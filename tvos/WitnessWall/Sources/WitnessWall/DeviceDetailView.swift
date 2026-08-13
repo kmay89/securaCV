@@ -77,7 +77,7 @@ struct DeviceDetailView: View {
                 // never reads as now, on any screen.
                 StatusBanner(
                     tone: .warning,
-                    title: "Showing the last verified record from \(asOf.formatted(date: .omitted, time: .shortened))",
+                    title: "Showing the last report received at \(asOf.formatted(date: .omitted, time: .shortened))",
                     detail: stale
                 )
             }

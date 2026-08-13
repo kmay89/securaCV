@@ -56,10 +56,17 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
         /// Where the device stands with its hub ("none" / "down" / "ok"), or
         /// nil when it did not say. Never rendered as "fine" when nil.
         var hub: String? = nil
+        /// WHICH SOURCE reported this row — the polled address, stamped by
+        /// the model after decode (never a wire field). It exists because a
+        /// name is not an identity: two units on older firmware both call
+        /// themselves the compile-time default ("canary_dash_001"), and only
+        /// their salted hostnames tell them apart. Set on multi-source
+        /// merges; nil when one hub answers for everyone.
+        var sourceHint: String? = nil
 
         /// Stable within a snapshot: the fleet endpoint has no device ids, and
         /// names are what a person actually distinguishes Canaries by.
-        var id: String { name }
+        var id: String { sourceHint.map { "\(name)@\($0)" } ?? name }
 
         /// Does this device's own report describe a chain FAILURE?
         ///
@@ -129,6 +136,66 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
             return "\(devices.count) \(noun), all online"
         }
         return "\(onlineCount) of \(devices.count) \(noun) online"
+    }
+}
+
+// MARK: - Merging (a fleet with no hub is still one fleet)
+
+extension FleetSnapshot {
+    /// Fold several Canaries' self-reports into the one wall they share.
+    ///
+    /// A hub answers /api/fleet for everyone behind it, but a HUBLESS fleet
+    /// answers one device at a time — each standalone Canary reports itself
+    /// (plus any peers it happens to front). The Wall polls them all and
+    /// merges here. Rules, in honesty order:
+    ///
+    ///  * Devices dedupe by (name, source) — a device reported twice BY THE
+    ///    SAME SOURCE is one device, but the same name from two sources is
+    ///    two physical units: older firmware ships a compile-time default
+    ///    device_id, so a hubless home can hold two "canary_dash_001"s, and
+    ///    only their sources tell them apart. Collapsing them would silently
+    ///    drop a real Canary from the wall.
+    ///  * A merged fleet has NO name and NO `verified_through`, full stop.
+    ///    A name from one part over devices from another is a claim nobody
+    ///    made, and a verification stamp from one part would render a calm
+    ///    "verified through …" banner over devices no verdict covers. Both
+    ///    survive only the single-part pass-through.
+    static func merged(_ parts: [FleetSnapshot]) -> FleetSnapshot {
+        guard parts.count > 1 else { return parts.first ?? FleetSnapshot(kernel: nil, verifiedThrough: nil, devices: []) }
+        var seen = Set<String>()
+        var devices: [Device] = []
+        for part in parts {
+            for device in part.devices where seen.insert(device.id).inserted {
+                devices.append(device)
+            }
+        }
+        return FleetSnapshot(kernel: nil, verifiedThrough: nil, devices: devices)
+    }
+
+    /// The same snapshot with every device stamped as reported by `source` —
+    /// the model applies this before a multi-source merge, so identity and
+    /// dedupe (see `merged`) can tell same-named units apart.
+    func tagged(bySource source: String) -> FleetSnapshot {
+        FleetSnapshot(kernel: kernel, verifiedThrough: verifiedThrough,
+                      devices: devices.map { device in
+                          var stamped = device
+                          stamped.sourceHint = source
+                          return stamped
+                      })
+    }
+
+    /// The same snapshot with every device marked offline — what the Wall
+    /// shows for a source that stopped answering: its last-known devices stay
+    /// on the wall as unreachable, rather than vanishing and letting the
+    /// merge read as all-online. The verification stamp does not survive:
+    /// a remembered report is not a current verdict.
+    func withEveryDeviceOffline() -> FleetSnapshot {
+        FleetSnapshot(kernel: kernel, verifiedThrough: nil,
+                      devices: devices.map { device in
+                          Device(name: device.name, online: false, chain: device.chain,
+                                 product: device.product, hw: device.hw, hub: device.hub,
+                                 sourceHint: device.sourceHint)
+                      })
     }
 }
 

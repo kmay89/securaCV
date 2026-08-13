@@ -37,8 +37,13 @@ final class WallModelTests: XCTestCase {
         UserDefaults(suiteName: name)!
     }
 
-    private func model(_ answers: [Result<String, Error>], defaults: UserDefaults? = nil) -> WallModel {
-        WallModel(transport: StubTransport(answers), defaults: defaults ?? scratchDefaults(), pollInterval: 0.01)
+    /// Discovery answers nothing unless a test says otherwise — the default
+    /// closure would run a REAL four-second Bonjour browse in the simulator,
+    /// which is neither deterministic nor a unit test.
+    private func model(_ answers: [Result<String, Error>], defaults: UserDefaults? = nil,
+                       discover: @escaping @Sendable (TimeInterval) async -> [String] = { _ in [] }) -> WallModel {
+        WallModel(transport: StubTransport(answers), defaults: defaults ?? scratchDefaults(),
+                  pollInterval: 0.01, discover: discover)
     }
 
     func testStartsByAskingForAHub() {
@@ -90,6 +95,145 @@ final class WallModelTests: XCTestCase {
         XCTAssertFalse(found)
         XCTAssertEqual(m.state, .needsHub,
                        "when nothing answers, the Wall asks — it never pretends to be connected")
+    }
+
+    // MARK: The hubless path — nothing claims canary.local, so the Canaries
+    // are found by their own announcements and merged into one wall.
+
+    func testAHublessFleetIsFoundByItsAnnouncementsAndMerged() async {
+        let porch = #"{"devices":[{"name":"Porch","online":true}]}"#
+        let bedroom = #"{"devices":[{"name":"Bedroom 7\"","online":true}]}"#
+        let defaults = scratchDefaults()
+        // Both well-known candidates fail (no hub), then each announced
+        // Canary answers for itself.
+        let m = model([
+            .failure(FleetError.unreachable("no hub")),
+            .failure(FleetError.unreachable("no wap")),
+            .success(porch),
+            .success(bedroom),
+        ], defaults: defaults, discover: { _ in
+            ["canary-nightstand-001-aa.local", "canary-nightstand7-001-bb.local"]
+        })
+
+        let found = await m.searchOnce()
+
+        XCTAssertTrue(found, "two standalone Canaries are a fleet, hub or not")
+        guard case .live(let fleet, _) = m.state else {
+            return XCTFail("expected .live after discovery, got \(m.state)")
+        }
+        XCTAssertEqual(fleet.devices.map(\.name).sorted(), ["Bedroom 7\"", "Porch"])
+        XCTAssertNil(fleet.kernel, "no single device gets to name the merged fleet")
+        XCTAssertEqual(defaults.stringArray(forKey: "SecuraCVWallSources"),
+                       ["canary-nightstand-001-aa.local", "canary-nightstand7-001-bb.local"],
+                       "every confirmed source persists, so the next boot polls them all")
+        XCTAssertEqual(m.hubAddress, "2 Canaries · found on your network")
+    }
+
+    func testADarkCanaryStaysOnTheWallAsOffline() async {
+        let porch = #"{"devices":[{"name":"Porch","online":true}]}"#
+        let bedroom = #"{"devices":[{"name":"Bedroom","online":true}]}"#
+        let defaults = scratchDefaults()
+        defaults.set(["a.local", "b.local"], forKey: "SecuraCVWallSources")
+        // Cycle 1: both answer. Cycle 2: b has gone dark.
+        let m = model([
+            .success(porch),
+            .success(bedroom),
+            .success(porch),
+            .failure(FleetError.unreachable("asleep")),
+        ], defaults: defaults)
+
+        await m.refreshOnce()
+        await m.refreshOnce()
+
+        guard case .live(let fleet, _) = m.state else {
+            return XCTFail("a partial answer is still a live wall, got \(m.state)")
+        }
+        XCTAssertEqual(fleet.devices.map(\.name), ["Porch", "Bedroom"],
+                       "the dark source's devices stay on the wall — vanishing "
+                       + "would let the merge read as all-online")
+        XCTAssertEqual(fleet.devices.map(\.online), [true, false],
+                       "and they are shown as what they are: unreachable")
+        XCTAssertEqual(fleet.onlineCount, 1)
+    }
+
+    func testASourceThatNeverAnsweredIsNotInvented() async {
+        let porch = #"{"devices":[{"name":"Porch","online":true}]}"#
+        let defaults = scratchDefaults()
+        defaults.set(["a.local", "b.local"], forKey: "SecuraCVWallSources")
+        // b has NEVER answered — there is nothing honest to remember.
+        let m = model([
+            .success(porch),
+            .failure(FleetError.unreachable("never met")),
+        ], defaults: defaults)
+
+        await m.refreshOnce()
+
+        guard case .live(let fleet, _) = m.state else {
+            return XCTFail("expected .live, got \(m.state)")
+        }
+        XCTAssertEqual(fleet.devices.map(\.name), ["Porch"],
+                       "no last answer means no remembered devices — absence, not invention")
+    }
+
+    func testMergeNeverCarriesANameOrAVerdictAcrossSources() throws {
+        let a = try JSONDecoder().decode(FleetSnapshot.self, from: Data(
+            #"{"kernel":"hub-a","verified_through":"now","devices":[{"name":"Porch"}]}"#.utf8))
+        let b = try JSONDecoder().decode(FleetSnapshot.self, from: Data(
+            #"{"devices":[{"name":"Porch"},{"name":"Studio"}]}"#.utf8))
+
+        let merged = FleetSnapshot.merged([a, b])
+
+        XCTAssertEqual(merged.devices.map(\.name), ["Porch", "Studio"],
+                       "an untagged duplicate is one device — first answer wins")
+        XCTAssertNil(merged.kernel,
+                     "one part's name over another part's devices is a claim nobody made")
+        XCTAssertNil(merged.verifiedThrough,
+                     "a verdict from ONE part must not banner the whole merged fleet")
+
+        let alone = FleetSnapshot.merged([a])
+        XCTAssertEqual(alone.kernel, "hub-a", "a single part keeps its own name and verdict")
+        XCTAssertEqual(alone.verifiedThrough, "now")
+    }
+
+    func testTwoUnitsSharingAStaleDefaultNameStayTwoRows() throws {
+        // Older firmware ships a compile-time default device_id, so a hubless
+        // home can genuinely hold two "canary_dash_001"s. Their sources tell
+        // them apart, and collapsing them would drop a real Canary.
+        let a = try JSONDecoder().decode(FleetSnapshot.self, from: Data(
+            #"{"devices":[{"name":"canary_dash_001"}]}"#.utf8)).tagged(bySource: "a.local")
+        let b = try JSONDecoder().decode(FleetSnapshot.self, from: Data(
+            #"{"devices":[{"name":"canary_dash_001"}]}"#.utf8)).tagged(bySource: "b.local")
+
+        let merged = FleetSnapshot.merged([a, b])
+
+        XCTAssertEqual(merged.devices.count, 2, "same name, two sources — two physical units")
+        XCTAssertEqual(Set(merged.devices.map(\.id)).count, 2,
+                       "and their ids differ, or SwiftUI's ForEach folds them back into one")
+    }
+
+    func testDiscoveryKeepsListeningAndANewCanaryJoinsTheWall() async {
+        let porch = #"{"devices":[{"name":"Porch","online":true}]}"#
+        let attic = #"{"devices":[{"name":"Attic","online":true}]}"#
+        let defaults = scratchDefaults()
+        defaults.set(["a.local"], forKey: "SecuraCVWallSources")
+        defaults.set(true, forKey: "SecuraCVWallSourcesDiscovered")
+        // reconcile probes the NEW host (attic), then the follow-up refresh
+        // polls both sources.
+        let m = model([
+            .success(attic),
+            .success(porch),
+            .success(attic),
+        ], defaults: defaults, discover: { _ in ["a.local", "new.local"] })
+
+        await m.reconcileDiscovered()
+
+        XCTAssertEqual(defaults.stringArray(forKey: "SecuraCVWallSources"),
+                       ["a.local", "new.local"],
+                       "a Canary plugged in later joins without a settings reset")
+        guard case .live(let fleet, _) = m.state else {
+            return XCTFail("expected .live after reconcile, got \(m.state)")
+        }
+        XCTAssertEqual(fleet.devices.map(\.name).sorted(), ["Attic", "Porch"])
     }
 
     func testAGoodFetchGoesLive() async {

@@ -46,5 +46,13 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>The Witness Wall reads your Canaries' verified record from your hub on this network. It never sees video, and never leaves your network.</string>
+	<!-- The service every Canary announces (firmware discovery.cpp). Browsing
+	     it is how a fleet with NO hub reaches the Wall: without this key,
+	     tvOS silently returns zero Bonjour results and the Wall would keep
+	     waiting for a canary.local that nothing claims. -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_securacv._tcp</string>
+	</array>
 </dict>
 </plist>
