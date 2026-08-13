@@ -396,7 +396,7 @@
             "out": [
               "Processing... Done."
             ],
-            "note": "Then: HACS \u2192 \u22ee \u2192 Custom repositories \u2192 add https://github.com/kmay89/securaCV (Integration) \u2192 install SecuraCV v{{integration}} \u2192 restart \u2192 Add Integration \u2192 SecuraCV \u2192 \"Canary devices via MQTT (Recommended)\"."
+            "note": "Then: HACS \u2192 \u22ee \u2192 Custom repositories \u2192 add https://github.com/kmay89/securacv-homeassistant (Integration) \u2192 install SecuraCV v{{integration}} \u2192 restart \u2192 Add Integration \u2192 SecuraCV \u2192 \"Canary devices via MQTT (Recommended)\"."
           }
         ]
       },

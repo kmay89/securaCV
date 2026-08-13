@@ -20,6 +20,7 @@
 //      a settings screen quietly lies about a device it can't reach.
 
 import SwiftUI
+import CoreLocation
 
 struct GlassSettingsSheet: View {
     let witness: Witness
@@ -30,6 +31,8 @@ struct GlassSettingsSheet: View {
     @State private var knobs: [GlassKnob] = []
     @State private var problem: String?
     @State private var busy = false
+    @State private var wxPlace = ""
+    @State private var wxPlaceStatus: String?
 
     var body: some View {
         NavigationStack {
@@ -62,6 +65,31 @@ struct GlassSettingsSheet: View {
                                 }
                             } footer: {
                                 if !knob.blurb.isEmpty { Text(knob.blurb) }
+                            }
+                        }
+
+                        if settings.hasDirectWeather && !settings.wxHub {
+                            Section {
+                                TextField("City, region — e.g. Austin, TX", text: $wxPlace)
+                                    .textInputAutocapitalization(.words)
+                                    .autocorrectionDisabled()
+                                Button(settings.wxLocSet ? "Replace stored location"
+                                                        : "Set weather location") {
+                                    Task { await setWeatherLocation() }
+                                }
+                                .disabled(wxPlace.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                                if let wxPlaceStatus {
+                                    Text(wxPlaceStatus)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } header: {
+                                Text("Weather location")
+                            } footer: {
+                                Text("Type a place; the phone looks it up and sends the glass a "
+                                   + "coarse ~11 km grid point — never your exact address, and "
+                                   + "never this phone's location. The glass keeps only that "
+                                   + "rounded point.")
                             }
                         }
                     }
@@ -116,6 +144,36 @@ struct GlassSettingsSheet: View {
     private func reload(after ok: Bool) async {
         if !ok { problem = "The glass didn't take that color." }
         await load()
+    }
+
+    /// Geocode the typed place ON THE PHONE (no location permission — this is
+    /// a text lookup, not a fix), coarsen to the 0.1° grid, and send the one
+    /// combined integer the firmware accepts atomically (wx_loc_encode in
+    /// glass_settings.h: (lat10+900)*4000 + (lon10+1800)).
+    private func setWeatherLocation() async {
+        busy = true
+        defer { busy = false }
+        wxPlaceStatus = "Looking up…"
+        do {
+            let marks = try await CLGeocoder().geocodeAddressString(wxPlace)
+            guard let loc = marks.first?.location else {
+                wxPlaceStatus = "Couldn't find that place — try adding a region."
+                return
+            }
+            let lat10 = Int((loc.coordinate.latitude * 10).rounded())
+            let lon10 = Int((loc.coordinate.longitude * 10).rounded())
+            guard (-900...900).contains(lat10), (-1800...1800).contains(lon10) else {
+                wxPlaceStatus = "That point is outside the valid grid."
+                return
+            }
+            let combined = (lat10 + 900) * 4000 + (lon10 + 1800)
+            try await GlassAPI.set("wx_loc", combined, at: base)
+            wxPlaceStatus = "Stored as a coarse grid point."
+            wxPlace = ""
+            await load()
+        } catch {
+            wxPlaceStatus = "Didn't stick — \(error.localizedDescription)"
+        }
     }
 }
 

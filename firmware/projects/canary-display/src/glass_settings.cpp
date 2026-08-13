@@ -22,7 +22,8 @@ struct Blob {
   Settings s;
 };
 constexpr uint16_t BLOB_MAGIC   = 0x5347;
-constexpr uint8_t  BLOB_VERSION = 3;  // v3: +rotation +bright_pct (v1/v2 migrate)
+constexpr uint8_t  BLOB_VERSION = 5;  // v5: +clock_12h +standalone-weather
+                                      // opt-in/location (v1..v4 migrate)
 
 // Frozen v1 layout (pre-Character). Kept verbatim so a v1 blob migrates
 // field-for-field instead of being rejected — an upgrade must never cost
@@ -63,6 +64,51 @@ struct BlobV2 {
   SettingsV2 s;
 };
 
+// Frozen v3 layout (pre-clock-style). Same reason as v1/v2: a v3 blob
+// migrates field-for-field so the clock-face wave never resets a rotation,
+// brightness, night window or Character a user already tuned.
+struct SettingsV3 {
+  uint8_t  day_pct;
+  uint8_t  night_screen;
+  uint8_t  red_shift;
+  uint8_t  peek_s;
+  uint8_t  night_start_hh;
+  uint8_t  night_end_hh;
+  uint16_t night_duty;
+  uint8_t  character;
+  uint8_t  rotation;
+  uint8_t  bright_pct;
+};
+struct BlobV3 {
+  uint16_t magic;
+  uint8_t  version;
+  uint8_t  size;
+  SettingsV3 s;
+};
+
+// Frozen v4 layout (pre-12h/weather). Same reason as the others: a v4 blob
+// migrates field-for-field so this wave never resets a clock face, rotation
+// or night window a user already tuned.
+struct SettingsV4 {
+  uint8_t  day_pct;
+  uint8_t  night_screen;
+  uint8_t  red_shift;
+  uint8_t  peek_s;
+  uint8_t  night_start_hh;
+  uint8_t  night_end_hh;
+  uint16_t night_duty;
+  uint8_t  character;
+  uint8_t  rotation;
+  uint8_t  bright_pct;
+  uint8_t  clock_style;
+};
+struct BlobV4 {
+  uint16_t magic;
+  uint8_t  version;
+  uint8_t  size;
+  SettingsV4 s;
+};
+
 struct CalBlob {
   uint16_t magic;    // 'N'<<8|'C'
   uint16_t floor_duty;
@@ -93,6 +139,12 @@ Settings defaults() {
   d.character = 0;  // Character::QuietGlass
   d.rotation = ROT_LANDSCAPE;   // the native wall/desk poster
   d.bright_pct = BRIGHT_PCT_MAX;  // full glass; dim it deliberately, not by default
+  d.clock_style = 0;  // ClockStyle::Segment — the classic instrument
+  d.clock_12h = 1;    // 12-hour with a quiet AM/PM; 24h is one flip away
+  d.wx_direct = 0;    // the hub stays the egress point unless the owner opts in
+  d.wx_loc_set = 0;
+  d.wx_lat10 = 0;
+  d.wx_lon10 = 0;
   return d;
 }
 
@@ -108,6 +160,20 @@ void sanitize(Settings& s) {
   // with canary::ui::Character: glass sits BELOW ui, so no ui include here
   // (character_apply re-clamps defensively at the ui layer anyway).
   if (s.character >= 7) s.character = 0;  // = Character::Count (wave 4: 7 ages)
+  // Same hand-synced literal discipline as `character`: 5 = ClockStyle::Count
+  // (clock_styles.h). Anything past the ring degrades to Segment.
+  if (s.clock_style >= 5) s.clock_style = 0;
+  if (s.clock_12h > 1) s.clock_12h = 1;
+  if (s.wx_direct > 1) s.wx_direct = 0;
+  if (s.wx_loc_set > 1) s.wx_loc_set = 0;
+  if (s.wx_lat10 < -900 || s.wx_lat10 > 900 ||
+      s.wx_lon10 < -1800 || s.wx_lon10 > 1800) {
+    // A corrupt coordinate must not aim the fetcher at the wrong sky: the
+    // location degrades to unset, and the opt-in simply waits for a new one.
+    s.wx_loc_set = 0;
+    s.wx_lat10 = 0;
+    s.wx_lon10 = 0;
+  }
   s.rotation &= 3;  // 0..3 = 0/90/180/270; any other bit pattern is noise
   // bright_pct lives on a [50..100] grid; a value off the grid (or the 0 a
   // migrated blob leaves) snaps to full rather than a random dim.
@@ -143,19 +209,68 @@ void settings_init() {
   Blob b = {};
   BlobV1 b1 = {};
   BlobV2 b2 = {};
+  BlobV3 b3 = {};
+  BlobV4 b4 = {};
   if (p.getBytesLength("cfg") == sizeof(Blob) &&
       p.getBytes("cfg", &b, sizeof(b)) == sizeof(Blob) &&
       b.magic == BLOB_MAGIC && b.version == BLOB_VERSION &&
       b.size == sizeof(Blob)) {
     s_settings = b.s;
     sanitize(s_settings);
+  } else if (p.getBytesLength("cfg") == sizeof(BlobV4) &&
+             p.getBytes("cfg", &b4, sizeof(b4)) == sizeof(BlobV4) &&
+             b4.magic == BLOB_MAGIC && b4.version == 4 &&
+             b4.size == sizeof(BlobV4)) {
+    // v4 -> v5: field-for-field; the clock gains its quiet AM/PM (the new
+    // default) and the weather opt-in stays off. Marked dirty so the
+    // debounced committer rewrites the blob as v5.
+    s_settings.day_pct        = b4.s.day_pct;
+    s_settings.night_screen   = b4.s.night_screen;
+    s_settings.red_shift      = b4.s.red_shift;
+    s_settings.peek_s         = b4.s.peek_s;
+    s_settings.night_start_hh = b4.s.night_start_hh;
+    s_settings.night_end_hh   = b4.s.night_end_hh;
+    s_settings.night_duty     = b4.s.night_duty;
+    s_settings.character      = b4.s.character;
+    s_settings.rotation       = b4.s.rotation;
+    s_settings.bright_pct     = b4.s.bright_pct;
+    s_settings.clock_style    = b4.s.clock_style;
+    s_settings.clock_12h      = 1;
+    sanitize(s_settings);
+    settings_mark_dirty();
+    canary::log_line("GLASS",
+                     "Settings upgraded from v4 - your preferences kept.");
+  } else if (p.getBytesLength("cfg") == sizeof(BlobV3) &&
+             p.getBytes("cfg", &b3, sizeof(b3)) == sizeof(BlobV3) &&
+             b3.magic == BLOB_MAGIC && b3.version == 3 &&
+             b3.size == sizeof(BlobV3)) {
+    // v3 -> v4: field-for-field; the clock face stays Segment (the
+    // zero-initialized new field IS the default). Marked dirty so the
+    // debounced committer rewrites the blob as v4.
+    s_settings.day_pct        = b3.s.day_pct;
+    s_settings.night_screen   = b3.s.night_screen;
+    s_settings.red_shift      = b3.s.red_shift;
+    s_settings.peek_s         = b3.s.peek_s;
+    s_settings.night_start_hh = b3.s.night_start_hh;
+    s_settings.night_end_hh   = b3.s.night_end_hh;
+    s_settings.night_duty     = b3.s.night_duty;
+    s_settings.character      = b3.s.character;
+    s_settings.rotation       = b3.s.rotation;
+    s_settings.bright_pct     = b3.s.bright_pct;
+    s_settings.clock_style    = 0;
+    s_settings.clock_12h      = 1;
+    sanitize(s_settings);
+    settings_mark_dirty();
+    canary::log_line("GLASS",
+                     "Settings upgraded from v3 - your preferences kept.");
   } else if (p.getBytesLength("cfg") == sizeof(BlobV2) &&
              p.getBytes("cfg", &b2, sizeof(b2)) == sizeof(BlobV2) &&
              b2.magic == BLOB_MAGIC && b2.version == 2 &&
              b2.size == sizeof(BlobV2)) {
-    // v2 -> v3: field-for-field; rotation stays landscape and brightness
-    // stays full (the sanitize below snaps the zero-initialized new fields
-    // to their defaults). Marked dirty so the committer rewrites it as v3.
+    // v2 -> v4: field-for-field; rotation stays landscape, brightness stays
+    // full and the clock face stays Segment (the sanitize below snaps the
+    // zero-initialized new fields to their defaults). Marked dirty so the
+    // committer rewrites it as v4.
     s_settings.day_pct        = b2.s.day_pct;
     s_settings.night_screen   = b2.s.night_screen;
     s_settings.red_shift      = b2.s.red_shift;
@@ -164,6 +279,7 @@ void settings_init() {
     s_settings.night_end_hh   = b2.s.night_end_hh;
     s_settings.night_duty     = b2.s.night_duty;
     s_settings.character      = b2.s.character;
+    s_settings.clock_12h      = 1;
     sanitize(s_settings);
     settings_mark_dirty();
     canary::log_line("GLASS",
@@ -172,9 +288,10 @@ void settings_init() {
              p.getBytes("cfg", &b1, sizeof(b1)) == sizeof(BlobV1) &&
              b1.magic == BLOB_MAGIC && b1.version == 1 &&
              b1.size == sizeof(BlobV1)) {
-    // v1 -> v3: field-for-field; character, rotation and brightness stay at
-    // their defaults. Marked dirty so the debounced committer rewrites the
-    // blob as v3 — one upgrade write, through the same retry-safe path.
+    // v1 -> v4: field-for-field; character, rotation, brightness and clock
+    // face stay at their defaults. Marked dirty so the debounced committer
+    // rewrites the blob as v4 — one upgrade write, through the same
+    // retry-safe path.
     s_settings.day_pct        = b1.s.day_pct;
     s_settings.night_screen   = b1.s.night_screen;
     s_settings.red_shift      = b1.s.red_shift;
@@ -182,6 +299,7 @@ void settings_init() {
     s_settings.night_start_hh = b1.s.night_start_hh;
     s_settings.night_end_hh   = b1.s.night_end_hh;
     s_settings.night_duty     = b1.s.night_duty;
+    s_settings.clock_12h      = 1;
     sanitize(s_settings);
     settings_mark_dirty();
     canary::log_line("GLASS",

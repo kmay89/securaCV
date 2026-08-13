@@ -69,7 +69,11 @@
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast + wx alerts
 #define FEATURE_WAKE_ALARM          1   // two-phase gentle wake; the sunrise is
                                         // RENDERED on-glass (backlight is binary)
-#define FEATURE_LANTERN             1   // user-summoned, timed-out night light
+#define FEATURE_LANTERN             1
+#define FEATURE_STANDALONE_WEATHER  1   // hub-less homes may OPT IN to the glass
+                                        // fetching its own coarse forecast
+                                        // (net/wx_direct.h - three gates, off by
+                                        // default, never a hub fallback)   // user-summoned, timed-out night light
                                         // (display_nightstand_line.md §4)
 
 // Features NOT used by this device — a display witnesses nothing itself.

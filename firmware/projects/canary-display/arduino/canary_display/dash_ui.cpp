@@ -27,7 +27,9 @@
 #include "theme.h"
 #include "character.h"
 #include "canary_mark.h"
+#include "fleet_figure.h"
 #include "trust.h"
+#include "fleet_figures.h"
 #include "version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
 #include "fleet_cards.h"
@@ -133,8 +135,10 @@ uint32_t s_hist_erase_ms = 0;
 // walk the house and watch each canary answer.
 constexpr int RC_ROWS = 8;
 constexpr lv_coord_t RC_X = 130, RC_Y = 40, RC_W = 540, RC_H = 400;
+constexpr int RC_FIG = 26;   // fixed figure slot per row — rows never reflow
 lv_obj_t* s_rc = nullptr;
 lv_obj_t* s_rc_title = nullptr;
+lv_obj_t* s_rc_figs[RC_ROWS] = {nullptr};
 lv_obj_t* s_rc_rows[RC_ROWS] = {nullptr};
 lv_obj_t* s_rc_hint = nullptr;
 #endif
@@ -352,7 +356,14 @@ void rc_render(const Fleet& fleet, uint32_t now) {
     const Witness* w = (i < n) ? fleet.at(i) : nullptr;
     if (!w) {
       lv_label_set_text(s_rc_rows[i], i == 0 && n == 0 ? "No witnesses yet" : "");
+      if (s_rc_figs[i]) lv_obj_add_flag(s_rc_figs[i], LV_OBJ_FLAG_HIDDEN);
       continue;
+    }
+    // The witness's own picture from the shared ledger; an unresolvable
+    // wire type keeps the slot hidden — never a guessed product.
+    if (s_rc_figs[i]) {
+      const auto* fig = canary::figures::figure_for(w->device_type);
+      canary::ui::fleet_figure_set(s_rc_figs[i], fig ? fig->figure_id : nullptr);
     }
     const int32_t age_ms = (int32_t)(now - w->last_seen_ms);
     const bool just_answered = age_ms >= 0 && age_ms < 5000;
@@ -657,8 +668,12 @@ void dash_ui_create() {
   lv_label_set_text(s_rc_title, "Roll call");
   lv_obj_align(s_rc_title, LV_ALIGN_TOP_LEFT, 24, 16);
   for (int i = 0; i < RC_ROWS; i++) {
+    // Each row leads with the witness's own figure (the ledger's picture,
+    // hidden until its wire type resolves), then the text line.
+    s_rc_figs[i] = fleet_figure_create(s_rc, nullptr, RC_FIG);
+    if (s_rc_figs[i]) lv_obj_set_pos(s_rc_figs[i], 24, 52 + i * 34);
     s_rc_rows[i] = mk_label(s_rc, font_label(), col_text());
-    lv_obj_set_pos(s_rc_rows[i], 24, 56 + i * 34);
+    lv_obj_set_pos(s_rc_rows[i], 24 + RC_FIG + 10, 56 + i * 34);
   }
   s_rc_hint = mk_label(s_rc, font_caption(), col_faint());
   lv_label_set_text(s_rc_hint,

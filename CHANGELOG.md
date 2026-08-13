@@ -2,6 +2,74 @@
 
 ## [Unreleased]
 
+### The 7" glass answers your finger, wears the face you choose, and shows you the fleet
+
+The Nightstand 7 shipped with touch wired and a full settings surface
+compiled in — and no touch path that reached it: the only settings doorway
+lived on the wall dashboard's transparency sheet, which the bedside flavor
+compiles out. The glass read as touch-dead. This pass closes that, and the
+gaps around it, on both sides of the wire.
+
+- **A settings doorway on the 7" faces.** The bedside face and the portrait
+  column carry a quiet `⚙ settings` corner by day (after dark the corner
+  grammar still belongs to the lantern and the wake tap). The sheet behind
+  it is the one the dash always had: night hours, night look, orientation,
+  brightness, style, firmware.
+- **The clock-face ring.** Four named, curated faces for the drawn-clock
+  glass — Segment, Slab, Hairline, and a drawn Analog dial — on the same
+  flip-through idiom as the Character ring, persisted in the settings blob
+  (v4; older blobs migrate field-for-field). A face changes the drawing,
+  never the message: honesty lines, severity colors and night behavior are
+  untouched, and night still outranks everything.
+- **The look, from the phone.** `/api/settings` on the dash family now
+  serves `character`, `clock_style` and `orientation` — with the Character
+  and clock catalogs BY NAME, the same device-describes contract as the
+  nightlight's scene list — and `/api/set` accepts them, applied on the
+  loop task through the exact paths an on-glass tap uses. The iPhone/iPad
+  settings sheet renders whatever catalog the device answers with.
+- **Figures on the glass** (the last unwired fleet-figures surface): the
+  roll call, the 7" fleet strip and the portrait witness list draw each
+  witness's own generated figure beside its severity dot — the same
+  projector, camera and palette as the phone, the web and the flashers.
+  The generator emits a new `fleet_figures_art.h` (glyph-tier faces,
+  decimated and pre-triangulated in the generator so the firmware never
+  carries a tessellator); a host test pins coverage, rev lockstep and
+  geometry sanity. An unresolvable wire type keeps a hidden fixed-size
+  slot — a wrong picture is worse than no picture.
+- **The clock you can trust at 3 a.m.** Twelve-hour digits with a quiet
+  AM/PM beside the clock (`clock_12h`, default on; 24-hour is one flip
+  away), a fifth clock face — **Calendar**, slimmer digits sharing the
+  hero with a mini month grid, today in the Character's accent — and a
+  clock-trust whisper on the date line: SNTP sync is now tracked, and a
+  clock that has not been verified against its time sources for days says
+  so instead of drifting in silence. Calendar arithmetic is host-tested
+  against independently-known dates.
+- **Standalone weather, without breaking the egress story.** Hub-less
+  homes can OPT IN (off by default, forever) to the glass fetching its
+  own forecast: an anonymous HTTPS query to Open-Meteo (pinned root CA)
+  over a location the phone coarsens to a ~11 km grid point before the
+  device stores it. Three gates, all load-bearing: the opt-in, a stored
+  location, and no hub ever configured — with a hub, the hub stays the
+  single egress point and the fetcher never becomes a quiet fallback.
+  The result feeds the exact retained-blob shape a hub would publish, so
+  every face and line behaves identically either way. Disclosed in
+  SECURITY_MODEL.md; the request shape is pinned by a host test so it
+  cannot quietly grow an identifier.
+- **The chain answer got honest, and its orphaned gate got resurrected.**
+  Two firmware "chain ok" signals were proxies that never looked at the
+  chain (the diagnostics self-test returned `crypto_healthy`; the WAP's
+  `/api/fleet` reported latched flags). Both now verify the actual tail:
+  the newest record must recompute under the canonical construction, match
+  the head, and verify under the device's key. And
+  `scripts/ci/conformance.sh` — the end-to-end fixture-DB-through-
+  `log_verify` gate — was referenced by no workflow; wiring it into
+  `rust.yml` immediately caught three drift bugs in the fixture (a
+  too-short device-key seed, a non-domain-separated trustee approval, and
+  an unconfigured quorum policy at authorize time), all fixed. The
+  device-side witness-chain endpoint suites (`canary-vision
+  tests/api/witness*.test.js`) now run in CI too, and FLIGHT_RULES FR-8/9/11
+  no longer claim the merged #990 boot tail-verify is open.
+
 ## [2.4.9] - 2026-08-09
 
 ### Every display draws itself, names itself, and the 7" brightness works

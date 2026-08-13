@@ -195,6 +195,32 @@ see `arduino/canary_display/README.md` for the matrix. Edit firmware in `src/`,
 then `./setup.sh regen` before committing; a CI guard enforces the sketch stays
 in sync.
 
+## Firmware updates (signed pull-OTA)
+
+Every display flavor rides the same signed pull-OTA engine the rest of the
+device line uses (`firmware/common/ota`, fronted here by `net/ota_mgr.*`):
+a daily jittered HTTPS check of a per-product manifest, Ed25519-verified
+against the committed release key before a byte is flashed, with automatic
+rollback if the new image fails to boot. The check needs only WiFi — a
+hub-less glass (no broker configured) still updates itself.
+
+- **Product identity is per flavor, and the release pipeline enforces it.**
+  Each env compiles in its own `SECURACV_OTA_PRODUCT` / manifest URL — the
+  7″ pair matters most here: `securacv-canary-display-dash7` (wall) and
+  `securacv-canary-display-nightstand7` (bedside) are distinct products so
+  an update can never cross-grade a bedroom clock into a wall dashboard.
+  `firmware-release.yml` refuses to publish a manifest whose binary doesn't
+  carry the release version string *and* self-identify as that product.
+- **The pipeline lives in the glass's own settings.** Settings → firmware
+  shows the installed version and opens the full pipeline: check now,
+  install, and the auto-update toggle (plus the dev/release channel the
+  HA update entity can switch). Progress and outcome render on the glass;
+  the rollback verdict is logged at the next boot.
+- **The flashers carry every flavor.** The browser flasher and the desktop
+  Flasher app both read the same catalog (`canary-local/devices/flash.json`),
+  so a factory USB install and the later self-updates offer the same set of
+  products — dash7 and nightstand7 included.
+
 ## Layout
 
 ```

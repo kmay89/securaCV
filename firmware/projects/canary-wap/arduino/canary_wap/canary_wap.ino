@@ -2405,6 +2405,32 @@ static bool verify_record_signature(const WitnessRecord* rec) {
   return verify_signature(g_device.pubkey, rec->chain_hash, 32, rec->signature);
 }
 
+// The coarse chain answer /api/fleet publishes, made REAL. It used to be a
+// proxy — "no tamper latched, no verify ever failed" — which reported
+// "chain":"ok" without ever looking at the chain, so a silently rewritten
+// tail that never tripped a verify still read green on the Witness Wall and
+// in the apps. What this device can honestly assert about its own chain on
+// every request, without an SD walk: the newest record still RECOMPUTES
+// under the canonical construction, still IS the head the next record would
+// extend, and still verifies under this device's key. The full-history walk
+// stays where it belongs (tools/verify_witness_log.py offline, and the
+// SD-tail reconciliation at boot).
+static bool chain_tail_intact() {
+  if (g_device.tamper_active || g_health.verify_failures != 0) return false;
+  if (g_device.seq == 0) return true;   // genesis: nothing to walk yet
+  if (g_last_record.seq != g_device.seq) {
+    // Head restored from NVS/SD this boot; the record itself is not in RAM
+    // to re-verify (boot reconciliation already vetted it).
+    return true;
+  }
+  uint8_t recomputed[32];
+  compute_chain_hash(g_last_record.prev_hash, g_last_record.payload_hash,
+                     g_last_record.seq, g_last_record.time_bucket, recomputed);
+  if (memcmp(recomputed, g_last_record.chain_hash, 32) != 0) return false;
+  if (memcmp(g_last_record.chain_hash, g_device.chain_head, 32) != 0) return false;
+  return verify_record_signature(&g_last_record);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // HEALTH LOGGING
 // ════════════════════════════════════════════════════════════════════════════
@@ -6607,9 +6633,11 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
   self.product = "canary-wap";
   self.online  = 1;   // we are answering this request, so we are up
-  // Honest coarse chain state: OK unless tamper is latched or a witness record
-  // failed verification. No hashes, no seq internals leaked beyond the height.
-  self.chain_ok     = (!g_device.tamper_active && g_health.verify_failures == 0) ? 1 : 0;
+  // Honest coarse chain state, backed by an actual tail check (see
+  // chain_tail_intact): the latched flags PLUS the newest record
+  // recomputing, matching the head, and verifying under this device's key.
+  // No hashes, no seq internals leaked beyond the height.
+  self.chain_ok     = chain_tail_intact() ? 1 : 0;
   self.chain_height = (int)(g_device.seq & 0x7fffffff);
   // When this device's key was born. Left at 0 — and so omitted entirely —
   // until this Canary has met a believable clock; see birth_day.h.

@@ -27,6 +27,10 @@ struct Nightstand7State {
   bool time_valid = false;
   int clock_hh = 0;
   int clock_mm = 0;
+  // Hours since SNTP last PROVED the wall clock (0xFFFF = never this boot).
+  // The face whispers about it once this grows old — a bedside clock must
+  // never be silently stale.
+  uint16_t sync_age_h = 0;
   CanaryMood bird = CanaryMood::Idle;
 };
 

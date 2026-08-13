@@ -32,7 +32,14 @@
 #include "theme.h"
 #include "canary_mark.h"
 #include "character.h"
+#include "clock_styles.h"
+#include "clock_face.h"
+#include "calendar_math.h"
+#include "fleet_figure.h"
+#include "settings_ui.h"
 #include "look_state.h"
+#include "glass_settings.h"
+#include "fleet_figures.h"
 #include "bedside.h"
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 #include "lantern.h"
@@ -112,17 +119,22 @@ lv_obj_t* mk_digit(lv_obj_t* parent, SegDigit* d, int x, int y, int w, int h,
 }
 
 // Paint a value (0-9, or -1 = blank) in `color`; unlit segments keep a
-// ghost presence by day (the resting shape of the instrument) and vanish
-// at night (a dark room wants digits, not scaffolding).
+// ghost presence by day when the style wants one (the resting shape of the
+// instrument) and always vanish at night (a dark room wants digits, not
+// scaffolding).
 void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
   const uint8_t map =
       (value >= 0 && value <= 9) ? DIGIT_MAP[value] : 0;
+  const bool ghost_day =
+      seg_style(canary::glass::settings().clock_style).ghost_day;
   for (int i = 0; i < 7; i++) {
     if (!d->seg[i]) continue;
     lv_obj_set_style_bg_color(d->seg[i], color, 0);
     const bool lit = (map >> i) & 1;
     lv_obj_set_style_bg_opa(
-        d->seg[i], lit ? LV_OPA_COVER : (night ? LV_OPA_0 : LV_OPA_10), 0);
+        d->seg[i],
+        lit ? LV_OPA_COVER
+            : ((night || !ghost_day) ? LV_OPA_0 : LV_OPA_10), 0);
   }
 }
 
@@ -134,6 +146,14 @@ SegDigit s_digit[4];
 lv_obj_t* s_digit_box[4] = {nullptr};
 lv_obj_t* s_colon[2] = {nullptr};
 lv_obj_t* s_date = nullptr;
+lv_obj_t* s_ampm = nullptr;      // the quiet 12-hour marker (clock_12h)
+
+// The Calendar face's mini month grid (day layout only; a dark room keeps
+// the clock as its one instrument). 7 columns, up to 6 rows + a header.
+constexpr int CAL_COLS = 7, CAL_ROWS = 6;
+lv_obj_t* s_cal_head = nullptr;
+lv_obj_t* s_cal_cell[CAL_ROWS * CAL_COLS] = {nullptr};
+int s_cal_drawn_ymd = -1;        // y*10000+m*100+d the grid currently shows
 
 // Day right column.
 lv_obj_t* s_wx_now = nullptr;    // "21.4°"
@@ -150,22 +170,31 @@ lv_obj_t* s_wx_alert_label = nullptr;
 // Day fleet strip.
 // Chip geometry, sized to the glass rather than guessed: the strip runs from
 // the state word's column (CHIP_X0) to where the glance line starts on the
-// right, so CHIPS * CHIP_PITCH must fit inside that. Six chips at 82 px is
-// the honest fit — beyond that the names stop being readable from a bed and
-// the "+N" stands in (the strip is severity-ordered, so the worst are always
-// among the visible ones).
+// right, so CHIPS * CHIP_PITCH must fit inside that. Five chips at 92 px is
+// the honest fit now that each carries its witness's FIGURE (the ledger's
+// own picture, fleet_figure.h) beside the severity dot and name — one fewer
+// chip than the text-only strip, but the strip is severity-ordered, so the
+// worst are always among the visible ones and "+N" carries the rest.
 lv_obj_t* s_strip = nullptr;
 lv_obj_t* s_bird = nullptr;
 lv_obj_t* s_state = nullptr;
-constexpr int CHIPS = 6;
+constexpr int CHIPS = 5;
 constexpr int CHIP_X0 = 108;
-constexpr int CHIP_PITCH = 82;
+constexpr int CHIP_PITCH = 92;
+constexpr int CHIP_FIG = 24;    // the figure slot, fixed so rows never reflow
 static_assert(CHIP_X0 + CHIPS * CHIP_PITCH <= SCR_W - 180,
               "witness chips must not run under the glance line");
 lv_obj_t* s_chip[CHIPS] = {nullptr};
+lv_obj_t* s_chip_fig[CHIPS] = {nullptr};
 lv_obj_t* s_chip_name[CHIPS] = {nullptr};
 lv_obj_t* s_more = nullptr;
 lv_obj_t* s_glance = nullptr;
+// The settings doorway (day face only): a quiet gear, top-right — the same
+// always-reachable promise the watch and the wall dashboard already keep.
+lv_obj_t* s_gear = nullptr;
+// The drawn Analog dial (ClockStyle::Analog); unused handles stay null on
+// the segment styles.
+AnalogClock s_analog;
 
 // Night extras.
 lv_obj_t* s_night_wx = nullptr;      // "18° now · tomorrow 26°/14°"
@@ -233,17 +262,55 @@ const char* state_word(Sev s) {
   }
 }
 
-// The clock digits, positioned. Day: the hero owns the upper left. Night:
-// centered, larger — the room's only instrument.
+// The clock hero, positioned. Day: it owns the upper left. Night: centered,
+// larger — the room's only instrument. The saved clock style picks between
+// the segment family (thickness/ghost per clock_styles.h) and the drawn
+// Analog dial; a style change rebuilds the face (main.cpp's ground flip).
 void build_clock(lv_obj_t* scr, bool night) {
-  const int W = night ? 128 : 104;
-  const int H = night ? 224 : 180;
-  const int T = night ? 26 : 22;
+  const uint8_t style = canary::glass::settings().clock_style;
+  // The Calendar face shares the hero with its month grid by day, so the
+  // digits step down a size; at night every style is just the clock.
+  const bool cal = clock_style_is_calendar(style) && !night;
+  const int W = night ? 128 : (cal ? 88 : 104);
+  const int H = night ? 224 : (cal ? 150 : 180);
+  const SegStyle ss = seg_style(style);
+  int T = (night ? 26 : (cal ? 18 : 22)) * ss.t_pct / 100;
+  if (T < 6) T = 6;
   const int GAP = night ? 18 : 12;
   const int COLON = night ? 30 : 26;
   const int total = 4 * W + 3 * GAP + COLON + 2 * GAP;
   const int x0 = night ? (SCR_W - total) / 2 : 44;
   const int y0 = night ? 92 : 56;
+
+  const auto mk_date = [&](int under_h) {
+    s_date = mk_label(scr, font_title(), col_muted());
+    lv_obj_set_style_text_align(s_date, LV_TEXT_ALIGN_CENTER, 0);
+    if (night) {
+      lv_obj_align(s_date, LV_ALIGN_TOP_MID, 0, y0 + under_h + 26);
+    } else {
+      lv_obj_set_pos(s_date, x0 + 4, y0 + under_h + 20);
+    }
+  };
+  const auto mk_ampm = [&](int x, int y, bool center) {
+    // The quiet marker: caption-sized, muted, beside the clock — visible
+    // when you look for it, invisible when you don't (clock_12h).
+    s_ampm = mk_label(scr, font_caption(), col_faint());
+    if (center) lv_obj_align(s_ampm, LV_ALIGN_TOP_MID, x, y);
+    else        lv_obj_set_pos(s_ampm, x, y);
+  };
+
+  if (clock_style_is_analog(style)) {
+    // The dial sits where the digits would: day in the hero's corner (the
+    // complications keep their column), night centered above the date.
+    const int r = night ? 110 : 95;
+    const int cx = night ? SCR_W / 2 : x0 + total / 2;
+    const int cy = y0 + (night ? 110 : 95);
+    analog_clock_build(&s_analog, scr, cx, cy, r);
+    if (night) mk_ampm(r + 24, cy - 8, true);
+    else       mk_ampm(cx + r + 12, cy + r - 22, false);
+    mk_date(night ? H : 2 * r);
+    return;
+  }
 
   int x = x0;
   for (int i = 0; i < 4; i++) {
@@ -259,12 +326,26 @@ void build_clock(lv_obj_t* scr, bool night) {
       x += COLON + 2 * GAP;
     }
   }
-  s_date = mk_label(scr, font_title(), col_muted());
-  lv_obj_set_style_text_align(s_date, LV_TEXT_ALIGN_CENTER, 0);
-  if (night) {
-    lv_obj_align(s_date, LV_ALIGN_TOP_MID, 0, y0 + H + 26);
-  } else {
-    lv_obj_set_pos(s_date, x0 + 4, y0 + H + 20);
+  mk_ampm(x0 + total + 8, y0 + H - 18, false);
+  mk_date(H);
+
+  if (cal) {
+    // The month grid, under the date, clear of the fleet strip: a header
+    // ("August 2026") and up to 6 rows of day numbers, today in the
+    // Character's accent. Same law as everything else on this face — it
+    // recolors through the theme choke point and never outranks an alarm.
+    const int gx = x0, gy = y0 + H + 46;
+    const int cw = 44, ch = 18;
+    s_cal_head = mk_label(scr, font_label(), col_text());
+    lv_obj_set_pos(s_cal_head, gx, gy);
+    for (int r = 0; r < CAL_ROWS; r++) {
+      for (int c = 0; c < CAL_COLS; c++) {
+        lv_obj_t* l = mk_label(scr, font_caption(), col_muted());
+        lv_obj_set_pos(l, gx + c * cw, gy + 22 + r * ch);
+        s_cal_cell[r * CAL_COLS + c] = l;
+      }
+    }
+    s_cal_drawn_ymd = -1;  // force the first paint
   }
 }
 
@@ -325,6 +406,10 @@ void build_day(lv_obj_t* scr) {
   lv_obj_align(s_state, LV_ALIGN_LEFT_MID, 108, -18);
 
   for (int i = 0; i < CHIPS; i++) {
+    // Fixed-size figure slot first (hidden until a witness resolves), then
+    // the severity dot, then the name — the slot discipline keeps the strip
+    // from reflowing as figures land (FLEET_FIGURES.md).
+    s_chip_fig[i] = fleet_figure_create(s_strip, nullptr, CHIP_FIG);
     s_chip[i] = lv_obj_create(s_strip);
     lv_obj_set_size(s_chip[i], 12, 12);
     lv_obj_set_style_radius(s_chip[i], LV_RADIUS_CIRCLE, 0);
@@ -339,6 +424,14 @@ void build_day(lv_obj_t* scr) {
 
   s_glance = mk_label(s_strip, font_body(), col_muted());
   lv_obj_align(s_glance, LV_ALIGN_RIGHT_MID, -18, 22);
+
+  // The settings doorway: a quiet word in the top-right corner. This face
+  // used to have NO touch path to the settings surface at all — the wall
+  // dashboard keeps its doorway on the transparency sheet, which this
+  // flavor compiles out — so the 7" bedside glass read as touch-dead.
+  s_gear = mk_label(scr, font_caption(), col_faint());
+  lv_label_set_text(s_gear, LV_SYMBOL_SETTINGS " settings");
+  lv_obj_align(s_gear, LV_ALIGN_TOP_RIGHT, -18, 12);
 }
 
 void build_night(lv_obj_t* scr) {
@@ -414,10 +507,15 @@ void nightstand7_ui_create() {
   for (auto& d : s_digit) d = SegDigit{};
   for (auto& b : s_digit_box) b = nullptr;
   s_colon[0] = s_colon[1] = nullptr;
+  s_ampm = s_cal_head = nullptr;
+  for (auto& c : s_cal_cell) c = nullptr;
+  s_cal_drawn_ymd = -1;
   s_date = s_wx_now = s_wx_cond = s_wx_range = s_wx_tmrw = nullptr;
   s_comfort = s_sun = s_wx_alert = s_wx_alert_label = nullptr;
-  s_strip = s_bird = s_state = s_more = s_glance = nullptr;
-  for (int i = 0; i < CHIPS; i++) s_chip[i] = s_chip_name[i] = nullptr;
+  s_strip = s_bird = s_state = s_more = s_glance = s_gear = nullptr;
+  for (int i = 0; i < CHIPS; i++)
+    s_chip[i] = s_chip_fig[i] = s_chip_name[i] = nullptr;
+  s_analog = AnalogClock{};
   s_night_wx = s_night_state = nullptr;
   s_lamp_zone = s_lamp_dot = s_lamp_label = nullptr;
   s_lantern = s_lantern_note = nullptr;
@@ -456,11 +554,23 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
   canary_mark_mood(st.bird);
 
   // ── Clock + date (both layouts) ──
+  const auto& gsx = canary::glass::settings();
+  const bool twelve = gsx.clock_12h != 0;
   const lv_color_t digit_col =
       night_mode ? (red ? ncol_text() : col_text()) : col_text();
+  // The Analog dial, when built; the segment calls below no-op on its null
+  // handles, so one update path serves every style.
+  analog_clock_update(&s_analog, st.clock_hh, st.clock_mm, digit_col,
+                      night_mode ? (red ? ncol_muted() : col_muted())
+                                 : col_muted(),
+                      st.time_valid);
+  bool pm = false;
   if (st.time_valid) {
-    set_digit(&s_digit[0], st.clock_hh / 10, digit_col, night_mode);
-    set_digit(&s_digit[1], st.clock_hh % 10, digit_col, night_mode);
+    const int dh = clock_display_hour(st.clock_hh, twelve, &pm);
+    // 12-hour blanks the leading zero (" 9:41"); 24-hour keeps it (09:41).
+    set_digit(&s_digit[0], (twelve && dh < 10) ? -1 : dh / 10, digit_col,
+              night_mode);
+    set_digit(&s_digit[1], dh % 10, digit_col, night_mode);
     set_digit(&s_digit[2], st.clock_mm / 10, digit_col, night_mode);
     set_digit(&s_digit[3], st.clock_mm % 10, digit_col, night_mode);
   } else {
@@ -470,6 +580,17 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
     if (!c) continue;
     lv_obj_set_style_bg_color(c, digit_col, 0);
     lv_obj_set_style_bg_opa(c, st.time_valid ? LV_OPA_COVER : LV_OPA_10, 0);
+  }
+  if (s_ampm) {
+    if (twelve && st.time_valid) {
+      lv_label_set_text(s_ampm, pm ? "PM" : "AM");
+      lv_obj_set_style_text_color(
+          s_ampm, night_mode ? (red ? ncol_muted() : col_faint()) : col_faint(),
+          0);
+      lv_obj_clear_flag(s_ampm, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s_ampm, LV_OBJ_FLAG_HIDDEN);
+    }
   }
   if (s_date) {
     const lv_color_t date_col =
@@ -483,10 +604,56 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
                                  "Thursday", "Friday", "Saturday"};
       static const char* MO[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-      lv_label_set_text_fmt(s_date, "%s \xE2\x80\xA2 %s %d", WD[lt.tm_wday],
-                            MO[lt.tm_mon], lt.tm_mday);
+      // The clock-trust whisper rides the date line (day only): a bedside
+      // clock that has not been VERIFIED against its time sources for days
+      // says so, quietly, instead of drifting in silence.
+      char trust[40] = "";
+      if (!night_mode) {
+        if (st.sync_age_h == 0xFFFF) {
+          snprintf(trust, sizeof(trust), " \xE2\x80\xA2 clock unverified");
+        } else if (st.sync_age_h >= 48) {
+          snprintf(trust, sizeof(trust), " \xE2\x80\xA2 clock checked %ud ago",
+                   (unsigned)(st.sync_age_h / 24));
+        }
+      }
+      lv_label_set_text_fmt(s_date, "%s \xE2\x80\xA2 %s %d%s", WD[lt.tm_wday],
+                            MO[lt.tm_mon], lt.tm_mday, trust);
     } else {
       lv_label_set_text(s_date, "waiting for the clock");
+    }
+  }
+
+  // ── The month grid (Calendar face, day layout) ──
+  if (s_cal_head) {
+    time_t t = time(nullptr);
+    struct tm lt;
+    if (st.time_valid && t > 1700000000) {
+      localtime_r(&t, &lt);
+      const int y = lt.tm_year + 1900, m = lt.tm_mon + 1, d = lt.tm_mday;
+      const int ymd = y * 10000 + m * 100 + d;
+      if (ymd != s_cal_drawn_ymd) {
+        s_cal_drawn_ymd = ymd;
+        lv_label_set_text_fmt(s_cal_head, "%s %d", cal_month_name(m), y);
+        const int days = cal_days_in_month(y, m);
+        for (int r = 0; r < CAL_ROWS; r++)
+          for (int c = 0; c < CAL_COLS; c++)
+            lv_label_set_text(s_cal_cell[r * CAL_COLS + c], "");
+        for (int day = 1; day <= days; day++) {
+          int r, c;
+          cal_cell_of(y, m, day, &r, &c);
+          lv_obj_t* cell = s_cal_cell[r * CAL_COLS + c];
+          lv_label_set_text_fmt(cell, "%d", day);
+          lv_obj_set_style_text_color(
+              cell, day == d ? col_accent() : col_muted(), 0);
+        }
+      }
+      lv_obj_set_style_text_color(s_cal_head, col_text(), 0);
+      lv_obj_clear_flag(s_cal_head, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s_cal_head, LV_OBJ_FLAG_HIDDEN);
+      for (auto* c : s_cal_cell)
+        if (c) lv_label_set_text(c, "");
+      s_cal_drawn_ymd = -1;
     }
   }
 
@@ -659,8 +826,17 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
       if (i < shown) {
         const Witness* w = fleet.at(order[i]);
         const Sev s = w ? fleet.witness_sev(*w, now) : Sev::Ok;
+        // The witness's own picture, from the shared ledger — the wire
+        // device type resolves it exactly like the phone does, and an
+        // unresolvable type keeps a hidden slot (never a guessed product).
+        const auto* fig =
+            w ? canary::figures::figure_for(w->device_type) : nullptr;
+        if (s_chip_fig[i]) {
+          fleet_figure_set(s_chip_fig[i], fig ? fig->figure_id : nullptr);
+          lv_obj_align(s_chip_fig[i], LV_ALIGN_LEFT_MID, x, y);
+        }
         lv_obj_set_style_bg_color(s_chip[i], sev_color(s, false), 0);
-        lv_obj_align(s_chip[i], LV_ALIGN_LEFT_MID, x, y);
+        lv_obj_align(s_chip[i], LV_ALIGN_LEFT_MID, x + CHIP_FIG + 4, y);
         // Bounded name: an LVGL label self-sizes, so a long room name would
         // walk over its neighbor. Truncate in C (the same %.Ns the comfort
         // line uses) rather than depend on a long-mode enum that was renamed
@@ -670,11 +846,12 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
         lv_obj_set_style_text_color(
             s_chip_name[i],
             (uint8_t)s >= (uint8_t)Sev::Warn ? col_text() : col_muted(), 0);
-        lv_obj_align(s_chip_name[i], LV_ALIGN_LEFT_MID, x + 18, y);
+        lv_obj_align(s_chip_name[i], LV_ALIGN_LEFT_MID, x + CHIP_FIG + 20, y);
         lv_obj_clear_flag(s_chip[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_chip_name[i], LV_OBJ_FLAG_HIDDEN);
         x += CHIP_PITCH;
       } else {
+        if (s_chip_fig[i]) lv_obj_add_flag(s_chip_fig[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_chip[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_chip_name[i], LV_OBJ_FLAG_HIDDEN);
       }
@@ -754,6 +931,13 @@ void nightstand7_ui_ack_hold(bool /*active*/) {
 }
 
 bool nightstand7_ui_handle_tap(int16_t x, int16_t y, uint32_t now) {
+  // The settings doorway (day face): the gear corner opens the shared
+  // settings surface. Day only — at night the glass is a clock and the
+  // affordance corner belongs to the lantern; settings can wait for light.
+  if (!character_night() && x >= SCR_W - 170 && y <= 56) {
+    settings_ui_open();
+    return true;
+  }
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
   auto& lamp = canary::care::lantern();
   if (s_lantern && !lv_obj_has_flag(s_lantern, LV_OBJ_FLAG_HIDDEN)) {

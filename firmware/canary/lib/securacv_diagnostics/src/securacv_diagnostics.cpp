@@ -18,6 +18,7 @@
 #include "canary_config.h"
 #include "log_level.h"
 #include "securacv_witness.h"
+#include "securacv_crypto.h"   /* compute_chain_hash — the real chain_ok test */
 #include "securacv_thermal.h"
 
 #if FEATURE_SD_STORAGE
@@ -279,9 +280,33 @@ static bool test_watchdog() {
 #endif
 }
 
+/* The chain self-test, made real. The old body returned crypto_healthy —
+ * a diagnostic NAMED chain_ok that never looked at the chain, so a
+ * silently rewritten tail still scored green. What a device can honestly
+ * assert about its own chain, every diagnostic pass, without an SD walk:
+ *   1. the crypto layer is up and no verify has ever failed;
+ *   2. the newest record's chain hash RECOMPUTES from its own fields
+ *      (the canonical construction, securacv_crypto);
+ *   3. that hash IS the head the next record would extend; and
+ *   4. the record's Ed25519 signature verifies under this device's key.
+ * The full-history walk stays where it belongs — the offline verifier
+ * (tools/verify_witness_log.py) and the SD-tail reconciliation at boot. */
 static bool test_chain() {
   SystemHealth& h = witness_get_health();
-  return h.crypto_healthy;
+  if (!h.crypto_healthy || h.verify_failures != 0) return false;
+  DeviceIdentity& d = witness_get_device();
+  if (d.seq == 0) return true;         /* genesis: nothing to walk yet */
+  const WitnessRecord& last = witness_get_last_record();
+  if (last.seq != d.seq) return true;  /* head restored from NVS/SD; the
+                                        * record itself is not in RAM to
+                                        * re-verify (boot reconciliation
+                                        * already vetted it) */
+  uint8_t recomputed[32];
+  compute_chain_hash(last.prev_hash, last.payload_hash, last.seq,
+                     last.time_bucket, recomputed);
+  if (memcmp(recomputed, last.chain_hash, 32) != 0) return false;
+  if (memcmp(last.chain_hash, d.chain_head, 32) != 0) return false;
+  return witness_verify_record(&last);
 }
 
 typedef bool (*test_fn_t)(void);

@@ -525,3 +525,47 @@ test("every concept in the registry has a figure — ideas are visible, not hidd
     assert.ok(f.sketch_note, `${d.id}'s sketch says what shape it is guessing at`);
   }
 });
+
+test("the on-glass art tier covers every id the firmware can resolve, at the same rev", () => {
+  // fleet_figures_art.h is the display firmware's copy of the glyph tier —
+  // pre-triangulated so an ESP32 never carries a tessellator. Its contract
+  // (also pinned host-side by firmware/tests_host/test_fleet_figures_art.cpp,
+  // but THIS suite is the gate canary-local.yml actually runs on a figures
+  // change): every id the kFigures/kHardware lookups can return has art, at
+  // the exact rev the lookup carries — a device that names itself must never
+  // draw nothing, or stale art.
+  const lookups = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
+  const art = readFileSync(join(REPO, "firmware/common/core/fleet_figures_art.h"), "utf8");
+
+  const artRows = new Map(
+    [...art.matchAll(/\{ "((?:device|part|board|tool)\.[^"]+)", "([0-9a-f]{8})", (\d+), kArt_\w+_faces \}/g)]
+      .map((m) => [m[1], { rev: m[2], faces: Number(m[3]) }]),
+  );
+  assert.ok(artRows.size > 0, "the art table parses and is non-empty");
+
+  const resolvable = [...lookups.matchAll(/\{ "[^"]+", "((?:device|part|board|tool)\.[^"]+)", "([0-9a-f]{8})", "(\w+)"/g)];
+  assert.ok(resolvable.length > 0, "the lookup tables parse and are non-empty");
+  for (const [, id, rev, confidence] of resolvable) {
+    const row = artRows.get(id);
+    assert.ok(row, `${id} is resolvable by the firmware but has no on-glass art`);
+    assert.strictEqual(row.rev, rev, `${id}'s art rev matches its lookup rev`);
+    assert.ok(row.faces > 0, `${id}'s art has faces to draw`);
+    assert.notStrictEqual(confidence, "idea",
+      `${id}: an idea must never be resolvable on-glass — ghosts are not drawn there`);
+    // And the ledger agrees the drawing is current — three copies, one rev.
+    const fig = byId.get(id);
+    assert.ok(fig, `${id} exists in the ledger`);
+    assert.strictEqual(fig.rev, rev, `${id}'s ledger rev matches the firmware's`);
+  }
+
+  // Geometry stays inside the declared box: coordinates are quarter-units of
+  // the 64-unit glyph, so every value sits in [0, 256]. A vertex outside the
+  // box would draw over a neighboring row on the glass.
+  const scale = art.match(/kFigureArtScale = (\d+)/);
+  assert.ok(scale && Number(scale[1]) === 256, "the art scale is the glyph's 64 * 4");
+  for (const m of art.matchAll(/inline constexpr int16_t kArt_\w+_t\d+\[\] = \{([-\d,]+)\};/g)) {
+    for (const v of m[1].split(",").map(Number)) {
+      assert.ok(v >= 0 && v <= 256, `art coordinate ${v} escapes the 64-unit glyph box`);
+    }
+  }
+});

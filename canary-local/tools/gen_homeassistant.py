@@ -241,7 +241,7 @@ TERMINAL = {
                  "note": "The official HACS installer, verbatim."},
                 {"cmd": "ha core restart",
                  "out": ["Processing... Done."],
-                 "note": "Then: HACS → ⋮ → Custom repositories → add https://github.com/kmay89/securaCV (Integration) → install SecuraCV v{{integration}} → restart → Add Integration → SecuraCV → \"Canary devices via MQTT (Recommended)\"."},
+                 "note": "Then: HACS → ⋮ → Custom repositories → add https://github.com/kmay89/securacv-homeassistant (Integration) → install SecuraCV v{{integration}} → restart → Add Integration → SecuraCV → \"Canary devices via MQTT (Recommended)\"."},
             ],
         },
         {

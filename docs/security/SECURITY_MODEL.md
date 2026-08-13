@@ -96,6 +96,30 @@ This means:
 - No server can be compelled to reveal device data
 - The device works identically with or without internet nearby
 
+#### The display line's disclosed exceptions
+
+The Canary displays (Dash / Nightstand / Watch Station) join the home
+WiFi to render the fleet, and carry exactly three disclosed outbound
+paths — all anonymous-commons queries, none carrying identifiers, and
+none required for the device to function:
+
+1. **Time (SNTP)** — always on when networked: UTC from two public time
+   sources (`pool.ntp.org`, `time.nist.gov`). This is what keeps a
+   bedside clock honest.
+2. **Timezone lookup** — compile-time opt-in only (`CD_TZ_WEB_LOOKUP` in
+   `secrets.h`); off in every shipped image. Without it the zone comes
+   from configuration or the app.
+3. **Standalone weather** — runtime opt-in, off by default, and gated
+   three ways (`firmware/.../net/wx_direct.h`): the owner must switch it
+   on, must store a location, and **no hub may ever have been
+   configured**. A home with a hub keeps the hub as its single egress
+   point — the fetcher never becomes a fallback when that hub is down.
+   The query is an anonymous HTTPS forecast request (Open-Meteo, pinned
+   root CA) over a location the phone coarsens to a 0.1° grid (~11 km)
+   before the device ever stores it; the exact request shape is pinned by
+   a host test (`tests_host/test_wx_core.cpp`) so it cannot quietly grow
+   an identifier. The device never republishes the stored grid point.
+
 ### No Tracking Identifiers
 
 - The WiFi network name ("Canary-XXXX") reveals no manufacturer identity,

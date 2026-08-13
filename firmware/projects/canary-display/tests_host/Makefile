@@ -159,6 +159,15 @@ $(ORIENT_BIN): $(ORIENT_SRC)
 $(DISPSET_BIN): $(DISPSET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DISPSET_SRC)
 
+# Clock-face ring (canary/ui/clock_styles.h): the shared 12-hour conversion
+# (0 -> 12 AM, 12 -> 12 PM), wrap-safe style stepping, the segment-geometry
+# table, and the glyph-range guard on every caption. Pure header, no LVGL.
+CLOCKSTYLE_BIN = test_clock_styles
+CLOCKSTYLE_SRC = test_clock_styles.cpp
+
+$(CLOCKSTYLE_BIN): $(CLOCKSTYLE_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(CLOCKSTYLE_SRC)
+
 # The first-meet story (canary/care/greeting.h): the beat arc and its dwell,
 # the first-meet-only rule, the abort when trouble arrives mid-story, and the
 # copy itself -- including the mechanical check that no beat ever words an
@@ -169,7 +178,7 @@ GREET_SRC = test_greeting.cpp
 $(GREET_BIN): $(GREET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(GREET_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(GREET_BIN)
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -185,7 +194,8 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(NIGHTLIGHT_BIN)
 	./$(ORIENT_BIN)
 	./$(DISPSET_BIN)
+	./$(CLOCKSTYLE_BIN)
 	./$(GREET_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(GREET_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN)
