@@ -81,7 +81,11 @@ struct WallSettingsView: View {
                 } header: {
                     Text("Fleet")
                 } footer: {
-                    Text("The Wall finds a hub or Canary at canary.local by itself — this field is only for a hub that lives somewhere else. Nothing leaves this room.")
+                    // No unconditional "nothing leaves this room" here: a
+                    // remote hub URL is a supported input, and the promise
+                    // must survive it. What IS always true: one address,
+                    // nothing else, no cloud of ours.
+                    Text("The Wall finds a hub or Canary at canary.local by itself — this field is only for a hub that lives somewhere else. Wherever it points, the Wall talks to that address and nothing else — never a cloud of ours.")
                 }
 
                 Section("About") {

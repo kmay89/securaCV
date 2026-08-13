@@ -58,7 +58,10 @@ struct WallView: View {
             WallSettingsView(model: model)
         }
         .fullScreenCover(item: $selectedDevice) { device in
-            DeviceDetailView(device: device, skin: skin)
+            // The cover gets the device's IDENTITY; the view reads the live
+            // row out of the model each render, so a detail screen left open
+            // across a poll can never keep an out-of-date sentence up.
+            DeviceDetailView(model: model, deviceID: device.id, skin: skin)
         }
         .onAppear {
             // Furniture must not doze: the whole point of a wall is that it

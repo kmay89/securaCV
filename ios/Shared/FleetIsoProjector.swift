@@ -332,17 +332,29 @@ public struct FleetFigureTurntable: View {
     /// on display rather than a loading spinner.
     private static let ambientRadiansPerSecond = 0.26
 
+    #if os(tvOS)
+    /// Reduce Motion means the part holds still. The pose it holds is the
+    /// canonical camera (yaw zero) — the fleet's one shared picture — so the
+    /// still view is exactly the committed figure, not a frozen mid-spin.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #endif
+
     public var body: some View {
         #if os(tvOS)
         // A television has no drag. The part turns by itself, the way a piece
         // on a shelf turntable does — the same massing, palette and light as
         // the phone, at couch distance. The phase comes from the clock so
         // every card on screen turns in step.
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            turntable(at: context.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 86_400) * Self.ambientRadiansPerSecond)
+        if reduceMotion {
+            turntable(at: 0)
+                .accessibilityLabel(title)
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                turntable(at: context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 86_400) * Self.ambientRadiansPerSecond)
+            }
+            .accessibilityLabel(title)
         }
-        .accessibilityLabel(title)
         #else
         turntable(at: yaw)
             .gesture(
