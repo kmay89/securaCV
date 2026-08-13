@@ -132,6 +132,43 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
     }
 }
 
+// MARK: - Merging (a fleet with no hub is still one fleet)
+
+extension FleetSnapshot {
+    /// Fold several Canaries' self-reports into the one wall they share.
+    ///
+    /// A hub answers /api/fleet for everyone behind it, but a HUBLESS fleet
+    /// answers one device at a time — each standalone Canary reports itself
+    /// (plus any peers it happens to front). The Wall polls them all and
+    /// merges here. Rules, in honesty order:
+    ///
+    ///  * Devices concatenate, deduped by name, first answer wins — a device
+    ///    reported both by itself and by a peer is one device.
+    ///  * `kernel` (the fleet's name) survives only when exactly one part
+    ///    claims one — two kernels would mean picking whose name wins, and
+    ///    inventing a merged name is a claim nobody made.
+    ///  * `verified_through` survives only from a single part, for the same
+    ///    reason: it is a statement about ONE verified record, and the merge
+    ///    of two statements is not itself verified.
+    static func merged(_ parts: [FleetSnapshot]) -> FleetSnapshot {
+        guard parts.count > 1 else { return parts.first ?? FleetSnapshot(kernel: nil, verifiedThrough: nil, devices: []) }
+        var seen = Set<String>()
+        var devices: [Device] = []
+        for part in parts {
+            for device in part.devices where seen.insert(device.id).inserted {
+                devices.append(device)
+            }
+        }
+        let kernels = parts.compactMap(\.kernel)
+        let verdicts = parts.compactMap(\.verifiedThrough)
+        return FleetSnapshot(
+            kernel: kernels.count == 1 ? kernels[0] : nil,
+            verifiedThrough: verdicts.count == 1 ? verdicts[0] : nil,
+            devices: devices
+        )
+    }
+}
+
 // MARK: - Tolerant decode (the same tolerance the phone applies)
 
 /// The phone's `FleetSelfDevice` decodes every field with a fallback on the

@@ -85,7 +85,7 @@ struct WallSettingsView: View {
                     // remote hub URL is a supported input, and the promise
                     // must survive it. What IS always true: one address,
                     // nothing else, no cloud of ours.
-                    Text("The Wall finds a hub or Canary at canary.local by itself — this field is only for a hub that lives somewhere else. Wherever it points, the Wall talks to that address and nothing else — never a cloud of ours.")
+                    Text("The Wall finds your Canaries by itself — a hub at canary.local, or any Canary announcing itself on your network. This field is only for a hub that lives somewhere else; typing one replaces the found set. Wherever it points, the Wall talks to your Canaries and nothing else — never a cloud of ours.")
                 }
 
                 Section("About") {
