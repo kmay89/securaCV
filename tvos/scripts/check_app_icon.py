@@ -107,17 +107,36 @@ def main() -> int:
                 suffix = "" if scale == 1 else f"@{scale}x"
                 png = os.path.join(image_set, f"{name.replace(' ', '_')}_{layer}{suffix}.png")
                 check(png, w * scale, h * scale, f"{name} / {layer} @{scale}x")
+            # The manifest is load-bearing, not optional: a PNG on disk that
+            # Contents.json does not declare (or declares under another
+            # filename) fills no slot, and actool/App Store validation fails
+            # on the "missing" scale while every expected file exists. So a
+            # missing manifest is a failure, and the comparison covers the
+            # whole declaration — filename, idiom, scale — not just scales.
             layer_manifest = os.path.join(image_set, "Contents.json")
-            if os.path.exists(layer_manifest):
+            if not os.path.exists(layer_manifest):
+                problems.append(
+                    f"{name} / {layer}: Content.imageset has no Contents.json — "
+                    "its PNGs fill no slots without one"
+                )
+            else:
                 with open(layer_manifest, encoding="utf-8") as handle:
-                    declared_scales = sorted(
-                        image.get("scale", "") for image in json.load(handle).get("images", [])
+                    declared = sorted(
+                        (image.get("filename", ""), image.get("idiom", ""), image.get("scale", ""))
+                        for image in json.load(handle).get("images", [])
                     )
-                want_scales = sorted(f"{scale}x" for scale in scales)
-                if declared_scales != want_scales:
+                want = sorted(
+                    (
+                        f"{name.replace(' ', '_')}_{layer}{'' if scale == 1 else f'@{scale}x'}.png",
+                        "tv",
+                        f"{scale}x",
+                    )
+                    for scale in scales
+                )
+                if declared != want:
                     problems.append(
-                        f"{name} / {layer}: Contents.json declares scales "
-                        f"{declared_scales}, Apple requires {want_scales}"
+                        f"{name} / {layer}: Contents.json declares {declared}, "
+                        f"Apple requires {want}"
                     )
 
     for name, w, h in SHELVES:
