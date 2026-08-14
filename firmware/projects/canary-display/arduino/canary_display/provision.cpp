@@ -25,8 +25,10 @@
 
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
 
+#include <Preferences.h>
 #include <esp_random.h>
 #include <lvgl.h>
+#include <string.h>
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
 #include <esp_task_wdt.h>
 #endif
@@ -77,6 +79,12 @@ constexpr uint32_t AP_LINGER_MAX_MS  = 25000;  // success: wait for phone's ack�
 constexpr uint32_t AP_LINGER_ACK_MS  = 1600;   // …then this beat, then teardown
 constexpr uint32_t IDLE_DIM_MS       = 480000; // 8 min unattended -> dim glass
 constexpr uint32_t SCAN_TTL_MS       = 300000; // scan cache freshness (5 min)
+constexpr uint32_t STUCK_HINT_MS     = 45000;  // AP up this long, nobody ever
+                                               // on it -> name the one fix
+
+// The setup AP's password. Eight characters: WPA2's minimum, and the glass
+// has to show it at a readable size on a round watch face.
+constexpr size_t AP_PASS_LEN = 8;
 
 enum class St : uint8_t { Hello, Waiting, PhoneHere, Testing, Fail, Success };
 
@@ -125,6 +133,8 @@ struct Ctx {
   int scan_n = 0;
   uint32_t scan_at = 0;          // millis of last completed sweep (0 = never)
   bool dimmed = false;
+  bool saw_station = false;      // any phone has EVER associated this session
+  bool stuck_hinted = false;     // the "forget the network" line is up
 };
 Ctx* g = nullptr;                // scoped to provision_run(); never steady-state
 
@@ -491,6 +501,85 @@ const char* sta_failure_reason(wl_status_t st) {
   return canary::net::join_failure_label(classify_status(st));
 }
 
+// ── The setup AP's password: minted once, then STABLE for this unit ───────
+//
+// It used to be re-rolled on every provision_run(). The SSID is not — that is
+// the salted device pseudonym, deliberately stable — so the wizard kept
+// offering the SAME network name with a DIFFERENT key on every boot and every
+// loop()-path re-raise. A phone remembers the pair, not the key it was last
+// shown: once it has joined "SecuraCV-XXXX" it auto-rejoins with the password
+// it saved, the handshake is refused, and iOS reports
+//
+//     Unable to join the network "SecuraCV-XXXX"
+//
+// with NO password prompt to correct it — as far as the phone is concerned it
+// already knows this network. Every remedy an owner reaches for (power-cycle,
+// reflash, retry) rolls another password and makes it worse, and the glass
+// keeps showing a perfectly correct QR that the phone will not act on. A 7"
+// Dash on 2.4.9 could not be onboarded from an iPhone at all until the network
+// was forgotten by hand.
+//
+// Stability is what the QR on the glass promises, so the password lives in NVS
+// beside the credentials the wizard writes. It is still random per unit
+// (esp_fill_random over the unambiguous alphabet) and still derivable from
+// nothing published — it just stops moving underneath the phone that wrote it
+// down. The AP itself only exists while the display is unprovisioned or cannot
+// join, and the password is printed on the glass the whole time it is up, so
+// re-rolling it bought no secrecy against anyone who could read the screen.
+bool ap_pass_ok(const char* s) {
+  if (s == nullptr || strlen(s) != AP_PASS_LEN) return false;
+  for (size_t i = 0; i < AP_PASS_LEN; i++) {
+    const unsigned char c = (unsigned char)s[i];
+    if (c < 0x21 || c > 0x7e) return false;  // printable, no spaces
+  }
+  return true;
+}
+
+void mint_ap_password(char* out, size_t out_len) {
+  uint8_t rnd[16];
+  esp_fill_random(rnd, sizeof(rnd));
+  render_password(rnd, sizeof(rnd), out, out_len);
+}
+
+// Load this unit's setup password, minting and persisting one the first time.
+//
+// Returns whether the password is DURABLE — already stored, or stored and read
+// back just now. The caller needs that answer, not just the password: a store
+// that quietly failed (NVS full, a bad flash write, or no NVS at all) leaves us
+// advertising a key the next boot will not have, which is the very lockout
+// above. `putString` reports a failed write by returning 0 rather than by
+// refusing, so an unchecked call is indistinguishable from a durable one; the
+// read-back covers the rest, since a write that reports success and does not
+// stick fails exactly the same way for the user.
+//
+// Failing to persist is never a dead end for THIS session — the wizard runs on
+// the freshly minted password and the join works — so this is a question about
+// the NEXT boot, which is what provision_run() uses it for.
+bool load_or_mint_ap_password(char* out, size_t out_len) {
+  Preferences prefs;
+  if (!prefs.begin("securacv", /*readOnly=*/false)) {
+    mint_ap_password(out, out_len);
+    canary::dbg_serial().println(
+        "Settings store unavailable - setup password is per-boot.");
+    return false;
+  }
+  const String stored = prefs.getString("ap_pass", "");
+  if (ap_pass_ok(stored.c_str())) {
+    snprintf(out, out_len, "%s", stored.c_str());
+    prefs.end();
+    return true;
+  }
+  mint_ap_password(out, out_len);
+  const bool wrote = prefs.putString("ap_pass", out) > 0 &&
+                     prefs.getString("ap_pass", "") == out;
+  prefs.end();
+  if (!wrote) {
+    canary::dbg_serial().println(
+        "Setup password could not be saved - it is per-boot this time.");
+  }
+  return wrote;
+}
+
 }  // namespace
 
 bool provision_needed() {
@@ -511,18 +600,32 @@ void provision_run(bool glass_ok) {
   s_glass = glass_ok;
 
   // Device-unique setup identity: SSID suffix from the salted, MAC-free
-  // pseudonym (stable, matches the fleet's SecuraCV-XXXX convention);
-  // password random per session — it is DISPLAYED on the glass and inside
-  // the join QR, so ephemeral beats memorable, and nothing derivable from
-  // published identifiers ever gates the AP.
+  // pseudonym (stable, matches the fleet's SecuraCV-XXXX convention); the
+  // password minted once and kept (see load_or_mint_ap_password). Nothing
+  // derivable from published identifiers ever gates the AP — which is also why
+  // the password cannot simply be re-derived from the pseudonym when the store
+  // refuses it: the pseudonym is printed in the SSID.
   char token[device_pseudonym::HEX_LEN + 1] = {0};
   device_pseudonym::device_id_hex(token, sizeof(token));
-  char ap_ssid[20];
-  snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s", token[0] ? token : "GLAS");
-  uint8_t rnd[16];
-  esp_fill_random(rnd, sizeof(rnd));
-  char ap_pass[9];
-  render_password(rnd, sizeof(rnd), ap_pass, sizeof(ap_pass));
+  char ap_pass[AP_PASS_LEN + 1];
+  const bool pass_durable = load_or_mint_ap_password(ap_pass, sizeof(ap_pass));
+
+  // The name and the key are one promise, so they keep the same lifetime. When
+  // the password could not be made durable, the SSID must not be either — a
+  // familiar name behind a key that changed is precisely what a phone cannot
+  // recover from, while a name it has never seen just prompts normally. So the
+  // rare unwritable-store path costs a per-session suffix and nothing else.
+  char ap_ssid[24];
+  if (pass_durable) {
+    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s", token[0] ? token : "GLAS");
+  } else {
+    uint8_t tag_rnd[8];
+    esp_fill_random(tag_rnd, sizeof(tag_rnd));
+    char tag[3];
+    render_password(tag_rnd, sizeof(tag_rnd), tag, sizeof(tag));
+    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s-%s",
+             token[0] ? token : "GLAS", tag);
+  }
 
   log_header("SETUP");
   canary::dbg_serial().printf("First boot - onboarding AP \"%s\"  password %s\n",
@@ -669,12 +772,31 @@ void provision_run(bool glass_ok) {
 
       case St::Waiting:
         if (stations > 0) {
+          ctx.saw_station = true;
           enter(St::PhoneHere, now);
           ui_stage(canary::ui::ObStage::PhoneJoined, nullptr);
           if (ctx.dimmed && s_glass) {
             canary::hal::backlight_set(CD_BRIGHT_DAY);
             ctx.dimmed = false;
           }
+        } else if (!ctx.saw_station && !ctx.stuck_hinted &&
+                   (int32_t)(now - ctx.st_since) > (int32_t)STUCK_HINT_MS) {
+          // Three quarters of a minute with the AP up and nothing has ever
+          // associated. The overwhelmingly likely reason is a phone that
+          // remembers this SSID from an earlier session and is auto-rejoining
+          // with a password this unit no longer has — every display shipped
+          // before the password was persisted rolled a new one each boot, and
+          // the phone's answer to that is "Unable to join the network", not a
+          // password prompt. It cannot be fixed from this side, and it cannot
+          // be detected from this side either (a refused association leaves no
+          // trace here), so name the one move that clears it rather than
+          // leaving a correct QR on the glass being ignored.
+          ctx.stuck_hinted = true;
+#ifdef CD_FLAVOR_WATCH
+          ui_hint("can't join? forget it on your phone");
+#else
+          ui_hint("can't join? on your phone, forget this network - then scan again");
+#endif
         } else if (s_glass && !ctx.dimmed &&
 #if CD_PORTAL_PAIR_DEMO
                    // A live demo card is being WATCHED — never dim under it.

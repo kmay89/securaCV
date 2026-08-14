@@ -332,6 +332,28 @@ Force quitting is never dangerous to a device. A flash interrupted at any stage
 is re-flashable: the ESP32's first-stage bootloader is mask ROM, and a
 half-written hub card is simply written again.
 
+### My phone says "Unable to join the network SecuraCV-XXXX"
+
+Forget the network on your phone, then scan the QR again.
+
+iPhone: **Settings → Wi-Fi → the (i) beside `SecuraCV-XXXX` → Forget This
+Network.** Android: long-press the network in the Wi-Fi list → **Forget**.
+Then rescan the QR on the glass, or join by hand with the name and password
+printed under it.
+
+Why it happens: your phone saves a network by its **name**, and a display on
+firmware 2.4.9 or older gave its setup network a new password on every boot
+while keeping the same name. So the second time your phone met that network it
+rejoined silently with the password it had stored, the display refused it, and
+the phone reported a plain join failure rather than asking you for the new one
+— which is why retyping never got a chance and re-flashing made it worse.
+Newer firmware mints that password once and keeps it, so the name and password
+on the glass stay true; a phone that already saved an old one still needs that
+single Forget.
+
+If the display has been sitting on the join screen for a while it will say
+this on its own glass too.
+
 ---
 
 ## Contributing & agents

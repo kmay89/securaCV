@@ -903,6 +903,44 @@
   → held until the settle window).
 - **Date learned:** 2026-07
 
+### A setup AP's SSID and password must change together, or not at all
+- **What happened:** A 7" Dash could not be onboarded from an iPhone. The glass
+  showed a correct join QR and a correct `SecuraCV-XXXX` / password caption;
+  the phone answered **"Unable to join the network"** — with no password
+  prompt, so there was nothing to retype. Power-cycling, re-flashing and
+  re-scanning the QR all made it worse rather than better.
+- **Root cause:** The display's onboarding AP paired a **stable** SSID (the
+  salted device pseudonym, deliberately per-unit and sticky) with a
+  **per-session** password, re-rolled inside every `provision_run()`. A phone
+  keys its saved networks on the SSID: once it has joined `SecuraCV-XXXX` it
+  auto-rejoins with the password it stored, that handshake is refused, and iOS
+  reports a generic join failure instead of re-prompting — it does not believe
+  it needs to ask. Every remedy an owner reaches for rolls another password, so
+  the failure was self-reinforcing and invisible from the device side (a
+  refused association leaves no trace on the AP).
+- **Fix:** Mint the setup password **once** and persist it (`ap_pass` in the
+  `securacv` namespace), so the SSID/password pair the QR promises stays true
+  for the life of the unit. It is still random per unit and derivable from
+  nothing published; rotation bought no secrecy anyway, because the password is
+  printed on the glass the whole time the AP is up. Plus a bounded on-glass
+  hint: 45 s with the AP up and nothing ever associated names the one move that
+  clears a stale saved network ("forget this network, then scan again"), since
+  units already in the field have phones carrying a password that no longer
+  exists.
+- **Rule:** An ephemeral credential may only sit behind an ephemeral
+  identifier. If the name is stable, the secret behind it has to be too —
+  otherwise the client's own cache becomes the thing that locks the user out.
+- **Corollary, and the reason the fix checks its own write:** "persisted" has
+  to be *verified*, not assumed. `Preferences::putString` reports a failed
+  write by returning 0, not by refusing, so an unchecked store looks identical
+  to a durable one and would re-open this bug on the next boot with nothing to
+  see. The password is read back, and when it genuinely could not be kept the
+  SSID takes a per-session suffix — the pair keeps one lifetime either way. Nor
+  can the fallback be "derive the secret from the stable id": that id is
+  printed in the SSID, so deriving from it would put the key on the screen for
+  anyone who never looked at the password.
+- **Date learned:** 2026-08
+
 ### Wi-Fi bring-up must not write flash while an RGB glass is scanning out
 - **What happened:** The 7" dash-family glass garbled right as the onboarding
   SoftAP came up (end of the wizard's hello beat), then reboot-looped.
