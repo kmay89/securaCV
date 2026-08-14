@@ -3026,6 +3026,16 @@ function refreshManifestState() {
     const entry = core.manifestEntry(m, product, state.chip);
     const verEl = row.querySelector('[data-for="' + id + '"].flash-product-ver, .flash-product-ver');
     const btn = row.querySelector(".flash-pick");
+    // The size gate: a product needing more flash than this chip HAS can
+    // never be installed on it, whatever the manifest says. Same words as
+    // onPick's refusal, said before the button instead of after it.
+    const fit = core.flashFitVerdict(product, state.flashBytes);
+    if (!fit.fits) {
+      if (verEl) verEl.textContent =
+        `needs a ${fit.needMb} MB board — this chip has ${fit.haveMb} MB`;
+      if (btn) { btn.disabled = true; btn.textContent = "wrong board"; }
+      return;
+    }
     if (entry && !entry.error) {
       if (verEl) {
         verEl.textContent = `v${entry.version} · ${core.formatBytes(entry.size)}`;
@@ -3055,6 +3065,15 @@ function installVerdictFor(product, version) {
 }
 
 function onPick(product) {
+  // The size gate, enforced at the last click as well as on the cards: an
+  // image built for a bigger flash than this chip writes fine and then
+  // boot-loops before printing anything (the XIAO-Sense-with-a-Freenove-image
+  // mistake). The chip guard can't catch it — both boards are ESP32-S3.
+  const fit = core.flashFitVerdict(product, state.flashBytes);
+  if (!fit.fits) {
+    setPhase(errorRetry("That image needs a bigger board", new Error(fit.why), phaseConnected));
+    return;
+  }
   const entry = core.manifestEntry(state.manifest, product, state.chip);
   if (!entry || entry.error) {
     setPhase(errorRetry("That image isn’t available", new Error(entry && entry.error || "not in release"), phaseConnected));
@@ -4595,15 +4614,25 @@ function phaseRescue() {
     "works the same for every future firmware release — the flasher always " +
     "fetches the latest signed image for the silicon in hand."));
 
-  const matches = core.productsForChip(state.catalog, state.chip);
+  // Rescue writes without a confirm screen, so the size gate has to happen
+  // in the candidate list itself: offering a 16 MB image to an 8 MB chip
+  // here would "rescue" the board straight into the boot loop the user came
+  // to escape. Unknown flash size filters nothing (fits stays true).
+  const matches = core.productsForChip(state.catalog, state.chip)
+    .filter((p) => core.flashFitVerdict(p, state.flashBytes).fits);
   // A clean-install escalation from a failed flash carries the product the user
   // was installing — state.current is cleared by the reconnect, so without this
   // a WAP / Vision rescue would silently default to plain canary. Consume it.
   const carried = (state.resumeRescuePrefer &&
     matches.find((p) => p.id === state.resumeRescuePrefer.id)) || null;
   state.resumeRescuePrefer = null;
-  const preferred = carried || core.pickRescueProduct(
+  // pickRescueProduct chooses from the unfiltered chip set, so its answer can
+  // be a product the size gate just excluded — fold it back into the gated
+  // list rather than letting a preference outrank a physical impossibility.
+  const preferredRaw = carried || core.pickRescueProduct(
     state.catalog, state.chip, state.current && state.current.projectName);
+  const preferred = preferredRaw &&
+    matches.find((p) => p.id === preferredRaw.id) || null;
 
   let chosen = preferred || matches[0] || null;
   if (matches.length > 1) {

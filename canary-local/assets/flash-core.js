@@ -1207,6 +1207,28 @@ export function productsForBoard(catalog, chip, flashBytes) {
   return sized.length ? sized : byChip;
 }
 
+// The chip guard says "right silicon"; this says "enough of it". A product
+// built for a BIGGER flash than the chip in hand is the one size mismatch
+// the write itself never catches: the bytes land fine, and the board then
+// boot-loops before the app prints a single line (the ROM log shows an
+// esp_core_dump_flash "config is corrupted" error and an instant
+// RTC_SW_CPU_RST reboot — a message that names everything except the real
+// cause). A SMALLER image on a bigger chip is fine and stays allowed —
+// that's just headroom. Unknown sizes are not judged: a chip we couldn't
+// measure must never block an install the chip guard already vetted.
+export function flashFitVerdict(product, flashBytes) {
+  const need = product && Number(product.flash_mb);
+  const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
+  if (!need || !mb || need <= mb) return { fits: true, needMb: need || null, haveMb: mb };
+  return {
+    fits: false, needMb: need, haveMb: mb,
+    why: `${product.name} is built for a ${need} MB board ` +
+      `(${product.board_label}), but the connected chip has ${mb} MB of ` +
+      `flash. The write would finish and the board would then boot-loop ` +
+      `before printing anything — wrong-board image, not a broken board.`,
+  };
+}
+
 // The ONE card the picker leads with, plus the honest sentence for why.
 // Priority: what you asked for (?product=) → what the board already runs →
 // what the silicon says (chip + flash size) → the chip's authored default.
