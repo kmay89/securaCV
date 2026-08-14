@@ -2196,3 +2196,27 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   (the same rule (x) states for lints). And upload-validation errors are
   the gate's requirements list: every 90xxx Apple has ever thrown at a
   target belongs in that target's preflight checker.
+
+### 2026-08-13 (c) — the Flasher bakes its catalog in, and the release plan watched only where the code lives
+
+- **Symptom:** firmware 2.4.9 (the first SIGNED release) shipped, the site's
+  in-browser flasher picked it up on the next pages deploy — and the desktop
+  Flasher kept installing 2.4.8, because its catalog is `include_str!`-baked
+  at build time and the published 0.11.1 binary was built before 2.4.9
+  existed. "Update everything" reported the Flasher `up_to_date` the whole
+  time, truthfully by its own rules: the target watched `desktop/` and the
+  catalog lives in `canary-local/devices/`.
+- **Why it cost real time:** a user who flashed displays from the Mac app
+  minutes after the firmware release got 2.4.8 — and 2.4.8 devices carry the
+  all-zeros OTA key, which hard-disables OTA, so every one of them needs a
+  USB re-flash that a current Flasher would have made unnecessary.
+- **Fix:** the flasher target's `watch:` list now includes the exact files
+  `build.rs` embeds (`flash.json`, `hatch.json`), so the next firmware
+  release flips the Flasher to `needs_bump` in the plan summary instead of
+  `up_to_date`. And 0.11.2 ships the 2.4.9 catalog.
+- **Applies to:** every versioned target whose build EMBEDS files from
+  outside its own tree. The watch list must cover what the build reads, not
+  just where the code lives — `grep include_str!`/`cp` lines in the build
+  script when adding a target, and add each embedded path to `watch:`.
+  (The tvOS/iOS apps are safe today — their only cross-tree embeds are
+  Swift sources listed in project.yml, inside watched paths.)

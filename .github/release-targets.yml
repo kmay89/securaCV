@@ -84,6 +84,14 @@ targets:
       dry_run: "true"
     watch:
       - desktop
+      # The Flasher BAKES these in at build time (desktop/src-tauri/build.rs),
+      # so they are inputs to the binary exactly as much as desktop/ is.
+      # Without them here, a firmware release moves flash.json and the plan
+      # still reports the Flasher "unchanged since 0.x.y — nothing to do",
+      # which is how the published app kept flashing 2.4.8 after 2.4.9
+      # shipped. Watch what the build EMBEDS, not just where the code lives.
+      - canary-local/devices/flash.json
+      - canary-local/devices/hatch.json
 
   - name: lab
     label: SecuraCV Lab (macOS + Linux)

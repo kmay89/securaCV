@@ -17,6 +17,26 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.2 — 2026-08-13
+
+**This Flasher flashes firmware 2.4.9 — the first signed release — and
+older Flashers can't.**
+
+The catalog inside the app is baked in when the app is built, and every
+Flasher before this one was built before 2.4.9 existed: flashing from an
+older Flasher installs 2.4.8 even though newer firmware is out. Update,
+then flash each Canary once over USB — 2.4.9 is the release that teaches
+your devices to verify update signatures, and a device on 2.4.8 refuses
+all over-the-air updates until that one USB flash (that refusal is the
+signature protection working, not a fault). After it, updates arrive over
+the air.
+
+What 2.4.9 itself brings to a display: touch settings on the 7", the
+missing-glyph boxes gone, screen brightness you can set from the phone,
+your fleet drawn as its actual hardware, and Wi-Fi auto-join — enter your
+network here in the Flasher before flashing and the Canary joins on first
+boot with no on-screen login.
+
 ## 0.11.1 — 2026-08-07
 
 **Your Canary gets the same name here as it does on your phone.**
