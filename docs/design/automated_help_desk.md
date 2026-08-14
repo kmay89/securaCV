@@ -48,7 +48,7 @@ Two rules make it safe to run without a human per ticket:
 | Crash evidence without a cable | `canary-wap` `hardware_state.h` (`safe_mode_check`, RTC breadcrumb) | "Why is it in recovery?" answered on the dashboard |
 | Flash-error classifier (7 kinds) + boot-log signatures (power vs clean-install) | `canary-local/assets/flash-core.js` (browser) + `desktop/src-tauri/src/health.rs` and friends (desktop; parity CI-gated) | The catalog's flashing entries restate these verbatim |
 | LED grammar, count-coded | `docs/hardware/canary_qr_onboarding.md` | The website's blink decoder; groups of 2/3/4/5 are pinned by test |
-| Diagnostic report, public-only by construction | `flash-core.js buildDiagnosticReport()` | The claims lane's proof-before-dispatch artifact |
+| Diagnostic report (copy-paste, user-reviewed before sending) | `flash-core.js buildDiagnosticReport()` | The claims lane's proof-before-dispatch artifact — **after the Phase 3 tightening below**; as shipped it includes the MAC and an unfiltered serial tail |
 | Fix-it flows + physics bench on the real firmware in WASM | `canary-local/emulator/`, `canary-local/assets/guides.js` | The rehearsal layer |
 | Coarse fleet/hub health | `firmware/common/fleet_selfreport/fleet_selfreport.h` | The "hub unreachable vs no hub" distinction, address-free |
 | Fix-not-return remedies, in code | website `scripts/fulfill.mjs` + terms-of-sale | The no-wasted-shipping gate |
@@ -74,16 +74,33 @@ Two rules make it safe to run without a human per ticket:
     display flavors already render commissioning QRs; the WAP already
     serves `/api/pairing-qr`. No new radio, no new data class — the QR
     carries only what the unauthenticated self-test already says on the AP.
-  - **Build-order warning:** any canary-display change moves the committed
-    emulator `dist/` for every flavor. Follow the sacred order in CLAUDE.md
-    (edit → regen → dispatch the pinned-emsdk rebuild → pull → catalogs →
-    commit), and remember the stale-dist failure surfaces in the *page
-    logic tests* job, not just the drift check.
+  - **Build-order warning:** a canary-display change moves the committed
+    emulator `dist/` when it touches what `canary-local/emulator/build.sh`
+    actually compiles — `src/main.cpp`, the LVGL faces, `care/`, `fleet/`,
+    `trust`, the color engine — and a VERSION bump always moves it, for
+    every flavor. The `net/` exclusions (`glass_web.cpp`, `discovery.cpp`;
+    `fleet_selfreport.h` is a worked no-dist-change example) do not. Check
+    `build.sh`'s inputs rather than guessing, then follow the sacred order
+    in CLAUDE.md (edit → regen → dispatch the pinned-emsdk rebuild → pull →
+    catalogs → commit), and remember the stale-dist failure surfaces in the
+    *page logic tests* job, not just the drift check.
 
 - **Phase 3 — diagnosis before dispatch (website + fulfillment).** Warranty
   intake requires the diagnostic report; the classifier's verdict maps in
   code (`fulfill.mjs`) to the smallest remedy — board in a mailer, parts
   pack, printable STL, or "this is a cable, ship nothing." One-way always.
+  - **Precondition — tighten the report first.** Today's report targets a
+    voluntary Discussions paste and the user sees every line before sending,
+    but it is not yet safe to *require*: it includes the device MAC (a
+    stable identifier — Invariant III territory the moment it becomes a
+    demanded artifact) and blindly appends the last 12 serial lines, while
+    the WAP prints its device-unique AP password to serial at boot
+    (`canary_wap.ino`, "[WIFI] AP started", acknowledged in
+    `build_config.h`). Before the claims lane ships: move the report to an
+    explicit field allowlist, drop or truncate the MAC to a non-stable
+    form, and filter the log tail against known-sensitive lines (the AP
+    password print above all). "Public-only by construction" has to be true
+    of the required artifact, not just intended by the voluntary one.
 
 - **Phase 4 — the loop.** "This didn't help" buttons (shipped in Phase 1)
   feed batched catalog curation; a human tends the corpus, never a ticket.
