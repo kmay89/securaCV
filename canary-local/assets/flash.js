@@ -4151,6 +4151,18 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
+  } else if (product && !opts.isBackup && !opts.isLocal) {
+    // Say the other half out loud. Leaving the network blank is a legitimate
+    // choice — every board can be set up from its own screen or setup network —
+    // but it is a SILENT one: the field is optional, nothing warns, and an
+    // owner who meant to fill it in only finds out when the device comes up
+    // asking. Naming it here (and in the native Flasher's install log, per the
+    // two-flashers rule) turns a surprise into an expectation.
+    const w = el("p", "muted");
+    w.append(document.createTextNode(
+      `No network was baked in — this Canary asks for WiFi itself on first boot ` +
+      `(its own screen, or the setup network it raises).`));
+    box.append(w);
   }
   if (opts.apiToken) {
     // Shown ONCE, here — deliberately not remembered by this page (the
