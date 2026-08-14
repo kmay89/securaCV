@@ -542,25 +542,42 @@ void mint_ap_password(char* out, size_t out_len) {
 }
 
 // Load this unit's setup password, minting and persisting one the first time.
-// NVS being down is not a dead end: the wizard runs on a freshly minted
-// password for this boot, exactly as it always did — the join still works,
-// it just isn't remembered.
-void load_or_mint_ap_password(char* out, size_t out_len) {
+//
+// Returns whether the password is DURABLE — already stored, or stored and read
+// back just now. The caller needs that answer, not just the password: a store
+// that quietly failed (NVS full, a bad flash write, or no NVS at all) leaves us
+// advertising a key the next boot will not have, which is the very lockout
+// above. `putString` reports a failed write by returning 0 rather than by
+// refusing, so an unchecked call is indistinguishable from a durable one; the
+// read-back covers the rest, since a write that reports success and does not
+// stick fails exactly the same way for the user.
+//
+// Failing to persist is never a dead end for THIS session — the wizard runs on
+// the freshly minted password and the join works — so this is a question about
+// the NEXT boot, which is what provision_run() uses it for.
+bool load_or_mint_ap_password(char* out, size_t out_len) {
   Preferences prefs;
   if (!prefs.begin("securacv", /*readOnly=*/false)) {
     mint_ap_password(out, out_len);
     canary::dbg_serial().println(
         "Settings store unavailable - setup password is per-boot.");
-    return;
+    return false;
   }
   const String stored = prefs.getString("ap_pass", "");
   if (ap_pass_ok(stored.c_str())) {
     snprintf(out, out_len, "%s", stored.c_str());
-  } else {
-    mint_ap_password(out, out_len);
-    prefs.putString("ap_pass", out);
+    prefs.end();
+    return true;
   }
+  mint_ap_password(out, out_len);
+  const bool wrote = prefs.putString("ap_pass", out) > 0 &&
+                     prefs.getString("ap_pass", "") == out;
   prefs.end();
+  if (!wrote) {
+    canary::dbg_serial().println(
+        "Setup password could not be saved - it is per-boot this time.");
+  }
+  return wrote;
 }
 
 }  // namespace
@@ -584,15 +601,31 @@ void provision_run(bool glass_ok) {
 
   // Device-unique setup identity: SSID suffix from the salted, MAC-free
   // pseudonym (stable, matches the fleet's SecuraCV-XXXX convention); the
-  // password minted once and kept (see load_or_mint_ap_password — a stable
-  // SSID paired with a rotating key is a network a phone cannot rejoin).
-  // Nothing derivable from published identifiers ever gates the AP.
+  // password minted once and kept (see load_or_mint_ap_password). Nothing
+  // derivable from published identifiers ever gates the AP — which is also why
+  // the password cannot simply be re-derived from the pseudonym when the store
+  // refuses it: the pseudonym is printed in the SSID.
   char token[device_pseudonym::HEX_LEN + 1] = {0};
   device_pseudonym::device_id_hex(token, sizeof(token));
-  char ap_ssid[20];
-  snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s", token[0] ? token : "GLAS");
   char ap_pass[AP_PASS_LEN + 1];
-  load_or_mint_ap_password(ap_pass, sizeof(ap_pass));
+  const bool pass_durable = load_or_mint_ap_password(ap_pass, sizeof(ap_pass));
+
+  // The name and the key are one promise, so they keep the same lifetime. When
+  // the password could not be made durable, the SSID must not be either — a
+  // familiar name behind a key that changed is precisely what a phone cannot
+  // recover from, while a name it has never seen just prompts normally. So the
+  // rare unwritable-store path costs a per-session suffix and nothing else.
+  char ap_ssid[24];
+  if (pass_durable) {
+    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s", token[0] ? token : "GLAS");
+  } else {
+    uint8_t tag_rnd[8];
+    esp_fill_random(tag_rnd, sizeof(tag_rnd));
+    char tag[3];
+    render_password(tag_rnd, sizeof(tag_rnd), tag, sizeof(tag));
+    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s-%s",
+             token[0] ? token : "GLAS", tag);
+  }
 
   log_header("SETUP");
   canary::dbg_serial().printf("First boot - onboarding AP \"%s\"  password %s\n",

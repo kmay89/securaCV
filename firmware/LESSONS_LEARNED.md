@@ -930,6 +930,15 @@
 - **Rule:** An ephemeral credential may only sit behind an ephemeral
   identifier. If the name is stable, the secret behind it has to be too —
   otherwise the client's own cache becomes the thing that locks the user out.
+- **Corollary, and the reason the fix checks its own write:** "persisted" has
+  to be *verified*, not assumed. `Preferences::putString` reports a failed
+  write by returning 0, not by refusing, so an unchecked store looks identical
+  to a durable one and would re-open this bug on the next boot with nothing to
+  see. The password is read back, and when it genuinely could not be kept the
+  SSID takes a per-session suffix — the pair keeps one lifetime either way. Nor
+  can the fallback be "derive the secret from the stable id": that id is
+  printed in the SSID, so deriving from it would put the key on the screen for
+  anyone who never looked at the password.
 - **Date learned:** 2026-08
 
 ### Wi-Fi bring-up must not write flash while an RGB glass is scanning out
