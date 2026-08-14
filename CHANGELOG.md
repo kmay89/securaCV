@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [2.4.10] - 2026-08-14
+
+### The display's setup network stops locking phones out
+
+A 7" Dash could not be onboarded from an iPhone at all. The glass showed a
+correct join QR and a correct name/password caption; the phone answered
+"Unable to join the network" and never offered a password prompt, so there
+was nothing to retype. Power-cycling, re-flashing and rescanning each made
+it worse.
+
+- **The setup password is minted once and kept.** It used to be re-rolled on
+  every wizard run while the SSID — the salted device pseudonym — stayed
+  fixed. A phone saves a network by its NAME, so once it had joined
+  `SecuraCV-XXXX` it auto-rejoined with the stored password, the display
+  refused that handshake, and the phone reported a generic join failure
+  rather than asking again. Every owner-side remedy rolled another password.
+  The password now lives in the settings store beside the credentials the
+  wizard writes: still random per unit, still derivable from nothing
+  published, but no longer moving underneath the phone that wrote it down.
+- **Durability is checked, not assumed**, and the name keeps the password's
+  lifetime. A store that quietly fails would have re-created the same
+  lockout invisibly, so the write is verified by read-back; if the password
+  genuinely cannot be kept, the SSID takes a per-session suffix so the phone
+  meets a network it has never seen and prompts normally.
+- **The glass names the fix.** Forty-five seconds with the setup network up
+  and nothing ever associated is almost always a phone rejoining with a
+  password this unit no longer has — the state every display already in the
+  field is in — so the screen says to forget the network and scan again.
+
+Upgrading from 2.4.9 or earlier: a phone that already saved the old setup
+network still needs one Forget This Network. After that the pair on the
+glass stays true.
+
+
 ### The 7" glass answers your finger, wears the face you choose, and shows you the fleet
 
 The Nightstand 7 shipped with touch wired and a full settings surface
