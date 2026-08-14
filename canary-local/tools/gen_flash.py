@@ -159,7 +159,12 @@ PRODUCTS = [
         # registry row is declared here — and checked against it in board_tier().
         "board_id": "xiao-esp32s3-sense",
         "family": "canary",
-        "board_label": "Seeed XIAO ESP32-S3",
+        # "Sense", spelled out: three products share the plain "Seeed XIAO
+        # ESP32-S3" silicon, but only the Sense expansion board carries the
+        # camera/mic/SD this firmware drives. An identical label across the
+        # Sense and non-Sense products once made the flagship unfindable to
+        # the person holding the Sense board it was written for.
+        "board_label": "Seeed XIAO ESP32-S3 Sense",
         "pick_label": "Seeed XIAO ESP32-S3 Sense — the one we build",
         "name": "Canary",
         "tagline": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
@@ -233,7 +238,8 @@ PRODUCTS = [
         # boards/<id>/pins include to derive the registry row from.
         "board_id": "xiao-esp32s3-sense",
         "family": "wap",
-        "board_label": "Seeed XIAO ESP32-S3",
+        # Sense board here too — same disambiguation as the flagship above.
+        "board_label": "Seeed XIAO ESP32-S3 Sense",
         "name": "Canary WAP",
         "tagline": "Feels presence through the WiFi field itself — no camera. Sets itself up from a phone.",
         "asset_stem": "canary-wap",

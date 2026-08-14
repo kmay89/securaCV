@@ -361,6 +361,34 @@ flavor is one `PRODUCTS` entry + one family membership in `gen_flash.py` —
 the generator refuses to emit a family with no products, a variant family
 with no question, or a product with no answer.
 
+### The size gate (why "show all" still can't brick your boot)
+
+The chip guard says "right silicon"; the size gate (`flashFitVerdict` in
+`flash-core.js`) says "enough of it." The one mismatch the write itself
+never catches is an image built for a **bigger** flash than the chip in
+hand — an ESP32-S3 image for a 16 MB Freenove written to an 8 MB XIAO
+passes the chip guard, flashes cleanly, verifies byte-for-byte… and then
+boot-loops before the app prints a single line. The tell in the serial
+log is misdirection incarnate:
+
+```
+E (303) esp_core_dump_flash: Core dump flash config is corrupted! CRC=0x… instead of 0x0
+Rebooting...
+rst:0xc (RTC_SW_CPU_RST),boot:0x2b (SPI_FAST_FLASH_BOOT)
+```
+
+— a core-dump complaint and a reboot at ~300 ms, when the firmware's own
+`setup()` doesn't speak until later. Nothing in that log says "wrong
+board," so the flasher has to say it instead: a product whose `flash_mb`
+exceeds the measured flash renders unpickable ("needs a 16 MB board —
+this chip has 8 MB"), the install click refuses with the same sentence,
+and the rescue path filters such images out of its candidates entirely
+(a "rescue" into the boot loop is not a rescue). A smaller image on a
+bigger chip stays allowed — that's headroom — and a chip whose size
+couldn't be measured is never judged. The desktop Flasher enforces the
+identical gate with the identical words (`flashFitVerdict` in
+`desktop/src/app.js`).
+
 ## The display family (watch / dash / dash-modes)
 
 Since the mode-system wave the flasher's product line includes the three

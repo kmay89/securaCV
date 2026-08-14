@@ -58,6 +58,26 @@ test("every product carries the board facts detection narrows on", () => {
   }
 });
 
+test("one board_label, one board — no two registry boards share a label", () => {
+  // Regression: the Sense-board products (canary, wap) and the plain-XIAO
+  // Vision port all said "Seeed XIAO ESP32-S3", so the owner of a Sense
+  // board could not find the firmware written FOR it — the flagship card
+  // never said "Sense". A label that names two different physical boards
+  // is a label that names neither.
+  const byLabel = new Map();
+  for (const p of catalog.products) {
+    const boardId = p.tier && p.tier.board_id;
+    if (!boardId) continue;
+    const seen = byLabel.get(p.board_label);
+    if (seen === undefined) byLabel.set(p.board_label, boardId);
+    else assert.strictEqual(seen, boardId,
+      `board_label "${p.board_label}" names both ${seen} and ${boardId}`);
+  }
+  const canary = catalog.products.find((p) => p.id === "securacv-canary");
+  assert.match(canary.board_label, /Sense/,
+    "the flagship must say Sense — that's the board it drives");
+});
+
 // ── board narrowing (chip + measured flash size) ────────────────────────────
 
 test("S3 + 16 MB narrows to the 16 MB boards — no longer a single family", async () => {
@@ -91,6 +111,43 @@ test("S3 + 8 MB is the XIAO class; unknown or odd sizes never empty the set",
       c.productsForChip(catalog, "ESP32-S3").length,
       "unmatched size falls back — never an empty picker");
   });
+
+// ── the size gate (flashFitVerdict) ─────────────────────────────────────────
+// The chip guard says "right silicon"; this says "enough of it". The exact
+// failure it exists for: a Freenove 16 MB image written to an 8 MB XIAO
+// Sense flashes cleanly and then boot-loops before printing a single line.
+
+test("an image needing more flash than the chip has is refused, with the cause named",
+  async () => {
+    const c = await core();
+    const freenove = catalog.products.find(
+      (p) => p.id === "securacv-canary-freenove-s3");
+    const v = c.flashFitVerdict(freenove, 8 * MB);
+    assert.strictEqual(v.fits, false);
+    assert.strictEqual(v.needMb, 16);
+    assert.strictEqual(v.haveMb, 8);
+    assert.match(v.why, /16 MB/);
+    assert.match(v.why, /8 MB/);
+    assert.match(v.why, /boot-loop/, "the verdict names the symptom");
+    assert.match(v.why, /wrong-board image, not a broken board/,
+      "the verdict absolves the hardware");
+  });
+
+test("smaller image on a bigger chip is headroom, not a refusal", async () => {
+  const c = await core();
+  const xiao = catalog.products.find((p) => p.id === "securacv-canary");
+  assert.strictEqual(c.flashFitVerdict(xiao, 16 * MB).fits, true);
+  assert.strictEqual(c.flashFitVerdict(xiao, 8 * MB).fits, true);
+});
+
+test("an unmeasured chip is never judged — unknown size blocks nothing", async () => {
+  const c = await core();
+  const freenove = catalog.products.find(
+    (p) => p.id === "securacv-canary-freenove-s3");
+  assert.strictEqual(c.flashFitVerdict(freenove, null).fits, true);
+  assert.strictEqual(c.flashFitVerdict(freenove, undefined).fits, true);
+  assert.strictEqual(c.flashFitVerdict(null, 8 * MB).fits, true);
+});
 
 // ── smartPick: the priority ladder ──────────────────────────────────────────
 
