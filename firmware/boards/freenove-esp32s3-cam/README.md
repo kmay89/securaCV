@@ -43,6 +43,16 @@ flagship can never install each other's images (different camera pins).
 
 ## Constraints & gotchas
 
+- **This image fits only a 16 MB chip.** Flashed onto an 8 MB S3 (a XIAO
+  ESP32-S3 / Sense — same chip family, so the chip guard alone won't stop
+  you), the write succeeds and the board then boot-loops before printing a
+  single firmware line: an `esp_core_dump_flash: Core dump flash config is
+  corrupted!` error ~300 ms in, then `RTC_SW_CPU_RST` and around again.
+  That log names everything except the actual cause. Both flashers now
+  refuse the combination up front (the size gate — see
+  `docs/browser_flasher.md`); the fix is simply to flash the image built
+  for the board in hand.
+
 - **The camera map is S3-EYE, not XIAO.** Same sensor, entirely different
   pins — which is exactly why the OTA product id is distinct.
 - **SD requires SDMMC.** If you need removable witness storage today, the

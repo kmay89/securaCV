@@ -251,6 +251,10 @@ kbd {
 }
 .product:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 .product.selected { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, transparent); }
+/* The size gate: right chip, not enough flash for this image — visible but unpickable. */
+.product.unfit { opacity: .55; cursor: not-allowed; }
+.product.unfit:hover { border-color: var(--border); transform: none; }
+.product.unfit .p-meta { color: var(--danger); }
 .product input { margin-top: 4px; accent-color: var(--brand); }
 .product .p-name { font-weight: 600; }
 .product .p-tag { font-size: 13px; color: var(--text-secondary); display: block; }
