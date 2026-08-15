@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [2.4.11] - 2026-08-15
+
+### The bedside glass keeps its clock lit, in a red you can read, in your own timezone
+
+Four bedside complaints that turned out to be two causes.
+
+- **The clock now defaults to America/New_York, not UTC.** A display with no
+  zone set showed 3 a.m. at 11 a.m. — and quiet hours are wall-clock hours,
+  so the face also sat in NIGHT MODE through the morning, which is what made
+  the settings corner dark and unresponsive in daylight. The privacy default
+  stands: the web learner stays compiled out (it would send the household's
+  IP to a geolocation service), so the compiled seed IS the answer until
+  someone sets one — and a seed that is right for one coast beats one that is
+  right for nowhere. `secrets.h`, the settings sheet and `POST /api/tz` all
+  still win over it.
+- **Night keeps the glow instead of going dark.** "Screen at night" now
+  defaults to **dim**, not off, on every flavor. A bedside clock that
+  vanishes at bedtime reads as a fault, not a setting, and getting it back
+  meant finding an unlit screen in the dark and remembering that a tap peeks.
+  The calibrated night floor stays, a tap still lifts it to the peek level,
+  and true blackout is one tap away in settings for a room that needs it.
+- **The night clock is a real red.** The hero digits get their own saturated
+  ink instead of the dim brick the rest of the night palette uses. At the
+  night backlight duty the old value landed as a muddy brown you had to
+  resolve rather than glance at. This spends LESS in the green and blue
+  channels than before — the wavelengths that actually suppress melatonin —
+  and all of its budget on red, so it is both more vibrant and a stricter
+  reading of the night rule, not a relaxation of it.
+- **The settings doorway works after dark.** The corner was gated on "not
+  night", so with the clock wrong it was both invisible and dead — and
+  settings is exactly where an owner would go to fix the clock. It now opens
+  day or night, is re-colored every frame (it used to be painted once in the
+  day ink and left to disappear against the night ground), and is carved out
+  of the lit lantern's full-screen tap so a lamp can never be the reason it
+  is unreachable. The lantern's own corner is the bottom-right and is
+  untouched.
+
+Upgrading: your zone, night choice and look are all still yours — this
+changes defaults for a display that was never told, not settings you set.
+
+
 ## [2.4.10] - 2026-08-14
 
 ### The display's setup network stops locking phones out

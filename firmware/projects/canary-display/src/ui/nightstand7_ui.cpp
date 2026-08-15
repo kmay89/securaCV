@@ -556,8 +556,12 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
   // ── Clock + date (both layouts) ──
   const auto& gsx = canary::glass::settings();
   const bool twelve = gsx.clock_12h != 0;
+  // The hero gets ncol_clock, not ncol_text: the digits are the whole reason
+  // this glass is on a nightstand, and everything around them stays quiet
+  // (ncol_muted below) so the difference reads as hierarchy rather than as a
+  // brighter room.
   const lv_color_t digit_col =
-      night_mode ? (red ? ncol_text() : col_text()) : col_text();
+      night_mode ? (red ? ncol_clock() : col_text()) : col_text();
   // The Analog dial, when built; the segment calls below no-op on its null
   // handles, so one update path serves every style.
   analog_clock_update(&s_analog, st.clock_hh, st.clock_mm, digit_col,
@@ -591,6 +595,18 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
     } else {
       lv_obj_add_flag(s_ampm, LV_OBJ_FLAG_HIDDEN);
     }
+  }
+  // The settings doorway has to be re-colored every tick, and used not to be
+  // colored at all after create(). It was built once in the DAY faint ink and
+  // then left there, so after dark it sat as near-black text on a near-black
+  // ground — present in the tree, hit-testable, and invisible to a human. The
+  // report that reached us was "I don't see the settings button", which is
+  // exactly what an unstyled label looks like. Night gets ncol_text: legible
+  // against the dark ground, and deliberately a step below the clock hero.
+  if (s_gear) {
+    lv_obj_set_style_text_color(
+        s_gear, night_mode ? (red ? ncol_text() : col_muted()) : col_muted(),
+        0);
   }
   if (s_date) {
     const lv_color_t date_col =
@@ -931,23 +947,37 @@ void nightstand7_ui_ack_hold(bool /*active*/) {
 }
 
 bool nightstand7_ui_handle_tap(int16_t x, int16_t y, uint32_t now) {
-  // The settings doorway (day face): the gear corner opens the shared
-  // settings surface. Day only — at night the glass is a clock and the
-  // affordance corner belongs to the lantern; settings can wait for light.
-  if (!character_night() && x >= SCR_W - 170 && y <= 56) {
-    settings_ui_open();
-    return true;
-  }
+  // The settings doorway: the top-right corner opens the shared settings
+  // surface, DAY OR NIGHT.
+  //
+  // It used to be gated on !character_night(), and the reasoning ("at night
+  // the glass is a clock; settings can wait for light") only holds while the
+  // glass agrees with the wall about what time it is. Ship a display with the
+  // default UTC zone into a house eight hours west of it and the face believes
+  // 11 a.m. is 3 a.m.: the doorway is dark AND dead, all day, with nothing on
+  // screen to explain why — and the settings surface is where the owner would
+  // have gone to fix the clock. A door that locks itself when the room is
+  // wrong is a dead end, and the corner cost at night is one small label the
+  // lantern never wanted (it lives in the BOTTOM-right corner, below).
+  const bool gear_hit = (x >= SCR_W - 170 && y <= 56);
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
   auto& lamp = canary::care::lantern();
-  if (s_lantern && !lv_obj_has_flag(s_lantern, LV_OBJ_FLAG_HIDDEN)) {
-    // Lantern lit: a tap walks the scene ring (Rainbow included).
+  if (!gear_hit && s_lantern && !lv_obj_has_flag(s_lantern, LV_OBJ_FLAG_HIDDEN)) {
+    // Lantern lit: a tap walks the scene ring (Rainbow included). The gear
+    // corner is carved out of that full-screen catch so a lit lamp can never
+    // be the reason settings is unreachable.
     lamp.cycle_scene(canary::color::kSceneCount);
     // A hand on the device picks a scene too — put the wheel away.
     canary::ui::look_set_custom_hue(-1);
     canary::care::lantern_prefs_changed();
     return true;
   }
+#endif
+  if (gear_hit) {
+    settings_ui_open();
+    return true;
+  }
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
   if (character_night() && x >= SCR_W - 120 && y >= SCR_H - 96) {
     // The affordance corner: summon the lantern.
     lamp.summon(now);

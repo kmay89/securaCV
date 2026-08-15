@@ -54,6 +54,20 @@ lv_color_t col_signed();
 inline lv_color_t ncol_text()   { return lv_color_hex(0x5A1C12); }
 inline lv_color_t ncol_muted()  { return lv_color_hex(0x32100A); }
 inline lv_color_t ncol_alert()  { return lv_color_hex(0x992219); }
+// The clock hero at night, and ONLY the hero — the one thing a bedside
+// glass exists to answer at 3 a.m. The chrome around it stays on ncol_muted
+// so the hierarchy is the point rather than an overall brightness.
+//
+// It is a fully saturated red where ncol_text is a dim brick, and that reads
+// as a change in kind: at the night backlight duty the old value landed as a
+// muddy brown a sleepy eye had to resolve, which is the opposite of glanceable.
+// This is NOT a relaxation of the night rule — it is a stricter reading of it.
+// Melatonin suppression is driven by the short wavelengths, so the honest
+// measure is the green and blue channels, and this value spends LESS there
+// (0x14 / 0x0C against 0x1C / 0x12) while spending its whole budget on the
+// long wavelength that costs nothing. A classic red alarm clock, arrived at
+// by making the red redder rather than by making the screen lighter.
+inline lv_color_t ncol_clock()  { return lv_color_hex(0xFF140C); }
 
 lv_color_t sev_color(canary::fleet::Sev s, bool night);
 lv_color_t badge_color(canary::fleet::Badge b, bool night);

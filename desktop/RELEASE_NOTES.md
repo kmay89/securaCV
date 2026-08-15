@@ -17,6 +17,21 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.4 — 2026-08-15
+
+**Flashes firmware 2.4.11 — the bedside fixes.**
+
+2.4.11 is about the display on your nightstand. Its clock defaults to US
+Eastern instead of UTC, so it no longer reads 3 a.m. at 11 a.m. — which also
+kept the face stuck in night mode through the morning and left the on-screen
+settings corner dark and unresponsive in daylight. Night now keeps a dim glow
+by default instead of going fully dark, the clock's night red is a red you can
+actually read at a glance, and the settings corner opens day or night.
+
+Nothing changed in the Flasher itself. This release exists because the app
+bakes the firmware catalog in when it is built, so an older Flasher keeps
+installing the older firmware no matter what has shipped since.
+
 ## 0.11.3 — 2026-08-14
 
 **Flashes firmware 2.4.10, and it tells you the truth about what it wrote.**
