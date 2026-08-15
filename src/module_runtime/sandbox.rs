@@ -103,6 +103,29 @@ mod linux {
         "tgkill",
     ];
 
+    /// Newer filesystem/network escape hatches that bypass the classic
+    /// `open`/`socket` denials: io_uring can submit OPENAT/CONNECT/SENDMSG
+    /// without ever issuing those syscalls; memfd/handle/mount openers and
+    /// pidfd_getfd (which can pull a live fd from another process) are further
+    /// file/descriptor vectors. These are resolved BEST-EFFORT: a name an older
+    /// libseccomp cannot map is skipped rather than failing the whole
+    /// (fail-closed) sandbox and breaking legitimate module execution.
+    const DENY_SYSCALLS_BEST_EFFORT: &[&str] = &[
+        "io_uring_setup",
+        "io_uring_enter",
+        "io_uring_register",
+        "memfd_create",
+        "open_by_handle_at",
+        "name_to_handle_at",
+        "pidfd_open",
+        "pidfd_getfd",
+        "open_tree",
+        "fsopen",
+        "fsconfig",
+        "fsmount",
+        "move_mount",
+    ];
+
     extern "C" {
         fn fork() -> c_int;
         fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
@@ -128,6 +151,14 @@ mod linux {
                 .with_context(|| format!("sandbox: unknown syscall name {name}"))?;
             ctx.add_rule(ScmpAction::Errno(libc::EPERM), syscall)
                 .with_context(|| format!("sandbox: failed to deny {name}"))?;
+        }
+        // Best-effort layer: deny the newer escape-hatch syscalls where this
+        // libseccomp knows them. A name it cannot map is skipped (never fatal)
+        // so the sandbox keeps working on older toolchains.
+        for name in DENY_SYSCALLS_BEST_EFFORT {
+            if let Ok(syscall) = ScmpSyscall::from_name(name) {
+                let _ = ctx.add_rule(ScmpAction::Errno(libc::EPERM), syscall);
+            }
         }
         // The prior filter killed on arch mismatch; libseccomp binds the filter
         // to the native architecture, preserving intent without hardcoding AUDIT_ARCH_*.
@@ -193,6 +224,19 @@ mod linux {
                 close(fds[0]);
                 // Prevent core dumps that could leak inherited key material.
                 libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+                // Drop every inherited descriptor except std streams and the
+                // result-pipe write end. The parent holds the SQLCipher DB
+                // handle, MQTT/broker sockets, and config fds; the seccomp
+                // filter cannot deny write()/read() (the pipe needs them), so
+                // an inherited live fd would be a ready-made exfiltration or
+                // log-corruption channel that the syscall denylist can't close.
+                // Best-effort (ENOSYS on very old kernels is ignored); the pipe
+                // write end is preserved so the response can still be sent.
+                let keep = fds[1] as libc::c_uint;
+                if keep > 3 {
+                    libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, keep - 1, 0);
+                }
+                libc::syscall(libc::SYS_close_range, keep + 1, libc::c_uint::MAX, 0);
             }
             let response = match install_filter().and_then(|_| f()) {
                 Ok(value) => SandboxResponse::Ok(value),

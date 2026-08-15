@@ -165,6 +165,13 @@ fn main() -> Result<()> {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
         rate_limit_per_minute: config.api_rate_limit_per_minute,
+        // Explicit opt-in required to expose the plaintext API off-loopback.
+        allow_insecure: std::env::var("WITNESS_API_ALLOW_INSECURE")
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true")
+            })
+            .unwrap_or(false),
         ..ApiConfig::default()
     };
     let api_handle = {

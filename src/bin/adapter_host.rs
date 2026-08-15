@@ -620,6 +620,32 @@ fn main() -> Result<()> {
                 let rate_limited = options.rate_limit.is_some();
                 let listen_addr = wc.listen_addr.clone();
 
+                // Fail closed: a webhook seals its claims into the witness log,
+                // so an unauthenticated listener on a routable interface lets
+                // anyone on the network forge witness events. Require token/HMAC
+                // auth (or mutual TLS, which authenticates the client) before a
+                // non-loopback bind. An explicit operator override is honored
+                // for deliberately network-isolated deployments.
+                let authenticated = authed || wc.tls_client_ca.is_some();
+                let allow_insecure = std::env::var("ADAPTER_WEBHOOK_ALLOW_INSECURE")
+                    .map(|v| {
+                        let v = v.trim();
+                        v == "1" || v.eq_ignore_ascii_case("true")
+                    })
+                    .unwrap_or(false);
+                if let Ok(sa) = listen_addr.parse::<std::net::SocketAddr>() {
+                    if !sa.ip().is_loopback() && !authenticated && !allow_insecure {
+                        return Err(anyhow!(
+                            "webhook adapter #{idx}: refusing to bind non-loopback address '{}' \
+                             without authentication — an unauthenticated webhook can forge witness \
+                             events. Set auth_token/hmac_secret (or mutual TLS via tls_client_ca), \
+                             bind a loopback address, or set ADAPTER_WEBHOOK_ALLOW_INSECURE=1 to \
+                             override explicitly.",
+                            listen_addr
+                        ));
+                    }
+                }
+
                 // TLS when both cert and key are configured; a client-CA adds mutual TLS.
                 let tls = match (&wc.tls_cert, &wc.tls_key) {
                     (Some(cert), Some(key)) => {
