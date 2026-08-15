@@ -35,6 +35,7 @@
 
 #include "canary/net/provision.h"
 #include "canary/net/provision_core.h"
+#include "canary/net/tz_auto.h"  // the zone the portal collects, applied on join
 #include "canary/runtime_config.h"
 #include "network/wifi_join_policy.h"  // shared join-failure vocabulary (common/)
 #if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
@@ -128,6 +129,7 @@ struct Ctx {
   uint32_t success_at = 0;
   char join_ssid[33] = {0};
   char join_pass[65] = {0};
+  char join_tz[48] = {0};        // POSIX rule the portal offered; "" = keep seed
   char fail_reason[48] = {0};
   ScanRow scan[SCAN_MAX];
   int scan_n = 0;
@@ -186,6 +188,11 @@ border-radius:10px;padding:2px 4px 2px 14px;margin-bottom:8px}
 font-size:16px;padding:11px 0}
 .pw-masked{-webkit-text-security:disc;text-security:disc}
 .field button{background:none;border:0;color:var(--mut);font-size:13px;padding:10px 12px;cursor:pointer}
+.tzr{display:flex;align-items:center;gap:10px;margin:2px 0 4px}
+.tzl{color:var(--mut);font-size:14px;white-space:nowrap}
+.tzr select{flex:1;min-width:0;background:#0c0c0c;color:var(--txt);
+border:1px solid var(--edge);border-radius:10px;padding:11px 10px;font-size:16px}
+#tzsub{color:var(--faint);font-size:12px;margin:0 2px 8px}
 #msg{min-height:20px;font-size:13.5px;color:var(--warn);margin:2px 2px 8px}
 #join{width:100%;padding:14px;border:0;border-radius:10px;background:var(--txt);
 color:#000;font-size:16px;font-weight:600;cursor:pointer;transition:opacity .18s}
@@ -223,6 +230,8 @@ footer{margin-top:26px;text-align:center;color:var(--faint);font-size:12px}
     <input id="pw" type="text" class="pw-masked" placeholder="Password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
     <button id="eye" type="button">show</button>
   </div>
+  <div class="tzr"><span class="tzl">Time zone</span><select id="tz"></select></div>
+  <div id="tzsub"></div>
   <div id="msg"></div>
   <button id="join">Join</button>
 </div>
@@ -235,8 +244,75 @@ footer{margin-top:26px;text-align:center;color:var(--faint);font-size:12px}
 </div>
 <footer>No account · no cloud · your password goes only to this device</footer>
 </main><script>
-var sel=null,busy=false;
+var sel=null,busy=false,tzPicked=false;
 function $(i){return document.getElementById(i)}
+// Zone presets: label, POSIX rule, and the IANA names a phone reports for it.
+// The first two columns are the SAME list the device's own settings page
+// serves (mirror_html.h TZS) — one vocabulary, so a zone picked here and a
+// zone picked there are the same string, not two spellings of one place.
+var TZS=[["New York (US Eastern)","EST5EDT,M3.2.0,M11.1.0","America/New_York,America/Toronto,America/Detroit,America/Montreal,America/Nassau"],
+["Chicago (US Central)","CST6CDT,M3.2.0,M11.1.0","America/Chicago,America/Winnipeg"],
+["Denver (US Mountain)","MST7MDT,M3.2.0,M11.1.0","America/Denver,America/Edmonton,America/Boise"],
+["Phoenix (no DST)","MST7","America/Phoenix"],
+["Los Angeles (US Pacific)","PST8PDT,M3.2.0,M11.1.0","America/Los_Angeles,America/Vancouver,America/Tijuana"],
+["Anchorage","AKST9AKDT,M3.2.0,M11.1.0","America/Anchorage,America/Juneau"],
+["Honolulu","HST10","Pacific/Honolulu"],
+["Mexico City","CST6","America/Mexico_City"],
+["Bogota","<-05>5","America/Bogota,America/Lima"],
+["Sao Paulo / Buenos Aires","<-03>3","America/Sao_Paulo,America/Argentina/Buenos_Aires"],
+["London / Dublin","GMT0BST,M3.5.0/1,M10.5.0","Europe/London,Europe/Dublin,Europe/Lisbon"],
+["Central Europe","CET-1CEST,M3.5.0,M10.5.0/3","Europe/Paris,Europe/Berlin,Europe/Madrid,Europe/Rome,Europe/Amsterdam,Europe/Brussels,Europe/Vienna,Europe/Stockholm,Europe/Oslo,Europe/Copenhagen,Europe/Prague,Europe/Warsaw,Europe/Zurich,Europe/Budapest"],
+["Eastern Europe","EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Helsinki,Europe/Athens,Europe/Bucharest,Europe/Kyiv,Europe/Kiev,Europe/Riga,Europe/Sofia"],
+["Moscow","MSK-3","Europe/Moscow,Europe/Istanbul"],
+["Dubai","<+04>-4","Asia/Dubai"],
+["India","IST-5:30","Asia/Kolkata,Asia/Calcutta,Asia/Colombo"],
+["China","CST-8","Asia/Shanghai,Asia/Chongqing"],
+["Hong Kong","HKT-8","Asia/Hong_Kong,Asia/Macau,Asia/Taipei"],
+["Singapore","<+08>-8","Asia/Singapore,Asia/Kuala_Lumpur,Asia/Manila"],
+["Perth","AWST-8","Australia/Perth"],
+["Tokyo","JST-9","Asia/Tokyo"],
+["Seoul","KST-9","Asia/Seoul"],
+["Brisbane","AEST-10","Australia/Brisbane"],
+["Sydney / Melbourne","AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Sydney,Australia/Melbourne,Australia/Hobart,Australia/Canberra"],
+["Auckland","NZST-12NZDT,M9.5.0,M4.1.0/3","Pacific/Auckland"],
+["UTC","UTC0","UTC,Etc/UTC"]];
+// The zone, with no typing and nothing asked of the network. The phone
+// already knows where it is, and it is standing on the display's OWN setup
+// AP — so the answer travels one hop over a link with no route to anywhere,
+// which is the whole reason the device's IP-geolocation learner stays
+// compiled out. A guess we cannot place falls back to New York, the same
+// seed the firmware compiles, and the line under the picker always says
+// which of the two happened rather than leaving a silent preselection to be
+// trusted or not.
+// The FIRST option is a sentinel with an empty value: leave the display on
+// whatever zone it already has. It is what a failed detection falls back to,
+// and the empty value is dropped by /join — so "we could not tell" never
+// SETS anything. The earlier draft preselected New York here instead, which
+// meant a unit hand-built with a non-Eastern CD_TZ was silently rewritten to
+// Eastern by a browser that merely declined to answer (review catch). A
+// picker may not overwrite a setting on the strength of not knowing it.
+(function(){var s=$('tz'),i,o;
+o=document.createElement('option');o.value='';o.textContent='Keep current setting';
+s.appendChild(o);
+for(i=0;i<TZS.length;i++){o=document.createElement('option');
+o.value=TZS[i][1];o.textContent=TZS[i][0];s.appendChild(o)}
+var guess='';
+try{guess=Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){}
+var hit=-1;
+if(guess){for(i=0;i<TZS.length;i++){
+if((','+TZS[i][2]+',').indexOf(','+guess+',')>=0){hit=i;break}}}
+s.selectedIndex=hit>=0?hit+1:0;
+$('tzsub').textContent=hit>=0
+?'Read from this phone. Change it if that’s not where the display lives.'
+:'Could not read a zone from this phone — pick yours so the clock and night mode are right.';
+s.addEventListener('change',function(){tzPicked=true})})();
+// Name the sentinel once the display tells us what it is actually on. Until
+// then it stays honest-but-vague rather than claiming a zone on its behalf.
+function tzShowCurrent(rule){if(!rule)return;var s=$('tz'),lbl='';
+for(var i=0;i<TZS.length;i++)if(TZS[i][1]===rule){lbl=TZS[i][0];break}
+s.options[0].textContent='Keep '+(lbl||rule);
+if(s.selectedIndex===0&&!tzPicked&&!lbl&&rule!=='UTC0')
+$('tzsub').textContent='Leaving this display on '+rule+'.'}
 function bars(r){var n=r>-60?3:r>-72?2:1,h='<span class="bars">';
 for(var i=1;i<=3;i++)h+='<i'+(i<=n?' class="on"':'')+'></i>';return h+'</span>'}
 function skeleton(){var h='';for(var i=0;i<3;i++)
@@ -261,7 +337,7 @@ var s=$('sheet');s.classList.remove('err');s.classList.add('open');
 function scan(force){skeleton();
 fetch('/scan'+(force?'?force=1':'')).then(function(r){return r.json()})
 .then(function(j){if(j.scanning){setTimeout(function(){scan(false)},900);return}
-renderNets(j.networks||[])})
+tzShowCurrent(j.tz);renderNets(j.networks||[])})
 .catch(function(){setTimeout(function(){scan(false)},1200)})}
 $('rescan').onclick=function(){if(!busy)scan(true)};
 $('eye').onclick=function(){var p=$('pw'),t=p.classList.contains('pw-masked');
@@ -271,7 +347,11 @@ var ssid=$('ssidf').style.display!=='none'?$('ssid').value.trim():sel;
 if(!ssid){$('msg').textContent='Enter the network name.';return}
 busy=true;var b=$('join');b.disabled=true;
 b.innerHTML='<span class="spin"></span>Joining…';$('msg').textContent='';
-var body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent($('pw').value);
+// An empty zone is OMITTED, not sent empty: "leave it as it is" has to
+// look identical on the wire to an older page that never had a picker.
+var tzv=$('tz').value;
+var body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent($('pw').value)
++(tzv?'&tz='+encodeURIComponent(tzv):'');
 fetch('/join',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
 .then(function(){poll()})
 .catch(function(){fail('Lost the display — rejoin its network and retry.')})};
@@ -346,7 +426,21 @@ void send_scan_json() {
              g->scan[i].secure ? "true" : "false");
     out += row;
   }
-  out += "]}";
+  out += "]";
+  // The zone this display is on RIGHT NOW, so the picker can offer "leave it
+  // alone" as something named rather than as a blank. Without it the page can
+  // only guess, and a page that guesses about a setting it is about to
+  // overwrite is how a hand-set CD_TZ gets quietly replaced.
+  {
+    char tz[48], tzesc[160];
+    canary::net::tz_current(tz, sizeof(tz));
+    if (json_escape(tz, tzesc, sizeof(tzesc)) > 0) {
+      out += ",\"tz\":\"";
+      out += tzesc;
+      out += "\"";
+    }
+  }
+  out += "}";
   g->server.send(200, "application/json", out);
 }
 
@@ -370,6 +464,20 @@ void handle_scan() {
   send_scan_json();
 }
 
+// A POSIX TZ rule is printable ASCII and nothing else. Same rule as
+// glass_web.cpp's /api/tz, and for the same reason: this value is persisted
+// to NVS and read back on every boot, so a smuggled control byte would be a
+// durable break rather than a transient one. Refused, never sanitized — a
+// "cleaned" zone is not the zone anyone meant.
+bool tz_rule_printable(const String& v) {
+  if (v.length() == 0 || v.length() >= 48) return false;
+  for (unsigned i = 0; i < v.length(); i++) {
+    const unsigned char c = (unsigned char)v[i];
+    if (c < 0x20 || c > 0x7E || c == '"' || c == '\\') return false;
+  }
+  return true;
+}
+
 void handle_join() {
   const String ssid = g->server.arg("ssid");
   const String pass = g->server.arg("pass");
@@ -380,6 +488,19 @@ void handle_join() {
   }
   snprintf(g->join_ssid, sizeof(g->join_ssid), "%s", ssid.c_str());
   snprintf(g->join_pass, sizeof(g->join_pass), "%s", pass.c_str());
+  // The zone rides along with the network, but it is NOT a precondition for
+  // joining: an older cached portal page, or a browser with no Intl, simply
+  // sends no tz and the compiled seed stands. A malformed one is dropped the
+  // same way — refusing the whole join over a bad time zone would trade a
+  // wrong clock for no network at all.
+  {
+    const String tz = g->server.arg("tz");
+    if (tz_rule_printable(tz)) {
+      snprintf(g->join_tz, sizeof(g->join_tz), "%s", tz.c_str());
+    } else {
+      g->join_tz[0] = '\0';
+    }
+  }
   g->fail_reason[0] = '\0';
 
   // WAP lessons, in order: clear ANY scan handle — running OR completed-but-
@@ -839,6 +960,17 @@ void provision_run(bool glass_ok) {
           // Persist ONLY on success — a failed attempt must never leave
           // broken credentials in NVS (power-cycle restarts clean).
           canary::cfg::set_wifi_credentials(ctx.join_ssid, ctx.join_pass);
+          // The zone lands here rather than at /join, so it is written in the
+          // same beat as the credentials and only once the join actually
+          // worked. tz_set_manual re-points SNTP as it persists, and at THIS
+          // moment there is finally a network for SNTP to reach — so the very
+          // first wall-clock the owner sees on the glass is already their own,
+          // instead of a UTC reading that corrects itself some seconds later.
+          // Marked as chosen-by-a-human, so nothing overrides it afterward.
+          if (ctx.join_tz[0] != '\0' &&
+              canary::net::tz_set_manual(ctx.join_tz)) {
+            log_line("SETUP", "Timezone chosen during setup.");
+          }
           ctx.success_at = now;
           ctx.phone_acked = false;
           enter(St::Success, now);

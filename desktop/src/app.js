@@ -351,6 +351,26 @@ function usbBridgeInfo(vid, pid) {
 
 // One-click copyable diagnostic (parity: flash-core.js buildDiagnosticReport)
 // — everything a bug report needs, gathered instead of asked for.
+// Public-only is enforced HERE, in the builder, same as the browser side:
+// fixed field allowlist, MAC truncated to a non-stable tail, and the console
+// tail scrubbed of credential lines (the WAP prints its AP password to serial
+// at boot; a report someone is ASKED to paste must not carry it).
+const TAIL_REDACT = [
+  /password/i,
+  /passphrase|\bpsk\b/i,
+  /wifi\s+pass\b/i,
+  /token["']?\s*[:=]/i,
+];
+function sanitizeLogTail(text) {
+  return String(text || "").split("\n").map((ln) =>
+    TAIL_REDACT.some((re) => re.test(ln)) ? "[redacted: credential line]" : ln
+  ).join("\n");
+}
+function macTail(mac) {
+  const hex = String(mac || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+  if (hex.length < 4) return "";
+  return "…" + hex.slice(-4, -2) + ":" + hex.slice(-2);
+}
 function buildDiagnosticReport(info = {}) {
   const lines = ["SecuraCV Flasher diagnostic", "==========================="];
   const add = (label, val) => {
@@ -362,7 +382,7 @@ function buildDiagnosticReport(info = {}) {
   add("platform", info.platform);
   add("firmware train", info.catalogVersion);
   add("chip", info.chip);
-  add("MAC", info.mac);
+  add("MAC tail", macTail(info.mac) || undefined);
   add("flash size", info.flashBytes ? info.flashBytes + " bytes" : undefined);
   add("USB device", info.usb);
   add("chosen product", info.product);
@@ -370,7 +390,7 @@ function buildDiagnosticReport(info = {}) {
   add("error", info.error);
   if (info.logTail) {
     lines.push("--- last console output ---");
-    lines.push(String(info.logTail).split("\n").slice(-12).join("\n"));
+    lines.push(sanitizeLogTail(String(info.logTail).split("\n").slice(-12).join("\n")));
   }
   return lines.join("\n") + "\n";
 }
