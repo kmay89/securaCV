@@ -601,5 +601,131 @@ def test_post_with_valid_length_still_works(monkeypatch):
     assert sent["json"] == {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# /api/status must never surface the device key seed or MQTT passwords. The
+# port is reachable on the Supervisor Docker network, so the full options
+# object would hand the root integrity secret to any co-resident container.
+# ---------------------------------------------------------------------------
+
+
+_SECRET_OPTS = {
+    "mode": "frigate",
+    "retention_days": 7,
+    "device_key_seed": "cafebabe" * 8,  # 64-hex root secret
+    "frigate": {
+        "mqtt_host": "10.0.0.7",
+        "topic_prefix": "frigate",
+        "mqtt_password": "frigate-broker-pw",
+    },
+    "mqtt_publish": {"enabled": True, "password": "publish-broker-pw"},
+    "cameras": [{"name": "front", "url": "rtsp://admin:hunter2@10.0.0.9/s"}],
+}
+
+
+def test_public_status_options_drops_secrets():
+    pub = serve_wizard._public_status_options(_SECRET_OPTS)
+    blob = json.dumps(pub)
+    assert "cafebabe" not in blob            # device_key_seed
+    assert "frigate-broker-pw" not in blob   # frigate mqtt password
+    assert "publish-broker-pw" not in blob   # publish mqtt password
+    assert "hunter2" not in blob             # camera URL credential
+    # But the fields the panel renders survive.
+    assert pub["mode"] == "frigate"
+    assert pub["retention_days"] == 7
+    assert pub["frigate"]["mqtt_host"] == "10.0.0.7"
+    assert pub["frigate"]["topic_prefix"] == "frigate"
+    assert pub["mqtt_publish"]["enabled"] is True
+
+
+def test_handle_status_never_returns_seed(monkeypatch):
+    monkeypatch.setattr(serve_wizard, "get_addon_options", lambda: _SECRET_OPTS)
+    monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", Path("/nonexistent/key"))
+    handler = _bare_handler()
+    result = handler._handle_status()
+    assert result["ok"] is True
+    assert result["configured"] is True     # seed present, so configured
+    assert "cafebabe" not in json.dumps(result)
+    assert "device_key_seed" not in result["options"]
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard: the pairing proxy and camera-reachability test must refuse the
+# add-on's own loopback/link-local/internal surface, but still allow LAN
+# (RFC1918) devices — the legitimate target.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1", "169.254.169.254", "0.0.0.0", "localhost", "supervisor"],
+)
+def test_is_blocked_host_blocks_internal(host):
+    assert serve_wizard._is_blocked_host(host) is True
+
+
+@pytest.mark.parametrize("host", ["192.168.1.50", "10.0.0.9", "172.16.0.4", "camera.local"])
+def test_is_blocked_host_allows_lan(host):
+    assert serve_wizard._is_blocked_host(host) is False
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "127.0.0.1:8799", "supervisor", "169.254.1.1"])
+def test_canary_request_rejects_internal_targets(address, monkeypatch):
+    def _must_not_call(*a, **k):  # pragma: no cover - asserts it isn't reached
+        raise AssertionError("urlopen called for a blocked internal target")
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _must_not_call)
+    result = serve_wizard._canary_request(address, "tok", "GET", "/api/mesh", None)
+    assert result["ok"] is False
+    assert "address" in result["error"].lower()
+
+
+def test_test_camera_tcp_blocks_internal_without_connecting(monkeypatch):
+    def _must_not_call(*a, **k):  # pragma: no cover
+        raise AssertionError("create_connection called for a blocked host")
+
+    monkeypatch.setattr(serve_wizard.socket, "create_connection", _must_not_call)
+    result = serve_wizard.test_camera_tcp("rtsp://127.0.0.1:554/stream")
+    assert result["ok"] is False
+
+
+def test_test_camera_tcp_allows_lan_host(monkeypatch):
+    calls = {}
+
+    class _Sock:
+        def close(self):
+            calls["closed"] = True
+
+    def _fake_conn(addr, timeout=None):
+        calls["addr"] = addr
+        return _Sock()
+
+    monkeypatch.setattr(serve_wizard.socket, "create_connection", _fake_conn)
+    result = serve_wizard.test_camera_tcp("rtsp://admin:pw@192.168.1.9:554/s")
+    assert result["ok"] is True
+    assert calls["addr"] == ("192.168.1.9", 554)
+
+
+# ---------------------------------------------------------------------------
+# Generated Frigate config: the camera URL becomes an ffmpeg input, so a
+# non-camera scheme is dropped and the value is emitted as a quoted scalar.
+# ---------------------------------------------------------------------------
+
+
+def test_write_frigate_config_rejects_bad_scheme(monkeypatch, tmp_path):
+    written = {}
+    monkeypatch.setattr(
+        serve_wizard.Path, "write_text",
+        lambda self, text: written.update(text=text), raising=False,
+    )
+    handler = _bare_handler()
+    handler._write_frigate_config(
+        [{"name": "evil", "url": "file:///etc/passwd"},
+         {"name": "good", "url": "rtsp://10.0.0.9/stream"}],
+        retention_days=1,
+    )
+    text = written["text"]
+    assert "file:///etc/passwd" not in text
+    assert "'rtsp://10.0.0.9/stream'" in text  # quoted scalar
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
