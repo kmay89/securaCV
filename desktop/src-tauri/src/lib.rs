@@ -688,11 +688,34 @@ async fn flash(
     let mut bytes = downloaded.to_vec();
     let provisioned = if let Some(config) = provisioning.as_ref() {
         provisioning::patch_factory_image(&mut bytes, config)?;
+        // Name what was ACTUALLY sealed. This line used to claim "Wi-Fi + MQTT"
+        // whenever any provisioning reached it — and for an on-glass display the
+        // broker host is prefilled for the user, so a config carrying an EMPTY
+        // network still arrived here and still printed the Wi-Fi claim. The
+        // network field is not `required` for those products (their firmware can
+        // be set up on the glass), so leaving it blank is silent by design; the
+        // owner read a tick saying their network was baked in, watched the board
+        // come up in its on-screen wizard anyway, and had no way to tell which of
+        // the two things had actually happened. A receipt that overstates what
+        // was written costs more than one that says less.
+        let wifi = !config.wifi_ssid.is_empty();
+        let broker = !config.mqtt_host.is_empty();
+        let what = match (wifi, broker) {
+            (true, true) => "network + hub",
+            (true, false) => "network",
+            (false, true) => "hub",
+            (false, false) => "settings",
+        };
         emit(
             &app,
-            "✓ Wi-Fi + MQTT settings sealed into the image's NVS partition (values not logged)"
-                .into(),
+            format!("✓ {what} sealed into the image's settings partition (values not logged)"),
         );
+        if !wifi {
+            emit(
+                &app,
+                "  no network baked in — this board asks for Wi-Fi itself on first boot".into(),
+            );
+        }
         true
     } else {
         false

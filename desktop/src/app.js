@@ -41,6 +41,27 @@ const releaseTagFromManifestUrl = (url) => {
   return /^fw-v/.test(tag) ? tag : null;
 };
 
+// The size gate — parity with canary-local/assets/flash-core.js
+// flashFitVerdict(), same words on purpose. The chip guard says "right
+// silicon"; this says "enough of it": a product built for a BIGGER flash
+// than the chip in hand writes fine and then boot-loops before the app
+// prints a single line (esp_core_dump_flash "config is corrupted" + an
+// instant RTC_SW_CPU_RST reboot — the XIAO-Sense-with-a-Freenove-image
+// mistake). Smaller-on-bigger is fine (headroom); an unmeasured chip is
+// never judged.
+const flashFitVerdict = (product, flashBytes) => {
+  const need = product && Number(product.flash_mb);
+  const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
+  if (!need || !mb || need <= mb) return { fits: true, needMb: need || null, haveMb: mb };
+  return {
+    fits: false, needMb: need, haveMb: mb,
+    why: `${product.name} is built for a ${need} MB board ` +
+      `(${product.board_label}), but the connected chip has ${mb} MB of ` +
+      `flash. The write would finish and the board would then boot-loop ` +
+      `before printing anything — wrong-board image, not a broken board.`,
+  };
+};
+
 // The dev channel's one stable address: the rolling fw-dev-latest prerelease.
 // A fixed first-party constant, deliberately NOT a URL override — the toggle
 // can only ever mean this URL, and the Rust side accepts it as the ONE
@@ -2533,17 +2554,23 @@ function renderProducts() {
       state.manifest.products[p.id] &&
       state.manifest.products[p.id].version;
 
-    const isSelected = p.id === selectedId;
+    // The size gate: right chip, not enough of it. The row stays visible so
+    // the product line is browsable, but it can't be picked — same refusal,
+    // same words, as the browser flasher's refreshManifestState.
+    const fit = flashFitVerdict(p, state.flashBytes);
+    const isSelected = fit.fits && p.id === selectedId;
     const row = document.createElement("label");
-    row.className = "product" + (isSelected ? " selected" : "");
+    row.className = "product" + (isSelected ? " selected" : "") + (fit.fits ? "" : " unfit");
     row.innerHTML = `
-      <input type="radio" name="product" value="${p.id}"${isSelected ? " checked" : ""}>
+      <input type="radio" name="product" value="${p.id}"${isSelected ? " checked" : ""}${fit.fits ? "" : " disabled"}>
       ${figureSlot(p)}
       <span>
         <span class="p-name">${esc(p.name)}<span class="chip-badge">${esc(p.chip)}</span></span>
         <span class="p-tag">${esc(p.tagline || "")}</span>
         <span class="p-meta">${
-          ver ? "release " + esc(ver) : "no published release yet"
+          fit.fits
+            ? ver ? "release " + esc(ver) : "no published release yet"
+            : `needs a ${fit.needMb} MB board — this chip has ${fit.haveMb} MB`
         }</span>${
           p.figure && p.figure.shared
             ? '<span class="p-note">This board is also sold as another product — check the name, not just the picture.</span>'
@@ -2722,6 +2749,16 @@ async function onFlash() {
   // judging the product that was actually written, not whatever the UI
   // holds by the time the flash finishes.
   const product = state.product;
+  // The size gate, enforced at the button as well as on the cards: the pick
+  // may predate chip detection, so an unfit product can still be sitting in
+  // state.product even though its row is now disabled.
+  {
+    const fit = flashFitVerdict(product, state.flashBytes);
+    if (!fit.fits) {
+      setStatus("flash-result", `✗ ${fit.why}`, "err");
+      return;
+    }
+  }
   const manifestUrl = activeManifestUrl();
   // false = the user TYPED provisioning values that don't validate — abort so
   // the install can't succeed while silently dropping the Wi-Fi they asked

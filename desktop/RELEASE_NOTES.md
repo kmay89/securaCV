@@ -17,6 +17,32 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.3 — 2026-08-14
+
+**Flashes firmware 2.4.10, and it tells you the truth about what it wrote.**
+
+2.4.10 is the release that fixes the display setup network. A 7" glass
+handed your phone a network name that never changed and a password that
+changed on every boot — so once your phone had saved it, it kept trying
+the old password, the display kept refusing, and the phone just said
+"Unable to join the network" without ever asking you for the new one.
+Re-flashing made it worse. The password is now minted once and kept, so
+what is printed on the glass stays true. A phone that already saved an
+old one needs one Forget This Network, and the display now says so on
+its own screen if nothing has managed to join for a while.
+
+**The install log stopped overstating itself.** It used to tick off
+"Wi-Fi + MQTT settings sealed" whenever anything at all was written — and
+for a display, the hub address is filled in for you, so an install with an
+EMPTY network field still printed the Wi-Fi claim. You would read the tick,
+then watch the board come up asking for Wi-Fi on its own screen, with no
+way to tell which had happened. The log now names what actually went in,
+and says plainly when no network did.
+
+The network field is still optional for displays — they can be set up on
+the glass — so this is about the receipt being honest, not about forcing
+you to fill it in.
+
 ## 0.11.2 — 2026-08-13
 
 **This Flasher flashes firmware 2.4.9 — the first signed release — and
