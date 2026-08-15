@@ -359,6 +359,7 @@ const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
   /wifi\s+pass\b/i,
+  /token["']?\s*[:=]/i,
 ];
 function sanitizeLogTail(text) {
   return String(text || "").split("\n").map((ln) =>

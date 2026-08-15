@@ -1839,6 +1839,7 @@ const TAIL_REDACT = [
   /password/i,            // "(password: …)", "Password: …", '"ap_password": …'
   /passphrase|\bpsk\b/i,  // any other spelling of the same secret
   /wifi\s+pass\b/i,       // "[PROV]   WiFi PASS : …"
+  /token["']?\s*[:=]/i,   // "[PROV]   API TOKEN : …", '"token": …', '"hw_token": …'
 ];
 
 // Scrub a serial tail for inclusion in a shareable report. Exported so the

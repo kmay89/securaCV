@@ -1130,6 +1130,8 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
     "[PROV]   WiFi PASS : cv-supersecret1",
     'Password: cv-supersecret1',
     '║    "ap_password": "cv-supersecret1",',
+    "[PROV]   API TOKEN : cv-supersecret1",        // review on #1551: tokens too
+    '║    "hw_token": "cv-supersecret1",',
     "wifi: PASS",                                  // selftest verdict row — kept
     "Brownout detector was triggered",             // fatal signature — kept
   ].join("\n");

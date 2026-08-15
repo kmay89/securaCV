@@ -251,6 +251,9 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   for (const [name, src] of [["desktop app.js", appJs], ["browser flash-core.js", flashCore]]) {
     assert.match(src, /function sanitizeLogTail|export function sanitizeLogTail/,
       `${name} lost the serial-tail credential scrub`);
+    assert.match(src, /TAIL_REDACT[\s\S]{0,300}token/,
+      `${name} scrub no longer covers token lines — the WAP prints "[PROV] API TOKEN : …" ` +
+      "and quick-connect token JSON to serial (review on #1551)");
     assert.match(src, /function macTail|export function macTail/,
       `${name} lost the MAC truncation`);
     assert.match(src, /add\("MAC tail", macTail\(info\.mac\)/,
