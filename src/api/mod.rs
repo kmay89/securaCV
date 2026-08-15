@@ -196,11 +196,7 @@ impl ApiServer {
         // explicit operator override before exposing it — mirroring the
         // break-glass server's validate_exposure. The loopback path (reached
         // behind a TLS reverse proxy or SSH tunnel) stays the default.
-        let tls_configured = self
-            .cfg
-            .tls
-            .as_ref()
-            .is_some_and(|t| t.is_configured());
+        let tls_configured = self.cfg.tls.as_ref().is_some_and(|t| t.is_configured());
         if !configured_addr.ip().is_loopback() && !tls_configured && !self.cfg.allow_insecure {
             return Err(anyhow!(
                 "refusing to bind non-loopback address '{configured_addr}': the event API \
