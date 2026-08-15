@@ -244,7 +244,7 @@ footer{margin-top:26px;text-align:center;color:var(--faint);font-size:12px}
 </div>
 <footer>No account · no cloud · your password goes only to this device</footer>
 </main><script>
-var sel=null,busy=false;
+var sel=null,busy=false,tzPicked=false;
 function $(i){return document.getElementById(i)}
 // Zone presets: label, POSIX rule, and the IANA names a phone reports for it.
 // The first two columns are the SAME list the device's own settings page
@@ -284,7 +284,16 @@ var TZS=[["New York (US Eastern)","EST5EDT,M3.2.0,M11.1.0","America/New_York,Ame
 // seed the firmware compiles, and the line under the picker always says
 // which of the two happened rather than leaving a silent preselection to be
 // trusted or not.
+// The FIRST option is a sentinel with an empty value: leave the display on
+// whatever zone it already has. It is what a failed detection falls back to,
+// and the empty value is dropped by /join — so "we could not tell" never
+// SETS anything. The earlier draft preselected New York here instead, which
+// meant a unit hand-built with a non-Eastern CD_TZ was silently rewritten to
+// Eastern by a browser that merely declined to answer (review catch). A
+// picker may not overwrite a setting on the strength of not knowing it.
 (function(){var s=$('tz'),i,o;
+o=document.createElement('option');o.value='';o.textContent='Keep current setting';
+s.appendChild(o);
 for(i=0;i<TZS.length;i++){o=document.createElement('option');
 o.value=TZS[i][1];o.textContent=TZS[i][0];s.appendChild(o)}
 var guess='';
@@ -292,10 +301,18 @@ try{guess=Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){}
 var hit=-1;
 if(guess){for(i=0;i<TZS.length;i++){
 if((','+TZS[i][2]+',').indexOf(','+guess+',')>=0){hit=i;break}}}
-s.selectedIndex=hit>=0?hit:0;
+s.selectedIndex=hit>=0?hit+1:0;
 $('tzsub').textContent=hit>=0
 ?'Read from this phone. Change it if that’s not where the display lives.'
-:'Defaulted to New York — pick yours so the clock and night mode are right.'})();
+:'Could not read a zone from this phone — pick yours so the clock and night mode are right.';
+s.addEventListener('change',function(){tzPicked=true})})();
+// Name the sentinel once the display tells us what it is actually on. Until
+// then it stays honest-but-vague rather than claiming a zone on its behalf.
+function tzShowCurrent(rule){if(!rule)return;var s=$('tz'),lbl='';
+for(var i=0;i<TZS.length;i++)if(TZS[i][1]===rule){lbl=TZS[i][0];break}
+s.options[0].textContent='Keep '+(lbl||rule);
+if(s.selectedIndex===0&&!tzPicked&&!lbl&&rule!=='UTC0')
+$('tzsub').textContent='Leaving this display on '+rule+'.'}
 function bars(r){var n=r>-60?3:r>-72?2:1,h='<span class="bars">';
 for(var i=1;i<=3;i++)h+='<i'+(i<=n?' class="on"':'')+'></i>';return h+'</span>'}
 function skeleton(){var h='';for(var i=0;i<3;i++)
@@ -320,7 +337,7 @@ var s=$('sheet');s.classList.remove('err');s.classList.add('open');
 function scan(force){skeleton();
 fetch('/scan'+(force?'?force=1':'')).then(function(r){return r.json()})
 .then(function(j){if(j.scanning){setTimeout(function(){scan(false)},900);return}
-renderNets(j.networks||[])})
+tzShowCurrent(j.tz);renderNets(j.networks||[])})
 .catch(function(){setTimeout(function(){scan(false)},1200)})}
 $('rescan').onclick=function(){if(!busy)scan(true)};
 $('eye').onclick=function(){var p=$('pw'),t=p.classList.contains('pw-masked');
@@ -330,8 +347,11 @@ var ssid=$('ssidf').style.display!=='none'?$('ssid').value.trim():sel;
 if(!ssid){$('msg').textContent='Enter the network name.';return}
 busy=true;var b=$('join');b.disabled=true;
 b.innerHTML='<span class="spin"></span>Joining…';$('msg').textContent='';
+// An empty zone is OMITTED, not sent empty: "leave it as it is" has to
+// look identical on the wire to an older page that never had a picker.
+var tzv=$('tz').value;
 var body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent($('pw').value)
-+'&tz='+encodeURIComponent($('tz').value);
++(tzv?'&tz='+encodeURIComponent(tzv):'');
 fetch('/join',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
 .then(function(){poll()})
 .catch(function(){fail('Lost the display — rejoin its network and retry.')})};
@@ -406,7 +426,21 @@ void send_scan_json() {
              g->scan[i].secure ? "true" : "false");
     out += row;
   }
-  out += "]}";
+  out += "]";
+  // The zone this display is on RIGHT NOW, so the picker can offer "leave it
+  // alone" as something named rather than as a blank. Without it the page can
+  // only guess, and a page that guesses about a setting it is about to
+  // overwrite is how a hand-set CD_TZ gets quietly replaced.
+  {
+    char tz[48], tzesc[160];
+    canary::net::tz_current(tz, sizeof(tz));
+    if (json_escape(tz, tzesc, sizeof(tzesc)) > 0) {
+      out += ",\"tz\":\"";
+      out += tzesc;
+      out += "\"";
+    }
+  }
+  out += "}";
   g->server.send(200, "application/json", out);
 }
 

@@ -16,8 +16,10 @@ Four bedside complaints that turned out to be two causes.
   hop and the IP-geolocation learner stays compiled out. The presets are the
   same list, label for label and rule for rule, that the display's settings
   page serves. A phone whose zone is not in the list, or a browser that will
-  not say, falls back to New York and the line under the picker tells you
-  which of the two happened.
+  not say, leaves the display on the zone it already has — named in the
+  picker, so "keep it" is never a blank — and the line underneath tells you
+  which of the two happened. On a stock display that zone IS New York; on one
+  built with its own, setup will not quietly take it away.
 - **And the compiled default is America/New_York, not UTC.** A display with no
   zone set showed 3 a.m. at 11 a.m. — and quiet hours are wall-clock hours,
   so the face also sat in NIGHT MODE through the morning, which is what made
