@@ -242,6 +242,27 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   //     both frontends clear it when either field changes.
   assert.match(appJs, /wifiQrInvalidate/, "desktop no longer invalidates a stale Wi-Fi QR");
   assert.match(flashJs, /qrClear/, "browser no longer invalidates a stale Wi-Fi QR");
+
+  // 12. Review hardening (Codex on #1549). The diagnostic report enforces
+  //     public-only IN THE BUILDER, both frontends: the MAC is truncated to
+  //     a non-stable tail, and the serial tail is scrubbed of credential
+  //     lines (the WAP prints its AP password to serial at boot — a report
+  //     someone is ASKED to paste must not carry it).
+  for (const [name, src] of [["desktop app.js", appJs], ["browser flash-core.js", flashCore]]) {
+    assert.match(src, /function sanitizeLogTail|export function sanitizeLogTail/,
+      `${name} lost the serial-tail credential scrub`);
+    assert.match(src, /TAIL_REDACT[\s\S]{0,300}token/,
+      `${name} scrub no longer covers token lines — the WAP prints "[PROV] API TOKEN : …" ` +
+      "and quick-connect token JSON to serial (review on #1551)");
+    assert.match(src, /function macTail|export function macTail/,
+      `${name} lost the MAC truncation`);
+    assert.match(src, /add\("MAC tail", macTail\(info\.mac\)/,
+      `${name} report no longer truncates the MAC in the builder`);
+    assert.match(src, /sanitizeLogTail\(String\(info\.logTail\)/,
+      `${name} report no longer scrubs the tail in the builder`);
+    assert.ok(!/add\("MAC", info\.mac\)/.test(src),
+      `${name} report prints the full MAC again — a stable identifier in a pastebin`);
+  }
 });
 
 test("parity wave 2: the board passport, the install verdict, and 'we've met this board'", () => {

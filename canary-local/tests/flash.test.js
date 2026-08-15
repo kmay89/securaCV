@@ -1088,7 +1088,7 @@ test("usbBridgeInfo: native USB → null, bridge chips → driver link", async (
 test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", async () => {
   const { buildDiagnosticReport } = await core();
   const r = buildDiagnosticReport({
-    browser: "Chrome", webSerial: true, chip: "ESP32-S3", mac: "AA:BB",
+    browser: "Chrome", webSerial: true, chip: "ESP32-S3", mac: "94:B9:7E:5A:7F:A3",
     baud: 460800, error: "timed out", product: "canary-wap",
     logTail: "line1\nline2\nBrownout detector was triggered",
   });
@@ -1100,6 +1100,49 @@ test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", asy
   assert.ok(!/platform:/.test(r) && !/flash size:/.test(r));
   // never leaks a field we didn't pass (e.g. wifi/keys aren't inputs at all)
   assert.ok(!/password|ssid|pubkey/i.test(r));
+});
+
+test("buildDiagnosticReport: the MAC is a tail, never the stable identifier", async () => {
+  // A report is made to be pasted somewhere public; a full MAC is a stable
+  // identifier (invariants.md III) and has no business riding along. The tail
+  // (last two octets) still tells two bench boards apart.
+  const { buildDiagnosticReport, macTail } = await core();
+  const r = buildDiagnosticReport({ mac: "94:B9:7E:5A:7F:A3" });
+  assert.ok(r.includes("MAC tail: …7f:a3"), "the non-stable tail is shown");
+  assert.ok(!r.includes("94:B9") && !/94:b9/i.test(r), "the full MAC never appears");
+  assert.strictEqual(macTail("94:B9:7E:5A:7F:A3"), "…7f:a3");
+  assert.strictEqual(macTail("94b97e5a7fa3"), "…7f:a3");     // separator-free input can't leak whole
+  assert.strictEqual(macTail(""), "");
+  assert.strictEqual(macTail("a3"), "", "too short to be a MAC → omit");
+  // no MAC → the line is omitted entirely, not rendered blank
+  assert.ok(!/MAC/.test(buildDiagnosticReport({ chip: "ESP32-S3" })));
+});
+
+test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", async () => {
+  // The WAP legitimately prints its device-unique AP password to serial at
+  // boot ("[WIFI] AP started: … (password: …)" — see build_config.h's own
+  // acknowledgment). A report a stuck user is ASKED to paste must not carry
+  // it. Redaction is visible, not silent, and diagnosis survives: fatal
+  // signatures and selftest PASS rows come through untouched.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const tail = [
+    "[WIFI] AP started: SecuraCV-7fA3 (password: cv-supersecret1)",
+    "[PROV]   WiFi PASS : cv-supersecret1",
+    'Password: cv-supersecret1',
+    '║    "ap_password": "cv-supersecret1",',
+    "[PROV]   API TOKEN : cv-supersecret1",        // review on #1551: tokens too
+    '║    "hw_token": "cv-supersecret1",',
+    "wifi: PASS",                                  // selftest verdict row — kept
+    "Brownout detector was triggered",             // fatal signature — kept
+  ].join("\n");
+  const r = buildDiagnosticReport({ logTail: tail });
+  assert.ok(!r.includes("cv-supersecret1"), "no credential survives into the report");
+  assert.ok(r.includes("[redacted: credential line]"), "redaction is visible, not silent");
+  assert.ok(r.includes("wifi: PASS"), "selftest verdict rows are not collateral damage");
+  assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives the scrub");
+  // the pure scrubber, directly
+  assert.strictEqual(sanitizeLogTail("nothing sensitive here"), "nothing sensitive here");
+  assert.ok(!sanitizeLogTail("psk=hunter2").includes("hunter2"));
 });
 
 // ── post-flash proof: self-manifest read-back ───────────────────────────────

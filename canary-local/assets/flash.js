@@ -1147,8 +1147,9 @@ function makeTerminal() {
 
 // ── self-healing: the "I'm stuck" escape hatch ──────────────────────────────
 // One click turns a stuck moment into a paste-able report for Discussions.
-// Public-only by construction (buildDiagnosticReport takes safe facts only —
-// never WiFi credentials or keys).
+// Public-only is enforced inside buildDiagnosticReport itself (fixed field
+// allowlist, non-stable MAC tail, credential-scrubbed serial tail) — this
+// caller only gathers; it can't leak what the builder won't print.
 const hex4 = (n) => (n == null ? null : "0x" + n.toString(16).padStart(4, "0"));
 
 function gatherDiagnostics(extra = {}) {

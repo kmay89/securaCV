@@ -101,6 +101,12 @@ Two rules make it safe to run without a human per ticket:
     form, and filter the log tail against known-sensitive lines (the AP
     password print above all). "Public-only by construction" has to be true
     of the required artifact, not just intended by the voluntary one.
+    **Status: DONE in both flashers** — `buildDiagnosticReport()` now
+    truncates the MAC to the nursery's non-stable tail (one truncation, one
+    behavior — `macTail()`) and scrubs the serial tail with visible
+    redaction markers before inclusion; `desktop_parity.test.js` item 12
+    pins both frontends so neither can regress alone. What remains for the
+    claims lane is the intake itself (Phase 3 proper), not the report.
 
 - **Phase 4 — the loop.** "This didn't help" buttons (shipped in Phase 1)
   feed batched catalog curation; a human tends the corpus, never a ticket.

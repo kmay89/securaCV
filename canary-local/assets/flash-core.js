@@ -1820,8 +1820,39 @@ export function visionChecklistModel(parts) {
 
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
-// Public-only by construction: it takes a plain object of already-safe facts
-// (no WiFi credentials, no keys) and formats them. Pure + testable.
+// Public-only by construction — enforced HERE, in the builder, not by hoping
+// callers pass safe facts: the field list is a fixed allowlist, the MAC is
+// truncated to a non-stable tail (a stable identifier has no business in a
+// pastebin — see spec/invariants.md III), and the serial tail is scrubbed of
+// credential lines before it is included, because the WAP legitimately prints
+// its device-unique AP password to serial at boot ("[WIFI] AP started: …
+// (password: …)", acknowledged in build_config.h) and a report someone is
+// ASKED to paste must not carry it. Pure + testable; the desktop app mirrors
+// this byte-for-byte in spirit (desktop_parity.test.js pins both sides).
+
+// Lines the serial tail may never carry into a report. Matched per line and
+// replaced with a marker (not silently dropped — a redaction you can see is
+// honest; a vanished line looks like nothing was there). Diagnosis survives:
+// selftest "PASS" rows don't match (the patterns want the credential words,
+// not the verdict word), and fatal signatures never share a line with these.
+const TAIL_REDACT = [
+  /password/i,            // "(password: …)", "Password: …", '"ap_password": …'
+  /passphrase|\bpsk\b/i,  // any other spelling of the same secret
+  /wifi\s+pass\b/i,       // "[PROV]   WiFi PASS : …"
+  /token["']?\s*[:=]/i,   // "[PROV]   API TOKEN : …", '"token": …', '"hw_token": …'
+];
+
+// Scrub a serial tail for inclusion in a shareable report. Exported so the
+// tests can feed it the WAP's real boot lines.
+export function sanitizeLogTail(text) {
+  return String(text || "").split("\n").map((ln) =>
+    TAIL_REDACT.some((re) => re.test(ln)) ? "[redacted: credential line]" : ln
+  ).join("\n");
+}
+
+// The MAC in the report is the same non-stable tail the nursery roster shows
+// (macTail, below with the roster helpers) — one truncation, one behavior.
+
 export function buildDiagnosticReport(info = {}) {
   const lines = ["SecuraCV flasher diagnostic", "==========================="];
   const add = (label, val) => {
@@ -1834,7 +1865,7 @@ export function buildDiagnosticReport(info = {}) {
   add("web serial", info.webSerial === undefined ? undefined : (info.webSerial ? "yes" : "no"));
   add("firmware train", info.catalogVersion);
   add("chip", info.chipDesc || info.chip);
-  add("MAC", info.mac);
+  add("MAC tail", macTail(info.mac) || undefined);
   add("flash size", info.flashBytes ? formatBytes(info.flashBytes) : undefined);
   add("USB device", info.usb);
   add("chosen product", info.product);
@@ -1843,7 +1874,7 @@ export function buildDiagnosticReport(info = {}) {
   add("error", info.error);
   if (info.logTail) {
     lines.push("--- last serial output ---");
-    lines.push(String(info.logTail).split("\n").slice(-12).join("\n"));
+    lines.push(sanitizeLogTail(String(info.logTail).split("\n").slice(-12).join("\n")));
   }
   return lines.join("\n") + "\n";
 }
@@ -2239,10 +2270,14 @@ export function rosterFind(list, mac) {
 }
 
 // Short MAC tail for a human label ("…a4:3b") — enough to tell boards apart
-// on a bench without shouting the full identifier.
+// on a bench without shouting the full identifier. Also the ONLY form of the
+// MAC the diagnostic report may carry (review hardening on #1549): hex-based
+// rather than split-on-colons, so a separator-free MAC can never fall through
+// as the full stable identifier, and "" (not the input) when it isn't a MAC.
 export function macTail(mac) {
-  const parts = String(mac || "").split(":");
-  return parts.length >= 2 ? "…" + parts.slice(-2).join(":") : String(mac || "");
+  const hex = String(mac || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+  if (hex.length < 4) return "";
+  return "…" + hex.slice(-4, -2) + ":" + hex.slice(-2);
 }
 
 // One line per hatchling for the progression strip; `now` passed in so the
