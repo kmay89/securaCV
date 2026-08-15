@@ -66,6 +66,13 @@ COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_ve
 COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799
+# The event API terminates no TLS in-process, so witnessd now fails closed on a
+# non-loopback bind unless plaintext exposure is explicitly acknowledged. This
+# image binds 0.0.0.0 by design (so the published port is reachable) and relies
+# on Docker network isolation / the operator's published-port and firewall
+# controls for confidentiality — put a TLS terminator in front for untrusted
+# networks. Opt in explicitly so the container boots under the fail-closed guard.
+ENV WITNESS_API_ALLOW_INSECURE=1
 ENV RUST_LOG=info
 
 # SECURITY: Expose only the API port. No other services should bind.

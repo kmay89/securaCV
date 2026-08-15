@@ -223,6 +223,7 @@ fn verify(conn: &Connection, ca: Option<&str>) -> Result<()> {
         return Ok(());
     }
     let mut failures = 0usize;
+    let mut unverified = 0usize;
     for a in &anchors {
         let mut problems: Vec<String> = Vec::new();
 
@@ -250,15 +251,25 @@ fn verify(conn: &Connection, ca: Option<&str>) -> Result<()> {
         }
 
         if problems.is_empty() {
-            let crypto = if ca.is_some() {
-                ", countersignature OK"
+            if ca.is_some() {
+                println!(
+                    "anchor #{}: OK (imprint matches, in chain history, countersignature OK) \
+                     genTime {}",
+                    a.id, a.gen_time
+                );
             } else {
-                ""
-            };
-            println!(
-                "anchor #{}: OK (imprint matches, in chain history{}) genTime {}",
-                a.id, crypto, a.gen_time
-            );
+                // Structural checks passed, but the CMS countersignature — the
+                // step that makes the timestamp an *authority* rather than an
+                // attacker-chosen string — was NOT checked. Never print "OK"
+                // here: it reads as a verified anchor. genTime is untrusted
+                // until --ca cryptographically verifies the token.
+                unverified += 1;
+                println!(
+                    "anchor #{}: UNVERIFIED (imprint matches, in chain history; countersignature \
+                     NOT checked — re-run with --ca) genTime {} (untrusted)",
+                    a.id, a.gen_time
+                );
+            }
         } else {
             failures += 1;
             println!("anchor #{}: FAIL", a.id);
@@ -269,7 +280,9 @@ fn verify(conn: &Connection, ca: Option<&str>) -> Result<()> {
     }
     if ca.is_none() {
         println!(
-            "\nstructural checks only; for the full countersignature check pass\n  \
+            "\n{unverified} anchor(s) structurally consistent but CRYPTOGRAPHICALLY UNVERIFIED. \
+             Their genTime is attacker-controllable until the countersignature is checked; do not \
+             rely on them as trusted timestamps. For the full countersignature check pass\n  \
              --ca <tsa-ca.pem>   (runs: openssl ts -verify -digest <hash> -in <token> -CAfile …)"
         );
     }

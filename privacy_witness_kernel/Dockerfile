@@ -27,8 +27,18 @@ RUN apk add --no-cache \
     libseccomp-dev \
     sqlite-dev \
     openssl-dev
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --profile minimal --default-toolchain stable
+# Pin an EXACT toolchain (not the moving `stable`) so the build is
+# reproducible — this matches the Rust version the root Dockerfile builds the
+# same crate with. `set -eux` fails the layer on any error in the pipe.
+# NOTE (supply chain, tracked): the rustup installer is fetched over TLS but not
+# checksum-verified, and the two base images below (BUILD_FROM and alpine:3.18)
+# are pinned by tag, not digest. The root Dockerfile pins its bases by
+# `@sha256:` — apply the same to BUILD_FROM/alpine here and add a sha256 check
+# of rustup-init to close this fully (needs registry/artifact digests).
+ARG RUST_TOOLCHAIN=1.97.0
+RUN set -eux; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}"
 ENV PATH="/root/.cargo/bin:${PATH}"
 # Disable crt-static for the whole build: the musl target links fully static by
 # default, but Alpine ships only shared (.so) GStreamer/GLib/seccomp libraries (no

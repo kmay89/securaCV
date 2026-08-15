@@ -97,7 +97,8 @@ and delay exports to reduce event-correlated network signals.
 
 **Access to sealed evidence requires distributed consent.**
 
-- No single actor, credential, or process can unilaterally access sealed evidence.
+- No single actor, credential, or process can unilaterally *authorize* access to
+  sealed evidence through the kernel's paths.
 - The kernel MUST support quorum-based authorization (e.g., N-of-M trustees).
 - Each break-glass event MUST be logged immutably and be externally verifiable.
 Quorum approvals MUST originate from independently controlled principals or
@@ -105,6 +106,18 @@ devices.
 Vault confidentiality MUST rely on distinct, device-local key material or
 quorum-derived secrets; identifiers are never treated as protective key
 material.
+
+> **Scope note (authorization vs. confidentiality).** The quorum is enforced as
+> an authorization gate with tamper-evident receipts, re-derived at the unseal
+> gate. It is **not**, in the current implementation, a cryptographic threshold
+> over the vault decryption key: envelopes are wrapped by a device-local master
+> key stored beside the ciphertext, so an actor who possesses the vault files
+> (stolen disk, backup, snapshot, or a compromised host) can decrypt without a
+> quorum. This is bounded by the host-trust assumption (§ threat model) and is
+> the target of the enterprise-custody work (threshold/HSM key custody). Until
+> that ships, this invariant guarantees quorum-gated *authorization* and an
+> immutable *audit trail*, not confidentiality against a vault-file holder. See
+> `kernel/architecture.md` (Invariant V) and `docs/security/ENTERPRISE_CUSTODY.md`.
 
 ---
 

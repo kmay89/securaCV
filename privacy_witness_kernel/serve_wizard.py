@@ -17,6 +17,7 @@ Endpoints:
 """
 
 import http.server
+import ipaddress
 import json
 import os
 import re
@@ -36,6 +37,44 @@ KERNEL_API_URL = "http://127.0.0.1:8799"
 # Largest POST body the wizard accepts. Every wizard payload is a small JSON
 # object; the cap only exists to fail closed on absurd declared lengths.
 MAX_POST_BODY_BYTES = 1024 * 1024
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard for user-supplied hosts (device pairing, camera reachability test)
+# ---------------------------------------------------------------------------
+
+# Names that resolve to internal Supervisor/host services. Blocking these keeps
+# the pairing proxy and the camera-reachability test from being turned into a
+# reachability/timing oracle for the add-on's own network neighborhood. The
+# legitimate target of both is a LAN device (typically RFC1918), so private
+# ranges are intentionally NOT blocked — only loopback, link-local, the
+# unspecified address, and the internal service names.
+_BLOCKED_HOST_NAMES = frozenset({
+    "localhost", "ip6-localhost", "ip6-loopback",
+    "supervisor", "hassio", "host.docker.internal",
+})
+
+
+def _is_blocked_host(host: str) -> bool:
+    """True if `host` (a bare hostname or IP literal, no port) targets the
+    add-on's own loopback/link-local/internal surface rather than a LAN device.
+
+    Literal IPs are classified structurally (loopback / link-local /
+    unspecified); known internal service names are blocked by name. DNS
+    rebinding to a loopback address is a residual gap (we do not resolve here,
+    to avoid blocking legitimate unresolved-at-config LAN names), but the
+    device path this proxies to is a fixed, non-sensitive set.
+    """
+    if not host:
+        return True
+    name = host.strip().lower().rstrip(".")
+    if name in _BLOCKED_HOST_NAMES:
+        return True
+    try:
+        ip = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_link_local or ip.is_unspecified
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +131,12 @@ def _canary_request(address: str, token: str, method: str, path: str,
     # embedded credentials so a crafted value can't redirect the request away
     # from the hardcoded `path`.
     if not re.fullmatch(r"[A-Za-z0-9.\-]+(?::\d{1,5})?", address):
+        return {"ok": False, "error": "Invalid device address"}
+    # SSRF guard: refuse the add-on's own loopback/link-local/internal surface
+    # so this authenticated proxy can't be used as an internal reachability
+    # oracle. The host is the part before an optional :port (the regex above
+    # allows at most one colon and no colons inside the host).
+    if _is_blocked_host(address.split(":", 1)[0]):
         return {"ok": False, "error": "Invalid device address"}
     url = f"http://{address}{path}"
     body = json.dumps(data).encode() if data is not None else None
@@ -213,6 +258,36 @@ def get_addon_options() -> dict:
     return resp.get("data", {})
 
 
+def _public_status_options(opts: dict) -> dict:
+    """Project the add-on options down to the non-secret fields the wizard
+    panel actually renders.
+
+    `/api/status` is reachable over the add-on's ingress port, which is bound
+    on all interfaces inside the Supervisor's Docker network. The full options
+    object carries the root `device_key_seed` (the sealed-log integrity secret)
+    and MQTT passwords; returning it wholesale hands those to the browser (and
+    to any co-resident container that reaches the port directly). The panel
+    only reads mode / retention / broker host / topic prefix / HA-sensor
+    enablement (see wizard/index.html), so we allowlist exactly those and drop
+    everything else. This mirrors the deliberate secret-minimization already
+    applied in `_discover_mqtt` / `_handle_preflight`.
+    """
+    frigate = opts.get("frigate") or {}
+    mqtt_publish = opts.get("mqtt_publish") or {}
+    return {
+        "mode": opts.get("mode", ""),
+        "retention_days": opts.get("retention_days"),
+        "frigate": {
+            # host is not a secret; the broker password is never surfaced.
+            "mqtt_host": str(frigate.get("mqtt_host", "") or ""),
+            "topic_prefix": str(frigate.get("topic_prefix", "") or ""),
+        },
+        "mqtt_publish": {
+            "enabled": bool(mqtt_publish.get("enabled", True)),
+        },
+    }
+
+
 def set_addon_options(options: dict) -> None:
     _supervisor_request("POST", "/addons/self/options", {"options": options})
 
@@ -279,11 +354,24 @@ def test_camera_tcp(url: str) -> dict:
             host = host_port
             port = 554  # default RTSP
 
-        sock = socket.create_connection((host, port), timeout=5)
-        sock.close()
+        # SSRF guard: don't let a "test camera" become an internal port scanner
+        # aimed at the add-on's own loopback/link-local/service surface.
+        if _is_blocked_host(host):
+            return {"ok": False, "error": "Camera address not allowed"}
+        if not (0 < port < 65536):
+            return {"ok": False, "error": "Invalid camera port"}
+
+        try:
+            sock = socket.create_connection((host, port), timeout=5)
+            sock.close()
+        except Exception:
+            # Generic message on purpose: distinguishing refused vs. timed-out
+            # vs. unreachable would leak an open/closed/filtered oracle.
+            return {"ok": False, "host": host, "port": port,
+                    "error": "Camera not reachable at this address"}
         return {"ok": True, "host": host, "port": port}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        return {"ok": False, "error": "Invalid camera URL"}
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +546,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # Try reading device key from file too
             if not configured and DEVICE_KEY_FILE.exists():
                 configured = True
-            return {"ok": True, "configured": configured, "options": opts}
+            # Never return the raw options: they carry device_key_seed and MQTT
+            # passwords. Surface only the non-secret fields the panel renders.
+            return {
+                "ok": True,
+                "configured": configured,
+                "options": _public_status_options(opts),
+            }
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -651,12 +745,20 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 continue
             # Sanitize URL: take only the first line to prevent YAML injection
             # via embedded newlines corrupting the generated config.
-            url = url.splitlines()[0] if url else ""
+            url = url.splitlines()[0].strip() if url else ""
+            # The URL becomes an ffmpeg input. Restrict the scheme to the camera
+            # protocols Frigate expects so a crafted value can't select an
+            # arbitrary ffmpeg protocol handler; skip anything else.
+            if not re.match(r"^(?:rtsp|rtsps|http|https)://", url, re.IGNORECASE):
+                continue
+            # Emit as a single-quoted YAML scalar (doubling any embedded quote)
+            # so the value can't break out of the scalar and inject YAML keys.
+            yaml_url = "'" + url.replace("'", "''") + "'"
             lines += [
                 f"  {name}:",
                 "    ffmpeg:",
                 "      inputs:",
-                f"        - path: {url}",
+                f"        - path: {yaml_url}",
                 "          roles:",
                 "            - detect",
                 "            - record",

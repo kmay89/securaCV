@@ -13,6 +13,16 @@ use witness_kernel::{
     KernelConfig, ZonePolicy,
 };
 
+/// True when an environment variable is set to a truthy value (`1`/`true`).
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false)
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -36,6 +46,8 @@ fn main() -> Result<()> {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
         rate_limit_per_minute: config.api_rate_limit_per_minute,
+        // Explicit opt-in required to expose the plaintext API off-loopback.
+        allow_insecure: env_flag("WITNESS_API_ALLOW_INSECURE"),
         ..ApiConfig::default()
     };
     let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;

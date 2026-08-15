@@ -137,9 +137,19 @@ network syscalls (open/openat, socket/connect, and related path or socket APIs).
 non-optional: if the platform cannot apply the filter, module execution fails closed.
 
 Sandbox boundary: `module_runtime::sandbox::run_in_sandbox` forks a short-lived worker process
-for each module invocation and installs the syscall denylist before running module inference.
-The child process is the untrusted boundary; it can read frames via the restricted inference
-interface, but it cannot access the filesystem or network even if it attempts to do so.
+for each module invocation, closes every inherited descriptor except the result pipe (so an
+inherited DB handle or live socket cannot be reused for exfiltration), and installs the syscall
+filter before running module inference. The child process is the untrusted boundary; it can read
+frames via the restricted inference interface, and the filter denies the filesystem/network
+syscalls plus the newer escape hatches (io_uring, memfd, handle/pidfd/mount openers).
+
+**Honest limitation.** The filter is a *default-allow denylist*, not an allowlist, and is bound to
+the native syscall ABI. It fails closed (module execution aborts if the filter cannot load) and
+reliably blocks the direct `open`/`socket`/`execve` path, but a denylist cannot claim a module
+"physically cannot" reach the filesystem or network — a syscall not on the list, or the 32-bit
+compat ABI on a multi-arch host, is a residual gap. Inverting to an allowlist (kill-by-default)
+and covering the compat ABI is tracked in `docs/security/ENTERPRISE_CUSTODY.md`. Treat the module
+sandbox as strong defense-in-depth around careful review, not an absolute containment boundary.
 
 ### 3.3 External tools (least trusted)
 External components (UI, dashboard, CLI, integrations) are untrusted:
@@ -190,14 +200,37 @@ Enforced by:
 
 ### Invariant V — Break-Glass by Quorum
 Enforced by:
-- vault key material is threshold-protected
-- decrypt requires N-of-M trustee approvals
-- every attempt logged and receipted
+- the break-glass **authorization** requires N-of-M independent trustee
+  signatures, re-derived (never trusted from a stored outcome) at the unseal
+  gate — a device-key holder cannot forge a `Granted` unseal without genuine
+  trustee approvals
+- every authorization attempt is logged and receipted (tamper-evident receipt
+  chain)
+- each token is bound to a single envelope + ruleset + time bucket and burned
+  after use
 
-Threat assumption: the vault is local-only storage. Protecting the host filesystem
-and trustee quorum process remains mandatory, because possession of the vault
-files alone does not grant access without break-glass authorization.
-Vault confidentiality MUST rely on separate, device-local key material or
+**Honest scope of the quorum (read this before trusting "N-of-M").** The quorum
+is a **runtime authorization gate**, not a cryptographic threshold over the
+decryption key. Vault envelopes are sealed with per-object AEAD keys wrapped by
+a device-local master key (`vault/envelopes/master.key`, and, for the pq/hybrid
+modes, `kem-mlkem768.key`). Trustee keys do **not** participate in that wrap.
+Consequently, an actor who can read the vault directory — a stolen disk, a
+backup, a volume snapshot, or a root/host compromise — can decrypt sealed
+evidence *without any trustee involvement*, because the key sits beside the
+ciphertext. This is consistent with, and bounded by, the documented host-trust
+assumption (`docs/root_paradox.md`, `spec/threat_model.md §2.6`): once the host
+boundary is breached, kernel guarantees no longer hold.
+
+What the quorum **does** guarantee, within a trusted host: no single actor
+using the kernel's own paths can *authorize* an unseal, and every unseal (or
+denied attempt) leaves an externally verifiable receipt. What it does **not**
+yet guarantee: confidentiality of the raw evidence against someone who
+possesses the vault files. Closing that gap — Shamir/threshold-wrapping the DEK
+across trustees, or sealing `master.key` in an HSM/TPM/PKCS#11 or under an
+Argon2id passphrase kept outside the vault directory — is the enterprise-custody
+work tracked in [`docs/security/ENTERPRISE_CUSTODY.md`](../docs/security/ENTERPRISE_CUSTODY.md).
+
+Vault confidentiality MUST rely on distinct, device-local key material or
 quorum-derived secrets; vault envelopes are never secured by identifiers alone.
 
 ### Invariant VI — No Retroactive Capability Expansion
