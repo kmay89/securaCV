@@ -21,10 +21,11 @@
 #define MQTT_PASS "your_mqtt_password"
 
 // Local timezone for the clock and quiet-hours night mode (POSIX TZ
-// string). SET THIS. The compiled default is UTC0, and the auto-learner
-// below is compiled OUT unless you opt in, so a display that is never
-// told its zone shows UTC forever — the clock reads hours wrong and quiet
-// hours begin and end at the wrong times. You can also set it at runtime
+// string). SET THIS unless you are on US Eastern. The compiled default is
+// America/New_York, and the auto-learner below is compiled OUT unless you
+// opt in, so a display that is never told its zone keeps that zone forever
+// — outside it the clock reads hours wrong and, because quiet hours are
+// wall-clock hours, the face can sit in night mode through the morning. You can also set it at runtime
 // from the display's own web page (Timezone), which persists to NVS and
 // wins over this value; this is the seed a freshly flashed unit boots on.
 // The explicit flag stops the auto-learner from ever overriding your

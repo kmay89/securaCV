@@ -330,8 +330,11 @@ void portrait7_ui_update(const Fleet& fleet, uint32_t now,
   const Sev worst = fleet.worst(now);
   const bool link_down = !st.wifi_ok || !st.mqtt_ok;
 
-  // Clock + colon.
-  const lv_color_t clk = night ? ncol_text() : col_text();
+  // Clock + colon. The hero takes the saturated night red (ncol_clock); the
+  // chrome below stays on ncol_muted, so the column keeps the same hierarchy
+  // as the bedside face rather than two 7" personalities disagreeing about
+  // what the brightest thing on a dark screen should be.
+  const lv_color_t clk = night ? ncol_clock() : col_text();
   analog_clock_update(&s_analog, st.clock_hh, st.clock_mm, clk,
                       night ? ncol_muted() : col_muted(), st.time_valid);
   const bool twelve = canary::glass::settings().clock_12h != 0;

@@ -1451,9 +1451,10 @@ void setup() {
 #if defined(FEATURE_SNTP) && FEATURE_SNTP
   // Wall time = UTC (SNTP, two independent sources) + a timezone rule.
   // The rule comes from NVS if a previous boot learned it from the web
-  // (tz_auto — DST included), else the CD_TZ seed (UTC0 unless secrets.h
-  // set a real one). The clock read "00:00" at 8 PM on the bench because
-  // the seed was honest UTC — right instant, wrong wall.
+  // (tz_auto — DST included), else the CD_TZ seed (America/New_York unless
+  // secrets.h set a real one). The clock read "00:00" at 8 PM on the bench
+  // when that seed was UTC — right instant, wrong wall, and on a bedside
+  // face a wrong wall also decides whether it is night.
   {
     char tz[48];
     canary::net::tz_boot_string(CD_TZ, tz, sizeof(tz));

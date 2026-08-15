@@ -194,7 +194,17 @@
 #define CD_QUIET_START_HOUR     20
 #define CD_QUIET_END_HOUR       7
 #ifndef CD_TZ
-#define CD_TZ                   "UTC0"
+#define CD_TZ                   "EST5EDT,M3.2.0,M11.1.0"  // America/New_York
+                                        // A wall clock that is wrong is worse
+                                        // than one that is late: UTC0 shipped a
+                                        // glass that read 3 a.m. at 11 a.m., which
+                                        // also drove the face into night mode in
+                                        // daylight. The web learner is OFF by
+                                        // default on purpose (it would send the
+                                        // household IP to a geolocation service),
+                                        // so this seed IS the answer until someone
+                                        // sets one. secrets.h CD_TZ still wins, as
+                                        // does POST /api/tz and the settings sheet.
 #endif
 
 // ============================================================================
