@@ -8,7 +8,17 @@
 
 Four bedside complaints that turned out to be two causes.
 
-- **The clock now defaults to America/New_York, not UTC.** A display with no
+- **You pick the time zone during setup, in one tap.** The phone-side setup
+  page now carries a zone picker, already set to the zone the phone itself
+  reports — so for most people it is a thing to glance at, not a thing to do.
+  It costs the network nothing: the phone is standing on the display's own
+  setup access point, which has no route anywhere, so the answer travels one
+  hop and the IP-geolocation learner stays compiled out. The presets are the
+  same list, label for label and rule for rule, that the display's settings
+  page serves. A phone whose zone is not in the list, or a browser that will
+  not say, falls back to New York and the line under the picker tells you
+  which of the two happened.
+- **And the compiled default is America/New_York, not UTC.** A display with no
   zone set showed 3 a.m. at 11 a.m. — and quiet hours are wall-clock hours,
   so the face also sat in NIGHT MODE through the morning, which is what made
   the settings corner dark and unresponsive in daylight. The privacy default
