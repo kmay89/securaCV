@@ -461,7 +461,10 @@ void handle_settings_set() {
 // rather than a string escape hatch in the integer parser.
 //
 // Why it exists at all: OTA release binaries are generic (runtime_config.h),
-// so they ship the CD_TZ default of UTC0. Before this, a household whose
+// so they ship the CD_TZ default, which is a real zone (America/New_York)
+// rather than UTC — right for one coast and wrong for everywhere else, so
+// this route is how everywhere else fixes it. Before it existed, a household
+// whose
 // display showed the wrong hour had exactly one remedy — rebuild the
 // firmware with its zone compiled in — which is not a thing a household
 // does. The zone lands in the same NVS the learner writes, so it outlives

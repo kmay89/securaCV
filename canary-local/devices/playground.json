@@ -7,7 +7,7 @@
   "name": "Waveshare ESP32-S3-Touch-LCD-4.3B",
   "vendor": "Waveshare",
   "mcu": "ESP32-S3",
-  "fw_version": "2.4.10",
+  "fw_version": "2.4.11",
   "enclosure": "LCD-4.3B-BOX",
   "dims_mm": [
    136,

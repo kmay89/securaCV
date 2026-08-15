@@ -162,8 +162,9 @@ void tz_boot_string(const char* seed, char* out, unsigned cap) {
     return;
   }
   // No NVS value yet: the seed as THIS unit sees it. The secrets-first
-  // include above means a hand-set CD_TZ wins over the flavor's UTC0
-  // even though the caller's copy of CD_TZ may be the flavor default.
+  // include above means a hand-set CD_TZ wins over the flavor's seed
+  // (America/New_York) even though the caller's copy of CD_TZ may be the
+  // flavor default.
   (void)seed;
   strlcpy(out, CD_TZ, cap);
 }

@@ -124,11 +124,18 @@ constexpr uint32_t COMMIT_DEBOUNCE_MS = 2000;
 Settings defaults() {
   Settings d = {};
   d.day_pct = 100;
-#if defined(FEATURE_NIGHT_BLACKOUT) && FEATURE_NIGHT_BLACKOUT
-  d.night_screen = NIGHT_SCREEN_OFF;
-#else
+  // Dim, not off — on every flavor, blackout-capable or not.
+  //
+  // A blackout-capable glass used to DEFAULT to going fully dark at night,
+  // and on a nightstand that reads as a fault rather than as a setting: the
+  // clock you bought a bedside clock for is simply gone, and getting it back
+  // means finding an unlit screen in the dark and remembering that a tap
+  // peeks. Dim keeps the calibrated glow — the same floor the black-point
+  // wizard tunes — and a tap still lifts it to CD_BRIGHT_PEEK, so "off" is
+  // now something an owner chooses for a room that needs true dark rather
+  // than the state they wake up to. NIGHT_SCREEN_OFF is untouched and one
+  // tap away in settings; the honesty veto over it is unchanged.
   d.night_screen = NIGHT_SCREEN_DIM;
-#endif
   d.red_shift = 1;
   d.peek_s = 5;
   d.night_start_hh = CD_QUIET_START_HOUR;
