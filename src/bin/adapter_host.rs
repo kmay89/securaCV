@@ -633,17 +633,24 @@ fn main() -> Result<()> {
                         v == "1" || v.eq_ignore_ascii_case("true")
                     })
                     .unwrap_or(false);
-                if let Ok(sa) = listen_addr.parse::<std::net::SocketAddr>() {
-                    if !sa.ip().is_loopback() && !authenticated && !allow_insecure {
-                        return Err(anyhow!(
-                            "webhook adapter #{idx}: refusing to bind non-loopback address '{}' \
-                             without authentication — an unauthenticated webhook can forge witness \
-                             events. Set auth_token/hmac_secret (or mutual TLS via tls_client_ca), \
-                             bind a loopback address, or set ADAPTER_WEBHOOK_ALLOW_INSECURE=1 to \
-                             override explicitly.",
-                            listen_addr
-                        ));
-                    }
+                // Resolve exactly as webhook::bind does (ToSocketAddrs), so a
+                // hostname listen_addr that resolves to a routable interface is
+                // caught too — not only numeric SocketAddr literals. If the name
+                // can't resolve here, the subsequent bind fails anyway.
+                use std::net::ToSocketAddrs;
+                let resolves_non_loopback = listen_addr
+                    .to_socket_addrs()
+                    .map(|addrs| addrs.into_iter().any(|sa| !sa.ip().is_loopback()))
+                    .unwrap_or(false);
+                if resolves_non_loopback && !authenticated && !allow_insecure {
+                    return Err(anyhow!(
+                        "webhook adapter #{idx}: refusing to bind non-loopback address '{}' \
+                         without authentication — an unauthenticated webhook can forge witness \
+                         events. Set auth_token/hmac_secret (or mutual TLS via tls_client_ca), \
+                         bind a loopback address, or set ADAPTER_WEBHOOK_ALLOW_INSECURE=1 to \
+                         override explicitly.",
+                        listen_addr
+                    ));
                 }
 
                 // TLS when both cert and key are configured; a client-CA adds mutual TLS.

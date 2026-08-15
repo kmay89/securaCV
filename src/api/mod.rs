@@ -190,19 +190,22 @@ impl ApiServer {
         }
 
         let configured_addr: SocketAddr = self.cfg.addr.parse()?;
-        // Fail closed on off-host exposure. The event API terminates no TLS
-        // in-process, so a non-loopback bind would put the bearer capability
-        // token and event metadata on the wire in cleartext. Require an
-        // explicit operator override before exposing it — mirroring the
-        // break-glass server's validate_exposure. The loopback path (reached
-        // behind a TLS reverse proxy or SSH tunnel) stays the default.
-        let tls_configured = self.cfg.tls.as_ref().is_some_and(|t| t.is_configured());
-        if !configured_addr.ip().is_loopback() && !tls_configured && !self.cfg.allow_insecure {
+        // Fail closed on off-host exposure. The event API terminates NO TLS
+        // in-process — a populated `ApiTlsConfig` is not yet wired into the
+        // accept loop — so a non-loopback bind puts the bearer capability token
+        // on the wire in cleartext *regardless* of whether cert/key are loaded.
+        // Do not treat loaded key material as protection: require an explicit
+        // operator override. Mirrors the break-glass server's validate_exposure;
+        // the loopback path (behind a TLS reverse proxy or SSH tunnel) is the
+        // default. (When in-process TLS lands, gate this on TLS actually wrapping
+        // the socket, not on config being present.)
+        if !configured_addr.ip().is_loopback() && !self.cfg.allow_insecure {
             return Err(anyhow!(
                 "refusing to bind non-loopback address '{configured_addr}': the event API \
-                 capability token would cross the network in cleartext. Bind a loopback address \
-                 behind a TLS reverse proxy or SSH tunnel, or set WITNESS_API_ALLOW_INSECURE=1 to \
-                 accept plaintext exposure explicitly."
+                 capability token would cross the network in cleartext (in-process TLS is not \
+                 implemented, so cert/key config does not protect this socket). Bind a loopback \
+                 address behind a TLS reverse proxy or SSH tunnel, or set \
+                 WITNESS_API_ALLOW_INSECURE=1 to accept plaintext exposure explicitly."
             ));
         }
         let listener = TcpListener::bind(configured_addr)?;
