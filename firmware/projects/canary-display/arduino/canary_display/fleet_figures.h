@@ -74,6 +74,7 @@ inline constexpr HardwareRef kHardware[] = {
   { "board:seeed_xiao_esp32s3", "device.canary-wap", "5fab1e20", "shipping", false },  // 4 builds
   { "esp32-c3", "device.canary-vision-devkit", "996e322d", "shipping", false },  // 2 builds
   { "waveshare-esp32c3-lcd147", "device.canary-nightlight", "27f621f7", "prototype", false },  // 1 build
+  { "waveshare-esp32s3-amoled241", "device.canary-display-amoled241", "8c939c25", "prototype", false },  // 1 build
   { "waveshare-esp32s3-lcd147", "device.canary-display-nightstand", "c361481b", "prototype", false },  // 1 build
   { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "9bb5e13f", "prototype", false },  // 2 builds
   { "waveshare-esp32s3-lcd7", "device.canary-display-dash7", "cdff74a9", "prototype", true },  // 2 builds — shared by canary-dash + canary-nightstand7

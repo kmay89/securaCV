@@ -1,6 +1,6 @@
 {
   "$schema_note": "canary.local device registry — one entry per device flavor. The page renders a pairing card per entry; entries with an `emulator` block get the live wasm firmware on their glass. `fw_train` names the release train this registry snapshot teaches; per-version emulator artifacts are named dist/<id>@<version>.js when built from a release tag (see canary-local/README.md §Versioning).",
-  "fw_train": "2.4.11",
+  "fw_train": "2.4.12",
   "devices": [
     {
       "id": "canary-display-watch",
@@ -307,6 +307,71 @@
             "id": "boot",
             "label": "BOOT",
             "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": []
+      }
+    },
+    {
+      "id": "canary-display-amoled241",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Glance AMOLED",
+      "tagline": "The flagship glance glass — true black, living color, and the whole nightstand story at 450x600.",
+      "board": "Waveshare ESP32-S3-Touch-AMOLED-2.41",
+      "glass": {
+        "w": 450,
+        "h": 600,
+        "round": false,
+        "panel": "RM690B0 2.41\" AMOLED",
+        "touch": "FT6336"
+      },
+      "senses": [],
+      "shows": [
+        "portrait witness column",
+        "living canary",
+        "touch peek + ack",
+        "honest night",
+        "SD deep archive"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-amoled241.js",
+        "factory": "createCanaryEmuAmoled241"
+      },
+      "docs": [
+        "docs/hardware/display_nightstand_line.md"
+      ],
+      "status": "in development — CI-verified twin, bench pending",
+      "bench": {
+        "power": {
+          "usb": "USB-C — power + serial",
+          "battery": "3.7 V cell on the battery header (ETA6098 charger — autonomous, no I2C gauge)",
+          "switch": {
+            "label": "PWR (case button)",
+            "controls": "battery",
+            "note": "a readable GPIO (15) riding a soft power latch (GPIO16): short press = wake, hold 3 s = honest power-off; on USB the board is always up"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin — this firmware also reads it at runtime for the tap/double/hold ladder"
+          },
+          {
+            "id": "pwr",
+            "label": "PWR",
+            "note": "GPIO15 — wake / hold-to-power-off (the latch drop is the power-off)"
           },
           {
             "id": "reset",

@@ -50,13 +50,15 @@ if [[ "$FLAVOR" == "all" ]]; then
   "$0" dash
   "$0" nightstand
   "$0" touch169
+  "$0" amoled241
   "$0" vision
   "$0" audio
   exit 0
 fi
 [[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" || "$FLAVOR" == "nightstand" || \
-   "$FLAVOR" == "touch169" || "$FLAVOR" == "vision" || "$FLAVOR" == "audio" ]] || {
-  echo "usage: $0 [watch|dash|nightstand|touch169|vision|audio|all]" >&2
+   "$FLAVOR" == "touch169" || "$FLAVOR" == "amoled241" || \
+   "$FLAVOR" == "vision" || "$FLAVOR" == "audio" ]] || {
+  echo "usage: $0 [watch|dash|nightstand|touch169|amoled241|vision|audio|all]" >&2
   exit 2
 }
 
@@ -265,6 +267,11 @@ elif [[ "$FLAVOR" == "touch169" ]]; then
   # shim's pointer events ARE the touch panel here.
   PINS_DIR="$FW/boards/waveshare-esp32s3-touch-lcd169/pins"
   CFG_DIR="$FW/configs/canary-display/touch169"
+elif [[ "$FLAVOR" == "amoled241" ]]; then
+  # The 450x600 flagship AMOLED portrait: the same nightstand app on the
+  # big emissive glass (CD_AMOLED_GLASS) — pointer events are the FT6336.
+  PINS_DIR="$FW/boards/waveshare-esp32s3-amoled241/pins"
+  CFG_DIR="$FW/configs/canary-display/amoled241"
 else
   PINS_DIR="$FW/boards/waveshare-esp32s3-lcd43/pins"
   CFG_DIR="$FW/configs/canary-display/dash"
@@ -275,6 +282,7 @@ case "$FLAVOR" in
   watch)      EXPORT_NAME="createCanaryEmuWatch" ;;
   nightstand) EXPORT_NAME="createCanaryEmuNightstand" ;;
   touch169)   EXPORT_NAME="createCanaryEmuTouch169" ;;
+  amoled241)  EXPORT_NAME="createCanaryEmuAmoled241" ;;
   *)          EXPORT_NAME="createCanaryEmuDash" ;;
 esac
 OBJ="$BUILD/$FLAVOR"
@@ -347,7 +355,8 @@ FIRMWARE_SRCS=(
 # color/look engine (the same LDF lesson the nightstand-s3 PlatformIO env
 # documents) — adding these TUs to watch/dash would perturb their bytes
 # for nothing, so they join per-flavor.
-if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" ]]; then
+if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" || \
+      "$FLAVOR" == "amoled241" ]]; then
   FIRMWARE_SRCS+=(
     "$FW/common/color/color_engine.cpp"
     "$FW/common/color/look_engine.cpp"
@@ -364,9 +373,9 @@ if [[ "$FLAVOR" == "nightstand" || "$FLAVOR" == "touch169" ]]; then
     "$PROJ/src/hal/ambient_led.cpp"
   )
 fi
-if [[ "$FLAVOR" == "touch169" ]]; then
+if [[ "$FLAVOR" == "touch169" || "$FLAVOR" == "amoled241" ]]; then
   FIRMWARE_SRCS+=(
-    # The battery-backed RTC transport (FEATURE_RTC on this flavor):
+    # The battery-backed RTC transport (FEATURE_RTC on these flavors):
     # main.cpp calls rtc_begin/rtc_loop under the same gate, so the TU
     # must link. On the shim's empty I2C bus (shim/Wire.h) the probe
     # NACKs and the firmware takes the same no-RTC path as hardware

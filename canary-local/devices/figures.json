@@ -23,7 +23,7 @@
  },
  "counts": {
   "idea": 15,
-  "prototype": 8,
+  "prototype": 9,
   "confirmed": 1,
   "shipping": 25
  },
@@ -170,6 +170,17 @@
     ],
     "serves": [
      "canary-nightlight"
+    ],
+    "shared": false
+   },
+   {
+    "hardware": "waveshare-esp32s3-amoled241",
+    "figure": "device.canary-display-amoled241",
+    "builds": [
+     "canary-display-amoled241"
+    ],
+    "serves": [
+     "canary-nightstand"
     ],
     "shared": false
    },
@@ -743,6 +754,48 @@
    "glyph": "canary-local/figures/device.canary-curbwatch.glyph.svg"
   },
   {
+   "id": "device.canary-display-amoled241",
+   "title": "Canary Glance AMOLED",
+   "role": "device",
+   "device": "canary-display-amoled241",
+   "family": "canary-display",
+   "supply": [
+    {
+     "vendor": "waveshare",
+     "line": "ESP32 display board"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "display",
+    "committed_stls": [],
+    "catalog_variants": [],
+    "firmware_configs": [
+     "amoled241",
+     "dash",
+     "dash7",
+     "nightlight",
+     "nightstand",
+     "nightstand7",
+     "touch169",
+     "watch"
+    ]
+   },
+   "dims_source": "sketch",
+   "sketch_note": "the 2.41\" 450x600 module (active 36.7 x 49.0, computed from the 61.2 mm diagonal) inside the vendor metal case, whose envelope is an estimate from vendor photos; no committed case CAD — VERIFY with calipers",
+   "envelope_mm": {
+    "w": 46,
+    "d": 13,
+    "h": 62
+   },
+   "traced_to": [],
+   "drift_guard": null,
+   "solids": 3,
+   "rev": "8c939c25",
+   "svg": "canary-local/figures/device.canary-display-amoled241.svg",
+   "glyph": "canary-local/figures/device.canary-display-amoled241.glyph.svg"
+  },
+  {
    "id": "device.canary-display-dash",
    "title": "Canary Dash",
    "role": "device",
@@ -771,6 +824,7 @@
      }
     ],
     "firmware_configs": [
+     "amoled241",
      "dash",
      "dash7",
      "nightlight",
@@ -822,6 +876,7 @@
     "committed_stls": [],
     "catalog_variants": [],
     "firmware_configs": [
+     "amoled241",
      "dash",
      "dash7",
      "nightlight",
@@ -863,6 +918,7 @@
     "committed_stls": [],
     "catalog_variants": [],
     "firmware_configs": [
+     "amoled241",
      "dash",
      "dash7",
      "nightlight",
@@ -904,6 +960,7 @@
     "committed_stls": [],
     "catalog_variants": [],
     "firmware_configs": [
+     "amoled241",
      "dash",
      "dash7",
      "nightlight",
@@ -961,6 +1018,7 @@
      }
     ],
     "firmware_configs": [
+     "amoled241",
      "dash",
      "dash7",
      "nightlight",
@@ -1200,6 +1258,7 @@
     "committed_stls": [],
     "catalog_variants": [],
     "firmware_configs": [
+     "amoled241",
      "dash",
      "dash7",
      "nightlight",

@@ -505,6 +505,7 @@ const HARDWARE_FIGURE = {
   // the generic marker is the honest answer.
   'waveshare-esp32c3-lcd147': 'device.canary-nightlight',
   'waveshare-esp32s3-lcd147': 'device.canary-display-nightstand',
+  'waveshare-esp32s3-amoled241': 'device.canary-display-amoled241',
 };
 
 /* Hardware we can name but cannot yet draw. Listed so the gap is data, with

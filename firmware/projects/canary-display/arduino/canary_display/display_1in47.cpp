@@ -25,7 +25,10 @@
 //    pins.h). These are community findings — bench-verify colors on first
 //    boot; a swapped panel shows blue where it should show yellow.
 #include "flavor_config.h"
-#ifdef CD_FLAVOR_NIGHTSTAND
+// The AMOLED 2.41 rides the same nightstand flavor but swaps this ST7789
+// HAL out for display_amoled241.cpp (RM690B0 QSPI) — CD_AMOLED_GLASS is
+// that board's config selector, not a feature flag.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_AMOLED_GLASS)
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
@@ -459,4 +462,4 @@ TouchSample touch_read() { return TouchSample{}; }
 
 }  // namespace canary::hal
 
-#endif  // CD_FLAVOR_NIGHTSTAND
+#endif  // CD_FLAVOR_NIGHTSTAND && !CD_AMOLED_GLASS

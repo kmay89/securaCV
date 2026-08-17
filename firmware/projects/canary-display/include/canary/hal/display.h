@@ -79,6 +79,14 @@ struct TouchSample {
 // frame (see touch_set_rotation), so callers never orientation-correct taps.
 TouchSample touch_read();
 
+#ifdef CD_AMOLED_GLASS
+// ── Honest power-off (the AMOLED 2.41's case PWR button) ────────────────
+// Panel to sleep, emission zero, power latch dropped, then deep sleep with
+// wake on the PWR key — so battery and USB desks tell the same story: hold
+// to go dark, press to come back. Does not return.
+void power_off();
+#endif
+
 #ifdef CD_FLAVOR_DASH
 // Tell the touch layer the active display rotation (canary::glass::Rotation)
 // and the panel's native landscape size, so touch_read() maps raw GT911

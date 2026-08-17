@@ -1161,6 +1161,15 @@ static void display_serial_write(const char* str) {
 }
 
 void setup() {
+#if defined(PWR_LATCH_PIN) && (PWR_LATCH_PIN >= 0)
+  // Soft power latch (AMOLED 2.41): GPIO16 holds the board's rail on
+  // battery — raise it before ANYTHING else, or a slow boot loses power
+  // the moment the user releases the PWR button. The display HAL re-asserts
+  // it (with the panel-supply settle delay) later; this line is what keeps
+  // us alive long enough to get there.
+  pinMode(PWR_LATCH_PIN, OUTPUT);
+  digitalWrite(PWR_LATCH_PIN, HIGH);
+#endif
 #if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
   // First visible sign of life: the behind-the-glass beacon lights bright
   // canary yellow before ANYTHING else — before serial settles, before the
@@ -2051,6 +2060,47 @@ void loop() {
     }
   }
 #endif  // BOOT_BUTTON_PIN
+
+#if defined(CD_AMOLED_GLASS) && defined(PWR_KEY_PIN) && (PWR_KEY_PIN >= 0) && \
+    defined(PWR_LATCH_PIN) && (PWR_LATCH_PIN >= 0) && !defined(__EMSCRIPTEN__)
+  // The case PWR button (AMOLED 2.41 — a readable GPIO, unlike the 1.69's
+  // latch-only key). Short press = wake/peek, exactly a BOOT tap; held
+  // CD_PWR_OFF_HOLD_MS = honest power-off through the HAL (panel to sleep,
+  // latch dropped, deep sleep waking on this same button). A hand-rolled
+  // hold timer rather than the ButtonClassifier on purpose: a power gesture
+  // must not inherit the double/triple grammar, and it fires on the
+  // deadline, not the release — the user learns the hold length by feel.
+  {
+    static bool s_pwr_armed = false;
+    static bool s_pwr_down = false;
+    static uint32_t s_pwr_down_ms = 0;
+    static bool s_pwr_fired = false;
+    if (!s_pwr_armed) {
+      pinMode(PWR_KEY_PIN, INPUT_PULLUP);
+      s_pwr_armed = true;
+    }
+    const bool pressed = digitalRead(PWR_KEY_PIN) == LOW;
+    if (pressed && !s_pwr_down) {
+      s_pwr_down = true;
+      s_pwr_down_ms = now;
+      s_pwr_fired = false;
+    } else if (pressed && s_pwr_down && !s_pwr_fired &&
+               (int32_t)(now - s_pwr_down_ms) >= (int32_t)CD_PWR_OFF_HOLD_MS) {
+      s_pwr_fired = true;
+      boot_line("[input] PWR held -> power off");
+      canary::hal::power_off();  // does not return
+    } else if (!pressed && s_pwr_down) {
+      s_pwr_down = false;
+      if (!s_pwr_fired) {
+        // A released short press: wake the glass, same as a BOOT tap.
+        const bool night_now = in_quiet_hours();
+        g_wake_until_ms = now + wake_window_ms(night_now);
+        canary::ui::canary_mark_react(canary::ui::CanaryReact::Startle);
+        fleet.mark_dirty();
+      }
+    }
+  }
+#endif  // CD_AMOLED_GLASS && PWR_KEY_PIN
 
   // ── Ambient life: the organic check-in ──
   // Allowed only on a glass that is genuinely idle AND genuinely lit: calm
