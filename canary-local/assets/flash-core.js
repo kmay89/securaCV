@@ -1728,6 +1728,30 @@ export function postFlashNextStep(product, opts = {}) {
   };
 }
 
+// ── post-flash: the hatch gate both flashers honor ──────────────────────────
+// Missing/unknown catalog entries fail closed and still require a receipt.
+// The generated catalog writes an explicit false only when the product's real
+// firmware sources do not wire the shared self-manifest to the `j` command.
+// Same rule, same wording, as desktop/src/app.js:requiresLiveReceipt — the
+// two flashers must agree on WHEN a product has proven itself.
+export function requiresLiveReceipt(product) {
+  return !product || product.serial_receipt !== false;
+}
+
+// The catalog's post-flash "first flight" (products[].hatch, authored once in
+// gen_flash.py's HATCH_MOMENTS): kicker + title + body + ordered steps.
+// Returns null when the product carries no usable hatch data (a local file,
+// an unknown board) — the caller falls back to the generic postFlashNextStep
+// above. Pure + host-tested; flash.js renders it, and the desktop Flasher
+// renders the same catalog copy (app.js hatchMoment → showHatchCard), so the
+// two frontends tell the same story.
+export function hatchMoment(product) {
+  const h = product && product.hatch;
+  if (!h || typeof h !== "object" || !h.title || !h.body) return null;
+  if (!Array.isArray(h.steps) || !h.steps.length) return null;
+  return { kicker: h.kicker || "Canary hatched", title: h.title, body: h.body, steps: h.steps };
+}
+
 // ── prove it works: the self-check verdict from the manifest health ─────────
 // The manifest's `health` (0-100, or null) IS the device self-test result. Turn
 // it into a plain-language verdict so a headless board (Sense/mmWave) *shows*

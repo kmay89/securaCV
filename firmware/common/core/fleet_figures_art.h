@@ -176,37 +176,37 @@ inline constexpr ArtFace kArt_device_canary_display_touch169_faces[] = {
   { 0x1A2F47, 2, kArt_device_canary_display_touch169_t18 },
 };
 
-inline constexpr int16_t kArt_device_canary_display_watch_t0[] = {176,189,234,156,232,138,232,138,175,171,176,189};
-inline constexpr int16_t kArt_device_canary_display_watch_t1[] = {175,171,232,138,228,118,228,118,171,152,175,171};
-inline constexpr int16_t kArt_device_canary_display_watch_t2[] = {171,152,228,118,221,99,221,99,163,132,171,152};
-inline constexpr int16_t kArt_device_canary_display_watch_t3[] = {163,132,221,99,211,80,211,80,154,113,163,132};
-inline constexpr int16_t kArt_device_canary_display_watch_t4[] = {154,113,211,80,200,62,200,62,142,95,154,113};
-inline constexpr int16_t kArt_device_canary_display_watch_t5[] = {142,95,200,62,186,46,186,46,129,79,142,95};
-inline constexpr int16_t kArt_device_canary_display_watch_t6[] = {129,79,186,46,172,33,172,33,114,66,129,79};
-inline constexpr int16_t kArt_device_canary_display_watch_t7[] = {114,66,172,33,157,22,157,22,99,56,114,66};
-inline constexpr int16_t kArt_device_canary_display_watch_t8[] = {99,56,157,22,142,15,142,15,84,49,99,56};
-inline constexpr int16_t kArt_device_canary_display_watch_t9[] = {84,49,142,15,127,12,127,12,70,45,84,49};
-inline constexpr int16_t kArt_device_canary_display_watch_t10[] = {70,45,127,12,114,13,114,13,56,46,70,45};
-inline constexpr int16_t kArt_device_canary_display_watch_t11[] = {114,13,45,50,56,46};
-inline constexpr int16_t kArt_device_canary_display_watch_t12[] = {221,198,163,231,154,239};
-inline constexpr int16_t kArt_device_canary_display_watch_t13[] = {163,231,221,198,228,187,228,187,171,220,163,231};
-inline constexpr int16_t kArt_device_canary_display_watch_t14[] = {171,220,228,187,232,172,232,172,175,206,171,220};
-inline constexpr int16_t kArt_device_canary_display_watch_t15[] = {175,206,232,172,234,156,234,156,176,189,175,206};
-inline constexpr int16_t kArt_device_canary_display_watch_t16[] = {175,206,175,171,163,132,175,206,163,132,142,95,175,206,142,95,114,66,175,206,114,66,84,49,175,206,84,49,56,46,175,206,56,46,35,58,175,206,35,58,24,84,175,206,24,84,24,118,175,206,24,118,35,157,175,206,35,157,56,194,175,206,56,194,84,223,175,206,84,223,114,241,175,206,114,241,142,243,142,243,163,231,175,206};
-inline constexpr int16_t kArt_device_canary_display_watch_t17[] = {160,187,166,183,165,167,165,167,159,171,160,187};
-inline constexpr int16_t kArt_device_canary_display_watch_t18[] = {159,171,165,167,161,151,161,151,155,154,159,171};
-inline constexpr int16_t kArt_device_canary_display_watch_t19[] = {155,154,161,151,155,134,155,134,149,137,155,154};
-inline constexpr int16_t kArt_device_canary_display_watch_t20[] = {149,137,155,134,147,117,147,117,141,121,149,137};
-inline constexpr int16_t kArt_device_canary_display_watch_t21[] = {141,121,147,117,136,102,136,102,131,105,141,121};
-inline constexpr int16_t kArt_device_canary_display_watch_t22[] = {131,105,136,102,125,88,125,88,119,91,131,105};
-inline constexpr int16_t kArt_device_canary_display_watch_t23[] = {119,91,125,88,112,76,112,76,106,80,119,91};
-inline constexpr int16_t kArt_device_canary_display_watch_t24[] = {106,80,112,76,99,67,99,67,93,71,106,80};
-inline constexpr int16_t kArt_device_canary_display_watch_t25[] = {93,71,99,67,86,61,86,61,80,65,93,71};
-inline constexpr int16_t kArt_device_canary_display_watch_t26[] = {80,65,86,61,74,59,74,59,68,62,80,65};
-inline constexpr int16_t kArt_device_canary_display_watch_t27[] = {155,213,161,210,165,197,165,197,159,201,155,213};
-inline constexpr int16_t kArt_device_canary_display_watch_t28[] = {159,201,165,197,166,183,166,183,160,187,159,201};
-inline constexpr int16_t kArt_device_canary_display_watch_t29[] = {159,201,159,171,141,121,159,201,141,121,106,80,159,201,106,80,80,65,159,201,80,65,56,62,159,201,56,62,38,73,159,201,38,73,28,95,159,201,28,95,28,125,159,201,28,125,46,175,159,201,46,175,80,216,159,201,80,216,106,231,159,201,106,231,131,234,131,234,149,223,159,201};
-inline constexpr int16_t kArt_device_canary_display_watch_t30[] = {147,193,144,154,123,113,147,193,123,113,92,84,147,193,92,84,71,76,147,193,71,76,52,80,147,193,52,80,40,94,147,193,40,94,37,130,147,193,37,130,52,172,147,193,52,172,81,206,147,193,81,206,114,221,147,193,114,221,132,218,132,218,144,204,147,193};
+inline constexpr int16_t kArt_device_canary_display_watch_t0[] = {172,190,236,153,234,135,234,135,170,172,172,190};
+inline constexpr int16_t kArt_device_canary_display_watch_t1[] = {170,172,234,135,230,116,230,116,166,153,170,172};
+inline constexpr int16_t kArt_device_canary_display_watch_t2[] = {166,153,230,116,223,97,223,97,159,134,166,153};
+inline constexpr int16_t kArt_device_canary_display_watch_t3[] = {159,134,223,97,214,79,214,79,149,116,159,134};
+inline constexpr int16_t kArt_device_canary_display_watch_t4[] = {149,116,214,79,202,61,202,61,138,98,149,116};
+inline constexpr int16_t kArt_device_canary_display_watch_t5[] = {138,98,202,61,189,45,189,45,125,83,138,98};
+inline constexpr int16_t kArt_device_canary_display_watch_t6[] = {125,83,189,45,175,32,175,32,111,69,125,83};
+inline constexpr int16_t kArt_device_canary_display_watch_t7[] = {111,69,175,32,160,22,160,22,96,59,111,69};
+inline constexpr int16_t kArt_device_canary_display_watch_t8[] = {96,59,160,22,145,15,145,15,81,52,96,59};
+inline constexpr int16_t kArt_device_canary_display_watch_t9[] = {81,52,145,15,131,12,131,12,67,49,81,52};
+inline constexpr int16_t kArt_device_canary_display_watch_t10[] = {67,49,131,12,118,13,118,13,54,50,67,49};
+inline constexpr int16_t kArt_device_canary_display_watch_t11[] = {118,13,42,54,54,50};
+inline constexpr int16_t kArt_device_canary_display_watch_t12[] = {223,194,159,231,149,239};
+inline constexpr int16_t kArt_device_canary_display_watch_t13[] = {159,231,223,194,230,183,230,183,166,220,159,231};
+inline constexpr int16_t kArt_device_canary_display_watch_t14[] = {166,220,230,183,234,169,234,169,170,206,166,220};
+inline constexpr int16_t kArt_device_canary_display_watch_t15[] = {170,206,234,169,236,153,236,153,172,190,170,206};
+inline constexpr int16_t kArt_device_canary_display_watch_t16[] = {170,206,170,172,159,134,170,206,159,134,125,83,170,206,125,83,96,59,170,206,96,59,67,49,170,206,67,49,42,54,170,206,42,54,26,73,170,206,26,73,20,103,170,206,20,103,26,140,170,206,26,140,54,195,170,206,54,195,81,224,170,206,81,224,111,241,170,206,111,241,138,243,138,243,159,231,170,206};
+inline constexpr int16_t kArt_device_canary_display_watch_t17[] = {155,187,161,184,160,169,160,169,153,172,155,187};
+inline constexpr int16_t kArt_device_canary_display_watch_t18[] = {153,172,160,169,156,152,156,152,150,156,153,172};
+inline constexpr int16_t kArt_device_canary_display_watch_t19[] = {150,156,156,152,150,136,150,136,144,140,150,156};
+inline constexpr int16_t kArt_device_canary_display_watch_t20[] = {144,140,150,136,142,120,142,120,136,124,144,140};
+inline constexpr int16_t kArt_device_canary_display_watch_t21[] = {136,124,142,120,132,105,132,105,126,109,136,124};
+inline constexpr int16_t kArt_device_canary_display_watch_t22[] = {126,109,132,105,121,92,121,92,115,95,126,109};
+inline constexpr int16_t kArt_device_canary_display_watch_t23[] = {115,95,121,92,109,80,109,80,103,84,115,95};
+inline constexpr int16_t kArt_device_canary_display_watch_t24[] = {103,84,109,80,96,72,96,72,90,75,103,84};
+inline constexpr int16_t kArt_device_canary_display_watch_t25[] = {90,75,96,72,83,66,83,66,77,69,90,75};
+inline constexpr int16_t kArt_device_canary_display_watch_t26[] = {77,69,83,66,71,63,71,63,65,66,77,69};
+inline constexpr int16_t kArt_device_canary_display_watch_t27[] = {150,213,156,210,160,198,160,198,153,201,150,213};
+inline constexpr int16_t kArt_device_canary_display_watch_t28[] = {153,201,160,198,161,184,161,184,155,187,153,201};
+inline constexpr int16_t kArt_device_canary_display_watch_t29[] = {153,201,150,156,126,109,153,201,126,109,90,75,153,201,90,75,65,66,153,201,65,66,44,71,153,201,44,71,30,87,153,201,30,87,25,113,153,201,25,113,36,160,153,201,36,160,65,205,153,201,65,205,103,231,153,201,103,231,126,233,126,233,144,223,153,201};
+inline constexpr int16_t kArt_device_canary_display_watch_t30[] = {141,194,138,156,118,116,141,194,118,116,88,88,141,194,88,88,68,81,141,194,68,81,50,85,141,194,50,85,39,98,141,194,39,98,35,132,141,194,35,132,50,173,141,194,50,173,78,206,141,194,78,206,109,220,141,194,109,220,127,217,127,217,138,204,141,194};
 inline constexpr ArtFace kArt_device_canary_display_watch_faces[] = {
   { 0xAFADA9, 2, kArt_device_canary_display_watch_t0 },
   { 0xC1BFBA, 2, kArt_device_canary_display_watch_t1 },
@@ -224,7 +224,7 @@ inline constexpr ArtFace kArt_device_canary_display_watch_faces[] = {
   { 0x6B6A67, 2, kArt_device_canary_display_watch_t13 },
   { 0x83827F, 2, kArt_device_canary_display_watch_t14 },
   { 0x9A9995, 2, kArt_device_canary_display_watch_t15 },
-  { 0x61615E, 14, kArt_device_canary_display_watch_t16 },
+  { 0x61615E, 13, kArt_device_canary_display_watch_t16 },
   { 0x141720, 2, kArt_device_canary_display_watch_t17 },
   { 0x161A23, 2, kArt_device_canary_display_watch_t18 },
   { 0x181C25, 2, kArt_device_canary_display_watch_t19 },
@@ -237,7 +237,7 @@ inline constexpr ArtFace kArt_device_canary_display_watch_faces[] = {
   { 0x151821, 2, kArt_device_canary_display_watch_t26 },
   { 0x0F1218, 2, kArt_device_canary_display_watch_t27 },
   { 0x12151C, 2, kArt_device_canary_display_watch_t28 },
-  { 0x0B0D12, 12, kArt_device_canary_display_watch_t29 },
+  { 0x0B0D12, 11, kArt_device_canary_display_watch_t29 },
   { 0x1A2F47, 11, kArt_device_canary_display_watch_t30 },
 };
 
@@ -409,7 +409,7 @@ inline constexpr FigureArt kFigureArt[] = {
   { "device.canary-display-dash7", "cdff74a9", 8, kArt_device_canary_display_dash7_faces },
   { "device.canary-display-nightstand", "c361481b", 20, kArt_device_canary_display_nightstand_faces },
   { "device.canary-display-touch169", "72fa8cf1", 19, kArt_device_canary_display_touch169_faces },
-  { "device.canary-display-watch", "64d11931", 31, kArt_device_canary_display_watch_faces },
+  { "device.canary-display-watch", "17e158d1", 31, kArt_device_canary_display_watch_faces },
   { "device.canary-nightlight", "27f621f7", 25, kArt_device_canary_nightlight_faces },
   { "device.canary-sense", "112abb6d", 13, kArt_device_canary_sense_faces },
   { "device.canary-vision", "421d34f1", 6, kArt_device_canary_vision_faces },

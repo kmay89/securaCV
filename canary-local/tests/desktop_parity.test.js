@@ -1291,6 +1291,39 @@ test("board access notes: both flashers explain the radar's hidden flashing port
   }
 });
 
+test("the catalog hatch moment renders on both flashers, behind the same receipt gate", () => {
+  // The post-flash "first flight" (products[].hatch, authored once in
+  // gen_flash.py's HATCH_MOMENTS) used to render only on the desktop — the
+  // browser validated it and then never showed it, so half the users kept
+  // the generic next-step card. Both frontends must render the catalog copy,
+  // and both must honor serial_receipt the same way: false → the steps land
+  // right after the write; anything else → they wait for the board's live
+  // serial self-manifest (the boot receipt).
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+
+  // Desktop: catalog hatch preferred over hardcoded copy, receipt-gated.
+  assert.match(appJs, /product\.hatch && Array\.isArray\(product\.hatch\.steps\)/,
+    "desktop hatchMoment no longer prefers the catalog's product.hatch");
+  assert.match(appJs, /function requiresLiveReceipt/,
+    "desktop lost requiresLiveReceipt — the receipt gate on its hatch card");
+
+  // Browser: the same gate lives once in flash-core (pure, host-tested)…
+  assert.match(flashCore, /export function requiresLiveReceipt/,
+    "browser lost core.requiresLiveReceipt — the shared receipt gate");
+  assert.match(flashCore, /export function hatchMoment/,
+    "browser lost core.hatchMoment — the catalog hatch can never render");
+  // …and both surfaces actually render it: the done card for receipt-less
+  // products, the monitor's identity card for receipt-gated ones.
+  assert.match(browser, /function hatchMomentCard/,
+    "browser flasher lost the hatch-steps card");
+  assert.match(browser, /!core\.requiresLiveReceipt\(product\)/,
+    "the browser done card no longer shows hatch steps for serial_receipt:false products");
+  assert.match(browser, /core\.requiresLiveReceipt\(opts\.hatchProduct\)/,
+    "the browser monitor no longer shows hatch steps when the boot receipt lands");
+});
+
 // ── broker credentials must reach every firmware that reads them ─────────────
 //
 // The displays could not be told which hub to talk to. Both flashers gated the

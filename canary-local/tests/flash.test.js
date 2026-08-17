@@ -1396,6 +1396,36 @@ test("postFlashNextStep: every catalog product yields a complete step (can't rot
   }
 });
 
+// ── post-flash: the catalog hatch moment + its receipt gate ─────────────────
+test("requiresLiveReceipt: fails closed; reads only the catalog's explicit false", async () => {
+  const { requiresLiveReceipt } = await core();
+  assert.strictEqual(requiresLiveReceipt(null), true);      // no product → still demand proof
+  assert.strictEqual(requiresLiveReceipt({}), true);        // absent field → demand proof
+  assert.strictEqual(requiresLiveReceipt({ serial_receipt: true }), true);
+  assert.strictEqual(requiresLiveReceipt({ serial_receipt: false }), false);
+  // The Watch Station reports no serial receipt — its hatch steps belong on
+  // the done card, straight after the write (the desktop shows them there too).
+  const watch = catalog.products.find((p) => p.id === "securacv-canary-display-watch");
+  assert.ok(watch, "the Watch Station left the catalog");
+  assert.strictEqual(requiresLiveReceipt(watch), false);
+});
+
+test("hatchMoment: every catalog product yields its own first flight; junk falls back", async () => {
+  const { hatchMoment } = await core();
+  for (const p of catalog.products) {
+    const m = hatchMoment(p);
+    assert.ok(m, `${p.id}: catalog hatch data must yield a moment`);
+    assert.strictEqual(m.title, p.hatch.title, `${p.id}: title must be the catalog's`);
+    assert.deepStrictEqual(m.steps, p.hatch.steps, `${p.id}: steps must be the catalog's, in order`);
+  }
+  // No usable hatch data (a local file, an unknown board) → null, so the
+  // caller falls back to the generic postFlashNextStep above.
+  assert.strictEqual(hatchMoment(null), null);
+  assert.strictEqual(hatchMoment({}), null);
+  assert.strictEqual(hatchMoment({ hatch: { title: "t", body: "b", steps: [] } }), null);
+  assert.strictEqual(hatchMoment({ hatch: { title: "t", steps: ["s"] } }), null);
+});
+
 test("healthVerdict: maps the self-test score to a plain verdict, never a false pass", async () => {
   const { healthVerdict } = await core();
   assert.strictEqual(healthVerdict(98).level, "ok");

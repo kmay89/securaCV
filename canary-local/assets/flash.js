@@ -4130,6 +4130,24 @@ async function renderHatchCert(slot, opts) {
   } catch { /* the certificate is a delight, never a requirement */ }
 }
 
+// The catalog's post-flash "first flight" — kicker + title + body + ordered
+// steps, the same structure (and the same catalog copy) the desktop Flasher's
+// #hatch-card renders (desktop/src/index.html, app.js showHatchCard), so the
+// two frontends tell the same story. WHEN it appears follows the desktop's
+// receipt gate too: serial_receipt: false products get it right on the done
+// card; products whose firmware answers `j` earn it when that live receipt
+// lands in the monitor (see maybeIdentity).
+function hatchMomentCard(moment) {
+  const card = el("div", "flash-nextstep flash-hatch-moment");
+  card.append(el("div", "flash-nextstep-kicker", moment.kicker));
+  card.append(el("div", "flash-nextstep-title", moment.title));
+  card.append(el("p", "flash-nextstep-body", moment.body));
+  const ol = el("ol", "flash-steps");
+  moment.steps.forEach((s) => ol.append(el("li", null, s)));
+  card.append(ol);
+  return card;
+}
+
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
@@ -4257,11 +4275,24 @@ function phaseDone(opts) {
       },
     }));
   } else if (product && !opts.isBackup) {
-    const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
-    const ns = el("div", "flash-nextstep");
-    ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
-    ns.append(el("p", "flash-nextstep-body", step.body));
-    box.append(ns);
+    // The catalog's hatch moment — the same "first flight" card the desktop
+    // Flasher shows, honoring the same receipt rule (app.js maybeHatch): a
+    // product that reports no serial receipt (serial_receipt: false — the
+    // displays, Sense, WAP) hatches right here, straight after the write. One
+    // whose firmware proves itself over serial keeps the generic next step —
+    // which points at the live monitor, where its hatch card appears the
+    // moment that receipt lands. A local file carries no catalog promise, so
+    // it stays on the generic step too.
+    const moment = !opts.isLocal && core.hatchMoment(product);
+    if (moment && !core.requiresLiveReceipt(product)) {
+      box.append(hatchMomentCard(moment));
+    } else {
+      const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
+      const ns = el("div", "flash-nextstep");
+      ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
+      ns.append(el("p", "flash-nextstep-body", step.body));
+      box.append(ns);
+    }
   } else if (!product) {
     box.append(el("p", "muted", "It rebooted into the firmware you just wrote. If it doesn’t light up, tap the RESET button once."));
   }
@@ -4376,7 +4407,11 @@ function phaseDone(opts) {
       })));
     }
     // "glass" and "monitor": the console is the honest window either way.
-    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true });
+    // Carry the flashed product so a receipt-gated hatch (serial_receipt not
+    // false) can pop its "first flight" card when the self-manifest arrives —
+    // the desktop's maybeHatch fires on exactly that receipt.
+    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true,
+      hatchProduct: (opts.product && !opts.isBackup && !opts.isLocal) ? opts.product : null });
   };
 
   const row = el("div", "flash-row");
@@ -5194,6 +5229,15 @@ function phaseMonitor(port, opts = {}) {
         "identity securacv.com/canary shows. Nothing was sent anywhere."
       : "Read from the running firmware over the cable."));
     setStatus("✓ Identity confirmed — it’s running and answering.");
+    // The boot receipt just landed. For a product whose hatch WAITS on that
+    // receipt (serial_receipt !== false), this is where the catalog's "first
+    // flight" steps belong — the desktop's maybeHatch pops its hatch card on
+    // exactly this manifest. Products with serial_receipt: false already got
+    // the card on the done screen, straight after the write.
+    if (opts.hatchProduct && core.requiresLiveReceipt(opts.hatchProduct)) {
+      const moment = core.hatchMoment(opts.hatchProduct);
+      if (moment) idCard.after(hatchMomentCard(moment));
+    }
   }
 
   const chips = el("div", "flash-mon-chips");
