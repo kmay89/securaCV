@@ -517,6 +517,12 @@ void build_help_qr() {
 #else
   const int qr_px = 240;   // dash_ui's join-QR size
 #endif
+  // PROVE the QR rendered before presenting it (the onboard_ui lesson): the
+  // v9 widget leaves a buffer-less canvas behind when its draw-buffer
+  // allocation loses, and update reports its own verdict. A failure here
+  // degrades to the plain URL — never an empty white card on the exact
+  // page someone opened because something is already wrong.
+  bool qr_ok = false;
   if (n > 0) {
     lv_obj_t* card = lv_obj_create(s_host);
     lv_obj_set_size(card, qr_px + 16, qr_px + 16);
@@ -528,13 +534,28 @@ void build_help_qr() {
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(card, LV_ALIGN_CENTER, 0, 8);
     lv_obj_t* qr = mk_qrcode(card, qr_px);
-    lv_obj_center(qr);
-    lv_qrcode_update(qr, s_url, (uint32_t)strlen(s_url));
+    if (qr != nullptr) {
+      lv_obj_center(qr);
+#if LVGL_VERSION_MAJOR >= 9
+      qr_ok = lv_canvas_get_draw_buf(qr) != NULL &&
+              lv_qrcode_update(qr, s_url, (uint32_t)strlen(s_url)) == LV_RESULT_OK;
+#else
+      qr_ok = lv_qrcode_update(qr, s_url, (uint32_t)strlen(s_url)) == LV_RES_OK;
+#endif
+    }
+    if (!qr_ok) lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  if (!qr_ok) {
+    // No code to scan — the URL becomes the page content, said plainly.
+    lv_obj_t* url = mk_label(s_host, font_body(), col_text());
+    lv_label_set_text(url, "securacv.com/help");
+    lv_obj_align(url, LV_ALIGN_CENTER, 0, 0);
   }
 
   lv_obj_t* cap = mk_label(s_host, font_caption(), col_muted());
   lv_label_set_text(cap,
-      n == 0     ? "securacv.com/help"  // compose refused — say the URL plainly
+      !qr_ok   ? "type it into any browser"
       : hub_down ? "scan " LV_SYMBOL_RIGHT " the fix for your hub link"
                  : "scan " LV_SYMBOL_RIGHT " opens the Help Desk");
   lv_obj_align(cap, LV_ALIGN_BOTTOM_MID, 0, -14);
