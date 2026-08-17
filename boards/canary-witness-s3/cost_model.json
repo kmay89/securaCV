@@ -2,7 +2,7 @@
   "generated_by": "scripts/gen_board_design.py",
   "board": "canary-witness-s3",
   "confidence": "idea",
-  "pricing_as_of": "2026-08-16T09:39:39Z",
+  "pricing_as_of": "2026-08-17T09:55:48Z",
   "qty_basis": 1000,
   "carrier": {
     "parts_usd": 9.6795,
