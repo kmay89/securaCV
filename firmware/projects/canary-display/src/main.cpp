@@ -1258,6 +1258,15 @@ void setup() {
   // Say the heat budget out loud at boot: the HAL clips the expander PWM.
   boot_kvf("Lamp",   "backlight duty capped at %d%% (heat; HAL-enforced)",
            CD_BL_MAX_PCT);
+#elif defined(CD_AMOLED_GLASS)
+  // The flagship glass: no SPI pin row to print (the panel rides QSPI) and
+  // no backlight pin to name — brightness is the RM690B0's 0x51 command.
+  boot_kvf("Glass",  "RM690B0 2.41\" %dx%d portrait AMOLED (FT6336 touch)",
+           LCD_WIDTH, LCD_HEIGHT);
+  boot_kvf("QSPI",   "CLK=%d D0..D3=%d/%d/%d/%d CS=%d RST=%d off=%d",
+           LCD_PIN_SCLK, LCD_PIN_SDIO0, LCD_PIN_SDIO1, LCD_PIN_SDIO2,
+           LCD_PIN_SDIO3, LCD_PIN_CS, LCD_PIN_RST, LCD_COL_OFFSET);
+  boot_kv("Bright",  "panel command 0x51 (AMOLED — no backlight pin)");
 #else
   boot_kv("Glass",   "ST7789 1.47\" 172x320 portrait SPI (no touch)");
   boot_kvf("SPI",    "SCK=%d MOSI=%d CS=%d DC=%d BL=%d(PWM) off=%d",

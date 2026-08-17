@@ -241,6 +241,16 @@ jobs:
         # embeds the picker tier into flash.json, so a stale figure would
         # otherwise surface as a confusing catalog diff instead of here.
         run: node canary-local/tools/figures/gen_figures.mjs --check
+      - name: Device 3D models match their generator (both flasher trees)
+        # The figures' 3D tier: the committed device GLBs in
+        # canary-local/models/ AND the desktop Flasher's byte-identical
+        # desktop/src/models/ copies are generated from the same massing the
+        # SVG figures are drawn from. Runs AFTER the figures gate (the
+        # ledger's confidence verdicts decide which figures get a model) and
+        # covers strays, gaps and drift in either tree. The geometric
+        # invariants (normals, coplanarity, real scale) are asserted by
+        # tests/device_models.test.js in the logic-tests job.
+        run: node canary-local/tools/figures/gen_device_glbs.mjs --check
       - name: Hatchery spec drift (the iPhone's copy of the name lists + proof vectors)
         # The birth certificate is DERIVED from a device's key, by three
         # independent implementations (this Lab, the Mac Flasher, the iPhone

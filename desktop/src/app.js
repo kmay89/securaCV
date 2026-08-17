@@ -2461,7 +2461,11 @@ function figureSlot(p) {
     const t = f.shared
       ? `${f.title} — this board is also built as another product`
       : f.title;
-    return `<span class="p-fig" title="${esc(t)}">${f.svg}</span>`;
+    // data-fig3d-id: the 3D upgrade hook (fig3d.js, byte-shared with the
+    // browser flasher). After the rows land, upgradeAll() swaps the flat
+    // drawing for a turntable of the committed model in src/models/ —
+    // progressive, never a dependency.
+    return `<span class="p-fig" data-fig3d-id="${esc(f.id)}" title="${esc(t)}">${f.svg}</span>`;
   }
   return (
     '<span class="p-fig placeholder" title="No drawing for this board yet">' +
@@ -2623,6 +2627,10 @@ function renderProducts() {
     list.appendChild(row);
     if (isSelected) onProductChosen(p, ver);
   });
+
+  // The figure slots' 3D upgrade — same behavior, same words, same bytes as
+  // the browser flasher (two frontends, one feature; AGENTS.md rule 7).
+  if (window.SCV_FIG3D) window.SCV_FIG3D.upgradeAll(list);
 }
 
 // Boards whose flashing port isn't the one you can see. Catalog-driven

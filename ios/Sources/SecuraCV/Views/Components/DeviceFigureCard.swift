@@ -12,6 +12,7 @@ import SwiftUI
 
 struct DeviceFigureCard: View {
     let witness: Witness
+    @State private var show3D = false
 
     private var figure: FleetFigure? {
         FleetFigure.resolve(deviceType: witness.deviceType,
@@ -34,6 +35,21 @@ struct DeviceFigureCard: View {
                     Text("Drag to turn · double-tap to set it down")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                }
+                if !massing.ghost {
+                    // The 3D sheet (DeviceSolids3DView): the same massing,
+                    // picked up. Never offered for a ghost — an idea does
+                    // not get a solid body, here or anywhere.
+                    Button {
+                        show3D = true
+                    } label: {
+                        Label("Pick it up in 3D", systemImage: "rotate.3d")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .sheet(isPresented: $show3D) {
+                        DeviceSolids3DSheet(title: productName, massing: massing)
+                    }
                 }
             } else {
                 Image(systemName: witness.deviceType.sfSymbol)

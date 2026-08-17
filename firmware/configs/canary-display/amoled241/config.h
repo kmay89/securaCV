@@ -49,8 +49,11 @@
                                         // tap/long-press ladder, by finger
 #define FEATURE_AMBIENT_LED         0   // no WS2812 on this board; the glass
                                         // (wash + emission ladder) is the beacon
-#define FEATURE_BACKLIGHT_DIM       1   // night dimming — a panel command here
-                                        // (0x51), not PWM; the HAL maps intent
+#define FEATURE_BACKLIGHT_DIM       0   // this flag means PWM dimming, which
+                                        // this glass structurally lacks
+                                        // (HAS_BACKLIGHT_PWM 0) — night
+                                        // dimming still works: the HAL maps
+                                        // both intents onto panel command 0x51
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1   // subscribe to the fleet, publish own status
 #define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
