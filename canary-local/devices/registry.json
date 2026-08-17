@@ -369,14 +369,9 @@
             "note": "GPIO0 strapping pin — this firmware also reads it at runtime for the tap/double/hold ladder"
           },
           {
-            "id": "pwr",
-            "label": "PWR",
-            "note": "GPIO15 — wake / hold-to-power-off (the latch drop is the power-off)"
-          },
-          {
             "id": "reset",
             "label": "RESET",
-            "note": "chip reset — RAM clears, NVS flash survives"
+            "note": "chip reset — RAM clears, NVS flash survives (the readable PWR case button is described with the power latch above — it is a power control, not a bench input)"
           }
         ],
         "leds": []
