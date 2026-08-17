@@ -46,22 +46,23 @@ namespace canary::story {
 //   line is going to be impressive and slightly threatening. The light pulls
 //   in and dims — the held breath.
 //
-//   THE PUNCHLINE IS "NOTHING." And then it itemizes the nothing, which is
-//   the actual joke: the specific things it went out of its way not to learn
-//   are exactly the things everything else in your house collects first. It
-//   is a flex — it IS showing off how much it could have known — and the flex
-//   is that it declined.
+//   THE PUNCHLINE IS "NOTHING." Then ONE itemized line of the nothing — the
+//   specific things it went out of its way not to learn are exactly the
+//   things everything else in your house collects first — and one flex: it
+//   could have, everything else in this house did.
 //
-//   THE WALK-BACK. Having been clever for three beats, it gets warm again and
-//   stays there. The one name it does have is a pseudonym it made up itself.
+//   THE WALK-BACK. One warm line doing double duty: the joke's button, and
+//   the handover of the only name it has — a pseudonym it made up itself.
 //
-//   THEN THE ACTUAL JOB. Only now, with the relationship established, does it
-//   explain the color language and the fleet — which is the part the user
-//   needs to retain, and which lands far better after a laugh than it does
-//   cold as a feature list.
+//   THEN THE ACTUAL JOB. The color language in one line, the fleet in one —
+//   the part the user needs to retain, landing right after the laugh.
 //
 //   THE PROMISE, last, in the bird's own voice, because it is the bird's to
 //   keep.
+//
+//   Each of those things is said exactly once. A first meeting is charming
+//   in inverse proportion to how long it holds the stage: the chuckle, the
+//   language, the promise — then hand the glass back.
 inline constexpr Beat kHelloBeats[] = {
     // Presence before speech.
     {nullptr, Pose::Enter,  Gesture::Bloom,   Tone::Bright,  520},
@@ -70,8 +71,8 @@ inline constexpr Beat kHelloBeats[] = {
 
     {"Oh! Hello.",
      Pose::Hop,    Gesture::Bloom,   Tone::Bright,  520},
-    {"I'm your canary. I keep watch, so you don't have to.",
-     Pose::Settle, Gesture::Breathe, Tone::Warm,    900},
+    {"I'm your canary.",
+     Pose::Settle, Gesture::Breathe, Tone::Warm,    700},
 
     // The setup.
     {"Want to know what I worked out about you?",
@@ -81,36 +82,24 @@ inline constexpr Beat kHelloBeats[] = {
     // The punchline.
     {"Nothing.",
      Pose::Tilt,   Gesture::Pulse,   Tone::Playful, 800},
-    {"Not your MAC address. I never asked the radio for it.",
+    {"No MAC, no IP, no idea who's on your wifi.",
      Pose::Preen,  Gesture::Rise,    Tone::Playful, 850},
-    {"Not your IP. Not who else is on your wifi.",
-     Pose::Hold,   Gesture::Rise,    Tone::Playful, 850},
     {"I could have. Everything else in this house did.",
      Pose::Look,   Gesture::Sweep,   Tone::Sly,     900},
 
     // The walk-back.
-    {"I'm not that kind of bird.",
-     Pose::Ruffle, Gesture::Warm,    Tone::Warm,    800},
-    {"I know myself as %s. That's the only name here.",
-     Pose::Settle, Gesture::Warm,    Tone::Warm,    900},
+    {"Not that kind of bird. Call me %s.",
+     Pose::Ruffle, Gesture::Warm,    Tone::Warm,    900},
 
     // The actual job.
-    {"Here's the deal. I sit here and I watch.",
-     Pose::Settle, Gesture::Breathe, Tone::Calm,    750},
-    {"Dark means all is well. You can stop reading me.",
-     Pose::Hold,   Gesture::Narrow,  Tone::Calm,    900},
-    {"If I glow, look at me. That's the whole language.",
+    {"Dark means all is well. If I glow, look at me.",
      Pose::Tilt,   Gesture::Pulse,   Tone::Earnest, 950},
-    {"Put another of me in another room and we compare notes.",
-     Pose::Look,   Gesture::Sweep,   Tone::Warm,    900},
-    {"A fleet notices what one bird alone would miss.",
+    {"Add another of me and we compare notes.",
      Pose::Hop,    Gesture::Bloom,   Tone::Bright,  850},
 
     // The promise.
     {"What I see stays here. That's a promise, not a setting.",
      Pose::Settle, Gesture::Warm,    Tone::Earnest, 1100},
-    {"Ready when you are.",
-     Pose::Stretch, Gesture::Breathe, Tone::Warm,   900},
 };
 
 inline constexpr Scene kHello = {

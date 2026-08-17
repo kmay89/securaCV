@@ -137,17 +137,21 @@ gets to be the same joke twice.
   you. The light pulls in and dims: the held breath. Every instinct built by
   every other device in this category says the next line is going to be
   impressive and faintly threatening.
-- **The punchline is "Nothing."** — one word, on its own beat. Then it itemizes
-  the nothing: not your MAC address, not your IP, not who else is on your wifi.
-  *It could have. Everything else in this house did.* It is a flex, and the flex
-  is that it declined.
-- **The walk-back.** Having been clever for three beats it gets warm again and
-  stays there. The one name it has is a pseudonym it made up itself.
-- **Then the actual job** — the color language ("dark means all is well; if I
-  glow, look at me") and the fleet — which is the part a user needs to retain,
-  and which lands far better after a laugh than cold as a feature list.
+- **The punchline is "Nothing."** — one word, on its own beat. The itemized
+  nothing is one line (no MAC, no IP, no idea who's on your wifi) and the flex
+  is one more: *it could have — everything else in this house did.*
+- **The walk-back.** One warm line doing double duty: the joke's button, and
+  the handover of the only name it has — a pseudonym it made up itself.
+- **Then the actual job** — the color language in a single line ("dark means
+  all is well; if I glow, look at me") and the fleet in one more — the part a
+  user needs to retain, landing right after the laugh.
 - **The promise last**, in the bird's own voice, because it is the bird's to
   keep.
+
+The meeting says each of those things exactly once — ten spoken lines, and
+every one of them is either the chuckle or something the user needs (a tap
+still completes the line, and the next tap moves on). A first meeting is
+charming in inverse proportion to how long it holds the stage.
 
 **The joke is only funny because it is true.** `common/identity/device_pseudonym.h`
 reads no hardware MAC by construction — the `esp_mac.h` include is deliberately
