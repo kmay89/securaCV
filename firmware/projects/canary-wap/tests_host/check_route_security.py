@@ -63,6 +63,10 @@ PUBLIC_ALLOWLIST = {
     ("GET", "/api/wifi"): "wizard status poll before any token exists (documented)",
     ("GET", "/api/wifi/scan"): "wizard network list before any token exists",
     ("GET", "/api/selftest"): "wizard step-5 health check on the AP (no secrets)",
+    ("GET", "/api/help-qr"): "Help Desk deep-link QR for the current verdict; "
+        "public website URL with a coarse anchor only — strictly less than "
+        "/api/selftest already answers on this surface (no device id, no "
+        "network name, no token; composition pinned in help_qr_logic.h)",
     # OS captive-portal probes must answer plainly or the OS disconnects.
     ("GET", "/hotspot-detect.html"): "Apple captive probe",
     ("GET", "/library/test/success.html"): "Apple captive probe (legacy)",
