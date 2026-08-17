@@ -20,7 +20,7 @@
       "source": "canary-local/devices/hub_seed.json",
       "bundle_path": "hub_seed.json",
       "card_path": "CONFIG/securacv/hub_seed.json",
-      "sha256": "97610ae20d62cc716aa9d13840b9f4aa233e1faef436a920093fd9ff17c1b141"
+      "sha256": "0bb90da369433751b4db453b7b4be171d887f20d9d644c6abf60c19cbfe66931"
     },
     {
       "role": "frigate-config",

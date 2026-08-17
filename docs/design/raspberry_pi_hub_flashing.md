@@ -398,7 +398,15 @@ Raspberry Pi Imager.
     login into the add-on's Configuration tab and pressing Start) is the
     user's, and the plan's `user_must_finish` says exactly that. With no
     screen attached the add-on simply refuses to start and nothing else on
-    the hub is affected. Validation home:
+    the hub is affected. The kiosk's login is a **dedicated non-admin HA
+    user** by instruction (the add-on keeps that password in its options, and
+    a screen only views dashboards — same reasoning as the broker's `canary`
+    account). Trust posture, said out loud: like Frigate and Pi-hole, the
+    add-on's repository is registered **unpinned** — the Supervisor's store
+    model tracks upstream releases and offers no ref-pinning — so the plan
+    and docs state it as the community add-on it is; vendoring it into this
+    repo's own add-on repository is the available hardening step if the
+    feature graduates from experimental. Validation home:
     [`hub_validation_runbook.md`](../hub_validation_runbook.md) §5 opt-in
     extras.
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain,

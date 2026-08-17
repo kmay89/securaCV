@@ -66,13 +66,20 @@ PIHOLE_SLUG = "pihole"
 # the household dashboard right on the box, and HAOSKiosk is the community
 # add-on built for exactly that: it starts an X server + Luakit browser ON the
 # HAOS host and points it at Home Assistant, with touch input mapped to the
-# panel. Local by construction — the browser talks to the hub it runs on.
+# panel. The browser points at the hub's own dashboard — no vendor cloud, no
+# new account — but it IS a real browser, so a dashboard that embeds outside
+# content fetches it, same as any phone that opens that dashboard; the copy
+# below says so rather than claiming isolation the stack doesn't enforce.
 # Honest status: same bar as Pi-hole above — the slug follows the repository's
-# own layout and the first real `--with display` run on hardware is what
-# validates it end to end. The add-on refuses to start until the operator
-# types their own Home Assistant login into its configuration (a credential
-# this plan must never mint or carry), so the step deliberately installs
-# WITHOUT starting and hands the last move to the user.
+# own layout, the repository is registered unpinned exactly like Frigate's and
+# Pi-hole's (the Supervisor store model tracks upstream releases and has no
+# ref-pinning), and the first real `--with display` run on hardware is what
+# validates it end to end. The add-on refuses to start until a Home Assistant
+# login is typed into its configuration (a credential this plan must never
+# mint or carry — and the copy steers to a dedicated NON-ADMIN user, because
+# the add-on keeps that password in its options and a screen needs no admin
+# rights), so the step deliberately installs WITHOUT starting and hands the
+# last move to the user.
 KIOSK_REPO = "https://github.com/puterboy/HAOS-kiosk"
 KIOSK_SLUG = "haoskiosk"
 
@@ -445,12 +452,14 @@ def main() -> None:
                 "The hub never needs a screen — headless is the default and stays fully "
                 "supported. But if you've plugged one in (any HDMI monitor, or a touchscreen "
                 "like a 7\" 1024x600 IPS panel with USB touch), this add-on puts it to work: "
-                "it runs a small browser on the hub itself, signed in to your Home Assistant, "
+                "it runs a small browser on the hub itself, signed in to Home Assistant, "
                 "showing the household dashboard full-screen — glance at the hallway, see the "
                 "whole house. Touch works as touch; a wall-mounted hub becomes a control "
-                "panel. Local by construction: the browser runs on the hub and talks to the "
-                "hub, so turning your screen on adds no cloud, no account, and no new way "
-                "for anything to leave your house."
+                "panel. The browser points at the hub's own dashboard, so the screen adds no "
+                "vendor cloud and no new account. Said honestly: it is a real browser, so if "
+                "your dashboard embeds outside content (a weather card, a remote image), the "
+                "screen fetches it — exactly as your phone already does when it opens that "
+                "same dashboard. The screen adds no destinations of its own."
             ),
             "for_what": (
                 "Your whole-house dashboard, live on the screen attached to the hub — no "
@@ -469,12 +478,17 @@ def main() -> None:
             # broken, the same reason Frigate isn't started before its config.
             "start": False,
             "user_must_finish": (
-                "One thing only you can do: give the browser on the hub a login. In Home "
-                "Assistant open Settings → Apps → HAOS Kiosk Display → Configuration, enter "
-                "your Home Assistant username and password, then press Start. The screen "
-                "lights up with your dashboard. No screen attached? The add-on simply won't "
-                "start — nothing else on the hub cares. The same Configuration tab also has "
-                "zoom, rotation and screen-timeout settings for your particular panel."
+                "One thing only you can do: give the screen its own login. Make a dedicated "
+                "user for it first — Settings → People → Users → Add User, name it something "
+                "like `screen`, leave Administrator off — because the add-on keeps that "
+                "username and password in its configuration, and a screen only needs to view "
+                "dashboards, never to administer your home. Then open Settings → Apps → "
+                "HAOS Kiosk Display → Configuration, enter that login, and press Start: the "
+                "screen lights up with your dashboard. (Same reasoning as the broker's "
+                "`canary` account — a screen is not a person, so it doesn't sign in as one.) "
+                "No screen attached? The add-on simply won't start — nothing else on the hub "
+                "cares. The same Configuration tab also has zoom, rotation and screen-timeout "
+                "settings for your particular panel."
             ),
             "reversible": True,
         },
@@ -524,7 +538,9 @@ def main() -> None:
                     "small browser on the hub itself, full-screen on the attached HDMI display, "
                     "with touch mapped to the panel. Made for a hub with a screen — like a 7\" "
                     "1024x600 IPS HDMI touchscreen — and harmless without one (the add-on just "
-                    "won't start). Everything stays on the hub; nothing new talks out."
+                    "won't start). No vendor cloud and no new account: the screen shows your "
+                    "own dashboard, and fetches only what that dashboard already fetches on "
+                    "any device that opens it."
                 ),
                 "enable": "sh provision.sh --with display   (or host_provision.sh --with display)",
                 "recommended": False,

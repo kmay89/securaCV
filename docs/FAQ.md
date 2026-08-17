@@ -243,12 +243,15 @@ is the reference) and the setup's opt-in **display** extra installs
 HAOSKiosk, a community app that runs a browser on the hub itself and shows
 your dashboard on that screen, touch included. In the desktop Flasher it's
 the "Also install the hub display" tick; by hand it's `--with display` (or
-just install HAOSKiosk from its repository in the app store). One step stays
-yours: type your Home Assistant login into the app's Configuration tab and
-press Start — the installer never carries your password. Everything stays
-local; a screen adds no cloud and no new way out. Honest status: same bar as
-self-setup itself — host-tested, awaiting its first validated run on real
-hardware. → [the full stack](full_stack_setup.md)
+just install HAOS Kiosk Display from its repository in the app store). One
+step stays yours: give the screen a dedicated non-admin Home Assistant user
+(a screen only views dashboards, so it shouldn't hold an admin password),
+type that login into the app's Configuration tab, and press Start — the
+installer never carries any password. No vendor cloud and no new account;
+the screen fetches only what your dashboard already fetches on any device
+that opens it. Honest status: same bar as self-setup itself — host-tested,
+awaiting its first validated run on real hardware.
+→ [the full stack](full_stack_setup.md)
 
 ### I already run Home Assistant. Where do I start?
 

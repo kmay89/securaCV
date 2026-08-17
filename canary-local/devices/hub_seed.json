@@ -12,7 +12,7 @@
       "off_by_default_because": "A DNS server is a whole-network change someone should choose on purpose \u2014 recommended, never imposed. The plan without it is complete."
     },
     "display": {
-      "what": "A dashboard on a screen plugged into the hub: the HAOSKiosk add-on runs a small browser on the hub itself, full-screen on the attached HDMI display, with touch mapped to the panel. Made for a hub with a screen \u2014 like a 7\" 1024x600 IPS HDMI touchscreen \u2014 and harmless without one (the add-on just won't start). Everything stays on the hub; nothing new talks out.",
+      "what": "A dashboard on a screen plugged into the hub: the HAOSKiosk add-on runs a small browser on the hub itself, full-screen on the attached HDMI display, with touch mapped to the panel. Made for a hub with a screen \u2014 like a 7\" 1024x600 IPS HDMI touchscreen \u2014 and harmless without one (the add-on just won't start). No vendor cloud and no new account: the screen shows your own dashboard, and fetches only what that dashboard already fetches on any device that opens it.",
       "enable": "sh provision.sh --with display   (or host_provision.sh --with display)",
       "recommended": false,
       "off_by_default_because": "Most hubs are headless \u2014 a closet box needs no browser running on it, and the add-on can't start without a screen anyway. Choosing it is what says 'this hub has eyes on it.' The plan without it is complete."
@@ -184,7 +184,7 @@
       "id": "install-display",
       "title": "Install the hub display (optional: a screen on the hub itself)",
       "what": "Register `https://github.com/puterboy/HAOS-kiosk`, then install the `haoskiosk` add-on \u2014 it shows your dashboard on a screen plugged into the hub.",
-      "why": "The hub never needs a screen \u2014 headless is the default and stays fully supported. But if you've plugged one in (any HDMI monitor, or a touchscreen like a 7\" 1024x600 IPS panel with USB touch), this add-on puts it to work: it runs a small browser on the hub itself, signed in to your Home Assistant, showing the household dashboard full-screen \u2014 glance at the hallway, see the whole house. Touch works as touch; a wall-mounted hub becomes a control panel. Local by construction: the browser runs on the hub and talks to the hub, so turning your screen on adds no cloud, no account, and no new way for anything to leave your house.",
+      "why": "The hub never needs a screen \u2014 headless is the default and stays fully supported. But if you've plugged one in (any HDMI monitor, or a touchscreen like a 7\" 1024x600 IPS panel with USB touch), this add-on puts it to work: it runs a small browser on the hub itself, signed in to Home Assistant, showing the household dashboard full-screen \u2014 glance at the hallway, see the whole house. Touch works as touch; a wall-mounted hub becomes a control panel. The browser points at the hub's own dashboard, so the screen adds no vendor cloud and no new account. Said honestly: it is a real browser, so if your dashboard embeds outside content (a weather card, a remote image), the screen fetches it \u2014 exactly as your phone already does when it opens that same dashboard. The screen adds no destinations of its own.",
       "for_what": "Your whole-house dashboard, live on the screen attached to the hub \u2014 no phone or laptop needed to glance at it.",
       "feature": "display",
       "repositories": [
@@ -193,7 +193,7 @@
       "addon": "haoskiosk",
       "supervisor_slug": "4c8b21d0_haoskiosk",
       "start": false,
-      "user_must_finish": "One thing only you can do: give the browser on the hub a login. In Home Assistant open Settings \u2192 Apps \u2192 HAOS Kiosk Display \u2192 Configuration, enter your Home Assistant username and password, then press Start. The screen lights up with your dashboard. No screen attached? The add-on simply won't start \u2014 nothing else on the hub cares. The same Configuration tab also has zoom, rotation and screen-timeout settings for your particular panel.",
+      "user_must_finish": "One thing only you can do: give the screen its own login. Make a dedicated user for it first \u2014 Settings \u2192 People \u2192 Users \u2192 Add User, name it something like `screen`, leave Administrator off \u2014 because the add-on keeps that username and password in its configuration, and a screen only needs to view dashboards, never to administer your home. Then open Settings \u2192 Apps \u2192 HAOS Kiosk Display \u2192 Configuration, enter that login, and press Start: the screen lights up with your dashboard. (Same reasoning as the broker's `canary` account \u2014 a screen is not a person, so it doesn't sign in as one.) No screen attached? The add-on simply won't start \u2014 nothing else on the hub cares. The same Configuration tab also has zoom, rotation and screen-timeout settings for your particular panel.",
       "reversible": true
     }
   ],

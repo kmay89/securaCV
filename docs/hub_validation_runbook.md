@@ -144,11 +144,13 @@ them land. Check each on the session's hub:
   flash with the tick on and an HDMI touchscreen attached — the reference
   panel is a 7" 1024x600 IPS with USB touch. The companion run must install
   HAOSKiosk **without starting it** and say so ("you finish" line names the
-  Configuration tab). Then, on the hub: enter the HA login in Settings → Apps
-  → HAOS Kiosk Display → Configuration, press Start — the dashboard appears on the
-  panel, touch registers where it taps, and both survive a hub reboot. Record
-  the zoom/rotation values that suit the 7" panel and fold them into
-  [`full_stack_setup.md`](full_stack_setup.md).
+  Configuration tab and steers to a dedicated non-admin user). Then, on the
+  hub: make the `screen` user (Administrator off), enter its login in
+  Settings → Apps → HAOS Kiosk Display → Configuration, press Start — the
+  dashboard appears on the panel, touch registers where it taps, and both
+  survive a hub reboot. Confirm the non-admin login is enough to view the
+  shipped dashboards. Record the zoom/rotation values that suit the 7" panel
+  and fold them into [`full_stack_setup.md`](full_stack_setup.md).
 - ☐ **Headless unchanged:** a flash with neither tick shows no trace of
   either add-on — the check that opt-in still means zero footprint.
 

@@ -158,6 +158,10 @@ class OptionalFeatures(unittest.TestCase):
         self.assertNotEqual(slug, "haoskiosk", "must be the hashed Supervisor slug")
         self.assertTrue(disp.user_must_finish, "the HA login is the user's to give")
         self.assertIn("username and password", disp.user_must_finish)
+        # Least privilege is part of the promise: the narration must steer to
+        # a dedicated, non-admin account — the add-on keeps the password in
+        # its options, and a screen has no business holding admin rights.
+        self.assertIn("Administrator off", disp.user_must_finish)
         # Headless stays the honest default — the narration must say a hub
         # never NEEDS a screen, not sell one.
         self.assertIn("headless is the default", disp.why)

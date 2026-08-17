@@ -5701,7 +5701,7 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
           ? ", plus Pi-hole. To switch Pi-hole on, point your router's DNS at the hub's IP — until then it sits idle."
           : ".") +
         (withDisplay
-          ? " The hub-display app is installed too — one step is yours: on the hub, open Settings → Apps → HAOS Kiosk Display → Configuration, enter your Home Assistant username and password, and press Start. Then the attached screen lights up with your dashboard."
+          ? " The hub-display app is installed too — one step is yours: make the screen its own Home Assistant user (Settings → People → Users, Administrator off — a screen only views dashboards), then open Settings → Apps → HAOS Kiosk Display → Configuration, enter that login, and press Start. The attached screen lights up with your dashboard."
           : "") +
         " Open your hub and the SecuraCV panel is waiting. 🐤" +
         // A clean install must not bury an account that still needs a human —
@@ -6140,11 +6140,12 @@ function hubShowHatch(receipt) {
       : []),
     ...(selfSetup && $("hub-provision-display").checked
       ? [
-          "When setup finishes, wake the screen: on the hub, open Settings → Apps → " +
-            "HAOS Kiosk Display → Configuration, enter your Home Assistant username and " +
-            "password, and press Start — your dashboard appears on the attached display, " +
-            "touch and all. The login is yours to type there because this app never carries " +
-            "it anywhere.",
+          "When setup finishes, wake the screen: on the hub, make it its own Home Assistant " +
+            "user (Settings → People → Users → Add User — name it “screen”, leave " +
+            "Administrator off; a screen only views dashboards), then open Settings → Apps " +
+            "→ HAOS Kiosk Display → Configuration, enter that login, and press Start — your " +
+            "dashboard appears on the attached display, touch and all. The login is yours " +
+            "to type there because this app never carries it anywhere.",
         ]
       : []),
     accountTyped
