@@ -22,6 +22,15 @@ struct HeartbeatCard: View {
                     Text("Away alerts").font(.headline)
                     Text(store.heartbeat.summary)
                         .font(.subheadline).foregroundStyle(.secondary)
+                    // The measured speed, shown only once a test has
+                    // actually measured it — the card claims a number it
+                    // holds, never a vibe (non-negotiable #4).
+                    if let latency = store.heartbeat.testLatencyLine {
+                        Text(latency)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
                 }
                 Spacer()
                 Button {

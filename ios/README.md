@@ -93,6 +93,42 @@ Four rules keep "beautiful" from decaying into "busy":
   path test answers in the hand that asked — and an ordinary week produces
   **zero** haptics. The chirp plays as a system sound, so the silent switch
   wins.
+- **Repeats rest; escalations pierce.** The condition ledger stops the same
+  alarm re-posting, but a dog pacing the porch flips a Canary between two
+  status lines all evening — and every flip used to buzz. `RepeatGovernor`
+  (host-tested) gives the first alert of a burst the full interruption and
+  each repeat a doubling rest (120 s → 30 min ceiling; a calm half hour makes
+  the next alert news again). A repeat that gets WORSE pierces immediately;
+  tamper and a failed chain are never governed — the same punch-through
+  contract mutes honor. Rested repeats still land in the history with the
+  honest reason, and the same verdict gates the away wake, so an iPad across
+  town rests exactly when the pocket does. When several Canaries cross in one
+  pass (the router died), `AlertStorm` collapses them into ONE summary naming
+  the count and the worst thing — the ledger keeps every per-Canary record.
+  And the 3am action is on the notification itself: **Mute until morning**,
+  the same always-expiring `MuteDuration` every other surface uses.
+- **~5-second LAN alerts, and a measured claim.** The 5-second liveness
+  sentinel also watches each Canary's witness-chain head (`HeadWatch`,
+  host-tested — first sight is a baseline, any movement including backwards
+  is news): the moment a head moves, the full refresh runs NOW instead of
+  waiting out the 20-second cycle. Tamper heard over a BLE console NOTIFY
+  re-evaluates immediately — sub-second, the fastest transport the fleet
+  has. And the Test Alert now runs a stopwatch: the provably-alive card
+  shows "posted and accepted in _n_ ms", a number it measured, never a vibe
+  (non-negotiable #4).
+- **The fleet moves to new Wi-Fi as one flow, pilot-first.** Fleet tab →
+  Options → "Update fleet Wi-Fi…". The staged plan (`FleetWiFiRollout`,
+  host-tested) sends ONE pilot Canary first and touches nothing else until
+  the pilot actually answers on the new network — a typo'd password strands
+  one device (which keeps its rescues), never the fleet. Each device rides
+  the transport it can actually use right now: HTTP (`/api/wifi/connect`)
+  when it's answering, the firmware's bonded BLE provisioning service when
+  the password already changed under it, and the display family is named
+  hands-on up front (its credentials live in its own first-boot portal).
+  Every verdict on the sheet is a device that actually came back — not a
+  hope. The same honesty landed under the glass settings sheet as an undo:
+  the sheet snapshots every knob at open, and "Undo changes" replays the
+  snapshot through the ordinary write path (`SettingsRevert`, host-tested).
 - **The character earns its moments.** The one standard Canary
   (`brands/logo_512x512.png`, staged by `make_brand_assets.py` — never
   redrawn) appears in the calm places, breathing gently (still, under Reduce

@@ -83,6 +83,31 @@ final class Heartbeat: ObservableObject {
     static let verifiedKey = "heartbeat_last_verified_v1"
     static let beatKey = "heartbeat_last_beat_v1"
     static let beatSourceKey = "heartbeat_last_beat_source_v1"
+    static let testRoundTripKey = "heartbeat_test_roundtrip_ms_v1"
+
+    /// The last Test Alert's measured ask→accepted round trip, in
+    /// milliseconds — the number that lets the card SAY fast instead of
+    /// merely feeling fast. Persisted beside the verification it belongs
+    /// to; nil until a test has actually been timed.
+    @Published private(set) var lastTestRoundTripMs: Int?
+
+    /// Stamped by the Test Alert's delivery closure, only on success (a
+    /// failed post has no round trip to claim).
+    func noteTestRoundTrip(ms: Int) {
+        lastTestRoundTripMs = max(0, ms)
+        defaults.set(max(0, ms), forKey: Self.testRoundTripKey)
+    }
+
+    /// The card's one-line speed claim — present only when a measurement
+    /// exists, worded to claim exactly what was measured and no more.
+    var testLatencyLine: String? {
+        guard let ms = lastTestRoundTripMs else { return nil }
+        if ms < 1000 {
+            return "Last test: posted and accepted in \(ms) ms."
+        }
+        let seconds = Double(ms) / 1000
+        return String(format: "Last test: posted and accepted in %.1f s.", seconds)
+    }
 
     private let defaults: UserDefaults
 
@@ -177,6 +202,8 @@ final class Heartbeat: ObservableObject {
         lastBeat = nil
         lastBeatSource = nil
         lastFleetCheckIn = nil
+        lastTestRoundTripMs = nil
+        defaults.removeObject(forKey: Self.testRoundTripKey)
         isDemoFed = false
         state = .unknown
         persist()
@@ -276,6 +303,9 @@ final class Heartbeat: ObservableObject {
         }
         if let raw = defaults.object(forKey: Self.beatSourceKey) as? Int {
             lastBeatSource = WristBeatSource(tolerant: raw)
+        }
+        if let ms = defaults.object(forKey: Self.testRoundTripKey) as? Int {
+            lastTestRoundTripMs = ms
         }
         // Don't claim anything yet: the first tick (with a real listening
         // window and a real expectsBeats) decides what this state means.

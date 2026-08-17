@@ -88,8 +88,16 @@ final class FleetStore: ObservableObject {
         // moment: on a cold launch from a background Ack/Mute tap, iOS
         // invokes the delegate before any SwiftUI .task runs — wiring these
         // in onAppear would silently drop that tap.
-        alerts.onMute = { [weak self] id in self?.mute(id) }
+        alerts.onMute = { [weak self] id, duration in self?.mute(id, duration: duration) }
         alerts.onAck = { [weak self] id in self?.acknowledgeAlert(for: id) }
+
+        // Tamper heard over a BLE NOTIFY is the fastest signal the fleet
+        // has — sub-second, no polling anywhere in the path. Re-fold and
+        // re-evaluate NOW; waiting out the 20-second cycle would squander
+        // the one transport that pushes.
+        ble.onUrgentSnapshot = { [weak self] _ in
+            Task { await self?.refreshOnce() }
+        }
 
         // Someone who installs this app ONLY to help watch a relative's fleet
         // pairs nothing, so the launch-time "you have devices, let's ask about
@@ -524,6 +532,10 @@ final class FleetStore: ObservableObject {
     /// Consecutive probe misses per paired device — the ladder's input.
     private var missCounts: [String: Int] = [:]
     private var sentinelTask: Task<Void, Never>?
+    /// Per-device witness-chain heads, watched by the sentinel — the moment
+    /// a head moves, the news gets a full refresh NOW instead of waiting
+    /// out the 20-second cycle (HeadWatch, host-tested).
+    private var headWatch = HeadWatch()
 
     /// Probe every paired, HTTP-capable Canary on a tight timeout every few
     /// seconds while the app is open. No cloud anywhere in the loop: an
@@ -569,11 +581,42 @@ final class FleetStore: ObservableObject {
                 changed = true
             }
         }
-        guard changed else { return }
-        witnesses = rows.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
-        republishGlanceSurfaces()
-        evaluateAlerts()
-        commitFeltTransition()
+        if changed {
+            witnesses = rows.sorted { $0.effectiveSeverity > $1.effectiveSeverity }
+            republishGlanceSurfaces()
+            evaluateAlerts()
+            commitFeltTransition()
+        }
+
+        // ── The event head-watch: the same 5-second pass that asks "is it
+        // alive?" also asks "did anything HAPPEN?" — one chain record's
+        // worth per answering device. The moment any head moves, the full
+        // refresh runs now, so a new event reaches the alert loop in ~5 s
+        // on the LAN instead of riding out the 20-second cycle. This is
+        // where "faster than the cloud cameras" is actually earned.
+        let liveRefs = devices.devices.filter {
+            $0.deviceType.isHTTPPairable && answers[$0.id] == true
+        }
+        guard !liveRefs.isEmpty else { return }
+        let heads = await withTaskGroup(of: (String, UInt64)?.self) { group -> [(String, UInt64)] in
+            for ref in liveRefs {
+                guard let api = try? devices.api(for: ref) else { continue }
+                group.addTask {
+                    // `try?` flattens the optional (SE-0230): nil here is a
+                    // failed read OR an empty chain — neither is news.
+                    guard let head = try? await api.witnessHeadSeq() else { return nil }
+                    return (ref.id, head)
+                }
+            }
+            var out: [(String, UInt64)] = []
+            for await h in group { if let h { out.append(h) } }
+            return out
+        }
+        var news = false
+        for (id, seq) in heads where headWatch.hasNews(id: id, headSeq: UInt32(clamping: seq)) {
+            news = true
+        }
+        if news { await refreshOnce() }
     }
 
     // MARK: - mute (the ledger is the truth; rows are its projection)
@@ -733,6 +776,15 @@ final class FleetStore: ObservableObject {
     // fresh identifier: the exact spam that gets alerts turned off.)
     private var postedAlerts: [String: String] = [:]
     private var ackedAlerts: [String: String] = [:]
+
+    /// Each witness's buzz-burst so far — the repeat governor's memory (the
+    /// dog-at-the-door damper). Deliberately NOT cleared when a condition
+    /// calms: the governor's own calm gap decides when a burst is over,
+    /// because "the dog left the porch for ninety seconds" must not reset
+    /// the rest the repeats already earned. In-memory only; a relaunch
+    /// forgetting a burst costs at most one extra buzz, which is the honest
+    /// direction to fail.
+    private var repeatMemory: [String: RepeatGovernor.Memory] = [:]
 
     /// Turn a refused delivery into a sentence the Alerts tab can show. The
     /// thrown reason is a fragment ("notifications are off for SecuraCV"), so
@@ -932,6 +984,17 @@ final class FleetStore: ObservableObject {
         // the tab's whole job is answering "did this actually reach me?", and
         // it can only answer honestly if we record what really happened.
         var live = Set<String>()
+        // Everything this pass decided to buzz for, gathered before any
+        // posting: whether each buzzes alone or the pass collapses into ONE
+        // storm summary ("3 Canaries need attention") is a question about
+        // the whole set, and it can only be answered after the loop.
+        struct PendingPost {
+            var recordID: String
+            var witness: Witness
+            var level: AlertLevel
+            var deliveredAway: Bool
+        }
+        var pendingPosts: [PendingPost] = []
         for w in witnesses where w.effectiveSeverity >= .alert {
             live.insert(w.id)
             let fingerprint = alertFingerprint(w)
@@ -986,43 +1049,32 @@ final class FleetStore: ObservableObject {
             // history shows what happened and says whose choice quieted it.
             let floor = witnessPrefs.floor(for: w.id)
             let allowedByWitness = w.effectiveSeverity >= floor.minSeverity
+            // The repeat governor speaks before the delivery is scheduled:
+            // a burst of same-story repeats from one Canary earns each
+            // repeat a longer rest (the dog-at-the-door damper). Tamper and
+            // a failed signature are never governed, and a repeat that
+            // ESCALATES pierces the rest — RepeatGovernor owns those rules,
+            // host-tested. A rested repeat still writes its record above,
+            // so the history stays complete; it just doesn't buzz.
+            let repeatVerdict = RepeatGovernor.consider(
+                severity: w.effectiveSeverity,
+                tamper: w.tamper,
+                integrityFailed: w.badge == .failed,
+                memory: repeatMemory[w.id],
+                now: Date())
             if allowedByWitness,
                let level = alerts.level(for: w.effectiveSeverity, awayFromHome: awayFromHome) {
-                // CONFIRM, never assume. `level` says a rule wants to tell
-                // them; it says nothing about whether iOS will actually show
-                // it. postConfirmed checks authorization and awaits the
-                // system's acceptance, so a denied-permission phone records
-                // "Not delivered — Notifications are off" instead of a
-                // comforting lie. This tab exists to be trusted about exactly
-                // this; recording an unverified success would make it the
-                // same kind of overstatement the PR set out to remove.
-                let recordID = record.id
-                let body = "\(w.displayName): \(w.statusLine)"
-                // "On Wi-Fi" is a claim about where the phone was, and it only
-                // stayed true while `awayFromHome` was hardcoded false. Now
-                // that it is derived, a phone across town still posts locally
-                // for everything it can genuinely observe (tamper, a failed
-                // signature) — and labeling that "On Wi-Fi" would be a false
-                // statement on the one tab whose entire job is answering
-                // "did this actually reach me?" honestly.
-                let deliveredAway = lastAwayWake != nil || awayFromHome
-                Task { [weak self] in
-                    guard let self else { return }
-                    do {
-                        try await self.alerts.postConfirmed(title: self.fleetName, body: body,
-                                                            level: level, threadID: w.id)
-                        // A wake that already reached the pocket outranks a
-                        // local post; the ledger only moves delivery up.
-                        self.alertLog.markDelivery(deliveredAway ? .away : .onLAN, for: recordID)
-                        // A REAL alert that iOS accepted proves the same
-                        // thing the Test Alert proves, and it proves it on the
-                        // day it mattered — so it counts as a verification of
-                        // the path, not merely as a delivery.
-                        self.heartbeat.recordBeat(source: .pathVerified)
-                    } catch {
-                        self.alertLog.markDelivery(.notDelivered, for: recordID,
-                                                   reason: Self.deliveryFailure(error))
-                    }
+                if repeatVerdict.buzz {
+                    repeatMemory[w.id] = repeatVerdict.memory
+                    // Collected, not posted: whether this buzzes alone or
+                    // folds into a storm summary is a decision about the
+                    // whole pass, made once, after the loop.
+                    pendingPosts.append(PendingPost(
+                        recordID: record.id, witness: w, level: level,
+                        deliveredAway: lastAwayWake != nil || awayFromHome))
+                } else {
+                    alertLog.markDelivery(.notDelivered, for: record.id,
+                                          reason: RepeatGovernor.restingReason(repeatVerdict.restingFor ?? 0))
                 }
             } else if !alerts.hasArmedRule(for: w.effectiveSeverity) {
                 alertLog.markDelivery(.notDelivered, for: record.id,
@@ -1061,9 +1113,80 @@ final class FleetStore: ObservableObject {
             // The only place that decision can be honored is here, before it
             // leaves. (Critical is exempt by construction — QuietHours cannot
             // hold it — so a tamper wake still goes out.)
-            if allowedByWitness, alerts.reachesAnywhere(severity: w.effectiveSeverity),
+            // The governor's rest binds the wake too: a repeat that isn't
+            // worth this phone's buzz isn't worth the iPad's across town —
+            // and the tiers that must never rest (tamper, a failed chain)
+            // never rest anywhere, because the same verdict covers both.
+            if allowedByWitness, repeatVerdict.buzz,
+               alerts.reachesAnywhere(severity: w.effectiveSeverity),
                !alerts.quietHoursSuppresses(w.effectiveSeverity), lastAwayWake == nil {
                 AwayPush.shared.publishWake(WakeClass(witness: w))
+            }
+        }
+
+        // ── Deliver what the pass gathered: one storm summary, or each on
+        // its own. AlertStorm owns the threshold (host-tested); the ledger
+        // keeps every per-Canary record either way — the collapse is about
+        // how many times a pocket buzzes, never about what the history holds.
+        if let storm = AlertStorm.collapse(pendingPosts.map {
+            AlertStorm.Pending(name: $0.witness.displayName,
+                               severity: $0.witness.effectiveSeverity,
+                               statusLine: $0.witness.statusLine)
+        }) {
+            // The summary inherits the pass's loudest level — a storm with a
+            // tamper in it pierces exactly as the tamper alone would have.
+            let level = pendingPosts.contains { $0.level == .critical } ? AlertLevel.critical : .important
+            let posts = pendingPosts
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.alerts.postConfirmed(title: self.fleetName, body: storm.body,
+                                                        level: level, threadID: AlertStorm.threadID)
+                    for p in posts {
+                        self.alertLog.markDelivery(p.deliveredAway ? .away : .onLAN, for: p.recordID)
+                    }
+                    self.heartbeat.recordBeat(source: .pathVerified)
+                } catch {
+                    for p in posts {
+                        self.alertLog.markDelivery(.notDelivered, for: p.recordID,
+                                                   reason: Self.deliveryFailure(error))
+                    }
+                }
+            }
+        } else {
+            for p in pendingPosts {
+                // CONFIRM, never assume. `level` says a rule wants to tell
+                // them; it says nothing about whether iOS will actually show
+                // it. postConfirmed checks authorization and awaits the
+                // system's acceptance, so a denied-permission phone records
+                // "Not delivered — Notifications are off" instead of a
+                // comforting lie. This tab exists to be trusted about exactly
+                // this; recording an unverified success would make it the
+                // same kind of overstatement the PR set out to remove.
+                //
+                // ("Away" here is a claim about where the phone was: a phone
+                // across town still posts locally for what it can genuinely
+                // observe, and labeling that "On Wi-Fi" would be a false
+                // statement on the one tab whose entire job is honesty.)
+                let body = "\(p.witness.displayName): \(p.witness.statusLine)"
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.alerts.postConfirmed(title: self.fleetName, body: body,
+                                                            level: p.level, threadID: p.witness.id)
+                        // A wake that already reached the pocket outranks a
+                        // local post; the ledger only moves delivery up.
+                        self.alertLog.markDelivery(p.deliveredAway ? .away : .onLAN, for: p.recordID)
+                        // A REAL alert that iOS accepted proves the same
+                        // thing the Test Alert proves, and it proves it on the
+                        // day it mattered — so it counts as a verification of
+                        // the path, not merely as a delivery.
+                        self.heartbeat.recordBeat(source: .pathVerified)
+                    } catch {
+                        self.alertLog.markDelivery(.notDelivered, for: p.recordID,
+                                                   reason: Self.deliveryFailure(error))
+                    }
+                }
             }
         }
         lastAwayWake = nil
@@ -1172,6 +1295,42 @@ final class FleetStore: ObservableObject {
         }
     }
 
+    // MARK: - fleet Wi-Fi rollout
+
+    /// The fleet as the Wi-Fi rollout sees it: who can take new credentials
+    /// over which path RIGHT NOW. Paired WAP-class Canaries are updatable
+    /// (HTTP when online, the BLE rescue when dark but in range); everything
+    /// else that lives on home Wi-Fi is named hands-on so the sheet can say
+    /// so instead of leaving it out and looking finished. Demo rows and
+    /// BLE-beacon-only sightings (no Wi-Fi to update) are excluded.
+    func wifiRolloutCandidates() -> [FleetWiFiRollout.Candidate] {
+        let bleIDs = ble.provisionableDeviceIDs
+        var out: [FleetWiFiRollout.Candidate] = []
+        var seen = Set<String>()
+        for ref in devices.devices where ref.deviceType.isHTTPPairable {
+            let w = witnesses.first { $0.id == ref.id }
+            out.append(FleetWiFiRollout.Candidate(
+                id: ref.id,
+                name: w?.displayName ?? ref.name,
+                updatable: ref.baseURL != nil && devices.token(for: ref.id) != nil,
+                online: w?.link == .online,
+                bleReachable: bleIDs.contains(ref.id),
+                rssiDBM: w?.rssiDBM))
+            seen.insert(ref.id)
+        }
+        for w in witnesses where !seen.contains(w.id) {
+            guard !w.id.hasPrefix(DemoFleet.idPrefix) else { continue }
+            // A row we only ever heard as a BLE beacon has no Wi-Fi of ours
+            // to update — listing it would be a chore that can't complete.
+            if w.seenViaBLE && w.baseURL == nil { continue }
+            seen.insert(w.id)
+            out.append(FleetWiFiRollout.Candidate(
+                id: w.id, name: w.displayName, updatable: false,
+                online: w.link == .online, bleReachable: false, rssiDBM: w.rssiDBM))
+        }
+        return out
+    }
+
     // MARK: - test alert (the "provably alive" button)
 
     /// `playFeedback: false` for wrist-originated tests: the answer lands in
@@ -1186,6 +1345,7 @@ final class FleetStore: ObservableObject {
         }
         let fleet = fleetName
         let alerts = alerts
+        let heartbeat = heartbeat
         await heartbeat.runTestAlert {
             // On-LAN self-test: post a local time-sensitive notification so
             // the user SEES this half of the path light up — and CONFIRM the
@@ -1200,10 +1360,15 @@ final class FleetStore: ObservableObject {
             // "your fleet can reach you" from a notification the phone posted
             // to itself is the kind of comfortable lie this project exists to
             // not tell.
+            // Timed, because "nearly instant" is a claim and claims get
+            // measured (non-negotiable #4): the stopwatch covers ask →
+            // system accepted, the same span the confirmation covers.
+            let started = Date()
             try await alerts.postConfirmed(
                 title: fleet,
                 body: "Notifications work on this iPhone. (Away alerts are a separate test — run it from the hub.)",
                 level: .important, threadID: "selftest")
+            await heartbeat.noteTestRoundTrip(ms: Int(Date().timeIntervalSince(started) * 1000))
         }
         pushLiveActivity()
         // Forced: the wrist is waiting on this exact push to leave its
