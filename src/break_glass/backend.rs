@@ -90,6 +90,7 @@ impl BreakGlassOps for KernelVaultOps {
         let vault = Vault::new(VaultConfig {
             local_path: self.vault_path.clone().into(),
             crypto_mode: policy.vault.crypto_mode,
+            key_material: crate::VaultKeyMaterial::from_env(),
         })?;
         let verifying_key = self.kernel.device_verifying_key();
         let mut clear = vault.unseal(
@@ -338,6 +339,7 @@ mod tests {
             let vault = Vault::new(VaultConfig {
                 local_path: vault_path.clone().into(),
                 crypto_mode: policy.vault.crypto_mode,
+                key_material: crate::VaultKeyMaterial::default(),
             })?;
             let vk = kernel.device_verifying_key();
             let mut raw = secret.clone();

@@ -97,7 +97,7 @@ pub use storage_health::{
     SharedStorageHealth, StorageHealthMonitor, StorageHealthReport, StorageHealthStatus,
 };
 pub use vault::crypto::VaultCryptoMode;
-pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
+pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultKeyMaterial, VaultStore};
 
 pub fn shared_memory_uri() -> String {
     let mut bytes = [0u8; 8];

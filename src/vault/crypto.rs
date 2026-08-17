@@ -247,6 +247,178 @@ fn decrypt_payload(
     Ok(())
 }
 
+// --------------------------------------------------------------------------
+// Master-key keyguard (MKG1): protect the vault master key at rest under an
+// Argon2id passphrase KEK, so possession of the vault directory alone is no
+// longer sufficient to decrypt evidence. This wraps ONLY how the master key
+// reaches memory — the envelope crypto above is untouched, so every sealed
+// v1/v2 envelope stays byte-identical.
+// --------------------------------------------------------------------------
+
+const KEYGUARD_MAGIC: &[u8; 4] = b"MKG1";
+const KEYGUARD_KIND_ARGON2ID: u8 = 1;
+const KEYGUARD_AAD_DOMAIN: &[u8] = b"securacv-vault-keyguard-v1";
+const KEYGUARD_M_KIB: u32 = 65536; // 64 MiB — interactive strength
+const KEYGUARD_T: u32 = 3;
+const KEYGUARD_P: u32 = 1;
+const KEYGUARD_SALT_LEN: usize = 16;
+
+fn read_u8b(bytes: &[u8], cursor: &mut usize) -> Result<u8> {
+    let v = *bytes
+        .get(*cursor)
+        .ok_or_else(|| anyhow!("vault keyguard: truncated"))?;
+    *cursor += 1;
+    Ok(v)
+}
+
+fn keyguard_aad(path_aad: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(KEYGUARD_AAD_DOMAIN.len() + path_aad.len());
+    v.extend_from_slice(KEYGUARD_AAD_DOMAIN);
+    v.extend_from_slice(path_aad);
+    v
+}
+
+fn keyguard_kek(
+    passphrase: &str,
+    salt: &[u8],
+    m: u32,
+    t: u32,
+    p: u32,
+) -> Result<zeroize::Zeroizing<[u8; 32]>> {
+    let params =
+        argon2::Params::new(m, t, p, None).map_err(|e| anyhow!("keyguard argon2 params: {e}"))?;
+    let kdf = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let mut kek = zeroize::Zeroizing::new([0u8; 32]);
+    kdf.hash_password_into(passphrase.as_bytes(), salt, kek.as_mut())
+        .map_err(|_| anyhow!("keyguard KEK derivation failed"))?;
+    Ok(kek)
+}
+
+/// Wrap a 32-byte master key under an Argon2id KEK derived from `passphrase`,
+/// producing a self-describing MKG1 container. `path_aad` binds the container
+/// to its vault directory (via AAD) so a keyguard copied elsewhere won't open.
+pub(crate) fn keyguard_encode(
+    master_key: &[u8; 32],
+    passphrase: &str,
+    path_aad: &[u8],
+) -> Result<Vec<u8>> {
+    let mut salt = [0u8; KEYGUARD_SALT_LEN];
+    SysRng
+        .try_fill_bytes(&mut salt[..])
+        .map_err(|_| anyhow!("OS RNG unavailable"))?;
+    let kek = keyguard_kek(passphrase, &salt, KEYGUARD_M_KIB, KEYGUARD_T, KEYGUARD_P)?;
+    let kek_bytes: &[u8; 32] = &kek;
+    let commit: [u8; 32] = Sha256::digest(kek_bytes).into();
+
+    let mut nonce = [0u8; 12];
+    SysRng
+        .try_fill_bytes(&mut nonce[..])
+        .map_err(|_| anyhow!("OS RNG unavailable"))?;
+    let mut ct = *master_key;
+    let aad = keyguard_aad(path_aad);
+    let tag = encrypt_payload(kek_bytes, &nonce, &aad, &mut ct)?;
+
+    let mut out = Vec::with_capacity(4 + 2 + 12 + 1 + KEYGUARD_SALT_LEN + 32 + 12 + 32 + 16);
+    out.extend_from_slice(KEYGUARD_MAGIC);
+    out.push(1u8); // container version
+    out.push(KEYGUARD_KIND_ARGON2ID);
+    out.extend_from_slice(&KEYGUARD_M_KIB.to_le_bytes());
+    out.extend_from_slice(&KEYGUARD_T.to_le_bytes());
+    out.extend_from_slice(&KEYGUARD_P.to_le_bytes());
+    out.push(KEYGUARD_SALT_LEN as u8);
+    out.extend_from_slice(&salt);
+    out.extend_from_slice(&commit);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ct);
+    out.extend_from_slice(&tag);
+    ct.zeroize();
+    Ok(out)
+}
+
+/// Recover the master key from an MKG1 container. Fails with a clean
+/// "wrong passphrase" (via the KEK commitment) before the AEAD, and fails the
+/// AEAD if the container was tampered with or copied to a different vault path.
+pub(crate) fn keyguard_decode(
+    container: &[u8],
+    passphrase: &str,
+    path_aad: &[u8],
+) -> Result<[u8; 32]> {
+    let mut cur = 0usize;
+    if read_slice(container, &mut cur, 4)? != KEYGUARD_MAGIC {
+        return Err(anyhow!("vault keyguard: bad magic"));
+    }
+    let version = read_u8b(container, &mut cur)?;
+    if version != 1 {
+        return Err(anyhow!("vault keyguard: unsupported version {version}"));
+    }
+    let kind = read_u8b(container, &mut cur)?;
+    if kind != KEYGUARD_KIND_ARGON2ID {
+        return Err(anyhow!("vault keyguard: unsupported kind {kind}"));
+    }
+    let m = read_u32(container, &mut cur)?;
+    let t = read_u32(container, &mut cur)?;
+    let p = read_u32(container, &mut cur)?;
+    let salt_len = read_u8b(container, &mut cur)? as usize;
+    let salt = read_slice(container, &mut cur, salt_len)?.to_vec();
+    let commit = read_slice(container, &mut cur, 32)?.to_vec();
+    let nonce = read_slice(container, &mut cur, 12)?.to_vec();
+    let ct = read_slice(container, &mut cur, 32)?.to_vec();
+    let tag = read_slice(container, &mut cur, 16)?.to_vec();
+
+    let kek = keyguard_kek(passphrase, &salt, m, t, p)?;
+    let kek_bytes: &[u8; 32] = &kek;
+    let got: [u8; 32] = Sha256::digest(kek_bytes).into();
+    if got != commit.as_slice() {
+        return Err(anyhow!("vault keyguard: wrong passphrase"));
+    }
+    let aad = keyguard_aad(path_aad);
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&ct);
+    decrypt_payload(kek_bytes, &nonce, &aad, &mut buf, &tag)?;
+    Ok(buf)
+}
+
+#[cfg(test)]
+mod keyguard_tests {
+    use super::*;
+
+    #[test]
+    fn keyguard_roundtrip() {
+        let master = [7u8; 32];
+        let c = keyguard_encode(&master, "hunter2 correct horse", b"/vault/a").unwrap();
+        let got = keyguard_decode(&c, "hunter2 correct horse", b"/vault/a").unwrap();
+        assert_eq!(got, master);
+    }
+
+    #[test]
+    fn keyguard_wrong_passphrase_fails() {
+        let c = keyguard_encode(&[9u8; 32], "right", b"/v").unwrap();
+        let err = keyguard_decode(&c, "wrong", b"/v").unwrap_err().to_string();
+        assert!(err.contains("wrong passphrase"), "got: {err}");
+    }
+
+    #[test]
+    fn keyguard_path_binding_fails_when_moved() {
+        // Same passphrase, different vault path: commitment passes, AEAD fails.
+        let c = keyguard_encode(&[3u8; 32], "pw", b"/vault/a").unwrap();
+        assert!(keyguard_decode(&c, "pw", b"/vault/b").is_err());
+    }
+
+    #[test]
+    fn keyguard_tamper_fails() {
+        let mut c = keyguard_encode(&[1u8; 32], "pw", b"/v").unwrap();
+        let last = c.len() - 1;
+        c[last] ^= 0xff; // flip a tag byte
+        assert!(keyguard_decode(&c, "pw", b"/v").is_err());
+    }
+
+    #[test]
+    fn keyguard_truncated_fails() {
+        let c = keyguard_encode(&[1u8; 32], "pw", b"/v").unwrap();
+        assert!(keyguard_decode(&c[..c.len() - 10], "pw", b"/v").is_err());
+    }
+}
+
 struct DerivedDek {
     dek: [u8; 32],
     kem_alg: String,

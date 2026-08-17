@@ -952,6 +952,7 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
     let vault = Vault::new(VaultConfig {
         local_path: vault_path,
         crypto_mode,
+        key_material: crate::VaultKeyMaterial::from_env(),
     })?;
     let conn = open_kernel_db_keyed(&db_str, DRILL_SEED)?;
     #[cfg(feature = "pqc-signatures")]
@@ -1519,6 +1520,7 @@ fn cmd_unseal(
     let vault = Vault::new(VaultConfig {
         local_path: vault_path.into(),
         crypto_mode,
+        key_material: crate::VaultKeyMaterial::from_env(),
     })?;
     let verifying_key = device_public_key_from_db(&conn)?;
     #[cfg(feature = "pqc-signatures")]

@@ -208,6 +208,7 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Initialize vault");
         Vault::new(VaultConfig {
             crypto_mode,
+            key_material: witness_kernel::VaultKeyMaterial::from_env(),
             ..VaultConfig::default()
         })?
     };
