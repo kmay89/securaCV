@@ -30,7 +30,8 @@ host — can decrypt without any quorum. `kernel/architecture.md` (Invariant V) 
 **Shipped now — passphrase keyguard (defense-in-depth).** Set
 `SECURACV_VAULT_PASSPHRASE` and the vault master key is no longer a plaintext
 file: it is wrapped under an Argon2id KEK in `master.keyguard` (an `MKG1`
-container, AAD-bound to the vault directory so a copied keyguard won't open),
+container, AAD-bound to the vault's canonical directory — a deterrent against a
+careless copy to a new path, not a cryptographic anti-exfiltration control),
 and **no plaintext `master.key` is ever written** in this mode. The passphrase
 is held only in memory, sourced from the environment, never on disk. Possession
 of the vault directory alone stops being sufficient — the operator-held

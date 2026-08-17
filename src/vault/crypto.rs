@@ -294,26 +294,32 @@ fn keyguard_kek(
     Ok(kek)
 }
 
+/// Fresh random bytes from the OS CSPRNG. The array literal is the scratch the
+/// RNG overwrites — the value returned is entirely RNG-derived (same shape as
+/// `random_dek`), so it is never a hard-coded salt/nonce.
+fn random_bytes<const N: usize>() -> [u8; N] {
+    let mut b = [0u8; N];
+    SysRng
+        .try_fill_bytes(&mut b[..])
+        .expect("OS RNG unavailable");
+    b
+}
+
 /// Wrap a 32-byte master key under an Argon2id KEK derived from `passphrase`,
 /// producing a self-describing MKG1 container. `path_aad` binds the container
-/// to its vault directory (via AAD) so a keyguard copied elsewhere won't open.
+/// to its vault directory (via AAD) so a keyguard casually copied to a
+/// different path won't open with the same passphrase.
 pub(crate) fn keyguard_encode(
     master_key: &[u8; 32],
     passphrase: &str,
     path_aad: &[u8],
 ) -> Result<Vec<u8>> {
-    let mut salt = [0u8; KEYGUARD_SALT_LEN];
-    SysRng
-        .try_fill_bytes(&mut salt[..])
-        .map_err(|_| anyhow!("OS RNG unavailable"))?;
+    let salt: [u8; KEYGUARD_SALT_LEN] = random_bytes();
     let kek = keyguard_kek(passphrase, &salt, KEYGUARD_M_KIB, KEYGUARD_T, KEYGUARD_P)?;
     let kek_bytes: &[u8; 32] = &kek;
     let commit: [u8; 32] = Sha256::digest(kek_bytes).into();
 
-    let mut nonce = [0u8; 12];
-    SysRng
-        .try_fill_bytes(&mut nonce[..])
-        .map_err(|_| anyhow!("OS RNG unavailable"))?;
+    let nonce: [u8; 12] = random_bytes();
     let mut ct = *master_key;
     let aad = keyguard_aad(path_aad);
     let tag = encrypt_payload(kek_bytes, &nonce, &aad, &mut ct)?;
@@ -358,6 +364,13 @@ pub(crate) fn keyguard_decode(
     let m = read_u32(container, &mut cur)?;
     let t = read_u32(container, &mut cur)?;
     let p = read_u32(container, &mut cur)?;
+    // Encode always uses the fixed v1 parameters, so a container claiming any
+    // other m/t/p is corrupt or hostile. Reject BEFORE deriving the KEK: an
+    // attacker who can write master.keyguard could otherwise set a huge m and
+    // OOM the process on the next open. (Parameter agility is a future kind.)
+    if m != KEYGUARD_M_KIB || t != KEYGUARD_T || p != KEYGUARD_P {
+        return Err(anyhow!("vault keyguard: unexpected MKG1 v1 parameters"));
+    }
     let salt_len = read_u8b(container, &mut cur)? as usize;
     let salt = read_slice(container, &mut cur, salt_len)?.to_vec();
     let commit = read_slice(container, &mut cur, 32)?.to_vec();
@@ -402,6 +415,17 @@ mod keyguard_tests {
         // Same passphrase, different vault path: commitment passes, AEAD fails.
         let c = keyguard_encode(&[3u8; 32], "pw", b"/vault/a").unwrap();
         assert!(keyguard_decode(&c, "pw", b"/vault/b").is_err());
+    }
+
+    #[test]
+    fn keyguard_rejects_out_of_spec_params() {
+        // A tampered m (attacker trying to force a huge Argon2 allocation) is
+        // rejected before the KEK is derived. m is a u32-LE at offset 6
+        // (magic[4] + version[1] + kind[1]).
+        let mut c = keyguard_encode(&[2u8; 32], "pw", b"/v").unwrap();
+        c[6..10].copy_from_slice(&9_999_999u32.to_le_bytes());
+        let err = keyguard_decode(&c, "pw", b"/v").unwrap_err().to_string();
+        assert!(err.contains("v1 parameters"), "got: {err}");
     }
 
     #[test]

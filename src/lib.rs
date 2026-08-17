@@ -2784,6 +2784,12 @@ pub const ARGON2_SEED_PREFIX: &str = "seed-argon2id:v1:";
 const ARGON2_MAX_M_KIB: u32 = 512 * 1024;
 /// Floor below which the memory cost is too weak to be worth the format. 8 MiB.
 const ARGON2_MIN_M_KIB: u32 = 8 * 1024;
+/// Upper bounds on the time/parallelism cost accepted from a seed string. The
+/// device-open path derives the key without a strength gate, so an unbounded
+/// `t` (argon2 accepts up to u32::MAX) would hang startup on a typo'd or hostile
+/// seed; these caps keep the derivation bounded while leaving ample strength.
+const ARGON2_MAX_T: u32 = 16;
+const ARGON2_MAX_P: u32 = 8;
 /// Minimum salt length (bytes) for a v1 Argon2id seed.
 const ARGON2_MIN_SALT_LEN: usize = 16;
 
@@ -2862,6 +2868,12 @@ fn signing_key_from_argon2_seed(rest: &str) -> Result<SigningKey> {
     }
     if t == 0 || p == 0 {
         return Err(anyhow!("argon2 seed: t and p must be >= 1"));
+    }
+    if t > ARGON2_MAX_T || p > ARGON2_MAX_P {
+        return Err(anyhow!(
+            "argon2 seed: t/p too large (max t={ARGON2_MAX_T}, p={ARGON2_MAX_P}) — \
+             bounded to keep device-open from hanging"
+        ));
     }
 
     let salt = hex::decode(salt_hex).map_err(|_| anyhow!("argon2 seed: salt is not hex"))?;
@@ -2985,6 +2997,8 @@ mod argon2_seed_tests {
             format!("seed-argon2id:v1:m=1,t=1,p=1:{salt}:pw"),
             format!("seed-argon2id:v1:m=99999999,t=1,p=1:{salt}:pw"),
             format!("seed-argon2id:v1:m=8192,t=0,p=1:{salt}:pw"),
+            format!("seed-argon2id:v1:m=8192,t=999,p=1:{salt}:pw"), // t over cap
+            format!("seed-argon2id:v1:m=8192,t=1,p=999:{salt}:pw"), // p over cap
             format!("seed-argon2id:v1:x=1:{salt}:pw"),
             format!("seed-argon2id:v1:m=8192,t=1,p=1:{salt}:"),
         ] {
