@@ -405,20 +405,37 @@ window.addEventListener("message", (e) => {
 });
 
 function overviewView() {
-  const cards = M.stages.map(s => {
+  const done = visited();
+  // Each card owns its stage's accent as --ac and its place in line as --i —
+  // the CSS does the rest: colored number badge, hover glow and shine sweep in
+  // that color, and a staggered entrance that walks the line 1 → 6.
+  const cards = M.stages.map((s, i) => {
     const n = (s.tracks ? s.tracks.flatMap(t => t.benches) : s.benches).length;
-    return h("button", { class: "scard", onclick: () => navigate(firstOf(s).slug) },
+    const isDone = done.has(s.id);
+    return h("button", { class: "scard" + (isDone ? " done" : ""),
+        style: `--ac:${s.accent};--i:${i}`, onclick: () => navigate(firstOf(s).slug) },
+      h("span", { class: "sc-shine", "aria-hidden": "true" }),
       h("div", { class: "top" },
-        h("span", { class: "circ", style: `border-color:${s.accent};color:${s.accent}` }, String(s.n)),
-        h("h3", {}, s.name)),
+        h("span", { class: "circ" }, isDone ? h("span", { class: "sc-chk", html: CHECK }) : String(s.n)),
+        h("h3", {}, s.name),
+        h("span", { class: "sc-go", "aria-hidden": "true", html:
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>' })),
       h("div", { class: "verb" }, s.verb),
       h("div", { class: "cnt" }, n + (n === 1 ? " bench" : " benches") + ((s.options || s.fork) ? " · options" : "")));
   });
+  const nDone = M.stages.filter(s => done.has(s.id)).length;
   return h("div", { class: "ov" },
-    h("div", { class: "room-wrap" },
-      h("iframe", { class: "room", src: "room.html", loading: "eager",
-        title: "The Canary Lab — a workshop you can walk. Tap a station to open its bench." })),
-    h("div", { class: "ov-cards-head" }, "Jump straight to a stage"),
+    h("div", { class: "ov-hero" },
+      h("div", { class: "ov-glow", "aria-hidden": "true" }),
+      h("div", { class: "room-wrap" },
+        h("iframe", { class: "room", src: "room.html", loading: "eager",
+          title: "The Canary Lab — a workshop you can walk. Tap a station to open its bench." }))),
+    h("div", { class: "ov-line" },
+      h("div", { class: "ov-cards-head" }, "Jump straight to a stage"),
+      h("div", { class: "ov-prog", role: "img",
+          "aria-label": nDone + " of " + M.stages.length + " stages visited" },
+        ...M.stages.map(s => h("span", { class: "pip" + (done.has(s.id) ? " lit" : ""), style: `--ac:${s.accent}` })),
+        h("span", { class: "pt" }, nDone + "/" + M.stages.length + " visited"))),
     h("div", { class: "stage-cards" }, ...cards),
   );
 }

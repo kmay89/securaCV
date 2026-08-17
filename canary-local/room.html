@@ -96,10 +96,18 @@
   #scene:focus-visible{outline:2px solid var(--s4);outline-offset:2px;border-radius:16px;}
 
   .pad{cursor:pointer;}
-  .pad-label{font-family:var(--sans);font-weight:700;font-size:13.5px;text-anchor:middle;}
-  .pad-label.sub{font-family:var(--mono);font-size:10px;letter-spacing:.04em;}
+  /* halo behind every station label (paint-order:stroke) — the names have to
+     read from across the room, day or night, without a box behind them */
+  .pad-label{font-family:var(--sans);font-weight:800;font-size:15.5px;text-anchor:middle;
+    paint-order:stroke;stroke:var(--bg);stroke-width:3.5px;stroke-linejoin:round;}
+  .pad-label.sub{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.04em;stroke-width:3px;}
   .lift{transition:transform .24s cubic-bezier(.2,1.25,.4,1);transform-box:fill-box;transform-origin:center;}
-  .pad:hover .lift,.pad.sel .lift{transform:translateY(-6px);}
+  .pad:hover .lift,.pad.sel .lift{transform:translateY(-8px) scale(1.03);}
+  /* each pad carries --gs (its station color at ~40% alpha, set in draw()) so
+     hovering pools that color under the machine — the existing .pad transition
+     on filter animates it in */
+  .pad:hover,.pad:focus-visible{filter:drop-shadow(0 10px 18px var(--gs,rgba(0,0,0,.25)));}
+  .pad:hover .marker{animation:none;opacity:1;}
   .marker-num{font-family:var(--mono);font-weight:700;font-size:15px;fill:#fff;text-anchor:middle;dominant-baseline:central;}
   .marker.pulse{animation:mpulse 2.6s ease-in-out infinite;transform-box:fill-box;transform-origin:center;}
   @keyframes mpulse{0%,100%{opacity:.62;}50%{opacity:1;}}
@@ -123,8 +131,13 @@
   @keyframes steam{0%{opacity:0;transform:translateY(2px) scaleY(.8);}40%{opacity:.6;}100%{opacity:0;transform:translateY(-12px) scaleY(1.2);}}
   .twinkle{animation:tw 3s ease-in-out infinite;}
   @keyframes tw{0%,100%{opacity:.35;}50%{opacity:1;}}
-  .rise{animation:rise .6s cubic-bezier(.2,1.1,.4,1) backwards;}
-  @keyframes rise{from{transform:translateY(16px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  /* first-load choreography only (draw() re-runs on every select/day-night;
+     introDone gates these so a click never replays the opening) */
+  .rise{animation:rise .7s cubic-bezier(.18,1.35,.4,1) backwards;transform-box:fill-box;transform-origin:center bottom;}
+  @keyframes rise{0%{transform:translateY(30px) scale(.9);opacity:0;}62%{transform:translateY(-5px) scale(1.03);opacity:1;}100%{transform:translateY(0) scale(1);opacity:1;}}
+  #scene.intro{animation:scenein .9s cubic-bezier(.22,1.1,.36,1) backwards;}
+  @keyframes scenein{from{opacity:0;transform:scale(.955) translateY(16px);}to{opacity:1;transform:none;}}
+  #scene{transition:transform .3s cubic-bezier(.2,.8,.3,1);}
   .built-glow{filter:drop-shadow(0 0 8px var(--gc));}
   /* cinematic focus — Skyrim-style pull to the selected station */
   #scene .env,#scene .pad{transition:opacity .45s ease, filter .45s ease;}
@@ -182,7 +195,8 @@
   .callout text{font-family:var(--mono);font-size:11px;letter-spacing:.09em;fill:var(--ink);}
   @media (prefers-reduced-motion: reduce){
     .marker.pulse,.tape.flow,.cone,.sweep,.dial,.head-x,.bird-bob,.hop,.blink,.steam,.twinkle,.rise,.sparkle{animation:none!important;}
-    .lift{transition:none;} .stage-shell{transition:none;}
+    #scene.intro{animation:none!important;}
+    .lift{transition:none;} .stage-shell{transition:none;} #scene{transition:none;}
   }
 
   /* the bench panel — slides over the scene when a station is chosen, gone otherwise */
@@ -298,7 +312,15 @@
   var NS="http://www.w3.org/2000/svg";
   var UX=37, UY=18.5, UZ=25, OX=402, OY=120;
   var REDUCE = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  var NIGHT=false;
+  // The room wakes up matching the visitor's theme — night scene in a dark
+  // app, day scene in a light one — instead of always dawning in daylight
+  // inside a dark shell. The 🌙/☀️ button still overrides; once tapped, the
+  // choice is theirs and scheme changes stop following.
+  var SCHEME = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var THEME_ATTR = document.documentElement.getAttribute("data-theme");
+  var NIGHT = THEME_ATTR ? THEME_ATTR === "dark" : !!(SCHEME && SCHEME.matches);
+  var NIGHT_LOCKED = false;
+  var introDone = false;
   function P(x,y,z){ z=z||0; return [(x-y)*UX+OX,(x+y)*UY-z*UZ+OY]; }
   function pts(l){ return l.map(function(p){return P(p[0],p[1],p[2]).join(",");}).join(" "); }
   function el(t,a,c){ var n=document.createElementNS(NS,t); if(a)for(var k in a)n.setAttribute(k,a[k]); if(c)n.setAttribute("class",c); return n; }
@@ -665,11 +687,16 @@
       var hidden=el("path",{d:dstr,fill:'none',stroke:'none'}); connG.appendChild(hidden);
       connPaths[lk[0]+'>'+lk[1]]=hidden;
     });
-    // stations back-to-front
+    // stations back-to-front — springing up one by one on first load only
+    if(!introDone && !REDUCE){
+      scene.classList.add('intro');
+      scene.addEventListener('animationend',function onIn(e){ if(e.target===scene){ scene.classList.remove('intro'); scene.removeEventListener('animationend',onIn); } });
+    }
     STATIONS.slice().sort(function(p,q){return (p.gx+p.gy)-(q.gx+q.gy);}).forEach(function(s,i){
-      var g=el("g",{'data-id':s.id,tabindex:'0',role:'button','aria-label':'Stage '+String(s.id).toUpperCase()+' · '+s.name},"pad"+(REDUCE?"":" rise"));
-      if(!REDUCE) g.style.animationDelay=(i*0.07)+"s";
-      if(isBuilt(s.id)){g.classList.add('built-glow');g.style.setProperty('--gc',s.hex);}
+      var g=el("g",{'data-id':s.id,tabindex:'0',role:'button','aria-label':'Stage '+String(s.id).toUpperCase()+' · '+s.name},"pad"+(REDUCE||introDone?"":" rise"));
+      if(!REDUCE&&!introDone) g.style.animationDelay=(0.12+i*0.09)+"s";
+      g.style.setProperty('--gc',s.hex); g.style.setProperty('--gs',s.hex+'66'); // hover glow pools the station's own color
+      if(isBuilt(s.id)) g.classList.add('built-glow');
       // warm wooden slab under each machine
       diamond(g,s.gx,s.gy,1.5,pal.benchTop,null,null).setAttribute("opacity",".92");
       diamond(g,s.gx,s.gy,1.5,'none',s.hex,null).setAttribute("stroke-width","2");
@@ -706,6 +733,7 @@
     scene.appendChild(ov); // persistent overlay on top (tokens, sparkles, toasts)
     ensureAmbient();
     paintProgress();
+    introDone=true;
   }
   function particles(host){
     if(REDUCE) return;
@@ -1021,14 +1049,27 @@
 
   // day / night
   var dnBtn=document.getElementById('daynight');
-  dnBtn.addEventListener('click',function(){
-    SFX.whoosh();
-    NIGHT=!NIGHT; shell.classList.toggle('night',NIGHT);
+  function syncDayNight(){
+    shell.classList.toggle('night',NIGHT);
     dnBtn.textContent=NIGHT?'☀️':'🌙';
     dnBtn.setAttribute('aria-label',NIGHT?'Switch to day':'Switch to night');
+  }
+  function redrawKeepSel(){
     var sel=document.querySelector('.chip.on'); draw();
     if(sel){var id=sel.getAttribute('data-id'); Array.prototype.forEach.call(scene.querySelectorAll('.pad'),function(p){if(p.getAttribute('data-id')===id)p.classList.add('sel');});}
+  }
+  syncDayNight();
+  dnBtn.addEventListener('click',function(){
+    SFX.whoosh();
+    NIGHT_LOCKED=true; NIGHT=!NIGHT; syncDayNight();
+    redrawKeepSel();
   });
+  // follow the app/OS theme live until the visitor picks a side themselves
+  if(SCHEME){
+    var onScheme=function(e){ if(NIGHT_LOCKED||NIGHT===e.matches) return; NIGHT=e.matches; syncDayNight(); redrawKeepSel(); };
+    if(SCHEME.addEventListener) SCHEME.addEventListener('change',onScheme);
+    else if(SCHEME.addListener) SCHEME.addListener(onScheme);
+  }
 
   // walk the line
   var walkBtn=document.getElementById('walk'), walking=false;
@@ -1065,7 +1106,9 @@
   if(!REDUCE){
     shell.addEventListener('mousemove',function(e){
       var r=shell.getBoundingClientRect();var dx=(e.clientX-r.left)/r.width-.5,dy=(e.clientY-r.top)/r.height-.5;
-      scene.style.transform="translate("+(dx*8).toFixed(1)+"px,"+(dy*5).toFixed(1)+"px)";
+      // parallax + a whisper of tilt — the room leans toward the cursor like a
+      // diorama on a shelf; #scene's transform transition does the damping
+      scene.style.transform="perspective(1200px) rotateX("+(dy*-1.5).toFixed(2)+"deg) rotateY("+(dx*2.2).toFixed(2)+"deg) translate("+(dx*10).toFixed(1)+"px,"+(dy*6).toFixed(1)+"px)";
       var now=Date.now(); if(now-_lastTrail>110){ _lastTrail=now; var sc=clientToScene(e.clientX,e.clientY); if(sc) sparkleAt(sc[0],sc[1],NIGHT?'#ffde96':'#fff0c0'); }
     });
     shell.addEventListener('mouseleave',function(){scene.style.transform="";});
