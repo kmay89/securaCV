@@ -77,11 +77,16 @@ constexpr int CHIP_X   = BIG ? (8 * SCR_W) / 172 : 8;
 constexpr int NAME_X   = BIG ? (26 * SCR_W) / 172 : 26;
 
 // Witness rows that fit between the column top (V(172)) and the glance
-// line's reserve, capped at the designed 5 — the formula reproduces exactly
-// 5 on the original 172x320 glass and degrades gracefully on shorter ones
-// (the scaled metrics keep the same designed 5 on the tall AMOLED).
+// line's reserve. The small glasses keep the designed cap of 5; a BIG glass
+// may grow to 8 — but only as far as its scaled rows actually FIT, which on
+// the 450x600 AMOLED is 5 full-size rows (the proportional face keeps its
+// physical row height rather than shrinking type to force a count). The
+// formula reproduces exactly 5 on the original 172x320 glass, degrades
+// gracefully on shorter ones, and lets a future even-taller glass use its
+// room without another edit here.
 constexpr int ROWS_FIT = (SCR_H - V(172) - (BIG ? V(26) : 26)) / (ROW_H + ROW_GAP);
-constexpr int ROWS = ROWS_FIT < 5 ? (ROWS_FIT < 1 ? 1 : ROWS_FIT) : 5;
+constexpr int ROWS_CAP = BIG ? 8 : 5;
+constexpr int ROWS = ROWS_FIT < ROWS_CAP ? (ROWS_FIT < 1 ? 1 : ROWS_FIT) : ROWS_CAP;
 
 lv_obj_t* s_wash = nullptr;        // breathing severity field behind the bird
 lv_obj_t* s_bird = nullptr;        // the living canary

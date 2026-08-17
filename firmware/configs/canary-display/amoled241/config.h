@@ -116,10 +116,12 @@
 // FLEET MODEL
 // ============================================================================
 
-// The 600-px glass reads more witness rows than any sibling: the portrait
-// face's severity-ordered column caps at 8 rows here (ROWS_CAP in
-// portrait_ui.cpp keys off glass height), with the worst always on top and a
-// muted "+N more" past the cap.
+// The portrait face's severity-ordered witness column shows what its scaled
+// rows actually fit — 5 full-size rows on this glass (ROWS in
+// portrait_ui.cpp: the proportional face keeps its physical row height
+// rather than shrinking type to force a count; a taller glass may grow to
+// 8). The worst witness always floats to the top row and a muted "+N more"
+// covers the rest; the fleet model itself tracks up to this many.
 #define CD_FLEET_MAX_DEVICES    12
 
 #define CD_STALE_AFTER_MS       180000    // 3 min  -> amber

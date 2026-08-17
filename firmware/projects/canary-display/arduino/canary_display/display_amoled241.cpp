@@ -228,6 +228,14 @@ void power_off() {
   digitalWrite(PWR_LATCH_PIN, LOW);
   delay(50);  // on battery we are gone before this returns
 #if defined(PWR_KEY_PIN) && (PWR_KEY_PIN >= 0)
+  // Still here = USB power (the latch drop couldn't cut the rail). This
+  // fires on the HOLD DEADLINE, so the active-low key is still down — and a
+  // level-low wake armed under a held key is already true: the "off" would
+  // bounce straight back on. Wait out the release (plus a debounce breath)
+  // before arming, so waking takes a fresh press.
+  pinMode(PWR_KEY_PIN, INPUT_PULLUP);
+  while (digitalRead(PWR_KEY_PIN) == LOW) delay(10);
+  delay(50);
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PWR_KEY_PIN, 0 /* wake on press */);
 #endif
   esp_deep_sleep_start();
