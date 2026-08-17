@@ -32,7 +32,8 @@ enum RepeatGovernor {
     static let baseCooldown: TimeInterval = 120
     /// Rests double per repeat up to this ceiling.
     static let cooldownCap: TimeInterval = 1800
-    /// Quiet this long ends the burst — the next alert is news again.
+    /// Quiet this long — no repeats even CONSIDERED, not merely none
+    /// buzzed — ends the burst; the next alert is news again.
     static let calmGap: TimeInterval = 1800
 
     /// What one witness's burst looks like so far. Kept by FleetStore per
@@ -40,6 +41,14 @@ enum RepeatGovernor {
     /// extra buzz, which is the honest direction to fail.
     struct Memory: Hashable, Sendable {
         var lastBuzzAt: Date
+        /// The last time ANY repeat was considered — buzzed or rested. THIS
+        /// is what the calm gap measures, and the distinction is the fix
+        /// for a real hole: measured from `lastBuzzAt`, a Canary flapping
+        /// continuously for half an hour under the cooldown ceiling would
+        /// read as "calm" (no buzz in 30 min) and win its short cooldowns
+        /// back without one quiet minute. Calm means the CONDITION stopped
+        /// churning, not that the governor was winning.
+        var lastSeenAt: Date
         /// The worst severity already buzzed in this burst — the bar a
         /// repeat must clear to count as an escalation.
         var worstBuzzed: Severity
@@ -77,36 +86,43 @@ enum RepeatGovernor {
             let count = (memory?.buzzCount ?? 0) + 1
             let worst = max(memory?.worstBuzzed ?? severity, severity)
             return Verdict(buzz: true,
-                           memory: Memory(lastBuzzAt: now, worstBuzzed: worst,
-                                          buzzCount: count),
+                           memory: Memory(lastBuzzAt: now, lastSeenAt: now,
+                                          worstBuzzed: worst, buzzCount: count),
                            restingFor: nil)
         }
-        // No burst, or the last one ended calmly — a fresh story.
-        guard let memory, now.timeIntervalSince(memory.lastBuzzAt) < calmGap else {
+        // No burst, or the last one ended calmly — a fresh story. Calm is
+        // measured from the last repeat CONSIDERED (lastSeenAt), so a
+        // condition that never stopped churning can never read as calm.
+        guard let memory, now.timeIntervalSince(memory.lastSeenAt) < calmGap else {
             return Verdict(buzz: true,
-                           memory: Memory(lastBuzzAt: now, worstBuzzed: severity,
-                                          buzzCount: 1),
+                           memory: Memory(lastBuzzAt: now, lastSeenAt: now,
+                                          worstBuzzed: severity, buzzCount: 1),
                            restingFor: nil)
         }
         // A genuine escalation pierces the rest.
         if severity > memory.worstBuzzed {
             return Verdict(buzz: true,
-                           memory: Memory(lastBuzzAt: now, worstBuzzed: severity,
+                           memory: Memory(lastBuzzAt: now, lastSeenAt: now,
+                                          worstBuzzed: severity,
                                           buzzCount: memory.buzzCount + 1),
                            restingFor: nil)
         }
         // A same-or-milder repeat inside the burst: buzz only once the
-        // earned rest has passed.
+        // earned rest (measured from the last BUZZ) has passed.
         let rest = cooldown(afterBuzzes: memory.buzzCount)
         let elapsed = now.timeIntervalSince(memory.lastBuzzAt)
         if elapsed >= rest {
             return Verdict(buzz: true,
-                           memory: Memory(lastBuzzAt: now,
+                           memory: Memory(lastBuzzAt: now, lastSeenAt: now,
                                           worstBuzzed: max(memory.worstBuzzed, severity),
                                           buzzCount: memory.buzzCount + 1),
                            restingFor: nil)
         }
-        return Verdict(buzz: false, memory: memory, restingFor: rest - elapsed)
+        // Rested — but SEEN: the burst's clock keeps running, or a
+        // continuous flap would age into a fake calm.
+        var seen = memory
+        seen.lastSeenAt = now
+        return Verdict(buzz: false, memory: seen, restingFor: rest - elapsed)
     }
 
     /// The ledger's honest sentence for a rested repeat — the history must

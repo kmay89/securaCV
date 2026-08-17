@@ -104,9 +104,12 @@ Four rules keep "beautiful" from decaying into "busy":
   honest reason, and the same verdict gates the away wake, so an iPad across
   town rests exactly when the pocket does. When several Canaries cross in one
   pass (the router died), `AlertStorm` collapses them into ONE summary naming
-  the count and the worst thing — the ledger keeps every per-Canary record.
-  And the 3am action is on the notification itself: **Mute until morning**,
-  the same always-expiring `MuteDuration` every other surface uses.
+  the count and the worst thing — and into ONE away wake carrying the worst
+  class, so the pocket and the nightstand collapse together. Ack or Mute on
+  the summary fans out to every Canary it spoke for (answering "4 Canaries
+  need attention" answers all four); the ledger keeps every per-Canary
+  record. And the 3am action is on the notification itself: **Mute until
+  morning**, the same always-expiring `MuteDuration` every other surface uses.
 - **~5-second LAN alerts, and a measured claim.** The 5-second liveness
   sentinel also watches each Canary's witness-chain head (`HeadWatch`,
   host-tested — first sight is a baseline, any movement including backwards

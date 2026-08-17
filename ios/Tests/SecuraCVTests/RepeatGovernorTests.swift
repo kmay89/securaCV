@@ -94,6 +94,33 @@ final class RepeatGovernorTests: XCTestCase {
         XCTAssertEqual(fresh.memory.buzzCount, 1, "a calm gap resets the doubling")
     }
 
+    func testContinuousFlappingNeverReadsAsCalm() {
+        // A Canary flapping every 10 minutes for over an hour. Under the
+        // 30-minute cooldown ceiling more than 30 minutes can pass between
+        // BUZZES while the condition never once goes quiet — that must not
+        // read as a calm gap and hand the short cooldowns back.
+        var memory: RepeatGovernor.Memory?
+        var buzzCounts: [Int] = []
+        for minute in stride(from: 0, through: 80, by: 10) {
+            let v = verdict(memory: memory,
+                            at: t0.addingTimeInterval(Double(minute) * 60))
+            memory = v.memory
+            if v.buzz { buzzCounts.append(v.memory.buzzCount) }
+        }
+        // Buzzes land at 0, 10, 20, 30, 50 and 80 minutes (rests doubling
+        // between them); the burst count only ever climbs — a reset to 1
+        // would be the fake-calm bug this test pins down.
+        XCTAssertEqual(buzzCounts, [1, 2, 3, 4, 5, 6])
+    }
+
+    func testARestedRepeatAdvancesTheSeenClockOnly() {
+        let first = verdict(memory: nil, at: t0)
+        let rested = verdict(memory: first.memory, at: t0.addingTimeInterval(30))
+        XCTAssertEqual(rested.memory.lastSeenAt, t0.addingTimeInterval(30))
+        XCTAssertEqual(rested.memory.lastBuzzAt, t0, "a rest is seen, never counted as a buzz")
+        XCTAssertEqual(rested.memory.buzzCount, 1)
+    }
+
     func testSameSeverityRepeatDoesNotPierce() {
         // The dog case exactly: alert → alert with a different status line.
         let first = verdict(severity: .alert, memory: nil, at: t0)

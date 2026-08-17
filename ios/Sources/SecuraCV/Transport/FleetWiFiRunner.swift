@@ -63,11 +63,23 @@ final class FleetWiFiRunner: ObservableObject {
             }
             return
         }
-        // Proven credentials fan out concurrently; the risk the staging
-        // existed for is spent.
+        // Proven credentials fan out; the risk the staging existed for is
+        // spent. HTTP followers go concurrently — each talks to its own
+        // device. BLE followers QUEUE: the console runs one bonded
+        // provisioning ceremony at a time (a second concurrent write would
+        // be refused, not interleaved), so a parallel fan-out would rescue
+        // one Canary and falsely fail the rest. The queue runs alongside
+        // the HTTP work, so the slow lane never holds the fast one.
+        let httpFollowers = plan.followers.filter { $0.path == .http }
+        let bleFollowers = plan.followers.filter { $0.path == .ble }
         await withTaskGroup(of: Void.self) { group in
-            for c in plan.followers {
+            for c in httpFollowers {
                 group.addTask { await self.push(to: c, ssid: ssid, password: password) }
+            }
+            group.addTask {
+                for c in bleFollowers {
+                    await self.push(to: c, ssid: ssid, password: password)
+                }
             }
         }
     }

@@ -637,6 +637,13 @@ final class FleetStore: ObservableObject {
     }
 
     private func quiet(_ id: String, until: Date) {
+        // A mute on the storm summary means "quiet all of them" — same
+        // fan-out as the storm Ack, and every guarantee still holds per
+        // witness (tamper punch-through, the mute's own expiry).
+        if id == AlertStorm.threadID {
+            for witnessID in stormWitnessIDs { quiet(witnessID, until: until) }
+            return
+        }
         // "Stop telling me about this" is an answer, and the local counters
         // hear it as one — a class the user mutes over and over is a class
         // the app should offer to stop pushing (AlertTuning).
@@ -786,6 +793,14 @@ final class FleetStore: ObservableObject {
     /// direction to fail.
     private var repeatMemory: [String: RepeatGovernor.Memory] = [:]
 
+    /// The witnesses the LAST storm summary spoke for. A storm notification
+    /// carries the synthetic `fleet-storm` thread, so its Ack / Mute actions
+    /// arrive naming no witness at all — this list is how those taps reach
+    /// every Canary the summary covered instead of silently doing nothing
+    /// (which would leave the records unacknowledged and eligible for
+    /// escalation the user believes they answered).
+    private var stormWitnessIDs: [String] = []
+
     /// Turn a refused delivery into a sentence the Alerts tab can show. The
     /// thrown reason is a fragment ("notifications are off for SecuraCV"), so
     /// it gets a capital and a period and nothing else — the user reads the
@@ -807,7 +822,15 @@ final class FleetStore: ObservableObject {
 
     /// The Ack action's landing pad: remember WHAT was acknowledged, so the
     /// same ongoing condition stays quiet but any change breaks through.
+    ///
+    /// The storm summary's thread is synthetic, so its Ack fans out to every
+    /// witness the summary spoke for — answering "4 Canaries need attention"
+    /// answers all four, exactly what the tap meant.
     func acknowledgeAlert(for id: String) {
+        if id == AlertStorm.threadID {
+            for witnessID in stormWitnessIDs { acknowledgeAlert(for: witnessID) }
+            return
+        }
         if let w = witnesses.first(where: { $0.id == id }) {
             ackedAlerts[id] = alertFingerprint(w)
         } else if let posted = postedAlerts[id] {
@@ -995,6 +1018,9 @@ final class FleetStore: ObservableObject {
             var deliveredAway: Bool
         }
         var pendingPosts: [PendingPost] = []
+        // Wakes gathered the same way, for the same reason — see the away
+        // leg of the storm collapse below.
+        var pendingWakes: [Witness] = []
         for w in witnesses where w.effectiveSeverity >= .alert {
             live.insert(w.id)
             let fingerprint = alertFingerprint(w)
@@ -1062,10 +1088,13 @@ final class FleetStore: ObservableObject {
                 integrityFailed: w.badge == .failed,
                 memory: repeatMemory[w.id],
                 now: Date())
+            // Stored on BOTH verdicts: a rested repeat still advances the
+            // burst's seen-clock, which is what keeps a continuous flap
+            // from aging into a fake calm gap.
+            repeatMemory[w.id] = repeatVerdict.memory
             if allowedByWitness,
                let level = alerts.level(for: w.effectiveSeverity, awayFromHome: awayFromHome) {
                 if repeatVerdict.buzz {
-                    repeatMemory[w.id] = repeatVerdict.memory
                     // Collected, not posted: whether this buzzes alone or
                     // folds into a storm summary is a decision about the
                     // whole pass, made once, after the loop.
@@ -1117,9 +1146,27 @@ final class FleetStore: ObservableObject {
             // worth this phone's buzz isn't worth the iPad's across town —
             // and the tiers that must never rest (tamper, a failed chain)
             // never rest anywhere, because the same verdict covers both.
+            // COLLECTED, not published: each wake record fires every
+            // subscribed device's push, so a storm publishing per witness
+            // would hand the user's other devices the exact multi-buzz
+            // pile-up the local collapse exists to prevent. One decision
+            // about the whole pass, after the loop.
             if allowedByWitness, repeatVerdict.buzz,
                alerts.reachesAnywhere(severity: w.effectiveSeverity),
                !alerts.quietHoursSuppresses(w.effectiveSeverity), lastAwayWake == nil {
+                pendingWakes.append(w)
+            }
+        }
+
+        // ── The away leg of the storm collapse: at or past the same
+        // threshold, ONE wake — carrying the worst class — reaches the
+        // user's other devices, mirroring the one summary this phone shows.
+        if pendingWakes.count >= AlertStorm.threshold {
+            if let worst = pendingWakes.max(by: { $0.effectiveSeverity < $1.effectiveSeverity }) {
+                AwayPush.shared.publishWake(WakeClass(witness: worst))
+            }
+        } else {
+            for w in pendingWakes {
                 AwayPush.shared.publishWake(WakeClass(witness: w))
             }
         }
@@ -1137,6 +1184,9 @@ final class FleetStore: ObservableObject {
             // tamper in it pierces exactly as the tamper alone would have.
             let level = pendingPosts.contains { $0.level == .critical } ? AlertLevel.critical : .important
             let posts = pendingPosts
+            // Stamped before the post: the Ack on a storm banner can arrive
+            // the moment iOS shows it.
+            stormWitnessIDs = posts.map(\.witness.id)
             Task { [weak self] in
                 guard let self else { return }
                 do {
