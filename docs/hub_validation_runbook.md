@@ -130,6 +130,28 @@ check each once on real hardware:
 - ☐ **Preflight** warns if the staging disk is low; the macOS permission
   heads-up appears before the write.
 
+### Opt-in extras (self-setup's `--with` flags)
+
+The plan's optional features carry the same honest-status caveat as self-setup
+itself: host-tested end to end, validated the first time a real run watches
+them land. Check each on the session's hub:
+
+- ☐ **Pi-hole** (`--with pihole` / the Flasher's tick): the companion run
+  registers the repository, installs and starts the add-on; its page loads
+  from the hub; nothing on the network changes until the router's DNS points
+  at the hub.
+- ☐ **Hub display** (`--with display` / "Also install the hub display"):
+  flash with the tick on and an HDMI touchscreen attached — the reference
+  panel is a 7" 1024x600 IPS with USB touch. The companion run must install
+  HAOSKiosk **without starting it** and say so ("you finish" line names the
+  Configuration tab). Then, on the hub: enter the HA login in Settings → Apps
+  → HAOS Kiosk Display → Configuration, press Start — the dashboard appears on the
+  panel, touch registers where it taps, and both survive a hub reboot. Record
+  the zoom/rotation values that suit the 7" panel and fold them into
+  [`full_stack_setup.md`](full_stack_setup.md).
+- ☐ **Headless unchanged:** a flash with neither tick shows no trace of
+  either add-on — the check that opt-in still means zero footprint.
+
 ### Recovery (the "always recovers" bar — try to break it)
 
 - ☐ **Pull the card mid-write** → clear "the card wandered off… plug it back

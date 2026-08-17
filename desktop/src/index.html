@@ -696,6 +696,20 @@
                 settings let you shorten retention or turn query logging off entirely (blocking
                 still works without it).</p>
               <label class="check"><input type="checkbox" id="hub-provision-pihole" checked> Also install Pi-hole</label>
+              <p class="muted" style="margin-top:12px"><strong>Optional — a screen on the hub itself.</strong>
+                The hub never needs one; headless stays the default. But if you're plugging an HDMI
+                display into the Pi — say a 7&#8243; 1024x600 IPS touchscreen with USB touch — self-setup
+                can also install <strong>HAOSKiosk</strong>, a small open-source app that runs a browser
+                on the hub and shows your dashboard on that screen full-screen, touch and all. Local by
+                construction: the browser runs on the hub and talks to the hub, so a screen adds no
+                cloud, no account, and no new way for anything to leave your house.</p>
+              <p class="muted"><strong>One thing it can't do for you:</strong> the screen signs in as
+                <em>your</em> Home Assistant user, and that password is yours — never typed here, never
+                put on the card. After setup, open Settings → Apps → HAOS Kiosk Display → Configuration
+                on the hub, enter your HA username and password, and press Start; the screen lights up
+                with your dashboard. (Zoom, rotation, and screen-timeout live in the same tab.) No screen
+                attached? The app simply won't start, and nothing else on the hub cares.</p>
+              <label class="check"><input type="checkbox" id="hub-provision-display"> Also install the hub display (for a screen plugged into the Pi)</label>
               <p id="hub-provision-hint" class="muted"></p>
             </details>
           </section>

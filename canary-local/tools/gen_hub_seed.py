@@ -60,6 +60,22 @@ SUPERVISOR_REPO_API = "POST http://supervisor/store/repositories"
 PIHOLE_REPO = "https://github.com/Poeschl/Hassio-Addons"
 PIHOLE_SLUG = "pihole"
 
+# Optional feature: a screen plugged into the hub itself. The default hub is
+# headless — that stays true and stays the default. But a Pi with an HDMI
+# touchscreen attached (e.g. a 7" 1024x600 IPS panel with USB touch) can show
+# the household dashboard right on the box, and HAOSKiosk is the community
+# add-on built for exactly that: it starts an X server + Luakit browser ON the
+# HAOS host and points it at Home Assistant, with touch input mapped to the
+# panel. Local by construction — the browser talks to the hub it runs on.
+# Honest status: same bar as Pi-hole above — the slug follows the repository's
+# own layout and the first real `--with display` run on hardware is what
+# validates it end to end. The add-on refuses to start until the operator
+# types their own Home Assistant login into its configuration (a credential
+# this plan must never mint or carry), so the step deliberately installs
+# WITHOUT starting and hands the last move to the user.
+KIOSK_REPO = "https://github.com/puterboy/HAOS-kiosk"
+KIOSK_SLUG = "haoskiosk"
+
 
 def die(msg: str) -> None:
     sys.exit(f"gen_hub_seed.py: {msg}")
@@ -167,6 +183,18 @@ def main() -> None:
             "cli_can_do_it": False,
             "feature": "pihole",
         },
+        {
+            "url": KIOSK_REPO,
+            "provides": [KIOSK_SLUG],
+            "why": (
+                "HAOSKiosk's own add-on repository — the community add-on that shows a dashboard "
+                "on a screen plugged into the hub. Only registered when the optional `display` "
+                "feature is enabled — see that step."
+            ),
+            "api": SUPERVISOR_REPO_API,
+            "cli_can_do_it": False,
+            "feature": "display",
+        },
     ]
 
     # The API-addressable slug for each add-on (see supervisor_slug's docstring).
@@ -179,6 +207,7 @@ def main() -> None:
     frigate_sup = supervisor_slug(frigate["slug"], repositories)
     kernel_sup = supervisor_slug(kernel["slug"], repositories)
     pihole_sup = supervisor_slug(PIHOLE_SLUG, repositories)
+    kiosk_sup = supervisor_slug(KIOSK_SLUG, repositories)
     for r in repositories:
         r["supervisor_slug"] = [supervisor_slug(s, repositories) for s in r["provides"]]
 
@@ -405,6 +434,50 @@ def main() -> None:
             ),
             "reversible": True,
         },
+        {
+            "id": "install-display",
+            "title": "Install the hub display (optional: a screen on the hub itself)",
+            "what": (
+                f"Register `{KIOSK_REPO}`, then install the `{KIOSK_SLUG}` add-on — it shows "
+                "your dashboard on a screen plugged into the hub."
+            ),
+            "why": (
+                "The hub never needs a screen — headless is the default and stays fully "
+                "supported. But if you've plugged one in (any HDMI monitor, or a touchscreen "
+                "like a 7\" 1024x600 IPS panel with USB touch), this add-on puts it to work: "
+                "it runs a small browser on the hub itself, signed in to your Home Assistant, "
+                "showing the household dashboard full-screen — glance at the hallway, see the "
+                "whole house. Touch works as touch; a wall-mounted hub becomes a control "
+                "panel. Local by construction: the browser runs on the hub and talks to the "
+                "hub, so turning your screen on adds no cloud, no account, and no new way "
+                "for anything to leave your house."
+            ),
+            "for_what": (
+                "Your whole-house dashboard, live on the screen attached to the hub — no "
+                "phone or laptop needed to glance at it."
+            ),
+            "feature": "display",
+            "repositories": [KIOSK_REPO],
+            "addon": KIOSK_SLUG,
+            "supervisor_slug": kiosk_sup,
+            # Deliberately NOT started: the add-on refuses to run until it has a
+            # Home Assistant login, and that credential is yours — this plan
+            # never mints or carries one (a password in this repo would be a
+            # published credential on every hub anyone ever flashed, and even a
+            # hub-minted HA login would be an account with API rights nobody
+            # asked for). Starting it configless would just crash-loop and look
+            # broken, the same reason Frigate isn't started before its config.
+            "start": False,
+            "user_must_finish": (
+                "One thing only you can do: give the browser on the hub a login. In Home "
+                "Assistant open Settings → Apps → HAOS Kiosk Display → Configuration, enter "
+                "your Home Assistant username and password, then press Start. The screen "
+                "lights up with your dashboard. No screen attached? The add-on simply won't "
+                "start — nothing else on the hub cares. The same Configuration tab also has "
+                "zoom, rotation and screen-timeout settings for your particular panel."
+            ),
+            "reversible": True,
+        },
     ]
 
     out = {
@@ -444,7 +517,23 @@ def main() -> None:
                     "A DNS server is a whole-network change someone should choose on purpose — "
                     "recommended, never imposed. The plan without it is complete."
                 ),
-            }
+            },
+            "display": {
+                "what": (
+                    "A dashboard on a screen plugged into the hub: the HAOSKiosk add-on runs a "
+                    "small browser on the hub itself, full-screen on the attached HDMI display, "
+                    "with touch mapped to the panel. Made for a hub with a screen — like a 7\" "
+                    "1024x600 IPS HDMI touchscreen — and harmless without one (the add-on just "
+                    "won't start). Everything stays on the hub; nothing new talks out."
+                ),
+                "enable": "sh provision.sh --with display   (or host_provision.sh --with display)",
+                "recommended": False,
+                "off_by_default_because": (
+                    "Most hubs are headless — a closet box needs no browser running on it, and "
+                    "the add-on can't start without a screen anyway. Choosing it is what says "
+                    "'this hub has eyes on it.' The plan without it is complete."
+                ),
+            },
         },
         "repositories": repositories,
         "steps": steps,

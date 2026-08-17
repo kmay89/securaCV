@@ -235,6 +235,21 @@ seller)? Read [unflashed board intake](unflashed_board_intake.md) first —
 bring it up cold. Board not listed? A port is a pin map plus a build config,
 one PR, no core code: [`firmware/PORTING.md`](../firmware/PORTING.md).
 
+### Can I put a screen on the hub?
+
+Yes — optionally. The hub runs headless by default and never needs one. But
+plug an HDMI touchscreen into the Pi (a 7" 1024x600 IPS panel with USB touch
+is the reference) and the setup's opt-in **display** extra installs
+HAOSKiosk, a community app that runs a browser on the hub itself and shows
+your dashboard on that screen, touch included. In the desktop Flasher it's
+the "Also install the hub display" tick; by hand it's `--with display` (or
+just install HAOSKiosk from its repository in the app store). One step stays
+yours: type your Home Assistant login into the app's Configuration tab and
+press Start — the installer never carries your password. Everything stays
+local; a screen adds no cloud and no new way out. Honest status: same bar as
+self-setup itself — host-tested, awaiting its first validated run on real
+hardware. → [the full stack](full_stack_setup.md)
+
 ### I already run Home Assistant. Where do I start?
 
 [Home Assistant setup](homeassistant_setup.md) → [Frigate

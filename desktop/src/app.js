@@ -5067,7 +5067,7 @@ function hubInit() {
 // A flash writes a tiny "last flash" record; on the next launch, if it's
 // recent and the hub isn't up yet, we quietly re-offer to watch for it — so a
 // crash, quit, or reboot mid-first-boot never loses the thread.
-function hubRecordFlash(provisionPending, piholeChoice, accountPending) {
+function hubRecordFlash(provisionPending, piholeChoice, displayChoice, accountPending) {
   try {
     localStorage.setItem(
       HUB_LASTFLASH_KEY,
@@ -5088,6 +5088,10 @@ function hubRecordFlash(provisionPending, piholeChoice, accountPending) {
         // after a relaunch would silently install Pi-hole for someone who
         // explicitly unticked it. An opt-out has to survive the restart.
         pihole: !!piholeChoice,
+        // Same for the hub-display decision, in the opposite direction: its
+        // default is UNCHECKED, so a lost opt-in would silently skip the
+        // screen setup someone explicitly asked for.
+        display: !!displayChoice,
       })
     );
   } catch (_) {}
@@ -5165,7 +5169,7 @@ async function hubMaybeResume() {
     });
     $("hub-resume-setup").addEventListener("click", () => {
       $("hub-resume-setup").classList.add("hidden");
-      hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole);
+      hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole, rec.display);
     });
     // Account first, same order as the live first-boot watch: being left at
     // a sign-in page is the failure this flow exists to prevent.
@@ -5173,7 +5177,7 @@ async function hubMaybeResume() {
       await hubRunOnboarding($("hub-resume-text"), rec.host);
     }
     const report = await hubRunHeadlessSetup(
-      $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole
+      $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole, rec.display
     );
     if (report && report.ok) hubClearFlashRecord();
     return;
@@ -5220,10 +5224,10 @@ async function hubMaybeResume() {
           "Your hub from earlier is up — finishing its setup from this computer…";
         $("hub-resume-setup").addEventListener("click", () => {
           $("hub-resume-setup").classList.add("hidden");
-          hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole);
+          hubRunHeadlessSetup($("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole, rec.display);
         });
         const report = await hubRunHeadlessSetup(
-          $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole
+          $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole, rec.display
         );
         if (report && report.ok) hubClearFlashRecord();
       } else {
@@ -5436,6 +5440,7 @@ function hubSaveSettings() {
         // Stored even when unchecked: an explicit "no Pi-hole" must survive
         // a restart just like a yes.
         pihole: $("hub-provision-pihole").checked,
+        display: $("hub-provision-display").checked,
       })
     );
     const ssid = $("hub-ssid").value.trim();
@@ -5460,6 +5465,7 @@ function hubRestoreSettings() {
     if (s.acctUser) $("hub-acct-user").value = s.acctUser;
     if (s.provision) $("hub-provision").checked = true;
     if ("pihole" in s) $("hub-provision-pihole").checked = !!s.pihole;
+    if ("display" in s) $("hub-provision-display").checked = !!s.display;
     if (s.boardId) hub.boardId = s.boardId; // applied when the board list renders
     // Restored account fields must re-validate, or the panel reads as
     // "untouched" and the account is silently skipped despite showing values.
@@ -5525,6 +5531,7 @@ function hubStartFirstBoot() {
   hubRecordFlash(
     hub.lastReceipt && hub.lastReceipt.provision_seeded,
     $("hub-provision-pihole").checked,
+    $("hub-provision-display").checked,
     hub.pendingAccount
   );
   const panel = $("hub-firstboot");
@@ -5669,7 +5676,7 @@ function hubCleanHost(raw) {
   return (raw || "").trim().replace(/^https?:\/\//i, "").replace(/[/:].*$/, "");
 }
 
-async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverride) {
+async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverride, displayOverride) {
   if (hub.headlessBusy) return null;
   hub.headlessBusy = true;
   const el = $("hub-console");
@@ -5680,17 +5687,22 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
     // Console port is fixed; strip :8123 from the probe host. An override (an
     // IP found in the router when mDNS is blocked) wins when given.
     const host = hubCleanHost(hostOverride) || HUB_HOST.replace(/:\d+$/, "");
-    // A resumed run passes the choice recorded at flash time; only a live,
-    // in-session run reads the checkbox.
+    // A resumed run passes the choices recorded at flash time; only a live,
+    // in-session run reads the checkboxes.
     const withPihole =
       piholeOverride === undefined ? !!$("hub-provision-pihole").checked : !!piholeOverride;
-    const report = await invoke("hub_headless_setup", { host, dryRun: false, withPihole });
+    const withDisplay =
+      displayOverride === undefined ? !!$("hub-provision-display").checked : !!displayOverride;
+    const report = await invoke("hub_headless_setup", { host, dryRun: false, withPihole, withDisplay });
     if (report.ok) {
       statusEl.textContent =
         "Setup finished — Mosquitto, MQTT, Frigate, and securaCV are installed" +
         (withPihole
           ? ", plus Pi-hole. To switch Pi-hole on, point your router's DNS at the hub's IP — until then it sits idle."
           : ".") +
+        (withDisplay
+          ? " The hub-display app is installed too — one step is yours: on the hub, open Settings → Apps → HAOS Kiosk Display → Configuration, enter your Home Assistant username and password, and press Start. Then the attached screen lights up with your dashboard."
+          : "") +
         " Open your hub and the SecuraCV panel is waiting. 🐤" +
         // A clean install must not bury an account that still needs a human —
         // carry the onboarding run's note over the finish line.
@@ -6113,6 +6125,7 @@ function hubShowHatch(receipt) {
             "console and installs everything itself — Mosquitto broker, the MQTT connection, " +
             "Frigate, and securaCV" +
             ($("hub-provision-pihole").checked ? ", plus Pi-hole" : "") +
+            ($("hub-provision-display").checked ? ", plus the hub-display app" : "") +
             " — narrated in the console below. Nothing to click on the hub.",
         ]
       : []),
@@ -6123,6 +6136,15 @@ function hubShowHatch(receipt) {
             "domain every device on your network asks for — the way to see that nothing, " +
             "Canaries included, is quietly talking out — and known ad/tracker domains are " +
             "refused for the whole house. Until the router change it sits idle.",
+        ]
+      : []),
+    ...(selfSetup && $("hub-provision-display").checked
+      ? [
+          "When setup finishes, wake the screen: on the hub, open Settings → Apps → " +
+            "HAOS Kiosk Display → Configuration, enter your Home Assistant username and " +
+            "password, and press Start — your dashboard appears on the attached display, " +
+            "touch and all. The login is yours to type there because this app never carries " +
+            "it anywhere.",
         ]
       : []),
     accountTyped

@@ -116,6 +116,21 @@ signed claims.
 > uploaded, and retention is yours to shorten or switch off in Pi-hole's
 > settings (blocking still works with query logging off). It does nothing at
 > all until you point your router's DNS at the hub's IP.
+>
+> **A screen on the hub (optional):** the hub never needs one — but if you've
+> plugged an HDMI display into the Pi (say a 7" 1024x600 IPS touchscreen with
+> USB touch), self-setup can also install **HAOSKiosk** (tick "Also install the
+> hub display" in the Flasher; manual: append `--with display`). It runs a
+> small browser on the hub itself and shows your dashboard on that screen
+> full-screen, touch and all — local by construction, since the browser runs on
+> the hub and talks to the hub. One step stays yours: the screen signs in as
+> *your* Home Assistant user, and that password is never minted or carried by
+> the installer — after setup, open Settings → Apps → **HAOS Kiosk Display** →
+> Configuration, enter your HA username and password, and press Start. Zoom,
+> rotation, and screen-timeout for your particular panel live in the same tab.
+> No screen attached? The add-on simply won't start, and nothing else cares.
+> By hand instead: add `https://github.com/puterboy/HAOS-kiosk` as an app
+> repository and install **HAOS Kiosk Display** from it — same result.
 
 By hand, it's two installs:
 

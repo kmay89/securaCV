@@ -17,6 +17,7 @@ Install the SecuraCV Home Assistant integration via HACS, then connect it to you
 | Home Assistant OS | Installed from the official image |
 | IP camera(s) with RTSP | Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, etc. |
 | HA Companion App (optional) | For push notifications to your phone |
+| HDMI touchscreen (optional) | e.g. 7" 1024x600 IPS with USB touch — the hub runs headless by default, but the HAOSKiosk app (the `display` self-setup extra) can show your dashboard right on it |
 
 ## Two witness logs, two trust roots
 

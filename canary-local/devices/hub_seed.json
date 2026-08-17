@@ -10,6 +10,12 @@
       "enable": "sh provision.sh --with pihole   (or host_provision.sh --with pihole)",
       "recommended": true,
       "off_by_default_because": "A DNS server is a whole-network change someone should choose on purpose \u2014 recommended, never imposed. The plan without it is complete."
+    },
+    "display": {
+      "what": "A dashboard on a screen plugged into the hub: the HAOSKiosk add-on runs a small browser on the hub itself, full-screen on the attached HDMI display, with touch mapped to the panel. Made for a hub with a screen \u2014 like a 7\" 1024x600 IPS HDMI touchscreen \u2014 and harmless without one (the add-on just won't start). Everything stays on the hub; nothing new talks out.",
+      "enable": "sh provision.sh --with display   (or host_provision.sh --with display)",
+      "recommended": false,
+      "off_by_default_because": "Most hubs are headless \u2014 a closet box needs no browser running on it, and the add-on can't start without a screen anyway. Choosing it is what says 'this hub has eyes on it.' The plan without it is complete."
     }
   },
   "repositories": [
@@ -48,6 +54,19 @@
       "feature": "pihole",
       "supervisor_slug": [
         "243ffc37_pihole"
+      ]
+    },
+    {
+      "url": "https://github.com/puterboy/HAOS-kiosk",
+      "provides": [
+        "haoskiosk"
+      ],
+      "why": "HAOSKiosk's own add-on repository \u2014 the community add-on that shows a dashboard on a screen plugged into the hub. Only registered when the optional `display` feature is enabled \u2014 see that step.",
+      "api": "POST http://supervisor/store/repositories",
+      "cli_can_do_it": false,
+      "feature": "display",
+      "supervisor_slug": [
+        "4c8b21d0_haoskiosk"
       ]
     }
   ],
@@ -159,6 +178,22 @@
       "supervisor_slug": "243ffc37_pihole",
       "start": true,
       "user_must_finish": "Two things only you can do: set a Pi-hole admin password from the add-on's page, and point your router's DNS server at the hub's IP address (in the router's DHCP settings) so your devices actually ask Pi-hole. Until the router change, Pi-hole sits idle and nothing on your network behaves differently.",
+      "reversible": true
+    },
+    {
+      "id": "install-display",
+      "title": "Install the hub display (optional: a screen on the hub itself)",
+      "what": "Register `https://github.com/puterboy/HAOS-kiosk`, then install the `haoskiosk` add-on \u2014 it shows your dashboard on a screen plugged into the hub.",
+      "why": "The hub never needs a screen \u2014 headless is the default and stays fully supported. But if you've plugged one in (any HDMI monitor, or a touchscreen like a 7\" 1024x600 IPS panel with USB touch), this add-on puts it to work: it runs a small browser on the hub itself, signed in to your Home Assistant, showing the household dashboard full-screen \u2014 glance at the hallway, see the whole house. Touch works as touch; a wall-mounted hub becomes a control panel. Local by construction: the browser runs on the hub and talks to the hub, so turning your screen on adds no cloud, no account, and no new way for anything to leave your house.",
+      "for_what": "Your whole-house dashboard, live on the screen attached to the hub \u2014 no phone or laptop needed to glance at it.",
+      "feature": "display",
+      "repositories": [
+        "https://github.com/puterboy/HAOS-kiosk"
+      ],
+      "addon": "haoskiosk",
+      "supervisor_slug": "4c8b21d0_haoskiosk",
+      "start": false,
+      "user_must_finish": "One thing only you can do: give the browser on the hub a login. In Home Assistant open Settings \u2192 Apps \u2192 HAOS Kiosk Display \u2192 Configuration, enter your Home Assistant username and password, then press Start. The screen lights up with your dashboard. No screen attached? The add-on simply won't start \u2014 nothing else on the hub cares. The same Configuration tab also has zoom, rotation and screen-timeout settings for your particular panel.",
       "reversible": true
     }
   ],

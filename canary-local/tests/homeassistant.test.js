@@ -64,6 +64,19 @@ test("every MQTT topic in the JSON is in the doc's topic reference", () => {
   for (const t of data.topics) assert.ok(doc.includes("`" + t.topic + "`"), t.topic);
 });
 
+test("the optional hub screen is a needs row that mirrors the setup guide", () => {
+  // The 7" HDMI touchscreen is offered, never required: it must be in the
+  // needs list marked optional (so a hub-with-a-screen builder sees it), it
+  // must keep headless as the stated default, and — since from_doc claims the
+  // guide as its source — the guide's own table must actually carry the row.
+  const row = data.hardware.needs.find((n) => /touchscreen/i.test(n.item));
+  assert.ok(row, "the optional touchscreen row exists in hardware.needs");
+  assert.ok(/optional/i.test(row.item), "it says optional in the item itself");
+  assert.ok(/headless by default/i.test(row.note), "headless stays the default");
+  assert.ok(row.from_doc, "it cites the setup guide as its source");
+  assert.ok(/touchscreen \(optional\)/i.test(doc), "…and the guide's table has it");
+});
+
 test("assembly: every part is a real procedural builder; every step staged", async () => {
   const { PARTS } = await import("../assets/hub-parts.js");
   const hw = data.hardware;

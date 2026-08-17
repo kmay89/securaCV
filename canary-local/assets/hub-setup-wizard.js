@@ -82,7 +82,8 @@ export function wizardSteps(facts) {
         "Install Home Assistant Operating System (HAOS) on your Pi/mini-PC. It’s the " +
         "easiest, most reliable way — it updates and heals itself. You want " + ha + ". " +
         "The Pi never needs a monitor or keyboard: flash it, power it, and it announces " +
-        "itself on your network by itself.",
+        "itself on your network by itself. (Want a screen on it anyway? Fine too — an " +
+        "attached HDMI touchscreen can show your dashboard later; the last step points there.)",
       do: [
         "Follow HA’s official installer for your device, or flash our ready Hub image. Heads up on Wi-Fi: seeding it onto the card at flash time is a desktop Flasher app feature — the browser guide writes stock HAOS, so on that route plug in an ethernet cable for the first boot (you can switch to Wi-Fi inside HA afterwards).",
         "Power it on and give the first boot under 10 minutes as a rule, up to 20 on a slow card — it’s setting itself up; the blinking light is normal.",
@@ -195,6 +196,7 @@ export function wizardSteps(facts) {
       do: [
         "In HA: Settings → Devices & Services → SecuraCV — your Canary shows up with its entities.",
         "Scroll down on this page to watch a live demo of exactly what that looks like.",
+        "Optional: got a screen plugged into the hub (say a 7-inch HDMI touchscreen)? The HAOS Kiosk Display app puts this dashboard on it full-screen, touch and all — in HA: Settings → Apps → App Store → three-dots → Repositories, add github.com/puterboy/HAOS-kiosk, then install “HAOS Kiosk Display”. Flashed with the desktop app? Its self-setup offers the same thing as the “display” extra. Headless hubs skip this and lose nothing.",
       ],
       stuck: [
         "Nothing after a minute? Power-cycle the Canary; on first boot it can take a moment to join Wi-Fi.",
