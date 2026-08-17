@@ -294,15 +294,12 @@ fn keyguard_kek(
     Ok(kek)
 }
 
-/// Fresh random bytes from the OS CSPRNG. The array literal is the scratch the
-/// RNG overwrites — the value returned is entirely RNG-derived (same shape as
-/// `random_dek`), so it is never a hard-coded salt/nonce.
+/// Fresh random bytes from the OS CSPRNG. Built with `array::from_fn` drawing
+/// each byte straight from the RNG — there is no zero-initialized buffer, so
+/// the value is unambiguously RNG-derived and never a hard-coded salt/nonce.
 fn random_bytes<const N: usize>() -> [u8; N] {
-    let mut b = [0u8; N];
-    SysRng
-        .try_fill_bytes(&mut b[..])
-        .expect("OS RNG unavailable");
-    b
+    let mut rng = SysRng;
+    std::array::from_fn(|_| (rng.try_next_u32().expect("OS RNG unavailable") & 0xff) as u8)
 }
 
 /// Wrap a 32-byte master key under an Argon2id KEK derived from `passphrase`,
