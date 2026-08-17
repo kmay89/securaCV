@@ -486,10 +486,12 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
       LV_PART_MAIN);
 
   lv_obj_set_style_text_color(s_dev_name, tcol, 0);
+  // Caps loosened from %.12s/%.10s/%.18s: the Round Frame fit owns the
+  // visual width (182 px at this latitude) and ellipsizes honestly.
   if (w->name[0] && w->room[0]) {
-    lv_label_set_text_fmt(s_dev_name, "%.12s • %.10s", w->name, w->room);
+    lv_label_set_text_fmt(s_dev_name, "%.16s • %.12s", w->name, w->room);
   } else {
-    lv_label_set_text_fmt(s_dev_name, "%.18s", Fleet::display_name(*w));
+    lv_label_set_text_fmt(s_dev_name, "%.24s", Fleet::display_name(*w));
   }
 
   if (muted && s < Sev::Alert) {
@@ -584,7 +586,10 @@ void update_events(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     format_age(now, e->at_ms, age, sizeof(age));
     lv_obj_set_style_text_color(
         s_ev_name[i], e->sev >= Sev::Warn ? sev_color(e->sev, st.night) : tcol, 0);
-    lv_label_set_text_fmt(s_ev_name[i], "%.24s", human);
+    // No print-time cap: the Round Frame fit owns the visual width now, and
+    // its ellipsis is honest — the old %.24s cut "restricted zone" to
+    // "restricted zon" even on rows with room for the whole phrase.
+    lv_label_set_text(s_ev_name[i], human);
     lv_obj_set_style_text_color(s_ev_meta[i], mcol, 0);
     lv_label_set_text_fmt(s_ev_meta[i], "%s • %.14s%s", age, e->device,
                           e->signed_flag ? " • signed" : "");
@@ -634,7 +639,8 @@ void update_history(const Fleet& fleet, uint32_t now, const GlanceState& st) {
         s_thist_name[i],
         r->sev >= (uint8_t)Sev::Warn ? sev_color((Sev)r->sev, st.night) : tcol,
         0);
-    lv_label_set_text_fmt(s_thist_name[i], "%.22s", human);
+    // Uncapped like the events rows — the fit ellipsizes, honestly.
+    lv_label_set_text(s_thist_name[i], human);
     lv_obj_set_style_text_color(s_thist_meta[i], mcol, 0);
     lv_label_set_text_fmt(s_thist_meta[i], "%s • %s", stamp,
                           badge_text((canary::fleet::Badge)r->badge));
@@ -672,7 +678,9 @@ void update_rollcall(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                              ? sev_color(fleet.witness_sev(*w, now), st.night)
                              : tcol),
         0);
-    lv_label_set_text_fmt(s_rc_name[i], "%.16s%s", Fleet::display_name(*w),
+    // Wider cap than the old %.16s — the fit owns the visual width; this
+    // one only bounds the buffer so the OK tick always survives the join.
+    lv_label_set_text_fmt(s_rc_name[i], "%.32s%s", Fleet::display_name(*w),
                           just_answered ? "  " LV_SYMBOL_OK : "");
     char meta[64];
     size_t o = (size_t)snprintf(meta, sizeof(meta), "%s ago", age);
