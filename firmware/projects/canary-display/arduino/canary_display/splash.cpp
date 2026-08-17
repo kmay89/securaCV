@@ -32,6 +32,7 @@
 
 #include "splash.h"
 #include "canary_mark.h"
+#include "round_frame_core.h"
 #include "story.h"
 #include "story_scripts.h"
 #include "device_pseudonym.h"
@@ -110,8 +111,17 @@ void splash_play(uint32_t hold_ms) {
   constexpr int BIRD_Y = -42, WORD_Y = 26, TAG_Y = 56;
   // Intro: bird high, bubble CENTERED — the round glass is widest at its
   // middle, and a wrapped line low on the disc would clip its corners.
+  // The Round Frame engine pins that claim: the bubble's band (its tallest
+  // three-line case, roughly ±40 px around BUB_Y) must keep its chord.
   constexpr int INTRO_BIRD_Y = -70;
   constexpr int BUB_W = 196, BUB_Y = 5;
+#if !defined(CD_FLAVOR_NIGHTSTAND)
+  static_assert(BUB_W <= canary::ui::roundframe::chord(
+                             canary::ui::roundframe::kDiscDiameter / 2 +
+                                 BUB_Y - 40,
+                             80),
+                "speech bubble outgrew the disc's mid-band chord");
+#endif
 #else
   constexpr int BIRD = 96;
   constexpr int BIRD_Y = -66, WORD_Y = 34, TAG_Y = 78;

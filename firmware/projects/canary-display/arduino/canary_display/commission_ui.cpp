@@ -13,6 +13,7 @@
 #include <esp_random.h>
 
 #include "commission_ui.h"
+#include "round_frame_core.h"
 #include "theme.h"
 #include "runtime_config.h"
 #include "mqtt_mgr.h"
@@ -24,7 +25,8 @@ namespace canary::ui {
 namespace {
 
 // Rendering budgets from the onboarding research: the round display's
-// clipped corners leave a ~169 px inscribed square, and a fixed-focus
+// clipped corners leave a 169 px inscribed square (the Round Frame engine
+// computes it; the assert below pins this file to it), and a fixed-focus
 // camera lens wants big modules more than it wants error correction — so
 // the watch caps the payload at 78 bytes (QR v4-L) and renders 164 px.
 // The dash has room for the full payload at a comfortable 360 px.
@@ -36,6 +38,12 @@ namespace {
 constexpr int QR_PX = 148;
 constexpr size_t PAYLOAD_CAP = 84;
 constexpr int HIT_PAD = 8;
+// The card (QR + 16 px of quiet zone, see card_px below) must live inside
+// the disc's inscribed square — the engine owns that number now, so a
+// future display or margin change breaks the build here, not the decode.
+static_assert(QR_PX + 16 <= roundframe::inscribed_square(
+                                roundframe::kDiscDiameter, 0),
+              "commissioning card outgrew the round glass's inscribed square");
 #else
 constexpr int QR_PX = 360;
 constexpr size_t PAYLOAD_CAP = 320;

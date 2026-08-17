@@ -14,6 +14,7 @@
 #include <ctype.h>
 
 #include "glance_ui.h"
+#include "round_frame.h"
 #include "theme.h"
 #include "canary_mark.h"
 #include "character.h"
@@ -42,7 +43,22 @@ using canary::fleet::the_fleet;
 namespace {
 
 constexpr int MAX_ARCS = CD_FLEET_MAX_DEVICES;
-constexpr int EV_ROWS = 5;
+
+// List pages (events / history / roll call) ride the Round Frame engine:
+// four rows on an equator-centered stack. Five rows reached y=202, where the
+// disc offers 126 px — the physical glass cut those rows mid-character (the
+// emulator's square canvas never showed it). Four readable rows beat five
+// clipped ones; every row of this stack keeps a 180+ px chord (the geometry
+// is pinned in tests_host/test_round_frame_core.cpp).
+constexpr int EV_ROWS = 4;
+constexpr int LIST_PITCH = 32;   // label line + caption line + breathing room
+
+// Row i's name-line y (meta rides +16 under it). Bias +6 clears the page
+// title without giving up the wide latitudes.
+int list_row_y(int i, int bias = 6) {
+  return roundframe::row_stack_y(roundframe::kDiscDiameter, EV_ROWS,
+                                 LIST_PITCH, i, bias);
+}
 
 lv_obj_t* s_scr = nullptr;
 
@@ -86,7 +102,7 @@ lv_obj_t* s_thist_meta[EV_ROWS] = {nullptr};
 // Roll Call page (display_care_wave.md §6): per-witness diagnostics — the
 // IQ-Panel-grade walk test no ambient display ships. Rows light up live as
 // each canary answers.
-constexpr int RC_ROWS = 5;
+constexpr int RC_ROWS = EV_ROWS;  // same Round Frame stack as the lists
 lv_obj_t* s_pg_rc = nullptr;
 lv_obj_t* s_rc_title = nullptr;
 lv_obj_t* s_rc_name[RC_ROWS] = {nullptr};
@@ -440,11 +456,13 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     // red banner would just be noise on a nightstand.
     lv_label_set_text(s_banner, "");
   } else if (!st.wifi_ok) {
-    lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  no wifi • reconnecting");
+    // Banner copy is sized to its low-latitude chord (140 px at +84) — the
+    // fit would ellipsize a longer line rather than let the rim cut it.
+    lv_label_set_text(s_banner, LV_SYMBOL_WIFI " no wifi • retrying");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_alert(), 0);
   } else if (!st.mqtt_ok) {
-    lv_label_set_text(s_banner, "hub lost • showing last known");
+    lv_label_set_text(s_banner, "hub lost • last known");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_warn(), 0);
   } else {
@@ -673,7 +691,9 @@ void update_rollcall(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   if (n > RC_ROWS) {
     lv_label_set_text_fmt(s_rc_more, "+%d more", n - RC_ROWS);
   } else {
-    lv_label_set_text(s_rc_more, n > 0 ? "walk past one - it lights up" : "");
+    // Short enough for its low-latitude chord (134 px at -26; the engine
+    // ellipsizes anything longer rather than letting the rim cut it).
+    lv_label_set_text(s_rc_more, n > 0 ? "walk by - it lights up" : "");
   }
 }
 #endif  // FEATURE_CARE
@@ -730,6 +750,9 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
       !canary::trust::pinned_pubkey_hex(pick->id, pk)) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_proof_who, pick ? pick->id : "");
+    // With the card hidden the equator is free — the explanation takes the
+    // widest band instead of squeezing into the bottom-caption chord.
+    rf_fit_center(s_proof_cap, 0);
     lv_label_set_text(s_proof_cap,
                       pick ? "no proof yet • after first event"
                            : "No witnesses yet");
@@ -743,13 +766,15 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                            pick->id, pk, pick->chain_raw);
   if (len <= 0 || (size_t)len >= sizeof(body)) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
+    rf_fit_center(s_proof_cap, 0);
     lv_label_set_text(s_proof_cap, "too long for a QR • see hub log");
     return;
   }
   lv_obj_clear_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
   lv_qrcode_update(s_proof_qr, body, (uint32_t)len);
   lv_label_set_text_fmt(s_proof_who, "%.18s", pick->id);
-  lv_label_set_text(s_proof_cap, "Scan to verify • no cloud");
+  rf_fit_bottom(s_proof_cap, -26);
+  lv_label_set_text(s_proof_cap, "verify • no cloud");
 }
 
 void ack_cb(void* var, int32_t v) {
@@ -810,41 +835,43 @@ void glance_ui_create() {
   s_hero = mk_label(s_pg_halo, font_title(), col_text());
   lv_obj_align(s_hero, LV_ALIGN_CENTER, 0, -26);
   s_hero_sub = mk_label(s_pg_halo, font_label(), col_muted());
-  lv_obj_align(s_hero_sub, LV_ALIGN_CENTER, 0, 6);
+  rf_fit_center(s_hero_sub, 6);
   s_hero_badge = mk_label(s_pg_halo, font_caption(), col_muted());
   lv_obj_set_style_text_letter_space(s_hero_badge, 1, 0);
-  lv_obj_align(s_hero_badge, LV_ALIGN_CENTER, 0, 28);
+  rf_fit_center(s_hero_badge, 28);
   s_clock = mk_label(s_pg_halo, font_clock(), col_muted());
   lv_obj_align(s_clock, LV_ALIGN_CENTER, 0, 62);
+  // The honesty banner sits low on the disc; +84 buys it a 140 px chord
+  // (+88 offered 128) and the fit keeps a Character's wider caption honest.
   s_banner = mk_label(s_pg_halo, font_caption(), col_alert());
-  lv_obj_align(s_banner, LV_ALIGN_CENTER, 0, 88);
+  rf_fit_center(s_banner, 84);
 
   // ── Device page ──
   s_pg_dev = mk_page(s_scr);
   s_dev_ring = mk_ring(s_pg_dev, 232, 6);
   s_dev_name = mk_label(s_pg_dev, font_body(), col_text());
-  lv_obj_align(s_dev_name, LV_ALIGN_CENTER, 0, -62);
+  rf_fit_center(s_dev_name, -62);
   s_dev_state = mk_label(s_pg_dev, font_title(), col_ok());
   lv_obj_align(s_dev_state, LV_ALIGN_CENTER, 0, -28);
   s_dev_event = mk_label(s_pg_dev, font_label(), col_muted());
   lv_obj_set_style_text_align(s_dev_event, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(s_dev_event, LV_ALIGN_CENTER, 0, 16);
   s_dev_meta = mk_label(s_pg_dev, font_caption(), col_muted());
-  lv_obj_align(s_dev_meta, LV_ALIGN_CENTER, 0, 56);
+  rf_fit_center(s_dev_meta, 56);
   s_dev_pos = mk_label(s_pg_dev, font_caption(), col_faint());
-  lv_obj_align(s_dev_pos, LV_ALIGN_CENTER, 0, 84);
+  rf_fit_center(s_dev_pos, 84);
 
-  // ── Events page ──
+  // ── Events page ── (rows on the Round Frame stack — see EV_ROWS above)
   s_pg_ev = mk_page(s_scr);
   s_ev_title = mk_label(s_pg_ev, font_caption(), col_muted());
   lv_obj_set_style_text_letter_space(s_ev_title, 2, 0);
   lv_label_set_text(s_ev_title, "RECENT");
-  lv_obj_align(s_ev_title, LV_ALIGN_TOP_MID, 0, 32);
+  rf_fit_top(s_ev_title, 32);
   for (int i = 0; i < EV_ROWS; i++) {
     s_ev_name[i] = mk_label(s_pg_ev, font_label(), col_text());
-    lv_obj_align(s_ev_name[i], LV_ALIGN_TOP_MID, 0, 58 + i * 32);
+    rf_fit_top(s_ev_name[i], list_row_y(i));
     s_ev_meta[i] = mk_label(s_pg_ev, font_caption(), col_muted());
-    lv_obj_align(s_ev_meta[i], LV_ALIGN_TOP_MID, 0, 74 + i * 32);
+    rf_fit_top(s_ev_meta[i], list_row_y(i) + 16);
   }
 
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
@@ -853,14 +880,16 @@ void glance_ui_create() {
   s_thist_title = mk_label(s_pg_history, font_caption(), col_muted());
   lv_obj_set_style_text_letter_space(s_thist_title, 2, 0);
   lv_label_set_text(s_thist_title, "HISTORY");
-  lv_obj_align(s_thist_title, LV_ALIGN_TOP_MID, 0, 30);
+  rf_fit_top(s_thist_title, 28);
   s_thist_summary = mk_label(s_pg_history, font_caption(), col_muted());
-  lv_obj_align(s_thist_summary, LV_ALIGN_TOP_MID, 0, 48);
+  rf_fit_top(s_thist_summary, 44);
   for (int i = 0; i < EV_ROWS; i++) {
+    // The title+summary pair above needs the deeper bias (+10) the events
+    // page doesn't.
     s_thist_name[i] = mk_label(s_pg_history, font_label(), col_text());
-    lv_obj_align(s_thist_name[i], LV_ALIGN_TOP_MID, 0, 70 + i * 32);
+    rf_fit_top(s_thist_name[i], list_row_y(i, 10));
     s_thist_meta[i] = mk_label(s_pg_history, font_caption(), col_muted());
-    lv_obj_align(s_thist_meta[i], LV_ALIGN_TOP_MID, 0, 86 + i * 32);
+    rf_fit_top(s_thist_meta[i], list_row_y(i, 10) + 16);
   }
   lv_obj_add_flag(s_pg_history, LV_OBJ_FLAG_HIDDEN);
 #endif
@@ -871,15 +900,15 @@ void glance_ui_create() {
   s_rc_title = mk_label(s_pg_rc, font_caption(), col_muted());
   lv_obj_set_style_text_letter_space(s_rc_title, 2, 0);
   lv_label_set_text(s_rc_title, "ROLL CALL");
-  lv_obj_align(s_rc_title, LV_ALIGN_TOP_MID, 0, 32);
+  rf_fit_top(s_rc_title, 32);
   for (int i = 0; i < RC_ROWS; i++) {
     s_rc_name[i] = mk_label(s_pg_rc, font_label(), col_text());
-    lv_obj_align(s_rc_name[i], LV_ALIGN_TOP_MID, 0, 58 + i * 32);
+    rf_fit_top(s_rc_name[i], list_row_y(i));
     s_rc_meta[i] = mk_label(s_pg_rc, font_caption(), col_muted());
-    lv_obj_align(s_rc_meta[i], LV_ALIGN_TOP_MID, 0, 74 + i * 32);
+    rf_fit_top(s_rc_meta[i], list_row_y(i) + 16);
   }
   s_rc_more = mk_label(s_pg_rc, font_caption(), col_faint());
-  lv_obj_align(s_rc_more, LV_ALIGN_BOTTOM_MID, 0, -22);
+  rf_fit_bottom(s_rc_more, -26);
   lv_obj_add_flag(s_pg_rc, LV_OBJ_FLAG_HIDDEN);
 #endif
 
@@ -888,7 +917,7 @@ void glance_ui_create() {
   s_about_title = mk_label(s_pg_about, font_caption(), col_muted());
   lv_obj_set_style_text_letter_space(s_about_title, 2, 0);
   lv_label_set_text(s_about_title, "THIS GLASS");
-  lv_obj_align(s_about_title, LV_ALIGN_TOP_MID, 0, 36);
+  rf_fit_top(s_about_title, 36);
   s_about_body = mk_label(s_pg_about, font_caption(), col_muted());
   lv_obj_set_style_text_align(s_about_body, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_line_space(s_about_body, 8, 0);
@@ -898,7 +927,7 @@ void glance_ui_create() {
   // ── Proof page ──
   s_pg_proof = mk_page(s_scr);
   s_proof_who = mk_label(s_pg_proof, font_caption(), col_muted());
-  lv_obj_align(s_proof_who, LV_ALIGN_TOP_MID, 0, 26);
+  rf_fit_top(s_proof_who, 26);
   s_proof_card = lv_obj_create(s_pg_proof);
   lv_obj_set_size(s_proof_card, 156, 156);
   lv_obj_align(s_proof_card, LV_ALIGN_CENTER, 0, 2);
@@ -911,7 +940,7 @@ void glance_ui_create() {
   s_proof_qr = mk_qrcode(s_proof_card, 140);
   lv_obj_center(s_proof_qr);
   s_proof_cap = mk_label(s_pg_proof, font_caption(), col_muted());
-  lv_obj_align(s_proof_cap, LV_ALIGN_BOTTOM_MID, 0, -26);
+  rf_fit_bottom(s_proof_cap, -26);
 
   // ── Settings doorway (settings wave) ──
   s_pg_settings = mk_page(s_scr);
