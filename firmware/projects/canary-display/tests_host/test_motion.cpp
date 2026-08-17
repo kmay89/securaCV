@@ -62,6 +62,24 @@ static void test_caps_and_tiers() {
   Caps fast = {172, 172, Bus::Spi, 80000000u, true, 240, false, true};
   CHECK(full_frame_us(fast) < FULL_FLUSH_CEILING_US, "fast SPI under ceiling");
   CHECK(tier_for(fast) == Tier::Full, "fast SPI -> Full");
+
+  // The Lab preview contract (review catch on #1566): the emulator derives
+  // tiers from each flavor's PHYSICAL bus, so substituting the bus away
+  // must never be reintroduced — an Emulated-bus watch row would land in
+  // Full (no bus budget) while the silicon earns Standard. This pins the
+  // divergence the substitution caused, so the glue's "keep the physical
+  // bus" rule has a named failure if it regresses.
+  Caps emu_watch = watch_caps();
+  emu_watch.bus = Bus::Emulated;
+  CHECK(tier_for(emu_watch) == Tier::Full && tier_for(watch_caps()) == Tier::Standard,
+        "bus substitution changes the watch's tier — derive from physical");
+
+  // Frame budgets loosen as tiers drop: a lean glass is allowed slower
+  // frames before the governor calls them heavy, never the reverse.
+  CHECK(frame_budget_us(Tier::Full) < frame_budget_us(Tier::Standard),
+        "full budget tightest");
+  CHECK(frame_budget_us(Tier::Standard) < frame_budget_us(Tier::Lean),
+        "lean budget loosest");
 }
 
 static void test_durations() {
@@ -278,6 +296,15 @@ static void test_wx_particles() {
   CHECK(wx_tick_ms(WxScene::Rain, Tier::Standard) >=
             wx_tick_ms(WxScene::Rain, Tier::Full),
         "standard ticks no faster");
+  // And the decorative timer is bounded on every scene and tier: never
+  // faster than ~30 fps (the field must not out-spend the faces it
+  // decorates), never so slow the drift stutters.
+  for (auto s : {WxScene::Clouds, WxScene::Rain, WxScene::Snow, WxScene::Fog}) {
+    for (auto t : {Tier::Lean, Tier::Standard, Tier::Full}) {
+      const uint32_t p = wx_tick_ms(s, t);
+      CHECK(p >= 33 && p <= 200, "scene tick within [33, 200] ms");
+    }
+  }
 }
 
 int main() {
