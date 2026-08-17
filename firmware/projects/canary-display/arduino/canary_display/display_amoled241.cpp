@@ -34,7 +34,9 @@
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
+#include <driver/gpio.h>
 #include <esp_sleep.h>
+#include <stdio.h>
 
 #include "pins.h"
 
@@ -155,7 +157,7 @@ bool display_init() {
   uint8_t id = 0;
   if (ft_read(FT_REG_CHIP_ID, &id, 1)) {
     char msg[48];
-    snprintf(msg, sizeof(msg), "FT6336 up (chip id 0x%02X) — touch armed.", id);
+    snprintf(msg, sizeof(msg), "FT6336 up (chip id 0x%02X) - touch armed.", id);
     log_line("DISP", msg);
   } else {
     log_line("DISP", "FT6336 quiet at boot — touch armed, will keep polling.");
