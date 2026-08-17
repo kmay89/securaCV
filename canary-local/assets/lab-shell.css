@@ -203,12 +203,12 @@ button{font:inherit;color:inherit;cursor:pointer;}
 @keyframes shine{to{transform:translateX(110%);}}
 .scard .top{display:flex;align-items:center;gap:9px;}
 .scard .circ{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:12.5px;font-weight:700;
-  flex:none;color:#fff;background:var(--ac,var(--brand));box-shadow:0 4px 12px -4px var(--ac,var(--brand));
+  flex:none;color:var(--ac-ink,#fff);background:var(--ac,var(--brand));box-shadow:0 4px 12px -4px var(--ac,var(--brand));
   transition:transform .35s cubic-bezier(.18,1.6,.4,1);}
 .scard:hover .circ{transform:scale(1.12) rotate(-6deg);}
 .scard .sc-chk{display:grid;place-items:center;}
 .scard .sc-chk svg{width:13px;height:13px;display:block;}
-.scard.done .circ{background:var(--good);box-shadow:0 4px 12px -4px var(--good);}
+.scard.done .circ{background:var(--good);color:#fff;box-shadow:0 4px 12px -4px var(--good);}
 .scard h3{font-size:15.5px;margin:0;font-weight:660;}
 .scard .sc-go{margin-left:auto;color:var(--ac,var(--brand));opacity:0;transform:translateX(-6px);
   transition:opacity .25s ease,transform .3s cubic-bezier(.2,1.4,.4,1);}

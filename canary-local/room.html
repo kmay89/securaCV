@@ -1064,8 +1064,10 @@
     NIGHT_LOCKED=true; NIGHT=!NIGHT; syncDayNight();
     redrawKeepSel();
   });
-  // follow the app/OS theme live until the visitor picks a side themselves
-  if(SCHEME){
+  // follow the app/OS theme live until the visitor picks a side themselves.
+  // An explicit data-theme pins the page palette regardless of OS scheme, so
+  // the scene must not drift with the OS on its own — no listener then.
+  if(SCHEME && !THEME_ATTR){
     var onScheme=function(e){ if(NIGHT_LOCKED||NIGHT===e.matches) return; NIGHT=e.matches; syncDayNight(); redrawKeepSel(); };
     if(SCHEME.addEventListener) SCHEME.addEventListener('change',onScheme);
     else if(SCHEME.addListener) SCHEME.addListener(onScheme);

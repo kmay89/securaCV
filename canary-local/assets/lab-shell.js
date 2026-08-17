@@ -404,6 +404,15 @@ window.addEventListener("message", (e) => {
   if (!followFramed(d.href)) e.source.postMessage({ source: "scv-lab-shell", type: "proceed" }, location.origin);
 });
 
+// The ink that reads best on a #rrggbb accent, by WCAG contrast: dark on the
+// bright accents (canary yellow ≈1.85:1 under white), white on the deep ones.
+function accentInk(hex) {
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const c = hex.replace("#", "");
+  const L = 0.2126 * lin(parseInt(c.slice(0, 2), 16)) + 0.7152 * lin(parseInt(c.slice(2, 4), 16)) + 0.0722 * lin(parseInt(c.slice(4, 6), 16));
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.058 ? "#fff" : "#1f1608";
+}
+
 function overviewView() {
   const done = visited();
   // Each card owns its stage's accent as --ac and its place in line as --i —
@@ -413,7 +422,7 @@ function overviewView() {
     const n = (s.tracks ? s.tracks.flatMap(t => t.benches) : s.benches).length;
     const isDone = done.has(s.id);
     return h("button", { class: "scard" + (isDone ? " done" : ""),
-        style: `--ac:${s.accent};--i:${i}`, onclick: () => navigate(firstOf(s).slug) },
+        style: `--ac:${s.accent};--ac-ink:${accentInk(s.accent)};--i:${i}`, onclick: () => navigate(firstOf(s).slug) },
       h("span", { class: "sc-shine", "aria-hidden": "true" }),
       h("div", { class: "top" },
         h("span", { class: "circ" }, isDone ? h("span", { class: "sc-chk", html: CHECK }) : String(s.n)),
