@@ -53,6 +53,8 @@
 
 #include "canary/ui/settings_ui.h"
 #include "canary/ui/commission_ui.h"
+#include "canary/ui/help_verdict.h"   // the "get help" QR's pure verdict → URL
+#include "canary/net/mqtt_mgr.h"      // hub link state for the help verdict
 #include "canary/ui/theme.h"
 #include "canary/ui/character.h"
 #include "canary/ui/clock_styles.h"
@@ -122,6 +124,7 @@ enum class Page {
   EditMicSens, // 4.3C: the room sensitivity preset (quiet/standard/noisy)
 #endif
   EditStyle,   // the Character ring picker
+  HelpQr,      // "get help" — the Help Desk QR for the current verdict
   CalIntro,    // watch only — the black-point wizard
   CalDescend,
   CalComfort,
@@ -140,7 +143,7 @@ enum class Page {
 enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
-  IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
+  IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD, IT_ROW_HELP,
 #ifdef CD_FLAVOR_DASH
   IT_ROW_DISPLAY, IT_ROW_BRIGHT, IT_ROW_FW, IT_ROW_CLOCK, IT_ROW_12H,
   IT_ROW_WX,
@@ -171,15 +174,16 @@ lv_obj_t* s_scr = nullptr;    // our own screen while open
 lv_obj_t* s_host = nullptr;   // content parent (screen on watch, sheet on dash)
 Page s_page = Page::Root;
 // Worst case is the dash root: back + six shared rows + the display /
-// brightness / firmware trio + reset + the modes doorway, each row up to two
-// objects (name+value), plus the board's siren or mic row. The sizes below
-// clear that with margin so add_item never silently drops a hit zone.
+// brightness / firmware trio + the get-help row + reset + the modes
+// doorway, each row up to two objects (name+value), plus the board's siren
+// or mic row. The sizes below clear that with margin so add_item never
+// silently drops a hit zone.
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
-Item s_items[28];
+Item s_items[30];
 #elif defined(CD_SET_MIC)
-Item s_items[26];
+Item s_items[28];
 #else
-Item s_items[24];
+Item s_items[26];
 #endif
 int s_item_n = 0;
 bool s_owns_backlight = false;
@@ -368,20 +372,22 @@ void build_root() {
   mk_back("settings • tap to leave");
   char v[24];
 #ifdef CD_FLAVOR_WATCH
-  // Nine rows since the style row joined — the editor spacing would run
-  // off the round glass, so the root alone packs tighter. (Ten with the
-  // modes doorway: tighter still, and the last row stays clear of the rim.)
+  // Ten rows since the get-help row joined (eleven with the modes doorway)
+  // — the editor spacing would run off the round glass, so the root alone
+  // packs tighter. Each config keeps the proven bottom edge: the last row
+  // lands at y<=212, the height the ten-row modes root already shipped at.
 #ifdef CD_SET_MODES
-  const int y0 = 32, step = 20;
+  const int y0 = 30, step = 18;   // 30 + 10*18 = 210
 #else
-  const int y0 = 36, step = 22;
+  const int y0 = 32, step = 20;   // 32 +  9*20 = 212 (the old modes spacing)
 #endif
 #else
   // The dash root packs tighter than the editors (the watch does the same):
-  // up to twelve rows must fit the sheet with the back line above them.
-  // 52 + 11*34 + a label's height = ~446 clears SHEET_H = 460; editors keep
-  // the roomier ROW_H — none of them exceeds five rows.
-  const int y0 = 52, step = 34;
+  // up to thirteen rows must fit the sheet with the back line above them.
+  // 52 + 12*32 + a label's height = ~456 clears SHEET_H = 460; editors keep
+  // the roomier ROW_H — none of them exceeds five rows. (Codex P2 history:
+  // a new row once pushed reset off the sheet — recount when adding one.)
+  const int y0 = 52, step = 32;
 #endif
   int y = y0;
   const Settings& gs = settings();
@@ -469,6 +475,10 @@ void build_root() {
   mk_row(y, "add a canary", nullptr, IT_ROW_ADD);
   y += step;
 #endif
+  // Every flavor: the Help Desk QR for whatever is wrong right now. A row,
+  // not a banner — help is always reachable, never shouted.
+  mk_row(y, "get help", nullptr, IT_ROW_HELP);
+  y += step;
   mk_row(y, "reset", nullptr, IT_ROW_RESET);
 #ifdef CD_SET_MODES
   // The glass has gears (display_modes.md): the doorway to the non-fleet
@@ -482,6 +492,52 @@ void build_root() {
   mk_row(y, "dev mode", "bench", IT_ROW_DEV);
 #endif
 #endif
+}
+
+// "get help" — a white card holding the Help Desk QR for the current
+// verdict, composed by the pure help_verdict header (host-tested). The
+// verdict inputs are what Settings can reach without new plumbing: the hub
+// link via mqtt_mgr. Witness staleness / verification live in the fleet
+// model main.cpp owns — the bare Help Desk still covers those, and the
+// caption says what the code encodes so nobody scans a mystery. The URL
+// carries no secrets (coarse anchor only), so no teardown scrub is owed.
+void build_help_qr() {
+  mk_back("get help");
+
+  static char s_url[96];
+  const bool hub_down = !canary::net::mqtt_broker_is_placeholder() &&
+                        !canary::net::mqtt_connected();
+  const size_t n = help_verdict::compose(
+      s_url, sizeof(s_url), "https://securacv.com/help",
+      /*any_verify_failed=*/false, hub_down,
+      /*any_witness_quiet=*/false);
+
+#ifdef CD_FLAVOR_WATCH
+  const int qr_px = 140;   // glance_ui's proof-QR size — fits the circle
+#else
+  const int qr_px = 240;   // dash_ui's join-QR size
+#endif
+  if (n > 0) {
+    lv_obj_t* card = lv_obj_create(s_host);
+    lv_obj_set_size(card, qr_px + 16, qr_px + 16);
+    lv_obj_set_style_bg_color(card, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, 8, 0);
+    lv_obj_set_style_border_width(card, 0, 0);
+    lv_obj_set_style_pad_all(card, 8, 0);   // the quiet zone
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 8);
+    lv_obj_t* qr = mk_qrcode(card, qr_px);
+    lv_obj_center(qr);
+    lv_qrcode_update(qr, s_url, (uint32_t)strlen(s_url));
+  }
+
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_muted());
+  lv_label_set_text(cap,
+      n == 0     ? "securacv.com/help"  // compose refused — say the URL plainly
+      : hub_down ? "scan " LV_SYMBOL_RIGHT " the fix for your hub link"
+                 : "scan " LV_SYMBOL_RIGHT " opens the Help Desk");
+  lv_obj_align(cap, LV_ALIGN_BOTTOM_MID, 0, -14);
 }
 
 void build_edit_day() {
@@ -1084,6 +1140,7 @@ void build(Page pg) {
     case Page::EditMicSens:  build_edit_mic_sens(); break;
 #endif
     case Page::EditStyle:    build_edit_style(); break;
+    case Page::HelpQr:       build_help_qr(); break;
     case Page::CalIntro:     build_cal_intro(); break;
     case Page::CalDescend:   build_cal_descend(); break;
     case Page::CalComfort:   build_cal_comfort(); break;
@@ -1206,6 +1263,9 @@ void dispatch(int id) {
         case IT_ROW_ADD:
           close_instant();
           commission_ui_open();
+          return;
+        case IT_ROW_HELP:
+          build(Page::HelpQr);
           return;
 #ifdef CD_SET_MODES
         case IT_ROW_DEV:
@@ -1445,6 +1505,12 @@ void dispatch(int id) {
           build(Page::CalBlink);
         }
       }
+      return;
+
+    case Page::HelpQr:
+      // A QR page has one affordance: back. Any other tap is a person
+      // aiming a camera, not navigating — leave the code on the glass.
+      if (id == IT_BACK) { build(Page::Root); return; }
       return;
 
     case Page::CalWarn:

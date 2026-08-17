@@ -178,7 +178,17 @@ GREET_SRC = test_greeting.cpp
 $(GREET_BIN): $(GREET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(GREET_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN)
+# The glass help QR's verdict (canary/ui/help_verdict.h): worst-first
+# precedence (verify failure > hub down > quiet witness > bare Help Desk),
+# the overflow-refusal compose, and the website #s- anchor charset contract.
+# Pure header, no LVGL.
+HELPV_BIN = test_help_verdict
+HELPV_SRC = test_help_verdict.cpp
+
+$(HELPV_BIN): $(HELPV_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(HELPV_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -196,6 +206,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(DISPSET_BIN)
 	./$(CLOCKSTYLE_BIN)
 	./$(GREET_BIN)
+	./$(HELPV_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN)

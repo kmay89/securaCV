@@ -17,3 +17,4 @@ test_rtc_pcf
 test_rtc_pcf85063
 test_voice_clearance
 test_voice_score
+test_help_verdict
