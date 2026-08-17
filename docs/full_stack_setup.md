@@ -116,6 +116,26 @@ signed claims.
 > uploaded, and retention is yours to shorten or switch off in Pi-hole's
 > settings (blocking still works with query logging off). It does nothing at
 > all until you point your router's DNS at the hub's IP.
+>
+> **A screen on the hub (optional):** the hub never needs one — but if you've
+> plugged an HDMI display into the Pi (say a 7" 1024x600 IPS touchscreen with
+> USB touch), self-setup can also install **HAOSKiosk** (tick "Also install the
+> hub display" in the Flasher; manual: append `--with display`). It runs a
+> small browser on the hub itself and shows your dashboard on that screen
+> full-screen, touch and all. No vendor cloud and no new account — though it is
+> a real browser, so a dashboard that embeds outside content (a weather card, a
+> remote image) fetches it on the screen exactly as your phone does opening the
+> same dashboard. One step stays yours, and the installer never mints or
+> carries a password: give the screen a **dedicated non-admin user** (Settings
+> → People → Users → Add User — name it `screen`, leave Administrator off; the
+> add-on keeps that password in its configuration, and a screen only needs to
+> view dashboards), then open Settings → Apps → **HAOS Kiosk Display** →
+> Configuration, enter that login, and press Start. Zoom, rotation, and
+> screen-timeout for your particular panel live in the same tab. No screen
+> attached? The add-on simply won't start, and nothing else cares. By hand
+> instead: add `https://github.com/puterboy/HAOS-kiosk` as an app repository
+> and install **HAOS Kiosk Display** from it — same result. Like Frigate and
+> Pi-hole above, it's a community add-on tracking its own upstream releases.
 
 By hand, it's two installs:
 

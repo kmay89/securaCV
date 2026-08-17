@@ -1165,6 +1165,7 @@ pub async fn hub_headless_setup(
     host: String,
     dry_run: Option<bool>,
     with_pihole: Option<bool>,
+    with_display: Option<bool>,
 ) -> Result<HeadlessReport, String> {
     {
         let mut busy = state.0.lock().map_err(|_| "headless state poisoned")?;
@@ -1179,6 +1180,7 @@ pub async fn hub_headless_setup(
             &host,
             dry_run.unwrap_or(false),
             with_pihole.unwrap_or(false),
+            with_display.unwrap_or(false),
         )
     })
     .await
@@ -1194,6 +1196,7 @@ fn hub_headless_blocking(
     host: &str,
     dry_run: bool,
     with_pihole: bool,
+    with_display: bool,
 ) -> Result<HeadlessReport, String> {
     let log = |line: String| {
         let _ = app.emit("hub:headless-log", line);
@@ -1214,6 +1217,7 @@ fn hub_headless_blocking(
         &known_hosts.to_string_lossy(),
         dry_run,
         with_pihole,
+        with_display,
     )?;
 
     log(format!(
