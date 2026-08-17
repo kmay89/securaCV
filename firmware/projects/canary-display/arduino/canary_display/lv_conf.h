@@ -44,6 +44,23 @@
 
 #define LV_DPI_DEF 130
 
+/* Frame pacing (the motion engine, ui/motion.h): raise the refresh ceiling
+ * from LVGL's stock 30 ms to 16 ms (~60 fps) on every glass with the head-
+ * room for it. Dirty-region rendering means an idle face pays nothing for
+ * the faster ceiling — the refresh timer finds nothing invalid and returns —
+ * while eased micro-motion (digit morphs, the veil, the minute sweep) gets
+ * twice the frames. A pass that runs long simply lands late (animations are
+ * time-parameterized, so they stay time-correct and drop frames instead of
+ * stretching), and the engine's governor watches real frame cost and parks
+ * decorative motion if a glass cannot keep up. The lean C3/C6 builds keep
+ * the stock 30 ms ceiling — fewer frames is that hardware's honest answer.
+ * (Two names, one value: LV_DISP_DEF_REFR_PERIOD is the v8 key,
+ * LV_DEF_REFR_PERIOD the v9 one; each major ignores the other's.) */
+#ifndef CD_LEAN_BUILD
+#define LV_DISP_DEF_REFR_PERIOD 16
+#define LV_DEF_REFR_PERIOD 16
+#endif
+
 /* No default theme: every style on these faces is deliberate (Quiet Glass
  * sets each color/radius/shadow itself; theme defaults would fight it). */
 #define LV_USE_THEME_DEFAULT 0
