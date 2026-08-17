@@ -91,12 +91,20 @@ empty beat, the hop in, a settle, the head-tilt that says *it sees you*
 breath at punctuation:
 
 > Oh! Hello.
-> I'm your canary. I keep watch, so you don't have to.
-> What I see stays here. That's a promise.
-> Ready when you are.
+> I'm your canary.
+> Want to know what I worked out about you?
+> *(a held, narrowed beat)*
+> Nothing.
+> No MAC, no IP, no idea who's on your wifi.
+> I could have. Everything else in this house did.
+> Not that kind of bird. Call me 3f7a9e21b4c5d6e8.
+> Dark means all is well. If I glow, look at me.
+> Add another of me and we compare notes.
+> What I see stays here. That's a promise, not a setting.
 
-The privacy promise is spoken by the bird itself, because that is who
-keeps it. The wordmark enters only after the last line — the name lands
+(The name in the walk-back is the device's own salted pseudonym — see
+`common/identity/device_pseudonym.h`.) The privacy promise is spoken by
+the bird itself, because that is who keeps it. The wordmark enters only after the last line — the name lands
 AFTER the friend does. A tap always advances (first tap completes the
 line, next tap moves on): the user outranks the storyboard. The meeting
 is remembered in NVS (`scv-hello`), and every later boot plays the short
