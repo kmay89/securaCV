@@ -29,12 +29,11 @@ Caps derive_caps() {
   c.bus = Bus::Spi;
   c.bus_hz = TFT_SPI_HZ;
 #endif
-#ifdef EMU_BUILD_FLAVOR
-  // The Lab: the browser compositor makes bus math meaningless; the tier
-  // still derives from the flavor's real geometry/PSRAM/CPU facts so the
-  // emulator previews the motion the silicon will run.
-  c.bus = Bus::Emulated;
-#endif
+  // The Lab (EMU_BUILD_FLAVOR) deliberately keeps the flavor's PHYSICAL
+  // bus here: the browser has no SPI wire, but substituting it away would
+  // reclassify a bus-bound glass as Full and the preview would show motion
+  // the silicon will never run (review catch on #1566). The emulator
+  // previews the tier the hardware earns.
 #if defined(HAS_PSRAM) && HAS_PSRAM
   c.psram = true;
 #endif
@@ -356,7 +355,17 @@ void backlight_glide(uint8_t level, bool urgent) {
   lv_anim_start(&a);
 }
 
-void backlight_glide_cancel() { lv_anim_del(&s_bl_holder, bl_exec); }
+void backlight_glide_cancel() {
+  lv_anim_del(&s_bl_holder, bl_exec);
+  // A cancel means another path (the night profile, a live editor, the
+  // dawn ramp) is about to own the pin, and the engine can no longer know
+  // what the hardware shows. Forget the shadow, so the next glide SNAPS
+  // and re-syncs instead of concluding "already there" against a panel
+  // that is actually sitting on the night floor (review catch on #1566:
+  // without this, a morning that returns to yesterday's ambient level
+  // never switched the LEDC back off the night profile).
+  s_bl_shadow = -1;
+}
 
 // ── The weather-scene layer ──────────────────────────────────────────────
 

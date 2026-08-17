@@ -889,6 +889,12 @@ static void dash_face_create() {
 // veil can run it under full cover (ground_swap), turning what used to be a
 // one-frame hard cut into a dip-to-ground.
 static void rebuild_active_face() {
+  // Engine-owned state that points into the tree we are about to delete is
+  // forgotten HERE, not in the faces' create() resets — a rotation swaps
+  // WHICH face builds next (landscape bedside -> portrait column), so the
+  // outgoing face's create never runs and a teardown left there would leak
+  // a live timer aimed at freed objects (review catch on #1566).
+  canary::ui::motion::wx_layer_teardown();
   lv_obj_clean(lv_scr_act());
 #ifdef CD_FLAVOR_WATCH
   canary::ui::glance_ui_create();

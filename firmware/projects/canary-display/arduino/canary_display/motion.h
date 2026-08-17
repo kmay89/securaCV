@@ -75,7 +75,11 @@ void ground_swap(void (*rebuild)(), lv_color_t veil_color);
 // the lean tier (no 60 Hz I2C chatter on the C3's expander). The very first
 // call always snaps — boot must not fade in from an unknown level.
 void backlight_glide(uint8_t level, bool urgent);
-void backlight_glide_cancel();     // a live brightness editor owns the glass
+// Another path is taking the pin (a live editor, the night profile, the
+// dawn ramp): stop any glide AND forget the engine's shadow of the level,
+// so the next glide snaps and re-syncs rather than trusting a value the
+// hardware no longer shows.
+void backlight_glide_cancel();
 
 // ── The weather-scene layer ──────────────────────────────────────────────
 // A clipped field of soft shapes (motion_core's particle math) that lives

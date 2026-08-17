@@ -34,8 +34,9 @@ namespace canary::ui::motion {
 // whether a repaint PAYS PER PIXEL ON A WIRE (SPI: the bus is the budget) or
 // renders into continuously scanned memory (RGB: the render is the budget).
 // QspiCmd is the AMOLED watch board's 4-lane command bus (Phase-0 hardware,
-// not yet in a display env); Emulated is the WASM Lab, where the browser
-// compositor makes bus math meaningless.
+// not yet in a display env). Emulated is reserved: the WASM Lab keeps each
+// flavor's PHYSICAL bus when deriving its tier, so the preview always shows
+// the motion the silicon earns — never a browser-flattered richer one.
 enum class Bus : uint8_t {
   Spi = 0,
   RgbPanel = 1,
