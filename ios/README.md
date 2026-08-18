@@ -119,6 +119,22 @@ Four rules keep "beautiful" from decaying into "busy":
   has. And the Test Alert now runs a stopwatch: the provably-alive card
   shows "posted and accepted in _n_ ms", a number it measured, never a vibe
   (non-negotiable #4).
+- **Find this Canary — hot/cold over its own beacon, and it answers back.**
+  Device detail → "Find this Canary": `Shared/ProximityRanger.swift` (pure,
+  host-tested) smooths the presence beacon's RSSI stream into honest BANDS
+  with hysteresis (no flicker at a boundary), a warmer/colder trend, and a
+  staleness rule — a quiet beacon reads "Listening…", never a stale "Right
+  here". The words stay hedged ("about a room away") because RSSI is bands,
+  not meters, and there is no ultra-wideband radio to draw an arrow with —
+  the honesty rule IS the design. The hand is guided by the same pure
+  grammar (`ProximityRanger.tick`): one graded tap per band crossed inward,
+  one success on arrival, silence otherwise. A paired WAP-class Canary also
+  answers back — "Make it chirp" runs the firmware's ~15 s identify
+  (blink + chirp, `/api/identify`), with the visual-only setting honored in
+  the copy. With several Canaries in earshot the screen says the honest
+  thing — "You're closer to Kitchen right now" — because every beacon's
+  fingerprint suffix ties it to its named row. Finding requires discovery
+  consent, and says so instead of listening to a radio that's off.
 - **The fleet moves to new Wi-Fi as one flow, pilot-first.** Fleet tab →
   Options → "Update fleet Wi-Fi…". The staged plan (`FleetWiFiRollout`,
   host-tested) sends ONE pilot Canary first and touches nothing else until

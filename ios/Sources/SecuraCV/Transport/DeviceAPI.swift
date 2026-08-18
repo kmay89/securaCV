@@ -142,6 +142,26 @@ actor DeviceAPI {
     /// Physical-presence confirm for gated settings (camera peek, etc.).
     func confirm() async throws { _ = try await postRaw("/api/v1/confirm", body: Data()) }
 
+    /// `POST /api/identify` — ask the Canary to make itself known: ~15 s of
+    /// LED blink plus its chirp (Hue-style). Returns true when the device
+    /// says it is set to VISUAL-ONLY (its chirp is disabled), so the Find
+    /// screen can say "watch for the blink" instead of promising a sound
+    /// that will not come.
+    func identify(durationMS: Int = 15_000) async throws -> Bool {
+        struct Reply: Codable {
+            var ok: Bool?
+            var visualOnly: Bool?
+            enum CodingKeys: String, CodingKey { case ok; case visualOnly = "visual_only" }
+        }
+        let body = try JSONEncoder().encode(["duration_ms": durationMS])
+        let data = try await postRaw("/api/identify", body: body)
+        let reply = try? JSONDecoder().decode(Reply.self, from: data)
+        if reply?.ok == false {
+            throw DeviceError.http(200, "The Canary declined to identify.")
+        }
+        return reply?.visualOnly ?? false
+    }
+
     // MARK: - the Wi-Fi surface (fleet credential rollout)
 
     /// The head of the witness chain, one record's worth — the cheap "did
