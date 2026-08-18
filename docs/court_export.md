@@ -43,22 +43,35 @@ with them.
 | `VERIFICATION.md` | Steps runnable with `sha256sum` + `openssl` only; the SecuraCV-tooling path is optional depth |
 | `CERTIFICATION_FRE_902_13.md` / `_14.md` | Draft 28 U.S.C. § 1746 declarations, digests pre-filled, blanks for the certifier |
 | `evidence/` | The bundle exactly as exported (plus its C2PA sidecar, if any) |
-| `anchors/*.tsr` | The RFC 3161 tokens relevant to THIS disclosure, verbatim: tokens over the bundle's exact bytes (called out as such) plus chain-head tokens. Digest anchors for other exports are deliberately excluded — including them would disclose that those exports exist |
+| `anchors/*.tsr` | The RFC 3161 tokens relevant to THIS disclosure, verbatim, each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such) plus chain-head tokens. Digest anchors for other exports are deliberately excluded — including them would disclose that those exports exist |
 | `MANIFEST.json` | Machine-readable list of every kit file with its SHA-256 |
 
 ## What it checks before packaging
 
 1. **The bundle verifies** (`verify_export_bundle`): receipt signature, entry
    hash, artifact hash. An unverifiable bundle is refused.
-2. **Custody**: the receipt is a real row of this database's export-receipt
-   chain, the stored bytes re-derive the same entry hash, the database's
-   pinned device identity is the bundle's signer, and the stored signature is
-   byte-identical to the bundle's (Ed25519 signing is deterministic, so this
-   ties the row to the key, not just to colliding content).
-3. **Anchoring**: if no stored anchor covers the bundle's exact bytes, the
-   kit still assembles but says so loudly — in the terminal, in
+2. **Custody**: the **entire export-receipt chain verifies from genesis**
+   (every row's prev-hash link, entry hash, and device signature, under the
+   database's pinned key — the custody record says "receipt N of M in the
+   signed chain", and that sentence is only written over a chain that
+   actually holds), the bundle's receipt is one of the verified rows, the
+   database's pinned device identity is the bundle's signer, and the stored
+   signature is byte-identical to the bundle's (Ed25519 signing is
+   deterministic, so this ties the row to the key, not just to colliding
+   content).
+3. **Anchoring**: every packaged token's DER message imprint must parse and
+   equal the digest its anchor row claims — a token proves only what it
+   embeds, so an unparseable or mismatched token is excluded with a warning
+   rather than counted. A chain-head anchor must additionally reference a
+   hash recorded in this database's chain history, or it fixes nothing about
+   this ledger. If no valid stored anchor covers the bundle's exact
+   bytes, the kit still assembles but says so loudly — in the terminal, in
    `VERIFICATION.md`, and as `"anchored": false` in the manifest — with the
-   exact `log_anchor` command to fix it.
+   exact `log_anchor` command to fix it (which accepts the same
+   `--device-key-seed` / `--db-key` options for an encrypted database).
+4. **Fresh output directory**: the manifest attests every file in the kit,
+   so `--output-dir` must be absent or empty — a directory with any
+   pre-existing content is refused.
 
 ## Honest limits
 

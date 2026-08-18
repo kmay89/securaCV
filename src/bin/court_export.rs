@@ -22,7 +22,10 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use witness_kernel::{hash_entry, tsa, verify_export_bundle, ExportAuthMode, ExportBundle};
+use witness_kernel::crypto::signatures::SignatureMode;
+use witness_kernel::{
+    hash_entry, tsa, verify_export_bundle, verify_helpers, ExportAuthMode, ExportBundle,
+};
 
 #[path = "../ui.rs"]
 mod ui;
@@ -41,8 +44,8 @@ struct Args {
     /// Path to the witness database (source of receipts and anchors).
     #[arg(long, default_value = "witness.db")]
     db: String,
-    /// Directory to assemble the kit into (created; must not already contain
-    /// a kit manifest).
+    /// Directory to assemble the kit into (created; must be absent or empty —
+    /// the manifest attests every file in it).
     #[arg(long, value_name = "DIR")]
     output_dir: PathBuf,
     /// Device key seed — used only to derive the database encryption key
@@ -112,12 +115,16 @@ fn open_db(args: &Args) -> Result<Connection> {
 
 /// Confirm the bundle's receipt entry is a genuine row of THIS database's
 /// export-receipt chain, produced by THIS database's device identity, and that
-/// its stored bytes re-derive the same entry hash. The entry hash alone is not
-/// enough: the hashed payload carries no device identity, so two devices
-/// exporting identical content in the same bucket produce colliding entry
-/// hashes — the identity and signature checks below are what tie the row to
-/// the bundle's signer. Returns the row's chain position (1-based id) and the
-/// chain length.
+/// the WHOLE chain verifies — every row's prev-hash link, entry hash, and
+/// device signature, from genesis to head. A single-row re-derivation is not
+/// enough: the custody record says "receipt N of M in the signed export
+/// chain", and packaging that sentence over a ledger whose other rows are
+/// broken would describe an intact chain that does not exist. The entry hash
+/// alone is not enough either: the hashed payload carries no device identity,
+/// so two devices exporting identical content in the same bucket produce
+/// colliding entry hashes — the identity and signature checks below are what
+/// tie the row to the bundle's signer. Returns the row's chain position
+/// (1-based id) and the chain length.
 fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(i64, i64)> {
     // The database's pinned device identity must BE the bundle's signer.
     let db_device_key = witness_kernel::device_public_key_from_db(conn)
@@ -129,20 +136,49 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
         ));
     }
 
-    let entry_hash = bundle.receipt_entry.entry_hash.to_vec();
-    let row: Option<(i64, String, Vec<u8>, Vec<u8>)> = conn
-        .query_row(
-            "SELECT id, payload_json, prev_hash, signature FROM export_receipts \
-             WHERE entry_hash = ?1 LIMIT 1",
-            rusqlite::params![entry_hash],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    // Full-chain verification under the database's pinned key. The PQ key is
+    // taken from the database when stored (Compat mode: the PQ signature is
+    // verified when a key is available, mandatory in neither).
+    let pq_public_key = verify_helpers::load_pq_verifying_key(conn, None, None)?;
+    let mut position: Option<i64> = None;
+    let total = witness_kernel::verify::verify_export_receipts_with(
+        conn,
+        &db_device_key,
+        SignatureMode::Compat,
+        pq_public_key.as_ref(),
+        |id, entry_hash| {
+            if entry_hash == bundle.receipt_entry.entry_hash {
+                position = Some(id);
+            }
+        },
+    )
+    .map_err(|e| {
+        anyhow!(
+            "custody break: this database's export-receipt chain does not verify ({}). The \
+             custody record must describe an intact chain — refusing to package.",
+            e
         )
-        .optional()?;
-    let Some((id, payload_json, prev_hash, signature)) = row else {
+    })? as i64;
+    let Some(id) = position else {
         return Err(anyhow!(
             "custody break: the bundle's export receipt is not present in this database's \
              export-receipt chain — this bundle did not come from this database, or the \
              chain has been altered. Refusing to package."
+        ));
+    };
+
+    // Bind the stored row to the bundle's copy of the receipt entry.
+    let row: Option<(String, Vec<u8>, Vec<u8>)> = conn
+        .query_row(
+            "SELECT payload_json, prev_hash, signature FROM export_receipts \
+             WHERE id = ?1 LIMIT 1",
+            rusqlite::params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((payload_json, prev_hash, signature)) = row else {
+        return Err(anyhow!(
+            "custody break: the receipt row disappeared between verification and read"
         ));
     };
     if prev_hash.len() != 32 || prev_hash != bundle.receipt_entry.prev_hash.to_vec() {
@@ -165,7 +201,6 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
             "custody break: the stored receipt's device signature differs from the bundle's"
         ));
     }
-    let total: i64 = conn.query_row("SELECT COUNT(*) FROM export_receipts", [], |r| r.get(0))?;
     Ok((id, total))
 }
 
@@ -197,10 +232,56 @@ fn package_anchors(
     // that contains the export receipt). Digest anchors for OTHER exports
     // prove nothing here and would over-disclose that those exports exist,
     // their hashes, and when they were anchored — so they stay out.
-    let relevant: Vec<_> = anchors
-        .into_iter()
-        .filter(|a| &a.subject_hash == bundle_sha256 || a.subject == "chain_head")
-        .collect();
+    //
+    // And a token only proves what IT embeds: the anchor row's subject_hash
+    // is a database column, not the token. Before any token is packaged (or
+    // counted as covering the bundle), its DER message imprint must parse and
+    // equal the row's claimed subject hash — otherwise "anchored" would be
+    // asserted on the strength of an unexamined blob. A chain-head anchor
+    // must additionally reference a hash actually recorded in this database's
+    // chain history, or it fixes nothing about THIS ledger.
+    let mut relevant = Vec::new();
+    for a in anchors {
+        if !(&a.subject_hash == bundle_sha256 || a.subject == "chain_head") {
+            continue;
+        }
+        match tsa::parse_token_imprint(&a.token_der) {
+            Ok(imprint) if imprint == a.subject_hash => {}
+            Ok(imprint) => {
+                eprintln!(
+                    "WARNING: anchor #{} excluded from the kit: its token's message imprint \
+                     ({}) is not the digest the anchor row claims ({}). Run `log_anchor \
+                     verify` on this database.",
+                    a.id,
+                    hex::encode(imprint),
+                    hex::encode(a.subject_hash)
+                );
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "WARNING: anchor #{} excluded from the kit: its stored token does not \
+                     parse as an RFC 3161 timestamp token ({}). Run `log_anchor verify` on \
+                     this database.",
+                    a.id, e
+                );
+                continue;
+            }
+        }
+        if a.subject == "chain_head"
+            && &a.subject_hash != bundle_sha256
+            && !tsa::hash_in_history(conn, &a.subject_hash)?
+        {
+            eprintln!(
+                "WARNING: anchor #{} excluded from the kit: it claims to anchor a chain \
+                 head, but the anchored hash is not in this database's chain history. Run \
+                 `log_anchor verify` on this database.",
+                a.id
+            );
+            continue;
+        }
+        relevant.push(a);
+    }
     if relevant.is_empty() {
         return Ok(Vec::new());
     }
@@ -295,12 +376,25 @@ fn main() -> Result<()> {
     };
 
     // ── 3. Assemble the kit ──────────────────────────────────────────────
+    // The output directory must be fresh: MANIFEST.json attests every file in
+    // the kit, so a pre-existing file (a stale anchor token, a leftover
+    // evidence file, anything) would sit inside the directory the manifest
+    // claims to describe without being listed in it. Empty-or-absent only.
     let kit = &args.output_dir;
-    if kit.join("MANIFEST.json").exists() {
-        return Err(anyhow!(
-            "{} already contains a kit manifest — pick a fresh directory",
-            kit.display()
-        ));
+    if kit.exists() {
+        if !kit.is_dir() {
+            return Err(anyhow!(
+                "{} exists and is not a directory — pick a fresh directory",
+                kit.display()
+            ));
+        }
+        if std::fs::read_dir(kit)?.next().is_some() {
+            return Err(anyhow!(
+                "{} already exists and is not empty — the kit manifest attests every file \
+                 in the directory, so the kit must be assembled into a fresh (or empty) one",
+                kit.display()
+            ));
+        }
     }
     std::fs::create_dir_all(kit.join("evidence"))?;
 
@@ -410,6 +504,12 @@ fn main() -> Result<()> {
             "  log_anchor request --db {} --url https://freetsa.org/tsr --digest {}",
             args.db, bundle_hex
         );
+        if args.db_key.is_some() || args.device_key_seed.is_some() {
+            println!(
+                "  (encrypted database: log_anchor accepts the same --device-key-seed / \
+                 --db-key flags and environment variables used here)"
+            );
+        }
     }
     Ok(())
 }

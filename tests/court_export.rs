@@ -217,19 +217,30 @@ fn bundle_from_a_foreign_database_is_refused_as_custody_break() -> Result<()> {
     Ok(())
 }
 
+/// The committed OpenSSL-generated fixture token (covers
+/// sha256("securacv-fixture"), NOT any live bundle).
+fn fixture_token() -> tsa::TimestampToken {
+    let path = format!(
+        "{}/tests/fixtures/tsa/reply.tsr",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    tsa::parse_response(&std::fs::read(&path).expect("reading TSA fixture"))
+        .expect("fixture token parses")
+}
+
 #[test]
-fn digest_anchor_is_packaged_and_marked_as_covering_the_bundle() -> Result<()> {
+fn invalid_anchor_tokens_are_excluded_never_trusted() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let (db, bundle) = make_db_and_bundle(temp.path())?;
-
-    // Record an anchor over the exact bundle bytes, the way
-    // `log_anchor request --digest` does. The token bytes are opaque to the
-    // packager (verification is openssl's job); what matters is the subject
-    // hash binding.
     let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+
     let cfg = test_cfg(&db);
     let kernel = Kernel::open(&cfg)?;
-    let token = tsa::TimestampToken {
+    tsa::ensure_anchor_table(&kernel.conn)?;
+
+    // 1. A row claiming to cover the bundle whose "token" is not a token at
+    //    all: the anchored claim must rest on the token, not the row.
+    let garbage = tsa::TimestampToken {
         status: 0,
         gen_time: "20260818000000Z".to_string(),
         policy_oid: "1.2.3.4".to_string(),
@@ -238,14 +249,165 @@ fn digest_anchor_is_packaged_and_marked_as_covering_the_bundle() -> Result<()> {
         nonce: None,
         token_der: b"test-token-der".to_vec(),
     };
-    tsa::ensure_anchor_table(&kernel.conn)?;
     tsa::insert_anchor(
         &kernel.conn,
         "digest",
         &bundle_sha,
         "https://tsa.example/tsr",
-        &token,
+        &garbage,
     )?;
+    // 2. A REAL token (the fixture) on a row that claims it covers the bundle
+    //    bytes — but the token's embedded imprint is the fixture digest.
+    tsa::insert_anchor(
+        &kernel.conn,
+        "digest",
+        &bundle_sha,
+        "https://tsa.example/tsr",
+        &fixture_token(),
+    )?;
+    // 3. The same real token on a self-consistent row (subject hash == the
+    //    token's imprint) claiming chain-head status — but that hash is not
+    //    in this database's chain history.
+    let fixture_digest: [u8; 32] = Sha256::digest(b"securacv-fixture").into();
+    tsa::insert_anchor(
+        &kernel.conn,
+        "chain_head",
+        &fixture_digest,
+        "https://tsa.example/tsr",
+        &fixture_token(),
+    )?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit_anchored");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // All three rows are excluded, each with its own named reason, and the
+    // kit honestly reports itself unanchored.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("does not parse"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("not the digest the anchor row claims"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("not in this database's chain history"),
+        "stderr: {stderr}"
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(kit.join("MANIFEST.json"))?)?;
+    assert_eq!(manifest["anchored"], false);
+    assert_eq!(manifest["anchor_count"], 0);
+    assert!(
+        !kit.join("anchors").exists(),
+        "no excluded token may be packaged"
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("WARNING: no RFC 3161 anchor covers"));
+    Ok(())
+}
+
+/// Full positive path: a token really minted over the live bundle bytes (by a
+/// throwaway local TSA, the same way the committed fixtures were made) is
+/// packaged, marked as covering the bundle, and flips the kit to anchored.
+/// Skipped when openssl is not on PATH.
+#[test]
+fn real_token_minted_over_the_bundle_bytes_anchors_the_kit() -> Result<()> {
+    if Command::new("openssl").arg("version").output().is_err() {
+        eprintln!("skipping: openssl not available");
+        return Ok(());
+    }
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+
+    // Throwaway TSA (fixtures README recipe): key + cert + serial in a
+    // scratch dir; it signs this test's artifacts only.
+    let tsa_dir = temp.path().join("tsa");
+    std::fs::create_dir_all(&tsa_dir)?;
+    std::fs::write(
+        tsa_dir.join("tsa.cnf"),
+        "[ req ]\ndistinguished_name = dn\nprompt = no\n[ dn ]\nCN = SecuraCV Test TSA\nO = Fixture Only\n\
+         [ tsa_cert ]\nextendedKeyUsage = critical,timeStamping\nkeyUsage = critical,digitalSignature\nbasicConstraints = CA:false\n\
+         [ tsa ]\ndefault_tsa = tsa_config1\n[ tsa_config1 ]\nserial = ./serial\ncrypto_device = builtin\n\
+         signer_cert = ./tsa.crt\nsigner_key = ./tsa.key\ndefault_policy = 1.3.6.1.4.1.13762.3\ndigests = sha256\n\
+         accuracy = secs:1\nordering = no\ntsa_name = no\ness_cert_id_chain = no\nsigner_digest = sha256\n",
+    )?;
+    std::fs::write(tsa_dir.join("serial"), "01\n")?;
+    let keygen = Command::new("openssl")
+        .current_dir(&tsa_dir)
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "ec",
+            "-pkeyopt",
+            "ec_paramgen_curve:P-256",
+            "-keyout",
+            "tsa.key",
+            "-out",
+            "tsa.crt",
+            "-days",
+            "2",
+            "-nodes",
+            "-config",
+            "tsa.cnf",
+            "-extensions",
+            "tsa_cert",
+        ])
+        .output()?;
+    assert!(
+        keygen.status.success(),
+        "openssl req failed: {}",
+        String::from_utf8_lossy(&keygen.stderr)
+    );
+
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    let chain_head = tsa::chain_head(&kernel.conn)?;
+
+    // Mint one token over the bundle bytes and one over the real chain head.
+    for (name, digest, kind) in [
+        ("bundle", bundle_sha, "digest"),
+        ("head", chain_head, "chain_head"),
+    ] {
+        std::fs::write(
+            tsa_dir.join(format!("{name}.tsq")),
+            tsa::build_request(&digest, None, true),
+        )?;
+        let reply = Command::new("openssl")
+            .current_dir(&tsa_dir)
+            .env("OPENSSL_CONF", "tsa.cnf")
+            .args([
+                "ts",
+                "-reply",
+                "-queryfile",
+                &format!("{name}.tsq"),
+                "-out",
+                &format!("{name}.tsr"),
+                "-section",
+                "tsa_config1",
+            ])
+            .output()?;
+        assert!(
+            reply.status.success(),
+            "openssl ts -reply failed: {}",
+            String::from_utf8_lossy(&reply.stderr)
+        );
+        let token = tsa::parse_response(&std::fs::read(tsa_dir.join(format!("{name}.tsr")))?)?;
+        tsa::verify_match(&token, &digest, None)?;
+        tsa::insert_anchor(
+            &kernel.conn,
+            kind,
+            &digest,
+            "https://tsa.example/tsr",
+            &token,
+        )?;
+    }
     drop(kernel);
 
     let kit = temp.path().join("kit_anchored");
@@ -259,17 +421,83 @@ fn digest_anchor_is_packaged_and_marked_as_covering_the_bundle() -> Result<()> {
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(kit.join("MANIFEST.json"))?)?;
     assert_eq!(manifest["anchored"], true);
-    assert_eq!(manifest["anchor_count"], 1);
-
-    // The token bytes travel verbatim, and the verification instructions name
-    // the exact openssl invocation for them.
+    assert_eq!(manifest["anchor_count"], 2);
+    // Both tokens travel verbatim, and the verification instructions name the
+    // exact openssl invocation for the covering one.
     let anchor_files: Vec<_> = std::fs::read_dir(kit.join("anchors"))?
         .map(|e| e.unwrap().path())
         .collect();
-    assert_eq!(anchor_files.len(), 1);
-    assert_eq!(std::fs::read(&anchor_files[0])?, b"test-token-der");
+    assert_eq!(anchor_files.len(), 2);
     let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
-    assert!(verification.contains("openssl ts -verify -digest"));
+    assert!(verification.contains(&format!(
+        "openssl ts -verify -digest {}",
+        hex::encode(bundle_sha)
+    )));
     assert!(!String::from_utf8_lossy(&out.stdout).contains("WARNING"));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("excluded"));
+    Ok(())
+}
+
+#[test]
+fn nonempty_output_dir_is_refused() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+
+    // Any pre-existing content — not just a previous manifest — must refuse:
+    // MANIFEST.json attests every file in the directory, so a stray file
+    // would sit inside the kit unlisted.
+    let kit = temp.path().join("kit_dirty");
+    std::fs::create_dir_all(&kit)?;
+    std::fs::write(kit.join("stray.txt"), b"leftover")?;
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(!out.status.success(), "a nonempty output dir must refuse");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not empty"));
+    assert!(!kit.join("MANIFEST.json").exists());
+    assert_eq!(std::fs::read(kit.join("stray.txt"))?, b"leftover");
+
+    // An explicitly-created EMPTY directory is fine.
+    let kit_empty = temp.path().join("kit_empty");
+    std::fs::create_dir_all(&kit_empty)?;
+    let out = run_court_export(&db, &bundle, &kit_empty);
+    assert!(
+        out.status.success(),
+        "an empty output dir must be accepted: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn tampered_interior_receipt_row_is_refused() -> Result<()> {
+    // The custody record says "receipt N of M in the signed export chain" —
+    // so the WHOLE chain must verify, not just the bundle's own row. Tamper
+    // with an EARLIER receipt and package a later bundle: refused.
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let _first = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    let second = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    let bundle_path = temp.path().join("witness_export.json");
+    std::fs::write(&bundle_path, serde_json::to_vec(&second)?)?;
+    kernel.conn.execute(
+        "UPDATE export_receipts SET payload_json = '{}' WHERE id = 1",
+        [],
+    )?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit_broken_chain");
+    let out = run_court_export(&db_path, &bundle_path, &kit);
+    assert!(
+        !out.status.success(),
+        "a broken export-receipt chain must refuse packaging"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("export-receipt chain does not verify"),
+        "stderr: {stderr}"
+    );
+    assert!(!kit.join("MANIFEST.json").exists());
     Ok(())
 }

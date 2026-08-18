@@ -36,6 +36,21 @@ struct Args {
     #[arg(long, default_value = "witness.db", global = true)]
     db: String,
 
+    /// Device key seed — used only to derive the database encryption key
+    /// (like log_verify). Not needed for an unencrypted database.
+    #[arg(long, env = "DEVICE_KEY_SEED", global = true)]
+    device_key_seed: Option<String>,
+
+    /// Explicit SQLCipher key (hex), overriding the seed derivation.
+    #[arg(
+        long,
+        env = "SECURACV_DB_KEY",
+        conflicts_with = "device_key_seed",
+        global = true,
+        value_name = "HEX"
+    )]
+    db_key: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -87,8 +102,35 @@ enum Command {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    // SQLCipher key: explicit --db-key wins; otherwise derive it from the
+    // device key seed exactly as the kernel does (same logic as log_verify).
+    let db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
+        (Some(key), _) => Some(key.clone()),
+        (None, Some(seed)) => {
+            let signing_key = witness_kernel::signing_key_from_seed(seed)?;
+            let seed_env = witness_kernel::db_key_seed_from_env();
+            Some(
+                witness_kernel::resolve_db_encryption_key(
+                    &signing_key,
+                    seed_env.as_ref().map(|s| s.as_str()),
+                )
+                .to_string(),
+            )
+        }
+        (None, None) => None,
+    };
     let conn =
         Connection::open(&args.db).with_context(|| format!("opening witness DB '{}'", args.db))?;
+    if let Some(ref key) = db_key {
+        conn.pragma_update(None, "key", format!("x'{}'", key))?;
+    }
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+        .map_err(|_| {
+            anyhow!(
+                "could not read the witness DB — if it is encrypted, pass \
+                 --device-key-seed (or --db-key)"
+            )
+        })?;
     tsa::ensure_anchor_table(&conn)?;
 
     match args.command {
