@@ -124,6 +124,31 @@ terminator. Wire `rustls` into both accept loops (mirror the webhook module) so
 countersignature of RFC-3161 anchors inside Rust (not only via an optional
 external `openssl ts -verify`).
 
+### 4a. PWK wizard — authenticate the mutating endpoints
+
+**State today.** The PWK setup wizard (`privacy_witness_kernel/serve_wizard.py`)
+binds `0.0.0.0:8788` and is served to the user through the Home Assistant
+Supervisor **ingress** proxy (which authenticates the user). Its `do_POST`
+handlers — `/api/save` (writes config and mints `device_key_seed`),
+`/api/restart-ha`, `/api/test-camera`, and the `/api/mesh/pair/*` device
+proxies — carry **no auth check of their own**, so any process that can reach
+the container's port directly on the Supervisor Docker network (a malicious
+sibling add-on, or SSRF from one) can invoke them, bypassing ingress. The
+2026-08 pass already minimized secret *disclosure* on `/api/status` and closed
+the SSRF/loopback and YAML-injection vectors on this surface; the mutating
+endpoints are the remaining item.
+
+**Design to close it.** Verify that a mutating request actually arrived through
+the authenticated ingress path rather than directly on the port — the robust
+form is to require the Supervisor-injected ingress session (HA sets an
+`X-Ingress-Path`/session the add-on can validate against `SUPERVISOR_TOKEN`),
+and/or require a per-install wizard bearer token minted at first run and handed
+to the browser only through the ingress-authenticated page. Fail closed on a
+direct-port request. This needs live add-on testing (a wrong cut either locks
+the wizard out or gives false assurance), which is why it is tracked here rather
+than patched blind. Binding to loopback is not sufficient on its own — the
+Supervisor reaches the add-on over the Docker network, not loopback.
+
 ---
 
 ## 5. Seed strength

@@ -144,6 +144,15 @@ and the PWK add-on. The quorum + unseal target design is
   requested `0600` when the path already exists. A shared `write_secret_file`
   now opens with `O_NOFOLLOW` and re-applies `0600` after open; the unsealed
   plaintext is zeroized after the write. `src/break_glass/cli.rs`.
+- **Raw-media plaintext zeroized on seal error paths.** `seal_bytes` only
+  scrubbed the caller's cleartext buffer on success; the "envelope already
+  exists" early return and a `seal_v2` failure left it in memory. It now
+  zeroizes on every exit. `src/vault/mod.rs`.
+- **Break-glass lockout map bounded.** The per-peer auth-failure table grew one
+  entry per source IP forever; it now prunes settled entries and caps at 4096
+  (a spoofed-source flood can no longer grow it without limit). An untracked IP
+  beyond the cap is simply not rate-limited that round — never wrongly locked.
+  `src/break_glass/server.rs`.
 - **Python unseal output permissions.** `tools/unseal_snapshot.py` wrote the
   decrypted snapshot with the default umask (world-readable) and, under
   `--force`, wrote the new private key into a pre-existing (possibly laxer)
@@ -178,13 +187,19 @@ Recorded honestly rather than half-fixed; designs in
   half-verified auth change risks locking the wizard out or providing false
   assurance. Designed in ENTERPRISE_CUSTODY §8.
 - **Break-glass HTTP server availability**: a pre-auth slowloris can stall the
-  single-threaded server, and the per-peer lockout map is unbounded (and
-  collapses to the proxy IP behind a terminator). Availability hardening
-  (accept/read timeouts, a bounded lockout map) — tracked, not a
-  confidentiality or integrity gap.
-- **Defense-in-depth zeroization**: raw-frame cleartext on some seal *error*
-  paths and the pre-roll drain gating are belt-and-suspenders items on top of
-  the enforced token gate.
+  single-threaded server, and the per-peer lockout still collapses to the proxy
+  IP behind a TLS terminator (it keys on the peer socket address). The lockout
+  map is now bounded (above); accept/read timeouts and a forwarded-for-aware
+  key remain tracked availability items — not a confidentiality or integrity
+  gap.
+- **Audit tooling on encrypted databases**: `break_glass receipts` opens the
+  kernel DB without the SQLCipher key, so it reads only an unencrypted DB; the
+  keyed read path (`open_kernel_db_keyed`, already used by `doctor`) should be
+  threaded through. Low severity — it cannot leak an encrypted DB's contents,
+  only fail to read them.
+- **Pre-roll buffer drain gating**: the in-memory pre-event ring drain is
+  belt-and-suspenders on top of the enforced token gate at
+  `export_for_vault`.
 
 ## Verification (this pass)
 
