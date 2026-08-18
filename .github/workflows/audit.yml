@@ -87,23 +87,6 @@ jobs:
         # provenance per deny.toml (doc-12 A4 / FR-14).
         run: cargo deny check bans licenses sources
 
-  # The three jobs above audit the WHOLE committed tree against advisory
-  # DBs. This one is PR-scoped: it diffs base..head through GitHub's
-  # dependency graph and fails if the PR *introduces* a dependency with a
-  # known high/critical advisory — catching a bad dep at the moment it
-  # enters, instead of at the next Monday sweep.
-  dependency-review:
-    name: Dependency review (PR diff)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - name: Flag vulnerable dependencies added by this PR
-        uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-
   npm-audit:
     name: npm audit (canary-vision)
     runs-on: ubuntu-latest

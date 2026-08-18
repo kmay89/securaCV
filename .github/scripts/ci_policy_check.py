@@ -57,6 +57,10 @@ FIRST_PARTY_OWNERS = {"actions", "github"}
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
+# R8 (comment half): a `uses:` line pinned to a 40-hex SHA, with whatever
+# follows the SHA captured so the trailing comment can be checked.
+SHA_USES_LINE_RE = re.compile(r"uses:\s*([^\s#]+)@([0-9a-f]{40})(.*)$")
+
 
 def load_policy() -> dict:
     if not os.path.exists(POLICY_PATH):
@@ -287,6 +291,32 @@ def check_action_pins(label: str, jobs: dict, policy: dict) -> list[str]:
     return problems
 
 
+def check_sha_pin_comments(path: str, label: str) -> list[str]:
+    """R8 (comment half): every SHA pin carries a trailing `# <version>`.
+
+    yaml.safe_load discards comments before check_action_pins ever sees a
+    step, so this half reads the raw text. Without the comment nobody —
+    reviewer or Dependabot — can tell which release a pin means, and a
+    stale or wrong pin becomes invisible in review.
+    """
+    problems = []
+    with open(path, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            m = SHA_USES_LINE_RE.search(line)
+            if not m:
+                continue
+            action, _sha, rest = m.groups()
+            if not re.match(r"\s+#\s*\S", rest):
+                problems.append(
+                    f"{label}:{lineno}: R8 — `{action}` is SHA-pinned but "
+                    f"has no trailing `# <version>` comment naming the ref "
+                    f"it was resolved from. Add it — it is what makes the "
+                    f"pin reviewable and lets Dependabot bump pin and "
+                    f"comment together."
+                )
+    return problems
+
+
 def check_composite_actions(policy: dict) -> list[str]:
     """R4/R8 also apply to steps inside local composite actions."""
     problems = []
@@ -298,6 +328,7 @@ def check_composite_actions(policy: dict) -> list[str]:
         rel = os.path.relpath(path, REPO_ROOT)
         problems.extend(
             check_action_pins(rel, {"(composite)": {"steps": steps}}, policy))
+        problems.extend(check_sha_pin_comments(path, rel))
     return problems
 
 
@@ -339,6 +370,8 @@ def main() -> int:
     all_problems: list[str] = []
     for path in files:
         all_problems.extend(check_workflow(path, policy))
+        all_problems.extend(
+            check_sha_pin_comments(path, os.path.basename(path)))
     all_problems.extend(check_composite_actions(policy))
 
     if all_problems:
