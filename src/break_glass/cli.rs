@@ -20,9 +20,8 @@ use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_
 use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile,
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
-    verify_approval, verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome,
-    BreakGlassToken, Kernel, KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault,
-    VaultConfig, ZonePolicy,
+    verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
+    KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig, ZonePolicy,
 };
 
 #[path = "../ui.rs"]
@@ -53,12 +52,26 @@ enum Command {
         db: String,
         #[arg(long, default_value = "ruleset:v0.3.0")]
         ruleset_id: String,
+        /// Also write the full request context to a file trustees can approve
+        /// from (`approve --request`), so they sign what they can SEE — not a
+        /// bare hash someone read to them.
+        #[arg(long, value_name = "PATH")]
+        output_request: Option<String>,
     },
 
-    /// Create an approval file for a request hash (Ed25519 signature)
+    /// Create an approval file for an unlock request (Ed25519 signature).
+    /// Prefer `--request <file>`: your own tool recomputes the hash from the
+    /// displayed fields, so you sign what you see. `--request-hash` alone is
+    /// blind signing and prints a warning.
     Approve {
-        #[arg(long)]
-        request_hash: String,
+        /// Request-context file written by `request --output-request`.
+        /// The hash is recomputed locally from its fields before signing.
+        #[arg(long, value_name = "PATH", conflicts_with = "request_hash")]
+        request: Option<String>,
+        /// Bare request hash (blind signing — you cannot verify what this
+        /// authorizes; prefer --request)
+        #[arg(long, value_name = "HEX")]
+        request_hash: Option<String>,
         #[arg(long)]
         trustee: String,
         #[arg(long)]
@@ -158,7 +171,8 @@ enum Command {
 
     /// Start a guided break-glass setup: pin the device identity and open a
     /// draft for an n-of-m quorum. Enroll trustees with `trustee enroll`; the
-    /// quorum policy commits automatically once enough are enrolled. Idempotent.
+    /// quorum policy commits automatically once ALL m are enrolled (changing a
+    /// live policy afterwards needs current-quorum approvals). Idempotent.
     Init {
         /// Quorum threshold (n) — how many trustees must approve
         #[arg(long)]
@@ -189,7 +203,7 @@ enum Command {
 enum TrusteeCommand {
     /// Enroll one trustee into the setup draft. Either import an existing public
     /// key (`--public-key`) or mint a fresh keypair (`--generate --output`). The
-    /// quorum policy commits/updates automatically once the draft is valid.
+    /// quorum policy commits automatically once the roster is complete.
     Enroll {
         /// Trustee id (a short human label, unique within the quorum)
         #[arg(long)]
@@ -219,7 +233,10 @@ enum TrusteeCommand {
 
 #[derive(Subcommand, Debug)]
 enum PolicyCommand {
-    /// Store a quorum policy in the kernel database
+    /// Store a quorum policy in the kernel database. On an empty database
+    /// this is the bootstrap and needs no approvals; when a policy already
+    /// exists, changing it requires current-quorum approvals (collect them
+    /// with `policy propose` + `policy approve`, then pass --approvals).
     Set {
         /// Quorum threshold (n)
         #[arg(long)]
@@ -227,6 +244,15 @@ enum PolicyCommand {
         /// Trustee entry in the format "id:HEX_PUBLIC_KEY"
         #[arg(long = "trustee", value_name = "ID:HEX", action = clap::ArgAction::Append)]
         trustees: Vec<String>,
+        /// Vault crypto mode (classical|pq|hybrid). Defaults to the stored
+        /// policy's mode when one exists, else classical — so a roster change
+        /// can never silently downgrade the vault crypto.
+        #[arg(long, value_name = "MODE")]
+        crypto_mode: Option<String>,
+        /// Comma-separated policy-change approval files from CURRENT trustees
+        /// (required when replacing an existing policy)
+        #[arg(long, value_name = "FILES")]
+        approvals: Option<String>,
         #[arg(long, default_value = "witness.db")]
         db: String,
         #[arg(long, default_value = "ruleset:v0.3.0")]
@@ -236,8 +262,60 @@ enum PolicyCommand {
         device_key_seed: String,
     },
 
+    /// Propose a change to the stored quorum policy: writes a proposal file
+    /// carrying the FULL current and proposed policies, for trustees to
+    /// review and approve with `policy approve`.
+    Propose {
+        /// Proposed quorum threshold (n)
+        #[arg(long)]
+        threshold: u8,
+        /// Proposed trustee entry in the format "id:HEX_PUBLIC_KEY"
+        #[arg(long = "trustee", value_name = "ID:HEX", action = clap::ArgAction::Append)]
+        trustees: Vec<String>,
+        /// Proposed vault crypto mode (classical|pq|hybrid); defaults to the
+        /// stored policy's mode
+        #[arg(long, value_name = "MODE")]
+        crypto_mode: Option<String>,
+        /// Where to write the proposal file
+        #[arg(long, value_name = "PATH")]
+        output: String,
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        /// Device key seed (must match witnessd)
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+    },
+
+    /// Approve a proposed policy change as a CURRENT trustee. Recomputes the
+    /// change hash locally from the proposal's full contents and displays
+    /// exactly what is changing before signing — you sign what you see.
+    Approve {
+        /// Proposal file written by `policy propose`
+        #[arg(long, value_name = "PATH")]
+        proposal: String,
+        #[arg(long)]
+        trustee: String,
+        #[arg(long)]
+        signing_key: String,
+        #[arg(long)]
+        output: String,
+    },
+
     /// Print the stored quorum policy
     Show {
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        /// Device key seed (must match witnessd)
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+    },
+
+    /// Print the policy-change history ledger (chained, device-signed)
+    History {
         #[arg(long, default_value = "witness.db")]
         db: String,
         #[arg(long, default_value = "ruleset:v0.3.0")]
@@ -268,18 +346,26 @@ pub fn run() -> Result<()> {
             purpose,
             db: _,
             ruleset_id,
+            output_request,
         } => {
             let _stage = ui.stage("Create unlock request");
-            cmd_request(&envelope, &purpose, &ruleset_id)
+            cmd_request(&envelope, &purpose, &ruleset_id, output_request.as_deref())
         }
         Command::Approve {
+            request,
             request_hash,
             trustee,
             signing_key,
             output,
         } => {
             let _stage = ui.stage("Sign approval");
-            cmd_approve(&request_hash, &trustee, &signing_key, &output)
+            cmd_approve(
+                request.as_deref(),
+                request_hash.as_deref(),
+                &trustee,
+                &signing_key,
+                &output,
+            )
         }
         Command::Authorize {
             envelope,
@@ -337,12 +423,51 @@ pub fn run() -> Result<()> {
             PolicyCommand::Set {
                 threshold,
                 trustees,
+                crypto_mode,
+                approvals,
                 db,
                 ruleset_id,
                 device_key_seed,
             } => {
                 let _stage = ui.stage("Set quorum policy");
-                cmd_policy_set(threshold, &trustees, &db, &ruleset_id, &device_key_seed)
+                cmd_policy_set(
+                    threshold,
+                    &trustees,
+                    crypto_mode.as_deref(),
+                    approvals.as_deref(),
+                    &db,
+                    &ruleset_id,
+                    &device_key_seed,
+                )
+            }
+            PolicyCommand::Propose {
+                threshold,
+                trustees,
+                crypto_mode,
+                output,
+                db,
+                ruleset_id,
+                device_key_seed,
+            } => {
+                let _stage = ui.stage("Propose policy change");
+                cmd_policy_propose(
+                    threshold,
+                    &trustees,
+                    crypto_mode.as_deref(),
+                    &output,
+                    &db,
+                    &ruleset_id,
+                    &device_key_seed,
+                )
+            }
+            PolicyCommand::Approve {
+                proposal,
+                trustee,
+                signing_key,
+                output,
+            } => {
+                let _stage = ui.stage("Approve policy change");
+                cmd_policy_change_approve(&proposal, &trustee, &signing_key, &output)
             }
             PolicyCommand::Show {
                 db,
@@ -351,6 +476,14 @@ pub fn run() -> Result<()> {
             } => {
                 let _stage = ui.stage("Show quorum policy");
                 cmd_policy_show(&db, &ruleset_id, &device_key_seed)
+            }
+            PolicyCommand::History {
+                db,
+                ruleset_id,
+                device_key_seed,
+            } => {
+                let _stage = ui.stage("Policy-change history");
+                cmd_policy_history(&db, &ruleset_id, &device_key_seed)
             }
         },
         Command::Doctor {
@@ -413,7 +546,80 @@ pub fn run() -> Result<()> {
     }
 }
 
-fn cmd_request(envelope: &str, purpose: &str, ruleset_id: &str) -> Result<()> {
+/// The portable request-context file `request --output-request` writes and
+/// `approve --request` consumes. Carries every field the request hash binds,
+/// so a trustee's own tool can recompute the hash and display the decoded
+/// request before signing (WYSIWYS — spec/quorum_unseal_v2.md §3.2).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct UnlockRequestFile {
+    format: String,
+    envelope: String,
+    purpose: String,
+    ruleset_id: String,
+    ruleset_hash: String,
+    time_bucket: TimeBucket,
+    request_hash: String,
+}
+
+const UNLOCK_REQUEST_FILE_FORMAT: &str = "securacv-unlock-request:v1";
+
+/// The portable policy-change proposal file `policy propose` writes and
+/// `policy approve` consumes. Carries the FULL current and proposed policies
+/// so a trustee reviews the actual rosters, not a summary someone narrated.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PolicyChangeProposalFile {
+    format: String,
+    prev_policy: Option<crate::break_glass::QuorumPolicy>,
+    new_policy: crate::break_glass::QuorumPolicy,
+    time_bucket: TimeBucket,
+    change_hash: String,
+}
+
+const POLICY_CHANGE_PROPOSAL_FORMAT: &str = "securacv-policy-change-proposal:v1";
+
+/// Render an epoch-seconds instant as a UTC timestamp for human review
+/// (display only — never part of any hashed or signed material).
+fn utc_string(epoch_s: u64) -> String {
+    let days = (epoch_s / 86_400) as i64;
+    let secs = epoch_s % 86_400;
+    // Civil-from-days (Howard Hinnant's algorithm), valid for the Unix era.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        y,
+        m,
+        d,
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
+}
+
+fn bucket_window(bucket: &TimeBucket) -> String {
+    format!(
+        "{} .. {} (bucket start {}, size {}s)",
+        utc_string(bucket.start_epoch_s),
+        utc_string(bucket.start_epoch_s + bucket.size_s as u64),
+        bucket.start_epoch_s,
+        bucket.size_s
+    )
+}
+
+fn cmd_request(
+    envelope: &str,
+    purpose: &str,
+    ruleset_id: &str,
+    output_request: Option<&str>,
+) -> Result<()> {
     let bucket = TimeBucket::now_10min()?;
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
     let request = UnlockRequest::new(envelope, ruleset_hash, purpose, bucket)?;
@@ -423,33 +629,131 @@ fn cmd_request(envelope: &str, purpose: &str, ruleset_id: &str) -> Result<()> {
     println!("Envelope:     {}", envelope);
     println!("Purpose:      {}", purpose);
     println!("Ruleset:      {}", ruleset_id);
-    println!(
-        "Time bucket:  {} (size {}s)",
-        bucket.start_epoch_s, bucket.size_s
-    );
+    println!("Valid window: {}", bucket_window(&bucket));
     println!("Request hash: {}", hex32(&request_hash));
     println!();
-    println!("Share the request hash with trustees. Each trustee runs:");
-    println!(
-        "  break_glass approve --request-hash {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
-        hex32(&request_hash)
-    );
+    if let Some(path) = output_request {
+        let file = UnlockRequestFile {
+            format: UNLOCK_REQUEST_FILE_FORMAT.to_string(),
+            envelope: envelope.trim().to_string(),
+            purpose: purpose.trim().to_string(),
+            ruleset_id: ruleset_id.to_string(),
+            ruleset_hash: hex32(&ruleset_hash),
+            time_bucket: bucket,
+            request_hash: hex32(&request_hash),
+        };
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&file)?))?;
+        println!("Request context written to: {}", path);
+        println!(
+            "Send the FILE to each trustee (full context, never a bare hash). Each trustee runs:"
+        );
+        println!(
+            "  break_glass approve --request {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
+            path
+        );
+    } else {
+        println!("Share the request hash with trustees. Each trustee runs:");
+        println!(
+            "  break_glass approve --request-hash {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
+            hex32(&request_hash)
+        );
+        println!(
+            "Better: re-run with --output-request <file> and send trustees the full context \
+             file instead, so their tool can show them what they are signing."
+        );
+    }
     println!("Trustee roster is loaded from the canonical policy in the kernel database.");
     Ok(())
 }
 
+fn read_signing_key(signing_key_path: &str) -> Result<SigningKey> {
+    let signing_key_hex = std::fs::read_to_string(signing_key_path)
+        .map_err(|e| anyhow!("failed to read signing key {}: {}", signing_key_path, e))?;
+    let signing_key_bytes = parse_hex32(signing_key_hex.trim())?;
+    Ok(SigningKey::from_bytes(&signing_key_bytes))
+}
+
 fn cmd_approve(
-    request_hash_hex: &str,
+    request_file: Option<&str>,
+    request_hash_hex: Option<&str>,
     trustee: &str,
     signing_key_path: &str,
     output: &str,
 ) -> Result<()> {
-    let request_hash = parse_hex32(request_hash_hex)?;
+    let request_hash = match (request_file, request_hash_hex) {
+        (Some(path), _) => {
+            let json = std::fs::read_to_string(path)
+                .map_err(|e| anyhow!("failed to read request file {}: {}", path, e))?;
+            let file: UnlockRequestFile = serde_json::from_str(&json)
+                .map_err(|e| anyhow!("invalid request file {}: {}", path, e))?;
+            if file.format != UNLOCK_REQUEST_FILE_FORMAT {
+                return Err(anyhow!(
+                    "unrecognized request file format '{}' (expected {})",
+                    file.format,
+                    UNLOCK_REQUEST_FILE_FORMAT
+                ));
+            }
+            // Recompute everything locally from the request's FIELDS. The
+            // file's own claimed hashes are cross-checked, never trusted:
+            // the signature is over what this tool derived from what it is
+            // about to display.
+            let derived_ruleset = KernelConfig::ruleset_hash_from_id(&file.ruleset_id);
+            let claimed_ruleset = parse_hex32(&file.ruleset_hash)?;
+            if derived_ruleset != claimed_ruleset {
+                return Err(anyhow!(
+                    "request file inconsistent: ruleset_hash does not match ruleset_id '{}' — refusing to sign",
+                    file.ruleset_id
+                ));
+            }
+            let request = UnlockRequest::new(
+                &file.envelope,
+                derived_ruleset,
+                &file.purpose,
+                file.time_bucket,
+            )?;
+            let recomputed = request.request_hash();
+            let claimed = parse_hex32(&file.request_hash)?;
+            if recomputed != claimed {
+                return Err(anyhow!(
+                    "request file inconsistent: recomputed request hash {} does not match its claimed hash {} — refusing to sign",
+                    hex32(&recomputed),
+                    hex32(&claimed)
+                ));
+            }
 
-    let signing_key_hex = std::fs::read_to_string(signing_key_path)
-        .map_err(|e| anyhow!("failed to read signing key {}: {}", signing_key_path, e))?;
-    let signing_key_bytes = parse_hex32(signing_key_hex.trim())?;
-    let signing_key = SigningKey::from_bytes(&signing_key_bytes);
+            println!("=== Unlock request — review before signing ===");
+            println!("Envelope:     {}", file.envelope);
+            println!("Purpose:      {}", file.purpose);
+            println!("Ruleset:      {}", file.ruleset_id);
+            println!("Valid window: {}", bucket_window(&file.time_bucket));
+            println!("Request hash: {} (recomputed locally)", hex32(&recomputed));
+            if let Ok(now) = TimeBucket::now_10min() {
+                if now.start_epoch_s != file.time_bucket.start_epoch_s {
+                    println!(
+                        "WARNING: this request's time window is not the current one — \
+                         authorization only succeeds inside the request's own window."
+                    );
+                }
+            }
+            println!();
+            recomputed
+        }
+        (None, Some(hex_str)) => {
+            eprintln!(
+                "WARNING: signing a bare request hash is BLIND SIGNING — this tool cannot \
+                 show you what it authorizes. Ask the operator for the request context file \
+                 (`request --output-request`) and use --request instead."
+            );
+            parse_hex32(hex_str)?
+        }
+        (None, None) => {
+            return Err(anyhow!(
+                "provide --request <file> (preferred) or --request-hash <hex>"
+            ))
+        }
+    };
+
+    let signing_key = read_signing_key(signing_key_path)?;
     // Domain-separated to DOMAIN_TRUSTEE_APPROVAL so this consent cannot be
     // replayed as (or from) any other signature context.
     let approval = Approval::signed(TrusteeId::new(trustee), request_hash, &signing_key);
@@ -557,24 +861,50 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
     }
 }
 
-fn cmd_policy_set(
+/// Read a comma-separated list of approval files (the same format
+/// `authorize --approvals` consumes).
+fn read_approval_files(arg: &str) -> Result<Vec<Approval>> {
+    let mut approvals: Vec<Approval> = Vec::new();
+    for file in arg.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let json =
+            std::fs::read_to_string(file).map_err(|e| anyhow!("failed to read {}: {}", file, e))?;
+        let a: Approval =
+            serde_json::from_str(&json).map_err(|e| anyhow!("failed to parse {}: {}", file, e))?;
+        approvals.push(a);
+    }
+    Ok(approvals)
+}
+
+/// Build the proposed policy for `policy set` / `policy propose`: parse the
+/// roster, then resolve the vault crypto mode — explicit flag wins, else the
+/// STORED policy's mode is preserved (a roster change must never silently
+/// downgrade the vault crypto), else the default.
+fn build_proposed_policy(
     threshold: u8,
     trustees: &[String],
-    db_path: &str,
-    ruleset_id: &str,
-    device_key_seed: &str,
-) -> Result<()> {
+    crypto_mode: Option<&str>,
+    current: Option<&crate::break_glass::QuorumPolicy>,
+) -> Result<crate::break_glass::QuorumPolicy> {
     let entries = trustees
         .iter()
         .map(|entry| parse_trustee_entry(entry))
         .collect::<Result<Vec<_>>>()?;
-    let policy = crate::break_glass::QuorumPolicy::new(threshold, entries)?;
+    let mut policy = crate::break_glass::QuorumPolicy::new(threshold, entries)?;
+    policy.vault.crypto_mode = match crypto_mode {
+        Some(mode) => mode.parse()?,
+        None => match current {
+            Some(cur) => cur.vault.crypto_mode,
+            None => Default::default(),
+        },
+    };
+    Ok(policy)
+}
 
-    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
-    let mut kernel = Kernel::open(&cfg)?;
-    kernel.set_break_glass_policy(&policy)?;
-
-    println!("Stored break-glass policy: {}-of-{}", policy.n, policy.m);
+fn print_policy_roster(label: &str, policy: &crate::break_glass::QuorumPolicy) {
+    println!(
+        "{}: {}-of-{} (crypto mode: {})",
+        label, policy.n, policy.m, policy.vault.crypto_mode
+    );
     for trustee in &policy.trustees {
         println!(
             "  trustee {} {}",
@@ -582,6 +912,333 @@ fn cmd_policy_set(
             hex_vec(&trustee.public_key)
         );
     }
+}
+
+fn cmd_policy_set(
+    threshold: u8,
+    trustees: &[String],
+    crypto_mode: Option<&str>,
+    approvals_arg: Option<&str>,
+    db_path: &str,
+    ruleset_id: &str,
+    device_key_seed: &str,
+) -> Result<()> {
+    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+    let mut kernel = Kernel::open(&cfg)?;
+    let current = kernel.break_glass_policy().cloned();
+    let policy = build_proposed_policy(threshold, trustees, crypto_mode, current.as_ref())?;
+
+    let approvals = match approvals_arg {
+        Some(arg) => read_approval_files(arg)?,
+        None => Vec::new(),
+    };
+    let bucket = TimeBucket::now_10min()?;
+
+    // Quorum-gated (Invariant V): replacing a live policy needs the CURRENT
+    // quorum's consent; only the bootstrap on an empty database does not.
+    let outcome = kernel.set_break_glass_policy_gated(&policy, &approvals, bucket)?;
+    match outcome {
+        crate::PolicyChangeOutcome::Bootstrapped => {
+            println!("Stored break-glass policy (bootstrap — no prior policy existed):");
+        }
+        crate::PolicyChangeOutcome::Replaced => {
+            println!("Replaced break-glass policy with current-quorum consent:");
+        }
+        crate::PolicyChangeOutcome::Unchanged => {
+            println!("Stored policy is identical — nothing changed.");
+            return Ok(());
+        }
+    }
+    print_policy_roster("Policy", &policy);
+    Ok(())
+}
+
+fn cmd_policy_propose(
+    threshold: u8,
+    trustees: &[String],
+    crypto_mode: Option<&str>,
+    output: &str,
+    db_path: &str,
+    ruleset_id: &str,
+    device_key_seed: &str,
+) -> Result<()> {
+    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+    let kernel = Kernel::open(&cfg)?;
+    let Some(current) = kernel.break_glass_policy().cloned() else {
+        return Err(anyhow!(
+            "no policy is stored yet — the first policy is a bootstrap and needs no proposal; \
+             run `break_glass policy set` directly"
+        ));
+    };
+    let new_policy = build_proposed_policy(threshold, trustees, crypto_mode, Some(&current))?;
+    if current.full_commitment() == new_policy.full_commitment() {
+        return Err(anyhow!(
+            "the proposed policy is identical to the stored policy — nothing to change"
+        ));
+    }
+
+    let bucket = TimeBucket::now_10min()?;
+    let proposal = crate::break_glass::PolicyChangeProposal {
+        prev_policy_commitment: current.full_commitment(),
+        new_policy: new_policy.clone(),
+        time_bucket: bucket,
+    };
+    let change_hash = proposal.change_hash();
+    let file = PolicyChangeProposalFile {
+        format: POLICY_CHANGE_PROPOSAL_FORMAT.to_string(),
+        prev_policy: Some(current.clone()),
+        new_policy: new_policy.clone(),
+        time_bucket: bucket,
+        change_hash: hex32(&change_hash),
+    };
+    std::fs::write(
+        output,
+        format!("{}\n", serde_json::to_string_pretty(&file)?),
+    )?;
+
+    println!("=== Policy change proposal ===");
+    print_policy_roster("Current", &current);
+    print_policy_roster("Proposed", &new_policy);
+    println!("Valid window: {}", bucket_window(&bucket));
+    println!("Change hash:  {}", hex32(&change_hash));
+    println!("Proposal written to: {}", output);
+    println!();
+    println!(
+        "Send the FILE to {} current trustee(s). Each runs:",
+        current.n
+    );
+    println!(
+        "  break_glass policy approve --proposal {} --trustee <name> --signing-key <hex-key-file> --output <name>.policy-approval",
+        output
+    );
+    println!("Then apply within the window: break_glass policy set … --approvals <files>");
+    Ok(())
+}
+
+fn cmd_policy_change_approve(
+    proposal_path: &str,
+    trustee: &str,
+    signing_key_path: &str,
+    output: &str,
+) -> Result<()> {
+    let json = std::fs::read_to_string(proposal_path)
+        .map_err(|e| anyhow!("failed to read proposal {}: {}", proposal_path, e))?;
+    let file: PolicyChangeProposalFile = serde_json::from_str(&json)
+        .map_err(|e| anyhow!("invalid proposal file {}: {}", proposal_path, e))?;
+    if file.format != POLICY_CHANGE_PROPOSAL_FORMAT {
+        return Err(anyhow!(
+            "unrecognized proposal format '{}' (expected {})",
+            file.format,
+            POLICY_CHANGE_PROPOSAL_FORMAT
+        ));
+    }
+    let Some(prev_policy) = &file.prev_policy else {
+        return Err(anyhow!(
+            "proposal carries no current policy — a bootstrap needs no approvals"
+        ));
+    };
+    prev_policy.validate()?;
+    file.new_policy.validate()?;
+
+    // Recompute the change hash from the proposal's FULL contents; the file's
+    // claimed hash is cross-checked, never trusted. What is displayed below
+    // is exactly what the recomputed hash commits to.
+    let proposal = crate::break_glass::PolicyChangeProposal {
+        prev_policy_commitment: prev_policy.full_commitment(),
+        new_policy: file.new_policy.clone(),
+        time_bucket: file.time_bucket,
+    };
+    let recomputed = proposal.change_hash();
+    let claimed = parse_hex32(&file.change_hash)?;
+    if recomputed != claimed {
+        return Err(anyhow!(
+            "proposal inconsistent: recomputed change hash {} does not match its claimed hash {} — refusing to sign",
+            hex32(&recomputed),
+            hex32(&claimed)
+        ));
+    }
+
+    println!("=== Policy change — review before signing ===");
+    print_policy_roster("Current", prev_policy);
+    print_policy_roster("Proposed", &file.new_policy);
+    let removed: Vec<&str> = prev_policy
+        .trustees
+        .iter()
+        .filter(|t| {
+            !file
+                .new_policy
+                .trustees
+                .iter()
+                .any(|n| n.public_key == t.public_key)
+        })
+        .map(|t| t.id.0.as_str())
+        .collect();
+    let added: Vec<&str> = file
+        .new_policy
+        .trustees
+        .iter()
+        .filter(|t| {
+            !prev_policy
+                .trustees
+                .iter()
+                .any(|p| p.public_key == t.public_key)
+        })
+        .map(|t| t.id.0.as_str())
+        .collect();
+    if !removed.is_empty() {
+        println!("Removes trustee key(s): {}", removed.join(", "));
+    }
+    if !added.is_empty() {
+        println!("Adds trustee key(s):    {}", added.join(", "));
+    }
+    if prev_policy.vault.crypto_mode != file.new_policy.vault.crypto_mode {
+        println!(
+            "Changes vault crypto mode: {} -> {}",
+            prev_policy.vault.crypto_mode, file.new_policy.vault.crypto_mode
+        );
+    }
+    println!("Valid window: {}", bucket_window(&file.time_bucket));
+    println!("Change hash:  {} (recomputed locally)", hex32(&recomputed));
+    println!(
+        "Verify the CURRENT-policy fingerprint out of band with the operator: {}",
+        hex32(&prev_policy.full_commitment())
+    );
+    println!();
+
+    let signing_key = read_signing_key(signing_key_path)?;
+    // Signed under DOMAIN_POLICY_CHANGE_APPROVAL — disjoint from unlock
+    // approvals, so this consent authorizes exactly one thing.
+    let signature =
+        crate::break_glass::sign_policy_change_approval(&signing_key, &recomputed).to_vec();
+    let approval = Approval::new(TrusteeId::new(trustee), recomputed, signature);
+    std::fs::write(output, serde_json::to_string_pretty(&approval)?)?;
+
+    println!("Policy-change approval written to: {}", output);
+    println!(
+        "Trustee public key: {}",
+        hex32(&signing_key.verifying_key().to_bytes())
+    );
+    Ok(())
+}
+
+fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) -> Result<()> {
+    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+    let kernel = Kernel::open(&cfg)?;
+    let device_vk = kernel.device_verifying_key();
+    let entries = kernel.policy_change_history()?;
+    println!("=== Policy-change history ===");
+    if entries.is_empty() {
+        println!("(no policy changes recorded)");
+        return Ok(());
+    }
+    let mut expected_prev = [0u8; 32];
+    let mut prev_new_commitment: Option<[u8; 32]> = None;
+    let mut invalid = 0usize;
+    for (i, entry) in entries.iter().enumerate() {
+        let mut issues = Vec::new();
+        if entry.prev_hash != expected_prev {
+            issues.push("prev_hash mismatch".to_string());
+        }
+        let computed = hash_entry(&expected_prev, entry.payload_json.as_bytes());
+        if computed != entry.entry_hash {
+            issues.push("entry_hash mismatch".to_string());
+        }
+        let sig_ok = <[u8; 64]>::try_from(entry.signature.as_slice())
+            .ok()
+            .map(|sig| {
+                crate::crypto::signatures::verify_ed25519_only(
+                    crate::crypto::signatures::DOMAIN_POLICY_CHANGE_RECORD,
+                    &device_vk,
+                    &entry.entry_hash,
+                    &sig,
+                )
+                .is_ok()
+            })
+            .unwrap_or(false);
+        if !sig_ok {
+            issues.push("device signature invalid".to_string());
+        }
+        // Approvals binding: the stored approvals must match the commitment
+        // inside the signed payload.
+        if approvals_commitment(&entry.approvals) != entry.record.approvals_commitment {
+            issues.push("approvals do not match the signed commitment".to_string());
+        }
+        // Per-transition quorum consent: a non-bootstrap change must carry the
+        // prior era's N-of-M consent, chain from the prior era, and commit to
+        // the right change hash. Only the first row may be a bootstrap.
+        if entry.record.bootstrap {
+            if i != 0 {
+                issues.push("bootstrap after the first entry".to_string());
+            }
+        } else if let Some(prev) = &entry.record.prev_policy {
+            if let Some(prev_commitment) = prev_new_commitment {
+                if prev.full_commitment() != prev_commitment {
+                    issues.push("prev_policy is not the prior era".to_string());
+                }
+            }
+            let expected_change_hash = crate::break_glass::PolicyChangeProposal {
+                prev_policy_commitment: prev.full_commitment(),
+                new_policy: entry.record.new_policy.clone(),
+                time_bucket: entry.record.time_bucket,
+            }
+            .change_hash();
+            if expected_change_hash != entry.record.change_hash {
+                issues.push("change_hash does not match its policies".to_string());
+            }
+            let valid = crate::break_glass::count_valid_distinct_policy_change_approvals(
+                prev,
+                &entry.record.change_hash,
+                &entry.approvals,
+            );
+            if valid < prev.n as usize {
+                issues.push(format!(
+                    "only {} of {} required prior-quorum approvals valid",
+                    valid, prev.n
+                ));
+            }
+        } else {
+            issues.push("non-bootstrap change without a prev_policy".to_string());
+        }
+        let status = if issues.is_empty() {
+            "VALID"
+        } else {
+            "INVALID"
+        };
+        if !issues.is_empty() {
+            invalid += 1;
+        }
+        let kind = if entry.record.bootstrap {
+            "bootstrap"
+        } else {
+            "change"
+        };
+        println!(
+            "[{}] {} {} — {}-of-{} (crypto mode: {}), {} approval(s), window {}{}",
+            i + 1,
+            status,
+            kind,
+            entry.record.new_policy.n,
+            entry.record.new_policy.m,
+            entry.record.new_policy.vault.crypto_mode,
+            entry.approvals.len(),
+            bucket_window(&entry.record.time_bucket),
+            if issues.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", issues.join("; "))
+            }
+        );
+        expected_prev = entry.entry_hash;
+        prev_new_commitment = Some(entry.record.new_policy.full_commitment());
+    }
+    if invalid > 0 {
+        return Err(anyhow!(
+            "policy-change history INVALID: {} of {} entries failed verification",
+            invalid,
+            entries.len()
+        ));
+    }
+    println!("History chain VALID ({} entries).", entries.len());
     Ok(())
 }
 
@@ -968,7 +1625,16 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
         ruleset_hash,
         &mut raw,
         &device_vk,
-        |hash| break_glass_receipt_outcome_for_verifier(&conn, &device_vk, hash, pq_pk.as_ref()),
+        |hash| {
+            break_glass_receipt_outcome_for_verifier(
+                &conn,
+                &device_vk,
+                envelope,
+                ruleset_hash,
+                hash,
+                pq_pk.as_ref(),
+            )
+        },
     )?;
     println!("  {} sealed a throwaway envelope", DR_OK);
 
@@ -979,7 +1645,16 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
         &mut unseal_token,
         ruleset_hash,
         &device_vk,
-        |hash| break_glass_receipt_outcome_for_verifier(&conn, &device_vk, hash, pq_pk.as_ref()),
+        |hash| {
+            break_glass_receipt_outcome_for_verifier(
+                &conn,
+                &device_vk,
+                envelope,
+                ruleset_hash,
+                hash,
+                pq_pk.as_ref(),
+            )
+        },
     )?;
     println!("  {} unsealed it with a fresh quorum token", DR_OK);
 
@@ -1049,42 +1724,59 @@ fn write_draft(path: &str, draft: &SetupDraft) -> Result<()> {
     std::fs::write(path, json).map_err(|e| anyhow!("failed to write setup draft {}: {}", path, e))
 }
 
+/// Write secret bytes to `path` with restricted permissions, hardened against
+/// two failure modes the plain `OpenOptions().mode(0o600)` pattern has.
+///
+/// 1. **Symlink following.** `O_NOFOLLOW` makes the open fail if the final
+///    path component is a symlink, so a pre-planted symlink cannot redirect
+///    the write (or, on read-back, leak the secret through an attacker's link).
+/// 2. **Mode ignored on a pre-existing file.** `.mode()` applies only when the
+///    file is *created*; if the path already exists (perhaps mode 0644), the
+///    requested 0600 is silently ignored. An explicit post-open
+///    `set_permissions(0600)` guarantees the mode regardless.
+///
+/// The file is created if absent and truncated if present (secrets are
+/// overwritten wholesale, never appended).
+#[cfg(unix)]
+fn write_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
+    use std::fs::{OpenOptions, Permissions};
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| anyhow!("failed to open {} for a secret write: {}", path, e))?;
+    // Enforce 0600 even if the file already existed with laxer permissions.
+    file.set_permissions(Permissions::from_mode(0o600))?;
+    file.write_all(bytes)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
+    std::fs::write(path, bytes).map_err(|e| anyhow!("failed to write {}: {}", path, e))
+}
+
 /// Write a freshly-minted trustee signing key (hex) to `path`, mode 0600 — this
 /// IS a secret, unlike the draft. Matches the format `approve --signing-key`
 /// reads.
 fn write_signing_key_file(path: &str, signing_key: &SigningKey) -> Result<()> {
-    let payload = format!("{}\n", hex_vec(&signing_key.to_bytes()));
-    #[cfg(unix)]
-    {
-        use std::fs::OpenOptions;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        file.write_all(payload.as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, payload)?;
-    }
-    Ok(())
+    write_secret_file(
+        path,
+        format!("{}\n", hex_vec(&signing_key.to_bytes())).as_bytes(),
+    )
 }
 
 fn print_setup_next_steps(draft: &SetupDraft) {
     let n = draft.trustees.len();
     let target = draft.target_trustees as usize;
     println!();
-    if n < draft.threshold as usize {
+    if n < target {
         println!(
-            "Next: enroll {} more trustee(s) before the quorum can go live:",
-            draft.threshold as usize - n
-        );
-    } else if n < target {
-        println!(
-            "Next: the policy is live; enroll {} more to reach your target of {}:",
+            "Next: enroll {} more trustee(s) — the policy goes live when all {} are enrolled:",
             target - n,
             target
         );
@@ -1157,8 +1849,8 @@ fn cmd_init(
         DR_OK, threshold, trustees, dpath
     );
     println!(
-        "    the quorum policy commits automatically once {} trustee(s) are enrolled",
-        threshold
+        "    the quorum policy commits automatically once all {} trustees are enrolled",
+        trustees
     );
     print_setup_next_steps(&draft);
     Ok(())
@@ -1260,8 +1952,12 @@ fn cmd_trustee_enroll(
         draft.target_trustees
     );
 
-    // Commit (or update) the real policy as soon as the draft is a valid quorum.
-    if draft.trustees.len() >= draft.threshold as usize {
+    // Commit the real policy once the roster is COMPLETE. Committing earlier
+    // (at the threshold) made every later enrollment a silent mutation of a
+    // LIVE policy — exactly the roster-rewrite path the quorum gate closes
+    // (Invariant V; spec/quorum_unseal_v2.md §3.1). A complete-roster commit
+    // is a bootstrap on a fresh database and needs no approvals.
+    if draft.trustees.len() == draft.target_trustees as usize {
         let entries = draft
             .trustees
             .iter()
@@ -1282,11 +1978,20 @@ fn cmd_trustee_enroll(
         let policy = crate::break_glass::QuorumPolicy::new(draft.threshold, entries)?;
         let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
         let mut kernel = Kernel::open(&cfg)?;
-        kernel.set_break_glass_policy(&policy)?;
-        println!(
-            "  {} quorum policy is live: {}-of-{}",
-            DR_OK, policy.n, policy.m
-        );
+        match kernel.set_break_glass_policy_gated(&policy, &[], TimeBucket::now_10min()?) {
+            Ok(_) => println!(
+                "  {} quorum policy is live: {}-of-{}",
+                DR_OK, policy.n, policy.m
+            ),
+            Err(e) => {
+                return Err(anyhow!(
+                    "a policy is already live, so this enrollment is a policy CHANGE and needs \
+                     current-quorum consent: {} — use `break_glass policy propose` / \
+                     `policy approve` / `policy set --approvals`",
+                    e
+                ));
+            }
+        }
     }
 
     print_setup_next_steps(&draft);
@@ -1302,6 +2007,11 @@ fn cmd_receipts(
     let conn = rusqlite::Connection::open(db_path)?;
     let verifying_key = load_verifying_key(&conn, public_key_hex, public_key_file)?;
     let policy = load_break_glass_policy(&conn)?;
+    // Ground truth for a receipt's declared `policy_commitment`: the
+    // authenticated policy-change history (chain + device signature + approvals
+    // binding + per-transition quorum consent). See verify::verify_receipt_quorum.
+    let policy_history =
+        crate::verify::load_authenticated_policy_eras(&conn, &verifying_key, None)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts ORDER BY id ASC",
     )?;
@@ -1380,7 +2090,16 @@ fn cmd_receipts(
                         hex_vec(&commitment)
                     ));
                 }
-                if let Err(err) = verify_approvals_against_policy(policy, &receipt, &approvals) {
+                // Quorum re-derivation (Invariant V): shared with log_verify /
+                // API verify so the CLI cannot report a forged or under-quorum
+                // Granted receipt as VALID. Resolves the receipt's policy era
+                // against the signed policy-change history.
+                if let Err(err) = crate::verify::verify_receipt_quorum(
+                    policy,
+                    &policy_history,
+                    &receipt,
+                    &approvals,
+                ) {
                     status = "INVALID";
                     issues.push(format!("approvals invalid: {}", err));
                 }
@@ -1454,29 +2173,9 @@ fn granted_lines(receipt: &crate::BreakGlassReceipt, token: &BreakGlassToken) ->
 }
 
 fn write_token_to_file(path: &str, token: &BreakGlassToken) -> Result<()> {
-    use std::io::Write;
-
     let token_file = BreakGlassTokenFile::from_token(token)?;
     let payload = format!("{}\n", serde_json::to_string_pretty(&token_file)?);
-
-    #[cfg(unix)]
-    {
-        use std::fs::OpenOptions;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        file.write_all(payload.as_bytes())?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, payload)?;
-    }
-    Ok(())
+    write_secret_file(path, payload.as_bytes())
 }
 
 fn read_token_from_file(path: &str) -> Result<BreakGlassTokenFile> {
@@ -1531,7 +2230,14 @@ fn cmd_unseal(
     // validity bucket. Record the nonce before any cleartext exists.
     crate::consume_break_glass_token_durably(&conn, &token)?;
     let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
-        break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash, pq_pk.as_ref())
+        break_glass_receipt_outcome_for_verifier(
+            &conn,
+            &verifying_key,
+            envelope,
+            ruleset_hash,
+            hash,
+            pq_pk.as_ref(),
+        )
     })?;
 
     let sanitized = crate::vault::sanitize_envelope_id(envelope)?;
@@ -1539,23 +2245,12 @@ fn cmd_unseal(
     std::fs::create_dir_all(output_dir_path)?;
     let output_path = output_dir_path.join(format!("{}.raw", sanitized));
 
-    #[cfg(unix)]
-    {
-        use std::fs::OpenOptions;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&output_path)?;
-        file.write_all(&clear)?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&output_path, &clear)?;
-    }
+    // Unsealed raw media is the most sensitive artifact break-glass produces —
+    // write it symlink-safe and 0600-guaranteed, then zeroize the plaintext.
+    let mut clear = clear;
+    let write_result = write_secret_file(&output_path.to_string_lossy(), &clear);
+    clear.zeroize();
+    write_result?;
 
     println!("Unsealed envelope written to {}", output_path.display());
     Ok(())
@@ -1595,39 +2290,6 @@ fn load_break_glass_policy(
     } else {
         Ok(None)
     }
-}
-
-fn verify_approvals_against_policy(
-    policy: &crate::break_glass::QuorumPolicy,
-    receipt: &crate::BreakGlassReceipt,
-    approvals: &[Approval],
-) -> Result<()> {
-    for approval in approvals {
-        if approval.request_hash != receipt.request_hash {
-            return Err(anyhow!(
-                "approval request_hash mismatch for trustee {}",
-                approval.trustee.0
-            ));
-        }
-        let trustee = policy
-            .trustees
-            .iter()
-            .find(|t| t.id.0 == approval.trustee.0)
-            .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
-        // Distinct message for an unusable key; the signature check itself is
-        // domain-separated (verify_approval rejects a bare-hash or
-        // cross-context signature), matching how authorize now signs.
-        VerifyingKey::from_bytes(&trustee.public_key)
-            .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
-        if !verify_approval(
-            &trustee.public_key,
-            &approval.request_hash,
-            &approval.signature,
-        ) {
-            return Err(anyhow!("invalid signature for trustee {}", trustee.id.0));
-        }
-    }
-    Ok(())
 }
 
 fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
@@ -1843,6 +2505,8 @@ mod tests {
         cmd_policy_set(
             1,
             std::slice::from_ref(&trustee_entry),
+            None,
+            None,
             &db_path.to_string_lossy(),
             ruleset_id,
             device_key_seed,
@@ -1907,6 +2571,8 @@ mod tests {
         cmd_policy_set(
             2,
             &entries,
+            None,
+            None,
             &db_path.to_string_lossy(),
             "ruleset:test",
             "devkey:test:a1b2c3d4e5f6a7b8c9d0",
@@ -1955,6 +2621,8 @@ mod tests {
         cmd_policy_set(
             1,
             std::slice::from_ref(&entry),
+            None,
+            None,
             &db_path.to_string_lossy(),
             "ruleset:test",
             "devkey:test:a1b2c3d4e5f6a7b8c9d0",
@@ -1989,6 +2657,8 @@ mod tests {
         cmd_policy_set(
             1,
             std::slice::from_ref(&entry),
+            None,
+            None,
             &db_path.to_string_lossy(),
             "ruleset:test",
             "devkey:test:a1b2c3d4e5f6a7b8c9d0",
@@ -2024,6 +2694,8 @@ mod tests {
         cmd_policy_set(
             1,
             std::slice::from_ref(&entry),
+            None,
+            None,
             &db_path.to_string_lossy(),
             "ruleset:test",
             "devkey:test:a1b2c3d4e5f6a7b8c9d0",
@@ -2084,7 +2756,7 @@ mod tests {
     }
 
     #[test]
-    fn init_and_enroll_commit_policy_at_threshold() -> Result<()> {
+    fn init_and_enroll_commit_policy_when_roster_is_complete() -> Result<()> {
         let temp = std::env::temp_dir().join(format!("secura_init_{}", rand::random::<u64>()));
         std::fs::create_dir_all(&temp)?;
         let db = temp.join("witness.db").to_string_lossy().to_string();
@@ -2105,11 +2777,7 @@ mod tests {
             TEST_SEED,
             None,
         )?;
-        assert_eq!(
-            policy_of(&db),
-            None,
-            "one trustee is below the threshold of 2"
-        );
+        assert_eq!(policy_of(&db), None, "one trustee is below the target of 3");
 
         cmd_trustee_enroll(
             "bob",
@@ -2121,10 +2789,13 @@ mod tests {
             TEST_SEED,
             None,
         )?;
+        // Committing at the threshold would make every later enrollment a
+        // silent mutation of a LIVE policy — the roster-rewrite path the
+        // quorum gate exists to close. So no policy yet:
         assert_eq!(
             policy_of(&db),
-            Some((2, 2)),
-            "policy goes live at the threshold"
+            None,
+            "policy must not go live before the roster is complete"
         );
 
         cmd_trustee_enroll(
@@ -2140,7 +2811,7 @@ mod tests {
         assert_eq!(
             policy_of(&db),
             Some((2, 3)),
-            "further enrollment strengthens the quorum"
+            "policy goes live once all target trustees are enrolled"
         );
         Ok(())
     }
@@ -2260,6 +2931,230 @@ mod tests {
             policy_of(&db),
             Some((1, 1)),
             "1-of-1 commits on the single enrollment"
+        );
+        Ok(())
+    }
+
+    // ─── WYSIWYS: approve from a request-context file ─────────────────────
+
+    #[test]
+    fn utc_string_formats_known_instants() {
+        assert_eq!(utc_string(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(utc_string(86_400), "1970-01-02 00:00:00 UTC");
+        assert_eq!(utc_string(1_000_000_000), "2001-09-09 01:46:40 UTC");
+    }
+
+    #[test]
+    fn approve_from_request_file_recomputes_hash_and_signs() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_wysiwys_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let req_path = temp.join("unlock.request").to_string_lossy().to_string();
+        let key_path = temp.join("alice.key").to_string_lossy().to_string();
+        let out_path = temp.join("alice.approval").to_string_lossy().to_string();
+
+        cmd_request(
+            "vault:wysiwys",
+            "incident response",
+            "ruleset:test",
+            Some(&req_path),
+        )?;
+
+        let alice = SigningKey::from_bytes(&[41u8; 32]);
+        std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
+
+        // The trustee tool recomputes the hash from the file's FIELDS and
+        // signs that — producing a valid, domain-separated approval.
+        cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path)?;
+        let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&out_path)?)?;
+        let file: UnlockRequestFile = serde_json::from_str(&std::fs::read_to_string(&req_path)?)?;
+        let expected = parse_hex32(&file.request_hash)?;
+        assert_eq!(approval.request_hash, expected);
+        assert!(crate::verify_approval(
+            &alice.verifying_key().to_bytes(),
+            &expected,
+            &approval.signature
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn approve_refuses_request_file_whose_fields_do_not_match_its_hash() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_wysiwys_t_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let req_path = temp.join("unlock.request").to_string_lossy().to_string();
+        let key_path = temp.join("alice.key").to_string_lossy().to_string();
+        let out_path = temp.join("alice.approval").to_string_lossy().to_string();
+
+        cmd_request(
+            "vault:tamper",
+            "routine export",
+            "ruleset:test",
+            Some(&req_path),
+        )?;
+        let alice = SigningKey::from_bytes(&[42u8; 32]);
+        std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
+
+        // A compromised relay swaps the displayed purpose but keeps the hash
+        // (the Bybit shape): the trustee tool recomputes, detects the
+        // mismatch, and refuses to sign.
+        let mut file: UnlockRequestFile =
+            serde_json::from_str(&std::fs::read_to_string(&req_path)?)?;
+        file.purpose = "totally routine, nothing to see".to_string();
+        std::fs::write(&req_path, serde_json::to_string_pretty(&file)?)?;
+
+        let result = cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path);
+        assert!(
+            result.is_err(),
+            "a request file whose fields do not hash to its claimed request hash must be refused"
+        );
+        assert!(
+            !std::path::Path::new(&out_path).exists(),
+            "no approval may be written for a tampered request"
+        );
+        Ok(())
+    }
+
+    // ─── quorum-gated policy mutation, end to end through the CLI ─────────
+
+    #[test]
+    fn policy_set_mutation_requires_and_accepts_current_quorum_approvals() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_polgate_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        let seed = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
+
+        // Bootstrap: 1-of-1 alice, no approvals needed on an empty database.
+        let alice_key = SigningKey::from_bytes(&[7u8; 32]);
+        let alice_entry = trustee_entry("alice", 7);
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&alice_entry),
+            None,
+            None,
+            &db,
+            "ruleset:test",
+            seed,
+        )?;
+        assert_eq!(policy_of(&db), Some((1, 1)));
+
+        // Replacing the roster WITHOUT current-quorum approvals must fail…
+        let mallory_entry = trustee_entry("mallory", 66);
+        assert!(cmd_policy_set(
+            1,
+            std::slice::from_ref(&mallory_entry),
+            None,
+            None,
+            &db,
+            "ruleset:test",
+            seed,
+        )
+        .is_err());
+        assert_eq!(policy_of(&db), Some((1, 1)), "policy must be unchanged");
+
+        // …and must succeed with the propose → approve → set flow. The
+        // propose/set pair must land in one 10-minute freshness window, so
+        // retry once if the boundary was straddled (the same rule a real
+        // ceremony follows).
+        let bob_entry = trustee_entry("bob", 8);
+        let alice_key_path = temp.join("alice.key").to_string_lossy().to_string();
+        std::fs::write(
+            &alice_key_path,
+            format!("{}\n", hex_vec(&alice_key.to_bytes())),
+        )?;
+        let mut applied = false;
+        for attempt in 0..2 {
+            let proposal_path = temp
+                .join(format!("change-{}.proposal", attempt))
+                .to_string_lossy()
+                .to_string();
+            let approval_path = temp
+                .join(format!("alice-{}.policy-approval", attempt))
+                .to_string_lossy()
+                .to_string();
+            cmd_policy_propose(
+                2,
+                &[alice_entry.clone(), bob_entry.clone()],
+                None,
+                &proposal_path,
+                &db,
+                "ruleset:test",
+                seed,
+            )?;
+            cmd_policy_change_approve(&proposal_path, "alice", &alice_key_path, &approval_path)?;
+            match cmd_policy_set(
+                2,
+                &[alice_entry.clone(), bob_entry.clone()],
+                None,
+                Some(&approval_path),
+                &db,
+                "ruleset:test",
+                seed,
+            ) {
+                Ok(()) => {
+                    applied = true;
+                    break;
+                }
+                Err(_) if attempt == 0 => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        assert!(applied, "gated policy change with valid consent must apply");
+        assert_eq!(policy_of(&db), Some((2, 2)));
+
+        // The history ledger records bootstrap + change and verifies.
+        cmd_policy_history(&db, "ruleset:test", seed)?;
+        Ok(())
+    }
+
+    #[test]
+    fn policy_change_approve_refuses_tampered_proposal() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_polprop_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        let seed = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
+
+        let alice_entry = trustee_entry("alice", 7);
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&alice_entry),
+            None,
+            None,
+            &db,
+            "ruleset:test",
+            seed,
+        )?;
+
+        let proposal_path = temp.join("change.proposal").to_string_lossy().to_string();
+        let bob_entry = trustee_entry("bob", 8);
+        cmd_policy_propose(
+            1,
+            std::slice::from_ref(&bob_entry),
+            None,
+            &proposal_path,
+            &db,
+            "ruleset:test",
+            seed,
+        )?;
+
+        // Swap the displayed roster while keeping the claimed change hash:
+        // the approving tool recomputes from the full contents and refuses.
+        let mut file: PolicyChangeProposalFile =
+            serde_json::from_str(&std::fs::read_to_string(&proposal_path)?)?;
+        let mallory = SigningKey::from_bytes(&[66u8; 32]);
+        file.new_policy.trustees[0].public_key = mallory.verifying_key().to_bytes();
+        std::fs::write(&proposal_path, serde_json::to_string_pretty(&file)?)?;
+
+        let alice_key = SigningKey::from_bytes(&[7u8; 32]);
+        let key_path = temp.join("alice.key").to_string_lossy().to_string();
+        std::fs::write(&key_path, format!("{}\n", hex_vec(&alice_key.to_bytes())))?;
+        let out_path = temp
+            .join("alice.policy-approval")
+            .to_string_lossy()
+            .to_string();
+        let result = cmd_policy_change_approve(&proposal_path, "alice", &key_path, &out_path);
+        assert!(
+            result.is_err(),
+            "a proposal whose contents do not hash to its claimed change hash must be refused"
         );
         Ok(())
     }
