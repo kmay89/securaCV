@@ -85,7 +85,14 @@ Every accepted change (bootstrap included) appends a chained, device-signed
 record to the **policy-change history** (`break_glass policy history`
 verifies and prints it), carrying the full previous and new policies and the
 approvals, so an audit can reconstruct the roster's lineage and tie each
-receipt's `policy_commitment` to the era that produced it.
+receipt's `policy_commitment` to the era that produced it. The record binds a
+commitment to the authorizing approvals **inside** the signed payload, and the
+audit **authenticates the whole ledger** before trusting any era: it checks the
+hash chain, the device signature, that the recorded approvals match the signed
+commitment, and that every non-bootstrap transition actually carries its prior
+era's N-of-M consent. A fabricated era therefore cannot launder a forged
+receipt — a device-key holder can sign a row but cannot manufacture the prior
+trustees' consent.
 
 Guided setup (`break_glass init` + `trustee enroll`) commits the policy once
 the roster is **complete** — enrollment before that point edits only the

@@ -2349,6 +2349,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             change_hash,
             time_bucket: now_bucket,
             bootstrap,
+            // Bind the authorizing approvals into the signed, hash-chained
+            // record: their commitment travels inside payload_json, so a
+            // tampered `approvals_json` fails verification.
+            approvals_commitment: crate::break_glass::approvals_commitment(approvals),
         };
 
         // History row and policy row land atomically: a change that cannot be
@@ -3401,9 +3405,20 @@ pub enum PolicyChangeOutcome {
     Unchanged,
 }
 
+/// The empty-approval-set commitment, used as the serde default for the
+/// `approvals_commitment` field on policy-change records written before the
+/// field existed.
+pub(crate) fn empty_approvals_commitment_bytes() -> [u8; 32] {
+    crate::break_glass::approvals_commitment(&[])
+}
+
 /// The payload of one policy-change history row: the full previous and new
-/// policies, the change hash trustees consented to, and whether this was the
-/// bootstrap write. Serialized verbatim into `payload_json` and hash-chained.
+/// policies, the change hash trustees consented to, a commitment to the
+/// trustee approvals that authorized the change, and whether this was the
+/// bootstrap write. Serialized verbatim into `payload_json` and hash-chained,
+/// so the device signature covers all of it — including `approvals_commitment`,
+/// which binds the recorded approvals into the signed material (a swapped or
+/// deleted `approvals_json` no longer verifies).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolicyChangeRecord {
     pub prev_policy: Option<crate::break_glass::QuorumPolicy>,
@@ -3411,6 +3426,11 @@ pub struct PolicyChangeRecord {
     pub change_hash: [u8; 32],
     pub time_bucket: TimeBucket,
     pub bootstrap: bool,
+    /// `approvals_commitment(approvals)` — the same commitment a break-glass
+    /// receipt records. Defaults to the empty-set commitment for records
+    /// written before this field existed.
+    #[serde(default = "crate::empty_approvals_commitment_bytes")]
+    pub approvals_commitment: [u8; 32],
 }
 
 /// One row of the policy-change history ledger, as read back for audit.
@@ -5484,6 +5504,118 @@ mod tests {
             )?;
             prev = entry.entry_hash;
         }
+        Ok(())
+    }
+
+    /// The authenticated policy-change history (`load_authenticated_policy_eras`)
+    /// is the ground truth for a receipt's era. A device-key holder can forge a
+    /// chained, device-signed history row, but cannot manufacture the prior
+    /// era's trustee consent — so a fabricated era without genuine prior-quorum
+    /// approvals makes the whole ledger untrusted. Tampering the recorded
+    /// approvals of a real row is likewise caught by the signed commitment.
+    #[test]
+    fn authenticated_history_rejects_forged_era_and_tampered_approvals() -> Result<()> {
+        use crate::break_glass::{sign_policy_change_approval, PolicyChangeProposal};
+
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let bucket = TimeBucket::now(600)?;
+        let alice = SigningKey::from_bytes(&[41u8; 32]);
+        let policy_a = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy_gated(&policy_a, &[], bucket)?;
+        let dev = kernel.device_verifying_key();
+        let pq = kernel.device_pq_public_key_ref();
+
+        // The genuine bootstrap authenticates.
+        let eras = crate::verify::load_authenticated_policy_eras(&kernel.conn, &dev, pq)?;
+        assert!(eras.iter().any(|p| p.commitment() == policy_a.commitment()));
+
+        // Forge a chained, device-signed row claiming a new attacker-controlled
+        // era, but with NO prior-quorum consent (empty approvals). The device
+        // signature is valid (the forger holds the device key); the missing
+        // consent is what the loader must catch.
+        let attacker = SigningKey::from_bytes(&[99u8; 32]);
+        let attacker_policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("attacker"),
+                public_key: attacker.verifying_key().to_bytes(),
+            }],
+        )?;
+        let proposal = PolicyChangeProposal {
+            prev_policy_commitment: policy_a.full_commitment(),
+            new_policy: attacker_policy.clone(),
+            time_bucket: bucket,
+        };
+        let forged = PolicyChangeRecord {
+            prev_policy: Some(policy_a.clone()),
+            new_policy: attacker_policy.clone(),
+            change_hash: proposal.change_hash(),
+            time_bucket: bucket,
+            bootstrap: false,
+            approvals_commitment: crate::break_glass::approvals_commitment(&[]),
+        };
+        let payload = serde_json::to_string(&forged)?;
+        let signing_key = crate::signing_key_from_seed(&cfg.device_key_seed)?;
+        let prev_hash = kernel.last_policy_change_hash_or_zero()?;
+        let entry_hash = hash_entry(&prev_hash, payload.as_bytes());
+        let sig = crate::crypto::signatures::sign_ed25519_only(
+            DOMAIN_POLICY_CHANGE_RECORD,
+            &signing_key,
+            &entry_hash,
+        );
+        kernel.conn.execute(
+            "INSERT INTO policy_change_history(created_at, payload_json, approvals_json, prev_hash, entry_hash, signature) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![0i64, payload, "[]", prev_hash.to_vec(), entry_hash.to_vec(), sig.to_vec()],
+        )?;
+        assert!(
+            crate::verify::load_authenticated_policy_eras(&kernel.conn, &dev, pq).is_err(),
+            "a device-signed era with no prior-quorum consent must be rejected"
+        );
+
+        // Second scenario: a genuine change, then its recorded approvals are
+        // swapped out — the signed commitment no longer matches.
+        let (mut kernel2, _cfg2) = setup_test_kernel()?;
+        kernel2.set_break_glass_policy_gated(&policy_a, &[], bucket)?;
+        let policy_b = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("bob"),
+                public_key: SigningKey::from_bytes(&[42u8; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            }],
+        )?;
+        let change = PolicyChangeProposal {
+            prev_policy_commitment: policy_a.full_commitment(),
+            new_policy: policy_b.clone(),
+            time_bucket: bucket,
+        };
+        let alice_consent = Approval::new(
+            TrusteeId::new("alice"),
+            change.change_hash(),
+            sign_policy_change_approval(&alice, &change.change_hash()).to_vec(),
+        );
+        kernel2.set_break_glass_policy_gated(&policy_b, &[alice_consent], bucket)?;
+        let dev2 = kernel2.device_verifying_key();
+        // Authentic history authenticates.
+        assert!(crate::verify::load_authenticated_policy_eras(&kernel2.conn, &dev2, None).is_ok());
+        // Swap the change row's approvals to the empty set (valid JSON) — the
+        // approvals no longer match the signed commitment.
+        kernel2.conn.execute(
+            "UPDATE policy_change_history SET approvals_json = '[]' WHERE payload_json LIKE '%\"bootstrap\":false%'",
+            [],
+        )?;
+        assert!(
+            crate::verify::load_authenticated_policy_eras(&kernel2.conn, &dev2, None).is_err(),
+            "swapped approvals must fail the signed-commitment binding"
+        );
         Ok(())
     }
 

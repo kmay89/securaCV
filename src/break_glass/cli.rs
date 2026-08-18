@@ -1132,6 +1132,7 @@ fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) ->
         return Ok(());
     }
     let mut expected_prev = [0u8; 32];
+    let mut prev_new_commitment: Option<[u8; 32]> = None;
     let mut invalid = 0usize;
     for (i, entry) in entries.iter().enumerate() {
         let mut issues = Vec::new();
@@ -1156,6 +1157,47 @@ fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) ->
             .unwrap_or(false);
         if !sig_ok {
             issues.push("device signature invalid".to_string());
+        }
+        // Approvals binding: the stored approvals must match the commitment
+        // inside the signed payload.
+        if approvals_commitment(&entry.approvals) != entry.record.approvals_commitment {
+            issues.push("approvals do not match the signed commitment".to_string());
+        }
+        // Per-transition quorum consent: a non-bootstrap change must carry the
+        // prior era's N-of-M consent, chain from the prior era, and commit to
+        // the right change hash. Only the first row may be a bootstrap.
+        if entry.record.bootstrap {
+            if i != 0 {
+                issues.push("bootstrap after the first entry".to_string());
+            }
+        } else if let Some(prev) = &entry.record.prev_policy {
+            if let Some(prev_commitment) = prev_new_commitment {
+                if prev.full_commitment() != prev_commitment {
+                    issues.push("prev_policy is not the prior era".to_string());
+                }
+            }
+            let expected_change_hash = crate::break_glass::PolicyChangeProposal {
+                prev_policy_commitment: prev.full_commitment(),
+                new_policy: entry.record.new_policy.clone(),
+                time_bucket: entry.record.time_bucket,
+            }
+            .change_hash();
+            if expected_change_hash != entry.record.change_hash {
+                issues.push("change_hash does not match its policies".to_string());
+            }
+            let valid = crate::break_glass::count_valid_distinct_policy_change_approvals(
+                prev,
+                &entry.record.change_hash,
+                &entry.approvals,
+            );
+            if valid < prev.n as usize {
+                issues.push(format!(
+                    "only {} of {} required prior-quorum approvals valid",
+                    valid, prev.n
+                ));
+            }
+        } else {
+            issues.push("non-bootstrap change without a prev_policy".to_string());
         }
         let status = if issues.is_empty() {
             "VALID"
@@ -1187,6 +1229,7 @@ fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) ->
             }
         );
         expected_prev = entry.entry_hash;
+        prev_new_commitment = Some(entry.record.new_policy.full_commitment());
     }
     if invalid > 0 {
         return Err(anyhow!(
@@ -1964,9 +2007,11 @@ fn cmd_receipts(
     let conn = rusqlite::Connection::open(db_path)?;
     let verifying_key = load_verifying_key(&conn, public_key_hex, public_key_file)?;
     let policy = load_break_glass_policy(&conn)?;
-    // Every policy era the signed history records — ground truth for a
-    // receipt's declared `policy_commitment` (see verify::verify_receipt_quorum).
-    let policy_history = crate::verify::load_policies_ever_in_force(&conn)?;
+    // Ground truth for a receipt's declared `policy_commitment`: the
+    // authenticated policy-change history (chain + device signature + approvals
+    // binding + per-transition quorum consent). See verify::verify_receipt_quorum.
+    let policy_history =
+        crate::verify::load_authenticated_policy_eras(&conn, &verifying_key, None)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts ORDER BY id ASC",
     )?;

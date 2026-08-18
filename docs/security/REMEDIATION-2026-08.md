@@ -108,6 +108,17 @@ and the PWK add-on. The quorum + unseal target design is
   seed could replace the roster and satisfy "quorum" with keys they minted.
   `src/break_glass/core.rs`, `src/lib.rs`, `src/break_glass/cli.rs`,
   `spec/break_glass.md`.
+  - **History is authenticated before it is trusted** (closing two review
+    findings on the first cut): the authorizing approvals' commitment is bound
+    *inside* the signed record, and the era resolver
+    (`verify::load_authenticated_policy_eras`) verifies the full chain — hash
+    linkage, device signature, approvals-commitment binding, and each
+    non-bootstrap transition's prior-era N-of-M consent — before any era is
+    used as ground truth. A device-key holder can sign a fabricated row but
+    cannot manufacture the prior trustees' consent, so a forged era can no
+    longer launder a forged receipt. (Residual host-attacker "delete the
+    ledger and re-bootstrap" is the ENTERPRISE_CUSTODY §2 external-anchor
+    boundary.)
 - **WYSIWYS trustee approval.** `break_glass request --output-request` emits a
   full request-context file; `approve --request <file>` recomputes the request
   hash locally, displays every decoded field, and refuses a file whose fields
