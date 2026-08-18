@@ -126,6 +126,40 @@ def test_canary_request_rejects_malformed_address(address, monkeypatch):
     assert "address" in result["error"].lower()
 
 
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",          # canonical loopback
+        "127.1",              # short-form loopback (inet_aton accepts, ipaddress rejects)
+        "0",                  # 0.0.0.0 (unspecified)
+        "2130706433",         # decimal loopback
+        "0x7f.0.0.1",         # hex octet loopback
+        "0177.0.0.1",         # octal octet loopback
+        "localhost",          # blocked service name
+        "supervisor",         # internal Supervisor name
+        "169.254.10.10",      # link-local
+    ],
+)
+def test_canary_request_blocks_loopback_including_noncanonical_forms(address, monkeypatch):
+    # The OS socket resolver accepts non-canonical numeric IPv4 forms and maps
+    # them to loopback; the SSRF guard must block them even though the strict
+    # `ipaddress` parser rejects them as non-IPs. urlopen must never be reached.
+    def _must_not_call(*a, **k):  # pragma: no cover - asserts it isn't reached
+        raise AssertionError(f"urlopen called for blocked address {address!r}")
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _must_not_call)
+    result = serve_wizard._canary_request(address, "tok", "GET", "/api/mesh", None)
+    assert result["ok"] is False
+    assert "address" in result["error"].lower()
+
+
+def test_is_blocked_host_allows_legitimate_lan_targets():
+    # Real LAN devices (private ranges) and unresolved hostnames must NOT be
+    # blocked — the guard targets only loopback/link-local/internal surfaces.
+    for host in ("192.168.1.50", "10.0.0.5", "172.16.0.9", "camera-1", "nvr.local"):
+        assert serve_wizard._is_blocked_host(host) is False, host
+
+
 @pytest.mark.parametrize("address", ["192.168.1.50", "canary.local", "10.0.0.5:80"])
 def test_canary_request_accepts_bare_host(address, monkeypatch):
     captured: dict = {}
@@ -725,6 +759,33 @@ def test_write_frigate_config_rejects_bad_scheme(monkeypatch, tmp_path):
     text = written["text"]
     assert "file:///etc/passwd" not in text
     assert "'rtsp://10.0.0.9/stream'" in text  # quoted scalar
+
+
+def test_write_frigate_config_quotes_broker_host_against_yaml_injection(monkeypatch):
+    # A wizard-supplied broker host carrying a newline + YAML keys must not
+    # inject configuration into frigate.yml — it is emitted as a single-line
+    # quoted scalar, mirroring the camera-URL treatment.
+    written = {}
+    monkeypatch.setattr(
+        serve_wizard.Path, "write_text",
+        lambda self, text: written.update(text=text), raising=False,
+    )
+    handler = _bare_handler()
+    handler._write_frigate_config(
+        [{"name": "cam", "url": "rtsp://10.0.0.9/stream"}],
+        retention_days=1,
+        broker_host="evil\nlogger:\n  level: debug",
+    )
+    text = written["text"]
+    assert "logger:" not in text, "YAML key injected via broker host"
+    assert "  host: 'evil'" in text
+    try:
+        import yaml
+        parsed = yaml.safe_load(text)
+        assert parsed["mqtt"]["host"] == "evil"
+        assert "logger" not in parsed
+    except ImportError:
+        pass  # structural assertions above already prove containment
 
 
 if __name__ == "__main__":

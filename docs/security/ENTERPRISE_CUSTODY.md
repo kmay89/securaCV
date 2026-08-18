@@ -33,6 +33,12 @@ host — can decrypt without any quorum. `kernel/architecture.md` (Invariant V) 
    Shamir, or use threshold ML-KEM / threshold-ElGamal so decapsulation
    genuinely requires *n* trustee shares. Break-glass then becomes the
    cryptographic lock, not a policy check upstream of it.
+   *Design now specified:* `spec/quorum_unseal_v2.md` §2 — a vault KEK split
+   n-of-m with VSS-hardened Shamir (commitments in the receipt chain,
+   self-describing share envelopes, in-memory reconstruction at the unseal
+   gate), the identical split applied to the ML-KEM-768 seed, a two-quorum
+   operational/recovery structure, and proactive resharing as a first-class
+   ceremony. The standards research behind it: `PROVENANCE_INTEROP.md` §1.4.
 2. **Hardware or passphrase KEK for `master.key`.** Seal the master key in an
    HSM / TPM / PKCS#11 token, or wrap it under an Argon2id passphrase supplied
    at unseal time — kept **outside** the vault directory — so possession of the
@@ -65,6 +71,12 @@ default verifier also takes its identity anchor from the DB under audit, so a
   RFC-3161 TSA anchor), and have `run_full_verify` fail closed when the current
   head/count is behind it. Closes tail-truncation, whole-file rollback, and the
   wiped-log case.
+  *Design now specified:* `spec/quorum_unseal_v2.md` §4 — implement the
+  high-water-mark as transparency-ecosystem witnessing: an RFC 9162 Merkle
+  tree over the sealed hashes (receipt-chain heads as leaves = the
+  cross-binding item below), C2SP checkpoint notes, fleet-internal witness
+  cosigning as the default, and one fleet-level aggregate checkpoint anchored
+  outward (TSA + OpenTimestamps). See `PROVENANCE_INTEROP.md` §1.5.
 - **Fold anchor verification into `run_full_verify`** and require the CMS
   countersignature to be checked in-boundary (see §4). `log_anchor verify` no
   longer prints "OK" for a cryptographically unverified anchor — it prints

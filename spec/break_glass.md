@@ -47,6 +47,57 @@ Each trustee entry is `id:HEX_PUBLIC_KEY`, where the public key is the
 hex-encoded 32-byte Ed25519 verifying key. The policy is required by
 `break_glass authorize` and by receipt verification (`break_glass receipts`).
 
+## Policy changes — quorum-gated
+
+Configuring a policy on an **empty** database is the bootstrap: there is no
+quorum yet to consult, so the device key seed alone suffices, and the change
+is recorded as a bootstrap in the policy-change history.
+
+**Changing a live policy — roster, threshold, or `vault.crypto_mode` — is
+quorum-gated**: it requires `n` distinct approvals from the *current*
+trustees, signed under a dedicated policy-change domain (disjoint from unlock
+approvals, so neither consent can stand in for the other). Without this gate,
+one actor holding the device key seed could replace the roster and then
+satisfy "quorum" with keys they minted (Invariant V; design rationale in
+`spec/quorum_unseal_v2.md` §3.1).
+
+```bash
+# Operator: write a proposal file carrying the FULL current + proposed policies
+break_glass policy propose \
+  --threshold 2 --trustee alice:0123... --trustee bob:4567... \
+  --output change.proposal --db witness.db
+
+# Each current trustee: review the displayed diff, then sign.
+# The tool recomputes the change hash from the proposal's full contents —
+# a tampered proposal is refused, not signed.
+break_glass policy approve \
+  --proposal change.proposal --trustee alice \
+  --signing-key alice.key --output alice.policy-approval
+
+# Operator: apply with the collected approvals (within the same
+# 10-minute freshness window the proposal was created in)
+break_glass policy set \
+  --threshold 2 --trustee alice:0123... --trustee bob:4567... \
+  --approvals alice.policy-approval,bob.policy-approval --db witness.db
+```
+
+Every accepted change (bootstrap included) appends a chained, device-signed
+record to the **policy-change history** (`break_glass policy history`
+verifies and prints it), carrying the full previous and new policies and the
+approvals, so an audit can reconstruct the roster's lineage and tie each
+receipt's `policy_commitment` to the era that produced it.
+
+Guided setup (`break_glass init` + `trustee enroll`) commits the policy once
+the roster is **complete** — enrollment before that point edits only the
+draft, never a live policy. Growing or shrinking a live roster afterwards is
+an ordinary quorum-gated policy change.
+
+Honest scope note: within the threat model's host-trust boundary this gate is
+a procedural and audit control — an actor with host access can still rewrite
+database rows out of band, but such a rewrite leaves no valid history record.
+Making the quorum the *cryptographic* lock is the threshold-custody tier
+(`docs/security/ENTERPRISE_CUSTODY.md` §1).
+
 The policy also carries **vault crypto settings**. `vault.crypto_mode` controls
 how v2 vault envelopes protect their per-object DEK:
 
@@ -59,29 +110,41 @@ If `vault.crypto_mode` is omitted, it defaults to `classical`.
 ## Request creation
 
 An unlock request binds the envelope id, ruleset hash, purpose, and a 10-minute
-time bucket. The CLI prints the request hash that trustees must sign.
+time bucket. Write the full request context to a file for trustees:
 
 ```bash
 break_glass request \
   --envelope envelope_id \
   --purpose "incident response" \
-  --ruleset-id ruleset:v0.3.0
+  --ruleset-id ruleset:v0.3.0 \
+  --output-request unlock.request
 ```
 
-Share the printed request hash with trustees.
+Send trustees the **context file**, not a bare hash — their tool can then
+show them exactly what they are consenting to. (Without `--output-request`
+the CLI still prints the request hash for the legacy flow.)
 
-## Trustee approvals
+## Trustee approvals — sign what you see
 
-Each trustee signs the request hash with their local Ed25519 signing key to
-produce a portable approval file.
+Each trustee's own tool recomputes the request hash locally from the context
+file's fields, displays the decoded request (envelope, purpose, ruleset, UTC
+validity window), and only then signs with the trustee's local Ed25519 key.
+A context file whose fields do not hash to its claimed request hash is
+refused, not signed — so a relay that swaps the displayed meaning while
+keeping the hash gets caught at the trustee's machine, and a "just sign this
+hash" social-engineering call has nothing the tool will accept.
 
 ```bash
 break_glass approve \
-  --request-hash <request_hash> \
+  --request unlock.request \
   --trustee alice \
   --signing-key /path/to/alice.signing.key \
   --output alice.approval
 ```
+
+`--request-hash <hex>` remains available for compatibility; it is **blind
+signing** — the tool cannot show what it authorizes — and prints a warning
+saying so. (Design rationale: `spec/quorum_unseal_v2.md` §3.2.)
 
 Approvals are collected by the operator and passed to the authorization step.
 
