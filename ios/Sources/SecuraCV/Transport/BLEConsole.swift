@@ -47,6 +47,11 @@ final class BLEConsole: NSObject, ObservableObject {
     /// canary-wap's connectable console (ble_console.h).
     static let consoleServiceUUID = CBUUID(string: "8fc1cee0-b162-4401-9607-c8ac21383e90")
     static let snapshotUUID       = CBUUID(string: "8fc1cee1-b162-4401-9607-c8ac21383e90")
+    /// canary-wap's bonded Wi-Fi provisioning service (ble_provision.h) —
+    /// the rescue path for a Canary the router password change stranded.
+    static let provisionServiceUUID = CBUUID(string: "8fc1cef0-b162-4401-9607-c8ac21383e90")
+    static let provisionCredsUUID   = CBUUID(string: "8fc1cef3-b162-4401-9607-c8ac21383e90")
+    static let provisionStateUUID   = CBUUID(string: "8fc1cef4-b162-4401-9607-c8ac21383e90")
     /// The `canary` firmware family's status service (securacv_ble_status.h).
     /// Known so its adverts are recognized as ours; its characteristics are not
     /// read yet — the beacon already carries this family's state.
@@ -109,6 +114,94 @@ final class BLEConsole: NSObject, ObservableObject {
         let cutoff = now.addingTimeInterval(-Self.staleAfter)
         sightings = sightings.filter { $0.value.lastHeard >= cutoff }
     }
+
+    // MARK: - Wi-Fi provisioning over BLE (the rescue path)
+
+    /// Which console peripheral a device id maps to — learned from the
+    /// snapshot's own `id` field, so the mapping is the device's claim, not
+    /// a guess from advertising order.
+    private var peripheralIDByDevice: [String: UUID] = [:]
+
+    /// Canaries whose console is connected RIGHT NOW — the set the Wi-Fi
+    /// rollout may offer the Bluetooth rescue to.
+    var provisionableDeviceIDs: Set<String> {
+        Set(peripheralIDByDevice.compactMap { id, peripheralID in
+            peripherals[peripheralID]?.state == .connected ? id : nil
+        })
+    }
+
+    /// Fires the moment a connected console reports tamper that wasn't
+    /// there a beat ago — BLE NOTIFY is sub-second, so the alert loop gets
+    /// to run NOW instead of at the next poll. Wired by FleetStore.
+    var onUrgentSnapshot: ((String) -> Void)?
+
+    /// One credentials write in flight at a time — the firmware rate-limits
+    /// to one per 5 s anyway, and a second concurrent write could only
+    /// steal the first one's answer.
+    private struct PendingProvision {
+        let peripheralID: UUID
+        let payload: Data
+        var continuation: CheckedContinuation<BLEProvisionOutcome, Never>?
+        let startedAt = Date()
+    }
+    private var pendingProvision: PendingProvision?
+    /// Which write the running timeout belongs to — a stale timer from an
+    /// EARLIER write must never resolve a later one.
+    private var provisionGeneration = 0
+
+    /// Hand a stranded Canary new Wi-Fi credentials over its bonded
+    /// provisioning service, and wait for the device's OWN verdict (the
+    /// STATE characteristic saying `connected` / `failed`). iOS raises the
+    /// pairing sheet on first use; the bond is the security boundary.
+    func writeWiFiCredentials(deviceID: String, ssid: String, password: String) async -> BLEProvisionOutcome {
+        guard pendingProvision == nil else {
+            return .failed("Another Canary's rescue is still in progress.")
+        }
+        guard let peripheralID = peripheralIDByDevice[deviceID],
+              let peripheral = peripherals[peripheralID],
+              peripheral.state == .connected else {
+            return .unreachable
+        }
+        struct Creds: Encodable { let ssid: String; let password: String }
+        guard let payload = try? JSONEncoder().encode(Creds(ssid: ssid, password: password)) else {
+            return .failed("Couldn't encode the credentials.")
+        }
+        provisionGeneration += 1
+        let generation = provisionGeneration
+        let outcome = await withCheckedContinuation { (cont: CheckedContinuation<BLEProvisionOutcome, Never>) in
+            pendingProvision = PendingProvision(peripheralID: peripheralID,
+                                                payload: payload,
+                                                continuation: cont)
+            peripheral.discoverServices([Self.provisionServiceUUID])
+            // The whole ceremony — bond, subscribe, write, join, notify —
+            // gets 75 seconds; past that the answer is honestly "no answer",
+            // never a spinner that outlives the user's patience. The
+            // generation check keeps this timer from ever touching a LATER
+            // write's ceremony.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(75))
+                guard let self, self.provisionGeneration == generation else { return }
+                self.resolveProvision(.failed(
+                    "No answer over Bluetooth — move closer to the Canary and try again."))
+            }
+        }
+        return outcome
+    }
+
+    /// Resolve the in-flight provisioning exactly once; later calls no-op.
+    private func resolveProvision(_ outcome: BLEProvisionOutcome) {
+        guard let pending = pendingProvision else { return }
+        pendingProvision = nil
+        pending.continuation?.resume(returning: outcome)
+    }
+}
+
+/// How a BLE credentials write ended — the device's own verdict, or the
+/// honest reason we never got one.
+enum BLEProvisionOutcome: Hashable, Sendable {
+    case joined                 // STATE said `connected`: it is on the new network
+    case failed(String)
+    case unreachable            // no connected console for that device right now
 }
 
 extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
@@ -153,6 +246,13 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         peripherals[peripheral.identifier] = nil
+        // A rescue mid-flight lost its device. Two honest readings: if the
+        // credentials were already written, the device may simply have
+        // rebooted onto the new network — say to watch for it; otherwise
+        // the link dropped before anything was handed over.
+        if pendingProvision?.peripheralID == peripheral.identifier {
+            resolveProvision(.failed("Bluetooth dropped before the Canary answered — watch the fleet list to see if it rejoined."))
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -160,22 +260,89 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        for service in peripheral.services ?? [] where service.uuid == Self.consoleServiceUUID {
-            peripheral.discoverCharacteristics([Self.snapshotUUID], for: service)
+        for service in peripheral.services ?? [] {
+            switch service.uuid {
+            case Self.consoleServiceUUID:
+                peripheral.discoverCharacteristics([Self.snapshotUUID], for: service)
+            case Self.provisionServiceUUID where pendingProvision?.peripheralID == peripheral.identifier:
+                peripheral.discoverCharacteristics([Self.provisionCredsUUID, Self.provisionStateUUID],
+                                                   for: service)
+            default:
+                break
+            }
+        }
+        // A rescue asked for the provisioning service and the device doesn't
+        // serve it (older firmware, or Bluetooth turned down in settings).
+        if pendingProvision?.peripheralID == peripheral.identifier,
+           !(peripheral.services ?? []).contains(where: { $0.uuid == Self.provisionServiceUUID }) {
+            resolveProvision(.failed("This Canary's firmware doesn't offer the Bluetooth rescue — use its setup portal (hold BOOT) instead."))
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        for ch in service.characteristics ?? [] where ch.uuid == Self.snapshotUUID {
-            peripheral.setNotifyValue(true, for: ch)   // live pushes
-            peripheral.readValue(for: ch)              // and one now
+        switch service.uuid {
+        case Self.consoleServiceUUID:
+            for ch in service.characteristics ?? [] where ch.uuid == Self.snapshotUUID {
+                peripheral.setNotifyValue(true, for: ch)   // live pushes
+                peripheral.readValue(for: ch)              // and one now
+            }
+        case Self.provisionServiceUUID:
+            guard let pending = pendingProvision, pending.peripheralID == peripheral.identifier else { return }
+            let chars = service.characteristics ?? []
+            guard let creds = chars.first(where: { $0.uuid == Self.provisionCredsUUID }),
+                  let state = chars.first(where: { $0.uuid == Self.provisionStateUUID }) else {
+                resolveProvision(.failed("This Canary's provisioning service is missing its controls."))
+                return
+            }
+            // Subscribe to the verdict FIRST, then hand over the
+            // credentials — a write whose answer nobody is listening for
+            // races the notification.
+            peripheral.setNotifyValue(true, for: state)
+            peripheral.writeValue(pending.payload, for: creds, type: .withResponse)
+        default:
+            break
         }
     }
 
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == Self.provisionCredsUUID,
+              pendingProvision?.peripheralID == peripheral.identifier else { return }
+        if let error {
+            // The bond ceremony refused, or the firmware's rate limit spoke.
+            resolveProvision(.failed("The Canary refused the write — \(error.localizedDescription)"))
+        }
+        // On success: stay quiet and let the STATE characteristic answer.
+    }
+
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard let data = characteristic.value,
-              let snap = try? JSONDecoder().decode(BLESnapshot.self, from: data) else { return }
-        let key = snap.id ?? peripheral.identifier.uuidString
-        snapshotsByDevice[key] = snap
+        switch characteristic.uuid {
+        case Self.snapshotUUID:
+            guard let data = characteristic.value,
+                  let snap = try? JSONDecoder().decode(BLESnapshot.self, from: data) else { return }
+            let key = snap.id ?? peripheral.identifier.uuidString
+            let tamperRose = (snap.tamper == true) && (snapshotsByDevice[key]?.tamper != true)
+            snapshotsByDevice[key] = snap
+            if snap.id != nil { peripheralIDByDevice[key] = peripheral.identifier }
+            // Tamper over BLE NOTIFY is the fastest signal the fleet has —
+            // hand it to the alert loop now, not at the next poll.
+            if tamperRose { onUrgentSnapshot?(key) }
+        case Self.provisionStateUUID:
+            guard pendingProvision?.peripheralID == peripheral.identifier,
+                  let data = characteristic.value,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let state = obj["state"] as? String else { return }
+            switch state {
+            case "connected":
+                resolveProvision(.joined)
+            case "failed":
+                resolveProvision(.failed("The Canary couldn't join with those credentials — check the password."))
+            case "rate_limited":
+                resolveProvision(.failed("The Canary is rate-limiting credential writes — try again in a few minutes."))
+            default:
+                break   // idle / scanning / connecting — the verdict is still coming
+            }
+        default:
+            break
+        }
     }
 }

@@ -318,6 +318,21 @@ impl FilesystemVaultStore {
         expected_ruleset_hash: [u8; 32],
         clear_bytes: &mut Vec<u8>,
     ) -> Result<EnvelopeMetadata> {
+        // The raw-media plaintext must be scrubbed on EVERY exit — including
+        // the "already exists" early return and a seal_v2 failure — not only
+        // on success, so an error path never leaves cleartext lingering in the
+        // caller's buffer.
+        let result = self.seal_bytes_inner(envelope_id, expected_ruleset_hash, clear_bytes);
+        clear_bytes.zeroize();
+        result
+    }
+
+    fn seal_bytes_inner(
+        &self,
+        envelope_id: &str,
+        expected_ruleset_hash: [u8; 32],
+        clear_bytes: &[u8],
+    ) -> Result<EnvelopeMetadata> {
         let sanitized = sanitize_envelope_id(envelope_id)?;
         let envelope_path = self.envelope_path(&sanitized);
 
@@ -333,7 +348,6 @@ impl FilesystemVaultStore {
             &self.master_key,
             self.kem_keypair.as_ref(),
         )?);
-        clear_bytes.zeroize();
 
         let encoded = envelope.encode()?;
         write_atomic(&envelope_path, &encoded)?;

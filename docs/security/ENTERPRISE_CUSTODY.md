@@ -52,10 +52,16 @@ to run alongside a plaintext key so an operator must migrate deliberately).
    quorum-locked (sealing uses the public KEM key). Highest-risk item: a sharing
    bug renders evidence permanently unopenable, so it ships on its own once the
    `MKG1` container is in the field.
+   *Design now specified:* `spec/quorum_unseal_v2.md` §2 — a vault KEK split
+   n-of-m with VSS-hardened Shamir (commitments in the receipt chain,
+   self-describing share envelopes, in-memory reconstruction at the unseal
+   gate), the identical split applied to the ML-KEM-768 seed, a two-quorum
+   operational/recovery structure, and proactive resharing as a first-class
+   ceremony. The standards research behind it: `PROVENANCE_INTEROP.md` §1.4.
 2. **Hardware KEK for `master.keyguard`.** Seal the KEK in an HSM / TPM /
-   PKCS#11 token (a new `MKG1` kind) so even the passphrase is not enough
-   without the hardware. Feasible in code; needs hardware to test, so excluded
-   from default CI.
+   PKCS#11 token (a new `MKG1` kind) so even the passphrase (now shipped, above)
+   is not enough without the hardware. Feasible in code; needs hardware to test,
+   so excluded from default CI.
 
 **Operator control that already exists (partial, for the DB — not the vault).**
 The SQLCipher database key can already be decoupled from the device identity:
@@ -84,6 +90,12 @@ default verifier also takes its identity anchor from the DB under audit, so a
   RFC-3161 TSA anchor), and have `run_full_verify` fail closed when the current
   head/count is behind it. Closes tail-truncation, whole-file rollback, and the
   wiped-log case.
+  *Design now specified:* `spec/quorum_unseal_v2.md` §4 — implement the
+  high-water-mark as transparency-ecosystem witnessing: an RFC 9162 Merkle
+  tree over the sealed hashes (receipt-chain heads as leaves = the
+  cross-binding item below), C2SP checkpoint notes, fleet-internal witness
+  cosigning as the default, and one fleet-level aggregate checkpoint anchored
+  outward (TSA + OpenTimestamps). See `PROVENANCE_INTEROP.md` §1.5.
 - **Fold anchor verification into `run_full_verify`** and require the CMS
   countersignature to be checked in-boundary (see §4). `log_anchor verify` no
   longer prints "OK" for a cryptographically unverified anchor — it prints
@@ -130,6 +142,31 @@ terminator. Wire `rustls` into both accept loops (mirror the webhook module) so
 "provide a cert/key" actually encrypts the socket, and verify the CMS
 countersignature of RFC-3161 anchors inside Rust (not only via an optional
 external `openssl ts -verify`).
+
+### 4a. PWK wizard — authenticate the mutating endpoints
+
+**State today.** The PWK setup wizard (`privacy_witness_kernel/serve_wizard.py`)
+binds `0.0.0.0:8788` and is served to the user through the Home Assistant
+Supervisor **ingress** proxy (which authenticates the user). Its `do_POST`
+handlers — `/api/save` (writes config and mints `device_key_seed`),
+`/api/restart-ha`, `/api/test-camera`, and the `/api/mesh/pair/*` device
+proxies — carry **no auth check of their own**, so any process that can reach
+the container's port directly on the Supervisor Docker network (a malicious
+sibling add-on, or SSRF from one) can invoke them, bypassing ingress. The
+2026-08 pass already minimized secret *disclosure* on `/api/status` and closed
+the SSRF/loopback and YAML-injection vectors on this surface; the mutating
+endpoints are the remaining item.
+
+**Design to close it.** Verify that a mutating request actually arrived through
+the authenticated ingress path rather than directly on the port — the robust
+form is to require the Supervisor-injected ingress session (HA sets an
+`X-Ingress-Path`/session the add-on can validate against `SUPERVISOR_TOKEN`),
+and/or require a per-install wizard bearer token minted at first run and handed
+to the browser only through the ingress-authenticated page. Fail closed on a
+direct-port request. This needs live add-on testing (a wrong cut either locks
+the wizard out or gives false assurance), which is why it is tracked here rather
+than patched blind. Binding to loopback is not sufficient on its own — the
+Supervisor reaches the add-on over the Docker network, not loopback.
 
 ---
 

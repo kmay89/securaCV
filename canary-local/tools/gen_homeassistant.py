@@ -107,6 +107,9 @@ HARDWARE = {
         {"item": "Official USB-C power supply", "note": "15 W (Pi 4) / 27 W (Pi 5) — undervoltage is the classic mystery crash", "from_doc": False},
         {"item": "Case with airflow (+ heatsink)", "note": "any vented case; passive cooling is fine", "from_doc": False},
         {"item": "Ethernet cable (recommended)", "note": "a hub wants wire", "from_doc": False},
+        {"item": "HDMI touchscreen (optional)", "note": "e.g. a 7\" 1024x600 IPS panel with USB touch — "
+                 "the hub runs headless by default, but with a screen it can show your dashboard "
+                 "(the “display” extra in self-setup)", "from_doc": True},
     ],
     "frame": {"rx": -0.5, "ry": 0.7, "pad": 2.3},
     "parts": [

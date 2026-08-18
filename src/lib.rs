@@ -34,7 +34,8 @@ use zeroize::Zeroizing;
 use crate::crypto::signatures::{
     sign_rotation_attestation, sign_rotation_authorization, verify_rotation_attestation,
     verify_rotation_authorization, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
-    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT, DOMAIN_SEALED_LOG_ENTRY,
+    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT, DOMAIN_POLICY_CHANGE_RECORD,
+    DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::storage::ensure_columns;
 
@@ -1350,6 +1351,18 @@ impl Kernel {
               policy_json TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS policy_change_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              created_at INTEGER NOT NULL,
+              payload_json TEXT NOT NULL,
+              approvals_json TEXT NOT NULL DEFAULT '[]',
+              prev_hash BLOB NOT NULL,
+              entry_hash BLOB NOT NULL,
+              signature BLOB NOT NULL,
+              pq_signature BLOB,
+              pq_scheme TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS export_receipts (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               created_at INTEGER NOT NULL,
@@ -2250,6 +2263,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         })
     }
 
+    /// RAW policy write: replaces the stored quorum policy with no quorum
+    /// check and no history record. For provisioning fresh databases and
+    /// fixtures only — every user-facing mutation path (CLI `policy set`,
+    /// guided setup, the break-glass backend) MUST go through
+    /// [`Kernel::set_break_glass_policy_gated`] so a live roster can only be
+    /// changed with its own consent (Invariant V).
     pub fn set_break_glass_policy(
         &mut self,
         policy: &crate::break_glass::QuorumPolicy,
@@ -2265,6 +2284,202 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     pub fn break_glass_policy(&self) -> Option<&crate::break_glass::QuorumPolicy> {
         self.break_glass_policy.as_ref()
+    }
+
+    /// Replace the stored quorum policy through the QUORUM-GATED path
+    /// (Invariant V; spec/quorum_unseal_v2.md §3.1): when a policy already
+    /// exists and differs, the change requires `current.n` distinct
+    /// current-trustee approvals over the policy-change hash, signed under
+    /// `DOMAIN_POLICY_CHANGE_APPROVAL`. On an empty database the change is a
+    /// bootstrap (there is no quorum yet to consult) and is recorded as such.
+    /// Every accepted change appends a chained, device-signed history record.
+    ///
+    /// Honest scope note: this is a procedural + auditability control inside
+    /// the host-trust boundary, not a cryptographic lock — an actor with host
+    /// access and the device seed can still rewrite the policy row out of
+    /// band, but such a rewrite leaves no valid history record for an audit
+    /// to find. The cryptographic lock is the threshold-custody tier
+    /// (`docs/security/ENTERPRISE_CUSTODY.md` §1).
+    pub fn set_break_glass_policy_gated(
+        &mut self,
+        new_policy: &crate::break_glass::QuorumPolicy,
+        approvals: &[crate::break_glass::Approval],
+        now_bucket: TimeBucket,
+    ) -> Result<PolicyChangeOutcome> {
+        new_policy.validate()?;
+        let current = self.break_glass_policy.clone();
+
+        let (prev_commitment, bootstrap) = match &current {
+            None => ([0u8; 32], true),
+            Some(cur) => {
+                if cur.full_commitment() == new_policy.full_commitment() {
+                    return Ok(PolicyChangeOutcome::Unchanged);
+                }
+                (cur.full_commitment(), false)
+            }
+        };
+
+        let proposal = crate::break_glass::PolicyChangeProposal {
+            prev_policy_commitment: prev_commitment,
+            new_policy: new_policy.clone(),
+            time_bucket: now_bucket,
+        };
+        let change_hash = proposal.change_hash();
+
+        if let Some(cur) = &current {
+            let valid = crate::break_glass::count_valid_distinct_policy_change_approvals(
+                cur,
+                &change_hash,
+                approvals,
+            );
+            if valid < cur.n as usize {
+                return Err(anyhow!(
+                    "policy change denied: {} of {} required approvals from the CURRENT quorum \
+                     are valid — collect consent with `break_glass policy propose` and \
+                     `break_glass policy approve`, then re-run with --approvals",
+                    valid,
+                    cur.n
+                ));
+            }
+        }
+
+        let record = PolicyChangeRecord {
+            prev_policy: current,
+            new_policy: new_policy.clone(),
+            change_hash,
+            time_bucket: now_bucket,
+            bootstrap,
+            // Bind the authorizing approvals into the signed, hash-chained
+            // record: their commitment travels inside payload_json, so a
+            // tampered `approvals_json` fails verification.
+            approvals_commitment: crate::break_glass::approvals_commitment(approvals),
+        };
+
+        // History row and policy row land atomically: a change that cannot be
+        // recorded is a change that does not happen (fail closed).
+        self.conn.execute_batch("SAVEPOINT policy_change;")?;
+        let applied = self.append_policy_change_record(&record, approvals);
+        let applied = applied.and_then(|_| {
+            let json = serde_json::to_string(new_policy)?;
+            self.conn.execute(
+                "INSERT OR REPLACE INTO break_glass_policy (id, policy_json) VALUES (1, ?1)",
+                params![json],
+            )?;
+            Ok(())
+        });
+        match applied {
+            Ok(()) => {
+                self.conn.execute_batch("RELEASE policy_change;")?;
+                self.break_glass_policy = Some(new_policy.clone());
+                Ok(if bootstrap {
+                    PolicyChangeOutcome::Bootstrapped
+                } else {
+                    PolicyChangeOutcome::Replaced
+                })
+            }
+            Err(e) => {
+                let _ = self
+                    .conn
+                    .execute_batch("ROLLBACK TO policy_change; RELEASE policy_change;");
+                Err(e)
+            }
+        }
+    }
+
+    fn last_policy_change_hash_or_zero(&self) -> Result<[u8; 32]> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT entry_hash FROM policy_change_history ORDER BY id DESC LIMIT 1")?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            let entry_bytes: Vec<u8> = row.get(0)?;
+            blob32(entry_bytes, "policy_change_history.entry_hash")
+        } else {
+            Ok([0u8; 32])
+        }
+    }
+
+    fn append_policy_change_record(
+        &mut self,
+        record: &PolicyChangeRecord,
+        approvals: &[crate::break_glass::Approval],
+    ) -> Result<[u8; 32]> {
+        let created_at = now_s()? as i64;
+        let prev_hash = self.last_policy_change_hash_or_zero()?;
+        let payload_json = serde_json::to_string(record)?;
+        let approvals_json = serde_json::to_string(approvals)?;
+
+        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+        let key_material = self.signature_key_material();
+        let signature_set = sign_entry(
+            &key_material.signature_keys(),
+            &entry_hash,
+            DOMAIN_POLICY_CHANGE_RECORD,
+        )?;
+        let pq_signature = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.signature.clone());
+        let pq_scheme = signature_set
+            .pq_signature
+            .as_ref()
+            .map(|sig| sig.scheme_id.clone());
+
+        self.conn.execute(
+            r#"
+            INSERT INTO policy_change_history(
+                created_at,
+                payload_json,
+                approvals_json,
+                prev_hash,
+                entry_hash,
+                signature,
+                pq_signature,
+                pq_scheme
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                created_at,
+                payload_json,
+                approvals_json,
+                prev_hash.to_vec(),
+                entry_hash.to_vec(),
+                signature_set.ed25519_signature,
+                pq_signature,
+                pq_scheme,
+            ],
+        )?;
+
+        Ok(entry_hash)
+    }
+
+    /// Read the policy-change history ledger in order. Auxiliary evidence
+    /// (like the anchors table): chained and device-signed, but not part of
+    /// the evidence envelope's ledgers.
+    pub fn policy_change_history(&self) -> Result<Vec<PolicyChangeHistoryEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature \
+             FROM policy_change_history ORDER BY id ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let payload_json: String = row.get(0)?;
+            let approvals_json: String = row.get(1)?;
+            let prev_hash: Vec<u8> = row.get(2)?;
+            let entry_hash: Vec<u8> = row.get(3)?;
+            let signature: Vec<u8> = row.get(4)?;
+            out.push(PolicyChangeHistoryEntry {
+                record: serde_json::from_str(&payload_json)?,
+                payload_json,
+                approvals: serde_json::from_str(&approvals_json)?,
+                prev_hash: blob32(prev_hash, "policy_change_history.prev_hash")?,
+                entry_hash: blob32(entry_hash, "policy_change_history.entry_hash")?,
+                signature,
+            });
+        }
+        Ok(out)
     }
 
     fn load_break_glass_policy(&mut self) -> Result<()> {
@@ -2361,7 +2576,13 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             expected_ruleset_hash,
             now_bucket,
             &self.device_verifying_key(),
-            |hash| self.break_glass_receipt_outcome(hash),
+            |hash| {
+                self.break_glass_receipt_outcome(
+                    EXPORT_EVENTS_ENVELOPE_ID,
+                    expected_ruleset_hash,
+                    hash,
+                )
+            },
         )?;
         // Burn-first (durable): a token file re-parses as unconsumed, so
         // without this ledger a granted token could authorize repeated
@@ -2740,6 +2961,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let outcome = break_glass_receipt_outcome_for_verifier(
             &self.conn,
             &self.device_verifying_key(),
+            token.vault_envelope_id(),
+            token.ruleset_hash(),
             &receipt_entry_hash,
             self.device_pq_public_key_ref(),
         )?;
@@ -2758,11 +2981,15 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     pub fn break_glass_receipt_outcome(
         &self,
+        expected_envelope_id: &str,
+        expected_ruleset_hash: [u8; 32],
         receipt_entry_hash: &[u8; 32],
     ) -> Result<break_glass::BreakGlassOutcome> {
         break_glass_receipt_outcome_for_verifier(
             &self.conn,
             &self.device_verifying_key(),
+            expected_envelope_id,
+            expected_ruleset_hash,
             receipt_entry_hash,
             self.device_pq_public_key_ref(),
         )
@@ -3390,6 +3617,57 @@ fn now_s() -> Result<u64> {
 /// Callers burn the nonce BEFORE releasing any cleartext (fail closed): a
 /// crash mid-unseal wastes the token — trustees re-approve — instead of
 /// leaving it replayable.
+/// Outcome of a gated policy write (`Kernel::set_break_glass_policy_gated`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolicyChangeOutcome {
+    /// No policy existed; the write is the bootstrap and needed no quorum.
+    Bootstrapped,
+    /// A policy existed and was replaced with current-quorum consent.
+    Replaced,
+    /// The proposed policy is identical to the stored one; nothing written.
+    Unchanged,
+}
+
+/// The empty-approval-set commitment, used as the serde default for the
+/// `approvals_commitment` field on policy-change records written before the
+/// field existed.
+pub(crate) fn empty_approvals_commitment_bytes() -> [u8; 32] {
+    crate::break_glass::approvals_commitment(&[])
+}
+
+/// The payload of one policy-change history row: the full previous and new
+/// policies, the change hash trustees consented to, a commitment to the
+/// trustee approvals that authorized the change, and whether this was the
+/// bootstrap write. Serialized verbatim into `payload_json` and hash-chained,
+/// so the device signature covers all of it — including `approvals_commitment`,
+/// which binds the recorded approvals into the signed material (a swapped or
+/// deleted `approvals_json` no longer verifies).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PolicyChangeRecord {
+    pub prev_policy: Option<crate::break_glass::QuorumPolicy>,
+    pub new_policy: crate::break_glass::QuorumPolicy,
+    pub change_hash: [u8; 32],
+    pub time_bucket: TimeBucket,
+    pub bootstrap: bool,
+    /// `approvals_commitment(approvals)` — the same commitment a break-glass
+    /// receipt records. Defaults to the empty-set commitment for records
+    /// written before this field existed.
+    #[serde(default = "crate::empty_approvals_commitment_bytes")]
+    pub approvals_commitment: [u8; 32],
+}
+
+/// One row of the policy-change history ledger, as read back for audit.
+#[derive(Clone, Debug)]
+pub struct PolicyChangeHistoryEntry {
+    pub record: PolicyChangeRecord,
+    /// The exact bytes that were hashed at append time.
+    pub payload_json: String,
+    pub approvals: Vec<crate::break_glass::Approval>,
+    pub prev_hash: [u8; 32],
+    pub entry_hash: [u8; 32],
+    pub signature: Vec<u8>,
+}
+
 pub fn consume_break_glass_token_durably(
     conn: &Connection,
     token: &break_glass::BreakGlassToken,
@@ -3417,9 +3695,23 @@ pub fn consume_break_glass_token_durably(
     Ok(())
 }
 
+/// Resolve and re-verify the break-glass receipt a token points at, binding it
+/// to the disclosure act the token authorizes.
+///
+/// `expected_envelope_id` / `expected_ruleset_hash` are the token's own
+/// (device-signed) envelope and ruleset. The receipt fetched by
+/// `receipt_entry_hash` MUST carry the same envelope and ruleset: without this,
+/// a genuine `Granted` receipt for envelope A (with real trustee approvals for
+/// A) could be paired with a token for envelope B and unseal B — reusing
+/// trustee consent across envelopes, defeating the per-disclosure binding
+/// Invariant V promises even against a device-key holder. The binding is
+/// checked before the quorum re-derivation so a cross-envelope replay fails
+/// fast and unambiguously.
 pub fn break_glass_receipt_outcome_for_verifier(
     conn: &Connection,
     verifying_key: &VerifyingKey,
+    expected_envelope_id: &str,
+    expected_ruleset_hash: [u8; 32],
     receipt_entry_hash: &[u8; 32],
     pq_public_key: Option<&PqPublicKey>,
 ) -> Result<break_glass::BreakGlassOutcome> {
@@ -3472,6 +3764,24 @@ pub fn break_glass_receipt_outcome_for_verifier(
         DOMAIN_BREAK_GLASS_RECEIPT,
     )?;
     let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+
+    // Bind the receipt to the disclosure act the token authorizes. A token is
+    // device-signed over its envelope and ruleset; the receipt it references
+    // must be the receipt for THAT envelope and ruleset. Rejecting a mismatch
+    // stops trustee consent granted for one envelope from being replayed to
+    // unseal another (Invariant V, per-disclosure binding).
+    if receipt.vault_envelope_id != expected_envelope_id {
+        return Err(anyhow!(
+            "break-glass receipt is bound to envelope '{}' but the token authorizes '{}' — trustee consent is per-envelope and cannot be reused across disclosures",
+            receipt.vault_envelope_id,
+            expected_envelope_id
+        ));
+    }
+    if receipt.ruleset_hash != expected_ruleset_hash {
+        return Err(anyhow!(
+            "break-glass receipt ruleset does not match the token's ruleset"
+        ));
+    }
 
     // Quorum re-derivation at the unseal gate (Invariant V). The receipt is
     // device-signed and hash-chained, but a device-key holder can still forge
@@ -5109,6 +5419,8 @@ mod tests {
         let outcome = break_glass_receipt_outcome_for_verifier(
             &kernel.conn,
             &dev,
+            "vault:rt",
+            [4u8; 32],
             &legit_hash,
             kernel.device_pq_public_key_ref(),
         )?;
@@ -5135,6 +5447,8 @@ mod tests {
         let result = break_glass_receipt_outcome_for_verifier(
             &kernel.conn,
             &dev,
+            "vault:rt",
+            [4u8; 32],
             &forged_hash,
             kernel.device_pq_public_key_ref(),
         );
@@ -5192,12 +5506,338 @@ mod tests {
         let result = break_glass_receipt_outcome_for_verifier(
             &kernel.conn,
             &dev,
+            "vault:rt",
+            [4u8; 32],
             &hash,
             kernel.device_pq_public_key_ref(),
         );
         assert!(
             result.is_err(),
             "a receipt whose policy commitment no longer matches the active policy must be refused"
+        );
+        Ok(())
+    }
+
+    /// Per-envelope binding (Invariant V): a genuine Granted receipt with real
+    /// trustee approvals for envelope A must NOT authorize unsealing envelope
+    /// B. The gate binds the receipt to the token's envelope/ruleset, so
+    /// trustee consent cannot be replayed across disclosures even by a
+    /// device-key holder pairing a real receipt with a token for a different
+    /// envelope.
+    #[test]
+    fn runtime_gate_binds_receipt_to_token_envelope() -> Result<()> {
+        let (mut kernel, _cfg) = setup_test_kernel()?;
+        let bucket = TimeBucket::now(600)?;
+        let alice = SigningKey::from_bytes(&[21u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+
+        // A genuine, fully-approved Granted receipt for envelope A.
+        let request_a = UnlockRequest::new("vault:A", [4u8; 32], "incident", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request_a.request_hash(), &alice);
+        let (_tok, receipt_a) =
+            BreakGlass::authorize(&policy, &request_a, std::slice::from_ref(&approval), bucket);
+        let hash_a =
+            kernel.append_break_glass_receipt(&receipt_a, std::slice::from_ref(&approval))?;
+        let dev = kernel.device_verifying_key();
+
+        // Bound to envelope A (its real envelope): the gate honors it.
+        assert!(matches!(
+            break_glass_receipt_outcome_for_verifier(
+                &kernel.conn,
+                &dev,
+                "vault:A",
+                [4u8; 32],
+                &hash_a,
+                kernel.device_pq_public_key_ref(),
+            )?,
+            BreakGlassOutcome::Granted
+        ));
+
+        // Replayed against envelope B (a token authorizing a DIFFERENT
+        // envelope): the binding check rejects it even though the receipt's
+        // quorum is genuinely satisfied.
+        let result = break_glass_receipt_outcome_for_verifier(
+            &kernel.conn,
+            &dev,
+            "vault:B",
+            [4u8; 32],
+            &hash_a,
+            kernel.device_pq_public_key_ref(),
+        );
+        assert!(
+            result.is_err(),
+            "a receipt for envelope A must not authorize unsealing envelope B"
+        );
+
+        // And a token claiming a different ruleset is likewise refused.
+        let ruleset_mismatch = break_glass_receipt_outcome_for_verifier(
+            &kernel.conn,
+            &dev,
+            "vault:A",
+            [7u8; 32],
+            &hash_a,
+            kernel.device_pq_public_key_ref(),
+        );
+        assert!(
+            ruleset_mismatch.is_err(),
+            "a receipt for one ruleset must not authorize a token with another"
+        );
+        Ok(())
+    }
+
+    /// Invariant V (spec/quorum_unseal_v2.md §3.1): replacing a LIVE policy
+    /// through the gated path requires the CURRENT quorum's consent —
+    /// bootstrap is free, mutation is not, consent from the proposed roster
+    /// or from the wrong signature domain never counts, and every accepted
+    /// write chains a device-signed history record.
+    #[test]
+    fn gated_policy_set_bootstrap_then_requires_current_quorum() -> Result<()> {
+        use crate::break_glass::{
+            sign_approval, sign_policy_change_approval, PolicyChangeProposal,
+        };
+
+        let (mut kernel, _cfg) = setup_test_kernel()?;
+        let bucket = TimeBucket::now(600)?;
+        let alice = SigningKey::from_bytes(&[31u8; 32]);
+        let bob = SigningKey::from_bytes(&[32u8; 32]);
+        let policy_a = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        let policy_b = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("bob"),
+                public_key: bob.verifying_key().to_bytes(),
+            }],
+        )?;
+
+        // Bootstrap on an empty database needs no approvals.
+        assert_eq!(
+            kernel.set_break_glass_policy_gated(&policy_a, &[], bucket)?,
+            PolicyChangeOutcome::Bootstrapped
+        );
+        // Idempotent re-set writes nothing.
+        assert_eq!(
+            kernel.set_break_glass_policy_gated(&policy_a, &[], bucket)?,
+            PolicyChangeOutcome::Unchanged
+        );
+        assert_eq!(kernel.policy_change_history()?.len(), 1);
+
+        // Mutation with no approvals is refused and the policy is unchanged.
+        assert!(kernel
+            .set_break_glass_policy_gated(&policy_b, &[], bucket)
+            .is_err());
+        assert_eq!(
+            kernel.break_glass_policy().unwrap().trustees[0].id.0,
+            "alice"
+        );
+
+        let proposal = PolicyChangeProposal {
+            prev_policy_commitment: policy_a.full_commitment(),
+            new_policy: policy_b.clone(),
+            time_bucket: bucket,
+        };
+        let change_hash = proposal.change_hash();
+
+        // Consent from the PROPOSED roster must not count — the quorum being
+        // replaced is the one that must consent.
+        let bob_consent = Approval::new(
+            TrusteeId::new("bob"),
+            change_hash,
+            sign_policy_change_approval(&bob, &change_hash).to_vec(),
+        );
+        assert!(kernel
+            .set_break_glass_policy_gated(&policy_b, std::slice::from_ref(&bob_consent), bucket)
+            .is_err());
+
+        // An unlock-approval-domain signature from a current trustee must not
+        // count as roster consent (disjoint domains).
+        let wrong_domain = Approval::new(
+            TrusteeId::new("alice"),
+            change_hash,
+            sign_approval(&alice, &change_hash).to_vec(),
+        );
+        assert!(kernel
+            .set_break_glass_policy_gated(&policy_b, &[wrong_domain], bucket)
+            .is_err());
+
+        // Genuine current-trustee consent replaces the policy.
+        let alice_consent = Approval::new(
+            TrusteeId::new("alice"),
+            change_hash,
+            sign_policy_change_approval(&alice, &change_hash).to_vec(),
+        );
+        assert_eq!(
+            kernel.set_break_glass_policy_gated(&policy_b, &[alice_consent], bucket)?,
+            PolicyChangeOutcome::Replaced
+        );
+        assert_eq!(kernel.break_glass_policy().unwrap().trustees[0].id.0, "bob");
+
+        // Consent is bucket-bound: an approval minted for one window does not
+        // authorize the same change applied in a different window.
+        let back_proposal = PolicyChangeProposal {
+            prev_policy_commitment: policy_b.full_commitment(),
+            new_policy: policy_a.clone(),
+            time_bucket: bucket,
+        };
+        let back_hash = back_proposal.change_hash();
+        let bob_back = Approval::new(
+            TrusteeId::new("bob"),
+            back_hash,
+            sign_policy_change_approval(&bob, &back_hash).to_vec(),
+        );
+        let later_bucket = TimeBucket {
+            start_epoch_s: bucket.start_epoch_s + 600,
+            size_s: bucket.size_s,
+        };
+        assert!(kernel
+            .set_break_glass_policy_gated(&policy_a, &[bob_back], later_bucket)
+            .is_err());
+
+        // The history ledger chains and every record is device-signed.
+        let history = kernel.policy_change_history()?;
+        assert_eq!(history.len(), 2);
+        assert!(history[0].record.bootstrap);
+        assert!(!history[1].record.bootstrap);
+        let dev = kernel.device_verifying_key();
+        let mut prev = [0u8; 32];
+        for entry in &history {
+            assert_eq!(entry.prev_hash, prev);
+            assert_eq!(
+                hash_entry(&entry.prev_hash, entry.payload_json.as_bytes()),
+                entry.entry_hash
+            );
+            let sig = <[u8; 64]>::try_from(entry.signature.as_slice()).unwrap();
+            crate::crypto::signatures::verify_ed25519_only(
+                DOMAIN_POLICY_CHANGE_RECORD,
+                &dev,
+                &entry.entry_hash,
+                &sig,
+            )?;
+            prev = entry.entry_hash;
+        }
+        Ok(())
+    }
+
+    /// The authenticated policy-change history (`load_authenticated_policy_eras`)
+    /// is the ground truth for a receipt's era. A device-key holder can forge a
+    /// chained, device-signed history row, but cannot manufacture the prior
+    /// era's trustee consent — so a fabricated era without genuine prior-quorum
+    /// approvals makes the whole ledger untrusted. Tampering the recorded
+    /// approvals of a real row is likewise caught by the signed commitment.
+    #[test]
+    fn authenticated_history_rejects_forged_era_and_tampered_approvals() -> Result<()> {
+        use crate::break_glass::{sign_policy_change_approval, PolicyChangeProposal};
+
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let bucket = TimeBucket::now(600)?;
+        let alice = SigningKey::from_bytes(&[41u8; 32]);
+        let policy_a = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy_gated(&policy_a, &[], bucket)?;
+        let dev = kernel.device_verifying_key();
+        let pq = kernel.device_pq_public_key_ref();
+
+        // The genuine bootstrap authenticates.
+        let eras = crate::verify::load_authenticated_policy_eras(&kernel.conn, &dev, pq)?;
+        assert!(eras.iter().any(|p| p.commitment() == policy_a.commitment()));
+
+        // Forge a chained, device-signed row claiming a new attacker-controlled
+        // era, but with NO prior-quorum consent (empty approvals). The device
+        // signature is valid (the forger holds the device key); the missing
+        // consent is what the loader must catch.
+        let attacker = SigningKey::from_bytes(&[99u8; 32]);
+        let attacker_policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("attacker"),
+                public_key: attacker.verifying_key().to_bytes(),
+            }],
+        )?;
+        let proposal = PolicyChangeProposal {
+            prev_policy_commitment: policy_a.full_commitment(),
+            new_policy: attacker_policy.clone(),
+            time_bucket: bucket,
+        };
+        let forged = PolicyChangeRecord {
+            prev_policy: Some(policy_a.clone()),
+            new_policy: attacker_policy.clone(),
+            change_hash: proposal.change_hash(),
+            time_bucket: bucket,
+            bootstrap: false,
+            approvals_commitment: crate::break_glass::approvals_commitment(&[]),
+        };
+        let payload = serde_json::to_string(&forged)?;
+        let signing_key = crate::signing_key_from_seed(&cfg.device_key_seed)?;
+        let prev_hash = kernel.last_policy_change_hash_or_zero()?;
+        let entry_hash = hash_entry(&prev_hash, payload.as_bytes());
+        let sig = crate::crypto::signatures::sign_ed25519_only(
+            DOMAIN_POLICY_CHANGE_RECORD,
+            &signing_key,
+            &entry_hash,
+        );
+        kernel.conn.execute(
+            "INSERT INTO policy_change_history(created_at, payload_json, approvals_json, prev_hash, entry_hash, signature) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![0i64, payload, "[]", prev_hash.to_vec(), entry_hash.to_vec(), sig.to_vec()],
+        )?;
+        assert!(
+            crate::verify::load_authenticated_policy_eras(&kernel.conn, &dev, pq).is_err(),
+            "a device-signed era with no prior-quorum consent must be rejected"
+        );
+
+        // Second scenario: a genuine change, then its recorded approvals are
+        // swapped out — the signed commitment no longer matches.
+        let (mut kernel2, _cfg2) = setup_test_kernel()?;
+        kernel2.set_break_glass_policy_gated(&policy_a, &[], bucket)?;
+        let policy_b = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("bob"),
+                public_key: SigningKey::from_bytes(&[42u8; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            }],
+        )?;
+        let change = PolicyChangeProposal {
+            prev_policy_commitment: policy_a.full_commitment(),
+            new_policy: policy_b.clone(),
+            time_bucket: bucket,
+        };
+        let alice_consent = Approval::new(
+            TrusteeId::new("alice"),
+            change.change_hash(),
+            sign_policy_change_approval(&alice, &change.change_hash()).to_vec(),
+        );
+        kernel2.set_break_glass_policy_gated(&policy_b, &[alice_consent], bucket)?;
+        let dev2 = kernel2.device_verifying_key();
+        // Authentic history authenticates.
+        assert!(crate::verify::load_authenticated_policy_eras(&kernel2.conn, &dev2, None).is_ok());
+        // Swap the change row's approvals to the empty set (valid JSON) — the
+        // approvals no longer match the signed commitment.
+        kernel2.conn.execute(
+            "UPDATE policy_change_history SET approvals_json = '[]' WHERE payload_json LIKE '%\"bootstrap\":false%'",
+            [],
+        )?;
+        assert!(
+            crate::verify::load_authenticated_policy_eras(&kernel2.conn, &dev2, None).is_err(),
+            "swapped approvals must fail the signed-commitment binding"
         );
         Ok(())
     }

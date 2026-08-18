@@ -696,6 +696,23 @@
                 settings let you shorten retention or turn query logging off entirely (blocking
                 still works without it).</p>
               <label class="check"><input type="checkbox" id="hub-provision-pihole" checked> Also install Pi-hole</label>
+              <p class="muted" style="margin-top:12px"><strong>Optional — a screen on the hub itself.</strong>
+                The hub never needs one; headless stays the default. But if you're plugging an HDMI
+                display into the Pi — say a 7&#8243; 1024x600 IPS touchscreen with USB touch — self-setup
+                can also install <strong>HAOSKiosk</strong>, a small open-source app that runs a browser
+                on the hub and shows your dashboard on that screen full-screen, touch and all. No cloud
+                and no new account: the screen shows your own dashboard, and fetches only what that
+                dashboard already fetches on any device that opens it — it's a real browser, so a
+                dashboard that embeds outside content (a weather card, say) loads it here too.</p>
+              <p class="muted"><strong>One thing it can't do for you:</strong> the screen needs a Home
+                Assistant login, and no password is ever typed here or put on the card. Best practice —
+                give the screen its own: in HA, Settings → People → Users → Add User, name it something
+                like &ldquo;screen&rdquo;, leave Administrator off (the app keeps that password in its
+                configuration, and a screen only needs to view dashboards). Then open Settings → Apps →
+                HAOS Kiosk Display → Configuration, enter that login, and press Start; the screen lights
+                up with your dashboard. (Zoom, rotation, and screen-timeout live in the same tab.) No
+                screen attached? The app simply won't start, and nothing else on the hub cares.</p>
+              <label class="check"><input type="checkbox" id="hub-provision-display"> Also install the hub display (for a screen plugged into the Pi)</label>
               <p id="hub-provision-hint" class="muted"></p>
             </details>
           </section>

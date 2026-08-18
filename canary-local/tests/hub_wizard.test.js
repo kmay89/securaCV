@@ -82,3 +82,20 @@ test("the broker-add step names Mosquitto (the one-click add-on)", async () => {
   const broker = wizardSteps(facts).find((s) => s.id === "broker");
   assert.ok(broker && /mosquitto/i.test(JSON.stringify(broker)), "names Mosquitto");
 });
+
+test("the optional hub screen is offered without undoing the headless promise", async () => {
+  const { wizardSteps } = await mod();
+  const steps = wizardSteps(facts);
+  // The install step keeps the truth that started it all: no monitor needed.
+  const install = steps.find((s) => s.id === "install-ha");
+  assert.ok(/never needs a monitor/i.test(install.what),
+    "headless stays the stated default");
+  // And the finish line tells a screen-owner where the dashboard-on-the-hub
+  // option lives (HAOSKiosk / the desktop app's display extra) — a copy sweep
+  // must not silently drop the only mention of it.
+  const done = steps.find((s) => s.done);
+  const blob = JSON.stringify(done);
+  assert.ok(/haos.kiosk/i.test(blob), "names the kiosk app for a hub screen");
+  assert.ok(/headless hubs skip this/i.test(blob),
+    "says plainly that skipping it loses nothing");
+});

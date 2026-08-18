@@ -1500,7 +1500,7 @@ fn seal_latest_frame(
         ruleset_hash,
         frame,
         &verifying_key,
-        |hash| kernel.break_glass_receipt_outcome(hash),
+        |hash| kernel.break_glass_receipt_outcome(&envelope_id, ruleset_hash, hash),
     )?;
     Ok(Some(envelope_id))
 }

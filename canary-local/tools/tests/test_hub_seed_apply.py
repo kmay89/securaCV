@@ -118,11 +118,13 @@ class OptionalFeatures(unittest.TestCase):
         steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
         ids = {s.id for s in steps}
         self.assertNotIn("install-pihole", ids)
+        self.assertNotIn("install-display", ids)
         # And no feature-tagged repository leaks into the core register step:
         # an un-enabled feature must leave ZERO footprint on the hub.
         reg = next(s for s in steps if s.id == "add-repositories")
         for a in reg.actions:
             self.assertNotIn("Poeschl", a.url)
+            self.assertNotIn("HAOS-kiosk", a.url)
 
     def test_with_pihole_appends_the_full_step(self):
         steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole"}))
@@ -141,12 +143,55 @@ class OptionalFeatures(unittest.TestCase):
         self.assertIn("instead of taking our word", narration)
         self.assertTrue(pihole.user_must_finish, "router DNS change is the user's")
 
+    def test_with_display_appends_install_but_never_a_start(self):
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB, frozenset({"display"}))
+        disp = next(s for s in steps if s.id == "install-display")
+        kinds = [a.kind for a in disp.actions]
+        # Its OWN repo registration rides inside the step, then the install —
+        # and NOTHING else. The add-on refuses to run until the operator types
+        # their Home Assistant login into its configuration, so a planned start
+        # here would fail the whole run on a correctly-provisioned hub. The
+        # last move is the user's, and the step must say so.
+        self.assertEqual(kinds, ["register_repo", "install_addon"])
+        slug = next(a for a in disp.actions if a.kind == "install_addon").slug
+        self.assertTrue(slug.endswith("_haoskiosk"), slug)
+        self.assertNotEqual(slug, "haoskiosk", "must be the hashed Supervisor slug")
+        self.assertTrue(disp.user_must_finish, "the HA login is the user's to give")
+        self.assertIn("username and password", disp.user_must_finish)
+        # Least privilege is part of the promise: the narration must steer to
+        # a dedicated, non-admin account — the add-on keeps the password in
+        # its options, and a screen has no business holding admin rights.
+        self.assertIn("Administrator off", disp.user_must_finish)
+        # Headless stays the honest default — the narration must say a hub
+        # never NEEDS a screen, not sell one.
+        self.assertIn("headless is the default", disp.why)
+
+    def test_display_plan_never_carries_a_credential(self):
+        # The kiosk browser signs in as a Home Assistant user. That credential
+        # is the operator's own: the plan may name the field, it may never
+        # carry or mint a value for it. (Same invariant the broker login step
+        # proves for its password — see MqttLogin.)
+        step = next(s for s in REAL_PLAN["steps"] if s["id"] == "install-display")
+        self.assertNotIn("password", json.dumps(step.get("options", {})).lower())
+        self.assertNotIn("options", step, "no options are set — none are safe to guess")
+
+    def test_both_features_together_compose(self):
+        steps = hsa.plan_actions(
+            REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole", "display"})
+        )
+        ids = [s.id for s in steps]
+        self.assertIn("install-pihole", ids)
+        self.assertIn("install-display", ids)
+
     def test_core_plan_is_identical_with_and_without_features(self):
         base = [s.id for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)]
+        feature_steps = {"install-pihole", "install-display"}
         extra = [
             s.id
-            for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole"}))
-            if s.id != "install-pihole"
+            for s in hsa.plan_actions(
+                REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole", "display"})
+            )
+            if s.id not in feature_steps
         ]
         self.assertEqual(base, extra)
 
@@ -169,6 +214,24 @@ class OptionalFeatures(unittest.TestCase):
             rc = hsa.main(["--dry-run"])
         self.assertEqual(rc, 0)
         self.assertIn("--with pihole", buf.getvalue())
+
+    def test_dry_run_without_display_mentions_it_is_available(self):
+        # Nobody can choose a feature they never hear about: a plain dry-run
+        # must name the display option the same way it names Pi-hole.
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = hsa.main(["--dry-run"])
+        self.assertEqual(rc, 0)
+        self.assertIn("--with display", buf.getvalue())
+
+    def test_dry_run_with_display_narrates_it(self):
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = hsa.main(["--dry-run", "--with", "display"])
+        self.assertEqual(rc, 0)
+        self.assertIn("haoskiosk", buf.getvalue().lower())
 
 
 class Idempotency(unittest.TestCase):
