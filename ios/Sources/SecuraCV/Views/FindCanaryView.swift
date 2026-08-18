@@ -87,10 +87,22 @@ struct FindCanaryView: View {
                         .foregroundStyle(reading.trend == .warmer
                                          ? Theme.color(.calm) : Theme.color(.warn))
                 }
-                Text(reading.band.hint)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                if suffixIsAmbiguous {
+                    // No signal is honest here — walking the user toward a
+                    // twin while saying "Right here" would be worse than
+                    // saying nothing. The chirp still tells them apart:
+                    // identify travels over Wi-Fi to THIS device by id.
+                    Text("Two of your Canaries share this one's short beacon id, so the signal can't tell them apart."
+                         + (canIdentify ? " \"Make it chirp\" still reaches exactly this one." : ""))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text(reading.band.hint)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
                 if let neighborHint {
                     Text("You're closer to \(neighborHint) right now.")
                         .font(.footnote)
@@ -138,11 +150,17 @@ struct FindCanaryView: View {
     private func run() async {
         while !Task.isCancelled {
             let before = reading.band
-            if let sighting = strongestMatch() {
-                reading = ranger.ingest(rssiDBM: sighting.rssiDBM, at: Date())
-            } else {
-                reading = ranger.reading(at: Date())
+            // Ingest only ACTUAL adverts, stamped when they were HEARD.
+            // The fleet view keeps a sighting "fresh" for a whole minute
+            // (presence at a glance tolerates that); a finding screen does
+            // not — re-stamping a stale sighting with `Date()` every pass
+            // would hold "Right here" on screen for a minute after the
+            // Canary went quiet, exactly the stale claim the ranger's
+            // six-second rule exists to forbid.
+            if let sighting = strongestMatch(), sighting.lastHeard != ranger.lastHeard {
+                _ = ranger.ingest(rssiDBM: sighting.rssiDBM, at: sighting.lastHeard)
             }
+            reading = ranger.reading(at: Date())
             Feedback.play(finding: ProximityRanger.tick(from: before, to: reading.band))
             neighborHint = ProximityRanger.nearerNeighbor(
                 targetDBM: ranger.smoothedDBM, neighbors: namedNeighbors())
@@ -150,22 +168,44 @@ struct FindCanaryView: View {
         }
     }
 
+    /// The finding screen's recency bar — the ranger's own staleness window,
+    /// not the fleet view's minute-long presence window.
+    private var recencyCutoff: Date {
+        Date().addingTimeInterval(-ProximityRanger.staleAfter)
+    }
+
+    /// Two fleet members sharing the beacon's 2-byte suffix cannot be told
+    /// apart over the air — the same ambiguity rule FleetMerge.attach
+    /// applies when decorating rows. A search that ignored it could walk
+    /// the user to the WRONG Canary while saying "Right here".
+    private var suffixIsAmbiguous: Bool {
+        guard witness.fingerprint.count >= 4 else { return false }
+        let suffix = witness.fingerprint.lowercased().suffix(4)
+        return store.witnesses.filter {
+            $0.fingerprint.count >= 4 && $0.fingerprint.lowercased().hasSuffix(suffix)
+        }.count > 1
+    }
+
     /// The freshest, strongest beacon whose fingerprint suffix matches this
-    /// witness. The suffix narrows rather than proves (two bytes), which is
-    /// exactly right for a finding hint — pairing and the chain remain the
-    /// real identity gates.
+    /// witness — and matches it UNIQUELY. The suffix narrows rather than
+    /// proves (two bytes), which is fine for a finding hint exactly until
+    /// two fleet members share it; then no signal is honest and the screen
+    /// says so instead of guessing (`suffixIsAmbiguous`).
     private func strongestMatch() -> BeaconSighting? {
-        guard !witness.fingerprint.isEmpty else { return nil }
+        guard !witness.fingerprint.isEmpty, !suffixIsAmbiguous else { return nil }
+        let cutoff = recencyCutoff
         return store.ble.freshSightings
-            .filter { $0.beacon.matches(fingerprint: witness.fingerprint) }
+            .filter { $0.lastHeard >= cutoff && $0.beacon.matches(fingerprint: witness.fingerprint) }
             .max { $0.rssiDBM < $1.rssiDBM }
     }
 
-    /// Every OTHER fleet member currently heard, by its real name — the
-    /// input to "you're closer to X".
+    /// Every OTHER fleet member heard within the finding window, by its
+    /// real name — the input to "you're closer to X".
     private func namedNeighbors() -> [(name: String, dbm: Double)] {
-        store.ble.freshSightings.compactMap { sighting in
-            guard let other = store.witnesses.first(where: {
+        let cutoff = recencyCutoff
+        return store.ble.freshSightings.compactMap { sighting in
+            guard sighting.lastHeard >= cutoff,
+                  let other = store.witnesses.first(where: {
                 !$0.fingerprint.isEmpty && $0.id != witness.id
                     && sighting.beacon.matches(fingerprint: $0.fingerprint)
             }) else { return nil }
