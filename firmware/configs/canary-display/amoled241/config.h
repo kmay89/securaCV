@@ -99,7 +99,13 @@
 // a dedicated SDMMC 1-bit slot with DAT3 on a native GPIO — the cleanest slot
 // in the display line, so the time machine's deep tier ships ON by default.
 // Absence stays honest: no card = one calm log line, archive on next insert.
+// #ifndef-guarded because the env ALSO passes -DFEATURE_SD_STORAGE=1, and it
+// must: the core-2 base's deep+ LDF evaluates conditionals with command-line
+// defines only, so a flag living solely in this header leaves SD_MMC.h
+// unresolvable at link time (the dash-sd env documents the same mechanism).
+#ifndef FEATURE_SD_STORAGE
 #define FEATURE_SD_STORAGE          1
+#endif
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0
