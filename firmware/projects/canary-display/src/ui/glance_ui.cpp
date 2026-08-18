@@ -591,8 +591,10 @@ void update_events(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     // "restricted zon" even on rows with room for the whole phrase.
     lv_label_set_text(s_ev_name[i], human);
     lv_obj_set_style_text_color(s_ev_meta[i], mcol, 0);
+    // The check, not the word: a signed event wears the trust mark
+    // (badge_text's Signed rule — the word "verified" stays earned).
     lv_label_set_text_fmt(s_ev_meta[i], "%s • %.14s%s", age, e->device,
-                          e->signed_flag ? " • signed" : "");
+                          e->signed_flag ? "  " LV_SYMBOL_OK : "");
   }
 }
 
