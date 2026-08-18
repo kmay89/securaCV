@@ -233,7 +233,16 @@ bool forget_wifi_credentials() {
   }
   prefs.remove("wifi_ssid");
   prefs.remove("wifi_pass");
+  // Trust the readback, not the calls: remove() also returns false for a
+  // key that never existed, and a remove that silently failed is exactly
+  // the case where rebooting into "setup will open" would be a lie — the
+  // old SSID would load right back (review catch).
+  const bool gone = !prefs.isKey("wifi_ssid") && !prefs.isKey("wifi_pass");
   prefs.end();
+  if (!gone) {
+    log_line("CFG", "NVS would not release the credentials - still joined.");
+    return false;
+  }
   // Patch the cache too, so anything that reads before the reboot sees the
   // truth (and the emulator, whose restart returns, lands in the wizard).
   get();

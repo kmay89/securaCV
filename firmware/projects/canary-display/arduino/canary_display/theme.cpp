@@ -89,12 +89,15 @@ lv_color_t badge_color(Badge b, bool night) {
 const char* badge_text(Badge b) {
   switch (b) {
     case Badge::Verified: return LV_SYMBOL_OK " verified";
-    // The bare check: the trust mark without the earned word. Signed means
-    // a signature is present; verified means it checked out against the
-    // pinned key — so verified is glyph + word and signed is the glyph
-    // alone. The distinction rides the wording, never color alone
-    // (WCAG 1.4.1), and the mark still reads as trust at a glance.
-    case Badge::Signed:   return LV_SYMBOL_OK;
+    // The pencil, not the check: Signed means a signature is PRESENT
+    // (evaluate_chain returns it when no pin exists yet, or before the
+    // check runs) — rendering it with the same glyph the verified state
+    // earns would dress an unchecked claim as a positive verification
+    // (AGENTS.md rule 4: "verified" means an Ed25519 signature checked
+    // against a pinned key, nothing looser — review catch). The pencil IS
+    // the signature mark: an icon, honestly scoped, that cannot be
+    // mistaken for the earned check.
+    case Badge::Signed:   return LV_SYMBOL_EDIT;
     // "proof failed" over bare "failed": the signature check failed, not
     // the device — the words should say which. "no proof" over
     // "unsigned": plain words for a device that simply doesn't sign.
