@@ -459,6 +459,27 @@ impl TimeBucket {
     }
 }
 
+/// Civil (proleptic Gregorian) date-time for an epoch-seconds instant, in UTC:
+/// `(year, month, day, hour, minute, second)`. Howard Hinnant's civil-from-days
+/// algorithm, shared so every CLI renders times identically instead of carrying
+/// its own copy of the calendar math. Display only — never part of any hashed
+/// or signed material.
+pub fn epoch_civil_utc(epoch_s: u64) -> (i64, i64, i64, u64, u64, u64) {
+    let days = (epoch_s / 86_400) as i64;
+    let secs = epoch_s % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d, secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
 // -------------------- Event Types --------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]

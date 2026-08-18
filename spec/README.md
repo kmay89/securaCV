@@ -28,7 +28,7 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`break_glass.md`](break_glass.md) | — | Normative | 🟢 Stable — implemented by the `break_glass` CLI + kernel |
 | [`threat_model.md`](threat_model.md) | Draft v0.1 | Informative but binding | 🟢 Stable — the security/privacy boundary |
 | [`co_signing.md`](co_signing.md) | Draft v0.1 | Design note | ⚪ Design note — not yet a normative wire contract |
-| [`quorum_unseal_v2.md`](quorum_unseal_v2.md) | Draft v0.1 | Design specification | ⚪ Spec-only — the quorum/unseal v2 target design (threshold custody, ceremony, anchoring spine, disclosure surface); §3.1 quorum-gated policy mutation and §3.2 WYSIWYS approval are implemented, the rest is direction |
+| [`quorum_unseal_v2.md`](quorum_unseal_v2.md) | Draft v0.1 | Design specification | ⚪ Spec-only — the quorum/unseal v2 target design (threshold custody, ceremony, anchoring spine, disclosure surface); §3.1 quorum-gated policy mutation, §3.2 WYSIWYS approval, and §5 `court export` (event bundles) are implemented, the rest is direction |
 | [`witness_mesh_os_v0.md`](witness_mesh_os_v0.md) | Draft v0.1 | Positioning + pointers | ⚪ Positioning — capability map, defers to the normative specs |
 | [`beacon_channel_v0.md`](beacon_channel_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF beacon channel (firmware scaffolding; see flag report F-07) |
 | [`chirp_channel_v0.md`](chirp_channel_v0.md) | Draft v0.2 | Normative (intended) | 🟡 Draft — acoustic chirp channel (see F-07) |
