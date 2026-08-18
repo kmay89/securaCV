@@ -1316,12 +1316,33 @@ test("the catalog hatch moment renders on both flashers, behind the same receipt
     "browser lost core.hatchMoment — the catalog hatch can never render");
   // …and both surfaces actually render it: the done card for receipt-less
   // products, the monitor's identity card for receipt-gated ones.
-  assert.match(browser, /function hatchMomentCard/,
-    "browser flasher lost the hatch-steps card");
+  const hatchCard = read(join(CANARY, "assets/hatch-card.js"));
+  assert.match(hatchCard, /export function hatchMomentCard/,
+    "browser flasher lost the shared hatch-steps card (assets/hatch-card.js)");
+  assert.match(browser, /hatchMomentCard/,
+    "flash.js no longer mounts the hatch-steps card");
   assert.match(browser, /!core\.requiresLiveReceipt\(product\)/,
     "the browser done card no longer shows hatch steps for serial_receipt:false products");
   assert.match(browser, /core\.requiresLiveReceipt\(opts\.hatchProduct\)/,
     "the browser monitor no longer shows hatch steps when the boot receipt lands");
+
+  // The Vision routing — the gap Codex flagged on #1569. A Vision's
+  // serial_receipt is true but its prove path is the camera bench, never the
+  // monitor, so the receipt-gated monitor card above can NEVER fire for it;
+  // without an explicit route, Vision owners are the only users who never
+  // see their first flight. The browser's "after both receipts" moment is
+  // the two-port pair completing, and a session can finish the pair on
+  // either screen — so BOTH must mount the hatch when both ports are in:
+  // flash.js's done card (module-first sessions) and we2-flash.js's
+  // module-done screen (ESP32-first sessions, the routed path).
+  const we2FlashJs = read(join(CANARY, "assets/we2-flash.js"));
+  assert.match(browser, /parts\.esp32 && parts\.we2[\s\S]{0,120}hatchMomentCard/,
+    "flash.js's done card no longer hatches a completed Vision pair (module-first sessions)");
+  assert.match(we2FlashJs, /parts\.esp32 && parts\.we2[\s\S]{0,400}hatchMomentCard/,
+    "we2-flash.js's module-done screen no longer hatches a completed Vision pair");
+  assert.match(we2FlashJs, /isVisionBoard\(p\)/,
+    "we2-flash.js must pick a catalog vision product for the hatch copy — " +
+    "the vision products share one hatch moment (pinned in flash.test.js)");
 });
 
 // ── broker credentials must reach every firmware that reads them ─────────────

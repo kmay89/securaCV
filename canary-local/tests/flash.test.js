@@ -1426,6 +1426,26 @@ test("hatchMoment: every catalog product yields its own first flight; junk falls
   assert.strictEqual(hatchMoment({ hatch: { title: "t", steps: ["s"] } }), null);
 });
 
+test("hatchMoment: the vision products share ONE moment, so the module flow can render it blind", async () => {
+  // A Vision pair can complete on the camera module's done screen
+  // (we2-flash.js), which knows the pair is done but not WHICH ESP32 vision
+  // board it was — it renders the hatch from any catalog vision product.
+  // That's only honest while every vision product carries the same hatch
+  // copy (gen_flash.py keys HATCH_MOMENTS by kind, not by board). If a
+  // vision board ever grows its own hatch, teach the module flow which
+  // board's copy to use before loosening this.
+  const { hatchMoment, isVisionBoard } = await core();
+  const visions = catalog.products.filter((p) => isVisionBoard(p));
+  assert.ok(visions.length >= 2, "expected the vision line in the catalog");
+  const ref = JSON.stringify(hatchMoment(visions[0]));
+  assert.notStrictEqual(ref, "null", `${visions[0].id}: vision hatch data missing`);
+  for (const p of visions) {
+    assert.strictEqual(JSON.stringify(hatchMoment(p)), ref,
+      `${p.id}: vision hatch copy diverged across boards — we2-flash.js renders ` +
+      "the pair-complete hatch from any one vision product");
+  }
+});
+
 test("healthVerdict: maps the self-test score to a plain verdict, never a false pass", async () => {
   const { healthVerdict } = await core();
   assert.strictEqual(healthVerdict(98).level, "ok");

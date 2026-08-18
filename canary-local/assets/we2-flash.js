@@ -23,10 +23,11 @@
 
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
-import { helpTopic } from "./flash-core.js";
+import { helpTopic, hatchMoment, isVisionBoard } from "./flash-core.js";
 import { chirp } from "./chirp.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
+import { hatchMomentCard } from "./hatch-card.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -719,7 +720,8 @@ function phaseModuleDone(ctx, s, job) {
   // Two-port guardrail: this camera module is done — show whether the ESP32
   // Vision firmware is too, and celebrate only when both ports are in. If the
   // board's firmware still needs doing, route straight to it (closes this port).
-  box.append(visionChecklistCard(visionSession.parts(), {
+  const parts = visionSession.parts();
+  box.append(visionChecklistCard(parts, {
     onFlashOther: async () => {
       try { await at.cmd("BREAK", { timeoutMs: 600 }); } catch { /* leaving anyway */ }
       try { at.stop(); } catch { /* leaving anyway */ }
@@ -727,6 +729,19 @@ function phaseModuleDone(ctx, s, job) {
       ctx.back();
     },
   }));
+  // Both ports in — the pair completed HERE, where an ESP32-first session
+  // lands last. This is the browser's "after both receipts" moment (a
+  // Vision's prove path is this bench, never the monitor, so the
+  // receipt-gated monitor card can't fire for it): the catalog's Vision
+  // hatch — its "first flight" — belongs right under the completed
+  // checklist, the same moment the desktop pops its hatch card. The vision
+  // products share ONE catalog hatch (flash.test.js pins that), so any of
+  // them can speak for the pair without knowing which ESP32 board it was.
+  if (parts.esp32 && parts.we2) {
+    const vision = (ctx.catalog.products || []).find((p) => isVisionBoard(p));
+    const moment = vision && hatchMoment(vision);
+    if (moment) box.append(hatchMomentCard(moment));
+  }
 
   (async () => {
     // give the app firmware a beat to come up, then handshake — with the

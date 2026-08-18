@@ -26,6 +26,7 @@ import { phaseModule } from "./we2-flash.js";
 import { wifiMemory } from "./wifi-memory.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
+import { hatchMomentCard } from "./hatch-card.js";
 import { mintCertificate } from "./hatchery.js";
 import { chirp, chirpToggle } from "./chirp.js";
 import { mountBoardIdentity } from "./board-identity.js";
@@ -4130,23 +4131,9 @@ async function renderHatchCert(slot, opts) {
   } catch { /* the certificate is a delight, never a requirement */ }
 }
 
-// The catalog's post-flash "first flight" — kicker + title + body + ordered
-// steps, the same structure (and the same catalog copy) the desktop Flasher's
-// #hatch-card renders (desktop/src/index.html, app.js showHatchCard), so the
-// two frontends tell the same story. WHEN it appears follows the desktop's
-// receipt gate too: serial_receipt: false products get it right on the done
-// card; products whose firmware answers `j` earn it when that live receipt
-// lands in the monitor (see maybeIdentity).
-function hatchMomentCard(moment) {
-  const card = el("div", "flash-nextstep flash-hatch-moment");
-  card.append(el("div", "flash-nextstep-kicker", moment.kicker));
-  card.append(el("div", "flash-nextstep-title", moment.title));
-  card.append(el("p", "flash-nextstep-body", moment.body));
-  const ol = el("ol", "flash-steps");
-  moment.steps.forEach((s) => ol.append(el("li", null, s)));
-  card.append(ol);
-  return card;
-}
+// The catalog's post-flash "first flight" card lives in hatch-card.js (shared
+// with the module flow, which mounts it when a Vision pair completes there);
+// its copy comes from core.hatchMoment. See that module for the receipt rules.
 
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
@@ -4262,7 +4249,8 @@ function phaseDone(opts) {
     // until the camera module has its model too — so here the two-port checklist
     // IS the next step: it shows what's done, what's left, and routes to the
     // other port. (visionSession was marked at the completion transition above.)
-    box.append(visionChecklistCard(visionSession.parts(), {
+    const parts = visionSession.parts();
+    box.append(visionChecklistCard(parts, {
       onFlashOther: async () => {
         // Release the ESP32 port first — the module flow opens its own transport,
         // and leaving state.session open would lock the host port until reload.
@@ -4274,6 +4262,14 @@ function phaseDone(opts) {
         }));
       },
     }));
+    // Both ports in (this session did the camera module first) — the pair is
+    // complete, which is the browser's "after both receipts" moment: a
+    // Vision's serial_receipt is true but its prove path is the camera bench,
+    // never the monitor, so the receipt-gated monitor card can't fire for it.
+    // The catalog's Vision hatch lands here instead, right under the
+    // completed checklist — the same moment the desktop pops its hatch card.
+    const moment = !opts.isLocal && parts.esp32 && parts.we2 && core.hatchMoment(product);
+    if (moment) box.append(hatchMomentCard(moment));
   } else if (product && !opts.isBackup) {
     // The catalog's hatch moment — the same "first flight" card the desktop
     // Flasher shows, honoring the same receipt rule (app.js maybeHatch): a
