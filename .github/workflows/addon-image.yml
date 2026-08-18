@@ -83,11 +83,11 @@ jobs:
 
       - name: Set up QEMU
         if: steps.gate.outputs.run == 'true' && matrix.arch != 'amd64'
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.run == 'true'
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       # Authenticate to GHCR before building. This is required even on PRs (which
       # don't push): anonymous pulls of the public home-assistant base image hit a
@@ -95,7 +95,7 @@ jobs:
       # result is still gated separately by build-push-action's `push:` below.
       - name: Log in to GHCR
         if: steps.gate.outputs.run == 'true'
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -103,7 +103,7 @@ jobs:
 
       - name: Build add-on image${{ github.event_name != 'pull_request' && ' (and push)' || ' (validate only)' }}
         if: steps.gate.outputs.run == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: privacy_witness_kernel/Dockerfile
