@@ -2327,12 +2327,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         let change_hash = proposal.change_hash();
 
         if let Some(cur) = &current {
-            let valid =
-                crate::break_glass::count_valid_distinct_policy_change_approvals(
-                    cur,
-                    &change_hash,
-                    approvals,
-                );
+            let valid = crate::break_glass::count_valid_distinct_policy_change_approvals(
+                cur,
+                &change_hash,
+                approvals,
+            );
             if valid < cur.n as usize {
                 return Err(anyhow!(
                     "policy change denied: {} of {} required approvals from the CURRENT quorum \
@@ -2384,9 +2383,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     fn last_policy_change_hash_or_zero(&self) -> Result<[u8; 32]> {
-        let mut stmt = self.conn.prepare(
-            "SELECT entry_hash FROM policy_change_history ORDER BY id DESC LIMIT 1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT entry_hash FROM policy_change_history ORDER BY id DESC LIMIT 1")?;
         let mut rows = stmt.query([])?;
         if let Some(row) = rows.next()? {
             let entry_bytes: Vec<u8> = row.get(0)?;
@@ -5357,7 +5356,9 @@ mod tests {
     /// write chains a device-signed history record.
     #[test]
     fn gated_policy_set_bootstrap_then_requires_current_quorum() -> Result<()> {
-        use crate::break_glass::{sign_approval, sign_policy_change_approval, PolicyChangeProposal};
+        use crate::break_glass::{
+            sign_approval, sign_policy_change_approval, PolicyChangeProposal,
+        };
 
         let (mut kernel, _cfg) = setup_test_kernel()?;
         let bucket = TimeBucket::now(600)?;
@@ -5394,7 +5395,10 @@ mod tests {
         assert!(kernel
             .set_break_glass_policy_gated(&policy_b, &[], bucket)
             .is_err());
-        assert_eq!(kernel.break_glass_policy().unwrap().trustees[0].id.0, "alice");
+        assert_eq!(
+            kernel.break_glass_policy().unwrap().trustees[0].id.0,
+            "alice"
+        );
 
         let proposal = PolicyChangeProposal {
             prev_policy_commitment: policy_a.full_commitment(),

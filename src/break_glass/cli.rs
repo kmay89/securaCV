@@ -906,7 +906,11 @@ fn print_policy_roster(label: &str, policy: &crate::break_glass::QuorumPolicy) {
         label, policy.n, policy.m, policy.vault.crypto_mode
     );
     for trustee in &policy.trustees {
-        println!("  trustee {} {}", trustee.id.0, hex_vec(&trustee.public_key));
+        println!(
+            "  trustee {} {}",
+            trustee.id.0,
+            hex_vec(&trustee.public_key)
+        );
     }
 }
 
@@ -987,7 +991,10 @@ fn cmd_policy_propose(
         time_bucket: bucket,
         change_hash: hex32(&change_hash),
     };
-    std::fs::write(output, format!("{}\n", serde_json::to_string_pretty(&file)?))?;
+    std::fs::write(
+        output,
+        format!("{}\n", serde_json::to_string_pretty(&file)?),
+    )?;
 
     println!("=== Policy change proposal ===");
     print_policy_roster("Current", &current);
@@ -1004,9 +1011,7 @@ fn cmd_policy_propose(
         "  break_glass policy approve --proposal {} --trustee <name> --signing-key <hex-key-file> --output <name>.policy-approval",
         output
     );
-    println!(
-        "Then apply within the window: break_glass policy set … --approvals <files>"
-    );
+    println!("Then apply within the window: break_glass policy set … --approvals <files>");
     Ok(())
 }
 
@@ -1093,10 +1098,7 @@ fn cmd_policy_change_approve(
         );
     }
     println!("Valid window: {}", bucket_window(&file.time_bucket));
-    println!(
-        "Change hash:  {} (recomputed locally)",
-        hex32(&recomputed)
-    );
+    println!("Change hash:  {} (recomputed locally)", hex32(&recomputed));
     println!(
         "Verify the CURRENT-policy fingerprint out of band with the operator: {}",
         hex32(&prev_policy.full_commitment())
@@ -1155,7 +1157,11 @@ fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) ->
         if !sig_ok {
             issues.push("device signature invalid".to_string());
         }
-        let status = if issues.is_empty() { "VALID" } else { "INVALID" };
+        let status = if issues.is_empty() {
+            "VALID"
+        } else {
+            "INVALID"
+        };
         if !issues.is_empty() {
             invalid += 1;
         }
@@ -1576,7 +1582,16 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
         ruleset_hash,
         &mut raw,
         &device_vk,
-        |hash| break_glass_receipt_outcome_for_verifier(&conn, &device_vk, envelope, ruleset_hash, hash, pq_pk.as_ref()),
+        |hash| {
+            break_glass_receipt_outcome_for_verifier(
+                &conn,
+                &device_vk,
+                envelope,
+                ruleset_hash,
+                hash,
+                pq_pk.as_ref(),
+            )
+        },
     )?;
     println!("  {} sealed a throwaway envelope", DR_OK);
 
@@ -1587,7 +1602,16 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
         &mut unseal_token,
         ruleset_hash,
         &device_vk,
-        |hash| break_glass_receipt_outcome_for_verifier(&conn, &device_vk, envelope, ruleset_hash, hash, pq_pk.as_ref()),
+        |hash| {
+            break_glass_receipt_outcome_for_verifier(
+                &conn,
+                &device_vk,
+                envelope,
+                ruleset_hash,
+                hash,
+                pq_pk.as_ref(),
+            )
+        },
     )?;
     println!("  {} unsealed it with a fresh quorum token", DR_OK);
 
@@ -1697,7 +1721,10 @@ fn write_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
 /// IS a secret, unlike the draft. Matches the format `approve --signing-key`
 /// reads.
 fn write_signing_key_file(path: &str, signing_key: &SigningKey) -> Result<()> {
-    write_secret_file(path, format!("{}\n", hex_vec(&signing_key.to_bytes())).as_bytes())
+    write_secret_file(
+        path,
+        format!("{}\n", hex_vec(&signing_key.to_bytes())).as_bytes(),
+    )
 }
 
 fn print_setup_next_steps(draft: &SetupDraft) {
@@ -2158,7 +2185,14 @@ fn cmd_unseal(
     // validity bucket. Record the nonce before any cleartext exists.
     crate::consume_break_glass_token_durably(&conn, &token)?;
     let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
-        break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, envelope, ruleset_hash, hash, pq_pk.as_ref())
+        break_glass_receipt_outcome_for_verifier(
+            &conn,
+            &verifying_key,
+            envelope,
+            ruleset_hash,
+            hash,
+            pq_pk.as_ref(),
+        )
     })?;
 
     let sanitized = crate::vault::sanitize_envelope_id(envelope)?;
@@ -2698,11 +2732,7 @@ mod tests {
             TEST_SEED,
             None,
         )?;
-        assert_eq!(
-            policy_of(&db),
-            None,
-            "one trustee is below the target of 3"
-        );
+        assert_eq!(policy_of(&db), None, "one trustee is below the target of 3");
 
         cmd_trustee_enroll(
             "bob",
@@ -2877,7 +2907,12 @@ mod tests {
         let key_path = temp.join("alice.key").to_string_lossy().to_string();
         let out_path = temp.join("alice.approval").to_string_lossy().to_string();
 
-        cmd_request("vault:wysiwys", "incident response", "ruleset:test", Some(&req_path))?;
+        cmd_request(
+            "vault:wysiwys",
+            "incident response",
+            "ruleset:test",
+            Some(&req_path),
+        )?;
 
         let alice = SigningKey::from_bytes(&[41u8; 32]);
         std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
@@ -2886,8 +2921,7 @@ mod tests {
         // signs that — producing a valid, domain-separated approval.
         cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path)?;
         let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&out_path)?)?;
-        let file: UnlockRequestFile =
-            serde_json::from_str(&std::fs::read_to_string(&req_path)?)?;
+        let file: UnlockRequestFile = serde_json::from_str(&std::fs::read_to_string(&req_path)?)?;
         let expected = parse_hex32(&file.request_hash)?;
         assert_eq!(approval.request_hash, expected);
         assert!(crate::verify_approval(
@@ -2906,7 +2940,12 @@ mod tests {
         let key_path = temp.join("alice.key").to_string_lossy().to_string();
         let out_path = temp.join("alice.approval").to_string_lossy().to_string();
 
-        cmd_request("vault:tamper", "routine export", "ruleset:test", Some(&req_path))?;
+        cmd_request(
+            "vault:tamper",
+            "routine export",
+            "ruleset:test",
+            Some(&req_path),
+        )?;
         let alice = SigningKey::from_bytes(&[42u8; 32]);
         std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
 
@@ -2973,7 +3012,10 @@ mod tests {
         // ceremony follows).
         let bob_entry = trustee_entry("bob", 8);
         let alice_key_path = temp.join("alice.key").to_string_lossy().to_string();
-        std::fs::write(&alice_key_path, format!("{}\n", hex_vec(&alice_key.to_bytes())))?;
+        std::fs::write(
+            &alice_key_path,
+            format!("{}\n", hex_vec(&alice_key.to_bytes())),
+        )?;
         let mut applied = false;
         for attempt in 0..2 {
             let proposal_path = temp
@@ -3060,7 +3102,10 @@ mod tests {
         let alice_key = SigningKey::from_bytes(&[7u8; 32]);
         let key_path = temp.join("alice.key").to_string_lossy().to_string();
         std::fs::write(&key_path, format!("{}\n", hex_vec(&alice_key.to_bytes())))?;
-        let out_path = temp.join("alice.policy-approval").to_string_lossy().to_string();
+        let out_path = temp
+            .join("alice.policy-approval")
+            .to_string_lossy()
+            .to_string();
         let result = cmd_policy_change_approve(&proposal_path, "alice", &key_path, &out_path);
         assert!(
             result.is_err(),

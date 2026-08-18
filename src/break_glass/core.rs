@@ -324,10 +324,7 @@ impl PolicyChangeProposal {
 
 /// Sign a trustee's consent to a policy change, domain-separated to
 /// `DOMAIN_POLICY_CHANGE_APPROVAL`.
-pub fn sign_policy_change_approval(
-    signing_key: &SigningKey,
-    change_hash: &[u8; 32],
-) -> [u8; 64] {
+pub fn sign_policy_change_approval(signing_key: &SigningKey, change_hash: &[u8; 32]) -> [u8; 64] {
     sign_ed25519_only(DOMAIN_POLICY_CHANGE_APPROVAL, signing_key, change_hash)
 }
 

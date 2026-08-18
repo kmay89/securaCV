@@ -234,7 +234,10 @@ pub fn load_policies_ever_in_force(conn: &Connection) -> Result<Vec<QuorumPolicy
     while let Some(row) = rows.next()? {
         let payload: String = row.get(0)?;
         let record: crate::PolicyChangeRecord = serde_json::from_str(&payload)?;
-        for policy in [record.prev_policy, Some(record.new_policy)].into_iter().flatten() {
+        for policy in [record.prev_policy, Some(record.new_policy)]
+            .into_iter()
+            .flatten()
+        {
             if policy.validate().is_ok() && seen.insert(policy.commitment()) {
                 out.push(policy);
             }
@@ -1263,12 +1266,9 @@ mod tests {
         assert!(verify_receipt_quorum(&new_policy, &history, &forged_old, &[]).is_err());
 
         // Under its OWN (old) policy it still fully re-derives and passes.
-        assert!(verify_receipt_quorum(
-            &old_policy,
-            &[],
-            &receipt,
-            std::slice::from_ref(&approval)
-        )
-        .is_ok());
+        assert!(
+            verify_receipt_quorum(&old_policy, &[], &receipt, std::slice::from_ref(&approval))
+                .is_ok()
+        );
     }
 }
