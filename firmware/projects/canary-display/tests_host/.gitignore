@@ -15,6 +15,7 @@ test_mode_registry
 test_nightlight
 test_orientation
 test_round_frame_core
+test_round_frame_cpp11
 test_rtc_pcf
 test_rtc_pcf85063
 test_voice_clearance
