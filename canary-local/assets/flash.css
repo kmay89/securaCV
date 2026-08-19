@@ -271,6 +271,9 @@ button.flash-map-key:hover { color: var(--text); }
 }
 .flash-nextstep-title { font-weight: 640; color: var(--canary); }
 .flash-nextstep-body { margin: 5px 0 0; color: #d8d8d8; font-size: 14px; line-height: 1.5; }
+/* The catalog hatch moment reuses the next-step card; the kicker is the same
+   small-caps line the birth certificate (and the desktop's hatch card) opens with. */
+.flash-nextstep-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--canary); margin-bottom: 2px; }
 @keyframes flash-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
 /* ── two-port Vision: the "did you do BOTH ports?" completion checklist ───── */

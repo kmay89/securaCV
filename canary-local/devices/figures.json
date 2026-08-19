@@ -973,14 +973,14 @@
    "dims_source": "sketch",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 52,
-    "d": 21.8,
-    "h": 52
+    "w": 49,
+    "d": 23.2,
+    "h": 49
    },
    "traced_to": [],
    "drift_guard": null,
    "solids": 3,
-   "rev": "64d11931",
+   "rev": "17e158d1",
    "svg": "canary-local/figures/device.canary-display-watch.svg",
    "glyph": "canary-local/figures/device.canary-display-watch.glyph.svg"
   },

@@ -1082,7 +1082,7 @@
       "mpn": "104030087",
       "mfr": "Seeed Studio",
       "usd": 18.0,
-      "notes": "ORDERED 2026-07 (bench validation unit). Seeed list $18.00 (street $24-26). 104030087 is the distributor-orderable SKU (DigiKey/Newark/TME; DigiKey hosts the datasheet under it) - 104040143 is a retail-channel alias for the same product that does not resolve at distributors. Firmware: canary-display-watch. Backlight on D6/GPIO43 is PWM-dimmable = bedside night floor. VERIFY pin map against board revision (docs/../boards/xiao-esp32s3-round)",
+      "notes": "ARRIVED 2026-08 (bench validation unit in hand; Track W runnable). Seeed list $18.00 (street $24-26). 104030087 is the distributor-orderable SKU (DigiKey/Newark/TME; DigiKey hosts the datasheet under it) - 104040143 is a retail-channel alias for the same product that does not resolve at distributors. Firmware: canary-display-watch. Backlight on D6/GPIO43 is PWM-dimmable = bedside night floor. VERIFY pin map against board revision (docs/../boards/xiao-esp32s3-round)",
       "orderable": true,
       "live": {
        "unit_usd": 18.0,

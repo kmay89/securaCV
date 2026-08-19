@@ -232,8 +232,34 @@ include/canary/
   net/                wifi_mgr / mqtt_mgr / ota_mgr (canary-vision parity)
   hal/display.h       panel+touch HAL (UI never sees panel specifics)
   ui/                 theme (timeline-card palette) + glance/dash faces
+  ui/round_frame_core.h  the circle's geometry engine (pure, host-tested)
 src/                  implementations; hal+ui TUs are flavor-gated
 ```
+
+## Round glass: the frame is an engine, not a habit
+
+The watch renders on a 240 px disc, and for its first year every surface
+respected the circle by hand — centered labels, "packs tighter" comments,
+an inscribed-square derivation living in a comment. The **Round Frame**
+engine replaces that discipline with one owner:
+
+- [`include/canary/ui/round_frame_core.h`](include/canary/ui/round_frame_core.h)
+  is the pure integer geometry — chord at latitude, equator-centered row
+  stacks, the inscribed QR square, polar placement — host-tested by
+  [`tests_host/test_round_frame_core.cpp`](tests_host/test_round_frame_core.cpp)
+  with the exact values the glass computes.
+- [`include/canary/ui/round_frame.h`](include/canary/ui/round_frame.h) is
+  the LVGL fit layer: a label near the rim gets the width its latitude
+  honestly offers and **ellipsizes** instead of spilling past the glass.
+  On rectangular glass (the nightstand renders the shared modal surfaces
+  through the watch branch) the same calls degrade to panel width, so
+  shared code fits unconditionally.
+
+House rule that falls out of it: **never hand a face a new magic number
+for the circle.** If a layout needs to know how wide, how many rows, or
+where on the disc, the answer comes from the engine — and if the engine
+can't answer it, extend the engine (with its host test) rather than
+deriving the number inline.
 
 ## Text on the glass: the font has a fixed alphabet
 

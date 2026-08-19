@@ -1267,6 +1267,33 @@
 
 ## Display: what the glass actually shows
 
+### The emulator's square canvas hides round-glass clipping — geometry must be an engine
+- **What happened:** The watch face laid out on the full 240x240 canvas with
+  hand-tuned offsets, and everything looked right in the emulator and in
+  screenshots. On the physical round display the corners of that canvas do
+  not exist: list rows near the top and bottom ran past the circle's chord
+  and the glass cut them mid-character, and a settings back-line at y=16
+  (where the chord is 98 px) lost a third of its text. A separate print-time
+  cap (`%.24s`) then mangled "restricted zone" to "restricted zon" even on
+  rows with room for the whole phrase.
+- **Root cause:** no single owner for the circle. Each face respected the
+  disc by local discipline — centered labels, "packs tighter" comments, an
+  inscribed-square derivation in a comment — and every reviewer surface
+  (emulator canvas, screenshots, square dev panels) renders the corners the
+  product doesn't have, so nothing ever showed the loss.
+- **Fix:** the Round Frame engine (`include/canary/ui/round_frame_core.h`,
+  pure host-tested integer geometry; `round_frame.h/.cpp` the LVGL fit
+  layer). A label near the rim gets the width its latitude honestly offers
+  and ellipsizes instead of spilling; list pages ride equator-centered row
+  stacks; QR budgets static_assert against the engine's inscribed square.
+  Print-time caps were loosened to buffer bounds — visual truncation is the
+  engine's job, and its ellipsis is honest.
+- **Regression check:** `tests_host/test_round_frame_core.cpp` pins the
+  exact chord/stack/square values the glass computes. The rule going
+  forward: never hand a face a new magic number for the circle — extend the
+  engine and its test instead.
+- **Date learned:** 2026-08
+
 ### Re-addressing a panel is not repainting it — a rotation leaves the old frame behind
 
 - **What happened:** A Nightlight on a bedside table showed thin yellow

@@ -902,6 +902,10 @@
        "on": true,
        "note": "tap-for-proof QR (trailblazer spec 1)"
       },
+      "FEATURE_QR_COMMISSION": {
+       "on": true,
+       "note": "\"add a canary\" SCV1 QR minting"
+      },
       "FEATURE_ACK_SYNC": {
        "on": true,
        "note": "household ack-sync    (spec 2)"
@@ -1076,6 +1080,10 @@
       "FEATURE_PROOF_QR": {
        "on": true,
        "note": "tap-for-proof QR (trailblazer spec 1)"
+      },
+      "FEATURE_QR_COMMISSION": {
+       "on": true,
+       "note": "\"add a canary\" SCV1 QR minting"
       },
       "FEATURE_ACK_SYNC": {
        "on": true,

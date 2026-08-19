@@ -26,6 +26,7 @@ import { phaseModule } from "./we2-flash.js";
 import { wifiMemory } from "./wifi-memory.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
+import { hatchMomentCard } from "./hatch-card.js";
 import { mintCertificate } from "./hatchery.js";
 import { chirp, chirpToggle } from "./chirp.js";
 import { mountBoardIdentity } from "./board-identity.js";
@@ -4130,6 +4131,10 @@ async function renderHatchCert(slot, opts) {
   } catch { /* the certificate is a delight, never a requirement */ }
 }
 
+// The catalog's post-flash "first flight" card lives in hatch-card.js (shared
+// with the module flow, which mounts it when a Vision pair completes there);
+// its copy comes from core.hatchMoment. See that module for the receipt rules.
+
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
@@ -4244,7 +4249,8 @@ function phaseDone(opts) {
     // until the camera module has its model too — so here the two-port checklist
     // IS the next step: it shows what's done, what's left, and routes to the
     // other port. (visionSession was marked at the completion transition above.)
-    box.append(visionChecklistCard(visionSession.parts(), {
+    const parts = visionSession.parts();
+    box.append(visionChecklistCard(parts, {
       onFlashOther: async () => {
         // Release the ESP32 port first — the module flow opens its own transport,
         // and leaving state.session open would lock the host port until reload.
@@ -4256,12 +4262,33 @@ function phaseDone(opts) {
         }));
       },
     }));
+    // Both ports in (this session did the camera module first) — the pair is
+    // complete, which is the browser's "after both receipts" moment: a
+    // Vision's serial_receipt is true but its prove path is the camera bench,
+    // never the monitor, so the receipt-gated monitor card can't fire for it.
+    // The catalog's Vision hatch lands here instead, right under the
+    // completed checklist — the same moment the desktop pops its hatch card.
+    const moment = !opts.isLocal && parts.esp32 && parts.we2 && core.hatchMoment(product);
+    if (moment) box.append(hatchMomentCard(moment));
   } else if (product && !opts.isBackup) {
-    const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
-    const ns = el("div", "flash-nextstep");
-    ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
-    ns.append(el("p", "flash-nextstep-body", step.body));
-    box.append(ns);
+    // The catalog's hatch moment — the same "first flight" card the desktop
+    // Flasher shows, honoring the same receipt rule (app.js maybeHatch): a
+    // product that reports no serial receipt (serial_receipt: false — the
+    // displays, Sense, WAP) hatches right here, straight after the write. One
+    // whose firmware proves itself over serial keeps the generic next step —
+    // which points at the live monitor, where its hatch card appears the
+    // moment that receipt lands. A local file carries no catalog promise, so
+    // it stays on the generic step too.
+    const moment = !opts.isLocal && core.hatchMoment(product);
+    if (moment && !core.requiresLiveReceipt(product)) {
+      box.append(hatchMomentCard(moment));
+    } else {
+      const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
+      const ns = el("div", "flash-nextstep");
+      ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
+      ns.append(el("p", "flash-nextstep-body", step.body));
+      box.append(ns);
+    }
   } else if (!product) {
     box.append(el("p", "muted", "It rebooted into the firmware you just wrote. If it doesn’t light up, tap the RESET button once."));
   }
@@ -4376,7 +4403,11 @@ function phaseDone(opts) {
       })));
     }
     // "glass" and "monitor": the console is the honest window either way.
-    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true });
+    // Carry the flashed product so a receipt-gated hatch (serial_receipt not
+    // false) can pop its "first flight" card when the self-manifest arrives —
+    // the desktop's maybeHatch fires on exactly that receipt.
+    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true,
+      hatchProduct: (opts.product && !opts.isBackup && !opts.isLocal) ? opts.product : null });
   };
 
   const row = el("div", "flash-row");
@@ -5194,6 +5225,15 @@ function phaseMonitor(port, opts = {}) {
         "identity securacv.com/canary shows. Nothing was sent anywhere."
       : "Read from the running firmware over the cable."));
     setStatus("✓ Identity confirmed — it’s running and answering.");
+    // The boot receipt just landed. For a product whose hatch WAITS on that
+    // receipt (serial_receipt !== false), this is where the catalog's "first
+    // flight" steps belong — the desktop's maybeHatch pops its hatch card on
+    // exactly this manifest. Products with serial_receipt: false already got
+    // the card on the done screen, straight after the write.
+    if (opts.hatchProduct && core.requiresLiveReceipt(opts.hatchProduct)) {
+      const moment = core.hatchMoment(opts.hatchProduct);
+      if (moment) idCard.after(hatchMomentCard(moment));
+    }
   }
 
   const chips = el("div", "flash-mon-chips");
