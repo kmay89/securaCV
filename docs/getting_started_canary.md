@@ -540,9 +540,12 @@ even after a restart.
 
 Everything above describes the classic Wi-Fi-sensing Canary (the "WAP").
 Two sibling devices share the same witness DNA but sense differently and
-set up differently. Both are **MQTT-native**: they don't raise their own
-Wi-Fi network or serve a dashboard — they join your home Wi-Fi, talk to
-your MQTT broker, and live inside Home Assistant.
+set up differently. Both are **MQTT-native**: they join your home Wi-Fi,
+talk to your MQTT broker, and live inside Home Assistant — no everyday
+dashboard of their own. (A unit with no Wi-Fi saved — or one that keeps
+failing to join for a reason you can fix, like a changed password — raises
+its own `SecuraCV-XXXX` setup network so a phone can point it at your
+router; it keeps sensing the whole time.)
 
 ### Canary Vision
 
@@ -562,9 +565,11 @@ make secrets          # copies secrets.example.h → secrets/secrets.h
 pio run -e canary-vision-xiao-c3 -t upload   # pick the env for your board
 ```
 
-There is **no captive portal** on this variant — Wi-Fi and the broker
-address are compiled in from `secrets/secrets.h`. Flash once over USB;
-after that, updates arrive over the air.
+Wi-Fi and the broker address come from `secrets/secrets.h` at build time,
+or from the flasher's fields (seeded into the chip's settings at flash
+time). If neither gave the board a network, it raises its own
+`SecuraCV-XXXX` setup network — join it from a phone and pick your Wi-Fi
+there. Flash once over USB; after that, updates arrive over the air.
 
 ### Canary Sense
 
@@ -585,8 +590,9 @@ make secrets          # copies secrets.example.h → secrets/secrets.h
 make upload           # default env; `make upload-wellbeing` for vitals
 ```
 
-Same deal as Vision: no captive portal, credentials compiled in, OTA
-after the first USB flash.
+Same deal as Vision: credentials from `secrets.h` or the flasher, the
+same `SecuraCV-XXXX` setup network if it has none (or can't join for a
+fixable reason), OTA after the first USB flash.
 
 ### How they show up
 
@@ -596,8 +602,9 @@ Once on your network, both variants:
   service carrying its device ID, name, hostname, firmware version,
   model, and device type — the same advert every Canary (and the
   fleet display) uses, so other SecuraCV devices and the companion app
-  can see them on the LAN. They advertise only; they don't run a web
-  server, so there's no `canary.local` dashboard to open for these two.
+  can see them on the LAN. They advertise only; there's no `canary.local`
+  dashboard to open for these two — the only web page they ever serve is
+  the setup wizard, and only while the setup network is up.
 - **Appear in Home Assistant automatically.** Point them at the same
   MQTT broker HA uses and the entities register themselves via MQTT
   discovery — no integration to install, same as the WAP.
@@ -613,10 +620,10 @@ identical white boxes apart while you're labeling rooms.
 
 | | Canary (WAP) | Vision / Sense |
 |---|---|---|
-| First contact | Join its `SecuraCV-XXXX` network, open `canary.local` | Flash with your credentials over USB |
-| Own dashboard | Yes (full web UI) | No — Home Assistant is the UI |
-| Wi-Fi setup | Captive portal / Settings → Wi-Fi | Compiled in via `secrets/secrets.h` |
-| Broker address | Set on the dashboard | Compiled in via `secrets/secrets.h` |
+| First contact | Join its `SecuraCV-XXXX` network, open `canary.local` | Flash with your credentials over USB (or join its `SecuraCV-XXXX` setup network) |
+| Own dashboard | Yes (full web UI) | No — Home Assistant is the UI (setup wizard only, while unprovisioned) |
+| Wi-Fi setup | Captive portal / Settings → Wi-Fi | Flasher fields or `secrets/secrets.h`; setup network as the fallback |
+| Broker address | Set on the dashboard | Flasher fields or `secrets/secrets.h` |
 | Identify | Companion app (blink + chirp) | **Identify** button in Home Assistant |
 
 A unified onboarding wizard that closes this gap — pairing MQTT-only

@@ -253,8 +253,14 @@ that embeds its public half into a dev build.
 
 ## Device API
 
-All endpoints are bearer-token gated, on canary and canary-wap
-(canary-vision has no local HTTP server — it is HA/MQTT-managed only):
+All endpoints are bearer-token gated on canary and canary-wap. Since 2026-08
+canary-display serves `status`/`check`/`install` under the same contract —
+same routes, statuses, and body shapes, so the desktop Flasher's one-click
+update works on displays too — but LAN-open like the rest of the glass web
+mirror (the glass mints no bearer credential), and without `/api/ota/config`.
+canary-vision and canary-sense have no always-on local HTTP server — they are
+HA/MQTT-managed (their setup portal serves HTTP only while provisioning or
+recovering):
 
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -317,8 +323,11 @@ user actions through the update system that leaves a device unrecoverable.**
   channels strictly exclude each other.
 - **Pre-reboot flush:** witness-chain state is persisted before the install
   reboot, mirroring the manual-reboot path.
-- **Never reboots unattended by default:** auto-update is an explicit
-  per-device opt-in.
+- **Never reboots unattended without consent:** the engine's stored
+  auto-update flag defaults to off. The flashers ask at flash time — "Keep
+  this Canary updated automatically", on by default, untick to keep updates
+  manual — and seed the choice into the device's settings; the HA **Auto
+  Update** switch (or the dashboard, where there is one) flips it any time.
 - **OTA can never touch the bootloader or partition table** — it writes app
   slots only. The ESP32's first-stage bootloader is mask ROM. Even in an
   unforeseeable worst case, a USB flash always recovers the device.
@@ -334,7 +343,7 @@ user actions through the update system that leaves a device unrecoverable.**
 | Power cycled in the first minute after an update | Returns to previous firmware (unconfirmed images don't stick) | Press Install again |
 | Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
 | Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
-| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision: needs a USB reflash (credentials seed from the build) | Reconnect via dashboard (canary/WAP) or USB (vision) |
+| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense) — a USB reflash always works too |
 | Absolute worst case | Device still enters ROM download mode | USB flash — always possible, OTA cannot break it |
 
 ## Adding a new variant (the recipe)
