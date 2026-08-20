@@ -26,6 +26,20 @@ export function setMinimalEnabled(on) {
   try { localStorage.setItem(KEY, on ? "on" : "off"); } catch { /* private mode */ }
 }
 
+// Every mounted toggle mirrors the ONE shared preference. Two live at once
+// (the journey bar and the settings dialog), and syncing only the clicked
+// chip left the other one lying — saying "minimal off" while the mode was
+// on, and then honestly turning it off when clicked (review catch on this
+// PR). So a flip re-syncs every mounted chip; ones gone from the DOM fall
+// out of the set as they're met.
+const mounted = new Set();
+function syncMounted() {
+  for (const entry of [...mounted]) {
+    if (!entry.btn.isConnected) { mounted.delete(entry); continue; }
+    entry.sync();
+  }
+}
+
 // The toggle chip the pages mount (flash.html's journey row and the settings
 // dialog). Reflects and persists state; `onChange` lets the page re-dress
 // itself the moment the choice is made.
@@ -44,9 +58,10 @@ export function minimalToggle(opts = {}, doc = typeof document === "undefined" ?
   };
   btn.addEventListener("click", () => {
     setMinimalEnabled(!minimalEnabled());
-    sync();
+    syncMounted();
     if (opts.onChange) { try { opts.onChange(minimalEnabled()); } catch { /* never break the page */ } }
   });
   sync();
+  mounted.add({ btn, sync });
   return btn;
 }

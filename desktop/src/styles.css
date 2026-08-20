@@ -1072,9 +1072,9 @@ details.coldstart[open] > summary { margin-bottom: 8px; }
    Same mode, same rule, as the browser flasher's minimal.js. */
 html[data-density="minimal"] .detail-only,
 html[data-density="minimal"] .pane-head .lede,
-html[data-density="minimal"] .product .p-tag,
-html[data-density="minimal"] .product .p-tier:not(.is-first),
-html[data-density="minimal"] .p-verdict-detail {
+html[data-density="minimal"] #product-list .p-tag,
+html[data-density="minimal"] #product-list .p-tier:not(.is-first),
+html[data-density="minimal"] #product-list .p-verdict-detail {
   display: none;
 }
 

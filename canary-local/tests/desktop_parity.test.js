@@ -1738,4 +1738,11 @@ test("minimal mode never hides a destructive choice", () => {
     "flash.css must exempt the forced-erase explainer from the fold");
   assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*\.coldstart-ask/,
     "styles.css must never fold the first-contact wipe label under minimal mode");
+  // The hub's write-target rows reuse .p-tag for the disk path and capacity —
+  // the facts that tell two identical card readers apart before a destructive
+  // write. The tagline fold must stay scoped to the Canary firmware picker.
+  assert.match(desktopCss, /#product-list \.p-tag/,
+    "styles.css must scope the tagline fold to #product-list, never app-wide");
+  assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*(?<!#product-list )\.p-tag\b/,
+    "no minimal-mode rule may fold .p-tag outside the Canary picker");
 });
