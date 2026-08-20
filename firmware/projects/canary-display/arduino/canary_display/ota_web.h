@@ -31,7 +31,7 @@ enum class OtaKick : uint8_t {
 struct OtaWebStatus {
   const char* installed;    // running firmware version (CANARY_FW_VERSION)
   const char* latest;       // manifest's version (nullptr until a check ran)
-  const char* state;        // technical state ("Idle", "Downloading", …)
+  const char* state;        // technical state ("Idle", "Downloading", ...)
   const char* state_text;   // friendly one-liner ("" when idle)
   const char* error;        // technical last error ("No error" when none)
   const char* error_text;   // friendly error ("" when none)

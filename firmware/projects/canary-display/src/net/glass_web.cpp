@@ -561,7 +561,7 @@ void handle_ota_status() {
 // POST /api/ota/check — fetch the manifest and compare versions, without
 // installing. Results land in /api/ota/status (poll while state=Checking).
 void handle_ota_check() {
-  send_ota_kick(ota_web_check(), "Checking for updates…",
+  send_ota_kick(ota_web_check(), "Checking for updates...",
                 "ota_check_failed");
 }
 
