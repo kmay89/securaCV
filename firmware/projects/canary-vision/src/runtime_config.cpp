@@ -136,22 +136,34 @@ bool wifi_credentials_configured() {
   return !is_placeholder(cfg.wifi_ssid);
 }
 
-void set_wifi_credentials(const char* ssid, const char* pass) {
-  if (ssid == nullptr || ssid[0] == '\0') return;
+bool set_wifi_credentials(const char* ssid, const char* pass) {
+  if (ssid == nullptr || ssid[0] == '\0') return false;
   get();  // ensure the cache exists before we patch it
   copy_str(g_cfg.wifi_ssid, sizeof(g_cfg.wifi_ssid), ssid);
   copy_str(g_cfg.wifi_pass, sizeof(g_cfg.wifi_pass), pass ? pass : "");
   Preferences prefs;
-  if (prefs.begin("securacv", /*readOnly=*/false)) {
-    prefs.putString("wifi_ssid", g_cfg.wifi_ssid);
-    prefs.putString("wifi_pass", g_cfg.wifi_pass);
-    prefs.end();
-    log_line("CFG", "WiFi credentials provisioned to NVS.");
-  } else {
+  if (!prefs.begin("securacv", /*readOnly=*/false)) {
     // NVS down: the session still works (cache is patched); the portal will
     // simply run again next boot. Honest failure, not a dead end.
     log_line("CFG", "NVS unavailable - credentials held for this boot only.");
+    return false;
   }
+  prefs.putString("wifi_ssid", g_cfg.wifi_ssid);
+  prefs.putString("wifi_pass", g_cfg.wifi_pass);
+  // Trust the readback, not the calls: a full or refusing store fails the
+  // same way for the user as a write that never happened — the next boot
+  // reloads whatever is actually in flash. (putString's return can't tell
+  // an empty password apart from a failed write, so readback is the one
+  // honest answer; same rule as the display's forget_wifi_credentials.)
+  const bool durable = prefs.getString("wifi_ssid", "") == g_cfg.wifi_ssid &&
+                       prefs.getString("wifi_pass", "") == g_cfg.wifi_pass;
+  prefs.end();
+  if (durable) {
+    log_line("CFG", "WiFi credentials provisioned to NVS.");
+  } else {
+    log_line("CFG", "NVS would not hold the credentials - this boot only.");
+  }
+  return durable;
 }
 
 bool mqtt_credentials_configured() {

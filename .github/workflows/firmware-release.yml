@@ -847,9 +847,15 @@ jobs:
         # was named in the allow_dropped_products input (the explicit "ship
         # without it" sign-off). Dev-channel prereleases report but never
         # block. First release (no previous manifest) skips cleanly.
+        #
+        # The tag-push path has no inputs and a re-run keeps them empty, so
+        # the sign-off there is the ALLOW_DROPPED_PRODUCTS repository
+        # variable (Settings → Secrets and variables → Actions → Variables):
+        # set it, re-run the failed job, then clear it — a standing value
+        # would silently wave the next accidental drop through too.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ALLOW_DROPPED: ${{ inputs.allow_dropped_products }}
+          ALLOW_DROPPED: ${{ inputs.allow_dropped_products || vars.ALLOW_DROPPED_PRODUCTS || '' }}
           THIS_TAG: ${{ steps.ver.outputs.tag }}
           CHANNEL: ${{ steps.ver.outputs.channel }}
         run: |

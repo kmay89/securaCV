@@ -78,7 +78,10 @@ shipped in the previous release is missing from this one (its build step
 degraded to a warning further up — the matrix is non-blocking by design, so
 this gate is where the drop becomes a decision). Fix that board's build, or
 re-run with `allow_dropped_products` naming the product id(s) to consciously
-ship without them. Dev-channel builds only report; they never block on this.
+ship without them. On the tag-push path (which has no inputs), set the
+`ALLOW_DROPPED_PRODUCTS` repository variable instead, re-run the failed job,
+then clear the variable. Dev-channel builds only report; they never block on
+this.
 
 ### Firmware Release — if changed
 

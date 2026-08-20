@@ -96,9 +96,11 @@ canary::net::WifiRetryPolicy retry_policy() {
 // SecuraCV-XXXX setup network; sensing continues underneath.
 
 bool portal_save(const char* ssid, const char* pass) {
-  canary::cfg::set_wifi_credentials(ssid, pass);
+  // The durable verdict flows to the portal, which logs the "store refused"
+  // warning; the session still runs from the patched cache either way.
+  const bool durable = canary::cfg::set_wifi_credentials(ssid, pass);
   s_configured = true;
-  return true;
+  return durable;
 }
 
 void portal_begin_saved() { begin_sta(); }
