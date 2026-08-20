@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-08-19T09:48:10Z",
+ "as_of": "2026-08-20T09:49:13Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
@@ -38,7 +38,7 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1532,
+   "stock": 1526,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
@@ -62,7 +62,7 @@
    "seed_usd": 18.0,
    "unit_usd": 18.0,
    "provenance": "digikey",
-   "stock": 135,
+   "stock": 133,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-104030087-ND"
@@ -85,7 +85,7 @@
    "seed_usd": 1.2,
    "unit_usd": 2.0,
    "provenance": "digikey",
-   "stock": 741,
+   "stock": 739,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-110990210",
@@ -109,7 +109,7 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 11071,
+   "stock": 11035,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-113991114-ND"
@@ -197,7 +197,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 861296,
+   "stock": 855097,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -254,7 +254,7 @@
    "seed_usd": 0.1,
    "unit_usd": 0.16,
    "provenance": "digikey",
-   "stock": 63839,
+   "stock": 60426,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
@@ -295,7 +295,7 @@
    "seed_usd": 1.8,
    "unit_usd": 3.76,
    "provenance": "digikey",
-   "stock": 9452,
+   "stock": 17252,
    "lifecycle": "Active",
    "sku": {
     "digikey": "HE573-ND"
@@ -447,7 +447,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 45585,
+   "stock": 45549,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -521,7 +521,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 6593282,
+   "stock": 6492137,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -1093,7 +1093,7 @@
    "seed_usd": 0.45,
    "unit_usd": 0.78,
    "provenance": "digikey",
-   "stock": 5948,
+   "stock": 5448,
    "lifecycle": "Active",
    "sku": {
     "digikey": "492-1149-ND"
@@ -1164,7 +1164,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 966903,
+   "stock": 1315000,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1217,7 +1217,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 571672,
+   "stock": 934799,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1270,7 +1270,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 978426,
+   "stock": 966196,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1323,7 +1323,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 358889,
+   "stock": 358577,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",
