@@ -1167,7 +1167,9 @@ const fleetBook = {
   // (canary/wap :80, displays on newer firmware), else the probed :80
   // upgrade (fielded displays that still announce the port-1 formality).
   // Vision and sense really have no server — their rows stay
-  // presence-and-version only (their OTA rides MQTT).
+  // presence-and-version only. (They still update themselves: the same
+  // signed daily HTTPS pull every variant runs; MQTT is only the Home
+  // Assistant trigger/status surface, not the transport.)
   webPortFor(entry) {
     const s = entry.deviceId && this.sightings[entry.deviceId];
     if (!s || !(s.ip || s.host)) return 0;
@@ -1244,7 +1246,7 @@ const fleetBook = {
           break;
         }
         if (inst.httpStatus === 401) { this.note(key, this.staleTokenNote()); return; }
-        if (inst.httpStatus === 404) { this.note(key, "This build doesn't carry the update engine — reflash over USB instead."); return; }
+        if (inst.httpStatus === 404) { this.note(key, "This firmware predates one-click installs — update once over USB or from Home Assistant, and later updates work from here."); return; }
         if (inst.httpStatus === 409) { this.note(key, "The board's update engine is busy — waiting for it to free up…"); continue; }
         if (inst.httpStatus >= 400) { this.note(key, "The board refused to start the update (HTTP " + inst.httpStatus + "). Try again in a minute."); return; }
         started = true;
@@ -3047,13 +3049,12 @@ function readProvisioning(product) {
   // not on the glass, whose portal only ever asked for Wi-Fi.
   const broker = product.broker_nvs === true;
   // Wi-Fi-only boards: an empty SSID just means "skip the preload" — the
-  // board's own setup path still works, so nothing to validate or write.
-  // A chosen room preset is a thing to write, exactly like a network or a
-  // broker. Today every dial-carrying product is usb-secrets so this arm can't
-  // be reached by one — but relying on that coincidence would mean a future
-  // dial product silently drops the preset the user picked.
+  // board's own setup path still works. A chosen room preset is a thing to
+  // write, exactly like a network or a broker. And since the auto-update
+  // checkbox arrived there is ALWAYS an answer to seed — checked writes 1,
+  // unchecked an explicit 0 — so an empty form no longer means "nothing to
+  // write": every flash carries at least the OTA choice.
   const dials = dialsForFlash(product);
-  if (!usbSecrets && !$("wifi-ssid").value && !$("mqtt-host").value && !dials) return null;
   const fields = ["wifi-ssid", "wifi-pass"]
     .concat(usbSecrets || broker ? ["device-id"] : [])
     .concat(broker ? ["mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"] : []);
@@ -3087,6 +3088,12 @@ function readProvisioning(product) {
     // Room presets as clamped typed ints, or empty when the user left the
     // dials as they ship (the backend writes no dial keys at all then).
     dials: dials || { u8: {}, u32: {} },
+    // The OTA opt-in, seeded into the engine's own NVS namespace
+    // ("securacv_ota"/auto_upd — securacv_ota.cpp). Checked (the default)
+    // writes 1 and the board keeps itself on Ed25519-signed releases with
+    // A/B rollback; unchecked writes an explicit 0 — the engine's default
+    // anyway, but a recorded human choice instead of an absence.
+    autoUpdate: !!($("auto-update") && $("auto-update").checked),
   };
 }
 

@@ -151,6 +151,9 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   assert.match(flashCoreSrc, /writeInt\("setup_ok"/,
     "flash-core.js buildNvsSeedImage lost the blob-scheme setup_ok latch — a seeded " +
     "canary/wap would boot into SETUP MODE despite joining");
+  assert.match(flashCoreSrc, /writeInt\("auto_upd"/,
+    "flash-core.js buildNvsSeedImage lost the OTA auto-update seed — a browser-flashed " +
+    "board would never keep itself updated");
   const { mqttProvisioningToNvs, apiTokenToNvs } = await import("../assets/flash-core.js");
   const { strings, u16 } = mqttProvisioningToNvs({
     deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
@@ -158,13 +161,74 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   // The API-token blobs ride the same seed (blob-scheme boards); their keys
   // are part of the contract the two flashers share.
   const { blobs } = apiTokenToNvs("cv_" + "a".repeat(32));
-  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en", "setup_ok",
+  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en", "setup_ok", "auto_upd",
     ...Object.keys(strings), ...Object.keys(u16), ...Object.keys(blobs)]);
 
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +
     "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage/apiTokenToNvs with " +
     "desktop/src-tauri/src/provisioning.rs:build_nvs");
+});
+
+test("OTA auto-update: both flashers seed the engine's own namespace, and both offer the switch", async () => {
+  // The shared OTA engine ships in every networked flavor and reads its
+  // persisted opt-in from ITS OWN NVS namespace — not "securacv", where
+  // everything else the flashers seed lives. Seeding it at flash time is what
+  // makes a freshly flashed board keep itself on signed releases without
+  // Home Assistant, so the namespace, the key, the u8 encoding, and the
+  // user-facing switch must all exist on BOTH frontends, pinned to the
+  // firmware's own #defines rather than to each other's copies.
+  const otaCpp = read(join(ROOT, "firmware/common/ota/src/securacv_ota.cpp"));
+  assert.match(otaCpp, /#define NVS_NAMESPACE\s+"securacv_ota"/,
+    "the OTA engine's NVS namespace moved — both flashers seed \"securacv_ota\"");
+  assert.match(otaCpp, /#define NVS_KEY_AUTO_UPDATE\s+"auto_upd"/,
+    "the OTA engine's auto-update key moved — both flashers seed \"auto_upd\"");
+
+  // Both writers: the second namespace entry plus the u8 under it.
+  const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
+  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  assert.match(flashCoreSrc, /"securacv_ota"/,
+    "flash-core.js buildNvsSeedImage no longer writes the securacv_ota namespace entry");
+  assert.match(flashCoreSrc, /writeInt\("auto_upd", 0x01/,
+    "flash-core.js must seed auto_upd as a u8 (0x01) — the engine reads it with nvs_get_u8");
+  assert.match(provRs, /namespace\("securacv_ota"\)/,
+    "provisioning.rs build_nvs no longer opens the securacv_ota namespace");
+  assert.match(provRs, /writer\.u8\("auto_upd"/,
+    "provisioning.rs build_nvs no longer seeds auto_upd as a u8");
+
+  // The seeded page must be READABLE back by the flasher's own parser (the
+  // health check uses it): two namespaces, each item under the right one.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const img = core.buildNvsSeedImage(
+    { wifi: { ssid: "Bird House", pass: "correct horse" }, autoUpdate: true }, 0x4000);
+  const items = core.parseNvs(img);
+  const auto = items.find((i) => i.namespace === "securacv_ota" && i.key === "auto_upd");
+  assert.ok(auto && auto.value === 1,
+    "parseNvs must read auto_upd back out of the securacv_ota namespace");
+  assert.ok(items.some((i) => i.namespace === "securacv" && i.key === "wifi_en"),
+    "the securacv namespace must keep its own tenants beside the new one");
+
+  // The switch itself, BOTH frontends, default ON, same copy — capability
+  // parity, not just constant parity (the dev-channel lesson).
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop index.html", html]]) {
+    assert.ok(src.includes("Keep this Canary updated automatically"),
+      `${label} lost the auto-update checkbox (or its copy drifted)`);
+    assert.ok(src.includes("Ed25519-signed releases installed with A/B rollback"),
+      `${label} no longer says what the updates ARE — signed releases with rollback`);
+  }
+  assert.match(flashJs, /otaChk\.checked = true/,
+    "the browser checkbox must default ON");
+  assert.match(html, /id="auto-update" checked/,
+    "the desktop checkbox must default ON");
+  assert.match(appJs, /autoUpdate: !!\(\$\("auto-update"\)/,
+    "desktop readProvisioning never reads the auto-update checkbox");
+  // Unchecked is a CHOICE — an explicit 0, never a silently absent key.
+  const declined = core.parseNvs(core.buildNvsSeedImage({ autoUpdate: false }, 0x4000));
+  const off = declined.find((i) => i.namespace === "securacv_ota" && i.key === "auto_upd");
+  assert.ok(off && off.value === 0, "unchecking must seed an explicit auto_upd = 0");
 });
 
 test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnostics ship on desktop too", () => {
@@ -1537,6 +1601,24 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
     assert.match(src, /prefs\.getBytesLength\(key\)/,
       `${path}: load_credential no longer falls back to a blob-scheme seed — ` +
       "a blob-seeded board would read empty credentials and boot into setup");
+  }
+
+  // 1c. The inverse fallback on the blob-scheme side: the main canary and
+  //     the wap read blobs first, so a string-typed seed (a string-scheme
+  //     flasher frontend writing a blob-scheme board's keys) must be honored
+  //     via getString when the key exists but getBytesLength reads 0.
+  const blobLoaders = [
+    "firmware/canary/lib/securacv_network/src/securacv_network.cpp",
+    "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+  ];
+  for (const path of blobLoaders) {
+    const src = read(join(ROOT, path));
+    assert.match(src, /nvs\.isKey\(NVS_KEY_WIFI_SSID\)/,
+      `${path}: the credential loader no longer distinguishes a string-typed ` +
+      "seed from an absent one — a string-seeded board would boot unprovisioned");
+    assert.match(src, /nvs\.getString\(NVS_KEY_WIFI_SSID/,
+      `${path}: the credential loader no longer falls back to a string-scheme ` +
+      "seed — a string-seeded board would read empty credentials and boot unprovisioned");
   }
 
   // Both writers write the wifi_pass key unconditionally inside the wifi block.
