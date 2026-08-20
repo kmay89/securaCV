@@ -264,7 +264,9 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
    draft FRE 902(13)/(14) certifications (28 U.S.C. § 1746 form) + system
    description + `sha256sum`/`openssl`-only VERIFICATION instructions;
    per-file handoff sidecars at unseal so downstream custody chains onto
-   ours.
+   ours. *(Implemented for event-export bundles — the `court_export` tool,
+   see `docs/court_export.md`. Still open: OTS tokens, and handoff sidecars
+   on `break_glass unseal` outputs.)*
 5. **Anchoring upgrades**: scheduled anchoring on by default; "two TSAs"
    becomes "one eIDAS-qualified + one independent"; OpenTimestamps as a
    second, trust-kind-independent leg; clock-provenance events (measured

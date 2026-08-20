@@ -282,6 +282,10 @@ Invariants II/III):
   per-file acquisition-metadata sheets (SWGDE practice); and a
   VERIFICATION file whose steps need only `sha256sum` and `openssl`. It
   refuses — or loudly warns — when the covered period is unanchored.
+  *(Implemented for event-export bundles: the `court_export` tool packages a
+  verified bundle with custody/identity binding, anchor tokens, certification
+  drafts, and an explicit unanchored warning — `docs/court_export.md`. Vault
+  unseal outputs and OTS anchoring remain design.)*
 - Exports optionally carry the frozen **C2PA witness-manifest profile**:
   COSE claim under a self-signed X.509 wrap of the device key, exactly one
   hard binding, `c2pa.created` with capture provenance bound to
