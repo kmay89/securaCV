@@ -1674,3 +1674,68 @@ test("a derived name offers no re-roll on either flasher", () => {
   assert.match(read(join(CANARY, "assets", "flash.js")),
     /cert\.derived\s*\n?\s*\?\s*null/, "flash.js must not build a re-roll for a derived name");
 });
+
+// ── Minimal mode: one quiet dress, both flashers ──────────────────────────
+//
+// The verbose flasher is the front door; minimal mode is the regular's
+// entrance. It is a user-facing feature, so the two-flashers rule applies in
+// full: if either frontend loses its toggle, its persistence, or the promise
+// that quiet is opted into (never the default), half the users keep — or
+// lose — a mode the other half has. These greps hold both sides together.
+test("minimal mode exists on both flashers, opt-in, persisted, reversible", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserMod = read(join(CANARY, "assets", "minimal.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const desktop = read(join(ROOT, "desktop", "src", "app.js"));
+  const desktopHtml = read(join(ROOT, "desktop", "src", "index.html"));
+  const desktopCss = read(join(ROOT, "desktop", "src", "styles.css"));
+
+  // Browser: a persisted preference module, mounted as a toggle, driving a
+  // root class that flash.css folds prose under — plus the per-phase bridge
+  // back to the full story.
+  assert.match(browserMod, /nursery\.minimal/,
+    "minimal.js must persist the choice under the nursery.* localStorage family");
+  assert.match(browserMod, /=== "on"/,
+    "minimal.js must treat anything but an explicit 'on' as off — opt-in, never sprung");
+  assert.match(browser, /minimalToggle\(/,
+    "flash.js must mount the minimal toggle");
+  assert.match(browser, /flash-minimal/,
+    "flash.js must dress #flash with the flash-minimal root class");
+  assert.match(browser, /minimalMoreBar|flash-minimal-open/,
+    "flash.js must offer the per-phase way back to the full story");
+  assert.match(browserCss, /\.flash-minimal:not\(\.flash-minimal-open\)/,
+    "flash.css must scope the folding so the reveal un-folds everything");
+
+  // Desktop: the same mode as a density attribute — persisted in prefs,
+  // toggled from the rail, folded by styles.css.
+  assert.match(desktop, /prefs\.minimal/,
+    "desktop app.js must persist the choice in prefs");
+  assert.match(desktop, /data-density/,
+    "desktop app.js must carry the mode as a data-density attribute");
+  assert.match(desktopHtml, /id="density-toggle"/,
+    "desktop index.html must keep the rail toggle");
+  assert.match(desktopCss, /html\[data-density="minimal"\]/,
+    "styles.css must fold under the density attribute");
+
+  // The desktop's minimal console collapses espflash's progress-bar redraw
+  // frames into one live line — the single biggest verbosity win, and the
+  // easiest one to lose in a refactor of the log listeners.
+  assert.match(desktop, /function appendFlashLog\b/,
+    "desktop app.js must route flash logs through the collapsing appender");
+  assert.match(desktop, /looksLikeProgressFrame/,
+    "desktop app.js must keep the progress-frame detector");
+});
+
+// What minimal mode may never fold: the destructive-choice affordances. The
+// first-contact wipe label was once folded into a disclosure and cost a
+// review catch (see index.html's comment); minimal mode must not repeat that
+// mistake by CSS, and the browser's forced-erase explainer stays visible the
+// same way.
+test("minimal mode never hides a destructive choice", () => {
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const desktopCss = read(join(ROOT, "desktop", "src", "styles.css"));
+  assert.match(browserCss, /\.flash-reassure:not\(\.flash-forced-erase\)/,
+    "flash.css must exempt the forced-erase explainer from the fold");
+  assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*\.coldstart-ask/,
+    "styles.css must never fold the first-contact wipe label under minimal mode");
+});

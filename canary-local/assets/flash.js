@@ -29,6 +29,7 @@ import { visionChecklistCard } from "./vision-checklist.js";
 import { hatchMomentCard } from "./hatch-card.js";
 import { mintCertificate } from "./hatchery.js";
 import { chirp, chirpToggle } from "./chirp.js";
+import { minimalEnabled, minimalToggle } from "./minimal.js";
 import { mountBoardIdentity } from "./board-identity.js";
 import * as intake from "./intake.js";
 
@@ -154,6 +155,7 @@ async function boot() {
   mount.append(flow);
   mountJourney(flow);
   mount.append(renderReassurance());
+  applyMinimalMode();
 
   // The footer's opener stays hidden until the catalog (and its about block)
   // actually loaded — a dead settings button would be worse than none.
@@ -229,6 +231,7 @@ function mountJourney(before) {
     journeyEl.append(s);
   });
   const side = el("span", "flash-journey-side");
+  side.append(minimalToggle({ onChange: applyMinimalMode }));
   side.append(chirpToggle());
   const gear = el("button", "flash-settings-open", "⚙︎");
   gear.type = "button";
@@ -294,10 +297,11 @@ function openSettings() {
     "(tools/gen_flash.py) and drift-checked in CI — the facts here can’t be " +
     "typed wrong, only parsed wrong loudly."));
 
-  // ── sound & lessons ──
-  const sPref = sec("Sound & lessons");
+  // ── sound, lessons & detail ──
+  const sPref = sec("Sound, lessons & detail");
   const prefRow = el("div", "flash-row");
   prefRow.append(chirpToggle());
+  prefRow.append(minimalToggle({ onChange: applyMinimalMode }));
   if (coachDismissed()) {
     const coachBtn = el("button", "ghost small", "☕ bring back the lessons");
     coachBtn.addEventListener("click", () => {
@@ -311,8 +315,10 @@ function openSettings() {
   }
   sPref.append(prefRow);
   sPref.append(el("p", "fineprint",
-    "Motion follows your system’s reduce-motion setting automatically — " +
-    "nothing to configure here."));
+    "Minimal mode folds the explainers away for people who flash all day — " +
+    "every control, check and receipt stays, and each screen offers its full " +
+    "story back with one click. Motion follows your system’s reduce-motion " +
+    "setting automatically — nothing to configure here."));
 
   // ── this page's memory ──
   const sData = sec("What this page remembers");
@@ -363,6 +369,40 @@ function openSettings() {
   dlg.showModal();
 }
 
+// ── minimal mode: the quiet dress for the whole page ────────────────────────
+// One root class on #flash; flash.css owns what folds away. The transient
+// "-open" reveal (the per-phase "full story" button below) never survives a
+// mode flip or a phase change — each screen starts quiet again.
+function applyMinimalMode() {
+  const mount = $("#flash");
+  if (!mount) return;
+  mount.classList.toggle("flash-minimal", minimalEnabled());
+  mount.classList.remove("flash-minimal-open");
+}
+
+// The bridge from the quiet screen to everything it folded: reveals the full
+// story for THIS phase (and the reassurance strip below) without touching the
+// saved preference. The layers tour and the coach are the one honest gap —
+// they run timers, so minimal mode skips rendering them; they ride again on
+// the next install with minimal off.
+function minimalMoreBar() {
+  const bar = el("div", "flash-minimal-more");
+  const btn = el("button", "ghost small flash-minimal-more-btn");
+  btn.type = "button";
+  const sync = () => {
+    const open = $("#flash").classList.contains("flash-minimal-open");
+    btn.textContent = open ? "fold the detail away again ↑" : "show the full story for this step ↓";
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  btn.addEventListener("click", () => {
+    $("#flash").classList.toggle("flash-minimal-open");
+    sync();
+  });
+  sync();
+  bar.append(btn);
+  return bar;
+}
+
 // One check, used everywhere motion is decorative rather than informative.
 function prefersCalm() {
   try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
@@ -373,6 +413,12 @@ function setPhase(node) {
   const flow = $("#flash-flow");
   flow.innerHTML = "";
   flow.append(node);
+  // A fresh phase starts quiet again; the reveal is per-screen on purpose.
+  const mount = $("#flash");
+  if (mount) {
+    mount.classList.remove("flash-minimal-open");
+    if (minimalEnabled()) flow.append(minimalMoreBar());
+  }
   if (node.dataset && node.dataset.step) renderJourney(Number(node.dataset.step));
   // Land screen-reader / keyboard focus on the new phase's heading, so a
   // phase change is announced instead of silently swapping content.
@@ -3775,7 +3821,11 @@ async function startFlash(opts) {
   // download lands (imageBytesRef is filled in below).
   const imageBytesRef = { bytes: opts.localBytes || null };
   const logEl = box.card.querySelector(".flash-log");
-  box.card.insertBefore(installStory(() => imageBytesRef.bytes || (state.backup && state.backup.bytes)), logEl);
+  // Minimal mode skips the tour rather than hiding it: the deck runs two
+  // timers, and a hidden slideshow ticking away helps nobody.
+  if (!minimalEnabled()) {
+    box.card.insertBefore(installStory(() => imageBytesRef.bytes || (state.backup && state.backup.bytes)), logEl);
+  }
 
   // Announce the whole journey up front — "step 2 of 4" is what makes the
   // bar predictable instead of a mystery that keeps restarting.
@@ -5884,7 +5934,9 @@ function progressCard(title, subtitle) {
   const reassure = el("p", "flash-reassure-lite fineprint",
     "Safe to interrupt — you can’t brick it. If anything stops, just start again.");
   card.append(reassure);
-  const coach = attachCoach(card, reassure);
+  // Minimal mode skips the coach entirely (it self-advances on a timer);
+  // the settings dialog's lesson switch still governs the full mode.
+  const coach = minimalEnabled() ? null : attachCoach(card, reassure);
   // expose esptool log
   const log = el("details", "flash-log");
   log.append(el("summary", null, "show technical log"));
