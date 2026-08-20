@@ -136,6 +136,24 @@ bool wifi_credentials_configured() {
   return !is_placeholder(cfg.wifi_ssid);
 }
 
+void set_wifi_credentials(const char* ssid, const char* pass) {
+  if (ssid == nullptr || ssid[0] == '\0') return;
+  get();  // ensure the cache exists before we patch it
+  copy_str(g_cfg.wifi_ssid, sizeof(g_cfg.wifi_ssid), ssid);
+  copy_str(g_cfg.wifi_pass, sizeof(g_cfg.wifi_pass), pass ? pass : "");
+  Preferences prefs;
+  if (prefs.begin("securacv", /*readOnly=*/false)) {
+    prefs.putString("wifi_ssid", g_cfg.wifi_ssid);
+    prefs.putString("wifi_pass", g_cfg.wifi_pass);
+    prefs.end();
+    log_line("CFG", "WiFi credentials provisioned to NVS.");
+  } else {
+    // NVS down: the session still works (cache is patched); the portal will
+    // simply run again next boot. Honest failure, not a dead end.
+    log_line("CFG", "NVS unavailable - credentials held for this boot only.");
+  }
+}
+
 bool mqtt_credentials_configured() {
   const RuntimeConfig& cfg = get();
   return !is_placeholder(cfg.mqtt_host) && cfg.mqtt_port != 0;

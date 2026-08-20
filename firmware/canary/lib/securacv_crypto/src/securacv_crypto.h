@@ -47,6 +47,11 @@ public:
   size_t getBytes(const char* key, void* buf, size_t maxLen);
   size_t putBytes(const char* key, const void* value, size_t len);
 
+  // String operations. Copies the value into buf NUL-terminated and returns
+  // chars copied (0 when the key is absent, not string-typed, or the value
+  // plus NUL does not fit in maxLen).
+  size_t getString(const char* key, char* buf, size_t maxLen);
+
   // Key management
   bool isKey(const char* key);
   bool remove(const char* key);

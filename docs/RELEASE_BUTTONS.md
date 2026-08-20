@@ -73,6 +73,13 @@ built commit can never disagree.
 to match — the version-string guard greps each binary and fails closed. And it
 refuses a tag that already exists: bump, don't reuse.
 
+**If it fails on "product silently drops out of the flasher":** a board that
+shipped in the previous release is missing from this one (its build step
+degraded to a warning further up — the matrix is non-blocking by design, so
+this gate is where the drop becomes a decision). Fix that board's build, or
+re-run with `allow_dropped_products` naming the product id(s) to consciously
+ship without them. Dev-channel builds only report; they never block on this.
+
 ### Firmware Release — if changed
 
 The firmware-only version of the master button.

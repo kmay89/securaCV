@@ -33,4 +33,14 @@ struct RuntimeConfig {
 // Loaded once on first call (then cached). Safe to call from setup() onward.
 const RuntimeConfig& get();
 
+// True only when NVS/compiled values are real, not the generic release's
+// placeholders. Used to boot into an honest offline/provisioning state instead
+// of joining a network no router has ever announced ("ci-placeholder").
+bool wifi_credentials_configured();
+
+// Persist credentials the setup portal tested successfully (and patch the
+// cached config, so a join in this same boot uses them). Empty pass = open
+// network. No-op on an empty ssid.
+void set_wifi_credentials(const char* ssid, const char* pass);
+
 } // namespace canary::cfg

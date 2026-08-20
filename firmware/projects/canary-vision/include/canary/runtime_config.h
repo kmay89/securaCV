@@ -38,4 +38,9 @@ const RuntimeConfig& get();
 bool wifi_credentials_configured();
 bool mqtt_credentials_configured();
 
+// Persist credentials the setup portal tested successfully (and patch the
+// cached config, so a join in this same boot uses them). Empty pass = open
+// network. No-op on an empty ssid.
+void set_wifi_credentials(const char* ssid, const char* pass);
+
 } // namespace canary::cfg
