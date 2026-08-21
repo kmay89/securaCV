@@ -1,15 +1,29 @@
 # SecuraCV sidecar quickstart WITH a bundled MQTT broker — for Frigate users
 # who don't run MQTT yet.
+# Already have a broker? Use quickstart.compose.yml instead.
 #
-#   1. docker compose -f quickstart-with-broker.compose.yml up -d
-#   2. Point Frigate at the broker by adding this to your frigate config:
+# Three steps, nothing else:
+#
+#   Step 1 — Start it.
+#     docker compose -f quickstart-with-broker.compose.yml up -d
+#     (The broker comes up first; the sidecar waits for the broker's
+#     healthcheck to pass before starting.)
+#
+#   Step 2 — Point Frigate at the new broker by adding this to your
+#     frigate config:
 #
 #        mqtt:
 #          enabled: true
 #          host: <docker-host-ip>   # or "mosquitto" if on this network
 #          port: 1883
 #
-#   3. docker compose -f quickstart-with-broker.compose.yml run --rm securacv doctor
+#   Step 3 — Check it.
+#     docker compose -f quickstart-with-broker.compose.yml run --rm securacv doctor
+#     (The doctor also listens for a real event — walk past a camera.)
+#
+# A device signing key is generated on first start and persisted in the
+# securacv_data volume — back it up: it is what makes the sealed log
+# verifiable.
 #
 # Security defaults:
 #   - The broker port is bound to 127.0.0.1 (this host only). Containers on
@@ -52,6 +66,24 @@ services:
       # Loopback-only by default. Set SECURACV_MQTT_BIND=0.0.0.0 (with a
       # password!) to accept connections from other machines.
       - "${SECURACV_MQTT_BIND:-127.0.0.1}:1883:1883"
+    # Publish a throwaway message over loopback. Works in both modes:
+    # anonymous, or authenticated when SECURACV_MQTT_PASSWORD is set. The
+    # sidecar's depends_on below waits for this, so it never races the
+    # broker's startup.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$SECURACV_MQTT_PASSWORD" ]; then
+          mosquitto_pub -h 127.0.0.1 -u securacv -P "$$SECURACV_MQTT_PASSWORD"
+          -t securacv/healthcheck -m ok;
+          else
+          mosquitto_pub -h 127.0.0.1 -t securacv/healthcheck -m ok;
+          fi
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     volumes:
       - mosquitto_data:/mosquitto/data
 
@@ -64,7 +96,8 @@ services:
     container_name: securacv
     restart: unless-stopped
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
     environment:
       FRIGATE_MQTT_HOST: "mosquitto"
       # Credentials are picked up automatically when SECURACV_MQTT_PASSWORD

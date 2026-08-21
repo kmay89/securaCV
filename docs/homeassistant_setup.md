@@ -1,6 +1,11 @@
 # Home Assistant Integration Guide
 
-Install the SecuraCV Home Assistant integration via HACS, then connect it to your SecuraCV Canary devices via MQTT or the Privacy Witness Kernel via HTTP API.
+On Home Assistant OS, one command installs and wires everything — broker,
+Frigate, the Privacy Witness Kernel, the SecuraCV integration, blueprints,
+dashboards. That command is the first section below. The rest of this guide
+is the same setup by hand: install the integration via HACS, then connect it
+to your SecuraCV Canary devices via MQTT or to the Privacy Witness Kernel via
+its HTTP API.
 
 > **Prefer the guided version?** [`canary-local/homeassistant.html`](../canary-local/homeassistant.html)
 > ("The Hub") walks this same setup interactively — a 3D Raspberry Pi build you
@@ -8,6 +13,64 @@ Install the SecuraCV Home Assistant integration via HACS, then connect it to you
 > working sketch of the dashboard you end up with. Its entity names, topics,
 > and versions are generated from this doc and drift-checked in CI, so the two
 > can't disagree.
+
+## Quick start: one command
+
+On Home Assistant OS, open the **Terminal & SSH** app (install it from
+**Settings → Apps → App Store** if you haven't) and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
+```
+
+The installer narrates each step — what it is doing and why — and does all of
+this through the Supervisor API:
+
+- registers both app repositories (Frigate's and this one)
+- installs and starts **Mosquitto**, and mints a `canary` broker login for
+  your devices — the password is never printed to the terminal; read it any
+  time under **Settings → Apps → Mosquitto broker → Configuration → Logins**
+- connects Home Assistant itself to the broker (the MQTT config entry)
+- installs **Frigate** and places the curated starting config at
+  `/addon_configs/ccab4aaf_frigate/config.yml`
+- installs the **Privacy Witness Kernel** app in frigate mode and starts it
+  (the device key is auto-generated on first start — nothing to type)
+- installs the **SecuraCV integration**, restarts Home Assistant Core, and
+  creates the integration's config entry automatically
+- installs the notification blueprints to
+  `/config/blueprints/automation/securacv/` and the dashboards to
+  `/config/securacv/dashboards/`, registering them as a YAML dashboard when
+  your `configuration.yaml` allows it (see
+  [Step 4c](#step-4c-ready-made-dashboards))
+- creates the daily-digest automation when a mobile-app notify service
+  exists (install the HA Companion app first if you want that on day one)
+
+It is idempotent: re-running it is safe and never repeats a finished step.
+
+Two things stay yours, and the installer says so when it finishes:
+
+1. **Point Frigate at your cameras.** Edit
+   `/addon_configs/ccab4aaf_frigate/config.yml`, set your cameras' RTSP URLs,
+   flip the example camera's `enabled: true`, and restart Frigate.
+2. **Point your Canaries at the broker.** Host `homeassistant.local`, port
+   `1883`, username `canary`, password from the Mosquitto Logins page above —
+   Step 3 of the manual walkthrough covers the device side.
+
+### Prefer clicking?
+
+The same result from a browser, no terminal:
+
+1. [Add the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV)
+   in one click, then install **Privacy Witness Kernel** from the App Store.
+2. Open its Web UI — the setup wizard walks keys, MQTT, and mode, and can
+   install Mosquitto and Frigate itself if they are missing.
+3. [Add the integration through HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89&repository=securacv-homeassistant&category=integration)
+   in one click, restart Home Assistant, then **Settings → Devices &
+   Services → Add Integration → SecuraCV** and keep the default
+   **Automatic — detect what's installed**.
+
+Everything below is the same setup done step by step — for reference, for
+installs that aren't Home Assistant OS, and for troubleshooting.
 
 ## What you need
 
@@ -28,14 +91,20 @@ Install the SecuraCV Home Assistant integration via HACS, then connect it to you
 > *not* re-sealed into the kernel's log — a "fleet" today is N independently-signed
 > canaries converging in your dashboard, each verifiable on its own.
 
-## Quick Start: Canary via MQTT (Recommended)
+## Manual walkthrough: Canary via MQTT
 
-Most users should use this path. Canary devices auto-discover in Home Assistant via MQTT Discovery.
+This is the Canary path the one-command installer sets up, spelled out step
+by step. Canary devices auto-discover in Home Assistant via MQTT Discovery.
+Even after the installer, Step 3 (pointing each Canary at the broker) is
+yours — a witness device only ever joins your network with your say-so.
 
 ### Prerequisites
 
-1. **MQTT broker** (Mosquitto recommended) running and configured in HA
-2. **SecuraCV Canary** device powered on with firmware v2.1.0+
+1. **MQTT broker** (Mosquitto recommended) running and configured in HA —
+   the one-command installer above sets this up
+2. **SecuraCV Canary** device powered on (any recent firmware; the update
+   entity in [Firmware Updates](#firmware-updates-from-home-assistant) keeps
+   it current)
 3. **Home WiFi** credentials entered into the Canary via its web dashboard
 
 ### Step 1: Install the Integration
@@ -52,11 +121,20 @@ default HACS store yet):
 
 ### Step 2: Configure the Integration
 
+The one-command installer creates this config entry for you — skip to Step 3
+if you ran it. By hand:
+
 1. Go to **Settings > Devices & Services > Add Integration**
 2. Search for "SecuraCV"
-3. Select **"Canary devices via MQTT (Recommended)"**
-4. Set the MQTT topic prefix (default: `securacv`) — this must match your Canary firmware config
-5. Click Submit
+3. Keep the default, **"Automatic — detect what's installed"**, and click
+   Submit. The integration probes for the Privacy Witness Kernel (its
+   `/health` endpoint at `http://d0491a67-privacy-witness-kernel:8799` and
+   the token file at `/config/api_token`) and configures itself: kernel +
+   MQTT when the kernel answers, MQTT-only otherwise. Nothing to type.
+4. Or pick **"Canary devices via MQTT"** explicitly. Its one option, the MQTT
+   topic prefix, defaults to `securacv` — the prefix Canary firmware always
+   publishes on. Leave it alone; there is nothing to invent or match. (Change
+   it only if you have deliberately re-bridged topics under another prefix.)
 
 ### Step 3: Configure the Canary Device
 
@@ -66,9 +144,10 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    wizard** on its own (the captive-portal sheet) — pick your home WiFi
    there and enter its password. The wizard's finish screen also offers an
    optional **"point it at your hub"** step, prefilled with the values that
-   are right for a SecuraCV hub (`homeassistant.local`, port `1883`) — fill
-   in username/password only if your broker requires them, save, and let it
-   restart.
+   are right for a SecuraCV hub (`homeassistant.local`, port `1883`) — enter
+   the broker credentials (if you ran the one-command installer: username
+   `canary`, password from **Settings → Apps → Mosquitto broker →
+   Configuration → Logins**), save, and let it restart.
 2. If the wizard doesn't appear (or the Canary was set up before), open
    `http://canary-<id>.local` (the device's unique hostname, shown in the
    boot banner — e.g. `http://canary-s3-ab7k.local`) or `http://192.168.4.1`
@@ -81,7 +160,9 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
 4. MQTT broker details (if you skipped the wizard's hub step):
    - **Host**: Your Mosquitto broker IP (e.g., `192.168.1.10` or `homeassistant.local`)
    - **Port**: `1883` (default)
-   - **Username/Password**: If your broker requires authentication
+   - **Username/Password**: whatever your broker requires — the one-command
+     installer mints a `canary` login for exactly this (password under
+     **Settings → Apps → Mosquitto broker → Configuration → Logins**)
 5. Save and reboot the Canary
 
 ### Step 4: Verify Discovery
@@ -129,9 +210,50 @@ verified-✓ event timeline with a hash-chain status header from the entities
 above, and auto-discovers them. Full options and a no-custom-card YAML fallback:
 [`docs/lovelace_timeline.md`](lovelace_timeline.md).
 
+### Step 4c: Ready-made dashboards
+
+Three ready-made dashboards ship in
+[`homeassistant/lovelace/`](../homeassistant/lovelace/) — the kernel pipeline
+view, the Canary fleet view, and the Vision view. The one-command installer
+copies them to `/config/securacv/dashboards/` and, when your
+`configuration.yaml` has no `lovelace:` key of its own, registers a YAML
+dashboard in the sidebar (a clearly marked block, validated with
+`ha core check` and rolled back if validation fails). If you already manage a
+`lovelace:` key, the installer leaves it untouched and tells you so — the
+files are still placed, and registering them is the snippet below.
+
+To register one by hand: Home Assistant has no "import a dashboard from a
+file" button in the UI, so a YAML dashboard is declared in
+`configuration.yaml`:
+
+```yaml
+lovelace:
+  mode: storage            # keeps your existing UI-editable dashboards
+  dashboards:
+    securacv-canary:
+      mode: yaml
+      title: SecuraCV
+      icon: mdi:shield-check
+      show_in_sidebar: true
+      filename: securacv/dashboards/securacv-canary-dashboard.yaml
+```
+
+…then restart Home Assistant. Or skip registration entirely: open any
+dashboard, enter edit mode, **Add card → Manual**, and paste the cards you
+want out of the YAML files.
+
 ### Step 5: Set Up Notifications
 
-Import the SecuraCV Alert Blueprint for one-click notification setup:
+The one-command installer pre-installs all the SecuraCV blueprints to
+`/config/blueprints/automation/securacv/`, where Home Assistant loads them
+automatically — if you ran it, skip straight to creating an automation
+(**Settings > Automations > Blueprints**, pick a SecuraCV blueprint). It also
+creates the daily-digest automation for you when a mobile-app notify service
+exists.
+
+To import the Alert Blueprint by hand instead, use the one-click badge —
+[import `securacv_alerts.yaml`](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fsecuracv_alerts.yaml)
+— or the URL flow:
 
 1. Go to **Settings > Automations > Blueprints > Import Blueprint**
 2. Enter URL: `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml`
@@ -143,10 +265,12 @@ Import the SecuraCV Alert Blueprint for one-click notification setup:
 
 Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
 
-**Have a Philips Hue (or any color) bulb?** Import the Alert Light blueprint
-the same way — URL:
-`https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_hue_alert_light.yaml`
-— pick your Canary's sensors and a bulb, and the light becomes a silent
+**Have a Philips Hue (or any color) bulb?** The Alert Light blueprint is
+pre-installed by the one-command installer too; to import it by hand,
+[use the badge](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fsecuracv_hue_alert_light.yaml)
+or the URL
+`https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_hue_alert_light.yaml`.
+Pick your Canary's sensors and a bulb, and the light becomes a silent
 beacon: it pulses and holds red on tamper / smoke or CO heard / chain
 failure, blinks green and restores itself when the sensors clear, and gives
 three gentle amber pulses if the device goes offline. Pair the bulb first
@@ -281,11 +405,14 @@ hosting, and the full security model.
 
 ## Alternative Setup Modes
 
-The integration supports three modes. The MQTT-only mode above is recommended for most users.
+The integration's config flow offers four choices. **Automatic** is the
+default and the right answer for almost everyone — the manual modes exist for
+unusual layouts (a kernel on another host, a re-bridged topic prefix).
 
 | Mode | Best For | How It Works |
 |------|----------|--------------|
-| **MQTT only** | Canary device users | Auto-discover devices via MQTT (recommended) |
+| **Automatic** (default) | Everyone | Probes for the kernel and configures kernel + MQTT, or MQTT-only, to match what's installed — zero typing |
+| **MQTT only** | Canary device users | Auto-discover devices via MQTT |
 | **Kernel only** | PWK API users | Poll the Witness Kernel HTTP API |
 | **Both** | Advanced users | MQTT for Canary + HTTP for the kernel |
 
@@ -318,7 +445,7 @@ Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 - [ ] **Frigate event topic is correct**: `frigate.mqtt_topic` matches Frigate’s configured event topic (default `frigate/events`).
 - [ ] **Home Assistant MQTT publish settings are aligned**: if you enable `mqtt_publish.enabled`, ensure `mqtt_publish.host`, `mqtt_publish.port`, `mqtt_publish.username`, and `mqtt_publish.password` match the same broker.
 - [ ] **Topic + discovery prefixes are consistent**: `mqtt_publish.topic_prefix` is the prefix you expect for PWK events, and `mqtt_publish.discovery_prefix` matches Home Assistant’s discovery prefix (default `homeassistant`).
-- [ ] **Required app options from the Configuration tab are configured**: `device_key_seed` is set, `mode` is still `frigate`, and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
+- [ ] **App options from the Configuration tab are configured**: `mode` is still `frigate`, a `device_key_seed` is present (the app auto-generates one on first start if you left it empty), and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
 - [ ] **MQTT transport expectations are understood**: the current bridges speak MQTT 3.1.1 over TCP with no TLS support.
 
 **Follow-up task**: If you require TLS or MQTT v5, the bridge code must be modified to use a standard MQTT client library that supports these features. When making this change, ensure the bridge still avoids introducing new privacy metadata.
@@ -335,7 +462,11 @@ Cameras → go2rtc → PWK (detection + logging)
 
 ---
 
-## Quick Start (HACS + Kernel)
+## Kernel Setup by Hand (HACS + Kernel)
+
+> The [one-command installer](#quick-start-one-command) at the top of this
+> page does all of this unattended. This section is the same setup done
+> manually.
 
 ### Step 1: Install the HACS Integration
 
@@ -347,7 +478,7 @@ Cameras → go2rtc → PWK (detection + logging)
 
 ### Step 2: Install the Kernel
 
-Choose one runtime option (you'll configure it in **frigate** or **standalone** mode in Step 4):
+Choose one runtime option:
 
 **Option A: Home Assistant app (custom repository)**
 1. Go to **Settings → Apps → App Store**
@@ -358,23 +489,31 @@ Choose one runtime option (you'll configure it in **frigate** or **standalone** 
 1. Run the kernel using your preferred deployment method
 2. Ensure the Event API is reachable from Home Assistant
 
-### Step 3: Generate a Device Key
+### Step 3: Start the Kernel and Run Its Wizard
 
-The device key establishes your kernel's cryptographic identity and is
-required before the kernel will start:
+Click **Start** (or start your container). There is no key ceremony: the
+kernel generates its Ed25519 device key on first start and persists it —
+nothing needs to exist before it will run.
 
-```bash
-openssl rand -hex 32
-```
+Then open the app's **Web UI** (ingress). The setup wizard confirms the mode
+(**frigate** when Frigate is present, **standalone** otherwise), discovers
+the Mosquitto broker, and checks that Mosquitto and Frigate are installed —
+it can install either one for you if they are missing. Nothing to type.
 
-Save this key - it protects your event signatures.
+Back up the device key once the kernel is running: if it is lost, old event
+signatures can no longer be verified.
 
-### Step 4: Configure the Kernel
+#### Advanced: manual configuration (optional)
+
+Skip the wizard only if you need a specific identity or a hand-tuned config —
+for instance, restoring a kernel from backup with its known key. Set the app
+options yourself before first start (`openssl rand -hex 32` produces a valid
+seed):
 
 **For Frigate users:**
 ```yaml
 mode: "frigate"
-device_key_seed: "your-64-char-key"
+device_key_seed: "your-64-char-key"  # optional — auto-generated if omitted
 frigate:
   mqtt_host: "core-mosquitto"
   min_confidence: 0.5
@@ -385,21 +524,23 @@ mqtt_publish:
 **For standalone users:**
 ```yaml
 mode: "standalone"
-device_key_seed: "your-64-char-key"
+device_key_seed: "your-64-char-key"  # optional — auto-generated if omitted
 go2rtc_discovery: true
 mqtt_publish:
   enabled: true  # Optional: HA MQTT discovery
 ```
 
-### Step 5: Start the Kernel
-
-Click **Start** (or start your container). Check logs for any errors.
-
-### Step 6: Add the Integration
+### Step 4: Add the Integration
 
 1. Go to **Settings → Devices & Services**
-2. Click **Add Integration** and select **SecuraCV**
-3. Provide the Event API URL and authentication (MQTT is optional):
+2. Click **Add Integration**, select **SecuraCV**, and keep the default
+   **Automatic — detect what's installed**: it probes the kernel's `/health`
+   at `http://d0491a67-privacy-witness-kernel:8799` and the token file at
+   `/config/api_token`, then creates the entry — kernel + MQTT when the
+   kernel answers, MQTT-only otherwise.
+3. Choosing a kernel mode manually instead? Provide the Event API URL
+   (`http://d0491a67-privacy-witness-kernel:8799` when the kernel runs as
+   the app) and authentication:
    - **API token file (recommended):** the kernel rotates its capability token
      every 10 minutes and rewrites the token file. When the kernel runs as the
      app, that file is `/config/api_token` (the default), which Home
@@ -446,22 +587,27 @@ cp -r privacy_witness_kernel /addons/privacy_witness_kernel
 
 ## Configuration
 
-### Step 1: Generate Device Key
+### Step 1: The Device Key
 
-The device key is a secret that establishes your device's cryptographic identity. Generate one:
+The device key is a secret that establishes your device's cryptographic
+identity. You don't need to create one — the app generates a key on first
+start and persists it. Supply your own seed only when you want a specific
+identity (for instance, restoring from backup):
 
 ```bash
 openssl rand -hex 32
 ```
 
-Save this key securely. If you lose it, you cannot verify old event signatures.
+Either way, back the key up securely. If you lose it, you cannot verify old
+event signatures.
 
 ### Step 2: Configure the App
 
-In the app configuration panel:
+The setup wizard (the app's Web UI) writes this configuration for you. To do
+it by hand instead, in the app configuration panel:
 
 ```yaml
-# Required: Your unique device key (generate with openssl rand -hex 32)
+# Optional: pin your device key (auto-generated on first start if omitted)
 device_key_seed: "your-64-character-hex-key-here"
 
 # Camera discovery from go2rtc (recommended)
@@ -625,11 +771,13 @@ automation:
 If you prefer not to use MQTT Discovery, you can create sensors manually using the REST API.
 
 The app exposes an Event API on port 8799. When Home Assistant is running
-alongside the app, use the app hostname (its slug) so HA can reach it over
-the Supervisor network. The default slug for this repository is
-`privacy_witness_kernel`, which results in `http://privacy_witness_kernel:8799`.
-You can confirm the hostname in **Settings → Apps → Privacy Witness Kernel →
-Info**, where Home Assistant lists the app hostname/slug.
+alongside the app, use the app hostname so HA can reach it over the
+Supervisor network. The Supervisor derives that hostname from the full app
+slug — repository hash plus app name, underscores becoming dashes — which for
+this repository is `d0491a67_privacy_witness_kernel`, giving
+`http://d0491a67-privacy-witness-kernel:8799`. You can confirm the hostname
+in **Settings → Apps → Privacy Witness Kernel → Info**, where Home Assistant
+lists the app hostname/slug.
 
 ### REST Sensor (Basic)
 
@@ -638,7 +786,7 @@ Info**, where Home Assistant lists the app hostname/slug.
 sensor:
   - platform: rest
     name: "PWK Last Event"
-    resource: http://privacy_witness_kernel:8799/events/latest
+    resource: http://d0491a67-privacy-witness-kernel:8799/events/latest
     headers:
       Authorization: Bearer YOUR_API_TOKEN
     value_template: "{{ value_json.event_type }}"
@@ -683,10 +831,10 @@ automation:
 
 ## API Reference
 
-The Event API is available at `http://privacy_witness_kernel:8799` when running
-as a Home Assistant app (or your configured port), as this hostname is
-automatically resolved by the Supervisor. If the kernel runs elsewhere, replace
-the hostname with the reachable IP/DNS name for that host.
+The Event API is available at `http://d0491a67-privacy-witness-kernel:8799`
+when running as a Home Assistant app (or your configured port), as this
+hostname is automatically resolved by the Supervisor. If the kernel runs
+elsewhere, replace the hostname with the reachable IP/DNS name for that host.
 
 ### Authentication
 
@@ -698,7 +846,7 @@ The `/health` endpoint is unauthenticated and only reachable on the local loopba
 TOKEN=$(cat /config/api_token)
 
 # Make authenticated requests (Bearer token only)
-curl -H "Authorization: Bearer $TOKEN" http://privacy_witness_kernel:8799/events
+curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:8799/events
 ```
 
 ### Endpoints
@@ -811,7 +959,8 @@ See [Break-Glass Documentation](../spec/break_glass.md) for details.
 ### App Won't Start
 
 1. Check logs: **Settings → Apps → Privacy Witness Kernel → Logs**
-2. Verify `device_key_seed` is set and valid (64 hex characters)
+2. If you set `device_key_seed` yourself, verify it is valid (64 hex
+   characters) — left empty, the app generates one on first start
 3. Ensure cameras are reachable
 
 ### No Cameras Discovered

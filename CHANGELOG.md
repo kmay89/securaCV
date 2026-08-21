@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-21
+
+### One command installs everything, and the wizard it hands you actually works
+
+The kernel, integration, and app move to 0.7.0 together for the install
+overhaul.
+
+- **`scripts/install.sh` finishes what it starts.** It now drives the
+  plan-based Supervisor provisioner: registers both app repositories,
+  installs and starts Mosquitto, mints the `canary` broker login (never
+  printed — read it from the Mosquitto app's own configuration), connects
+  Home Assistant to the broker, installs Frigate with the curated config in
+  the right place (`/addon_configs`), installs this app in frigate mode,
+  installs the integration, restarts core, and creates the config entry and
+  daily-digest automation through the API. Blueprints land where Home
+  Assistant loads them; dashboards register through a validated,
+  rolled-back-on-failure `configuration.yaml` edit. Idempotent, narrated,
+  and covered by a mocked end-to-end test suite for the first time. The
+  same command on a plain Docker host deploys the sidecar instead.
+- **The app's setup wizard works under ingress.** Every panel API call used
+  to target a variable no code ever set; the wizard now builds its URLs
+  from its own page location. Preflight checks the real Frigate slug, can
+  install missing Mosquitto or Frigate itself, camera discovery parses
+  go2rtc correctly and pre-fills rows, saves respond before the restart
+  they trigger, and the digest setting creates a real automation instead of
+  being silently discarded.
+- **The integration configures itself.** New default setup mode
+  "Automatic — detect what's installed"; MQTT discovery fixed (it crashed
+  on the 2022.6 ServiceInfo change) and ends in a zero-input confirm; the
+  app announces itself via Supervisor discovery and appears as a discovered
+  card; the default kernel URL is the hostname Supervisor DNS actually
+  publishes; MQTT subscribe failures raise a Repairs issue; the bundled
+  Lovelace cards register themselves as dashboard resources.
+- **The Event API is reachable where the integration lives.** It binds the
+  container network (token-required on every data endpoint, as before)
+  while the host port mapping goes from mapped-by-default to disabled — on
+  your LAN only if you opt in.
+- **Without Home Assistant:** the witnessd container image now publishes to
+  GHCR, the sidecar gains a healthcheck and IPv6-safe broker parsing, and
+  both quickstart compose files read as a three-step wizard.
+
 ## [2.4.11] - 2026-08-15
 
 ### The bedside glass keeps its clock lit, in a red you can read, in your own timezone

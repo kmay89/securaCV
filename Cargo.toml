@@ -3,7 +3,7 @@ name = "witness-kernel"
 # Kept in lockstep with custom_components/securacv/manifest.json and
 # privacy_witness_kernel/config.yaml via scripts/bump_version.sh; CI fails
 # on drift (scripts/lint_version_sync.sh).
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"

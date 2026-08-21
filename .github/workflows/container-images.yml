@@ -1,14 +1,18 @@
 name: Container images
 
-# Build-validate the standalone witnessd image (root Dockerfile, see
-# docs/container.md). The other images have their own workflows: the HA
+# Build-validate AND publish the standalone witnessd image (root Dockerfile,
+# see docs/container.md). The other images have their own workflows: the HA
 # add-on in addon-image.yml and the Frigate sidecar in docker-sidecar.yml.
 #
-# The image is not published; this gate exists so a change to the crate,
-# the Dockerfile, or the build context can't silently break the documented
-# `docker build -t witnessd:local .` (which happened before this gate
-# existed: the lock file moved to v4 while the build stage pinned a cargo
-# too old to read it, and nothing noticed).
+# - On pull requests: build + smoke test only, no push. This gate exists so
+#   a change to the crate, the Dockerfile, or the build context can't
+#   silently break the documented `docker build -t witnessd:local .` (which
+#   happened before this gate existed: the lock file moved to v4 while the
+#   build stage pinned a cargo too old to read it, and nothing noticed).
+# - On push to main: additionally publish to GHCR as
+#   ghcr.io/<owner>/securacv-witnessd (:latest + :<commit sha>), so the
+#   no-Home-Assistant path gets a `docker run ghcr.io/...` that works
+#   without a local toolchain. Mirrors docker-sidecar.yml's publish job.
 
 on:
   pull_request:
@@ -32,6 +36,9 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded PR runs only. Main runs publish to GHCR; canceling one
+# mid-push could leave :latest and :<sha> pointing at different builds, so
+# those queue instead (same reasoning as docker-sidecar.yml).
 concurrency:
   group: container-images-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -77,3 +84,52 @@ jobs:
             export_verify --help >/dev/null
             curl --version >/dev/null
           '
+
+  publish:
+    name: Publish to GHCR
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve image name
+        id: meta
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${owner}/securacv-witnessd" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # amd64 only for now: unlike the sidecar, this image compiles the full
+      # GStreamer-linked crate, and a QEMU-emulated arm64 build of that does
+      # not fit inside the policy's timeout ceiling. Add arm64 when native
+      # arm64 runners (or a cross-compile stage) are available.
+      #
+      # Tags: :latest plus the exact commit sha. The witnessd image ships
+      # from main (not from version tags), so the sha tag is the pin.
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=container-witnessd
+          cache-to: type=gha,scope=container-witnessd,mode=max
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
