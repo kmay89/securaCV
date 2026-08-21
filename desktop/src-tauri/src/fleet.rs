@@ -255,7 +255,7 @@ pub async fn device_whoami(
     // 32 hex chars of OS randomness: inside the firmware's 16-64 gate, and
     // far past any birthday concern for a per-session challenge.
     let mut raw = [0u8; 16];
-    getrandom::getrandom(&mut raw).map_err(|e| format!("no system randomness: {e}"))?;
+    getrandom::fill(&mut raw).map_err(|e| format!("no system randomness: {e}"))?;
     let nonce: String = raw.iter().map(|b| format!("{b:02x}")).collect();
     debug_assert!(crate::whoami::nonce_ok(&nonce));
 
