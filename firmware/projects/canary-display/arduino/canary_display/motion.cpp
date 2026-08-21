@@ -23,6 +23,7 @@ Caps derive_caps() {
   c.h = LCD_HEIGHT;
   c.bus = Bus::RgbPanel;
   c.bus_hz = LCD_PCLK_HZ;
+<<<<<<< HEAD
 #elif defined(LCD_QSPI_HZ)
   // GRAM-backed QSPI AMOLED (RM690B0 class): the panel holds its own
   // framebuffer and takes windowed command writes, so like an RGB panel it
@@ -31,6 +32,8 @@ Caps derive_caps() {
   c.h = TFT_HEIGHT;
   c.bus = Bus::QspiCmd;
   c.bus_hz = LCD_QSPI_HZ;
+=======
+>>>>>>> origin/main
 #else
   c.w = TFT_WIDTH;
   c.h = TFT_HEIGHT;
