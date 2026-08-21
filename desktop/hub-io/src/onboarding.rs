@@ -154,25 +154,39 @@ pub fn auth_code_from(v: &Value) -> Option<String> {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    ureq::Agent::config_builder()
         .user_agent("SecuraCV-Flasher")
-        .timeout_connect(std::time::Duration::from_secs(5))
+        .timeout_connect(Some(std::time::Duration::from_secs(5)))
         // Creating the owner also creates its person entry and first refresh
         // token — give a Pi mid-first-boot room to be slow without hanging
         // the UI forever.
-        .timeout_read(std::time::Duration::from_secs(30))
+        .timeout_recv_response(Some(std::time::Duration::from_secs(30)))
+        .timeout_recv_body(Some(std::time::Duration::from_secs(30)))
+        // HA answers meaningful JSON on non-2xx (a step already finished is a
+        // 403 with a message) — deliver those as responses whose body callers
+        // can read, not as a bodyless `Error::StatusCode`. The status checks
+        // this obliges live in `fetch_steps` / `post_json` / `exchange_code`.
+        .http_status_as_error(false)
         .build()
+        .into()
 }
 
 /// GET the onboarding step list. `Err` here means "not reachable / not ready
 /// yet" — the caller's retry loop owns that, not this module.
 fn fetch_steps(agent: &ureq::Agent, base: &str) -> Result<Vec<(String, bool)>, String> {
-    let resp = agent
+    let mut resp = agent
         .get(&format!("{base}/api/onboarding"))
         .call()
         .map_err(|e| format!("couldn't read the hub's setup state: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "couldn't read the hub's setup state: {}",
+            resp.status()
+        ));
+    }
     let v: Value = resp
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("the hub's setup state wasn't readable: {e}"))?;
     parse_steps(&v)
 }
@@ -187,17 +201,16 @@ fn post_json(
 ) -> Result<(u16, Value), String> {
     let mut req = agent.post(url);
     if let Some(t) = token {
-        req = req.set("Authorization", &format!("Bearer {t}"));
+        req = req.header("Authorization", format!("Bearer {t}"));
     }
-    match req.send_json(body.clone()) {
-        Ok(resp) => {
-            let status = resp.status();
-            let v = resp.into_json().unwrap_or(Value::Null);
+    // The agent is configured with `http_status_as_error(false)`, so a non-2xx
+    // arrives here as a response too — its status and body flow to the caller
+    // the same way a 200's do.
+    match req.send_json(body) {
+        Ok(mut resp) => {
+            let status = resp.status().as_u16();
+            let v = resp.body_mut().read_json().unwrap_or(Value::Null);
             Ok((status, v))
-        }
-        Err(ureq::Error::Status(code, resp)) => {
-            let v = resp.into_json().unwrap_or(Value::Null);
-            Ok((code, v))
         }
         Err(e) => Err(format!("couldn't reach the hub: {e}")),
     }
@@ -209,16 +222,24 @@ fn exchange_code(
     base: &str,
     code: &str,
 ) -> Result<(String, Option<String>), String> {
-    let resp = agent
+    let cid = client_id(base);
+    let mut resp = agent
         .post(&format!("{base}/auth/token"))
-        .send_form(&[
+        .send_form([
             ("grant_type", "authorization_code"),
             ("code", code),
-            ("client_id", &client_id(base)),
+            ("client_id", cid.as_str()),
         ])
         .map_err(|e| format!("the hub wouldn't exchange its sign-in code: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "the hub wouldn't exchange its sign-in code: {}",
+            resp.status()
+        ));
+    }
     let v: Value = resp
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("the hub's token reply wasn't readable: {e}"))?;
     let access = v
         .get("access_token")
@@ -239,7 +260,7 @@ fn exchange_code(
 fn revoke_refresh_token(agent: &ureq::Agent, base: &str, refresh: &str) {
     let _ = agent
         .post(&format!("{base}/auth/token"))
-        .send_form(&[("token", refresh), ("action", "revoke")]);
+        .send_form([("token", refresh), ("action", "revoke")]);
 }
 
 /// Prove the typed credentials open this hub, via HA's login flow. Returns
