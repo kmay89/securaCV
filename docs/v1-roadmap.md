@@ -68,8 +68,11 @@ tagging v1):**
   (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
 - **Still open:** all of the above gates are green **in CI**, but the v1 tag also waits on
   **on-device hardware validation** (the kernel/bridge pipeline and firmware exercised on real
-  ESP32 devices, not just CI). The concrete procedure, pass/fail criteria, and required
-  artifacts are in [`docs/hardware/v1_bench_validation_runbook.md`](hardware/v1_bench_validation_runbook.md)
+  ESP32 devices, not just CI). The driver sheet that sequences the whole gate — tracks,
+  sign-off matrix, tag step — is
+  [`docs/V1_BENCH_TEST_RUNBOOK.md`](V1_BENCH_TEST_RUNBOOK.md); the detailed per-track
+  procedures, pass/fail criteria, and required artifacts are in
+  [`docs/hardware/v1_bench_validation_runbook.md`](hardware/v1_bench_validation_runbook.md)
   (Track A: single canary → HA verified-✓; Track B: kernel pipeline smoke; Track C: 2–3 board
   mesh/chirp fleet). Until that's done the README status stays `v1-rc`, the
   `CHANGELOG.md` `[1.0.0]` entry stays `Unreleased`, and no tag is cut.

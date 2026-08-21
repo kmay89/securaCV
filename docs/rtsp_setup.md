@@ -314,4 +314,4 @@ cargo build --release --features rtsp-ffmpeg
 
 - [Home Assistant Integration](homeassistant_setup.md) - Run as an HA add-on
 - [Container Deployment](container.md) - Run in Docker
-- [Verification](../spec/verification.md) - Verify event integrity
+- [Verification](log_verify.md) - Verify event integrity

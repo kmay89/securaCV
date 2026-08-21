@@ -145,12 +145,16 @@ This is the same discipline as the hub doc's *"inherit it, don't rebuild it."*
   platform — a webview wrapped in Tauri (how desktop/iOS ship) would fight the
   remote and the ambient aesthetic. This is the one platform where native is
   the honest choice.
-- **The exact same Rust witness core** that verifies the sealed log on desktop,
-  in firmware, and in the kernel — compiled for `aarch64-apple-tvos` and called
-  from Swift over a thin FFI. The chain math is *byte-identical* everywhere, so
-  there is no "the TV disagrees with the kernel" failure mode by construction.
-  `tvos/witness-core/` wraps the workspace crate; `tvos/scripts/build-witness-core.sh`
-  builds it.
+- **The same chain math, proven against the kernel.** The kernel's own Rust
+  verifier cannot compile for Apple TV (it is welded to rusqlite/sqlcipher and
+  GStreamer), so `tvos/witness-core/` is a small standalone crate that
+  re-implements the kernel's *pinned bytes* — the same precedent as the
+  offline JavaScript verifier — compiled for `aarch64-apple-tvos` and called
+  from Swift over a thin FFI. CI proves it against the kernel's own
+  domain-separation fixtures on every PR and again on the release path
+  (`tvos/witness-core/tests/vectors.rs`), so "the TV disagrees with the
+  kernel" is a failure CI catches before it ships, not one prevented by
+  sharing a binary. `tvos/scripts/build-witness-core.sh` builds it.
 - **Local discovery over Bonjour/mDNS.** The TV finds the kernel on the LAN,
   no account, no cloud, no pairing codes typed on a remote. Reconnects with
   backoff on any network blip (the watchdog posture, borrowed from firmware).

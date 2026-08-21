@@ -1,6 +1,15 @@
 # v1 On-Device Bench Validation Runbook
 
-This is the procedure that closes the project's last v1 gate: **on-device hardware
+> **⚠️ Not the driver sheet.** The document that sequences the whole v1 gate —
+> tracks A–D, the sign-off matrix, and the tag step — is
+> [`docs/V1_BENCH_TEST_RUNBOOK.md`](../V1_BENCH_TEST_RUNBOOK.md). Work from
+> that one. This file stays as the **detailed per-track procedures and pass
+> criteria** the driver sheet draws on (single-board bring-up, kernel operator
+> smoke, 2–3 board fleet validation); earlier versions of this file called
+> itself "the procedure that closes the last v1 gate," and that claim now
+> lives in the driver sheet.
+
+This runbook details the bench procedures for the v1 gate: **on-device hardware
 validation** (README "Release gate", `v1-roadmap.md` "Still open"). CI proves the
 code compiles and the pipelines work against fixtures; this runbook proves the same
 behavior on real boards. It has three tracks:
@@ -55,7 +64,7 @@ verified" badge* on hardware, plus reboot/backfill and tamper-negative behavior.
 
 1. The device raises its AP `SecuraCV-XXXX` with a **device-unique** password
    (printed on serial at first boot — confirm it is *not* a fixed default;
-   `regression_check.sh` warns on the legacy `witness2026`).
+   `regression_check.sh` fails on the legacy `witness2026`).
 2. Join from a phone; the captive portal (`setup_wizard.h`) should redirect any
    hostname to `192.168.4.1`.
 3. Enter home-WiFi credentials (or use BLE provisioning). Record the `device_id`

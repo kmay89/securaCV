@@ -10,13 +10,13 @@ against the sprawl becoming a maintenance nightmare.
 
 | Tree | Files | What it is | Duplicate? |
 | --- | --- | --- | --- |
-| `src/` | ~89 | **The witness kernel** — the real Rust daemon (`witnessd`) and its 17 binaries. This is the product. | No — canonical |
+| `src/` | ~110 | **The witness kernel** — the real Rust daemon (`witnessd`) and its ~20 binaries (`src/bin/`; the exact roster is the `[[bin]]` entries in `Cargo.toml`). This is the product. | No — canonical |
 | `kernel/` | ~2 | **Docs only** — `architecture.md` etc., the constitutional reference CONTRIBUTING points at. Not code. | No — rename candidate (see below) |
 | `privacy_witness_kernel/` | ~12 | **The Home Assistant add-on** — packaging wrapper that ships the kernel as a HACS/add-on. Not a second kernel. | No |
 | `desktop/` | ~43 | **Hub & flasher** — the Tauri hub app and `hub-io`/`hub-core` Rust crates (provisioning, flashing). | No |
 | `desktop-lab/` | ~25 | **The Lab desktop app** — a Tauri shell around `canary-local` (the browser Lab), for Mac/Linux. Different app, different job. | No |
-| `firmware/canary/` | ~137 | **Active firmware** (PlatformIO, `seeed_xiao_esp32s3`). ~88% feature parity per `firmware/FEATURES.md`. | No — canonical |
-| `firmware/projects/canary-wap/` | ~255 | **The WAP variant** — Arduino compatibility lane **plus** a PlatformIO lane that FEATURES.md flags as ~40% skeleton. | Partial — see decision 1 |
+| `firmware/canary/` | ~140 | **Active firmware** (PlatformIO, `seeed_xiao_esp32s3`). ~88% feature parity per `firmware/FEATURES.md`. | No — canonical |
+| `firmware/projects/canary-wap/` | ~280 | **The WAP variant** — Arduino compatibility lane **plus** a PlatformIO lane that FEATURES.md flags as ~40% skeleton. | Partial — see decision 1 |
 
 **Rule of thumb for newcomers:** the product is `src/` (kernel) + `firmware/canary/`
 (device). Everything else is a wrapper, a variant, or docs.
