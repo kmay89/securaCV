@@ -365,6 +365,86 @@ async function hashEntry(prevHash, payloadStr) {
   return sha256(concatBytes(prevHash, utf8(payloadStr)));
 }
 
+// ---- device-key rotation lineage -----------------------------------------
+// Mirrors src/crypto/signatures.rs (rotation_binding_hash) and
+// src/envelope.rs (envelope_key_lineage). A rotated device's envelope carries
+// rows signed by earlier keys; the evidence for trusting those keys travels
+// IN the envelope as KeyRotation records (new key's possession attestation +
+// prev key's authorization, distinct domains), walked BACKWARD from the
+// provenance anchor.
+
+const DOMAIN_KEY_ROTATION = 'securacv:pwk:device-key-rotation:v1';
+const DOMAIN_KEY_ROTATION_AUTHZ = 'securacv:pwk:device-key-rotation-authz:v1';
+
+async function rotationBindingHash(domain, prevKeyBytes, newKeyBytes) {
+  const inner = await sha256(concatBytes(prevKeyBytes, newKeyBytes));
+  return domainSeparatedHash(domain, inner);
+}
+
+// Returns { keys: [Uint8Array...oldest->newest], rowKey: [keyIndex per sealed row] }.
+// Throws on a CHAINING rotation whose attestation/authorization fails (tampered
+// identity evidence). Rotations that do not chain into the anchor cannot extend
+// the lineage; their rows still verify (or fail) like any other row.
+async function envelopeKeyLineage(entries, provenanceKeyBytes) {
+  const rotations = [];
+  for (let row = 0; row < entries.length; row++) {
+    let parsed;
+    try { parsed = JSON.parse(entries[row].payload_json); } catch { continue; }
+    if (!parsed || parsed.record_type !== 'key_rotation') continue;
+    rotations.push({
+      row,
+      prev: Uint8Array.from(parsed.prev_public_key || []),
+      next: Uint8Array.from(parsed.new_public_key || []),
+      attestation: Uint8Array.from(parsed.new_key_attestation || []),
+      authorization: Uint8Array.from(parsed.prev_key_authorization || []),
+    });
+  }
+  const keysRev = [provenanceKeyBytes];
+  const chainedRows = [];
+  let current = provenanceKeyBytes;
+  for (let i = rotations.length - 1; i >= 0; i--) {
+    const rot = rotations[i];
+    if (rot.next.length !== 32 || rot.prev.length !== 32 || !bytesEqual(rot.next, current)) continue;
+    const attMsg = await rotationBindingHash(DOMAIN_KEY_ROTATION, rot.prev, rot.next);
+    if (!(await verifyEd25519(rot.next, rot.attestation, attMsg))) {
+      throw chainFail(`key rotation at row ${rot.row}: possession attestation invalid`,
+        'sealed_events', rot.row, 'key_rotation_invalid');
+    }
+    if (rot.authorization.length > 0) {
+      const authzMsg = await rotationBindingHash(DOMAIN_KEY_ROTATION_AUTHZ, rot.prev, rot.next);
+      if (!(await verifyEd25519(rot.prev, rot.authorization, authzMsg))) {
+        throw chainFail(`key rotation at row ${rot.row}: predecessor authorization invalid`,
+          'sealed_events', rot.row, 'key_rotation_invalid');
+      }
+    }
+    // Legacy records (empty authorization) are anchored by their row's entry
+    // signature under the predecessor, which the chain walk enforces because
+    // the row's assigned signer IS that predecessor.
+    keysRev.push(rot.prev);
+    chainedRows.push(rot.row);
+    current = rot.prev;
+  }
+  keysRev.reverse();
+  chainedRows.reverse();
+  // Rows up to and INCLUDING a chaining rotation row are signed by the
+  // retiring key; the successor signs from the next row on.
+  const rowKey = [];
+  let active = 0;
+  let nextRot = 0;
+  for (let row = 0; row < entries.length; row++) {
+    rowKey.push(active);
+    if (nextRot < chainedRows.length && chainedRows[nextRot] === row) { active++; nextRot++; }
+  }
+  return { keys: keysRev, rowKey };
+}
+
+async function verifyEd25519AnyOf(keys, signatureBytes, message) {
+  for (const key of keys) {
+    if (await verifyEd25519(key, signatureBytes, message)) return true;
+  }
+  return false;
+}
+
 async function verifyEd25519(pubKeyBytes, signatureBytes, message) {
   let key;
   try {
@@ -537,7 +617,12 @@ function chainFail(message, ledger, entryId, kind) {
   return err;
 }
 
-async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName, verifySig) {
+// `signers` mirrors src/envelope.rs ChainSigners: rows are signed by the
+// device key current at write time, so a rotated device's ledgers mix signers.
+//   { perEntry: keys, rowKey }  sealed events — row i must verify under
+//                               keys[rowKey[i]] (switches at each rotation)
+//   { anyOf: keys }             receipts/checkpoint — any validated lineage key
+async function verifyLinearChain(entries, startHead, domain, signers, ledgerName, verifySig) {
   let expectedPrev = startHead;
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -557,7 +642,10 @@ async function verifyLinearChain(entries, startHead, domain, pubKey, ledgerName,
     if (verifySig) {
       const sig = Uint8Array.from(e.signatures.ed25519_signature);
       const msg = await domainSeparatedHash(domain, entryHash);
-      if (!(await verifyEd25519(pubKey, sig, msg))) {
+      const ok = signers.perEntry
+        ? await verifyEd25519(signers.perEntry[signers.rowKey[i]], sig, msg)
+        : await verifyEd25519AnyOf(signers.anyOf, sig, msg);
+      if (!ok) {
         throw chainFail(`${ledgerName} signature verification failed at index ${i}`,
           ledgerName, i, 'signature_mismatch');
       }
@@ -623,21 +711,33 @@ async function verifyEnvelope(envelope) {
     const pubKey = sigCheckable ? hexToBytes(envelope.provenance.device_public_key) : null;
     const domains = envelope.manifest.signature_domains;
 
+    // The provenance key is the device key CURRENT at seal time; a rotated
+    // device's ledgers carry rows signed by earlier lineage keys, proven by
+    // the envelope's own KeyRotation records. Lineage validation needs
+    // Ed25519, so it rides the same sigCheckable deferral as every signature.
+    const lineage = sigCheckable
+      ? await envelopeKeyLineage(envelope.ledgers.sealed_events.entries, pubKey)
+      : { keys: [], rowKey: [] };
+    if (sigCheckable && lineage.keys.length > 1) {
+      result.checks.push(`Device key rotation(s) followed (${lineage.keys.length - 1}) — lineage anchored at the provenance key`);
+    }
+
     // Sealed events (start at checkpoint head if present, else genesis).
     const cp = envelope.ledgers.checkpoints.latest;
     const sealedStart = cp ? toBytes(cp.chain_head_hash) : new Uint8Array(32);
     const sealed = envelope.ledgers.sealed_events;
-    const sealedHead = await verifyLinearChain(sealed.entries, sealedStart, domains.sealed_log_entry, pubKey, 'sealed_events', sigCheckable);
+    const sealedHead = await verifyLinearChain(sealed.entries, sealedStart, domains.sealed_log_entry,
+      { perEntry: lineage.keys, rowKey: lineage.rowKey }, 'sealed_events', sigCheckable);
     validateSummary('sealed_events', sealed.entries.length, sealed.count, sealed.head_hash, sealedHead);
     result.checks.push(`Sealed-event hash chain intact (${sealed.entries.length} ${sealed.entries.length === 1 ? 'entry' : 'entries'})`);
     if (sigCheckable) result.checks.push('Device Ed25519 signatures valid on every sealed event');
 
-    // Checkpoint signature.
+    // Checkpoint signature — by whichever lineage key was current when it was written.
     if (cp && sigCheckable) {
       const head = toBytes(cp.chain_head_hash);
       const msg = await domainSeparatedHash(domains.checkpoint, head);
       const sig = Uint8Array.from(cp.signatures.ed25519_signature);
-      if (!(await verifyEd25519(pubKey, sig, msg))) {
+      if (!(await verifyEd25519AnyOf(lineage.keys, sig, msg))) {
         throw chainFail('checkpoint signature verification failed', 'checkpoint', null, 'checkpoint_invalid');
       }
       result.checks.push('Checkpoint signature valid (chain continuity across pruning)');
@@ -645,7 +745,8 @@ async function verifyEnvelope(envelope) {
 
     // Break-glass receipts.
     const bg = envelope.ledgers.break_glass_receipts;
-    const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass, pubKey, 'break_glass_receipts', sigCheckable);
+    const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass,
+      { anyOf: lineage.keys }, 'break_glass_receipts', sigCheckable);
     validateSummary('break_glass_receipts', bg.entries.length, bg.count, bg.head_hash, bgHead);
     for (let i = 0; i < bg.entries.length; i++) {
       const e = bg.entries[i];
@@ -663,7 +764,8 @@ async function verifyEnvelope(envelope) {
 
     // Export receipts.
     const exp = envelope.ledgers.export_receipts;
-    const expHead = await verifyLinearChain(exp.entries, new Uint8Array(32), domains.export_receipt, pubKey, 'export_receipts', sigCheckable);
+    const expHead = await verifyLinearChain(exp.entries, new Uint8Array(32), domains.export_receipt,
+      { anyOf: lineage.keys }, 'export_receipts', sigCheckable);
     validateSummary('export_receipts', exp.entries.length, exp.count, exp.head_hash, expHead);
 
     // Provenance must be consistent with the signed export receipt.
@@ -690,7 +792,7 @@ async function verifyEnvelope(envelope) {
     if (sigCheckable) {
       const rMsg = await domainSeparatedHash(domains.export_receipt, toBytes(rEntry.entry_hash));
       const rSig = Uint8Array.from(rEntry.signatures.ed25519_signature);
-      if (!(await verifyEd25519(pubKey, rSig, rMsg))) throw new Error('export receipt signature verification failed');
+      if (!(await verifyEd25519AnyOf(lineage.keys, rSig, rMsg))) throw new Error('export receipt signature verification failed');
       result.checks.push('Export receipt signature valid (provenance bound)');
     }
 

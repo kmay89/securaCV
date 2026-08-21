@@ -29,6 +29,19 @@ fn valid_fixture_verifies() {
     );
 }
 
+/// Pins rotation-aware verification cross-language: the ledgers mix signers
+/// (a device-key rotation mid-history) and the lineage is proven by the
+/// envelope's own key_rotation record. Regenerate with:
+///   cargo run --example gen_rotated_envelope_fixture
+#[test]
+fn rotated_fixture_verifies() {
+    let envelope = load("valid_envelope_rotated.json");
+    let report =
+        verify_envelope(&envelope, SignatureMode::Compat).expect("rotated fixture must verify");
+    assert_eq!(report.sealed_events, 3, "pre-event, rotation record, post-event");
+    assert_eq!(report.export_receipts, 1);
+}
+
 /// Pins the pre-`auth_mode` receipt format: bundles exported before the field
 /// existed must keep verifying forever. This fixture is never regenerated.
 #[test]

@@ -379,11 +379,18 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         ));
     }
 
-    // 2. Keys.
-    let verifying_key =
-        ed25519_dalek::VerifyingKey::from_bytes(&envelope.provenance.device_public_key)
-            .map_err(|e| anyhow!("invalid device public key: {}", e))?;
+    // 2. Keys. The provenance key is the device key CURRENT at seal time; the
+    // ledgers may carry rows signed by EARLIER lineage keys (a rotated device
+    // exports its retained history), so the acceptable-signer set is the
+    // lineage reconstructed from the envelope's own KeyRotation records,
+    // anchored at the provenance key (see envelope_key_lineage).
+    ed25519_dalek::VerifyingKey::from_bytes(&envelope.provenance.device_public_key)
+        .map_err(|e| anyhow!("invalid device public key: {}", e))?;
     let pq_key = parse_pq_key(envelope.provenance.pq_public_key.as_deref());
+    let (lineage_keys, sealed_row_key) = envelope_key_lineage(
+        &envelope.ledgers.sealed_events.entries,
+        envelope.provenance.device_public_key,
+    )?;
 
     let mut warnings = Vec::new();
     let mut pq_checked = false;
@@ -408,7 +415,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         sealed_iter,
         sealed_start,
         DOMAIN_SEALED_LOG_ENTRY,
-        &verifying_key,
+        ChainSigners::PerEntry(&lineage_keys, &sealed_row_key),
         mode,
         pq_key.as_ref(),
         "sealed_events",
@@ -422,10 +429,11 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         sealed_head,
     )?;
 
-    // 4. Checkpoint signature.
+    // 4. Checkpoint signature — by whichever lineage key was current when the
+    // checkpoint was written.
     if let Some(cp) = envelope.ledgers.checkpoints.latest.as_ref() {
-        verify_entry_signature(
-            &verifying_key,
+        verify_entry_signature_any_of(
+            &lineage_keys,
             &cp.chain_head_hash,
             &cp.signatures,
             mode,
@@ -460,7 +468,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         bg_iter,
         [0u8; 32],
         DOMAIN_BREAK_GLASS_RECEIPT,
-        &verifying_key,
+        ChainSigners::AnyOf(&lineage_keys),
         mode,
         pq_key.as_ref(),
         "break_glass_receipts",
@@ -515,7 +523,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         exp_iter,
         [0u8; 32],
         DOMAIN_EXPORT_RECEIPT,
-        &verifying_key,
+        ChainSigners::AnyOf(&lineage_keys),
         mode,
         pq_key.as_ref(),
         "export_receipts",
@@ -549,8 +557,8 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     if computed_entry_hash != envelope.export_receipt_entry.entry_hash {
         return Err(anyhow!("export receipt entry hash mismatch"));
     }
-    verify_entry_signature(
-        &verifying_key,
+    verify_entry_signature_any_of(
+        &lineage_keys,
         &envelope.export_receipt_entry.entry_hash,
         &envelope.export_receipt_entry.signatures,
         mode,
@@ -625,7 +633,6 @@ fn validate_ledger_summary(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 // Map a ledger's wire name onto the structured failure location. The wire
 // names are fixed by the envelope format; the message strings keep using them
 // verbatim so existing consumers (and the parity fixtures) see unchanged text.
@@ -652,14 +659,178 @@ fn chain_fail(
 }
 
 // The argument list mirrors the verification context (chain start, domain,
-// keys, mode, ledger identity) — bundling them into a struct would obscure
-// the 1:1 mapping with the Rust/JS parity algorithm for no reuse benefit.
+/// Which device key(s) a ledger walk verifies each row against.
+///
+/// Rows are signed by the device key CURRENT at write time, so a rotated
+/// device's ledgers legitimately mix signers:
+/// - `PerEntry` — the sealed-events walk, where the exact signer of every row
+///   is known (it switches at each validated KeyRotation record): row `i`
+///   must verify under `keys[row_key[i]]`, nothing weaker.
+/// - `AnyOf` — the receipt ledgers and checkpoint, whose rows carry no
+///   ordering relative to the rotations: any validated lineage key is an
+///   acceptable signer; a signature valid under none of them is a forgery.
+enum ChainSigners<'a> {
+    PerEntry(&'a [ed25519_dalek::VerifyingKey], &'a [usize]),
+    AnyOf(&'a [ed25519_dalek::VerifyingKey]),
+}
+
+/// Verify an entry signature against every key in a validated lineage,
+/// accepting the first that verifies.
+fn verify_entry_signature_any_of(
+    keys: &[ed25519_dalek::VerifyingKey],
+    entry_hash: &[u8; 32],
+    signatures: &SignatureSet,
+    mode: SignatureMode,
+    pq_public_key: Option<&PqPublicKey>,
+    domain: &str,
+) -> Result<()> {
+    let mut last_err = None;
+    for key in keys {
+        match verify_entry_signature(key, entry_hash, signatures, mode, pq_public_key, domain) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("no lineage keys to verify against")))
+}
+
+/// Reconstruct the device-key lineage valid for THIS envelope from its own
+/// contents, anchored at the provenance key (the key current at seal time).
+///
+/// A rotated device's envelope carries rows signed by earlier keys, and the
+/// evidence for trusting those keys travels IN the envelope: each in-chain
+/// `KeyRotation` record binds `prev → new` with the NEW key's possession
+/// attestation and the PREV key's authorization (distinct signature domains).
+/// Walking those records BACKWARD from the provenance key yields the ordered
+/// key list without trusting anything but the anchor:
+/// - a rotation only extends the lineage if its `new_public_key` equals the
+///   key currently trusted, its attestation verifies, and its authorization
+///   (when present — legacy records predate the field) verifies under the
+///   announced predecessor. A chaining rotation that fails either check is a
+///   hard error (tampered identity evidence).
+/// - a rotation that does NOT chain into the trusted lineage cannot extend
+///   it; its row is simply verified like any other under the key active at
+///   its position, so a fabricated rotation still breaks the chain walk.
+/// - a legacy rotation (empty authorization) is anchored the same way the
+///   kernel's own lineage recovery anchors it: by its row's entry signature
+///   under the predecessor key, which the forward walk enforces because the
+///   row's assigned signer IS that predecessor.
+///
+/// Returns the keys oldest→newest plus, for each sealed-events row, the index
+/// of the key that must have signed it (the signer switches AFTER each
+/// chaining rotation row — the rotation record itself is signed by the
+/// retiring key).
+fn envelope_key_lineage(
+    entries: &[SealedEntryView],
+    provenance_key: [u8; 32],
+) -> Result<(Vec<ed25519_dalek::VerifyingKey>, Vec<usize>)> {
+    struct Rot {
+        row: usize,
+        prev: [u8; 32],
+        new: [u8; 32],
+        attestation: Vec<u8>,
+        authorization: Vec<u8>,
+    }
+    // Unparseable or non-rotation payloads are simply not rotations — the
+    // walk stays forward-compatible with record kinds this verifier predates.
+    let rotations: Vec<Rot> = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(row, e)| {
+            match crate::SealedLogRecord::deserialize_compat(&e.payload_json) {
+                Ok(crate::SealedLogRecord::KeyRotation(r)) => Some(Rot {
+                    row,
+                    prev: r.prev_public_key,
+                    new: r.new_public_key,
+                    attestation: r.new_key_attestation,
+                    authorization: r.prev_key_authorization,
+                }),
+                _ => None,
+            }
+        })
+        .collect();
+
+    // Backward: anchor at provenance, follow prev-links through validated
+    // rotations. `chained[i]` marks rotations that extend the lineage.
+    let mut keys_rev: Vec<[u8; 32]> = vec![provenance_key];
+    let mut chained_rows: Vec<usize> = Vec::new();
+    let mut current = provenance_key;
+    for rot in rotations.iter().rev() {
+        if rot.new != current {
+            continue;
+        }
+        let new_key = ed25519_dalek::VerifyingKey::from_bytes(&rot.new)
+            .map_err(|e| anyhow!("key rotation at row {}: invalid new key: {}", rot.row, e))?;
+        let prev_key = ed25519_dalek::VerifyingKey::from_bytes(&rot.prev)
+            .map_err(|e| anyhow!("key rotation at row {}: invalid prev key: {}", rot.row, e))?;
+        crate::crypto::signatures::verify_rotation_attestation(
+            &new_key,
+            &rot.prev,
+            &rot.new,
+            &rot.attestation,
+        )
+        .map_err(|e| {
+            anyhow::Error::new(verify::VerifyFailure {
+                ledger: verify::FailedLedger::SealedEvents,
+                entry_id: Some(rot.row as i64),
+                kind: verify::FailureKind::KeyRotationInvalid,
+                detail: format!("key rotation at row {}: {}", rot.row, e),
+            })
+        })?;
+        if !rot.authorization.is_empty() {
+            crate::crypto::signatures::verify_rotation_authorization(
+                &prev_key,
+                &rot.prev,
+                &rot.new,
+                &rot.authorization,
+            )
+            .map_err(|e| {
+                anyhow::Error::new(verify::VerifyFailure {
+                    ledger: verify::FailedLedger::SealedEvents,
+                    entry_id: Some(rot.row as i64),
+                    kind: verify::FailureKind::KeyRotationInvalid,
+                    detail: format!("key rotation at row {}: {}", rot.row, e),
+                })
+            })?;
+        }
+        keys_rev.push(rot.prev);
+        chained_rows.push(rot.row);
+        current = rot.prev;
+    }
+    keys_rev.reverse(); // oldest → newest
+    chained_rows.reverse(); // ascending row order
+    let keys = keys_rev
+        .iter()
+        .map(|k| {
+            ed25519_dalek::VerifyingKey::from_bytes(k)
+                .map_err(|e| anyhow!("invalid lineage key: {}", e))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Forward: rows up to and INCLUDING a chaining rotation row are signed by
+    // the retiring key; the successor signs from the next row on.
+    let mut row_key = Vec::with_capacity(entries.len());
+    let mut active = 0usize;
+    let mut next_rot = 0usize;
+    for row in 0..entries.len() {
+        row_key.push(active);
+        if next_rot < chained_rows.len() && chained_rows[next_rot] == row {
+            active += 1;
+            next_rot += 1;
+        }
+    }
+    Ok((keys, row_key))
+}
+
+// verify_linear_chain's parameters are the parity algorithm's inputs (chain
+// state, keys, mode, ledger identity) — bundling them into a struct would
+// obscure the 1:1 mapping with the JS verifier for no reuse benefit.
 #[allow(clippy::too_many_arguments)]
 fn verify_linear_chain<'a, I>(
     entries: I,
     mut expected_prev: [u8; 32],
     domain: &str,
-    verifying_key: &ed25519_dalek::VerifyingKey,
+    signers: ChainSigners<'_>,
     mode: SignatureMode,
     pq_public_key: Option<&PqPublicKey>,
     ledger_name: &str,
@@ -698,14 +869,24 @@ where
                 ),
             ));
         }
-        verify_entry_signature(
-            verifying_key,
-            entry_hash,
-            signatures,
-            mode,
-            pq_public_key,
-            domain,
-        )
+        match &signers {
+            ChainSigners::PerEntry(keys, row_key) => verify_entry_signature(
+                &keys[row_key[idx]],
+                entry_hash,
+                signatures,
+                mode,
+                pq_public_key,
+                domain,
+            ),
+            ChainSigners::AnyOf(keys) => verify_entry_signature_any_of(
+                keys,
+                entry_hash,
+                signatures,
+                mode,
+                pq_public_key,
+                domain,
+            ),
+        }
         .map_err(|e| {
             chain_fail(
                 ledger_name,

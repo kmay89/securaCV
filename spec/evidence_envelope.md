@@ -211,12 +211,35 @@ This is a deliberate subset of RFC 8785 that is trivially reproducible in JavaSc
 
 1. Reject unknown `envelope_format` / `envelope_version`.
 2. Recompute `whole_envelope_digest` (§9) and compare.
+2b. **Device-key lineage.** `provenance.device_public_key` is the key current at SEAL time; a
+   device that rotated its signing key exports ledgers whose rows are signed by earlier keys,
+   and the evidence for trusting those keys travels IN the envelope as `key_rotation` sealed
+   records (internally tagged: `record_type: "key_rotation"`, with `prev_public_key`,
+   `new_public_key`, the NEW key's `new_key_attestation`, and the PREV key's
+   `prev_key_authorization`; binding message
+   `domain_separated_hash(domain, SHA256(prev_public_key || new_public_key))` under domains
+   `securacv:pwk:device-key-rotation:v1` / `…-authz:v1`). Verifiers reconstruct the lineage by
+   walking those records **backward from the provenance anchor**: a rotation extends the lineage
+   only if its `new_public_key` equals the currently-trusted key, its attestation verifies, and
+   its authorization (when present — legacy records predate the field) verifies under the
+   announced predecessor; a chaining rotation failing either check is a hard failure. A rotation
+   that does not chain cannot extend the lineage — its row still needs a valid signature under
+   the key active at its position, so a fabricated record breaks the walk. Legacy records
+   (empty authorization) are anchored by their row's entry signature under the predecessor,
+   which step 3 enforces because that row's assigned signer IS the predecessor.
+   (Pinned cross-language by `valid_envelope_rotated.json`.)
 3. For each ledger, walk entries in order: check `prev_hash` linkage (from checkpoint head or
    genesis), recompute `entry_hash = SHA256(prev_hash || payload_json)`, verify the SignatureSet
-   over `domain_separated_hash(domain, entry_hash)` using the manifest's domain string. PQ is
+   over `domain_separated_hash(domain, entry_hash)` using the manifest's domain string.
+   **Signer selection:** for `sealed_events` the signer of each row is exact — the lineage key
+   active at that row, switching to the successor AFTER each chaining `key_rotation` row (the
+   rotation record itself is signed by the retiring key); for the receipt ledgers, whose rows
+   carry no ordering relative to the rotations, any validated lineage key is acceptable and a
+   signature valid under none of them is a failure. PQ is
    verified when present and a PQ key is available; otherwise it is reported as "not checked"
-   (mirrors `SignatureMode::Compat`), never silently passed.
-4. Checkpoint: verify its signature over `chain_head_hash` with the checkpoint domain.
+   (mirrors `SignatureMode::Compat`), never silently passed. (The PQ key does not rotate.)
+4. Checkpoint: verify its signature over `chain_head_hash` with the checkpoint domain, accepting
+   any validated lineage key (the checkpoint is signed by the key current when it was written).
 5. Break-glass: recompute `approvals_commitment` and confirm it matches each receipt; tally
    granted/denied.
 6. Disclosure: confirm any `omitted_entry_hashes` link the chain across the omission.

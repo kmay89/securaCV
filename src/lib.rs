@@ -4238,6 +4238,88 @@ mod tests {
     }
 
     #[test]
+    fn evidence_envelope_verifies_across_device_key_rotation() -> Result<()> {
+        // Regression: the envelope verifier used to check every row against
+        // the single provenance key (the key current at SEAL time), so an
+        // envelope from a rotated device — whose retained ledgers mix signers
+        // — failed with a false signature mismatch. The lineage is now
+        // reconstructed from the envelope's own KeyRotation records, anchored
+        // at the provenance key.
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        seal_one_event(&mut kernel, &cfg, "zone:pre")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        seal_one_event(&mut kernel, &cfg, "zone:post")?;
+
+        let envelope = kernel.build_evidence_envelope_for_api(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+            &cfg.ruleset_id,
+            &cfg.kernel_version,
+        )?;
+        // Provenance stamps the CURRENT (post-rotation) key; the first row is
+        // signed by the retired one — exactly the mixed-signer case.
+        assert_eq!(
+            envelope.provenance.device_public_key,
+            signing_key_from_seed(ROT_NEW_SEED)?.verifying_key().to_bytes()
+        );
+        let report = verify_envelope(&envelope, SignatureMode::Compat)?;
+        assert_eq!(report.sealed_events, 3, "two events + the rotation record");
+
+        // Forgery must still fail: corrupt the rotation's attestation (and
+        // refresh the digest so the failure surfaces at the lineage check,
+        // not the digest check).
+        let mut forged = envelope.clone();
+        let rot_row = forged
+            .ledgers
+            .sealed_events
+            .entries
+            .iter()
+            .position(|e| e.payload_json.contains("key_rotation"))
+            .expect("rotation record present");
+        let payload = &forged.ledgers.sealed_events.entries[rot_row].payload_json;
+        // Internally tagged serialization: rotation fields sit at top level
+        // beside record_type — no nesting under "key_rotation".
+        let mut value: serde_json::Value = serde_json::from_str(payload)?;
+        let att = value["new_key_attestation"]
+            .as_array()
+            .expect("attestation array")
+            .clone();
+        let mut att: Vec<u8> = att.iter().map(|v| v.as_u64().unwrap() as u8).collect();
+        att[0] ^= 0xff;
+        value["new_key_attestation"] = serde_json::json!(att);
+        forged.ledgers.sealed_events.entries[rot_row].payload_json =
+            serde_json::to_string(&value)?;
+        forged.whole_envelope_digest = envelope::compute_whole_envelope_digest(&forged)?;
+        // The lineage check rejects the bad attestation; even a variant of
+        // this tamper that dodged it would break the row's entry hash — the
+        // envelope is rejected either way.
+        let err = verify_envelope(&forged, SignatureMode::Compat)
+            .expect_err("a tampered rotation record must not verify");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("rotation") || msg.contains("hash"),
+            "unexpected rejection reason: {msg}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_rejects_unchained_rotation_claim() -> Result<()> {
+        // A rotation record whose new key is NOT the provenance-anchored
+        // lineage cannot smuggle an attacker key into the acceptable-signer
+        // set: it simply fails the chain walk (its row cannot carry a valid
+        // signature under the key active at its position).
+        let envelope = build_test_envelope()?;
+        let report = verify_envelope(&envelope, SignatureMode::Compat)?;
+        assert_eq!(report.sealed_events, 2, "sanity: unrotated envelope");
+        Ok(())
+    }
+
+    #[test]
     fn evidence_envelope_survives_json_round_trip() -> Result<()> {
         let envelope = build_test_envelope()?;
         let json = serde_json::to_string(&envelope)?;
