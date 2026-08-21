@@ -17,6 +17,19 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.5 — 2026-08-20
+
+**Minimal mode — for the fortieth board of the day.**
+
+A new feather button in the rail (next to day/night) folds the explainer
+prose away: the page ledes, the product taglines, the settled support-tier
+lines and the provisioning note step aside, the cards tighten up, and the
+flash console collapses the progress bar's redraw spam into one live line.
+Every control, safety check, receipt and warning stays exactly where it was
+— including the first-contact wipe choice and the "never booted" tier note —
+and one click brings the full story back. The choice is remembered. The
+browser flasher gains the same mode in the same release.
+
 ## 0.11.4 — 2026-08-15
 
 **Flashes firmware 2.4.11 — the bedside fixes.**

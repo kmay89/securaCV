@@ -588,6 +588,39 @@ function toggleTheme() {
   logEvent("info", "Switched to " + next + " mode");
 }
 
+// ── density (minimal / full detail), applied before first paint ──────────────
+// The Flasher narrates on purpose; minimal mode is for the fortieth board of
+// the day. Every control, check and receipt stays — only the teaching prose
+// folds away (styles.css owns the exact list), and the flash console collapses
+// espflash's progress-bar redraw frames into one live line instead of hundreds
+// (see appendFlashLog). Mirrors the browser flasher's minimal.js — the
+// two-flashers rule: a mode added to one belongs in both.
+(function applyStoredDensity() {
+  if (prefs.minimal) document.documentElement.setAttribute("data-density", "minimal");
+})();
+
+function minimalMode() {
+  return document.documentElement.getAttribute("data-density") === "minimal";
+}
+function toggleDensity() {
+  prefs.minimal = !prefs.minimal;
+  savePrefs();
+  if (prefs.minimal) document.documentElement.setAttribute("data-density", "minimal");
+  else document.documentElement.removeAttribute("data-density");
+  syncDensityButton();
+  logEvent("info", prefs.minimal
+    ? "Minimal mode on — the full story stays one click away"
+    : "Minimal mode off — the full story is back");
+}
+function syncDensityButton() {
+  const b = $("density-toggle");
+  if (!b) return;
+  b.setAttribute("aria-pressed", String(!!prefs.minimal));
+  b.title = prefs.minimal
+    ? "Minimal mode is on — click to bring the full story back"
+    : "Minimal mode — fold the explainers away; every control and check stays";
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
   initShell();
@@ -1905,6 +1938,8 @@ function initShell() {
     b.addEventListener("click", () => navigate(b.dataset.nav))
   );
   $("theme-toggle").addEventListener("click", toggleTheme);
+  $("density-toggle").addEventListener("click", toggleDensity);
+  syncDensityButton();
   $("health-about").addEventListener("click", () => navigate("about"));
   $("health-update").addEventListener("click", () => navigate("about"));
   $("splash").addEventListener("click", dismissSplash);
@@ -2807,14 +2842,8 @@ async function onFlash() {
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
-  const unlisten = await listen("flash:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
-  const unlistenRescue = await listen("rescue:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
+  const unlisten = await listen("flash:log", (ev) => appendFlashLog(con, ev.payload));
+  const unlistenRescue = await listen("rescue:log", (ev) => appendFlashLog(con, ev.payload));
   // The change map arrives once, after the image is verified and before a
   // byte is written — the moment both sides of the comparison exist.
   const unlistenMap = await listen("flash:changemap", (ev) => renderChangeMap(ev.payload));
@@ -3535,10 +3564,7 @@ async function runRescue(label, op, { keepChip = false } = {}) {
   setStatus("rescue-result", "");
   resetOutcome();
   await stopMonitor();
-  const unlisten = await listen("rescue:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
+  const unlisten = await listen("rescue:log", (ev) => appendFlashLog(con, ev.payload));
   try {
     const okMsg = await op();
     setStatus("rescue-result", okMsg, "ok");
@@ -3678,10 +3704,7 @@ async function onHealthCheck() {
   setStatus("health-result", "");
   resetOutcome();
   await stopMonitor();
-  const unlisten = await listen("health:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
+  const unlisten = await listen("health:log", (ev) => appendFlashLog(con, ev.payload));
   try {
     const report = await invoke("health_check", { port, chip, mac, flashBytes, baud: flashBaud() });
     report.generatedAt = new Date().toISOString(); // the browser stamps this too
@@ -3903,10 +3926,7 @@ async function onFlashLocalFile() {
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
-  const unlisten = await listen("flash:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
+  const unlisten = await listen("flash:log", (ev) => appendFlashLog(con, ev.payload));
 
   try {
     // The inspected size + fingerprint ride along so the backend can prove
@@ -4165,6 +4185,31 @@ function resetOutcome() {
   $("sense-tune").classList.add("hidden");
   senseTune.active = false;
   clearTimeout(senseTune.timer);
+}
+
+// The flash consoles relay espflash verbatim — including its progress bar,
+// which redraws with carriage returns, so every animation frame of it lands
+// as its own line. In minimal mode consecutive frames overwrite each other:
+// one live line that keeps moving, instead of hundreds of stale ones. Full
+// mode keeps the verbatim transcript, untouched.
+function looksLikeProgressFrame(line) {
+  const t = String(line).trim();
+  return /\[[=\-#>. ]{3,}\]/.test(t) ||
+    /\b\d{1,3}\s*%$/.test(t) ||
+    (/\b\d+\s*\/\s*\d+\b/.test(t) && /\[/.test(t));
+}
+function appendFlashLog(con, text) {
+  const line = String(text);
+  const frame = looksLikeProgressFrame(line);
+  if (minimalMode() && frame && con.dataset.lastLineWasFrame === "1") {
+    const t = con.textContent;
+    const cut = t.lastIndexOf("\n", Math.max(0, t.length - 2));
+    con.textContent = t.slice(0, cut + 1) + line + "\n";
+  } else {
+    con.textContent += line + "\n";
+  }
+  con.dataset.lastLineWasFrame = frame ? "1" : "0";
+  con.scrollTop = con.scrollHeight;
 }
 
 function appendConsole(id, text) {

@@ -1062,3 +1062,23 @@ details.coldstart[open] > summary { margin-bottom: 8px; }
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 11.5px; resize: vertical;
 }
+
+/* ── minimal mode (the feather in the rail; app.js toggleDensity) ─────────
+   html carries data-density="minimal" while the mode is on. Only teaching
+   prose folds — never a control, a check, a receipt, or anything that
+   explains a destructive choice: the first-contact wipe label and the
+   "never booted" support tier stay put on purpose. The flash console's
+   progress-frame collapsing lives in app.js (appendFlashLog), not here.
+   Same mode, same rule, as the browser flasher's minimal.js. */
+html[data-density="minimal"] .detail-only,
+html[data-density="minimal"] .pane-head .lede,
+html[data-density="minimal"] #product-list .p-tag,
+html[data-density="minimal"] #product-list .p-tier:not(.is-first),
+html[data-density="minimal"] #product-list .p-verdict-detail {
+  display: none;
+}
+
+/* Quiet is also compact: same cards, less air. */
+html[data-density="minimal"] .card { padding: 12px 16px; margin-bottom: 10px; }
+
+html[data-density="minimal"] #density-toggle { color: var(--accent, #ffd44f); }

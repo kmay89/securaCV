@@ -597,6 +597,14 @@ test("chirp module: safe headless — off by default, every call a quiet no-op",
   assert.doesNotThrow(() => c.setChirpsEnabled(true)); // no localStorage here — still safe
 });
 
+test("minimal module: safe headless — the full story by default, quiet is a choice", async () => {
+  const m = await import("../assets/minimal.js");
+  assert.strictEqual(m.minimalEnabled(), false, "minimal is opted into, never sprung");
+  assert.doesNotThrow(() => m.setMinimalEnabled(true)); // no localStorage here — still safe
+  assert.strictEqual(m.minimalEnabled(), false, "no storage means the choice can't stick — still off");
+  assert.strictEqual(m.minimalToggle(), null, "no document — no chip, and no throw either");
+});
+
 test("flash.json: the coach's lesson deck — real stages, unique ids, teaching-weight copy", () => {
   const deck = catalog.lessons;
   assert.ok(Array.isArray(deck) && deck.length >= 10, "a deck worth dealing");
