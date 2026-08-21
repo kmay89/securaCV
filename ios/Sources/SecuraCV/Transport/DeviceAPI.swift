@@ -45,7 +45,10 @@ struct ProvisioningReceipt: Codable, Sendable {
         deviceID = str(["device_id"]) ?? ""
         token = str(["token", "api_token"]) ?? ""
         let urlString = str(["base_url", "host"]) ?? ""
-        guard let url = URL(string: urlString) else {
+        // Tolerance has a floor: a receipt without a token would "pair" a
+        // device whose every authenticated call then 401s with no explanation.
+        // (deviceID may stay empty — PairView falls back to the discovered id.)
+        guard !token.isEmpty, let url = URL(string: urlString) else {
             throw DeviceError.badReceipt
         }
         baseURL = url
@@ -108,7 +111,8 @@ actor DeviceAPI {
     func info() async throws -> DeviceInfo { try await get("/api/v1/info") }
 
     func witness(last: Int = 20) async throws -> WitnessChainPage {
-        try await get("/api/v1/witness?last=\(max(1, min(100, last)))")
+        try await get("/api/v1/witness",
+                      query: [URLQueryItem(name: "last", value: String(max(1, min(100, last))))])
     }
 
     func config() async throws -> Data { try await getRaw("/api/v1/config") }
@@ -168,7 +172,8 @@ actor DeviceAPI {
     /// anything happen?" read the 5-second sentinel can afford. Nil when the
     /// device reports an empty chain.
     func witnessHeadSeq() async throws -> UInt64? {
-        let page: WitnessChainPage = try await get("/api/v1/witness?last=1")
+        let page: WitnessChainPage = try await get("/api/v1/witness",
+                                                   query: [URLQueryItem(name: "last", value: "1")])
         return page.records.map(\.seq).max()
     }
 
@@ -194,17 +199,74 @@ actor DeviceAPI {
         }
     }
 
+    // MARK: - the device's signing key (TOFU pinning)
+
+    /// The device's raw 32-byte Ed25519 public key — fetched once, at first
+    /// sight, so `PinnedKeyStore.pin` has a key to pin (the pairing receipt
+    /// deliberately carries only id/URL/token). Both dialects are tried, same
+    /// spirit as `authorize(_:)`: the WAP firmware serves the key as 64 hex
+    /// chars in `/api/status` ("pubkey"); the reference device-api serves it
+    /// SPKI-PEM-encoded in `/api/v1/witness/export` ("public_key_pem").
+    func publicKey() async throws -> Data {
+        if let data = try? await getRaw("/api/status"),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let hex = obj["pubkey"] as? String,
+           let key = Data(hexString: hex), key.count == 32 {
+            return key
+        }
+        let data = try await getRaw("/api/v1/witness/export")
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pem = obj["public_key_pem"] as? String,
+              let key = Self.ed25519Key(fromSPKIPEM: pem) else {
+            throw DeviceError.http(200, "The device presented no public key.")
+        }
+        return key
+    }
+
+    /// Extract the raw 32-byte Ed25519 key from an SPKI PEM. The DER for an
+    /// Ed25519 SubjectPublicKeyInfo is a fixed 12-byte prefix followed by the
+    /// raw key, so anything else is rejected rather than guessed at.
+    static func ed25519Key(fromSPKIPEM pem: String) -> Data? {
+        let base64 = pem
+            .components(separatedBy: .newlines)
+            .filter { !$0.hasPrefix("-----") }
+            .joined()
+            .trimmingCharacters(in: .whitespaces)
+        guard let der = Data(base64Encoded: base64) else { return nil }
+        let prefix: [UInt8] = [0x30, 0x2A, 0x30, 0x05, 0x06, 0x03,
+                               0x2B, 0x65, 0x70, 0x03, 0x21, 0x00]
+        guard der.count == prefix.count + 32,
+              [UInt8](der.prefix(prefix.count)) == prefix else { return nil }
+        return Data(der.suffix(32))
+    }
+
     // MARK: - plumbing
 
-    private func get<T: Decodable>(_ path: String) async throws -> T {
-        let data = try await getRaw(path)
+    private func get<T: Decodable>(_ path: String, query: [URLQueryItem]? = nil) async throws -> T {
+        let data = try await getRaw(path, query: query)
         return try Self.decoder.decode(T.self, from: data)
     }
 
-    private func getRaw(_ path: String) async throws -> Data {
-        var req = URLRequest(url: base.appendingPathComponent(path))
+    private func getRaw(_ path: String, query: [URLQueryItem]? = nil) async throws -> Data {
+        var req = URLRequest(url: url(for: path, query: query))
         authorize(&req)
         return try await send(req)
+    }
+
+    private func url(for path: String, query: [URLQueryItem]?) -> URL {
+        Self.requestURL(base: base, path: path, query: query)
+    }
+
+    /// Build a request URL. Queries ride URLComponents (as NightlightAPI's
+    /// do) — `appendingPathComponent` percent-encodes '?', so a "?last=N"
+    /// baked into the path becomes the literal path `witness%3Flast=N` and
+    /// the device answers 404. Static + pure so the tests can pin it.
+    static func requestURL(base: URL, path: String, query: [URLQueryItem]?) -> URL {
+        let plain = base.appendingPathComponent(path)
+        guard let query, !query.isEmpty else { return plain }
+        var comps = URLComponents(url: plain, resolvingAgainstBaseURL: false)
+        comps?.queryItems = query
+        return comps?.url ?? plain
     }
 
     private func postRaw(_ path: String, body: Data) async throws -> Data {
