@@ -14,6 +14,14 @@
  *      allow-listed fields. No hashed_id is published in v1 either —
  *      the label travels in the note field (sanitized ASCII at the
  *      chokepoint) and consumers correlate via label only.
+ *
+ * VENDORED COPY — intentional divergence from the canonical library
+ * (firmware/canary/lib/securacv_ble_scan/src/ble_scout.cpp), normalized away by
+ * firmware/scripts/check_ble_scan_sync.sh: this copy carries no fleet_roster_feed
+ * wiring. The canonical module_tick() also expires the fleet roster (the Scout's
+ * second consumer, tracking OTHER Canaries); the WAP tracks its fleet through
+ * the mesh layer instead, so fleet_roster_feed / fleet_roster.h are not staged
+ * here. See ble_scout_nimble.cpp's header for the full divergence note.
  */
 
 #include "ble_scout.h"
