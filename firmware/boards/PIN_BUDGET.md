@@ -45,6 +45,7 @@ README stays the narrative source for those stories.
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | 24 | 10 (42%) | 2 | 4 | 8 |
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
 | `waveshare-esp32s3-amoled206` | ESP32-S3 | 33 | 21 (64%) | 0 | 5 | 7 |
+| `waveshare-esp32s3-amoled241` | ESP32-S3 | 33 | 20 (61%) | 0 | 4 | 9 |
 | `waveshare-esp32s3-lcd147` | ESP32-S3 | 38 | 11 (29%) | 1 | 6 | 20 |
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | 33 | 27 (82%) | 0 | 4 | 2 |
 | `waveshare-esp32s3-lcd43b` | ESP32-S3 | 33 | 30 (91%) | 0 | 2 | 1 |
@@ -425,6 +426,57 @@ Capabilities on: `HAS_AMOLED`, `HAS_BATTERY`, `HAS_BLE`, `HAS_IMU`, `HAS_PMU`, `
 Capabilities off (room to grow): `HAS_CAMERA`, `HAS_HAPTIC`, `HAS_MICROPHONE`.
 
 **Thermals:** Skin contact, so thermals are a comfort question before they are a silicon one. AMOLED on a mostly-black face is cheap and the panel is off most of the time (wake-on-raise); the real budget is radio duty. Charging a Li-po against a wrist is the case to watch — dock it, don't wear it charging.
+
+### `waveshare-esp32s3-amoled241` — Waveshare ESP32-S3-Touch-AMOLED-2.41
+
+ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-amoled241/pins/pins.h)
+
+**20/33 committed** · 0 assigned · 4 conditional · **9 free** (4 ADC-capable)
+
+| GPIO | bucket | held by / trade | notes |
+|---|---|---|---|
+| 0 | committed | BOOT_BUTTON_PIN | sleep-wake, strap⚠ |
+| 1 | **free** | — | ADC, sleep-wake |
+| 2 | committed | SD_PIN_D3 | ADC, sleep-wake |
+| 3 | committed | TOUCH_PIN_RST | ADC, sleep-wake, strap⚠ |
+| 4 | committed | SD_PIN_CLK | ADC, sleep-wake |
+| 5 | committed | SD_PIN_CMD | ADC, sleep-wake |
+| 6 | committed | SD_PIN_D0 | ADC, sleep-wake |
+| 7 | **free** | — | ADC, sleep-wake |
+| 8 | **free** | — | ADC, sleep-wake |
+| 9 | committed | LCD_PIN_CS | ADC, sleep-wake |
+| 10 | committed | LCD_PIN_SCLK | ADC, sleep-wake |
+| 11 | committed | LCD_PIN_SDIO0 | ADC, sleep-wake |
+| 12 | committed | LCD_PIN_SDIO1 | ADC, sleep-wake |
+| 13 | committed | LCD_PIN_SDIO2 | ADC, sleep-wake |
+| 14 | committed | LCD_PIN_SDIO3 | ADC, sleep-wake |
+| 15 | committed | PWR_KEY_PIN | ADC, sleep-wake |
+| 16 | committed | PWR_LATCH_PIN | ADC, sleep-wake |
+| 17 | committed | BAT_ADC_PIN | ADC, sleep-wake |
+| 18 | **free** | — | ADC, sleep-wake |
+| 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DM) | ADC, sleep-wake |
+| 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) | ADC, sleep-wake |
+| 21 | committed | LCD_PIN_RST | sleep-wake |
+| 38 | **free** | — |  |
+| 39 | **free** | — |  |
+| 40 | **free** | — |  |
+| 41 | **free** | — |  |
+| 42 | **free** | — |  |
+| 43 | committed | UART_PIN_TX |  |
+| 44 | committed | UART_PIN_RX |  |
+| 45 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 46 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 47 | committed | I2C_PIN_SDA |  |
+| 48 | committed | I2C_PIN_SCL |  |
+
+⚠ 3 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BUZZER_PIN`, `LCD_PIN_BL`, `TOUCH_PIN_INT`. Free counts above may shrink as these resolve.
+
+Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 0/8.
+
+Capabilities on: `HAS_AMOLED`, `HAS_BATTERY`, `HAS_BLE`, `HAS_DISPLAY`, `HAS_IMU`, `HAS_IO_EXPANDER`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RTC`, `HAS_SD_CARD`, `HAS_TOUCH`, `HAS_USB_CDC`, `HAS_WIFI`.
+Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BUZZER`, `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_PMU`, `HAS_RGBLED`, `HAS_THREAD_ZIGBEE`.
+
+**Thermals:** AMOLED with a mostly-black face is the coolest glass in the display line — no backlight, and true black emits nothing. The metal case is its own heatsink; the real watch item is Li-po charging inside it (charge with the panel dim, and calibrate the battery divider before trusting a percentage).
 
 ### `waveshare-esp32s3-lcd147` — Waveshare ESP32-S3-LCD-1.47
 

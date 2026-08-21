@@ -355,5 +355,22 @@
     "notes": "The wrist board, shared by two Phase-0 projects (host-tested cores in CI, no PlatformIO env until the hardware lands): canary-tincan (two siblings tie a string) and canary-companion (the Night Watch bedside clock + the Pocket Canary virtual pet): 2.06\" 410x502 AMOLED (CO5300, 4-lane QSPI, brightness is a panel command — no backlight pin), FT3168 touch @0x38, QMI8658 IMU, PCF85063 RTC, AXP2101 PMU + Li-po (battery not included). Pin map transcribed from the vendor sample tree, not bench validated. Two traps: Waveshare's store copy says CST9220 touch but every vendor sketch drives an FT3168 — confirm first at bring-up; and there is NO vibration motor, so a DRV2605L + LRA on the exposed I²C port (0x5A) is required hardware for a watch whose whole premise is a knock you feel. Mics are present and deliberately unused — HAS_MICROPHONE 0 describes what the firmware may touch, not what is soldered.",
     "thermal_notes": "Skin contact, so thermals are a comfort question before they are a silicon one. AMOLED on a mostly-black face is cheap and the panel is off most of the time (wake-on-raise); the real budget is radio duty. Charging a Li-po against a wrist is the case to watch — dock it, don't wear it charging.",
     "psram_type": "octal"
+  },
+  {
+    "id": "waveshare-esp32s3-amoled241",
+    "name": "Waveshare ESP32-S3-Touch-AMOLED-2.41",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [
+      "canary-display"
+    ],
+    "notes": "The flagship glance glass (V2 board, metal case): 2.41\" 450x600 AMOLED (RM690B0, 4-lane QSPI, 16-px column window, brightness is a panel command — no backlight pin), FT6336 touch @0x38 with its INT behind the TCA9554 expander @0x20 (poll — there is no GPIO to attach), QMI8658 IMU, PCF85063 RTC, dedicated SDMMC 1-bit microSD, ETA6098 Li-po charger (autonomous — no I2C PMU; battery telemetry is the GPIO17 divider), soft power latch + panel supply on GPIO16 (drive HIGH early on battery), readable PWR case button on GPIO15. Wired as the canary-display 'amoled241' flavor (env canary-display-amoled241: nightstand app + CD_AMOLED_GLASS — display_amoled241.cpp QSPI HAL, portrait_ui.cpp scales its row metrics up on the tall glass). Pin map transcribed from the bench-tested CircuitPython board definition + the V2 case label; not OUR bench validation.",
+    "thermal_notes": "AMOLED with a mostly-black face is the coolest glass in the display line — no backlight, and true black emits nothing. The metal case is its own heatsink; the real watch item is Li-po charging inside it (charge with the panel dim, and calibrate the battery divider before trusting a percentage).",
+    "psram_type": "octal"
   }
 ]

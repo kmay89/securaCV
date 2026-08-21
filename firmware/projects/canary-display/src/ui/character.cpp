@@ -20,7 +20,11 @@ namespace {
 // print" edition (display_character.md §4). The default ladder doubles
 // for Neon's "compact": there is no smaller enabled font, and tighter
 // than default would break the glance contract anyway.
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) || defined(CD_AMOLED_GLASS)
+// The AMOLED 2.41 shares the dash's across-the-room ladder for a different
+// reason: 450x600 in 2.41 inches is ~310 ppi, so the small-glass sizes
+// would render physically tiny — the roles need the larger faces just to
+// keep their designed physical height.
 constexpr TypeLadder k_ladder_default = {
     &lv_font_montserrat_48,   // hero
     &lv_font_montserrat_36,   // title

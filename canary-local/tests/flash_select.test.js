@@ -92,7 +92,8 @@ test("S3 + 16 MB narrows to the 16 MB boards — no longer a single family", asy
      "securacv-canary-display-dash", "securacv-canary-display-dash-modes",
      "securacv-canary-display-dash7", "securacv-canary-display-nightstand7",
      "securacv-canary-display-nightstand-s3",
-     "securacv-canary-display-touch169"]);
+     "securacv-canary-display-touch169",
+     "securacv-canary-display-amoled241"]);
   assert.ok(new Set(set.map((p) => p.family)).size > 1,
     "spans families — smartPick must not claim to have named the board");
 });

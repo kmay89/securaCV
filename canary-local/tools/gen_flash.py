@@ -430,6 +430,24 @@ PRODUCTS = [
         "provisioning": "on-glass",
     },
     {
+        # The flagship glance glass: the nightstand app on the 2.41" 450x600
+        # AMOLED (true black is free, brightness is a panel command), with
+        # FT6336 touch, RTC-trusted time and the SD deep archive. A distinct
+        # product because the OTA engine must never cross-grade an AMOLED
+        # panel into an ST7789 sibling (different glass entirely).
+        "id": "securacv-canary-display-amoled241",
+        "family": "display",
+        "board_label": "Waveshare ESP32-S3-Touch-AMOLED-2.41",
+        "pick_label": "Glance AMOLED — the 2.41″ AMOLED in the metal case",
+        "name": "Canary Glance AMOLED",
+        "tagline": "The flagship glance glass — true black, living color, touch, and the whole nightstand story.",
+        "asset_stem": "canary-display-amoled241",
+        "project": "firmware/projects/canary-display",
+        "env": "canary-display-amoled241",
+        "board": "esp32-s3-devkitc-1",
+        "provisioning": "on-glass",
+    },
+    {
         "id": "securacv-canary-display-nightstand-c6",
         "family": "display",
         "board_label": "Waveshare ESP32-C6-LCD-1.47 (pin-header)",

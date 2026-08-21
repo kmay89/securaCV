@@ -2955,6 +2955,13 @@ function figureSlot(p) {
     slot.title = f.shared
       ? `${f.title} — this board is also built as another product`
       : f.title;
+    // The 3D upgrade (fig3d.js, a classic script shared byte-for-byte with
+    // the desktop Flasher): the committed device model replaces the flat
+    // drawing with a small turntable. Progressive, never a dependency — a
+    // failed fetch keeps the drawing, and an offline copy without models/
+    // loses nothing.
+    slot.dataset.fig3dId = f.id;
+    if (window.SCV_FIG3D) window.SCV_FIG3D.upgrade(slot, `models/${f.id}.glb`);
     return slot;
   }
   slot.classList.add("is-placeholder");

@@ -62,11 +62,31 @@ constexpr int SCR_W = TFT_WIDTH;
 constexpr int SCR_H = TFT_HEIGHT;
 constexpr int V(int y320) { return (y320 * SCR_H) / 320; }
 
+// The flagship AMOLED (450x600) shows this same face at ~2x the pixel pitch
+// (~310 ppi), so the row metrics scale UP on any glass taller than the
+// designed 320 — the witness column keeps its physical size and the bigger
+// type ladder (character.cpp) has room to breathe. Every shipped small
+// glass takes the literals it always had (BIG is false there, bit-for-bit).
+constexpr bool BIG = SCR_H > 320;
+constexpr int ROW_H    = BIG ? (22 * SCR_H) / 320 : 22;
+constexpr int ROW_GAP  = BIG ? (2 * SCR_H) / 320 : 2;
+constexpr int ROW_W    = BIG ? SCR_W - (20 * SCR_W) / 172 : SCR_W - 20;
+constexpr int ROW_RAD  = BIG ? 12 : 6;
+constexpr int CHIP_SZ  = BIG ? (10 * SCR_H) / 320 : 10;
+constexpr int CHIP_X   = BIG ? (8 * SCR_W) / 172 : 8;
+constexpr int NAME_X   = BIG ? (26 * SCR_W) / 172 : 26;
+
 // Witness rows that fit between the column top (V(172)) and the glance
-// line's reserve, capped at the designed 5 — the formula reproduces exactly
-// 5 on the original 172x320 glass and degrades gracefully on shorter ones.
-constexpr int ROWS_FIT = (SCR_H - V(172) - 26) / 24;
-constexpr int ROWS = ROWS_FIT < 5 ? (ROWS_FIT < 1 ? 1 : ROWS_FIT) : 5;
+// line's reserve. The small glasses keep the designed cap of 5; a BIG glass
+// may grow to 8 — but only as far as its scaled rows actually FIT, which on
+// the 450x600 AMOLED is 5 full-size rows (the proportional face keeps its
+// physical row height rather than shrinking type to force a count). The
+// formula reproduces exactly 5 on the original 172x320 glass, degrades
+// gracefully on shorter ones, and lets a future even-taller glass use its
+// room without another edit here.
+constexpr int ROWS_FIT = (SCR_H - V(172) - (BIG ? V(26) : 26)) / (ROW_H + ROW_GAP);
+constexpr int ROWS_CAP = BIG ? 8 : 5;
+constexpr int ROWS = ROWS_FIT < ROWS_CAP ? (ROWS_FIT < 1 ? 1 : ROWS_FIT) : ROWS_CAP;
 
 lv_obj_t* s_wash = nullptr;        // breathing severity field behind the bird
 lv_obj_t* s_bird = nullptr;        // the living canary
@@ -195,13 +215,11 @@ void portrait_ui_create() {
 
   // ── The witness column ──
   const int col_top = V(172);
-  const int row_h = 22;
-  const int row_gap = 2;
   for (int i = 0; i < ROWS; i++) {
     lv_obj_t* row = lv_obj_create(scr);
-    lv_obj_set_size(row, SCR_W - 20, row_h);
-    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, col_top + i * (row_h + row_gap));
-    lv_obj_set_style_radius(row, 6, 0);
+    lv_obj_set_size(row, ROW_W, ROW_H);
+    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, col_top + i * (ROW_H + ROW_GAP));
+    lv_obj_set_style_radius(row, ROW_RAD, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_set_style_bg_color(row, col_surface(), 0);
@@ -209,15 +227,15 @@ void portrait_ui_create() {
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* chip = lv_obj_create(row);
-    lv_obj_set_size(chip, 10, 10);
-    lv_obj_align(chip, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_set_size(chip, CHIP_SZ, CHIP_SZ);
+    lv_obj_align(chip, LV_ALIGN_LEFT_MID, CHIP_X, 0);
     lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(chip, 0, 0);
     lv_obj_set_style_pad_all(chip, 0, 0);
     lv_obj_set_style_bg_color(chip, sev_color(Sev::Ok, false), 0);
 
     lv_obj_t* name = mk_label(row, font_body(), col_text());
-    lv_obj_align(name, LV_ALIGN_LEFT_MID, 26, 0);
+    lv_obj_align(name, LV_ALIGN_LEFT_MID, NAME_X, 0);
 
     s_row[i] = row;
     s_chip[i] = chip;
@@ -226,7 +244,7 @@ void portrait_ui_create() {
 
   s_more = mk_label(scr, font_caption(), col_faint());
   lv_obj_set_style_text_align(s_more, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(s_more, LV_ALIGN_TOP_MID, 0, col_top + ROWS * (row_h + row_gap) + 2);
+  lv_obj_align(s_more, LV_ALIGN_TOP_MID, 0, col_top + ROWS * (ROW_H + ROW_GAP) + 2);
   lv_label_set_text(s_more, "");
 
   // ── The glance line ──

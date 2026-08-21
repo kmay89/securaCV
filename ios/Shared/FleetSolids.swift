@@ -133,6 +133,14 @@ public struct FleetMassing: Sendable {
     solids: [
       FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [96, 52, 120], r: 17.28, h: 0, fullDetailOnly: false),
   ]),
+  "device.canary-display-amoled241": FleetMassing(
+    id: "device.canary-display-amoled241", rev: "8c939c25", ghost: false,
+    envelope: [46, 13, 62],
+    solids: [
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [46, 10.6, 62], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "glass", axis: "y", at: [2, 10.6, 3.2], size: [42, 2, 55.6], r: 2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "lit", axis: "y", at: [4.65, 12.6, 6.5], size: [36.7, 0.4, 49], r: 1.5, h: 0, fullDetailOnly: false),
+  ]),
   "device.canary-display-dash": FleetMassing(
     id: "device.canary-display-dash", rev: "9bb5e13f", ghost: false,
     envelope: [118, 38.9, 79],

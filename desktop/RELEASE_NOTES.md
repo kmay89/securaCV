@@ -17,6 +17,28 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.7 — 2026-08-21
+
+**A new board joins the picker — the 2.41″ AMOLED in the metal case — and
+every device drawing learned to turn.**
+
+The Waveshare ESP32-S3-Touch-AMOLED-2.41 is now a flashable product: the
+**Canary Glance AMOLED**, the nightstand story on the prettiest glass in the
+fleet (true black costs no power on AMOLED, so dark-when-safe is genuinely
+dark). Plug it in and the chip guard offers it like any other board; the
+install seeds your Wi-Fi and hub settings, so it joins your network on first
+boot. Fair warning, printed on the row itself: nobody has booted this image
+on real hardware yet — you would be the first, and the worst case is
+re-flashing something else.
+
+**The picker's device drawings are now small 3D models.** Rest your pointer
+on one and it turns, so you can recognize the board in your hand by its
+shape, not its model number. Devices whose design is still an idea keep
+their dashed outline — a concept never poses as a product.
+
+This release also carries firmware 2.4.12 in the baked catalog, because the
+app bakes the catalog in when it is built — an older Flasher keeps
+installing the older firmware no matter what has shipped since.
 ## 0.11.6 — 2026-08-21
 
 **Nothing looks stuck anymore — every wait shows its work.**

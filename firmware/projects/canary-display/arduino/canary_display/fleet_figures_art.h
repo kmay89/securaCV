@@ -40,6 +40,39 @@ struct FigureArt {
 // One denominator for every coordinate: px = coord * size_px / kFigureArtScale.
 inline constexpr int kFigureArtScale = 256;
 
+inline constexpr int16_t kArt_device_canary_display_amoled241_t0[] = {168,239,193,225,193,78,193,78,168,91,168,239};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t1[] = {192,75,168,89,168,91};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t2[] = {192,73,167,87,168,89};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t3[] = {167,87,192,73,191,71,191,71,166,85,167,87};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t4[] = {166,85,191,71,189,69,189,69,165,83,166,85};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t5[] = {188,67,163,81,165,83};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t6[] = {186,66,162,80,163,81};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t7[] = {162,80,186,66,94,13,94,13,70,27,162,80};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t8[] = {70,190,168,239,162,80,162,80,63,31,70,190};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t9[] = {159,233,164,231,164,95,164,95,159,97,159,233};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t10[] = {155,89,159,87,73,37,73,37,68,39,155,89};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t11[] = {68,186,159,233,155,89,155,89,63,42,68,186};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t12[] = {153,101,152,102,152,223};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t13[] = {73,51,72,51,149,96};
+inline constexpr int16_t kArt_device_canary_display_amoled241_t14[] = {72,181,152,223,149,96,149,96,69,53,72,181};
+inline constexpr ArtFace kArt_device_canary_display_amoled241_faces[] = {
+  { 0xA5A39F, 2, kArt_device_canary_display_amoled241_t0 },
+  { 0xB2B1AC, 1, kArt_device_canary_display_amoled241_t1 },
+  { 0xC8C7C2, 1, kArt_device_canary_display_amoled241_t2 },
+  { 0xD8D6D0, 2, kArt_device_canary_display_amoled241_t3 },
+  { 0xDFDDD7, 2, kArt_device_canary_display_amoled241_t4 },
+  { 0xDEDCD6, 1, kArt_device_canary_display_amoled241_t5 },
+  { 0xD4D2CD, 1, kArt_device_canary_display_amoled241_t6 },
+  { 0xCCCAC5, 2, kArt_device_canary_display_amoled241_t7 },
+  { 0x61615E, 2, kArt_device_canary_display_amoled241_t8 },
+  { 0x13161E, 2, kArt_device_canary_display_amoled241_t9 },
+  { 0x181B25, 2, kArt_device_canary_display_amoled241_t10 },
+  { 0x0B0D12, 2, kArt_device_canary_display_amoled241_t11 },
+  { 0x2B4F77, 1, kArt_device_canary_display_amoled241_t12 },
+  { 0x366294, 1, kArt_device_canary_display_amoled241_t13 },
+  { 0x1A2F47, 2, kArt_device_canary_display_amoled241_t14 },
+};
+
 inline constexpr int16_t kArt_device_canary_display_dash_t0[] = {231,217,194,238,194,239};
 inline constexpr int16_t kArt_device_canary_display_dash_t1[] = {194,238,231,217,231,107,231,107,194,128,194,238};
 inline constexpr int16_t kArt_device_canary_display_dash_t2[] = {230,105,194,126,194,128};
@@ -405,6 +438,7 @@ inline constexpr ArtFace kArt_device_canary_wap_faces[] = {
 };
 
 inline constexpr FigureArt kFigureArt[] = {
+  { "device.canary-display-amoled241", "8c939c25", 15, kArt_device_canary_display_amoled241_faces },
   { "device.canary-display-dash", "9bb5e13f", 15, kArt_device_canary_display_dash_faces },
   { "device.canary-display-dash7", "cdff74a9", 8, kArt_device_canary_display_dash7_faces },
   { "device.canary-display-nightstand", "c361481b", 20, kArt_device_canary_display_nightstand_faces },

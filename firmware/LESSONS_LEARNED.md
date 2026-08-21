@@ -538,6 +538,29 @@
   duplicate one, by resolving each env's *effective* `lib_ldf_mode` and
   `lib_extra_dirs` through the `extends` chain. It catches this in seconds —
   the build that found it took ~50 minutes and landed on main twice first.
+
+### deep+ LDF only sees command-line defines — a feature flag that lives in config.h can't summon a framework library (2026-08, PR #1561)
+- **What happened:** `canary-display-amoled241` (core-2 base, so `deep+`
+  from common.ini) set `FEATURE_SD_STORAGE 1` in its flavor `config.h` and
+  died at compile with `SD_MMC.h: No such file or directory` — in
+  `fleet/sd_archive.cpp`, a TU that builds fine on `dash-sd`. The `deep+`
+  LDF evaluates each TU's preprocessor conditionals to decide which
+  libraries to wire in, but it evaluates them with **command-line defines
+  only**: a flag defined in an `-I`'d header is invisible to it, so the
+  `#include <SD_MMC.h>` sat in a branch the LDF scored false, the
+  framework-bundled SD_MMC library never joined the build — and then the
+  real compiler, which does read config.h, hit the include with no path to
+  resolve it.
+- **Why dash-sd never saw this:** its flag arrives as
+  `-DFEATURE_SD_STORAGE=1` in build_flags (LDF-visible), and the dash
+  family rides `chain` mode anyway, which follows includes without
+  evaluating conditionals at all.
+- **The rule:** a `FEATURE_*` flag that gates a `#include` of a
+  framework/library header must ALSO be passed as `-D` in the env whenever
+  the env's effective LDF mode is `deep+` — and the flavor config's own
+  `#define` must be `#ifndef`-guarded so the two agree instead of fighting
+  (the same guard dash-sd's comment demands for the opposite reason).
+  Flags that only gate our own code can stay header-only.
   The guard's own fixtures live in
   `scripts/tests/test_lint_common_lib_manifests.py`, and they earned their
   keep immediately: the first version of the check followed

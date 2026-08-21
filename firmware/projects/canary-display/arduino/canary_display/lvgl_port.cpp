@@ -19,7 +19,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <Arduino_GFX_Library.h>
-#ifdef CD_FLAVOR_DASH
+#if defined(CD_FLAVOR_DASH) || defined(CD_AMOLED_GLASS)
 #include <esp_heap_caps.h>
 #endif
 
@@ -39,7 +39,15 @@ namespace {
 #if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
 constexpr int16_t SCR_W = TFT_WIDTH;
 constexpr int16_t SCR_H = TFT_HEIGHT;
+#ifdef CD_AMOLED_GLASS
+// The 450x600 AMOLED is the one nightstand-family glass big enough that a
+// static internal buffer would crowd .bss (450*60*2 = 54 KB). It carries
+// 8 MB PSRAM, so it takes the dash's arrangement instead: a taller PSRAM
+// draw buffer (allocated in lvgl_port_init), internal-RAM fallback.
+constexpr size_t BUF_PX = (size_t)SCR_W * 120;
+#else
 constexpr size_t BUF_PX = (size_t)SCR_W * 60;
+#endif
 #endif
 #ifdef CD_FLAVOR_DASH
 constexpr int16_t SCR_W = LCD_WIDTH;
@@ -62,7 +70,8 @@ lv_obj_t* s_scrim = nullptr;       // rendered brightness dim (top layer)
 
 #if LVGL_VERSION_MAJOR >= 9
 
-#if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
+#if (defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)) && \
+    !defined(CD_AMOLED_GLASS)
 alignas(4) uint8_t s_buf[BUF_BYTES];
 #endif
 
@@ -83,12 +92,27 @@ void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
 
 #else  // LVGL v8
 
-#if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
+#if (defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)) && \
+    !defined(CD_AMOLED_GLASS)
 lv_color_t s_buf[BUF_PX];
 #endif
 
 lv_disp_draw_buf_t s_draw_buf;
 lv_disp_drv_t s_disp_drv;
+
+#ifdef CD_AMOLED_GLASS
+// RM690B0 QSPI address windows want even column/row starts and even sizes
+// (the same 2-px granularity the CO5300 family documents). Rounding every
+// dirty area outward to even bounds here — with the even 16-px panel
+// window offset in the HAL — keeps each flush legal without the face ever
+// knowing. Costs at most one extra pixel row/column per flush.
+void rounder_cb(lv_disp_drv_t* /*drv*/, lv_area_t* a) {
+  a->x1 &= ~1;
+  a->y1 &= ~1;
+  a->x2 |= 1;
+  a->y2 |= 1;
+}
+#endif
 
 void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* px) {
   Arduino_GFX* g = canary::hal::gfx();
@@ -111,8 +135,20 @@ bool lvgl_port_init() {
   void* buf = nullptr;
   size_t buf_bytes = 0;
 #if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
+#ifdef CD_AMOLED_GLASS
+  // The 450x600 glass takes the dash's PSRAM arrangement (see BUF_PX note).
+  buf = heap_caps_malloc(BUF_BYTES, MALLOC_CAP_SPIRAM);
+  buf_bytes = BUF_BYTES;
+  if (!buf) {
+    // PSRAM missing/hostile: shrink into internal RAM rather than dying —
+    // slower flushes, same pixels.
+    buf_bytes = (size_t)SCR_W * 24 * 2;
+    buf = malloc(buf_bytes);
+  }
+#else
   buf = s_buf;
   buf_bytes = BUF_BYTES;
+#endif
 #endif
 #ifdef CD_FLAVOR_DASH
   buf = heap_caps_malloc(BUF_BYTES, MALLOC_CAP_SPIRAM);
@@ -149,6 +185,9 @@ bool lvgl_port_init() {
   s_disp_drv.hor_res = SCR_W;
   s_disp_drv.ver_res = SCR_H;
   s_disp_drv.flush_cb = flush_cb;
+#ifdef CD_AMOLED_GLASS
+  s_disp_drv.rounder_cb = rounder_cb;  // even-aligned windows (QSPI AMOLED)
+#endif
   s_disp_drv.draw_buf = &s_draw_buf;
   lv_disp_drv_register(&s_disp_drv);
 #endif

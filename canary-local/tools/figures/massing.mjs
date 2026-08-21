@@ -433,6 +433,24 @@ export const FIGURES = [
     ],
   },
   {
+    id: 'device.canary-display-amoled241',
+    title: 'Canary Glance AMOLED',
+    role: 'device', of: 'canary-display-amoled241',
+    // The vendor's own metal case around the 2.41" 450x600 AMOLED. The
+    // active area is computed from the module (61.2 mm diagonal at 3:4 →
+    // 36.7 x 49.0); the case envelope is an ESTIMATE from vendor photos —
+    // no vendor case CAD is committed, so the wall is the sketch part.
+    sketch: { w: 46, d: 13, h: 62 },
+    sketchNote: 'the 2.41" 450x600 module (active 36.7 x 49.0, computed from the '
+      + '61.2 mm diagonal) inside the vendor metal case, whose envelope is an '
+      + 'estimate from vendor photos; no committed case CAD — VERIFY with calipers',
+    build: (E) => [
+      { kind: 'box', m: 'shell', face: 'y', at: [0, 0, 0], size: [E.w, E.d - 2.4, E.h], r: 3 },
+      { kind: 'box', m: 'glass', face: 'y', at: [2, E.d - 2.4, 3.2], size: [42, 2.0, 55.6], r: 2 },
+      { kind: 'box', m: 'lit', face: 'y', at: [4.65, E.d - 0.4, 6.5], size: [36.7, 0.4, 49.0], r: 1.5 },
+    ],
+  },
+  {
     id: 'device.canary-display-dash7',
     title: 'Canary Dash 7',
     role: 'device', of: 'canary-display-dash7',

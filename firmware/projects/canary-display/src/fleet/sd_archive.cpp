@@ -21,8 +21,8 @@
 
 #if defined(FEATURE_SD_STORAGE) && FEATURE_SD_STORAGE && !defined(__EMSCRIPTEN__)
 
-#if !defined(CD_FLAVOR_DASH)
-#error "FEATURE_SD_STORAGE on the watch isn't supported yet: the slot shares the panel's SPI pins and the GC9A01 runs on Arduino_GFX's private bus handle (no shared arbiter — see sd_archive.h). Build a dash flavor, or leave the flag 0."
+#if !defined(CD_FLAVOR_DASH) && !defined(CD_AMOLED_GLASS)
+#error "FEATURE_SD_STORAGE on the watch isn't supported yet: the slot shares the panel's SPI pins and the GC9A01 runs on Arduino_GFX's private bus handle (no shared arbiter — see sd_archive.h). Build a dash or AMOLED-2.41 flavor, or leave the flag 0."
 #endif
 
 #include <Arduino.h>
