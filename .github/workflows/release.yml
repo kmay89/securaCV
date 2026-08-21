@@ -108,8 +108,11 @@ jobs:
           # assets into one directory can never run `sha256sum -c`. Basenames
           # are unique per-arch; fail loudly if that ever stops being true
           # rather than emitting an ambiguous checksum file.
-          find artifacts -type f -name '*.tar.gz' -printf '%f\n' | sort | uniq -d | grep . \
-            && { echo "::error::duplicate tarball basenames across artifacts"; exit 1; } || true
+          dupes="$(find artifacts -type f -name '*.tar.gz' -printf '%f\n' | sort | uniq -d)"
+          if [ -n "$dupes" ]; then
+            echo "::error::duplicate tarball basenames across artifacts: $dupes"
+            exit 1
+          fi
           find artifacts -type f -name '*.tar.gz' | sort | while read -r f; do
             ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" )
           done > sha256sums.txt
