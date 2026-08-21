@@ -1,10 +1,10 @@
 // include/canary/care/greeting.h — the first-meet story, pure model.
 //
-// The glass already introduces itself: splash.cpp runs a first-meeting
-// storyboard off the same NVS "scv-hello" bit — presence before speech (a
-// beat, a hop, a settle, the head-tilt that says it sees you), then four
-// typed lines in a speech bubble, then the wordmark, so the name lands
-// after the friend does. That is shipped and this file does NOT replace it.
+// The glass already introduces itself: splash.cpp plays the first-meeting
+// scene (story::kHello in firmware/common/story/story_scripts.h) off the
+// same NVS "scv-hello" bit — presence before speech, a handful of typed
+// lines in a speech bubble, then the wordmark, so the name lands after
+// the friend does. That is shipped and this file does NOT replace it.
 //
 // What this adds is the part that script has no way to say, plus the
 // guardrails it has no way to enforce:
@@ -12,10 +12,10 @@
 //   * Two beats it lacks — the self-identification flex and the fleet-as-
 //     company line (the "there are more of us" idea, introduced as company
 //     rather than as coverage).
-//   * The honesty rules, mechanical instead of remembered. splash.cpp's
-//     four lines are a hardcoded array; nothing stops a future edit from
-//     putting a severity word in the bird's mouth or a glyph Montserrat
-//     can't draw. Here the copy is one tested surface.
+//   * The honesty rules, mechanical instead of remembered. The splash
+//     script is tested data now (test_story.cpp bans severity words and
+//     glyphs Montserrat can't draw), but these runtime-fact lines never
+//     pass through it — here THEIR copy is the same kind of tested surface.
 //
 // NOTE ON WIRING: this model is deliberately not called from splash yet.
 // splash_play() runs before the face is built, so on a true first boot
