@@ -114,7 +114,7 @@ look failed on the phone — hard-won WAP lesson.)
 
 | Piece | Where |
 |---|---|
-| Pure helpers (QR/JSON escaping, password alphabet, captive DNS, probe policy) | `include/canary/net/provision_core.h` (host-tested) |
+| Pure helpers (QR/JSON escaping, password alphabet, captive DNS, probe policy) | `include/canary/net/provision_core.h` (host-tested) — a byte-identical copy of the canonical `firmware/common/network/provision_core.h`, pinned by `firmware/scripts/check_provision_core_sync.sh` until the display migrates to the shared portal |
 | State machine + AP + portal | `src/net/provision.cpp` (`FEATURE_ONBOARDING`) |
 | Glass scenes | `src/ui/onboard_ui.cpp` — own LVGL screen, auto-deleted at handoff |
 | NVS persistence | `canary::cfg::set_wifi_credentials()` (success only) |

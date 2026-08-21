@@ -39,13 +39,14 @@ jobs:
 
       - name: Set up Rust (+ iOS targets)
         if: vars.ENABLE_IOS_BUILD == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
+          toolchain: stable
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - name: Cache Rust build
         if: vars.ENABLE_IOS_BUILD == 'true'
-        uses: swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: desktop-lab/src-tauri -> target
           key: ios

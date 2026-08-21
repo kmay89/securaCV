@@ -174,6 +174,55 @@ the baud ceiling a rung and the retry writes at the gentler speed (reset for a
 fresh board). And the "Clean install" escalation carries the product you were
 installing into the rescue, so it can't default to the wrong firmware.
 
+## Liveness (nothing may look stuck)
+
+Real flashes carry real waits — a full-chip erase the silicon runs in
+silence (up to ~two minutes on 16 MB parts), a download on whatever network
+is at hand, minutes of writing, an on-chip checksum at the end — and a
+frozen screen is indistinguishable from a hung one. The rule, enforced by
+`desktop_parity.test.js` on both flashers: **every wait shows something that
+moves**, plus honest words about what any silence means.
+
+- Every progress card carries an **elapsed clock** ticking once a second;
+  after 8 s with no other signal it adds "still working" out loud.
+- Waits with no honest number — the erase, the chip recomputing its MD5 —
+  **sweep the bar** (`pulse()`) instead of freezing it, and the stage names
+  the pause with a size-shaped estimate (`eraseEstimateText`, unit-tested).
+- The **image download streams** with live bytes/rate/ETA against the
+  release's published size; the write bar counts the engine's own
+  (compressed) units per file, so it genuinely reaches 100 %.
+- The connect-time reads narrate step by step (current firmware, passport,
+  customs — including each flash-capacity probe), clicking Install lands on
+  a live card *before* the port re-sync instead of after it, and the serial
+  "listening…" line explains itself after five quiet seconds.
+- The desktop Flasher mirrors all of it with a progress strip above each
+  working console (stage + elapsed + bar), fed by the engine's own progress
+  frames, structured download events, and a narrated `board_passport`.
+
+## Minimal mode (the quiet dress)
+
+The Nursery narrates by default — right for a first flash, a lot of reading
+for the fortieth. The **🪶 minimal** toggle in the journey bar (also under
+⚙ settings) folds the teaching away and keeps everything that does the
+work: the journey bar, every control, the live status line, the progress
+bar with bytes and time left, the verdicts (customs, install, self-check)
+and every error card. Mechanically it is hide-not-remove: one root class on
+`#flash` (`flash-minimal`), with `flash.css` owning the exact fold list;
+each screen carries a "show the full story for this step" bridge that
+un-folds everything for that phase without touching the preference. The
+layers tour and the coach are skipped rather than hidden — they run timers.
+The choice is sticky per browser (`nursery.minimal` — `minimal.js` owns the
+preference), and off by default: quiet is opted into, never sprung.
+
+Error guidance and safety surfaces never fold, in either mode — an error
+that folds away is an error that never happened, and the fold list exempts
+anything that explains a destructive choice (the forced-erase note) or
+discloses a credential-bearing artifact (the done card's safety-copy line).
+The desktop Flasher carries the same mode (the feather in the rail,
+`prefs.minimal`, `html[data-density="minimal"]`), where it also collapses
+espflash's progress-bar redraw frames into one live console line;
+`desktop_parity.test.js` holds the two flashers together.
+
 ## Post-flash proof
 
 "Watch it boot & prove itself →" doesn't just stream the log — it asks the
@@ -250,10 +299,12 @@ firmware-release.yml (fw-v* tag)
 A factory image spans offset 0 to the end of the app, so flashing it clears the
 NVS region (saved WiFi/settings) back to blank. That is intentional and matches
 SecuraCV's provisioning model: an AP-based variant (canary, WAP) brings up its
-own setup network afterwards; a sensor variant (vision, sense) takes its
-credentials from the firmware and re-seeds NVS on first boot
-([`firmware_ota.md` § generic release builds + NVS](firmware_ota.md)). Every
-later OTA update inherits that identity. The "erase the entire chip first"
+own setup network afterwards; a sensor variant (vision, sense) re-seeds NVS
+from the firmware's compiled credentials on first boot
+([`firmware_ota.md` § generic release builds + NVS](firmware_ota.md)) — and if
+those leave it without a real network, it raises its own `SecuraCV-XXXX` setup
+network too (the shared setup portal), so a factory flash never strands it.
+Every later OTA update inherits that identity. The "erase the entire chip first"
 option is a belt-and-suspenders full erase for a misbehaving board.
 
 ## Trust model (read this before relying on it)

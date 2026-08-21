@@ -99,6 +99,8 @@ struct RateLimitEntry {
  * GET  /                         - Dashboard UI (HTML)
  * GET  /api/device-info          - Non-sensitive device metadata
  * GET  /api/provisioning-receipt - Provisioning receipt (physical BOOT button or Bearer token)
+ * GET  /api/help-qr              - SVG QR deep link to the Help Desk for the current
+ *                                  verdict (coarse anchor only; selftest-parity boundary)
  *
  * ── Authenticated (Bearer token required) ──
  * GET  /api/status          - Device status JSON

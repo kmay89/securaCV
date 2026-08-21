@@ -41,6 +41,25 @@ enum Feedback {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }
+
+    /// The finding session's hand-feel — the one screen where the user asked
+    /// to be guided physically. WHEN a tick happens is decided by the pure,
+    /// host-tested grammar (ProximityRanger.tick); this only grades it:
+    /// firmer the closer you get, one success on arrival, one soft note if
+    /// a close signal vanishes.
+    static func play(finding tick: FindingTick?) {
+        guard let tick else { return }
+        switch tick {
+        case .closer(let band):
+            let style: UIImpactFeedbackGenerator.FeedbackStyle =
+                band >= .veryClose ? .heavy : (band >= .near ? .medium : .light)
+            UIImpactFeedbackGenerator(style: style).impactOccurred()
+        case .arrived:
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        case .lost:
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
 }
 
 #else
@@ -48,5 +67,6 @@ enum Feedback {
 @MainActor
 enum Feedback {
     static func play(_ event: FeedbackEvent?) {}
+    static func play(finding tick: FindingTick?) {}
 }
 #endif

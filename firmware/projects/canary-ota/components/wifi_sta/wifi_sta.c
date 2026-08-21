@@ -4,6 +4,13 @@
  *
  * Implements WiFi station mode connectivity using ESP-IDF APIs.
  * Uses event groups for synchronous connection waiting.
+ *
+ * Credential fallback order for wifi_sta_connect_from_nvs():
+ *   1. NVS namespace "wifi", keys "ssid"/"password" (this component's own)
+ *   2. NVS namespace "securacv", keys "wifi_ssid"/"wifi_pass" — the seed
+ *      both flashers and every other flavor use; honored whether the seed
+ *      is string- or blob-typed
+ *   3. Kconfig defaults (CONFIG_ESP_WIFI_SSID / CONFIG_ESP_WIFI_PASSWORD)
  */
 
 #include "wifi_sta.h"
@@ -34,6 +41,12 @@ static const char *TAG = "wifi_sta";
 #define NVS_NAMESPACE           "wifi"
 #define NVS_KEY_SSID            "ssid"
 #define NVS_KEY_PASSWORD        "password"
+
+// The seed namespace every other flavor and both flashers use. Values may be
+// string- OR blob-typed (the flashers pick the encoding per product).
+#define NVS_SEED_NAMESPACE      "securacv"
+#define NVS_SEED_KEY_SSID       "wifi_ssid"
+#define NVS_SEED_KEY_PASSWORD   "wifi_pass"
 
 // Event group bits
 #define WIFI_CONNECTED_BIT      BIT0
@@ -307,6 +320,24 @@ esp_err_t wifi_sta_connect(const wifi_sta_config_t *config)
     }
 }
 
+// Read one seed-namespace value that may be string- or blob-typed. Blob
+// values carry no NUL — copy and terminate; out_size caps the payload at
+// out_size - 1 chars. Returns true when a non-empty value was read.
+static bool seed_read(nvs_handle_t nvs, const char *key, char *out, size_t out_size)
+{
+    size_t len = out_size;
+    if (nvs_get_str(nvs, key, out, &len) == ESP_OK) {
+        return out[0] != '\0';
+    }
+    len = out_size - 1;
+    if (nvs_get_blob(nvs, key, out, &len) == ESP_OK && len > 0) {
+        out[len] = '\0';
+        return true;
+    }
+    out[0] = '\0';
+    return false;
+}
+
 esp_err_t wifi_sta_connect_from_nvs(uint32_t timeout_ms)
 {
     char ssid[33] = {0};
@@ -332,6 +363,19 @@ esp_err_t wifi_sta_connect_from_nvs(uint32_t timeout_ms)
         nvs_close(nvs);
     } else {
         use_defaults = true;
+    }
+
+    // Second lookup: the flasher-seeded "securacv" namespace, either typing
+    if (use_defaults) {
+        err = nvs_open(NVS_SEED_NAMESPACE, NVS_READONLY, &nvs);
+        if (err == ESP_OK) {
+            if (seed_read(nvs, NVS_SEED_KEY_SSID, ssid, sizeof(ssid))) {
+                seed_read(nvs, NVS_SEED_KEY_PASSWORD, password, sizeof(password));
+                use_defaults = false;
+                ESP_LOGI(TAG, "Using WiFi credentials from seed NVS (securacv)");
+            }
+            nvs_close(nvs);
+        }
     }
 
     // Fall back to Kconfig defaults

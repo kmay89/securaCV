@@ -69,11 +69,24 @@ Two rules make it safe to run without a human per ticket:
     over WebSerial (the `/canary` page already holds the serial plumbing)
     and land directly on the verdict's catalog entry.
   - Firmware: a **help QR** — on request (console key or dashboard button,
-    never unprompted), render/serve a QR encoding
-    `https://securacv.com/help#s-<verdict>` plus the failing probe ids. The
-    display flavors already render commissioning QRs; the WAP already
-    serves `/api/pairing-qr`. No new radio, no new data class — the QR
-    carries only what the unauthenticated self-test already says on the AP.
+    never unprompted), render/serve a QR encoding the Help Desk deep link
+    for the current verdict. The display flavors already render
+    commissioning QRs; the WAP already serves `/api/pairing-qr`. No new
+    radio, no new data class — the QR carries only what the
+    unauthenticated self-test already says on the AP.
+    **Status: SHIPPED on the WAP** — `GET /api/help-qr` (public,
+    selftest-parity boundary; route-security allowlisted with the
+    justification) + a "Show Help QR" button in the headline dashboard's
+    Fleet sheet. The verdict → URL composition, worst-first precedence
+    (safe mode > hub down > first mapped failing probe), and the
+    **probe-namespace bridge** (the WAP's "wifi"/"sd"/"bluetooth" ids map
+    onto the website's `#probe-wifi_ok`/`#probe-sd_card`/
+    `#s-ble-not-working` anchors — two ten-entry probe lists exist and
+    they are NOT the same list) live in the pure, host-tested
+    `help_qr_logic.h`. The website honors `#probe-<id>` deep links as of
+    securacv_website#171. Still open: the canary-display glass rendering
+    (moves the emulator `dist/` — its own carefully-ordered change) and a
+    console key.
   - **Build-order warning:** a canary-display change moves the committed
     emulator `dist/` when it touches what `canary-local/emulator/build.sh`
     actually compiles — `src/main.cpp`, the LVGL faces, `care/`, `fleet/`,

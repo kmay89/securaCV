@@ -151,6 +151,9 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   assert.match(flashCoreSrc, /writeInt\("setup_ok"/,
     "flash-core.js buildNvsSeedImage lost the blob-scheme setup_ok latch — a seeded " +
     "canary/wap would boot into SETUP MODE despite joining");
+  assert.match(flashCoreSrc, /writeInt\("auto_upd"/,
+    "flash-core.js buildNvsSeedImage lost the OTA auto-update seed — a browser-flashed " +
+    "board would never keep itself updated");
   const { mqttProvisioningToNvs, apiTokenToNvs } = await import("../assets/flash-core.js");
   const { strings, u16 } = mqttProvisioningToNvs({
     deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
@@ -158,13 +161,74 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   // The API-token blobs ride the same seed (blob-scheme boards); their keys
   // are part of the contract the two flashers share.
   const { blobs } = apiTokenToNvs("cv_" + "a".repeat(32));
-  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en", "setup_ok",
+  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en", "setup_ok", "auto_upd",
     ...Object.keys(strings), ...Object.keys(u16), ...Object.keys(blobs)]);
 
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +
     "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage/apiTokenToNvs with " +
     "desktop/src-tauri/src/provisioning.rs:build_nvs");
+});
+
+test("OTA auto-update: both flashers seed the engine's own namespace, and both offer the switch", async () => {
+  // The shared OTA engine ships in every networked flavor and reads its
+  // persisted opt-in from ITS OWN NVS namespace — not "securacv", where
+  // everything else the flashers seed lives. Seeding it at flash time is what
+  // makes a freshly flashed board keep itself on signed releases without
+  // Home Assistant, so the namespace, the key, the u8 encoding, and the
+  // user-facing switch must all exist on BOTH frontends, pinned to the
+  // firmware's own #defines rather than to each other's copies.
+  const otaCpp = read(join(ROOT, "firmware/common/ota/src/securacv_ota.cpp"));
+  assert.match(otaCpp, /#define NVS_NAMESPACE\s+"securacv_ota"/,
+    "the OTA engine's NVS namespace moved — both flashers seed \"securacv_ota\"");
+  assert.match(otaCpp, /#define NVS_KEY_AUTO_UPDATE\s+"auto_upd"/,
+    "the OTA engine's auto-update key moved — both flashers seed \"auto_upd\"");
+
+  // Both writers: the second namespace entry plus the u8 under it.
+  const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
+  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  assert.match(flashCoreSrc, /"securacv_ota"/,
+    "flash-core.js buildNvsSeedImage no longer writes the securacv_ota namespace entry");
+  assert.match(flashCoreSrc, /writeInt\("auto_upd", 0x01/,
+    "flash-core.js must seed auto_upd as a u8 (0x01) — the engine reads it with nvs_get_u8");
+  assert.match(provRs, /namespace\("securacv_ota"\)/,
+    "provisioning.rs build_nvs no longer opens the securacv_ota namespace");
+  assert.match(provRs, /writer\.u8\("auto_upd"/,
+    "provisioning.rs build_nvs no longer seeds auto_upd as a u8");
+
+  // The seeded page must be READABLE back by the flasher's own parser (the
+  // health check uses it): two namespaces, each item under the right one.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const img = core.buildNvsSeedImage(
+    { wifi: { ssid: "Bird House", pass: "correct horse" }, autoUpdate: true }, 0x4000);
+  const items = core.parseNvs(img);
+  const auto = items.find((i) => i.namespace === "securacv_ota" && i.key === "auto_upd");
+  assert.ok(auto && auto.value === 1,
+    "parseNvs must read auto_upd back out of the securacv_ota namespace");
+  assert.ok(items.some((i) => i.namespace === "securacv" && i.key === "wifi_en"),
+    "the securacv namespace must keep its own tenants beside the new one");
+
+  // The switch itself, BOTH frontends, default ON, same copy — capability
+  // parity, not just constant parity (the dev-channel lesson).
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop index.html", html]]) {
+    assert.ok(src.includes("Keep this Canary updated automatically"),
+      `${label} lost the auto-update checkbox (or its copy drifted)`);
+    assert.ok(src.includes("Ed25519-signed releases installed with A/B rollback"),
+      `${label} no longer says what the updates ARE — signed releases with rollback`);
+  }
+  assert.match(flashJs, /otaChk\.checked = true/,
+    "the browser checkbox must default ON");
+  assert.match(html, /id="auto-update" checked/,
+    "the desktop checkbox must default ON");
+  assert.match(appJs, /autoUpdate: !!\(\$\("auto-update"\)/,
+    "desktop readProvisioning never reads the auto-update checkbox");
+  // Unchecked is a CHOICE — an explicit 0, never a silently absent key.
+  const declined = core.parseNvs(core.buildNvsSeedImage({ autoUpdate: false }, 0x4000));
+  const off = declined.find((i) => i.namespace === "securacv_ota" && i.key === "auto_upd");
+  assert.ok(off && off.value === 0, "unchecking must seed an explicit auto_upd = 0");
 });
 
 test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnostics ship on desktop too", () => {
@@ -1291,6 +1355,60 @@ test("board access notes: both flashers explain the radar's hidden flashing port
   }
 });
 
+test("the catalog hatch moment renders on both flashers, behind the same receipt gate", () => {
+  // The post-flash "first flight" (products[].hatch, authored once in
+  // gen_flash.py's HATCH_MOMENTS) used to render only on the desktop — the
+  // browser validated it and then never showed it, so half the users kept
+  // the generic next-step card. Both frontends must render the catalog copy,
+  // and both must honor serial_receipt the same way: false → the steps land
+  // right after the write; anything else → they wait for the board's live
+  // serial self-manifest (the boot receipt).
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+
+  // Desktop: catalog hatch preferred over hardcoded copy, receipt-gated.
+  assert.match(appJs, /product\.hatch && Array\.isArray\(product\.hatch\.steps\)/,
+    "desktop hatchMoment no longer prefers the catalog's product.hatch");
+  assert.match(appJs, /function requiresLiveReceipt/,
+    "desktop lost requiresLiveReceipt — the receipt gate on its hatch card");
+
+  // Browser: the same gate lives once in flash-core (pure, host-tested)…
+  assert.match(flashCore, /export function requiresLiveReceipt/,
+    "browser lost core.requiresLiveReceipt — the shared receipt gate");
+  assert.match(flashCore, /export function hatchMoment/,
+    "browser lost core.hatchMoment — the catalog hatch can never render");
+  // …and both surfaces actually render it: the done card for receipt-less
+  // products, the monitor's identity card for receipt-gated ones.
+  const hatchCard = read(join(CANARY, "assets/hatch-card.js"));
+  assert.match(hatchCard, /export function hatchMomentCard/,
+    "browser flasher lost the shared hatch-steps card (assets/hatch-card.js)");
+  assert.match(browser, /hatchMomentCard/,
+    "flash.js no longer mounts the hatch-steps card");
+  assert.match(browser, /!core\.requiresLiveReceipt\(product\)/,
+    "the browser done card no longer shows hatch steps for serial_receipt:false products");
+  assert.match(browser, /core\.requiresLiveReceipt\(opts\.hatchProduct\)/,
+    "the browser monitor no longer shows hatch steps when the boot receipt lands");
+
+  // The Vision routing — the gap Codex flagged on #1569. A Vision's
+  // serial_receipt is true but its prove path is the camera bench, never the
+  // monitor, so the receipt-gated monitor card above can NEVER fire for it;
+  // without an explicit route, Vision owners are the only users who never
+  // see their first flight. The browser's "after both receipts" moment is
+  // the two-port pair completing, and a session can finish the pair on
+  // either screen — so BOTH must mount the hatch when both ports are in:
+  // flash.js's done card (module-first sessions) and we2-flash.js's
+  // module-done screen (ESP32-first sessions, the routed path).
+  const we2FlashJs = read(join(CANARY, "assets/we2-flash.js"));
+  assert.match(browser, /parts\.esp32 && parts\.we2[\s\S]{0,120}hatchMomentCard/,
+    "flash.js's done card no longer hatches a completed Vision pair (module-first sessions)");
+  assert.match(we2FlashJs, /parts\.esp32 && parts\.we2[\s\S]{0,400}hatchMomentCard/,
+    "we2-flash.js's module-done screen no longer hatches a completed Vision pair");
+  assert.match(we2FlashJs, /isVisionBoard\(p\)/,
+    "we2-flash.js must pick a catalog vision product for the hatch copy — " +
+    "the vision products share one hatch moment (pinned in flash.test.js)");
+});
+
 // ── broker credentials must reach every firmware that reads them ─────────────
 //
 // The displays could not be told which hub to talk to. Both flashers gated the
@@ -1485,6 +1603,24 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
       "a blob-seeded board would read empty credentials and boot into setup");
   }
 
+  // 1c. The inverse fallback on the blob-scheme side: the main canary and
+  //     the wap read blobs first, so a string-typed seed (a string-scheme
+  //     flasher frontend writing a blob-scheme board's keys) must be honored
+  //     via getString when the key exists but getBytesLength reads 0.
+  const blobLoaders = [
+    "firmware/canary/lib/securacv_network/src/securacv_network.cpp",
+    "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+  ];
+  for (const path of blobLoaders) {
+    const src = read(join(ROOT, path));
+    assert.match(src, /nvs\.isKey\(NVS_KEY_WIFI_SSID\)/,
+      `${path}: the credential loader no longer distinguishes a string-typed ` +
+      "seed from an absent one — a string-seeded board would boot unprovisioned");
+    assert.match(src, /nvs\.getString\(NVS_KEY_WIFI_SSID/,
+      `${path}: the credential loader no longer falls back to a string-scheme ` +
+      "seed — a string-seeded board would read empty credentials and boot unprovisioned");
+  }
+
   // Both writers write the wifi_pass key unconditionally inside the wifi block.
   const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
   assert.match(flashCoreSrc, /writeString\("wifi_pass", passB\)/,
@@ -1619,4 +1755,212 @@ test("a derived name offers no re-roll on either flasher", () => {
     /rerollBtn\.hidden = !!cert\.derived/, "desktop must hide the dice for a derived name");
   assert.match(read(join(CANARY, "assets", "flash.js")),
     /cert\.derived\s*\n?\s*\?\s*null/, "flash.js must not build a re-roll for a derived name");
+});
+
+// ── Minimal mode: one quiet dress, both flashers ──────────────────────────
+//
+// The verbose flasher is the front door; minimal mode is the regular's
+// entrance. It is a user-facing feature, so the two-flashers rule applies in
+// full: if either frontend loses its toggle, its persistence, or the promise
+// that quiet is opted into (never the default), half the users keep — or
+// lose — a mode the other half has. These greps hold both sides together.
+test("minimal mode exists on both flashers, opt-in, persisted, reversible", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserMod = read(join(CANARY, "assets", "minimal.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const desktop = read(join(ROOT, "desktop", "src", "app.js"));
+  const desktopHtml = read(join(ROOT, "desktop", "src", "index.html"));
+  const desktopCss = read(join(ROOT, "desktop", "src", "styles.css"));
+
+  // Browser: a persisted preference module, mounted as a toggle, driving a
+  // root class that flash.css folds prose under — plus the per-phase bridge
+  // back to the full story.
+  assert.match(browserMod, /nursery\.minimal/,
+    "minimal.js must persist the choice under the nursery.* localStorage family");
+  assert.match(browserMod, /=== "on"/,
+    "minimal.js must treat anything but an explicit 'on' as off — opt-in, never sprung");
+  assert.match(browser, /minimalToggle\(/,
+    "flash.js must mount the minimal toggle");
+  assert.match(browser, /flash-minimal/,
+    "flash.js must dress #flash with the flash-minimal root class");
+  assert.match(browser, /minimalMoreBar|flash-minimal-open/,
+    "flash.js must offer the per-phase way back to the full story");
+  assert.match(browserCss, /\.flash-minimal:not\(\.flash-minimal-open\)/,
+    "flash.css must scope the folding so the reveal un-folds everything");
+
+  // Desktop: the same mode as a density attribute — persisted in prefs,
+  // toggled from the rail, folded by styles.css.
+  assert.match(desktop, /prefs\.minimal/,
+    "desktop app.js must persist the choice in prefs");
+  assert.match(desktop, /data-density/,
+    "desktop app.js must carry the mode as a data-density attribute");
+  assert.match(desktopHtml, /id="density-toggle"/,
+    "desktop index.html must keep the rail toggle");
+  assert.match(desktopCss, /html\[data-density="minimal"\]/,
+    "styles.css must fold under the density attribute");
+
+  // The desktop's minimal console collapses espflash's progress-bar redraw
+  // frames into one live line — the single biggest verbosity win, and the
+  // easiest one to lose in a refactor of the log listeners.
+  assert.match(desktop, /function appendFlashLog\b/,
+    "desktop app.js must route flash logs through the collapsing appender");
+  assert.match(desktop, /looksLikeProgressFrame/,
+    "desktop app.js must keep the progress-frame detector");
+});
+
+// What minimal mode may never fold: the destructive-choice affordances. The
+// first-contact wipe label was once folded into a disclosure and cost a
+// review catch (see index.html's comment); minimal mode must not repeat that
+// mistake by CSS, and the browser's forced-erase explainer stays visible the
+// same way.
+test("minimal mode never hides a destructive choice", () => {
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const desktopCss = read(join(ROOT, "desktop", "src", "styles.css"));
+  assert.match(browserCss, /\.flash-reassure:not\(\.flash-forced-erase\)/,
+    "flash.css must exempt the forced-erase explainer from the fold");
+  assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*\.coldstart-ask/,
+    "styles.css must never fold the first-contact wipe label under minimal mode");
+  // The hub's write-target rows reuse .p-tag for the disk path and capacity —
+  // the facts that tell two identical card readers apart before a destructive
+  // write. The tagline fold must stay scoped to the Canary firmware picker.
+  assert.match(desktopCss, /#product-list \.p-tag/,
+    "styles.css must scope the tagline fold to #product-list, never app-wide");
+  assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*(?<!#product-list )\.p-tag\b/,
+    "no minimal-mode rule may fold .p-tag outside the Canary picker");
+});
+
+// And the disclosure it may never fold: the done card's safety-copy line is
+// the ONLY notice that a credential-bearing file — the board's identity key
+// and saved WiFi inside — just landed in the downloads folder without a
+// click. (Codex catch on #1575, where a parallel fold list hid it.) The fold
+// list above targets .flash-hello and .flash-voice fineprints by scope on
+// purpose; this gate keeps the done card out of every present and future
+// minimal-mode rule, so the warning always rides the file it describes.
+test("minimal mode never folds the backup-secret notice", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  assert.match(browser, /Treat it like a spare house key/,
+    "the backup-secret wording moved — re-point this gate at its new home");
+  assert.doesNotMatch(browserCss, /flash-minimal[^{}]*\.flash-done/,
+    "a minimal-mode rule reaches into the done card — the backup-secret " +
+    "notice lives there and must stay visible in every mode");
+});
+
+// ── Liveness: no wait may look stuck, on either flasher ─────────────────────
+//
+// The 2026-08 wait-state audit: a display factory image can erase for a
+// minute, download for minutes, and verify for half a minute — and every one
+// of those used to sit visually frozen on at least one frontend. The rule
+// this gate pins: every long operation shows something that MOVES (a real
+// fraction, a sweeping bar, or a ticking elapsed clock) plus honest words
+// about what the silence means. Both flashers, per rule 7.
+test("every long wait shows liveness on both flashers", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const browserCore = read(join(CANARY, "assets", "flash-core.js"));
+  const appJs = read(join(ROOT, "desktop", "src", "app.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+  const css = read(join(ROOT, "desktop", "src", "styles.css"));
+  const libRsSrc = read(join(ROOT, "desktop", "src-tauri", "src", "lib.rs"));
+
+  // 1. The elapsed clock: both frontends tick seconds through every long
+  //    operation — the difference between "working" and "hung".
+  assert.match(browser, /flash-elapsed/,
+    "browser progress cards lost their elapsed clock");
+  assert.match(appJs, /still working/,
+    "desktop op strip lost its quiet-stretch watchdog");
+  assert.match(browser, /still working/,
+    "browser progress cards lost their quiet-stretch watchdog");
+
+  // 2. Indeterminate motion for waits with no honest number (full-chip
+  //    erase, the chip's own MD5): a sweep, never a frozen bar.
+  assert.match(browserCss, /flash-bar-indet/,
+    "browser lost the indeterminate bar sweep");
+  assert.match(browser, /pulse\(/,
+    "browser progressCard lost pulse() — erase/verify would freeze the bar");
+  assert.match(css, /\.op-progress \.bar-fill\.indet/,
+    "desktop op strip lost its indeterminate sweep");
+
+  // 3. The erase is narrated with a size-shaped estimate on the browser
+  //    (eraseEstimateText, unit-tested in flash.test.js) and a stage line on
+  //    the desktop — the chip reports nothing while erasing, so the words
+  //    are the only honest signal.
+  assert.match(browserCore, /export function eraseEstimateText/,
+    "flash-core lost the erase estimate");
+  assert.match(browser, /eraseEstimateText/,
+    "the browser erase step no longer states its expected duration");
+  assert.match(appJs, /stays silent until it finishes/,
+    "the desktop erase stage no longer says what the silence means");
+
+  // 4. Downloads stream with progress on both sides. The browser reads the
+  //    response body; the desktop's Rust flash command emits structured
+  //    flash:progress events from a chunked download.
+  assert.match(browser, /resp\.body && resp\.body\.getReader/,
+    "the browser image download went back to a silent arrayBuffer()");
+  assert.match(libRsSrc, /flash:progress/,
+    "lib.rs no longer emits download progress events");
+  assert.match(libRsSrc, /resp\s*\.chunk\(\)/,
+    "lib.rs download went back to a silent bytes() buffer");
+  assert.match(appJs, /flash:progress/,
+    "desktop never listens for the download progress it is sent");
+
+  // 5. The desktop finally has a real bar for the Canary flow — driven by
+  //    espflash's own frames — and the connect-time passport read narrates.
+  assert.match(html, /id="flash-progress-wrap"/,
+    "desktop lost the Canary-flow progress strip");
+  assert.match(appJs, /function progressFromFrame/,
+    "desktop lost the espflash frame parser — the bar has no data source");
+  assert.match(libRsSrc, /passport:log/,
+    "board_passport went silent again — up to 25 s with zero events");
+  assert.match(appJs, /passport:log/,
+    "desktop never shows the passport narration it is sent");
+
+  // 6. The browser's write bar reaches 100 %: one tracker per file, in the
+  //    callback's own (compressed) units — the old single tracker was seeded
+  //    with the uncompressed length and topped out at the compression ratio.
+  assert.match(browser, /fileEtas\[i\]/,
+    "the browser write bar went back to the mis-scaled single tracker");
+  // …and the chip's MD5 pause is named instead of mysterious.
+  assert.match(browser, /recomputing its checksum \(MD5\)/,
+    "the browser no longer names the chip's verify pause");
+});
+
+// The desktop's frame parser against realistic espflash/indicatif shapes —
+// same grab-the-function pattern as the classifier tests above. A parser
+// that can't read a frame must return null (the strip degrades to sweep +
+// clock), never a wrong number.
+test("progressFromFrame reads espflash's bars and refuses everything else", () => {
+  const appJs = read(join(ROOT, "desktop", "src", "app.js"));
+  const grabFn = (name) => {
+    const i = appJs.indexOf("function " + name);
+    let p = 0, j = appJs.indexOf("(", i);
+    for (let k = j; k < appJs.length; k++) {
+      if (appJs[k] === "(") p++;
+      else if (appJs[k] === ")") { p--; if (!p) { j = k; break; } }
+    }
+    const b = appJs.indexOf("{", j);
+    let d = 0;
+    for (let k = b; k < appJs.length; k++) {
+      if (appJs[k] === "{") d++;
+      else if (appJs[k] === "}") { d--; if (!d) return appJs.slice(i, k + 1); }
+    }
+  };
+  const fn = new Function(
+    grabFn("looksLikeProgressFrame") + "\n" + grabFn("progressFromFrame") +
+    "\nreturn progressFromFrame;")();
+
+  // Percent frames, wherever the percent sits.
+  assert.strictEqual(fn("[00:00:12] [========>-------] 45%"), 0.45);
+  assert.strictEqual(fn("Writing [#####>..........] 12% (0x10000)"), 0.12);
+  // indicatif's precise-percent template: the whole decimal, never the
+  // digits after the dot (review catch — '12.34%' must not read as 34 %).
+  assert.strictEqual(fn("[=>--------------] 12.34%"), 0.1234);
+  // n/m beside a bracketed bar.
+  assert.strictEqual(fn("[=====>          ] 512/1024"), 0.5);
+  // Not frames: narration, plain numbers, a bare fraction with no bar.
+  assert.strictEqual(fn("→ downloading https://example"), null);
+  assert.strictEqual(fn("✓ chip write verified"), null);
+  assert.strictEqual(fn("Flash size: 8MB"), null);
+  // Degenerate frames must degrade to null, never a wrong number.
+  assert.strictEqual(fn("[=========] 1024/0"), null);
 });

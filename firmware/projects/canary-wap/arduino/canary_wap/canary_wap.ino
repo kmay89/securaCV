@@ -181,6 +181,7 @@ extern "C" {
 #include "sys_monitor.h"
 #include "hardware_state.h"
 #include "selftest_api.h"        // GET /api/selftest — wizard pre-flight aggregator
+#include "help_qr_logic.h"       // GET /api/help-qr — verdict → Help Desk URL (pure, host-tested)
 #include "data_mgmt_api.h"      // SD rotation, chain backup/restore, integrity verify
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -6701,6 +6702,58 @@ static esp_err_t handle_pairing_qr(httpd_req_t* req) {
   return send_qr_svg(req, payload);
 }
 
+/* Help QR: SVG QR of the Help Desk deep link for whatever is wrong RIGHT
+ * NOW — worst first: safe mode, then a configured-but-unreachable hub,
+ * then the first failing self-test probe with a page anchor; all-clear
+ * encodes the bare Help Desk. Scan it with a phone and land on the fix,
+ * no typing, no reading blink counts off the glass. The URL composition
+ * (and the WAP-probe → website-anchor bridge) is pure and host-tested in
+ * help_qr_logic.h.
+ *
+ * Unauthenticated ON PURPOSE — the same boundary argument as
+ * /api/selftest (selftest_api.h): the wizard needs it on the captive AP
+ * before any token exists, and the payload is a public website URL
+ * carrying a coarse verdict, strictly less than /api/selftest already
+ * answers on this surface. No device id, no network name, no token ever
+ * rides in it.
+ */
+static esp_err_t handle_help_qr(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  // A hub is "down" only when one is configured and enabled but the link
+  // is not up — the same signal mdns_sync_broker_txt() trusts. A device
+  // with no hub configured is standalone, not broken.
+  bool hub_down = false;
+  {
+    csi_mqtt::Config cfg;
+    if (csi_mqtt::config_load(&cfg) && cfg.enabled && cfg.host[0] != '\0') {
+      hub_down = !csi_mqtt::connected();
+    }
+  }
+
+  // Probes re-run on demand, exactly like GET /api/selftest — each is
+  // budgeted <50 ms and reads already-cached state (selftest_api.h).
+  JsonDocument doc;
+  selftest::run_to_json(doc);
+  const char* failing[selftest::MAX_PROBES];
+  size_t failing_count = 0;
+  for (JsonObject p : doc["probes"].as<JsonArray>()) {
+    if (failing_count >= selftest::MAX_PROBES) break;
+    const char* st = p["status"] | "";
+    if (strcmp(st, "fail") == 0) failing[failing_count++] = p["name"] | "";
+  }
+
+  char url[96];
+  if (help_qr_logic::compose_help_url(url, sizeof(url),
+                                      "https://securacv.com/help",
+                                      is_safe_mode(), hub_down,
+                                      failing, failing_count) == 0) {
+    return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                               "Failed to build help URL");
+  }
+  return send_qr_svg(req, url);
+}
+
 /* OS connectivity-probe handler (Apple / Android / Windows captive checks).
  *
  * These probes decide whether a phone *stays* on our setup AP, and the right
@@ -8224,13 +8277,13 @@ static void start_http_server() {
   //   tests_host/check_route_budget.py  (CI: firmware.yml)
   // which emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and
   // asserts >= 8 free slots. If it fails, RAISE a number here — never lower.
-  const int base_handlers = 48;       // register_api_routes core (incl. /api/config
+  const int base_handlers = 49;       // register_api_routes core (incl. /api/config
                                        // GET+POST) + the always-on
                                        // register_extra_routes singles (WiFi
                                        // provisioning, OTA x4, identify,
                                        // device-name, selftest, fleet/pairing QR,
-                                       // fleet/scan, sys-monitor, battery)
-                                       // + captive probes
+                                       // help QR, fleet/scan, sys-monitor,
+                                       // battery) + captive probes
   const int csi_handlers = 23;        // csi_integration::init (stream/window/events/
                                        // calibrate/settings/mqtt/tune/pair-token/…)
   const int wifi_presence_handlers = 4;   // /api/presence/{combined,wifi,wifi/start,wifi/stop}
@@ -8555,6 +8608,11 @@ register_extra_routes:
   httpd_uri_t pairing_qr = { .uri = "/api/pairing-qr", .method = HTTP_GET, .handler = handle_pairing_qr };
   httpd_register_uri_handler(active_server, &pairing_qr);
 
+  // Help QR — the Help Desk deep link for the current verdict (public;
+  // selftest-parity boundary, see the handler comment)
+  httpd_uri_t help_qr = { .uri = "/api/help-qr", .method = HTTP_GET, .handler = handle_help_qr };
+  httpd_register_uri_handler(active_server, &help_qr);
+
 #if FEATURE_MESH_NETWORK
   // Mesh network (opera) endpoints
   httpd_uri_t mesh_status = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status_auth };
@@ -8692,6 +8750,16 @@ static bool wifi_load_credentials() {
 
     g_wifi_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
     g_wifi_creds.configured = (strlen(g_wifi_creds.ssid) > 0);
+  } else if (ssid_len == 0 && nvs.isKey(NVS_KEY_WIFI_SSID)) {
+    // String-typed seed: isKey() is type-blind and getBytesLength() is 0 for
+    // string entries, so a present key with no blob bytes is the other
+    // encoding, not absence (LESSONS_LEARNED "A seeded credential key is
+    // honored whichever NVS TYPE wrote it"). Same caps as the blob path.
+    if (nvs.getString(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, sizeof(g_wifi_creds.ssid)) > 0) {
+      nvs.getString(NVS_KEY_WIFI_PASS, g_wifi_creds.password, sizeof(g_wifi_creds.password));
+      g_wifi_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
+      g_wifi_creds.configured = true;
+    }
   }
 
   nvs.end();

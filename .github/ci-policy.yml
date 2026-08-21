@@ -22,6 +22,11 @@ paths_parity_ok: []
 # bare `cancel-in-progress: true` despite publishing.
 publish_cancel_ok: []
 
+# R8: workflows allowed to pin a third-party action to a tag instead of
+# a commit SHA. Should stay empty — a tag is a mutable ref in someone
+# else's hands; SHA pins are the rule and Dependabot keeps them fresh.
+third_party_tag_ok: []
+
 # R3 (branch half): branch-push workflows allowed to keep a bare
 # `cancel-in-progress: true`. Only for workflows that produce no signal worth
 # preserving — canceling a *test* on main hides whether main is healthy,

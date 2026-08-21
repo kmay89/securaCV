@@ -153,6 +153,7 @@ fn main() -> Result<()> {
     let vault = Vault::new(VaultConfig {
         local_path: vault_path.clone(),
         crypto_mode: policy.vault.crypto_mode,
+        key_material: witness_kernel::VaultKeyMaterial::from_env(),
     })?;
 
     let export_path = out_dir.join("export_bundle.json");
@@ -258,7 +259,14 @@ fn main() -> Result<()> {
                 let conn = &kernel.conn;
                 let pq_pk = kernel.device_pq_public_key_ref();
                 let outcome = |hash: &[u8; 32]| {
-                    break_glass_receipt_outcome_for_verifier(conn, &verifying_key, hash, pq_pk)
+                    break_glass_receipt_outcome_for_verifier(
+                        conn,
+                        &verifying_key,
+                        DEFAULT_VAULT_ENVELOPE_ID,
+                        ruleset_hash,
+                        hash,
+                        pq_pk,
+                    )
                 };
                 let _meta = vault.seal_frame(
                     DEFAULT_VAULT_ENVELOPE_ID,

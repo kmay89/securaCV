@@ -112,8 +112,13 @@ it the shared grammar and made it scan on its own:
   After 30 s of any error group the canary returns to scanning on its
   own — every retry re-announces its state (the anti-Wyze rule: never a
   silent forever-loop).
-- **Camera-less siblings (ESP32-C6):** Improv Wi-Fi over BLE with the
-  display as commissioner — the display spots the advertisement, asks
-  "new sensor found — add it?", one tap writes the credentials, and the
-  same enrollment path finishes the job. SoftAP stays the break-glass
-  fallback behind a long-press.
+- **Camera-less siblings (ESP32-C6):** still to come — Improv Wi-Fi over
+  BLE with the display as commissioner: the display spots the
+  advertisement, asks "new sensor found — add it?", one tap writes the
+  credentials, and the same enrollment path finishes the job. The SoftAP
+  fallback it layers over is no longer hypothetical: an unprovisioned (or
+  recovery-stuck) Sense or Vision already raises the shared setup
+  portal's `SecuraCV-XXXX` network on its own
+  (`firmware/common/network/setup_portal`) — no long-press needed — so
+  BLE commissioning arrives as convenience on top of a shipped
+  break-glass path.

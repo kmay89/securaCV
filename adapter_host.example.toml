@@ -31,7 +31,11 @@ min_confidence = 0.5
 #   GET /healthz   liveness ("ok")
 # The SecuraCV Home Assistant integration can surface this automatically as a diagnostic sensor —
 # set the same URL as "Adapter Host stats URL" during setup.
-# stats_addr = "127.0.0.1:8799"
+# 8801, not 8799: the witness_api Event API already defaults to 127.0.0.1:8799
+# (config.example.toml), and the adapter host often runs on the same machine —
+# binding the stats endpoint there too would collide. (8800 is taken as well:
+# the webhook adapter below listens on it.)
+# stats_addr = "127.0.0.1:8801"
 
 # Send SIGHUP (`kill -HUP <pid>`) to reload this file without restarting: host `min_confidence`
 # and each adapter's route/room/filter *attributes* (claim kind, zone, confidence, thresholds) are
@@ -363,7 +367,7 @@ confidence = 0.9
 # configuration.yaml:
 #
 #   rest:
-#     - resource: "http://ADAPTER_HOST:8799/"
+#     - resource: "http://ADAPTER_HOST:8801/"
 #       scan_interval: 30
 #       sensor:
 #         - name: "Webhook adapter sealed"

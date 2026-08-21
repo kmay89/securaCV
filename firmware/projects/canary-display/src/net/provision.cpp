@@ -913,7 +913,11 @@ void provision_run(bool glass_ok) {
           // trace here), so name the one move that clears it rather than
           // leaving a correct QR on the glass being ignored.
           ctx.stuck_hinted = true;
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH) && !defined(CD_FLAVOR_NIGHTSTAND)
+          // Round glass: the hint rides the password line's low band
+          // (round_frame fits it; ~142 px) — every word here is measured.
+          ui_hint("forget it on your phone");
+#elif defined(CD_FLAVOR_WATCH)
           ui_hint("can't join? forget it on your phone");
 #else
           ui_hint("can't join? on your phone, forget this network - then scan again");
@@ -946,7 +950,11 @@ void provision_run(bool glass_ok) {
           // quietly. "browser", not "Safari" — this glass onboards Android
           // phones too (review catch). Short form on the watch: the round
           // face clips long bottom captions.
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH) && !defined(CD_FLAVOR_NIGHTSTAND)
+          // Round glass: the low band offers ~142 px — the address IS the
+          // hint (anything longer would ellipsize the digits away).
+          ui_hint("open 192.168.4.1");
+#elif defined(CD_FLAVOR_WATCH)
           ui_hint("no page? open 192.168.4.1");
 #else
           ui_hint("no page? open your browser: 192.168.4.1");
