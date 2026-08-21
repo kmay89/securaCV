@@ -402,6 +402,15 @@ impl SealedLogStore for SqliteSealedLogStore {
         for payload in payloads {
             let record = SealedLogRecord::deserialize_compat(&payload)?;
 
+            // Key rotations are identity-administration records with no ruleset
+            // binding (their ruleset_hash is all-zero), so they are exempt from
+            // the reprocess guard and excluded from the read — otherwise a
+            // single rotation would fail every subsequent read with a false
+            // CONFORMANCE_REPROCESS_VIOLATION. Mirrors the export path's skip.
+            if matches!(record, SealedLogRecord::KeyRotation(_)) {
+                continue;
+            }
+
             if let Err(e) =
                 ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
             {
@@ -514,6 +523,12 @@ impl SealedLogStore for InMemorySealedLogStore {
         let mut out = Vec::with_capacity(payloads.len());
         for payload in payloads {
             let record = SealedLogRecord::deserialize_compat(&payload)?;
+
+            // Key rotations carry no ruleset binding — exempt and excluded,
+            // matching the SQLite store above.
+            if matches!(record, SealedLogRecord::KeyRotation(_)) {
+                continue;
+            }
 
             if let Err(e) =
                 ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())

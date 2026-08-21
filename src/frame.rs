@@ -506,7 +506,13 @@ impl FrameBuffer {
     /// Drain frames for vault sealing. REQUIRES BreakGlassToken.
     ///
     /// This is the only way to extract frames from the buffer.
-    /// The buffer is cleared after drain.
+    /// The buffer is cleared after drain — dropping the returned iterator
+    /// removes and zeroizes every remaining frame. Because the drain is
+    /// destructive, callers MUST validate the token first
+    /// (`BreakGlass::assert_token_valid`, per spec/invariants.md §3.1):
+    /// possession of the token is enforced by this signature, but validity
+    /// cannot be checked here without the device key and receipt ledger.
+    /// Frames are yielded oldest-first; `.last()` is the newest.
     #[allow(dead_code)]
     pub fn drain_for_vault(
         &mut self,

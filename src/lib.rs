@@ -3553,14 +3553,44 @@ pub fn break_glass_receipt_outcome_for_verifier(
         return Err(anyhow!("break-glass receipt hash invalid"));
     }
     let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
-    verify_entry_signature(
-        verifying_key,
-        &entry_hash,
-        &signature_set,
-        SignatureMode::Compat,
-        pq_public_key,
-        DOMAIN_BREAK_GLASS_RECEIPT,
-    )?;
+    // Receipts are signed by the device key current at write time, so after a
+    // key rotation a genuine receipt may verify under a different lineage key
+    // than the caller's (the kernel passes its CURRENT key; a pre-rotation
+    // receipt is signed by an earlier one). Accept any key from the
+    // genesis-anchored, cryptographically validated lineage — but only when the
+    // caller's own trust anchor is a member of that lineage; otherwise (foreign
+    // database, explicit key override) fall back to exactly the caller's key.
+    let candidate_keys: Vec<VerifyingKey> = match reconstruct_device_key_lineage(conn) {
+        Ok(lineage)
+            if lineage
+                .iter()
+                .any(|e| e.public_key == verifying_key.to_bytes()) =>
+        {
+            lineage
+                .iter()
+                .map(|e| verifying_key_from_bytes(&e.public_key))
+                .collect::<Result<Vec<_>>>()?
+        }
+        _ => vec![*verifying_key],
+    };
+    candidate_keys
+        .iter()
+        .map(|key| {
+            verify_entry_signature(
+                key,
+                &entry_hash,
+                &signature_set,
+                SignatureMode::Compat,
+                pq_public_key,
+                DOMAIN_BREAK_GLASS_RECEIPT,
+            )
+        })
+        .find(|r| r.is_ok())
+        .unwrap_or_else(|| {
+            Err(anyhow!(
+                "break-glass receipt signature verifies under no device lineage key"
+            ))
+        })?;
     let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
 
     // Bind the receipt to the disclosure act the token authorizes. A token is
@@ -5553,7 +5583,7 @@ mod tests {
         let pq = kernel.device_pq_public_key_ref();
 
         // The genuine bootstrap authenticates.
-        let eras = crate::verify::load_authenticated_policy_eras(&kernel.conn, &dev, pq)?;
+        let eras = crate::verify::load_authenticated_policy_eras(&kernel.conn, std::slice::from_ref(&dev), pq)?;
         assert!(eras.iter().any(|p| p.commitment() == policy_a.commitment()));
 
         // Forge a chained, device-signed row claiming a new attacker-controlled
@@ -5596,7 +5626,7 @@ mod tests {
             params![0i64, payload, "[]", prev_hash.to_vec(), entry_hash.to_vec(), sig.to_vec()],
         )?;
         assert!(
-            crate::verify::load_authenticated_policy_eras(&kernel.conn, &dev, pq).is_err(),
+            crate::verify::load_authenticated_policy_eras(&kernel.conn, std::slice::from_ref(&dev), pq).is_err(),
             "a device-signed era with no prior-quorum consent must be rejected"
         );
 
@@ -5626,7 +5656,7 @@ mod tests {
         kernel2.set_break_glass_policy_gated(&policy_b, &[alice_consent], bucket)?;
         let dev2 = kernel2.device_verifying_key();
         // Authentic history authenticates.
-        assert!(crate::verify::load_authenticated_policy_eras(&kernel2.conn, &dev2, None).is_ok());
+        assert!(crate::verify::load_authenticated_policy_eras(&kernel2.conn, std::slice::from_ref(&dev2), None).is_ok());
         // Swap the change row's approvals to the empty set (valid JSON) — the
         // approvals no longer match the signed commitment.
         kernel2.conn.execute(
@@ -5634,7 +5664,7 @@ mod tests {
             [],
         )?;
         assert!(
-            crate::verify::load_authenticated_policy_eras(&kernel2.conn, &dev2, None).is_err(),
+            crate::verify::load_authenticated_policy_eras(&kernel2.conn, std::slice::from_ref(&dev2), None).is_err(),
             "swapped approvals must fail the signed-commitment binding"
         );
         Ok(())
@@ -6266,6 +6296,154 @@ mod tests {
         assert!(
             err.to_string().contains("authorization"),
             "rejection must be due to the unforgeable genesis authorization, got: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rotation_keeps_receipt_ledgers_and_full_verify_green() -> Result<()> {
+        // Regression: receipts and policy-change rows are signed by the device
+        // key CURRENT at write time, but run_full_verify used to check the
+        // receipt ledgers against the genesis key alone — so one rotation plus
+        // one export made the boot verification report a false tamper alarm
+        // (and witnessd then enters permanent safe mode on exactly that
+        // report). The ledger walks must accept every validated lineage key.
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+
+        let alice = SigningKey::from_bytes(&[41u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+
+        let append_granted_receipt = |kernel: &mut Kernel, envelope: &str| -> Result<()> {
+            let bucket = TimeBucket::now(600)?;
+            let request = UnlockRequest::new(envelope, [9u8; 32], "audit", bucket)?;
+            let approval =
+                Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+            let (_, receipt) =
+                BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+            kernel.append_break_glass_receipt(&receipt, &[approval])?;
+            Ok(())
+        };
+
+        // Pre-rotation rows on both receipt ledgers (signed by the old key).
+        kernel.export_events_for_api(cfg.ruleset_hash, ExportOptions::default())?;
+        append_granted_receipt(&mut kernel, "vault:pre")?;
+
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+
+        // Post-rotation rows (signed by the new key) — the ledgers now mix signers.
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        kernel.export_events_for_api(cfg.ruleset_hash, ExportOptions::default())?;
+        append_granted_receipt(&mut kernel, "vault:post")?;
+
+        let report = kernel.verify_sealed_log()?;
+        assert!(
+            report.chain_valid,
+            "rotation must keep every ledger verifiable, got: {:?}",
+            report.error
+        );
+        assert_eq!(report.break_glass_receipts_verified, 2);
+        assert_eq!(report.export_receipts_verified, 2);
+
+        // The lineage acceptance must not weaken forgery detection: a receipt
+        // re-signed by a key OUTSIDE the lineage still fails the walk.
+        let outsider = SigningKey::from_bytes(&[77u8; 32]);
+        let (id, entry_hash): (i64, Vec<u8>) = kernel.conn.query_row(
+            "SELECT id, entry_hash FROM export_receipts ORDER BY id DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&entry_hash);
+        let forged = crate::crypto::signatures::sign_with_domain(
+            DOMAIN_EXPORT_RECEIPT,
+            &crate::crypto::signatures::SignatureKeys::new(&outsider),
+            &hash,
+        )?;
+        kernel.conn.execute(
+            "UPDATE export_receipts SET signature = ?1 WHERE id = ?2",
+            params![forged.ed25519_signature.to_vec(), id],
+        )?;
+        let report = kernel.verify_sealed_log()?;
+        assert!(
+            !report.chain_valid,
+            "a receipt signed outside the lineage must still be rejected"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rotation_does_not_poison_ruleset_bound_reads() -> Result<()> {
+        // Regression: the KeyRotation record carries a zero ruleset hash, and
+        // read_events_ruleset_bound used to feed it to the reprocess guard —
+        // so one rotation made every subsequent read fail with a false
+        // CONFORMANCE_REPROCESS_VIOLATION (and log an alarm per call).
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+
+        let records = kernel.read_events_ruleset_bound(cfg.ruleset_hash, 100)?;
+        assert_eq!(
+            records.len(),
+            2,
+            "both events readable; the rotation record is excluded, not fatal"
+        );
+        assert!(
+            records
+                .iter()
+                .all(|r| !matches!(r, SealedLogRecord::KeyRotation(_))),
+            "identity-administration records are not events"
+        );
+        let alarms: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM conformance_alarms", [], |r| r.get(0))?;
+        assert_eq!(alarms, 0, "no false conformance alarm may be logged");
+        Ok(())
+    }
+
+    #[test]
+    fn break_glass_receipt_outcome_survives_rotation() -> Result<()> {
+        // Regression: the unseal gate re-verifies the receipt with the
+        // kernel's CURRENT key — after a rotation, a pre-rotation Granted
+        // receipt (signed by the old key) used to fail that re-verification,
+        // making sealed evidence un-unsealable. Any validated lineage key must
+        // be accepted; a receipt signed outside the lineage must still fail.
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        let bucket = TimeBucket::now(600)?;
+        let alice = SigningKey::from_bytes(&[42u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+        let ruleset_hash = cfg.ruleset_hash;
+        let request = UnlockRequest::new("vault:1", ruleset_hash, "audit", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+        let (_, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let receipt_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+
+        let outcome = kernel.break_glass_receipt_outcome("vault:1", ruleset_hash, &receipt_hash)?;
+        assert!(
+            matches!(outcome, BreakGlassOutcome::Granted),
+            "a pre-rotation receipt must stay resolvable after rotation"
         );
         Ok(())
     }

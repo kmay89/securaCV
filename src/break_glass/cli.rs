@@ -1993,8 +1993,9 @@ fn cmd_receipts(
     // Ground truth for a receipt's declared `policy_commitment`: the
     // authenticated policy-change history (chain + device signature + approvals
     // binding + per-transition quorum consent). See verify::verify_receipt_quorum.
+    let lineage_keys = crate::verify_helpers::lineage_verifying_keys(&conn, &verifying_key)?;
     let policy_history =
-        crate::verify::load_authenticated_policy_eras(&conn, &verifying_key, None)?;
+        crate::verify::load_authenticated_policy_eras(&conn, &lineage_keys, None)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts ORDER BY id ASC",
     )?;
@@ -2046,16 +2047,19 @@ fn cmd_receipts(
                 hex_vec(&entry_hash)
             ));
         }
-        if verify_entry_signature(
-            &verifying_key,
-            &entry_hash,
-            &signature_set,
-            SignatureMode::Compat,
-            None,
-            DOMAIN_BREAK_GLASS_RECEIPT,
-        )
-        .is_err()
-        {
+        // Receipts are signed by the device key current at write time, so a
+        // post-rotation row legitimately verifies under a later lineage key.
+        if !lineage_keys.iter().any(|key| {
+            verify_entry_signature(
+                key,
+                &entry_hash,
+                &signature_set,
+                SignatureMode::Compat,
+                None,
+                DOMAIN_BREAK_GLASS_RECEIPT,
+            )
+            .is_ok()
+        }) {
             status = "INVALID";
             issues.push(format!(
                 "signature mismatch (stored={})",

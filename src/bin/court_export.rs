@@ -129,10 +129,18 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
     // The database's pinned device identity must BE the bundle's signer.
     let db_device_key = witness_kernel::device_public_key_from_db(conn)
         .map_err(|e| anyhow!("could not read the database's device identity: {}", e))?;
-    if db_device_key.to_bytes() != bundle.device_public_key {
+    // The bundle stamps the device key CURRENT at export time; the database
+    // pins the genesis anchor. After a key rotation those legitimately differ,
+    // so custody is "the bundle's signer belongs to this database's validated
+    // key lineage", not bytewise equality with genesis.
+    let lineage_keys = verify_helpers::lineage_verifying_keys(conn, &db_device_key)?;
+    if !lineage_keys
+        .iter()
+        .any(|key| key.to_bytes() == bundle.device_public_key)
+    {
         return Err(anyhow!(
-            "custody break: this database's device identity does not match the bundle's \
-             signing key — the bundle was produced by a different device. Refusing to package."
+            "custody break: the bundle's signing key is not in this database's device key \
+             lineage — the bundle was produced by a different device. Refusing to package."
         ));
     }
 
@@ -143,7 +151,7 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
     let mut position: Option<i64> = None;
     let total = witness_kernel::verify::verify_export_receipts_with(
         conn,
-        &db_device_key,
+        &lineage_keys,
         SignatureMode::Compat,
         pq_public_key.as_ref(),
         |id, entry_hash| {
