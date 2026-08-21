@@ -77,7 +77,13 @@ fn scan_blocking(wait_ms: u64) -> Result<Vec<FleetSighting>, String> {
                 let device_id = txt("device_id");
                 let name = txt("name");
                 // Prefer IPv4 — that's what the LAN HTTP calls below want.
-                let mut addrs: Vec<&IpAddr> = info.get_addresses().iter().collect();
+                // mdns-sd 0.21 hands back interface-scoped addresses; the
+                // fleet book only needs the bare IP for its LAN HTTP calls.
+                let mut addrs: Vec<IpAddr> = info
+                    .get_addresses()
+                    .iter()
+                    .map(|a| a.to_ip_addr())
+                    .collect();
                 addrs.sort_by_key(|a| match a {
                     IpAddr::V4(_) => 0,
                     IpAddr::V6(_) => 1,
