@@ -224,6 +224,12 @@ st.addEventListener("pointerup",function(){drag=null});
 ["night_start_hh","night_end_hh"].forEach(function(id){var s=$(id);
 for(var h=0;h<24;h++){var o=document.createElement("option");o.value=h;
 o.textContent=(h%12||12)+(h<12?" am":" pm");s.appendChild(o)}});
+// The per-boot CSRF token the device requires on state-changing POSTs. It
+// arrives in /api/settings (same-origin only — that response carries no CORS
+// header, so a cross-origin page cannot read it) and rides X-CSRF-Token on
+// every write below. Empty until the first /api/settings load resolves, which
+// is well before any settings control can be touched.
+var CSRF="";
 // Time zone: the POSIX rules carry their own DST transitions, so a zone
 // picked once stays right across the spring and fall changes. Values match
 // the table the auto-learner maps to (net/tz_auto.cpp) — keep them in step.
@@ -247,12 +253,14 @@ var TZS=[["New York (US Eastern)","EST5EDT,M3.2.0,M11.1.0"],
 var o=document.createElement("option");o.value=z[1];o.textContent=z[0];
 s.appendChild(o)});
 s.addEventListener("change",function(){
-fetch("/api/tz?v="+encodeURIComponent(s.value),{method:"POST"})
+fetch("/api/tz?v="+encodeURIComponent(s.value),{method:"POST",
+headers:{"X-CSRF-Token":CSRF}})
 .then(function(r){$("tzsub").textContent=r.ok?
 "Saved. The clock is on this zone now, daylight saving included.":
 "The display would not take that zone."})})})();
 // settings wiring: one knob per change, the glass validates
-function send(k,v){fetch("/api/set?k="+k+"&v="+v,{method:"POST"})}
+function send(k,v){fetch("/api/set?k="+k+"&v="+v,{method:"POST",
+headers:{"X-CSRF-Token":CSRF}})}
 ["day_pct","bright_pct","night_step"].forEach(function(id){var e=$(id);
 e.addEventListener("input",function(){$(id+"v").textContent=e.value});
 e.addEventListener("change",function(){send(id,e.value)})});
@@ -260,6 +268,7 @@ e.addEventListener("change",function(){send(id,e.value)})});
 .forEach(function(id){$(id).addEventListener("change",function(){
 send(id,$(id).value)})});
 fetch("/api/settings").then(function(r){return r.json()}).then(function(s){
+if(s.csrf!==undefined)CSRF=s.csrf;
 ["day_pct","bright_pct","night_step","night_screen","red_shift","peek_s",
 "night_start_hh","night_end_hh"].forEach(function(id){
 if(s[id]!==undefined)$(id).value=s[id];

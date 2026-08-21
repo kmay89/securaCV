@@ -25,14 +25,18 @@ All errors return JSON with `error` and `message` fields.
 | Status | `error` Code | Meaning |
 |--------|-------------|---------|
 | 400 | `invalid_config` | Malformed or invalid config body |
-| 400 | `nothing_pending` | No settings awaiting physical confirmation |
-| 400 | `no_firmware` | Firmware upload missing or wrong content type |
+| 400 | `no_firmware` | Firmware upload body was empty |
+| 400 | `invalid_firmware_header` | Firmware version header missing or corrupt |
+| 400 | `payload_too_large` | Firmware payload exceeds the 16 MiB maximum |
 | 401 | `token_required` | `X-Canary-Token` header missing |
 | 401 | `token_invalid` | Token does not match device token |
 | 403 | `host_rejected` | Host header failed validation (DNS rebinding protection) |
+| 403 | `signature_missing` | Firmware upload lacked the `X-Firmware-Signature` header |
+| 403 | `signature_invalid` | Firmware signature failed Ed25519 verification |
+| 403 | `version_downgrade` | Firmware version not strictly newer than the installed one |
 | 404 | `not_found` | Endpoint or config section not found |
 | 429 | `rate_limited` | General rate limit exceeded (30 req/min) |
-| 429 | `auth_locked` | Too many auth failures (5 within 60s locks for 60s) |
+| 429 | `auth_locked` | Too many auth failures (5 trigger an escalating lockout: 2 s, doubling to a 300 s cap) |
 | 503 | `update_in_progress` | A firmware update is already running |
 
 Rate-limited responses include a `Retry-After` header (seconds).
@@ -145,17 +149,17 @@ curl -X PUT \
 }
 ```
 
-If `camera_peek_enabled` is set to `true`, it is not applied immediately. Instead, the response includes a `pending_physical_confirm` array:
+`privacy.camera_peek_enabled` is **immutable via the API** (Invariant I: No Raw Export). If a config update includes it, the key is stripped, the rest of the update is applied normally, and the response lists the rejected key:
 
 ```json
 {
   "ok": true,
   "config": { "..." },
-  "pending_physical_confirm": ["camera_peek_enabled"]
+  "rejected_immutable": ["camera_peek_enabled"]
 }
 ```
 
-The setting takes effect only after a physical button press (see `POST /api/v1/confirm`).
+There is no HTTP endpoint that can change it — enabling camera peek requires physical interaction with the device (the firmware's physical button mechanism).
 
 **Validation rules:**
 
@@ -289,15 +293,24 @@ curl -H "X-Canary-Token: cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f" \
       "timestamp": "2026-02-18T14:10:00.000Z",
       "event_type": "person_detected",
       "zone": "front",
-      "signature": "ed25519 signature hex"
+      "signature": "ed25519 signature hex",
+      "time_source": "device_clock",
+      "thumbnail": "data:image/x-portable-graymap;base64,..."
     }
   ]
 }
 ```
 
-**Hash computation:** `SHA256("${seq}:${prev_hash}:${timestamp}:${event_type}:${zone}")`
+When the device has a fresh GPS fix, `time_source` is `gps_utc` and the record additionally carries `gps_timestamp`, `gps_fix_quality`, `gps_satellites`, and `gps_fix_age_ms`.
 
-**Event types:** `motion_detected`, `person_detected`, `vehicle_detected`, `animal_detected`
+**Hash computation:** `SHA256("${seq}:${prev_hash}:${timestamp}:${event_type}:${zone}:${time_source}:${gps_timestamp}")`
+
+- `time_source` is `gps_utc` or `device_clock` (a record without one hashes as `device_clock`).
+- `gps_timestamp` is the empty string when the record has no `gps_timestamp` field, so a `device_clock` record's hash input ends in `:device_clock:`.
+
+This is the same formula the device itself embeds in `GET /api/v1/witness/export` under `verification_instructions`.
+
+**Event types:** `motion_detected`, `person_detected`, `vehicle_detected`, `animal_detected`, `object_removed`, `contact_changed`, `presence_restricted`, `acoustic_impulse`
 
 ---
 
@@ -395,14 +408,20 @@ Uploads and applies a firmware update.
 
 **Rate limit:** 1 update per hour.
 
-**Content-Type:** `multipart/form-data` (firmware binary).
+**Body:** the raw firmware binary (`application/octet-stream`) — **not** multipart/form-data. Maximum 16 MiB.
+
+**Required header:** `X-Firmware-Signature` — a detached Ed25519 signature over the entire firmware payload, hex-encoded (64 bytes, 128 hex characters). Verified against the configured signing public key (`SECURACV_FW_SIGNING_PUBKEY`, PEM or 32-byte hex; the reference server falls back to the device's own key).
+
+**Firmware layout:** the binary must begin with an 8-byte header — magic `SCV\x01` (bytes `0x53 0x43 0x56 0x01`), then `version_major`, `version_minor`, `version_patch` (one byte each), then 1 reserved byte. The version must be **strictly newer** than the installed firmware (anti-downgrade).
 
 **Request:**
 
 ```bash
 curl -X POST \
      -H "X-Canary-Token: cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f" \
-     -F "firmware=@firmware-0.4.2.bin" \
+     -H "X-Firmware-Signature: <128 hex chars>" \
+     -H "Content-Type: application/octet-stream" \
+     --data-binary @firmware-0.4.2.bin \
      http://canary-a3f7.local/api/v1/update
 ```
 
@@ -411,37 +430,17 @@ curl -X POST \
 ```json
 {
   "ok": true,
-  "message": "Updating firmware. Device will reboot."
+  "message": "Updating firmware. Device will reboot.",
+  "version": "0.4.2"
 }
 ```
 
-**Response (400):** Missing firmware file or wrong content type.
+**Response (400):** `no_firmware` (empty body), `payload_too_large` (over 16 MiB), or `invalid_firmware_header` (missing/corrupt `SCV\x01` header).
+
+**Response (403):** `signature_missing`, `signature_invalid`, or `version_downgrade` (version not strictly newer than the installed one).
 
 **Response (429):** Update rate limit exceeded.
 
+**Response (500):** `signing_key_unavailable` — no firmware signing key configured.
+
 **Response (503):** An update is already in progress.
-
----
-
-### POST /api/v1/confirm
-
-Applies settings that require physical confirmation (e.g., enabling `camera_peek_enabled`). In production firmware, this is triggered by a physical button press on the device.
-
-**Request:**
-
-```bash
-curl -X POST \
-     -H "X-Canary-Token: cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f" \
-     http://canary-a3f7.local/api/v1/confirm
-```
-
-**Response (200):**
-
-```json
-{
-  "ok": true,
-  "confirmed": ["camera_peek_enabled"]
-}
-```
-
-**Response (400):** Nothing pending confirmation.

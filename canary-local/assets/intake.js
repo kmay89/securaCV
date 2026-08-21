@@ -257,6 +257,19 @@ export function flashAliasVerdict({ declaredBytes, head, probes } = {}) {
               "the address lines are wrapping, which is exactly what a relabeled flash " +
               "part does. Anything written past the real capacity would be silently lost." };
   }
+  // "Clear" is a positive claim about EVERY capacity below the declared size,
+  // so it needs a probe at every candidate. A caller whose reads stopped short
+  // (a flaky cable, a partial dump) gets "inconclusive" — missing evidence
+  // must never read as a passed check. (Same rule as the desktop twin,
+  // desktop/src-tauri/src/intake.rs.)
+  const probed = new Set(probes.filter((p) => p && p.bytes).map((p) => p.atBytes));
+  const unread = flashAliasCandidates(declaredBytes).find((at) => !probed.has(at));
+  if (unread !== undefined) {
+    return { level: "inconclusive",
+      label: `Flash size can't be fully confirmed — the probes stop short of the ${formatSize(declaredBytes)} claim`,
+      detail: `Capacities at and above ${formatSize(unread)} were never read. Nothing that ` +
+              "was probed aliases, but an unread capacity can't be vouched for." };
+  }
   return { level: "clear", label: `Flash reads a genuine ${formatSize(declaredBytes)}` };
 }
 

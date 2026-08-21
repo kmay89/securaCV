@@ -31,6 +31,7 @@ on:
       - 'canary-local/devices/hub_seed.json'
       - 'canary-local/devices/hub_provision_bundle.json'
       - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/hub_host_provision.sh'
       - 'canary-local/tools/gen_hub_provision_bundle.py'
       - 'homeassistant/frigate/config.yaml'
   pull_request:
@@ -51,6 +52,7 @@ on:
       - 'canary-local/devices/hub_seed.json'
       - 'canary-local/devices/hub_provision_bundle.json'
       - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/hub_host_provision.sh'
       - 'canary-local/tools/gen_hub_provision_bundle.py'
       - 'homeassistant/frigate/config.yaml'
 

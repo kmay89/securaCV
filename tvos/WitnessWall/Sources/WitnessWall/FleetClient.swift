@@ -1,9 +1,12 @@
 //  FleetClient.swift — reaching the kernel, and healing when it isn't there.
 //
-//  The network contract is one endpoint, `GET /api/fleet`
-//  (tvos/discovery/DISCOVERY.md). Everything else in this file exists to make
-//  a flaky LAN a non-event: bounded timeouts, capped exponential backoff, and
-//  a protocol seam so the whole reconnect story is testable without a network.
+//  The network contract is one required endpoint, `GET /api/fleet`
+//  (tvos/discovery/DISCOVERY.md), plus one OPTIONAL one the Wall asks for and
+//  no source serves yet: `GET /api/sealed-log`, the document the Rust core
+//  verifies. Its absence is an answer, not an error. Everything else in this
+//  file exists to make a flaky LAN a non-event: bounded timeouts, capped
+//  exponential backoff, and a protocol seam so the whole reconnect story is
+//  testable without a network.
 
 import Foundation
 
@@ -12,6 +15,18 @@ import Foundation
 protocol FleetTransport: Sendable {
     /// Fetch `GET /api/fleet` from `base` and return the raw body.
     func fetchFleet(from base: URL) async throws -> String
+
+    /// Fetch `GET /api/sealed-log` from `base` — the sealed-log document the
+    /// Rust core verifies — or nil when the source doesn't serve one. Absence
+    /// is an answer, not an error: no kernel or firmware ships the endpoint
+    /// yet, and the Wall renders the honest self-report state until one does.
+    func fetchSealedLog(from base: URL) async -> String?
+}
+
+extension FleetTransport {
+    /// Default: no sealed log. Keeps the seam small for test stubs that only
+    /// care about the fleet path; the real transport overrides this.
+    func fetchSealedLog(from base: URL) async -> String? { nil }
 }
 
 /// Why the Wall can't currently see the fleet. The messages are the *screen*
@@ -60,6 +75,15 @@ enum FleetAddress {
         if base.path.hasSuffix("/api/fleet") { return base }
         return base.appendingPathComponent("api").appendingPathComponent("fleet")
     }
+
+    /// The sealed-log endpoint beside the fleet endpoint, tolerating the same
+    /// pasted-full-URL input `endpoint(for:)` tolerates.
+    static func sealedLogEndpoint(for base: URL) -> URL {
+        if base.path.hasSuffix("/api/fleet") {
+            return base.deletingLastPathComponent().appendingPathComponent("sealed-log")
+        }
+        return base.appendingPathComponent("api").appendingPathComponent("sealed-log")
+    }
 }
 
 /// The real transport.
@@ -89,6 +113,20 @@ struct URLSessionFleetTransport: FleetTransport {
         } catch {
             throw FleetError.unreachable(error.localizedDescription)
         }
+    }
+
+    /// Best-effort by design: any non-2xx answer, transport failure, or
+    /// non-text body is "this source serves no sealed log right now" — the
+    /// state every source is in until a hub ships the endpoint. The verdict
+    /// honesty lives downstream: nil here means the Wall shows the fleet's
+    /// own report labeled as a report, never a verification it didn't do.
+    func fetchSealedLog(from base: URL) async -> String? {
+        let url = FleetAddress.sealedLogEndpoint(for: base)
+        guard let (data, response) = try? await session.data(from: url) else { return nil }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 }
 

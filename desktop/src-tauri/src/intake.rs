@@ -84,7 +84,27 @@ pub fn flash_alias_verdict(dump: &[u8], declared: u64) -> Finding {
         let start = at as usize;
         let end = start + WINDOW;
         if end > dump.len() {
-            break; // the copy doesn't reach this candidate; nothing to compare
+            // The copy doesn't reach this candidate, so every capacity from
+            // here up to the declared size was never probed. A "clear —
+            // genuine {declared}" from here would be missing evidence dressed
+            // as a pass — the exact failure this module exists to avoid — so
+            // the verdict is inconclusive and says how far the evidence goes.
+            // (Latent in the flash path today, where declared == dump.len().)
+            return Finding {
+                level: "inconclusive",
+                label: format!(
+                    "Flash size can't be fully confirmed — the copy stops short of the {} claim",
+                    format_size(declared)
+                ),
+                detail: Some(format!(
+                    "The safety copy holds {} of the declared {}, so capacities at and \
+                     above {} were never probed. Nothing that was probed aliases, but an \
+                     unread capacity can't be vouched for.",
+                    format_size(dump.len() as u64),
+                    format_size(declared),
+                    format_size(at)
+                )),
+            };
         }
         if &dump[start..end] == head {
             return Finding {
@@ -236,12 +256,29 @@ mod tests {
 
     #[test]
     fn a_truncated_copy_never_invents_a_verdict() {
-        // The safety copy stops short (a partial read): candidates past its
-        // end are skipped rather than compared against nothing.
+        // The safety copy stops short (a partial read): capacities past its
+        // end were never probed, so the verdict must be INCONCLUSIVE. This
+        // test used to enshrine the opposite — asserting "clear" for a 1 MB
+        // dump declared 16 MB, a positive claim about capacities never read.
         let declared = 16 * 1024 * 1024u64;
         let dump = patterned(1024 * 1024);
-        assert_eq!(flash_alias_verdict(&dump, declared).level, "clear");
+        let v = flash_alias_verdict(&dump, declared);
+        assert_eq!(v.level, "inconclusive");
+        assert!(v.label.contains("16 MB"), "got: {}", v.label);
         assert_eq!(flash_alias_verdict(&[], declared).level, "unknown");
+        // A dump that DOES reach every candidate below the claim still earns
+        // its "clear" (the honest positive is untouched).
+        let full = patterned(declared as usize);
+        assert_eq!(flash_alias_verdict(&full, declared).level, "clear");
+        // And a mirror that sits inside a truncated dump is still caught —
+        // the stop verdict outranks the truncation.
+        let mut aliased = patterned(512 * 1024);
+        aliased.extend_from_slice(&patterned(512 * 1024)); // 512 KB die mirrored once
+        assert_eq!(
+            flash_alias_verdict(&aliased, declared).level,
+            "stop",
+            "an alias hit inside the readable range must still refuse the board"
+        );
     }
 
     #[test]

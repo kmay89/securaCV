@@ -16,7 +16,6 @@ use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CHECKPOINT};
 use witness_kernel::detect::TractBackend;
 use witness_kernel::detect::{BackendRegistry, CpuBackend, StubBackend};
 use witness_kernel::vault::DEFAULT_VAULT_PATH;
-use witness_kernel::verify;
 use witness_kernel::{
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, verify_entry_signature,
     verify_export_bundle, BackendSelection, CandidateEvent, CapabilityBoundaryRuntime,
@@ -24,6 +23,7 @@ use witness_kernel::{
     FileSource, InferenceBackend, Kernel, KernelConfig, Module, RtspConfig, RtspSource, TimeBucket,
     Vault, VaultConfig, ZoneCrossingModule, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
+use witness_kernel::{verify, verify_helpers};
 
 const DEFAULT_DB_PATH: &str = "demo_witness.db";
 const DEFAULT_RULESET_ID: &str = "ruleset:demo";
@@ -461,9 +461,10 @@ fn verify_demo(db_path: &str, export_bundle_bytes: &[u8]) -> Result<()> {
         |_, _| {},
     )?;
     let policy = verify::load_break_glass_policy(&conn)?;
+    let lineage_keys = verify_helpers::lineage_verifying_keys(&conn, &verifying_key)?;
     verify::verify_break_glass_receipts_with(
         &conn,
-        &verifying_key,
+        &lineage_keys,
         policy.as_ref(),
         SignatureMode::Compat,
         None,
@@ -471,7 +472,7 @@ fn verify_demo(db_path: &str, export_bundle_bytes: &[u8]) -> Result<()> {
     )?;
     verify::verify_export_receipts_with(
         &conn,
-        &verifying_key,
+        &lineage_keys,
         SignatureMode::Compat,
         None,
         |_, _| {},

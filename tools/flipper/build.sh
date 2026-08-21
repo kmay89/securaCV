@@ -5,9 +5,27 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$SCRIPT_DIR/securacv_scanner"
 DIST_DIR="$SCRIPT_DIR/dist"
 
+# The scanner app is SHELVED — it depends on furi_hal_bt_start_observer(), a
+# function that exists in NO official / Unleashed / Momentum firmware, so ufbt
+# cannot compile it (securacv_scanner/README.md). This script is kept for
+# reference; surface that up front so nobody installs four SDKs for a build
+# that cannot succeed.
+shelved_banner() {
+  cat >&2 <<'EOF'
+============================================================================
+  SHELVED — NOT BUILDABLE. The securacv_scanner app uses
+  furi_hal_bt_start_observer(), which exists in no official, Unleashed, or
+  Momentum firmware. `ufbt` WILL fail at the compile step for every target
+  below. This script is kept for reference only — see
+  tools/flipper/securacv_scanner/README.md.
+============================================================================
+EOF
+}
+
 usage() {
+  shelved_banner
   cat <<EOF
-SecuraCV Flipper Zero FAP Build Script
+SecuraCV Flipper Zero FAP Build Script  [SHELVED — NOT BUILDABLE]
 
 Usage: $0 [firmware]
 
@@ -72,6 +90,9 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 TARGET="${1:-official}"
+
+# Loud up front for real invocations too — the compile below cannot succeed.
+shelved_banner
 
 if ! command -v ufbt &>/dev/null; then
   echo "Error: ufbt not found." >&2

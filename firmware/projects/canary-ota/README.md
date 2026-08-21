@@ -248,7 +248,7 @@ python mock_ota_server.py generate ../.pio/build/dev/firmware.bin 1.1.0
 
 ## License
 
-MIT License - See LICENSE file for details.
+Apache-2.0 (repository license) — see the repository root `LICENSE` file.
 
 ## Contributing
 

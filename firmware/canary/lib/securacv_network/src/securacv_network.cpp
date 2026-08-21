@@ -2299,6 +2299,7 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
 
 static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
   int n = WiFi.scanNetworks(false, false, false, 300);

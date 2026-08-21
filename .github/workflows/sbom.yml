@@ -88,8 +88,20 @@ jobs:
     # ---- Firmware (C/C++) SBOM ----
     - name: Generate Firmware SBOM (CycloneDX)
       run: |
-        # Unquoted delimiter on purpose: the $(date ...) timestamp below must
-        # expand. The document contains no other shell-special characters.
+        set -euo pipefail
+        # Derive the firmware version from source rather than hardcoding it — a
+        # stale literal (this shipped as "1.0.0") is a false compliance record on
+        # every release. FIRMWARE_VERSION is the single source of truth.
+        FW_VERSION=$(grep -oE '#define[[:space:]]+FIRMWARE_VERSION[[:space:]]+"[^"]+"' \
+          firmware/canary/include/canary_config.h | grep -oE '"[^"]+"' | tr -d '"')
+        [ -n "$FW_VERSION" ] || { echo "::error::could not read FIRMWARE_VERSION from firmware/canary/include/canary_config.h"; exit 1; }
+        echo "firmware version: $FW_VERSION"
+        # The dev/release images build framework=arduino on the OFFICIAL
+        # espressif32 platform, which packages Arduino-ESP32 core 2.0.17 /
+        # ESP-IDF 4.4.7 (firmware/canary/platformio.ini) — NOT bare esp-idf 5.1.
+        # Unquoted delimiter on purpose: $(date ...) and ${FW_VERSION} below must
+        # expand. Both values are shell-safe (a timestamp and a semver from a
+        # trusted in-repo header), so there is nothing to inject.
         cat > sbom-firmware.cdx.json << FWEOF
         {
           "bomFormat": "CycloneDX",
@@ -101,8 +113,8 @@ jobs:
             "component": {
               "type": "firmware",
               "name": "securacv-canary-firmware",
-              "version": "1.0.0",
-              "description": "SecuraCV Canary ESP32-S3 firmware"
+              "version": "${FW_VERSION}",
+              "description": "SecuraCV Canary ESP32-S3 firmware (dev/release image: Arduino-ESP32 core on the official espressif32 platform)"
             },
             "tools": [
               {
@@ -114,64 +126,72 @@ jobs:
           "components": [
             {
               "type": "framework",
+              "name": "arduino-esp32",
+              "version": "2.0.17",
+              "description": "Arduino-ESP32 core (framework=arduino on the official espressif32 platform); bundles ESP-IDF 4.4.7",
+              "purl": "pkg:github/espressif/arduino-esp32@2.0.17",
+              "licenses": [{ "license": { "id": "LGPL-2.1-or-later" } }]
+            },
+            {
+              "type": "framework",
               "name": "esp-idf",
-              "version": "5.1",
-              "description": "Espressif IoT Development Framework",
-              "purl": "pkg:github/espressif/esp-idf@v5.1",
+              "version": "4.4.7",
+              "description": "Espressif IoT Development Framework (bundled by the Arduino-ESP32 core)",
+              "purl": "pkg:github/espressif/esp-idf@v4.4.7",
               "licenses": [{ "license": { "id": "Apache-2.0" } }]
             },
             {
               "type": "library",
               "name": "freertos",
-              "version": "10.5.1",
-              "description": "FreeRTOS real-time operating system kernel (ESP-IDF bundled)",
-              "purl": "pkg:github/FreeRTOS/FreeRTOS-Kernel@V10.5.1",
+              "version": "10.4.3",
+              "description": "FreeRTOS real-time operating system kernel (bundled with ESP-IDF 4.4.7)",
+              "purl": "pkg:github/FreeRTOS/FreeRTOS-Kernel@V10.4.3",
               "licenses": [{ "license": { "id": "MIT" } }]
             },
             {
               "type": "library",
               "name": "mbedtls",
-              "version": "3.4.1",
-              "description": "Mbed TLS cryptographic library (ESP-IDF bundled)",
-              "purl": "pkg:github/Mbed-TLS/mbedtls@v3.4.1",
+              "version": "2.28.3",
+              "description": "Mbed TLS cryptographic library (bundled with ESP-IDF 4.4.7, 2.28 LTS line)",
+              "purl": "pkg:github/Mbed-TLS/mbedtls@mbedtls-2.28.3",
               "licenses": [{ "license": { "id": "Apache-2.0" } }]
             },
             {
               "type": "library",
               "name": "cJSON",
-              "version": "1.7.17",
-              "description": "Ultralightweight JSON parser (ESP-IDF component)",
-              "purl": "pkg:github/DaveGamble/cJSON@v1.7.17",
+              "version": "1.7.15",
+              "description": "Ultralightweight JSON parser (bundled with ESP-IDF 4.4.7)",
+              "purl": "pkg:github/DaveGamble/cJSON@v1.7.15",
               "licenses": [{ "license": { "id": "MIT" } }]
             },
             {
               "type": "library",
               "name": "lwip",
-              "version": "2.1.3",
-              "description": "Lightweight TCP/IP stack (ESP-IDF bundled)",
-              "purl": "pkg:github/lwip-tcpip/lwip@STABLE-2_1_3_RELEASE",
+              "version": "2.1.2",
+              "description": "Lightweight TCP/IP stack (bundled with ESP-IDF 4.4.7)",
+              "purl": "pkg:github/lwip-tcpip/lwip@STABLE-2_1_2_RELEASE",
               "licenses": [{ "license": { "id": "BSD-3-Clause" } }]
             },
             {
               "type": "library",
               "name": "esp-tls",
-              "version": "5.1",
+              "version": "4.4.7",
               "description": "ESP-IDF TLS abstraction layer",
-              "purl": "pkg:github/espressif/esp-idf@v5.1#components/esp-tls"
+              "purl": "pkg:github/espressif/esp-idf@v4.4.7#components/esp-tls"
             },
             {
               "type": "library",
               "name": "nvs_flash",
-              "version": "5.1",
+              "version": "4.4.7",
               "description": "ESP-IDF Non-Volatile Storage library",
-              "purl": "pkg:github/espressif/esp-idf@v5.1#components/nvs_flash"
+              "purl": "pkg:github/espressif/esp-idf@v4.4.7#components/nvs_flash"
             },
             {
               "type": "library",
               "name": "esp_https_ota",
-              "version": "5.1",
+              "version": "4.4.7",
               "description": "ESP-IDF HTTPS OTA update component",
-              "purl": "pkg:github/espressif/esp-idf@v5.1#components/esp_https_ota"
+              "purl": "pkg:github/espressif/esp-idf@v4.4.7#components/esp_https_ota"
             }
           ]
         }
@@ -224,11 +244,18 @@ jobs:
     - name: Attach SBOMs to the release
       env:
         GH_TOKEN: ${{ github.token }}
+        # A release tag can legally contain `$`, backticks, `(`, `;` — so it goes
+        # through the environment and is referenced as "$TAG", never interpolated
+        # into the script body where the shell would evaluate it. This is the
+        # repo's own anti-injection rule (idea-intake.yml); every other run block
+        # follows it.
+        TAG: ${{ github.event.release.tag_name }}
+        REPO: ${{ github.repository }}
       # --clobber so a re-run (or a re-published release) overwrites the
       # existing assets instead of failing on the duplicate name.
       run: |
-        gh release upload "${{ github.event.release.tag_name }}" \
+        gh release upload "$TAG" \
           sbom/sbom-rust.cdx.json \
           sbom/sbom-node.cdx.json \
           sbom/sbom-firmware.cdx.json \
-          --clobber --repo "${{ github.repository }}"
+          --clobber --repo "$REPO"

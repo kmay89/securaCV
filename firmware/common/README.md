@@ -24,8 +24,9 @@ common/
 │   └── hal_ble.h   # BLE interface
 ├── witness/        # Witness chain management
 │   └── witness_chain.h
-├── gnss/           # GPS/GNSS parsing
-│   └── gnss_parser.h
+├── gnss/           # GPS time validation + privacy coarsening
+│   ├── gnss_time.h
+│   └── gps_privacy.h
 ├── storage/        # Unified storage
 │   └── storage.h
 ├── network/        # Network modules
@@ -38,8 +39,6 @@ common/
 │   └── chirp_channel.h
 ├── health/         # Health logging with categories
 │   └── health_log.h
-├── camera/         # Camera management
-│   └── camera_mgr.h
 ├── encoding/       # Data encoding
 │   └── cbor.h
 └── web/            # HTTP server and UI

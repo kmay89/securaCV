@@ -4,24 +4,20 @@ PlatformIO configuration files for SecuraCV firmware targets.
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| `common.ini` | Shared settings across all environments |
-| `canary-wap.ini` | Canary WAP environments |
-| `canary-vision.ini` | Canary Vision environments |
+| File | Environments | Description |
+|------|:---:|-------------|
+| `common.ini` | — | Shared bases (`common`, `common_esp32s3`, `common_esp32c3`) every env extends |
+| `canary-display.ini` | 21 | Canary Display flavors (watch, dash + option probes, dash7, nightstand-s3/-c6, nightstand7, touch169, nightlight-c3, playground, debug) |
+| `canary-sense.ini` | 3 | Canary Sense (default, wellbeing, debug) |
+| `canary-sentinel.ini` | 5 | Canary Sentinel presets (door, window, hallway, demo-head, lite) |
+| `canary-vision.ini` | 5 | Canary Vision (default, debug, xiao-c3, c3-super-mini, xiao-s3) |
+| `canary-wap.ini` | 4 | Canary WAP (default, mobile, debug, usbdrive) |
 
-## Environment Inheritance
-
-```
-common.ini
-├── common_esp32s3 (ESP32-S3 settings)
-│   └── canary-wap-default
-│       ├── canary-wap-mobile
-│       └── canary-wap-debug
-└── common_esp32c3 (ESP32-C3 settings)
-    └── canary-vision-default
-        └── canary-vision-debug
-```
+The env lists above are counts, not a registry — **the `.ini` files are the
+source of truth.** To see every env with its board and flags, read the ini
+itself or run `pio project config` in the consuming project. (A hand-drawn
+inheritance tree used to live here; it drifted to covering half the files
+and was removed rather than re-drawn.)
 
 ## Using in Projects
 
@@ -36,35 +32,24 @@ extra_configs =
 default_envs = canary-wap-default
 ```
 
+Build any env from its project directory:
+
+```bash
+pio run -e canary-display-watch     # from projects/canary-display/
+pio run -e canary-wap-default       # from projects/canary-wap/
+```
+
 ## Build Flags
 
-All environments automatically include:
+All environments extend `common.ini` and pull shared modules from
+`firmware/common/`. Board pin definitions come from `boards/<board-id>/pins/`
+via per-env `-I` flags.
 
-- Board pin definitions from `boards/<board-id>/pins/`
-- Configuration from `configs/<app-id>/<config-id>/`
-- Common modules from `common/`
+Configuration handling differs by family:
 
-## Available Environments
-
-### Canary WAP
-
-```bash
-# Default full-featured build
-pio run -e canary-wap-default
-
-# Mobile power-optimized build
-pio run -e canary-wap-mobile
-
-# Debug build with verbose logging
-pio run -e canary-wap-debug
-```
-
-### Canary Vision
-
-```bash
-# Default build
-pio run -e canary-vision-default
-
-# Debug build
-pio run -e canary-vision-debug
-```
+- **canary-display, canary-sense, canary-sentinel, canary-vision** — each env
+  adds `-I ../../configs/<app-id>/<config-id>/` so the matching `config.h`
+  from `firmware/configs/` is on the include path.
+- **canary-wap** — does *not* include anything from `configs/`; its feature
+  selection lives in the sketch's own `build_config.h` profiles
+  (`-DBUILD_PROFILE_DEV` etc. in `canary-wap.ini`).

@@ -133,6 +133,9 @@ typedef enum {
     SECURACV_OTA_ERR_PUBKEY_MISSING,        /**< Release public key not provisioned (all zeros) */
     SECURACV_OTA_ERR_DEFERRED,              /**< Install deferred by the device (busy / low battery) */
     SECURACV_OTA_ERR_MANIFEST_SIG,          /**< Manifest signature missing or invalid (forged metadata) */
+    SECURACV_OTA_ERR__COUNT,                /**< Sentinel — keep LAST. Not an error code; lets
+                                                 test_ota_logic.cpp iterate every enumerator so a
+                                                 new code cannot ship without a friendly UI string. */
 } securacv_ota_error_t;
 
 /**

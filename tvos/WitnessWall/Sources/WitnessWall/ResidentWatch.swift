@@ -133,7 +133,10 @@ enum ResidentRules {
 @Observable
 final class ResidentWatch {
     private(set) var standing: ResidentStanding = .off
-    private var lastSnapshot: FleetSnapshot?
+    /// The baseline the wake rules diff against. Internal-read (not private)
+    /// so tests can assert the fresh-start rule directly: no snapshot seen
+    /// while the watch was off may ever sit here.
+    private(set) var lastSnapshot: FleetSnapshot?
     private var lastSent: [WakeClass: Date] = [:]
     private let defaults: UserDefaults
 
@@ -257,9 +260,16 @@ final class ResidentWatch {
     /// Feed the resident every snapshot the Wall successfully fetched.
     /// Publishes at most one wake per class per window; keeps the snapshot as
     /// the new baseline either way, so a transition is never counted twice.
+    ///
+    /// The guard comes BEFORE the baseline update, deliberately: a snapshot
+    /// seen while the watch is off must not become a baseline, or the first
+    /// post-enable poll could wake the household for a Canary that went dark
+    /// while nobody was watching — exactly the retroactive report
+    /// `setEnabled` promises not to make. (The defer used to be registered
+    /// above the guard, which leaked that baseline on every disabled poll.)
     func observe(_ snapshot: FleetSnapshot, now: Date = Date()) {
-        defer { lastSnapshot = snapshot }
         guard isEnabled, Self.cloudUsable else { return }
+        defer { lastSnapshot = snapshot }
         // Anything dropped earlier goes first: the transition that earned it
         // will not happen twice, so this is its only remaining chance.
         if !pending.isEmpty { flushPending() }

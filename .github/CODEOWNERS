@@ -1,4 +1,10 @@
 # Constitutional areas require maintainer review.
-/spec/ @securaCV/maintainers
-/kernel/ @securaCV/maintainers
-/src/ @securaCV/maintainers
+#
+# This repo is a personal (user-owned) account, so a `@securaCV/maintainers`
+# TEAM cannot exist — GitHub silently ignores an unresolvable owner in
+# CODEOWNERS, which left this gate inert. Assign the actual maintainer.
+# Follow-up (GitHub UI, not this file): enable "Require review from Code
+# Owners" on the default branch so these areas are actually gated.
+/spec/ @kmay89
+/kernel/ @kmay89
+/src/ @kmay89

@@ -68,7 +68,6 @@ on:
       - ".github/workflows/desktop-flasher-release.yml"
       - ".github/workflows/desktop-lab-updater-pointer.yml"
       - "desktop-lab/scripts/**"
-      - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"
       - "homeassistant/lovelace/**"
       - "homeassistant/automations/**"
@@ -140,7 +139,6 @@ on:
       - ".github/workflows/desktop-flasher-release.yml"
       - ".github/workflows/desktop-lab-updater-pointer.yml"
       - "desktop-lab/scripts/**"
-      - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"
       - "homeassistant/lovelace/**"
       - "homeassistant/automations/**"
@@ -497,6 +495,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Boot probe — COMMITTED artifacts (what a bare checkout serves)
         run: node canary-local/tests/boot_probe.mjs
+      - name: Flash probe — flasher page boots on both branches (serial + no-serial)
+        run: node canary-local/tests/flash_probe.mjs
       - name: Workshop probe — the configurator drives the real catalog
         run: node canary-local/tests/workshop_probe.mjs
       - name: Board Room probe — pin flags + wiring on the committed meshes

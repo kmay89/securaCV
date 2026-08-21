@@ -299,6 +299,9 @@ fn wipe_webview_state(home: &Path) -> Vec<PathBuf> {
 }
 
 // ── time, borrowed from the Lab's update journal ─────────────────────────────
+// KEEP IN LOCKSTEP with `desktop-lab/src-tauri/src/self_update.rs`
+// (`epoch_secs` / `utc_stamp`): byte-for-byte the same two functions (two
+// crates, no shared crate yet). A fix to either copy belongs in both.
 
 fn epoch_secs() -> u64 {
     SystemTime::now()

@@ -11,6 +11,10 @@ on:
       - 'canary-vision/**'
       - 'custom_components/securacv/www/**'
       - 'firmware/projects/canary-wap/arduino/canary_wap/**'
+      # build.mjs bakes these fixtures into the committed single-file viewer,
+      # so a fixture-only edit must also trip the drift gate.
+      - 'tests/fixtures/envelope/**'
+      - 'tests/fixtures/export_bundle/**'
       - '.github/workflows/viewer.yml'
   pull_request:
     branches: [ "main" ]
@@ -19,6 +23,10 @@ on:
       - 'canary-vision/**'
       - 'custom_components/securacv/www/**'
       - 'firmware/projects/canary-wap/arduino/canary_wap/**'
+      # build.mjs bakes these fixtures into the committed single-file viewer,
+      # so a fixture-only edit must also trip the drift gate.
+      - 'tests/fixtures/envelope/**'
+      - 'tests/fixtures/export_bundle/**'
       - '.github/workflows/viewer.yml'
 
 permissions:

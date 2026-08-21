@@ -230,7 +230,7 @@ running firmware for its **signed self-manifest** (`j`, schema
 `securacv.canary.manifest/v1`) and shows a verified-identity card: board,
 firmware version, **key fingerprint**, health, and boot count, read straight
 from the board over the cable. It's the flash proven from the device's own
-mouth — the same self-verify [`securacv.com/canary`](self_star_roadmap.md) does
+mouth — the same self-verify [`securacv.com/canary`](design/self_star_roadmap.md) does
 — and it never leaves the page. Variants without a serial console simply don't
 show the card (the boot log still streams). (`parseSelfManifest`.)
 
