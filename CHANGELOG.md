@@ -43,6 +43,40 @@ overhaul.
   GHCR, the sidecar gains a healthcheck and IPv6-safe broker parsing, and
   both quickstart compose files read as a three-step wizard.
 
+## [2.4.12] - 2026-08-21
+
+### WiFi that flashes and saves, a setup network on every board, and updates that install themselves
+
+- **Flash it with WiFi and it joins that WiFi.** The credential loaders on
+  the flagship canary and canary-wap read the seeded `wifi_ssid`/`wifi_pass`
+  whichever NVS type wrote them — string or blob — closing the gap where a
+  seed from either flasher sat unread in flash while the board booted
+  unprovisioned and asked to be joined by hand. The canary-ota reference
+  project reads the same standard `securacv` seed namespace now too.
+- **Every networked board can recover from a changed WiFi.** canary-sense and
+  canary-vision — previously reflash-only if a saved network went away — gain
+  the shared setup portal: no credentials, or a saved join that keeps failing
+  for a fixable reason, raises a device-unique `SecuraCV-XXXX` WPA2 setup
+  network with a scan/join/status wizard, while sensing keeps running
+  underneath. The saved network is quietly retried every minute, so a router
+  that was only rebooting rejoins on its own. Credentials persist only after
+  a successful join, verified by readback. Displays and WAP keep their proven
+  portals; Sense no longer tries to join a placeholder SSID forever.
+- **Updates from every surface.** Displays now serve the flagship's
+  `/api/ota` status/check/install contract (the desktop Flasher's update
+  button worked on zero of the nine display SKUs before); the flagship's HTTP
+  errors carry their real status codes so retry-on-busy fires; a new OTA run
+  clears the previous attempt's error instead of wearing it; and both
+  flashers seed the auto-update opt-in at flash time, on by default and
+  recorded either way — a freshly flashed board without Home Assistant
+  updates itself.
+- **A release can no longer quietly lose a product.** The release workflow
+  diffs each new flasher manifest against the previous stable release and
+  fails unless a dropped product is explicitly signed off.
+- **Canary Watch (from 2.4.11's hardware-arrival work).** The Round Frame
+  engine, on-glass WiFi forget, and flasher hatch parity ride this train.
+- **WAP: the help QR.** Scan the device's verdict and land on the fix.
+
 ## [2.4.11] - 2026-08-15
 
 ### The bedside glass keeps its clock lit, in a red you can read, in your own timezone

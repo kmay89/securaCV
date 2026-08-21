@@ -71,7 +71,7 @@ srp = { version = "0.7.0-rc.3", optional = true }
 # key come from the repo's fallible OS RNG rather than dalek's infallible
 # `CryptoRng`; it also carries `was_contributory()`, the low-order-point check.
 x25519-dalek = { version = "3.0", optional = true, features = ["static_secrets"] }
-mdns-sd = { version = "0.20", optional = true }
+mdns-sd = { version = "0.21", optional = true }
 # The setup QR. Zero dependencies of its own (Nayuki's reference generator),
 # which is why it clears the FR-14 gate without argument.
 qrcodegen = { version = "1.8", optional = true }
