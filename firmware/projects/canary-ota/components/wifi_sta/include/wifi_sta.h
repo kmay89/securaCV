@@ -72,7 +72,9 @@ esp_err_t wifi_sta_connect(const wifi_sta_config_t *config);
  * @brief Connect using credentials from NVS
  *
  * Reads SSID and password from NVS storage and attempts connection.
- * Falls back to Kconfig defaults if NVS values not found.
+ * Lookup order: the component's own "wifi" namespace ("ssid"/"password",
+ * strings), then the flasher-seeded "securacv" namespace
+ * ("wifi_ssid"/"wifi_pass", string- or blob-typed), then Kconfig defaults.
  *
  * @param timeout_ms Connection timeout in milliseconds (0 = no timeout)
  * @return ESP_OK if connected, error code on failure

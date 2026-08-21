@@ -837,11 +837,14 @@ function nvsWr32(page, o, v) {
 // WiFi credentials (blobs, the wap/canary scheme) and small integer settings
 // (the Preferences putUChar/putULong scheme detect_config.cpp reads — u8 is
 // item type 0x01, u32 is 0x04). One writer so the two families can't drift.
-//   opts.wifi   { ssid, pass }                     — optional
-//   opts.u8     { key: value, … }  (0-255)         — optional
-//   opts.u32    { key: value, … }  (0-2^32-1)      — optional
+//   opts.wifi        { ssid, pass }                — optional
+//   opts.u8          { key: value, … }  (0-255)    — optional
+//   opts.u32         { key: value, … }  (0-2^32-1) — optional
+//   opts.autoUpdate  true | false                  — optional; seeds the OTA
+//     engine's opt-in ("securacv_ota"/auto_upd u8) — see the block below
 export function buildNvsSeedImage(opts, partitionSize) {
   const wifi = opts && opts.wifi;
+  const autoUpdate = opts && typeof opts.autoUpdate === "boolean" ? opts.autoUpdate : null;
   const u8s = (opts && opts.u8) || {};
   const u16s = (opts && opts.u16) || {};
   const u32s = (opts && opts.u32) || {};
@@ -918,9 +921,9 @@ export function buildNvsSeedImage(opts, partitionSize) {
 
   // Small integers, the Preferences scheme: putUChar → type 0x01 (1 byte),
   // putULong → type 0x04 (4 bytes LE), value inline in the data field.
-  const writeInt = (key, type, size, value) => {
+  const writeInt = (key, type, size, value, ns = 1) => {
     const o = itemBase(idx);
-    writeHeader(o, 1, type, 1, 0xff, key);
+    writeHeader(o, ns, type, 1, 0xff, key);
     for (let i = 0; i < 8; i++) {
       page[o + 24 + i] = i < size ? (value >>> (8 * i)) & 0xff : 0xff;
     }
@@ -973,6 +976,25 @@ export function buildNvsSeedImage(opts, partitionSize) {
   for (const [k, v] of Object.entries(u8s)) writeInt(k, 0x01, 1, v);
   for (const [k, v] of Object.entries(u16s)) writeInt(k, 0x02, 2, v); // Preferences putUShort
   for (const [k, v] of Object.entries(u32s)) writeInt(k, 0x04, 4, v);
+
+  // The OTA auto-update opt-in — the one key that lives OUTSIDE "securacv":
+  // the shared engine (firmware/common/ota securacv_ota.cpp) keeps its
+  // settings in its own namespace "securacv_ota" and reads auto_upd with
+  // nvs_get_u8 (default 0, off). A boolean here seeds the human's choice at
+  // flash time: true writes 1 — the board keeps itself on Ed25519-signed
+  // releases, no hub needed — and false writes an explicit 0, which is the
+  // engine's default anyway but records a decision instead of an absence.
+  // Leaving the opt out writes neither the key nor the namespace, so the
+  // seed stays byte-identical to the pre-OTA one. Mirrors native
+  // provisioning.rs (auto_update) byte-for-byte.
+  if (autoUpdate !== null) {
+    // Second namespace definition: "securacv_ota" → index 2 ("securacv" is 1).
+    writeHeader(itemBase(idx), 0, 0x01, 1, 0xff, "securacv_ota");
+    page[itemBase(idx) + 24] = 2;
+    for (let i = 1; i < 8; i++) page[itemBase(idx) + 24 + i] = 0xff;
+    finishItem(idx); markWritten(idx); idx++;
+    writeInt("auto_upd", 0x01, 1, autoUpdate ? 1 : 0, 2);
+  }
 
   // Page header: ACTIVE, seq 0, version 0xFE (v2); CRC over bytes 4..27.
   nvsWr32(page, 0, 0xfffffffe);

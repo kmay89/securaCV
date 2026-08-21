@@ -9,6 +9,7 @@
 #include "version.h"
 #include "log.h"
 #include "mqtt_mgr.h"
+#include "ota_web.h"
 
 #include "securacv_ota.h"     // shared engine (firmware/common/ota, via lib_extra_dirs)
 #include "ota_release_key.h"  // shared Ed25519 release public key
@@ -245,6 +246,47 @@ void ota_set_auto_update(bool on) {
   }
   publish_update_auto_retained(g_topics, on);
   g_publish_pending = true;
+}
+
+// ── /api/ota web facade (ota_web.h) ──────────────────────────────────────
+// glass_web's routes land here so the HTTP trigger and HA's MQTT Install
+// button converge on the same engine calls — one code path, one "busy"
+// arbiter. The engine's progress callback (on_progress above) fires on the
+// state transitions these kicks cause, so the HA update entity narrates a
+// web-started run exactly like an MQTT-started one.
+
+namespace {
+OtaKick kick_result(esp_err_t err) {
+  if (err == ESP_OK) return OtaKick::Started;
+  if (err == ESP_ERR_INVALID_STATE) return OtaKick::Busy;  // already running
+  return OtaKick::Failed;
+}
+}  // namespace
+
+OtaWebStatus ota_web_status() {
+  OtaWebStatus s{};
+  s.installed = CANARY_FW_VERSION;
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  s.latest = (m != nullptr) ? m->version : nullptr;
+  const securacv_ota_state_t st = securacv_ota_get_state();
+  const securacv_ota_error_t err = securacv_ota_get_last_error();
+  s.state = securacv_ota_state_str(st);
+  s.state_text = securacv_ota_friendly_state(st);
+  s.error = securacv_ota_error_str(err);
+  s.error_text = securacv_ota_friendly_error(err);
+  s.update_available = securacv_ota_update_available();
+  s.auto_update = securacv_ota_get_auto_update();
+  s.progress = securacv_ota_get_progress();
+  return s;
+}
+
+OtaKick ota_web_check() {
+  return kick_result(securacv_ota_check());
+}
+
+OtaKick ota_web_install() {
+  log_line("OTA", "Install requested from the web page.");
+  return kick_result(securacv_ota_check_and_install());
 }
 
 } // namespace canary::net

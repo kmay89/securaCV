@@ -46,6 +46,7 @@
 #include "canary/diagnostics.h"
 #include "canary/witness.h"
 #include "canary/net/wifi_mgr.h"
+#include "network/setup_portal.h"  // shared recovery portal (common/) — radio-contention query
 #include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
@@ -919,11 +920,14 @@ void loop() {
   // witness's own fleet roster (last-heartbeat + status). Broker-independent
   // like the beacon; also before the broker early-return so it keeps tracking
   // peers through an MQTT/WiFi outage (continuous scan when fully off-grid).
-  // wifi_provisioned = true: canary-sense has no unprovisioned mode — it always
-  // carries NVS credentials and wifi_loop() retries the join for as long as it
-  // takes, so the scan must never hold the shared radio through that window.
-  canary::net::fleet_roster_scan_tick(now, canary::net::wifi_connected(),
-                                      /*wifi_provisioned=*/true);
+  // wifi_provisioned: real state now that an unseeded board raises the shared
+  // setup portal instead of joining a placeholder forever. While the portal
+  // owns the radio (SoftAP + candidate joins) the scan must treat it as
+  // contended, exactly like an in-flight join — hence the OR.
+  canary::net::fleet_roster_scan_tick(
+      now, canary::net::wifi_connected(),
+      /*wifi_provisioned=*/canary::net::wifi_configured() ||
+          canary::net::setup_portal_active());
 #endif
 
   // Bounded, backoff-scheduled broker supervision: while the broker is

@@ -920,6 +920,70 @@ test("seeded Wi-Fi is taken at face value: open networks and the first-boot latc
     "string scheme has no first-boot latch to mark");
 });
 
+test("buildNvsSeedImage: the OTA opt-in rides the engine's own second namespace", async () => {
+  const { buildNvsSeedImage, parseNvs, crc32EspRom } = await core();
+  const u32 = (b, o) => (b[o] | (b[o+1] << 8) | (b[o+2] << 16) | (b[o+3] << 24)) >>> 0;
+
+  // Opted in: the page grows a SECOND namespace-definition entry — an item
+  // under index 0, type 0x01, key "securacv_ota", data byte 2 (the new
+  // index, right after "securacv"'s 1) — and a u8 "auto_upd" = 1 under it.
+  const img = buildNvsSeedImage(
+    { wifi: { ssid: "MyHomeWifi", pass: "correct horse" }, autoUpdate: true }, 0x5000);
+  const findHeader = (ns, key) => {
+    for (let j = 0; j < 126; j++) {
+      const o = 64 + j * 32;
+      if (img[o] !== ns) continue;
+      let k = ""; for (let i = 0; i < 16 && img[o + 8 + i]; i++) k += String.fromCharCode(img[o + 8 + i]);
+      if (k === key) return o;
+    }
+    return -1;
+  };
+  const nsDef = findHeader(0, "securacv_ota");
+  assert.ok(nsDef > 0, "the securacv_ota namespace entry must exist under index 0");
+  assert.strictEqual(img[nsDef + 1], 0x01, "namespace entries are type 0x01");
+  assert.strictEqual(img[nsDef + 24], 2, "securacv_ota must be namespace index 2");
+  const item = findHeader(2, "auto_upd");
+  assert.ok(item > 0, "auto_upd must live under namespace index 2");
+  assert.strictEqual(img[item + 1], 0x01, "the engine reads auto_upd with nvs_get_u8 — a u8");
+  assert.strictEqual(img[item + 24], 1);
+
+  // Both new items' CRCs verify exactly the way ESP-IDF checks them on boot
+  // (bytes 0-3 + 8-31, skipping the CRC field), and the page header CRC
+  // still covers the grown page.
+  for (const o of [nsDef, item]) {
+    const tmp = new Uint8Array(28);
+    tmp.set(img.subarray(o, o + 4), 0);
+    tmp.set(img.subarray(o + 8, o + 32), 4);
+    assert.strictEqual(u32(img, o + 4), crc32EspRom(tmp), "item CRC must verify");
+  }
+  assert.strictEqual(u32(img, 28), crc32EspRom(img.subarray(4, 28)), "page header CRC");
+
+  // The parser the health check trusts reads it back, namespaces intact.
+  const items = parseNvs(img, ["wifi_ssid"]);
+  const auto = items.find((i) => i.key === "auto_upd");
+  assert.strictEqual(auto.namespace, "securacv_ota");
+  assert.strictEqual(auto.nsIndex, 2);
+  assert.strictEqual(auto.value, 1);
+  assert.ok(items.find((i) => i.key === "wifi_ssid").namespace === "securacv",
+    "the wifi keys stay under securacv — two namespaces, one page");
+
+  // Declined is an explicit 0 — a recorded choice, not an absent key.
+  const off = parseNvs(buildNvsSeedImage({ autoUpdate: false }, 0x4000))
+    .find((i) => i.namespace === "securacv_ota" && i.key === "auto_upd");
+  assert.ok(off, "unchecked must still write the key");
+  assert.strictEqual(off.value, 0);
+
+  // No opt at all → byte-identical to the pre-OTA seed: no second namespace,
+  // no auto_upd, and the exact same bytes as an explicit non-boolean.
+  const base = buildNvsSeedImage({ wifi: { ssid: "MyHomeWifi", pass: "correct horse" } }, 0x5000);
+  const baseNull = buildNvsSeedImage(
+    { wifi: { ssid: "MyHomeWifi", pass: "correct horse" }, autoUpdate: null }, 0x5000);
+  assert.deepStrictEqual(Buffer.from(baseNull), Buffer.from(base),
+    "a non-boolean autoUpdate must leave the seed byte-identical");
+  assert.ok(!parseNvs(base).some((i) => i.key === "auto_upd" || i.namespace === "securacv_ota"),
+    "no opt must write neither the key nor the namespace");
+});
+
 test("wifiQrString escapes the special characters and handles open networks", async () => {
   const { wifiQrString } = await core();
   assert.strictEqual(wifiQrString("MyWifi", "pass1234"), "WIFI:T:WPA;S:MyWifi;P:pass1234;;");

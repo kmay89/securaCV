@@ -3366,16 +3366,16 @@ function phaseConfirm(product, entry) {
     // password field and remember an empty one over the real network.
     if (state.busy) return;
     go.disabled = true;
-    let wifi = null, mqtt = null;
+    let wifi = null, mqtt = null, autoUpdate = null;
     if (wifiUI) {
       const r = wifiUI.credentials();
       if (!r.ok) { go.disabled = false; return; } // invalid input — the field showed why
-      wifi = r.wifi; mqtt = r.mqtt;
+      wifi = r.wifi; mqtt = r.mqtt; autoUpdate = r.autoUpdate;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
     const dialSel = dialsUI ? dialsUI.selection() : null;
     const reflexSel = reflexUI ? reflexUI.selection() : null;
-    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi, mqtt,
+    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi, mqtt, autoUpdate,
       detect: dialSel ? dialSel.values : null,
       detectPreset: dialSel ? dialSel.presetTitle : null,
       reflex: reflexSel ? reflexSel.values : null,
@@ -3821,6 +3821,21 @@ function renderWifiFields(box, product) {
     }) };
   }
 
+  // Keep itself updated (default ON): seeds the shared OTA engine's opt-in —
+  // NVS "securacv_ota"/auto_upd — so the board checks for signed releases on
+  // its own, no Home Assistant needed. Unchecking writes an explicit 0: the
+  // engine ships off anyway, but a recorded choice beats an absence.
+  const otaRow = el("div", "flash-wifi-remember");
+  const otaLabel = el("label", "flash-wifi-remember-label");
+  const otaChk = el("input"); otaChk.type = "checkbox"; otaChk.checked = true;
+  otaLabel.append(otaChk, document.createTextNode(" Keep this Canary updated automatically"));
+  otaRow.append(otaLabel);
+  sec.append(otaRow);
+  sec.append(el("p", "fineprint",
+    "Updates are Ed25519-signed releases installed with A/B rollback — the " +
+    "board steps back by itself if a new one doesn’t boot — and you can turn " +
+    "this off later in the device’s settings."));
+
   box.append(sec);
   return {
     credentials() {
@@ -3837,13 +3852,17 @@ function renderWifiFields(box, product) {
           return { ok: false, wifi: null, mqtt: null };
         }
       }
-      if (!ssid.value) return { ok: true, wifi: null, mqtt }; // wifi optional — skipped
+      // The auto-update checkbox always carries an answer — checked seeds 1,
+      // unchecked an explicit 0 (see the row above) — so it rides every
+      // successful read, Wi-Fi typed or not.
+      const autoUpdate = otaChk.checked;
+      if (!ssid.value) return { ok: true, wifi: null, mqtt, autoUpdate }; // wifi optional — skipped
       try {
         // The builder validates lengths; run it small just for the checks.
         core.buildNvsWifiImage(ssid.value, pass.value, 4096);
         // Remember it for the next board (session always; disk if opted in).
         wifiMemory.remember({ ssid: ssid.value, pass: pass.value }, rememberChk.checked);
-        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value }, mqtt };
+        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value }, mqtt, autoUpdate };
       } catch (e) {
         err.textContent = String(e.message || e);
         err.classList.remove("flash-hidden");
@@ -4015,7 +4034,11 @@ async function startFlash(opts) {
     // that region, the install continues — never block a flash on a
     // convenience.
     let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null;
-    if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex) && !opts.isBackup) {
+    // The auto-update choice (a boolean when the confirm card's checkbox was
+    // shown) is a thing to seed by itself: checked or not, the human
+    // answered, and the OTA engine reads that answer out of NVS on boot.
+    const autoUpdate = typeof opts.autoUpdate === "boolean" ? opts.autoUpdate : null;
+    if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex || autoUpdate !== null) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
           bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
@@ -4040,7 +4063,11 @@ async function startFlash(opts) {
           { wifi: opts.wifi || null,
             wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
             strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
-            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
+            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 },
+            // The OTA opt-in, seeded into the engine's own namespace
+            // ("securacv_ota"/auto_upd) — null means the checkbox never
+            // appeared (rescue, local file), and nothing is written.
+            autoUpdate }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;

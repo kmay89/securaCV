@@ -270,6 +270,20 @@
                    NVS. Filled by renderDials(); hidden for every other
                    product. "As it ships" writes nothing at all. -->
               <div id="dials" class="dials hidden"></div>
+
+              <!-- OTA opt-in (default ON): seeds the shared update engine's
+                   own NVS namespace (securacv_ota/auto_upd) so the board
+                   keeps itself on signed releases with no hub in the loop.
+                   Unchecking writes an explicit 0 — a recorded choice, not
+                   an absence. Same checkbox, same copy, in the browser
+                   flasher (renderWifiFields). -->
+              <div class="row prov-auto-update">
+                <label class="check"><input type="checkbox" id="auto-update" checked>
+                  Keep this Canary updated automatically</label>
+              </div>
+              <p class="muted">Updates are Ed25519-signed releases installed with A/B rollback —
+                the board steps back by itself if a new one doesn’t boot — and you can turn
+                this off later in the device’s settings.</p>
             </section>
             <div class="row" id="host-flash-controls">
               <button id="flash-btn" class="btn btn-primary" disabled>Flash my Canary</button>

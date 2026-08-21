@@ -68,8 +68,9 @@ Witness Wall and, while open, browses `_securacv._tcp` for real (`fleet.rs`,
 `mdns-sd`) — the TXT schema every networked Canary advertises (device_id,
 name, fw, model, dt, role; `docs/onboarding_unified_wizard.md`) gives
 presence *and* version without opening a single connection, and reaches the
-HTTP-less variants (vision/sense advertise port 1 and are status-only here;
-their OTA rides MQTT). Devices on the network that aren't in the book show
+HTTP-less variants (vision/sense advertise port 1 and are status-only here —
+like every networked flavor they run the same signed daily HTTPS pull
+themselves; MQTT is only their Home Assistant trigger/status surface). Devices on the network that aren't in the book show
 as one-click "Add to book" rows; the hub gets a row of its own probed via
 `hub_probe_hub`.
 
@@ -79,7 +80,9 @@ When a book row's firmware is behind the app's pinned train, "Update over
 the air" runs the device's **own** signed pull pipeline
 (`docs/firmware_ota.md`): `POST /api/ota/check`, then `POST
 /api/ota/install`, then narrate `GET /api/ota/status` (state → progress →
-reboot) until the row reads "up to date". The device downloads the manifest
+reboot) until the row reads "up to date". The displays expose the same
+`/api/ota/*` contract as the flagship canary (since 2026-08), so their rows
+get the same one-click update. The device downloads the manifest
 and image itself, verifies Ed25519 against its pinned release key plus
 SHA-256 and the anti-rollback floor, and A/B-swaps with automatic rollback.
 The app never serves firmware bytes.
@@ -96,11 +99,17 @@ Security posture of the bridge (`fleet.rs`, unit-tested):
 
 ## Honest limits
 
-- Vision/sense rows are presence + version only (no HTTP server on-device).
+- Vision/sense rows are presence + version only (no always-on HTTP API
+  on-device — their shared setup portal serves HTTP only while the board is
+  provisioning or recovering; updates arrive by their own daily signed pull,
+  or on demand from Home Assistant).
 - A board flashed by something other than these flashers has no stored
   token; its row says exactly that and what one reflash fixes.
 - `POST /api/ota/config` is deliberately **not** exposed from the app — the
-  manifest URL and auto-update policy stay the device owner's settings.
+  manifest URL and auto-update policy stay the device owner's settings. (The
+  flash-time "Keep this Canary updated automatically" toggle is the one place
+  the flashers set that policy, over USB with the owner's hands on the board —
+  never over the network.)
 - **mDNS is unauthenticated by nature.** A hostile device already admitted
   to your network can announce a known Canary's `device_id` and, when you
   click Identify or Update, receive that board's bearer token at its own

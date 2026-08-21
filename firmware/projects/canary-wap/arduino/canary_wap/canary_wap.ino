@@ -8750,6 +8750,16 @@ static bool wifi_load_credentials() {
 
     g_wifi_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
     g_wifi_creds.configured = (strlen(g_wifi_creds.ssid) > 0);
+  } else if (ssid_len == 0 && nvs.isKey(NVS_KEY_WIFI_SSID)) {
+    // String-typed seed: isKey() is type-blind and getBytesLength() is 0 for
+    // string entries, so a present key with no blob bytes is the other
+    // encoding, not absence (LESSONS_LEARNED "A seeded credential key is
+    // honored whichever NVS TYPE wrote it"). Same caps as the blob path.
+    if (nvs.getString(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, sizeof(g_wifi_creds.ssid)) > 0) {
+      nvs.getString(NVS_KEY_WIFI_PASS, g_wifi_creds.password, sizeof(g_wifi_creds.password));
+      g_wifi_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
+      g_wifi_creds.configured = true;
+    }
   }
 
   nvs.end();
