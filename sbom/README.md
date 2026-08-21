@@ -16,16 +16,21 @@ SBOMs are generated automatically in CI via the `.github/workflows/sbom.yml` wor
 
 ## Firmware SBOM
 
-The firmware SBOM is generated manually because the ESP-IDF build system uses vendored components that are not tracked by a standard package manager. The SBOM lists:
+The firmware SBOM is generated manually because the Arduino/ESP-IDF build uses vendored components that are not tracked by a standard package manager.
 
-- **esp-idf** — Espressif IoT Development Framework
-- **FreeRTOS** — Real-time OS kernel (bundled with ESP-IDF)
-- **mbedtls** — Cryptographic library (bundled with ESP-IDF)
-- **cJSON** — JSON parser
-- **lwip** — TCP/IP stack
-- **esp-tls**, **nvs_flash**, **esp_https_ota** — ESP-IDF components
+The **firmware version is read from source** (`FIRMWARE_VERSION` in `firmware/canary/include/canary_config.h`) at generation time, so the SBOM always names the version that actually shipped rather than a hardcoded literal.
 
-When adding new ESP-IDF components or vendored C libraries, update the firmware SBOM template in `.github/workflows/sbom.yml`.
+The dev/release image builds `framework = arduino` on the **official espressif32 platform** (`firmware/canary/platformio.ini`), which packages **Arduino-ESP32 core 2.0.17 / ESP-IDF 4.4.7** — not bare ESP-IDF 5.1. The SBOM lists:
+
+- **arduino-esp32** (2.0.17) — Arduino-ESP32 core (framework); bundles ESP-IDF 4.4.7
+- **esp-idf** (4.4.7) — Espressif IoT Development Framework (bundled by the Arduino core)
+- **FreeRTOS** (10.4.3) — Real-time OS kernel (bundled with ESP-IDF 4.4.7)
+- **mbedtls** (2.28.3) — Cryptographic library (bundled with ESP-IDF 4.4.7, 2.28 LTS line)
+- **cJSON** (1.7.15) — JSON parser
+- **lwip** (2.1.2) — TCP/IP stack
+- **esp-tls**, **nvs_flash**, **esp_https_ota** (4.4.7) — ESP-IDF components
+
+When adding new ESP-IDF components or vendored C libraries, update the firmware SBOM template in `.github/workflows/sbom.yml`. The `[env:full]` build uses a different platform (pioarduino core 3.x / ESP-IDF 5.5.4); if it ever becomes the shipped image, the framework component versions above must move with it.
 
 ## Retrieving SBOMs
 

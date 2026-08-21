@@ -112,11 +112,64 @@ final class FleetBeaconTests: XCTestCase {
 
         var wrongVersion = good; wrongVersion[3] = 0x02
         XCTAssertNil(FleetBeacon.parse(manufacturerData: Data(wrongVersion)),
+                     "v2's version byte at v1 length must be rejected — length and version must agree")
+
+        var unknownVersion = good; unknownVersion[3] = 0x03
+        XCTAssertNil(FleetBeacon.parse(manufacturerData: Data(unknownVersion)),
                      "an unknown schema version must be rejected, not guessed at")
 
         good[2] = FleetBeacon.type
         XCTAssertNotNil(FleetBeacon.parse(manufacturerData: Data(good)),
                         "the untouched vector still parses (the negatives above were real changes)")
+    }
+
+    // ── v2: detection class + confidence ride two trailing bytes ──
+    // Mirrors the C test's v2 block exactly.
+    func testVersionTwoEncodeAndParseMatchFirmwareVectors() {
+        let flags = FleetBeacon.flagAlert | FleetBeacon.flagOnWiFiSTA
+        let blob = FleetBeacon.encodeV2(flags: flags, batteryPct: nil, healthPct: 90,
+                                        chainHeight: 0x0101, fpB0: 0xAA, fpB1: 0xBB,
+                                        detectClass: FleetBeacon.detectPerson, detectScore: 87)
+        let b = [UInt8](blob)
+        XCTAssertEqual(b.count, 13, "full v2 on-air blob is 13 bytes (11 payload + 2 company)")
+        XCTAssertEqual(b[2], 0x10, "v2 keeps the 0x10 type byte")
+        XCTAssertEqual(b[3], 0x02, "v2 schema version is 0x02")
+        XCTAssertEqual(b[11], FleetBeacon.detectPerson, "v2 detect class byte")
+        XCTAssertEqual(b[12], 87, "v2 detect score byte")
+
+        let p = FleetBeacon.parse(manufacturerData: blob)
+        XCTAssertNotNil(p, "parse accepts a v2 blob")
+        XCTAssertEqual(p?.flags, flags, "v2 parsed flags match (alert set)")
+        XCTAssertNil(p?.batteryPct, "v2 parsed battery unknown")
+        XCTAssertEqual(p?.healthPct, 90, "v2 parsed health matches")
+        XCTAssertEqual(p?.chainLow16, 0x0101, "v2 parsed chain matches")
+        XCTAssertEqual(p?.fpB0, 0xAA)
+        XCTAssertEqual(p?.fpB1, 0xBB)
+        XCTAssertEqual(p?.detectClass, FleetBeacon.detectPerson, "v2 parsed detect class")
+        XCTAssertEqual(p?.detectScore, 87, "v2 parsed detect score")
+
+        // Out-of-range score maps to the unknown sentinel -> nil.
+        let idle = FleetBeacon.encodeV2(flags: 0, batteryPct: nil, healthPct: nil,
+                                        chainHeight: 0, fpB0: 0, fpB1: 0,
+                                        detectClass: FleetBeacon.detectNone, detectScore: 150)
+        XCTAssertEqual([UInt8](idle)[12], FleetBeacon.scoreUnknown, "score >100 -> 0xFF unknown")
+        let idleParsed = FleetBeacon.parse(manufacturerData: idle)
+        XCTAssertNotNil(idleParsed, "parse accepts idle v2 blob")
+        XCTAssertEqual(idleParsed?.detectClass, FleetBeacon.detectNone, "idle v2 class is NONE")
+        XCTAssertNil(idleParsed?.detectScore, "0xFF score decodes to nil unknown")
+
+        // A v1 blob decodes with the detect fields at their absent values.
+        let v1 = FleetBeacon.encode(flags: 0, batteryPct: 50, healthPct: 50,
+                                    chainHeight: 0, fpB0: 0x12, fpB1: 0x34)
+        let v1Parsed = FleetBeacon.parse(manufacturerData: v1)
+        XCTAssertNotNil(v1Parsed, "v1 blob still parses")
+        XCTAssertEqual(v1Parsed?.detectClass, FleetBeacon.detectNone, "v1 blob yields NONE detect class")
+        XCTAssertNil(v1Parsed?.detectScore, "v1 blob yields nil detect score")
+
+        // Length/version agreement holds in the other direction too.
+        var v1AtV2Length = [UInt8](blob); v1AtV2Length[3] = FleetBeacon.version
+        XCTAssertNil(FleetBeacon.parse(manufacturerData: Data(v1AtV2Length)),
+                     "reject v1 version at v2 length")
     }
 
     /// `CBAdvertisementDataManufacturerDataKey` can hand back a slice whose

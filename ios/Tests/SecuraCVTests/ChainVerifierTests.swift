@@ -17,7 +17,8 @@ final class ChainVerifierTests: XCTestCase {
         for seq in 1...n {
             let ts = Date(timeIntervalSince1970: 1_700_000_000 + Double(seq))
             let iso = ISO8601DateFormatter.witness.string(from: ts)
-            let preimage = "\(seq):\(prev):\(iso):person_detected:front"
+            // Seven fields, exactly as device-state.js hashes them.
+            let preimage = "\(seq):\(prev):\(iso):person_detected:front:device_clock:"
             let hash = ChainVerifier.sha256Hex(preimage)
             let sig = try! key.signature(for: Data(hash.utf8))
             records.append(.init(seq: UInt64(seq), hash: hash, prevHash: prev,

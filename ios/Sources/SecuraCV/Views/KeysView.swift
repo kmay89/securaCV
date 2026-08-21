@@ -1,10 +1,11 @@
 // KeysView.swift
 //
 // The part no web SPA can do well: your key ring. Pinned-key trust (TOFU) with
-// a loud "this key changed" alarm, the trustee approve/deny surface, on-device
-// .svlt unseal (Secure Enclave), and the self-healing About panel — build rev,
-// firmware train, last-checked, "heals forward" — ported from the desktop app's
-// renderAbout() so every surface tells the same story from one source of truth.
+// a loud "this key changed" alarm, the entry point for the on-device .svlt
+// unseal (still a placeholder — UnsealView says so), and the self-healing
+// About panel — build rev, firmware train, last-checked, "heals forward" —
+// ported from the desktop app's renderAbout() so every surface tells the same
+// story from one source of truth.
 
 import SwiftUI
 
@@ -43,7 +44,7 @@ struct KeysView: View {
                 } header: {
                     Text("Vault")
                 } footer: {
-                    Text("Sealed snapshots are encrypted to your key. The Canary holds only the public half — it's structurally unable to open them. Only this phone can, in the Secure Enclave.")
+                    Text("Sealed snapshots are encrypted to your key. The Canary holds only the public half — it's structurally unable to open them. Unsealing in this app is still being built; today the repo's unseal tool is the working path.")
                 }
 
                 Section {
@@ -65,13 +66,15 @@ struct KeysView: View {
     }
 }
 
-/// Placeholder unseal surface — the crypto is already built in the repo
-/// (tools/unseal_snapshot.py); on device this runs against Secure Enclave.
+/// Placeholder unseal surface — and it SAYS so (the honest-status doctrine):
+/// there is no importer and no decrypt code in this app yet. The crypto is
+/// already built repo-side (tools/unseal_snapshot.py); when the flow lands
+/// here it will import a .svlt from Files and decrypt on this phone.
 struct UnsealView: View {
     var body: some View {
-        ContentUnavailableView("Bring a sealed snapshot",
+        ContentUnavailableView("Unsealing isn't in the app yet",
             systemImage: "doc.badge.gearshape",
-            description: Text("Import a .svlt from Files to decrypt it here, once, in the Secure Enclave. It's never written to any cloud."))
+            description: Text("This screen will import a .svlt from Files and decrypt it on this phone, never through any cloud. Until it lands, the repo's unseal tool (tools/unseal_snapshot.py) is the working path."))
             .navigationTitle("Unseal")
     }
 }

@@ -107,10 +107,22 @@ final class ResidentWatchTests: XCTestCase {
         XCTAssertEqual(watch.standing, .off)
 
         // Observing while off must not even establish a baseline that a later
-        // enable could turn into a retroactive wake.
+        // enable could turn into a retroactive wake. Asserted directly on the
+        // baseline: this comment used to promise the check while the test
+        // only looked at `standing`, which passed whether or not the
+        // baseline leaked.
         watch.observe(fleet([("porch", true, "ok")]))
         watch.observe(fleet([("porch", false, "ok")]))
         XCTAssertEqual(watch.standing, .off)
+        XCTAssertNil(watch.lastSnapshot,
+                     "a snapshot seen while off became a baseline — the first "
+                     + "post-enable poll could report history as news")
+
+        // And after enabling, the porch that went dark while nobody was
+        // watching is history, not a transition: the first observation is
+        // the fresh baseline, never a diff against the disabled era.
+        watch.setEnabled(true)
+        XCTAssertNil(watch.lastSnapshot, "enabling must start from no baseline")
     }
 
     @MainActor

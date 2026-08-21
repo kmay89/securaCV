@@ -66,28 +66,33 @@ internet" tag Apple stamps on the file. Identical on Apple Silicon and Intel.
 
 ## Linux
 
-Two formats on the release page — take your pick:
+Two formats on the release page — take your pick. (GitHub stores release
+asset names with dots where the app's name has a space, so the downloads are
+named `SecuraCV.Lab_…`.)
 
-- **AppImage** (runs anywhere):
+- **AppImage** (self-updating, runs anywhere):
 
   ```sh
-  chmod +x "SecuraCV Lab_"*.AppImage
-  ./"SecuraCV Lab_"*.AppImage
+  chmod +x SecuraCV.Lab_*_amd64.AppImage
+  ./SecuraCV.Lab_*_amd64.AppImage
   ```
 
 - **.deb** (Debian/Ubuntu):
 
   ```sh
-  sudo apt install ./"SecuraCV Lab_"*_amd64.deb
+  sudo apt install ./SecuraCV.Lab_*_amd64.deb
   ```
 
 ---
 
 ## Updating
 
-Grab the next release from the
-[releases page](https://github.com/kmay89/securaCV/releases) and reinstall —
-same one-liner on macOS. (`.deb` users can also update through `apt`.)
+You don't. The Lab checks the project's GitHub releases when it starts (and
+every six hours while it stays open) and offers a one-click
+**Update & relaunch** when a newer signed build is out. (Self-update covers
+the macOS `.app` and the Linux **AppImage**; `.deb` users update through
+`apt` or by grabbing the next `.deb` from the
+[releases page](https://github.com/kmay89/securaCV/releases).)
 
 ---
 
@@ -97,5 +102,18 @@ same one-liner on macOS. (`.deb` users can also update through `apt`.)
 - **Linux AppImage:** delete the file.
 - **Linux .deb:** `sudo apt remove securacv-lab`.
 
-Nothing else is left behind — the Lab keeps its state locally and talks only to
-your own devices.
+Two small things stay behind (no secrets in either) — remove them too for a
+complete uninstall:
+
+- **The app data folder** — the self-updater's journal
+  (`update-journal.log`) and its declined-version marker (`update-declined`):
+  - macOS: `~/Library/Application Support/com.securacv.lab/`
+  - Linux: `~/.local/share/com.securacv.lab/` (or under `$XDG_DATA_HOME`)
+- **Webview data** (bench preferences kept in the page's local storage):
+  - macOS: `~/Library/WebKit/com.securacv.lab`,
+    `~/Library/Caches/com.securacv.lab`
+  - Linux: inside the app data folder above, plus
+    `~/.cache/com.securacv.lab`
+
+The Lab keeps all of its state locally and talks only to your own devices —
+the one thing it ever fetches on its own is its update manifest.

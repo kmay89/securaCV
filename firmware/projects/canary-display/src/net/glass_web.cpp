@@ -4,6 +4,7 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <string.h>
+#include <esp_random.h>  // esp_fill_random() — per-boot CSRF write token
 
 #include <WiFi.h>
 
@@ -51,6 +52,91 @@ namespace {
 
 WebServer* s_server = nullptr;
 bool s_mdns_added = false;
+
+// ── Per-boot write guard (CSRF + Origin) ───────────────────────────────
+// The state-changing POSTs (/api/set, /api/tz) re-persist brightness,
+// Character, timezone and the rest to NVS. The read surface stays open — the
+// mirror is a LAN glance — but writes must not be forgeable by a web page the
+// owner happens to visit, which can blind-POST (no-cors)
+// http://<canary>.local/api/tz from another origin. Two cheap checks close
+// that, mirroring the break-glass server's "every write needs the capability
+// the page carries" stance without an on-device session store:
+//
+//   1) Origin allowlist. A browser attaches Origin to every POST — same- and
+//      cross-origin alike — so the legitimate mirror (served BY this device)
+//      carries an Origin whose authority equals the Host it POSTed to, while a
+//      drive-by page on another site carries its own and mismatches. A caller
+//      with no Origin at all is not a browser bound by the same-origin policy,
+//      so it is not this CSRF vector and is let through.
+//   2) A per-boot CSRF token, minted from the hardware RNG at init and handed
+//      to the page in /api/settings — which, carrying no
+//      Access-Control-Allow-Origin, a cross-origin script cannot read back.
+//      The page echoes it as X-CSRF-Token on each write, so a request that
+//      never loaded the page from this origin cannot forge one.
+//
+// Neither stops a DIRECT LAN host (no browser: it reads the page and its token
+// itself). That is the same trust boundary /api/glass and /api/fleet already
+// sit on (see handle_glass) — the reachable-from-a-web-page half is what this
+// closes, which is the drive-by the finding describes.
+char s_csrf[33];  // 16 RNG bytes as 32 lowercase-hex chars + NUL
+
+void csrf_init() {
+  uint8_t r[16];
+  esp_fill_random(r, sizeof(r));
+  // NOT named HEX: the Arduino core #defines HEX as the print-base constant
+  // (16), so `HEX[i]` would expand to `16[i]` and fail to compile.
+  static const char kHexDigits[] = "0123456789abcdef";
+  for (int i = 0; i < 16; i++) {
+    s_csrf[2 * i]     = kHexDigits[(r[i] >> 4) & 0xF];
+    s_csrf[2 * i + 1] = kHexDigits[r[i] & 0xF];
+  }
+  s_csrf[32] = '\0';
+}
+
+// Constant-time token compare (length-checked). A straight strcmp returns on
+// the first differing byte; a LAN timing oracle on a 128-bit token is not a
+// realistic threat, but the break-glass server sets the house rule that bearer
+// tokens are compared without an early-out, so follow it here.
+bool csrf_matches(const char* got) {
+  if (!got) return false;
+  const size_t n = strlen(s_csrf);
+  if (strlen(got) != n) return false;
+  uint8_t diff = 0;
+  for (size_t i = 0; i < n; i++) diff |= (uint8_t)(got[i] ^ s_csrf[i]);
+  return diff == 0;
+}
+
+// True when a browser POST is cross-site and must be refused. Compares the
+// Origin's authority (host[:port], scheme and any path stripped) to the Host
+// the request targeted — name-agnostic, so it holds for the .local name, the
+// raw IP, or any alias the household reaches the glass by. Origin absent → not
+// a same-origin-policy browser write → not cross-site here (see the note).
+bool origin_is_cross_site() {
+  if (!s_server->hasHeader("Origin")) return false;
+  String o = s_server->header("Origin");
+  if (o.length() == 0) return false;
+  const int p = o.indexOf("://");
+  String auth = (p >= 0) ? o.substring(p + 3) : o;
+  const int slash = auth.indexOf('/');
+  if (slash >= 0) auth = auth.substring(0, slash);
+  return !auth.equalsIgnoreCase(s_server->hostHeader());
+}
+
+// The gate for /api/set and /api/tz: sends its own 403 and returns true when
+// the write must be refused, so a handler need only guard with
+// `if (write_blocked()) return;` before it touches NVS.
+bool write_blocked() {
+  if (origin_is_cross_site()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"origin\"}");
+    return true;
+  }
+  if (!s_server->hasHeader("X-CSRF-Token") ||
+      !csrf_matches(s_server->header("X-CSRF-Token").c_str())) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"csrf\"}");
+    return true;
+  }
+  return false;
+}
 
 // ── Log ring: the last N lines log_line() spoke, timestamped. RAM-only,
 // loop-task-only (every log_line caller and the server share the loop).
@@ -134,6 +220,19 @@ void handle_tv() {
   s_server->send_P(200, "text/html", TV_HTML);
 }
 
+// GET /api/glass — the live mirror snapshot the phone and TV render from. It
+// is served UNAUTHENTICATED by design, exactly like /api/fleet: this is the
+// LAN glance the product promises. It carries per-witness presence and
+// wellbeing (`wb`/`br` — someone is home, someone is breathing), so read the
+// exposure honestly. Unlike /api/fleet it sets NO Access-Control-Allow-Origin,
+// so the same-origin policy blocks a drive-by web page from READING it
+// cross-origin; the residual reader is a host already ON the home WiFi that
+// knows the device's address. That direct-LAN host is the documented trust
+// boundary for the whole mirror surface — and the reason the WRITE endpoints
+// (/api/set, /api/tz) are additionally gated (see the write-guard note above)
+// while these reads are not: a write reconfigures the device durably, whereas
+// a read sees only what a glance at the wall display already shows anyone in
+// the home.
 void handle_glass() {
   // 16 witnesses (~90 B each) + the voiced/palette head (~420 B) peaked
   // near the old 2048 — headroom so bappend's clamp (safe but truncating)
@@ -202,7 +301,9 @@ void handle_settings_get() {
   const auto& gs = canary::glass::settings();
   char tz[48];
   canary::net::tz_current(tz, sizeof(tz));
-  char body[1280];
+  // 1280 + headroom for the per-boot CSRF token appended below the tz field
+  // (the flavor/scene blocks that follow already clamp against this cap).
+  char body[1408];
   size_t o = (size_t)snprintf(
       body, sizeof(body),
       "{\"day_pct\":%u,\"night_screen\":%u,\"red_shift\":%u,"
@@ -219,6 +320,11 @@ void handle_settings_get() {
   // UI down until someone reflashed.
   o = bappend(body, sizeof(body), o, ",\"tz\":");
   o = bappend_jstr(body, sizeof(body), o, tz);
+  // The per-boot CSRF token the write endpoints require. Delivered here (and
+  // nowhere with an Access-Control-Allow-Origin header) so only the
+  // same-origin page can read it back; the value is pure lowercase hex, so it
+  // needs no JSON escaping. See the write-guard note above.
+  o = bappend(body, sizeof(body), o, ",\"csrf\":\"%s\"", s_csrf);
 #ifdef CD_FLAVOR_DASH
   // THE BRIGHTNESS KNOB THAT WORKS ON THIS GLASS.
   //
@@ -313,6 +419,7 @@ void handle_settings_get() {
 // engine validates and debounces the NVS commit, exactly as if the change
 // had been made on the panel.
 void handle_settings_set() {
+  if (write_blocked()) return;  // Origin allowlist + per-boot CSRF token
   const String k = s_server->arg("k");
   const long v = s_server->arg("v").toInt();
   auto gs = canary::glass::settings();  // copy; setters below persist
@@ -471,6 +578,7 @@ void handle_settings_set() {
 // does. The zone lands in the same NVS the learner writes, so it outlives
 // reboots and future updates.
 void handle_tz_set() {
+  if (write_blocked()) return;  // Origin allowlist + per-boot CSRF token
   const String v = s_server->arg("v");
   // A POSIX TZ rule is printable ASCII and nothing else: letters, digits, and
   // + - : , . / < >. Refuse anything outside that rather than sanitize it,
@@ -724,7 +832,13 @@ void handle_fleet_options() {
 void glass_web_init() {
   if (s_server) return;
   canary::g_log_sink = log_capture;  // browser serial monitor from here on
+  csrf_init();                       // mint the per-boot write token
   s_server = new WebServer(80);
+  // The write guard inspects Origin and X-CSRF-Token; WebServer only retains
+  // the request headers named here (Host is always available via hostHeader()).
+  static const char* kGuardHeaders[] = {"Origin", "X-CSRF-Token"};
+  s_server->collectHeaders(kGuardHeaders,
+                           sizeof(kGuardHeaders) / sizeof(kGuardHeaders[0]));
   s_server->on("/", HTTP_GET, handle_root);
   s_server->on("/tv", HTTP_GET, handle_tv);
   s_server->on("/api/glass", HTTP_GET, handle_glass);

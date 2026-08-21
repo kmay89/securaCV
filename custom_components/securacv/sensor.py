@@ -44,7 +44,7 @@ from .const import (
     normalize_attestation,
 )
 from .device_trust import TrustStore
-from . import async_record_verify
+from . import async_record_verify, parse_mqtt_json
 from .voice import record_canary_event
 from .watch_runtime import async_observe_event
 from .health_metrics import (
@@ -308,12 +308,18 @@ async def _setup_mqtt_sensors(
 
     # Subscribe to all device topics for sensor discovery. STATUS is included
     # so the device_type-gated radar-link sensor can be created once the device
-    # identifies itself, independent of health-topic timing.
+    # identifies itself, independent of health-topic timing. The unsubscribe
+    # callables land in entry_data["unsub_mqtt"] so async_unload_entry
+    # releases them — otherwise every reload leaks wildcard subscriptions
+    # whose closures hold the previous entities_added/async_add_entities.
+    unsubs = hass.data[DOMAIN][entry.entry_id].setdefault("unsub_mqtt", [])
     for topic_suffix in [TOPIC_COUNTS, TOPIC_CHAIN, TOPIC_EVENTS, TOPIC_HEALTH, TOPIC_STATUS]:
-        await mqtt.async_subscribe(
-            hass,
-            f"{prefix}/+/{topic_suffix}",
-            _async_discover_sensors,
+        unsubs.append(
+            await mqtt.async_subscribe(
+                hass,
+                f"{prefix}/+/{topic_suffix}",
+                _async_discover_sensors,
+            )
         )
 
 
@@ -673,28 +679,32 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
         super().__init__(prefix, device_id, entry, "Witness Count", "witness_count")
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_COUNTS}",
-            self._handle_message,
+        """Subscribe to MQTT when added; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_COUNTS}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle count message."""
-        try:
-            data = json.loads(msg.payload)
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            # Not a JSON object (bare count, junk, oversized): try the plain
+            # integer fallback the firmware's earliest publishes used.
+            try:
+                self._attr_native_value = int(msg.payload)
+            except (ValueError, TypeError):
+                return
+        else:
             self._attr_native_value = data.get("total", data.get("count", 0))
             _verify_and_record(self.hass, self._entry, self._device_id,
                                data, verify_counts)
             self._attr_extra_state_attributes = _trust_attrs(
                 self.hass, self._entry, self._device_id)
-        except (json.JSONDecodeError, TypeError):
-            try:
-                self._attr_native_value = int(msg.payload)
-            except (ValueError, TypeError):
-                return
         self.async_write_ha_state()
 
 
@@ -710,28 +720,29 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
         super().__init__(prefix, device_id, entry, "Chain Length", "chain_length")
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_CHAIN}",
-            self._handle_message,
+        """Subscribe to MQTT when added; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_CHAIN}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle chain message."""
-        try:
-            data = json.loads(msg.payload)
-            self._attr_native_value = data.get("length", data.get("chain_length", 0))
-            _verify_and_record(self.hass, self._entry, self._device_id,
-                               data, verify_chain)
-            self._attr_extra_state_attributes = {
-                "latest_hash": data.get("latest_hash", ""),
-                "algorithm": data.get("algorithm", "ed25519"),
-                **_trust_attrs(self.hass, self._entry, self._device_id),
-            }
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
+        self._attr_native_value = data.get("length", data.get("chain_length", 0))
+        _verify_and_record(self.hass, self._entry, self._device_id,
+                           data, verify_chain)
+        self._attr_extra_state_attributes = {
+            "latest_hash": data.get("latest_hash", ""),
+            "algorithm": data.get("algorithm", "ed25519"),
+            **_trust_attrs(self.hass, self._entry, self._device_id),
+        }
         self.async_write_ha_state()
 
 
@@ -745,22 +756,24 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
         super().__init__(prefix, device_id, entry, "Last Event", "last_event")
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_EVENTS}",
-            self._handle_message,
+        """Subscribe to MQTT when added; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_EVENTS}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle event message."""
         try:
-            data = json.loads(msg.payload)
-            if not isinstance(data, dict):
-                # A bare JSON scalar/list would AttributeError out of the
-                # @callback on data.get() and stall the entity; route it
-                # into the except arm like the health handler does.
+            data = parse_mqtt_json(msg.payload)
+            if data is None:
+                # Not a JSON object (bare scalar/list, junk, oversized):
+                # degrade to the bounded raw-payload fallback rather than
+                # AttributeError out of the @callback and stall the entity.
                 raise TypeError("Event payload is not a JSON object")
             self._attr_native_value = data.get(
                 "event_type", data.get("type", data.get("event", "unknown"))
@@ -812,7 +825,10 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 attrs["attestation"] = normalize_attestation(data.get("attestation"))
             self._attr_extra_state_attributes = attrs
         except (json.JSONDecodeError, TypeError):
-            payload = msg.payload.decode(errors="ignore") if isinstance(msg.payload, bytes) else str(msg.payload)
+            # Slice BEFORE decoding so an oversized payload never costs a
+            # full decode just to keep 255 characters of it.
+            raw = msg.payload[:1024]
+            payload = raw.decode(errors="ignore") if isinstance(raw, bytes) else str(raw)
             self._attr_native_value = payload[:255]
         self.async_write_ha_state()
 
@@ -827,68 +843,69 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         super().__init__(prefix, device_id, entry, "Health", "health_status")
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
-            self._handle_message,
+        """Subscribe to MQTT when added; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle health message."""
-        try:
-            data = json.loads(msg.payload)
-            if not isinstance(data, dict):
-                # Valid JSON that isn't an object (array/number/...) would
-                # crash the helpers below; route it to the except block.
-                raise TypeError("health payload is not a JSON object")
-            # Both firmware spellings for battery ("battery" /
-            # "battery_soc") and memory ("memory_free" / "free_heap").
-            battery = battery_percent(data)
-            memory_free = memory_free_bytes(data)
-
-            # Battery thresholds apply only to a discharging battery:
-            # mains-powered devices (battery is None) and charging
-            # devices are not at power-loss risk, and alerting on them
-            # would be a false alarm.
-            battery_for_status = (
-                100 if battery is None or battery_charging(data) else battery
-            )
-
-            if (
-                battery_for_status < CRITICAL_BATTERY_THRESHOLD_PERCENT
-                or memory_free < WARNING_MEMORY_THRESHOLD_BYTES
-            ):
-                self._attr_native_value = "critical"
-            elif battery_for_status < WARNING_BATTERY_THRESHOLD_PERCENT:
-                self._attr_native_value = "warning"
-            else:
-                self._attr_native_value = "healthy"
-
-            self._attr_extra_state_attributes = {
-                "battery_percent": 100 if battery is None else battery,
-                "memory_free_bytes": memory_free,
-                "uptime_seconds": data.get("uptime", 0),
-                "firmware_version": data.get("firmware_version", ""),
-                "public_key": data.get("public_key", ""),
-            }
-            # Battery detail, when the firmware reports it.
-            for key in (
-                "battery_present",
-                "charge_state",
-                "battery_health_pct",
-                "battery_mv",
-            ):
-                if (val := data.get(key)) is not None:
-                    self._attr_extra_state_attributes[key] = val
-            # SD endurance metrics, when the firmware reports them.
-            if (sd := canary_sd(data)) is not None:
-                self._attr_extra_state_attributes["sd"] = sd
-            if (temp_c := data.get("temp_c")) is not None:
-                self._attr_extra_state_attributes["temp_c"] = temp_c
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            # Not a JSON object (array/number/junk/oversized): the helpers
+            # below would crash on it, so report an honest "unknown".
             self._attr_native_value = "unknown"
+            self.async_write_ha_state()
+            return
+        # Both firmware spellings for battery ("battery" /
+        # "battery_soc") and memory ("memory_free" / "free_heap").
+        battery = battery_percent(data)
+        memory_free = memory_free_bytes(data)
+
+        # Battery thresholds apply only to a discharging battery:
+        # mains-powered devices (battery is None) and charging
+        # devices are not at power-loss risk, and alerting on them
+        # would be a false alarm.
+        battery_for_status = (
+            100 if battery is None or battery_charging(data) else battery
+        )
+
+        if (
+            battery_for_status < CRITICAL_BATTERY_THRESHOLD_PERCENT
+            or memory_free < WARNING_MEMORY_THRESHOLD_BYTES
+        ):
+            self._attr_native_value = "critical"
+        elif battery_for_status < WARNING_BATTERY_THRESHOLD_PERCENT:
+            self._attr_native_value = "warning"
+        else:
+            self._attr_native_value = "healthy"
+
+        self._attr_extra_state_attributes = {
+            "battery_percent": 100 if battery is None else battery,
+            "memory_free_bytes": memory_free,
+            "uptime_seconds": data.get("uptime", 0),
+            "firmware_version": data.get("firmware_version", ""),
+            "public_key": data.get("public_key", ""),
+        }
+        # Battery detail, when the firmware reports it.
+        for key in (
+            "battery_present",
+            "charge_state",
+            "battery_health_pct",
+            "battery_mv",
+        ):
+            if (val := data.get(key)) is not None:
+                self._attr_extra_state_attributes[key] = val
+        # SD endurance metrics, when the firmware reports them.
+        if (sd := canary_sd(data)) is not None:
+            self._attr_extra_state_attributes["sd"] = sd
+        if (temp_c := data.get("temp_c")) is not None:
+            self._attr_extra_state_attributes["temp_c"] = temp_c
         self.async_write_ha_state()
 
 
@@ -910,19 +927,20 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
         super().__init__(prefix, device_id, entry, "SD Wear Estimate", "sd_wear")
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
-            self._handle_message,
+        """Subscribe to MQTT when added; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle health message for SD endurance data."""
-        try:
-            data = json.loads(msg.payload)
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
         wear = canary_sd_wear_pct(data)
         if wear is None and canary_sd(data) is None:
@@ -951,32 +969,33 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
         super().__init__(prefix, device_id, entry, "GPS Fix", "gps_fix")
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
-            self._handle_message,
+        """Subscribe to MQTT when added; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle health message for GPS data."""
-        try:
-            data = json.loads(msg.payload)
-            gps = data.get("gps", {})
-
-            if isinstance(gps, dict):
-                self._attr_native_value = gps.get("fix_type", "no_fix")
-                self._attr_extra_state_attributes = {
-                    "satellites": gps.get("satellites", 0),
-                    "hdop": gps.get("hdop", 0),
-                    "latitude": gps.get("latitude", ""),
-                    "longitude": gps.get("longitude", ""),
-                }
-            else:
-                self._attr_native_value = str(gps) if gps else "no_fix"
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
+        gps = data.get("gps", {})
+
+        if isinstance(gps, dict):
+            self._attr_native_value = gps.get("fix_type", "no_fix")
+            self._attr_extra_state_attributes = {
+                "satellites": gps.get("satellites", 0),
+                "hdop": gps.get("hdop", 0),
+                "latitude": gps.get("latitude", ""),
+                "longitude": gps.get("longitude", ""),
+            }
+        else:
+            self._attr_native_value = str(gps) if gps else "no_fix"
         self.async_write_ha_state()
 
 
@@ -1019,11 +1038,13 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
         super().__init__(prefix, device_id, entry, "Radar Link", "radar_link")
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT when added."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
-            self._handle_message,
+        """Subscribe to MQTT when added; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_message,
+            )
         )
 
     @staticmethod
@@ -1064,11 +1085,8 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle health message for radar-link data."""
-        try:
-            data = json.loads(msg.payload)
-        except (json.JSONDecodeError, TypeError):
-            return
-        if not isinstance(data, dict):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
         radar = data.get("radar")
         if not isinstance(radar, dict):

@@ -18,12 +18,20 @@ import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# A spread of what real firmware sends (tvos/discovery/DISCOVERY.md): some
+# devices carry the optional `hw` (which board — what resolves the figure a
+# client draws) and `hub` (where the device stands with its hub), and some
+# omit them the way pre-field firmware does — so a client's fallback path is
+# exercised too. The hw values are real board ids (firmware/boards/*/pins,
+# CANARY_FIGURE_HARDWARE), so the Wall's figure/turntable path lights up.
 DEVICES = [
-    {"name": "Front Door", "online": True, "chain": "ok", "product": "canary-wap"},
+    {"name": "Front Door", "online": True, "chain": "ok", "product": "canary-wap", "hub": "ok"},
     {"name": "Studio", "online": True, "chain": "ok", "product": "canary"},
-    {"name": "Garage", "online": True, "chain": "ok", "product": "canary-sense"},
+    {"name": "Garage", "online": True, "chain": "ok", "product": "canary-sense",
+     "hw": "xiao-esp32c6-mr60", "hub": "ok"},
     {"name": "Back Gate", "online": True, "chain": "ok", "product": "canary"},
-    {"name": "Driveway", "online": False, "chain": "ok", "product": "canary-vision"},
+    {"name": "Driveway", "online": False, "chain": "ok", "product": "canary-vision",
+     "hw": "xiao-esp32c3", "hub": "none"},
 ]
 
 # Populated from CLI: after JOIN_AFTER seconds, a freshly "flashed" Canary joins
@@ -53,7 +61,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path.split("?", 1)[0] in ("/api/fleet", "/api/hello"):
+        # /api/fleet only — the one endpoint the contract names. This used to
+        # also answer an "/api/hello" alias that no client in any repo ever
+        # requested; a reference kernel that answers more than the contract
+        # teaches the wrong contract.
+        if self.path.split("?", 1)[0] == "/api/fleet":
             body = json.dumps(current_fleet()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

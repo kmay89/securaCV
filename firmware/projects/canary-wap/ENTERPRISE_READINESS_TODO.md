@@ -22,8 +22,10 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
 ## 1) Critical security/privacy fixes before enterprise rollout
 
 - [x] **Eliminate fallback AP password from production paths**
-  - [x] Replace static fallback (`"witness2026"`) with mandatory device-unique generated credential.
-  - [x] Ensure fallback is compile-time-disabled for release builds.
+  - [x] Replace the static legacy fallback password with a mandatory device-unique generated credential.
+  - [x] Remove the fallback define entirely (`AP_PASSWORD_DEFAULT` deleted from `canary_config.h`;
+        `ScvNetworkManager::begin()` / `network_init()` now require an explicit password), and
+        upgrade `regression_check.sh`'s probe for the old literal from warn to **fail**.
   - [x] Update docs to remove any default-password onboarding language.
 
 - [x] **Stop exposing raw MAC addresses in WAP APIs/logs** *(canary-wap arduino; F-03)*

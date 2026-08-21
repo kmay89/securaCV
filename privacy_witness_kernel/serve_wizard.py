@@ -69,6 +69,23 @@ RESTART_DELAY_SECONDS = 1.0
 # object; the cap only exists to fail closed on absurd declared lengths.
 MAX_POST_BODY_BYTES = 1024 * 1024
 
+# The only legitimate clients of this port: the Supervisor's ingress proxy
+# (requests that passed Home Assistant's own authentication always originate
+# from 172.30.32.2) and the add-on's own loopback. The server binds 0.0.0.0 on
+# the Supervisor Docker network, so without this gate any co-resident container
+# could rewrite the add-on options — including installing a device_key_seed it
+# knows and forging the sealed log from then on — or use the wizard's proxies.
+# This is the same adversary `_public_status_options` hardens the read path
+# against; the write path must refuse it outright.
+INGRESS_PROXY_IP = "172.30.32.2"
+
+
+def _trusted_client_ips() -> frozenset:
+    extra = os.environ.get("WIZARD_TRUSTED_CLIENT_IPS", "")
+    ips = {INGRESS_PROXY_IP, "127.0.0.1", "::1"}
+    ips.update(ip.strip() for ip in extra.split(",") if ip.strip())
+    return frozenset(ips)
+
 
 # ---------------------------------------------------------------------------
 # SSRF guard for user-supplied hosts (device pairing, camera reachability test)
@@ -683,7 +700,26 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             sys.stderr.write(f"[wizard] {fmt % args}\n")
 
     # ------------------------------------------------------------------
+    def _refuse_untrusted_client(self) -> bool:
+        """True (after sending 403) unless the connection came through the
+        Supervisor ingress proxy or the add-on's own loopback."""
+        client_ip = (self.client_address or ("",))[0]
+        if client_ip in _trusted_client_ips():
+            return False
+        sys.stderr.write(
+            f"[wizard] refused direct connection from {client_ip} "
+            "(only Supervisor ingress and loopback are trusted)\n"
+        )
+        self._json_response(
+            {"ok": False, "error": "forbidden: use the Home Assistant ingress panel"},
+            status=403,
+        )
+        return True
+
+    # ------------------------------------------------------------------
     def do_GET(self):
+        if self._refuse_untrusted_client():
+            return
         # Strip the query string BEFORE routing: paths are matched by exact
         # string compare, so "/api/status?ts=1" must still route to the
         # status handler (it previously fell through to a 404/static file).
@@ -754,6 +790,8 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------
     def do_POST(self):
+        if self._refuse_untrusted_client():
+            return
         # Query strings are stripped before the exact-match routing below,
         # same as do_GET.
         path, _, _query = self.path.partition("?")
@@ -894,10 +932,33 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             retention_days = int(payload.get("retention_days", 1))
             device_key_seed = payload.get("device_key_seed", "").strip()
 
-            # Generate key if not provided
+            # The sealed log's identity is bound to the existing seed, so a
+            # reconfigure must never silently mint or swap it. Omitted seed +
+            # existing key -> reuse the existing identity. A DIFFERENT seed
+            # replaces an existing one only with proof of knowledge of the
+            # current seed — otherwise any client that reaches this endpoint
+            # could install a key it knows and forge the log from then on.
+            existing_seed = ""
+            if DEVICE_KEY_FILE.exists():
+                existing_seed = DEVICE_KEY_FILE.read_text().strip()
+
             if not device_key_seed:
-                import secrets
-                device_key_seed = secrets.token_hex(32)
+                if existing_seed:
+                    device_key_seed = existing_seed
+                else:
+                    import secrets
+                    device_key_seed = secrets.token_hex(32)
+            elif existing_seed and device_key_seed != existing_seed:
+                confirm = str(payload.get("current_device_key_seed", "") or "").strip()
+                if confirm != existing_seed:
+                    return {
+                        "ok": False,
+                        "error": (
+                            "a device key already exists; replacing it would "
+                            "orphan the sealed log. Pass the current seed as "
+                            "current_device_key_seed to authorize the change."
+                        ),
+                    }
 
             # Persist device key to file for the install script's backing-up
             # message. Created 0600 from the start — write-then-chmod would
@@ -1029,11 +1090,18 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     )
 
             # NOTE: the add-on restart is deliberately NOT triggered here —
-            # do_POST schedules it after the response is flushed.
+            # do_POST schedules it (_restart_addon_soon) after the response is
+            # flushed.
+            #
+            # The seed is deliberately NOT echoed back: the wizard UI already
+            # holds the seed it submitted (it generates one client-side), and
+            # a server-generated seed is recoverable from the 0600 key file —
+            # while an echoed copy would hand the device identity to anything
+            # that can read this response.
             return {
                 "ok": True,
                 "message": "Configuration saved. Restarting Privacy Witness Kernel…",
-                "device_key_seed": device_key_seed,
+                "device_key_file": str(DEVICE_KEY_FILE),
                 "digest": digest_result,
                 "frigate_config": frigate_note,
             }

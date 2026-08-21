@@ -264,14 +264,33 @@ test("the naive probe this replaced would have missed it", () => {
   // Regression guard for the original bug: comparing the head against the
   // last sector of the DECLARED size reads real-part content, not a mirror,
   // so it looks clean. That single non-matching probe must not say "clear"
-  // by itself — the candidate boundaries are what carry the verdict.
+  // by itself — the candidate boundaries are what carry the verdict, and
+  // with none of them probed the honest answer is "inconclusive".
   const naive = [{ atBytes: 16 * MB - 0x1000, bytes: OTHER.slice() }];
   assert.equal(flashAliasVerdict({ declaredBytes: 16 * MB, head: HEAD, probes: naive }).level,
-    "clear");
+    "inconclusive");
   const real = flashAliasCandidates(16 * MB).map((at) => ({
     atBytes: at, bytes: at % (4 * MB) === 0 ? HEAD.slice() : OTHER.slice(),
   }));
   assert.equal(flashAliasVerdict({ declaredBytes: 16 * MB, head: HEAD, probes: real }).level,
+    "stop");
+});
+
+test("probes that stop short of the claim never invent a 'clear'", () => {
+  // "Clear" is a positive claim about EVERY capacity below the declared
+  // size. Hand the verdict only the low candidates (the reads stopped short)
+  // and it must say inconclusive, not vouch for capacities it never saw —
+  // the same rule the desktop twin (intake.rs) enforces on a truncated dump.
+  const partial = flashAliasCandidates(16 * MB)
+    .filter((at) => at < 1 * MB)
+    .map((at) => ({ atBytes: at, bytes: OTHER.slice() }));
+  const v = flashAliasVerdict({ declaredBytes: 16 * MB, head: HEAD, probes: partial });
+  assert.equal(v.level, "inconclusive");
+  assert.match(v.label, /16 MB/);
+  // An alias hit inside the readable range still refuses the board outright.
+  const mirrored = partial.concat([{ atBytes: 1 * MB, bytes: HEAD.slice() }]);
+  assert.equal(
+    flashAliasVerdict({ declaredBytes: 16 * MB, head: HEAD, probes: mirrored }).level,
     "stop");
 });
 

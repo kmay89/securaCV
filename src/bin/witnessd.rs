@@ -1489,11 +1489,27 @@ fn seal_latest_frame(
             hex::encode(ruleset_hash)
         ));
     }
-    let Some(frame) = frame_buffer.drain_for_vault(token).next() else {
-        return Ok(None);
-    };
     let envelope_id = token.vault_envelope_id().to_string();
     let verifying_key = kernel.device_verifying_key();
+    // Validate the token BEFORE the drain (spec/invariants.md §3.1): draining
+    // destroys and zeroizes the entire pre-roll buffer, so a stale or
+    // mismatched token must fail while the incident's pre-roll is still
+    // intact — otherwise one expired token erases the evidence it was meant
+    // to seal. The vault re-validates (and consumes) inside seal_frame.
+    witness_kernel::break_glass::BreakGlass::assert_token_valid(
+        token,
+        &envelope_id,
+        ruleset_hash,
+        witness_kernel::TimeBucket::now(600)?,
+        &verifying_key,
+        |hash| kernel.break_glass_receipt_outcome(&envelope_id, ruleset_hash, hash),
+    )?;
+    // `.last()` seals the NEWEST frame — the one closest to the triggering
+    // event, matching this function's name — while the drain still clears and
+    // zeroizes the remaining pre-roll, as the buffer contract requires.
+    let Some(frame) = frame_buffer.drain_for_vault(token).last() else {
+        return Ok(None);
+    };
     vault.seal_frame(
         &envelope_id,
         token,

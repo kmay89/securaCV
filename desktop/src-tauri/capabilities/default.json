@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the SecuraCV Flasher main window: run the bundled espflash sidecar, open dialogs and external docs, and self-update.",
+  "description": "Permissions for the SecuraCV Flasher main window: open dialogs and external docs, and self-update. Deliberately NO shell permission: every espflash/rpiboot sidecar spawn happens Rust-side (launch_guard::spawn_tracked via ShellExt), which the webview capability system does not gate — so granting the webview shell:allow-execute (it used to, with args:true) only widened what an injected script could do, without being needed by anything. The frontend never calls plugin:shell.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -9,21 +9,6 @@
     "updater:default",
     "process:default",
     "opener:default",
-    "notification:default",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "espflash",
-          "sidecar": true,
-          "args": true
-        },
-        {
-          "name": "rpiboot",
-          "sidecar": true,
-          "args": true
-        }
-      ]
-    }
+    "notification:default"
   ]
 }

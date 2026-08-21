@@ -26,6 +26,31 @@ private final class StubTransport: FleetTransport, @unchecked Sendable {
     }
 }
 
+/// A transport that also serves a sealed log — the seam for proving the
+/// verify wiring (WallModel.refreshVerification) without a socket.
+private final class SealedLogTransport: FleetTransport, @unchecked Sendable {
+    /// Fleet answers, consumed in order; the last one repeats.
+    var fleetAnswers: [Result<String, Error>]
+    let sealedLog: String?
+    private var calls = 0
+
+    init(fleet: [Result<String, Error>], sealedLog: String?) {
+        self.fleetAnswers = fleet
+        self.sealedLog = sealedLog
+    }
+
+    func fetchFleet(from base: URL) async throws -> String {
+        let answer = fleetAnswers[min(calls, fleetAnswers.count - 1)]
+        calls += 1
+        switch answer {
+        case .success(let body): return body
+        case .failure(let error): throw error
+        }
+    }
+
+    func fetchSealedLog(from base: URL) async -> String? { sealedLog }
+}
+
 private let goodFleet = #"{"kernel":"kitchen-hub","devices":[{"name":"Front Door"},{"name":"Studio"}]}"#
 
 @MainActor
@@ -323,6 +348,105 @@ final class WallModelTests: XCTestCase {
                      "a bad address must not be saved, or it re-fails on every boot")
     }
 
+    // MARK: This TV's own verification — what may (and may not) say "Verified".
+
+    /// A document that IS a sealed log, under a real key, whose chain is
+    /// broken: the first entry claims a prev_hash that is not the genesis
+    /// head. The verifying key is the Ed25519 base point — a valid key — so
+    /// the core reaches the chain walk and fails THERE, the way a tampered
+    /// log fails, not the way garbage fails.
+    private var tamperedSealedLog: String {
+        """
+        {
+          "verifying_key": "5866666666666666666666666666666666666666666666666666666666666666",
+          "entries": [
+            {"id": 7, "payload": "{}",
+             "prev_hash": "\(String(repeating: "a", count: 64))",
+             "entry_hash": "\(String(repeating: "b", count: 64))",
+             "signature": "\(String(repeating: "c", count: 128))"}
+          ]
+        }
+        """
+    }
+
+    private func singleSourceDefaults() -> UserDefaults {
+        let defaults = scratchDefaults()
+        defaults.set(["canary.local:8099"], forKey: "SecuraCVWallSources")
+        return defaults
+    }
+
+    func testNoSealedLogServedMeansNoVerdict() async {
+        // Today this is EVERY source — no kernel or firmware ships the
+        // endpoint yet — and the honest answer is no verdict at all: the
+        // banner then says the fleet REPORTS verified, never that this TV
+        // verified anything.
+        let m = WallModel(transport: SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: nil),
+                          defaults: singleSourceDefaults(), pollInterval: 0.01, discover: { _ in [] })
+        await m.refreshOnce()
+
+        guard case .live = m.state else {
+            return XCTFail("expected .live, got \(m.state)")
+        }
+        XCTAssertNil(m.report)
+    }
+
+    func testAServedSealedLogBecomesThisTVsOwnVerdict() async throws {
+        let m = WallModel(
+            transport: SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog),
+            defaults: singleSourceDefaults(), pollInterval: 0.01, discover: { _ in [] })
+        await m.refreshOnce()
+
+        let report = try XCTUnwrap(m.report, "a served sealed log must be verified, not ignored")
+        XCTAssertFalse(report.ok, "a broken chain must never render as fine")
+        XCTAssertEqual(report.failedAt, 7, "the verdict names the entry that broke")
+    }
+
+    func testAnAnswerThatIsNotASealedLogIsANonAnswerNotAFailedVerification() async {
+        // A squatted host answering 200 HTML must not put an alarm on the
+        // household's wall — the same "keep looking, never close enough"
+        // rule the fleet parse applies to captive portals.
+        let m = WallModel(
+            transport: SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: "<html>Sign in</html>"),
+            defaults: singleSourceDefaults(), pollInterval: 0.01, discover: { _ in [] })
+        await m.refreshOnce()
+
+        XCTAssertNil(m.report)
+    }
+
+    func testAMultiSourceWallCarriesNoVerdict() async {
+        // One chain from one Canary must not banner devices another one
+        // reported — the same rule merged() applies to verified_through.
+        let defaults = scratchDefaults()
+        defaults.set(["a.local", "b.local"], forKey: "SecuraCVWallSources")
+        let m = WallModel(
+            transport: SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog),
+            defaults: defaults, pollInterval: 0.01, discover: { _ in [] })
+        await m.refreshOnce()
+
+        guard case .live = m.state else {
+            return XCTFail("expected .live, got \(m.state)")
+        }
+        XCTAssertNil(m.report)
+    }
+
+    func testLosingTheSourceDropsTheVerdict() async {
+        // A remembered verdict is not a current verdict — the same rule
+        // withEveryDeviceOffline applies to a remembered verified_through.
+        let m = WallModel(
+            transport: SealedLogTransport(
+                fleet: [.success(goodFleet), .failure(FleetError.unreachable("gone"))],
+                sealedLog: tamperedSealedLog),
+            defaults: singleSourceDefaults(), pollInterval: 0.01, discover: { _ in [] })
+        await m.refreshOnce()
+        XCTAssertNotNil(m.report, "the served sealed log earned a verdict while live")
+
+        await m.refreshOnce()
+        guard case .stale = m.state else {
+            return XCTFail("expected .stale, got \(m.state)")
+        }
+        XCTAssertNil(m.report)
+    }
+
     func testAGoodAddressIsPersistedSoAPowerCutHealsItself() {
         let defaults = scratchDefaults()
         let m = model([.success(goodFleet)], defaults: defaults)
@@ -363,6 +487,16 @@ final class FleetAddressTests: XCTestCase {
     func testPastingTheFullEndpointDoesNotDoubleIt() throws {
         let base = try FleetAddress.normalize("http://canary.local:8099/api/fleet")
         XCTAssertEqual(FleetAddress.endpoint(for: base).path, "/api/fleet")
+    }
+
+    func testTheSealedLogEndpointSitsBesideTheFleetEndpoint() throws {
+        let base = try FleetAddress.normalize("canary.local:8099")
+        XCTAssertEqual(FleetAddress.sealedLogEndpoint(for: base).path, "/api/sealed-log")
+    }
+
+    func testPastingTheFullFleetURLStillFindsTheSealedLog() throws {
+        let base = try FleetAddress.normalize("http://canary.local:8099/api/fleet")
+        XCTAssertEqual(FleetAddress.sealedLogEndpoint(for: base).path, "/api/sealed-log")
     }
 }
 

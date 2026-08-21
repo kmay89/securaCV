@@ -3,7 +3,10 @@
 > **Purpose:** the single driver sheet for the one remaining v1 gate — *on-device hardware
 > validation*. Everything documented is already green in CI; this runbook takes it onto real
 > hardware. It **sequences and references** the detailed procedures that already live in the repo
-> rather than duplicating them, and gives you one results matrix to sign off.
+> rather than duplicating them — chiefly
+> [`hardware/v1_bench_validation_runbook.md`](hardware/v1_bench_validation_runbook.md), whose
+> per-track pass criteria and artifact lists apply to Tracks A–C here — and gives you one
+> results matrix to sign off.
 >
 > **Companion:** [`V1_LAUNCH_REVIEW.md`](V1_LAUNCH_REVIEW.md) (the why) · this doc is the how.
 > **Closes:** the "on-device validation pending" blocker in `v1-roadmap.md` and issue **#610**.
@@ -12,8 +15,8 @@
 Work the four tracks top to bottom. Each step lists the **command/reference**, the **expected
 result**, and the **artifact** to capture. File artifacts under `docs/audit/repro/<track>/` (the
 dirs #610 expects to be filled). When every row in the §5 matrix is ✅ with an artifact, flip the
-README badge `v1-rc → v1.0`, date the `CHANGELOG.md [1.0.0]` entry, and bump the crate `0.5.0 →
-1.0.0` (the tag step).
+README badge `v1-rc → v1.0`, date the `CHANGELOG.md [1.0.0]` entry, and bump the crate version
+in `Cargo.toml` to `1.0.0` (the tag step).
 
 ---
 
@@ -128,6 +131,6 @@ present. Confirm the v1 image actually runs it.
 | D | HTTPS:443 + redirect + cert match | ☐ | |
 
 **Exit criteria → tag v1.0:** every row ✅ with an artifact, all CI checks green, then run the
-tag step (badge `v1-rc → v1.0`, `CHANGELOG [1.0.0]` dated, crate `0.5.0 → 1.0.0`).
+tag step (badge `v1-rc → v1.0`, `CHANGELOG [1.0.0]` dated, crate version → `1.0.0`).
 Anything that fails on hardware comes back as a code fix (CI-gated) before re-running its track —
 the loop has a terminal state and this matrix is how you drive it there.

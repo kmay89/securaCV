@@ -160,6 +160,45 @@ Per the Ambient Display Standard and securaCV's whole premise:
 - **No "verified" it didn't check, no ads, no engagement mechanics, no
   silence-reads-as-safe.** All enforced in the shipped `/tv` page.
 
+## Security posture on the LAN (be honest about the edge)
+
+The no-hub story is built on serving the fleet snapshot openly on the home
+network, and that convenience is a deliberate trust trade-off worth stating
+plainly rather than hiding:
+
+- **The reads are unauthenticated by design.** `GET /api/glass`, `GET /api/fleet`
+  and the `/` and `/tv` pages are served without a credential — that is the LAN
+  glance the product promises. `/api/glass` carries per-witness presence and
+  wellbeing (`wb` = someone is home, `br` = breathing), so treat that as
+  visible to anyone already on the WiFi. `/api/glass` sets no
+  `Access-Control-Allow-Origin`, so the browser same-origin policy blocks a
+  drive-by web page from *reading* it cross-origin; the residual reader is a
+  host already on the LAN that knows the device address. That direct-LAN host
+  is the documented trust boundary for the whole mirror surface — a read shows
+  only what a glance at the wall display already shows anyone in the home.
+- **The writes are gated.** The state-changing POSTs `/api/set` (brightness,
+  Character, clock, orientation, nightlight) and `/api/tz` (timezone) are *not*
+  open: each requires an `Origin`/`Host` allowlist match plus a per-boot CSRF
+  token minted from the hardware RNG and handed only to the same-origin page in
+  `/api/settings` (which carries no CORS header, so a cross-origin script cannot
+  read it back). This closes the drive-by CSRF where a web page the owner
+  visits blind-POSTs `http://<canary>.local/api/tz` to re-persist device
+  settings. It does not — and is not meant to — stop a direct-LAN host that
+  reads the page and its token itself; that is the same boundary the reads sit
+  on. See the write-guard note in `glass_web.cpp`.
+- **The display↔broker MQTT link is plaintext by default.** `mqtt_mgr.cpp`
+  connects over TCP 1883 with a plain `WiFiClient` (no TLS), so a LAN sniffer
+  can see the MQTT username/password and every retained status/health/chain and
+  presence payload for the fleet. This is the common local-broker trade-off and
+  it is a deliberate default, not an oversight: the intended deployment is a
+  broker on the same trusted home LAN. Two honest caveats follow from it — (1)
+  at-rest protection of the NVS-stored broker credentials relies on the
+  flash-encrypted secure build (`provisioning/sdkconfig.defaults.secure`), not
+  the default unencrypted NVS; and (2) an opt-in `WiFiClientSecure` path with a
+  pinned broker CA is the hardening option for households that want the link
+  encrypted end-to-end. Until that ships, do not describe the display's MQTT
+  telemetry as confidential on the wire.
+
 ## Open decisions (for review)
 
 1. **Bless the Pi-class dongle as "Canary TV," or ship only the software

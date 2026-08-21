@@ -80,5 +80,10 @@ enum PinnedKeyStore {
         return .pinned
     }
 
+    /// Drop the pin — ONLY on unpair (DeviceStore.remove). The pin lives
+    /// exactly as long as the pairing it vouches for; while paired, a key is
+    /// never forgotten or replaced, which is what makes `.changed` meaningful.
+    static func forget(_ deviceID: String) { Keychain.delete(account: deviceID, service: service) }
+
     enum PinResult: Equatable { case pinned, matches, changed(previous: Data) }
 }
