@@ -84,7 +84,10 @@
 // ============================================================================
 
 #define CONFIG_AP_SSID_PREFIX           "SecuraCV-"
-#define CONFIG_AP_PASSWORD_DEFAULT      "witness2026"
+// No CONFIG_AP_PASSWORD_DEFAULT: the AP password is always device-unique,
+// derived at runtime from the device key (see derive_ap_password in the
+// sketch). A shared compile-time default was removed on purpose — do not
+// reintroduce one (regression_check.sh fails the build on the old literal).
 #define CONFIG_AP_CHANNEL               1
 #define CONFIG_AP_MAX_CLIENTS           4
 #define CONFIG_AP_HIDDEN                0

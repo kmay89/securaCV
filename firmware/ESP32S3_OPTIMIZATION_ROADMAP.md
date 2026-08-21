@@ -218,7 +218,8 @@ unsafe behavior, verified during the audit.
 8. **Stale/false in-code claims to correct while touching these.** The auth header says "wiring
    happens in Phase 2" but auth **is** wired (`auth_gate` on ~91 of 98 handlers,
    [`securacv_network.cpp:757`](canary/lib/securacv_network/src/securacv_network.cpp)); the
-   `bluetooth_mgr.h` pairing/bonding manager and `ble_debug_beacon` are **orphaned dead code**;
+   `bluetooth_mgr.h` pairing/bonding manager is **orphaned dead code** (`ble_debug_beacon` was
+   removed in the repo audit cleanup);
    the "single main-loop task" thread-safety comments on the Scout tracker/roster are **wrong**
    (the advert callback runs in the NimBLE host task — a real data race the moment item 3 is
    fixed). Clean these up so the next reader isn't misled.
@@ -244,8 +245,8 @@ Untapped / issues beyond the P0s above:
   mixes real and guessed IDs. Wrong exposure/color on two of the three sensors the board ships. **[P1]**
 - **Software JPEG decode every vision frame** instead of asking the sensor for a small
   RGB565/grayscale via DCW/binning — free downscale left on the table. **[P1]**
-- `firmware/common/camera/camera_mgr.h` is a **second, unused camera implementation** — converge
-  or delete to avoid two divergent stacks. **[P2]**
+- ~~`firmware/common/camera/camera_mgr.h` is a **second, unused camera implementation**~~ —
+  deleted in the repo audit cleanup; `securacv_camera` is the only camera stack. **[done]**
 
 ### 3.2 Audio (`securacv_audio`) — legacy driver, scalar DSP
 
@@ -298,8 +299,9 @@ Untapped / issues:
 - **ESP-NOW uses the default rate and unauthenticated broadcast pairing.**
   `esp_wifi_config_espnow_rate()` (pin a robust low/LR rate) improves mesh range/reliability;
   app-layer AEAD already covers confidentiality. **[P2]**
-- **WPA3-Personal + PMF** on STA and SoftAP, plus a **per-device random AP password** instead of
-  the shared `"witness2026"` fallback ([`canary_config.h:276`](canary/include/canary_config.h)).
+- **WPA3-Personal + PMF** on STA and SoftAP. (The AP password is already per-device — the shared
+  legacy fallback macro was deleted from [`canary_config.h`](canary/include/canary_config.h) and
+  `begin()` now requires an explicit credential.)
   The IDF OTA sub-project already sets `pmf_cfg`; the main firmware doesn't. **[P1, unblocked by §1.1]**
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**

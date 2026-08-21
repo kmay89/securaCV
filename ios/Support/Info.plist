@@ -45,9 +45,9 @@
   <key>NSHomeKitUsageDescription</key>
   <string>Add your Canaries to Apple Home so they can trigger your automations. Only coarse status is shared — never footage.</string>
 
-  <!-- Microphone: two-way talk to a doorbell-class Canary (opt-in, per use). -->
-  <key>NSMicrophoneUsageDescription</key>
-  <string>Talk through a Canary that supports two-way audio. The mic is used only while you're talking.</string>
+  <!-- No microphone usage string, on purpose: the app records nothing and
+       has no talk feature. If two-way talk ever lands, the mic string, the
+       session plumbing, and the UI arrive together in that change. -->
 
   <!-- CloudKit sharing: without this key iOS opens an invitation link in
        Safari instead of handing it to the app, so "someone else can be told
@@ -57,12 +57,14 @@
   <key>CKSharingSupported</key>
   <true/>
 
-  <!-- Local notifications + background delivery for alerts and heartbeat. -->
+  <!-- Background delivery for the away-path wakes (APNs). ONLY
+       remote-notification: the BLE scan is foreground-only by design
+       (BLEConsole/FleetStore stop it when the scene deactivates), and no
+       code plays background audio — declaring modes nothing uses is an App
+       Review rejection trigger and an overclaim besides. -->
   <key>UIBackgroundModes</key>
   <array>
     <string>remote-notification</string>
-    <string>bluetooth-central</string>
-    <string>audio</string>
   </array>
 
   <key>UILaunchScreen</key>

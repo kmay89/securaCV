@@ -74,6 +74,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # contents: write to publish the release; id-token + attestations to sign
+    # and store the build-provenance attestation (mirrors firmware-release.yml).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -87,11 +93,43 @@ jobs:
           if [ ! -s release_notes.md ]; then
             echo "Release ${VERSION}" > release_notes.md
           fi
+      # The trust-critical verifier binaries (log_verify, export_verify, …) ship
+      # here with no integrity artifact of their own — unlike the firmware
+      # release, which publishes sha256sums.txt and a provenance attestation.
+      # Mirror both: a checksum file users can diff, and a signed, public record
+      # (Sigstore/Rekor) of who built these tarballs from which commit. Verify:
+      #   gh attestation verify <tarball> --repo ${{ github.repository }}
+      - name: Generate SHA-256 checksums
+        run: |
+          set -euo pipefail
+          # download-artifact places each tarball under artifacts/<name>/, but
+          # the release publishes them as FLAT assets by basename — so the
+          # checksum lines must carry basenames, or a user who downloads the
+          # assets into one directory can never run `sha256sum -c`. Basenames
+          # are unique per-arch; fail loudly if that ever stops being true
+          # rather than emitting an ambiguous checksum file.
+          dupes="$(find artifacts -type f -name '*.tar.gz' -printf '%f\n' | sort | uniq -d)"
+          if [ -n "$dupes" ]; then
+            echo "::error::duplicate tarball basenames across artifacts: $dupes"
+            exit 1
+          fi
+          find artifacts -type f -name '*.tar.gz' | sort | while read -r f; do
+            ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" )
+          done > sha256sums.txt
+          cat sha256sums.txt
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            artifacts/**/*.tar.gz
+            sha256sums.txt
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           body_path: release_notes.md
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            sha256sums.txt
 
   validate-hacs:
     needs: test

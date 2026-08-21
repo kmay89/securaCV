@@ -38,7 +38,12 @@ async def async_get_config_entry_diagnostics(
                 trust_info[device_id] = {
                     "pinned": bool(entry_trust.fingerprint_hex),
                     "pin_source": getattr(entry_trust, "pin_source", "unknown"),
-                    "fingerprint": entry_trust.fingerprint_hex[:16] + "…" if entry_trust.fingerprint_hex else None,
+                    # The full fingerprint is exactly 16 hex chars
+                    # (device_trust: sha256 digest[:8].hex()), so truncate
+                    # to half of it — diagnostics dumps get shared publicly,
+                    # and 8 chars is plenty to correlate against /enroll
+                    # without republishing the whole identifier.
+                    "fingerprint": entry_trust.fingerprint_hex[:8] + "…" if entry_trust.fingerprint_hex else None,
                 }
 
     verify_info: dict[str, Any] = {}

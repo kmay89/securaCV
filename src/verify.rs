@@ -234,7 +234,7 @@ pub fn load_break_glass_policy(conn: &Connection) -> Result<Option<QuorumPolicy>
 /// the same host-trust boundary the external high-water-mark work closes.
 pub fn load_authenticated_policy_eras(
     conn: &Connection,
-    device_key: &VerifyingKey,
+    trusted_signers: &[VerifyingKey],
     pq_public_key: Option<&PqPublicKey>,
 ) -> Result<Vec<QuorumPolicy>> {
     // The table may not exist on a pre-feature database.
@@ -259,6 +259,7 @@ pub fn load_authenticated_policy_eras(
     let mut expected_prev = [0u8; 32];
     let mut prev_new_commitment: Option<[u8; 32]> = None;
     let mut index = 0u64;
+    let mut last_ok_signer = 0usize;
     while let Some(row) = rows.next()? {
         let payload: String = row.get(0)?;
         let approvals_json: String = row.get(1)?;
@@ -281,10 +282,13 @@ pub fn load_authenticated_policy_eras(
                 index
             ));
         }
-        // (1) device signature over the entry hash.
+        // (1) device signature over the entry hash — by any validated lineage
+        // key: policy changes recorded after a device-key rotation are signed
+        // by the then-current key, not genesis.
         let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
-        verify_entry_signature(
-            device_key,
+        verify_entry_signature_any(
+            trusted_signers,
+            &mut last_ok_signer,
             &entry_hash,
             &signature_set,
             SignatureMode::Compat,
@@ -578,9 +582,54 @@ where
     Ok(count)
 }
 
+/// Verify an entry-hash signature set against the genesis-anchored device key
+/// lineage. Receipt-ledger and policy-change rows are signed by the device key
+/// **current at write time**, so a ledger legitimately mixes signers across a
+/// `rotate_device_identity`; every lineage key was cryptographically validated
+/// during reconstruction (possession attestation + predecessor authorization
+/// anchored at genesis), so any of them is an acceptable signer, and a
+/// signature that verifies under none of them is a forgery or corruption.
+///
+/// `last_ok` caches the index of the last key that verified: rows are appended
+/// in key order, so contiguous runs verify on the first try.
+fn verify_entry_signature_any(
+    trusted_signers: &[VerifyingKey],
+    last_ok: &mut usize,
+    entry_hash: &[u8; 32],
+    signatures: &SignatureSet,
+    mode: SignatureMode,
+    pq_public_key: Option<&PqPublicKey>,
+    domain: &str,
+) -> Result<()> {
+    if trusted_signers.is_empty() {
+        return Err(anyhow!("no trusted signer keys supplied"));
+    }
+    let n = trusted_signers.len();
+    let start = (*last_ok).min(n - 1);
+    let mut last_err = None;
+    for offset in 0..n {
+        let idx = (start + offset) % n;
+        match verify_entry_signature(
+            &trusted_signers[idx],
+            entry_hash,
+            signatures,
+            mode,
+            pq_public_key,
+            domain,
+        ) {
+            Ok(()) => {
+                *last_ok = idx;
+                return Ok(());
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.expect("at least one signer was tried"))
+}
+
 pub fn verify_break_glass_receipts_with<F>(
     conn: &Connection,
-    verifying_key: &VerifyingKey,
+    trusted_signers: &[VerifyingKey],
     policy: Option<&QuorumPolicy>,
     mode: SignatureMode,
     pq_public_key: Option<&PqPublicKey>,
@@ -596,13 +645,14 @@ where
     // Ground truth for a receipt's declared policy era: the authenticated
     // policy-change history (chain + device signature + approvals binding +
     // per-transition quorum consent). Loaded once for the whole ledger walk.
-    let history = load_authenticated_policy_eras(conn, verifying_key, pq_public_key)?;
+    let history = load_authenticated_policy_eras(conn, trusted_signers, pq_public_key)?;
 
     let mut rows = stmt.query([])?;
     let mut expected_prev = [0u8; 32];
     let mut count = 0u64;
     let mut granted = 0u64;
     let mut denied = 0u64;
+    let mut last_ok_signer = 0usize;
 
     while let Some(row) = rows.next()? {
         let policy = policy.ok_or_else(|| {
@@ -653,8 +703,9 @@ where
             ));
         }
 
-        if verify_entry_signature(
-            verifying_key,
+        if verify_entry_signature_any(
+            trusted_signers,
+            &mut last_ok_signer,
             &entry_hash,
             &signature_set,
             mode,
@@ -719,7 +770,7 @@ where
 
 pub fn verify_export_receipts_with<F>(
     conn: &Connection,
-    verifying_key: &VerifyingKey,
+    trusted_signers: &[VerifyingKey],
     mode: SignatureMode,
     pq_public_key: Option<&PqPublicKey>,
     mut on_receipt: F,
@@ -734,6 +785,7 @@ where
     let mut rows = stmt.query([])?;
     let mut expected_prev = [0u8; 32];
     let mut count = 0u64;
+    let mut last_ok_signer = 0usize;
 
     while let Some(row) = rows.next()? {
         let id: i64 = row.get(0)?;
@@ -775,8 +827,9 @@ where
             ));
         }
 
-        if verify_entry_signature(
-            verifying_key,
+        if verify_entry_signature_any(
+            trusted_signers,
+            &mut last_ok_signer,
             &entry_hash,
             &signature_set,
             mode,

@@ -34,7 +34,12 @@ enum WallState: Equatable {
 @Observable
 final class WallModel {
     private(set) var state: WallState = .needsHub
-    /// The last verification verdict, when the hub serves a sealed log.
+    /// The verdict of THIS TV's own verification of the sealed log, refreshed
+    /// every poll cycle (`refreshVerification`) — nil whenever the source
+    /// serves no sealed log, which is every source until a hub ships the
+    /// endpoint. The header banner keys off it: only a non-nil `ok` verdict
+    /// may say "Verified"; everything else is phrased as the fleet's own
+    /// report, because that is all it is.
     private(set) var report: VerifyReport?
     /// Where the fleet answers, persisted so a power cut heals itself. ONE
     /// entry when a hub (or a typed address) fronts the fleet; SEVERAL when
@@ -165,6 +170,8 @@ final class WallModel {
             return
         }
         persist([typed])
+        // The old source's verdict does not cover the new source's fleet.
+        report = nil
         backoff.reset()
         state = .connecting(to: typed)
         start()
@@ -298,11 +305,47 @@ final class WallModel {
         // troubled chain) — see ResidentWatch.
         resident.observe(snapshot)
         backoff.reset()
+        await refreshVerification()
+    }
+
+    /// One verify pass of this TV's own: fetch the sealed log and run the
+    /// Rust core over it, every poll cycle. This is what earns the header's
+    /// "Verified" — a fleet that renders is not the same claim as a chain
+    /// that verifies, and conflating them is exactly how a wall starts lying.
+    ///
+    /// Two honesty rules bound it:
+    ///  * ONE verdict, ONE source — the same rule `FleetSnapshot.merged`
+    ///    applies to `verified_through`: a chain fetched from one Canary must
+    ///    not banner devices another one reported, so a multi-source wall
+    ///    carries no verdict at all.
+    ///  * A body that is not a sealed log AT ALL (a squatted host's login
+    ///    page, an endpoint nobody serves — today, every source) is a
+    ///    non-answer, not a failed verification: same "keep looking, never
+    ///    close enough" rule the fleet parse applies. The core reports that
+    ///    case as malformed with no failing entry, which is the one shape
+    ///    that never indicts a real chain.
+    private func refreshVerification() async {
+        guard sources.count == 1,
+              let address = try? FleetAddress.normalize(sources[0]),
+              let sealed = await transport.fetchSealedLog(from: address) else {
+            report = nil
+            return
+        }
+        let verdict = try? WitnessCore.verify(sealedLogJSON: sealed)
+        if let verdict, verdict.kind == .malformed, verdict.failedAt == nil {
+            report = nil
+        } else {
+            report = verdict
+        }
     }
 
     /// Losing the hub keeps the last good fleet on screen, clearly marked
     /// stale. Never having had one says so instead of showing an empty wall.
+    /// The verify verdict does NOT survive the loss — a remembered verdict is
+    /// not a current verdict, the same rule `withEveryDeviceOffline` applies
+    /// to a remembered `verified_through`.
     private func degrade(reason: String) {
+        report = nil
         switch state {
         case .live(let snapshot, let asOf):
             state = .stale(snapshot, since: asOf, reason: reason)
@@ -361,12 +404,5 @@ final class WallModel {
                 return   // canceled
             }
         }
-    }
-
-    /// Verify a sealed log the hub served. Kept separate from the fleet poll:
-    /// a fleet that renders is not the same claim as a chain that verifies, and
-    /// conflating them is exactly how a wall starts lying.
-    func verify(sealedLogJSON json: String) {
-        report = try? WitnessCore.verify(sealedLogJSON: json)
     }
 }

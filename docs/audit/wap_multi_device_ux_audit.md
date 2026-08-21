@@ -17,6 +17,17 @@ Canary the user will ever own, never mentions adding another, and the fleet
 manager isn't reachable from any URL the user can find. This document is the
 audit of that gap plus the design we are moving toward.
 
+> **Status note (2026-08-21):** `firmware/fleet-manager.html` no longer exists
+> in the tree — it was retired in favor of the canary-vision SPA (see
+> `firmware/README.md`, "The former standalone `fleet-manager.html` has been
+> retired in favor of the app"). Read every mention of it below as a
+> description of the tree *at audit time*: the §1 inventory row, §4.1's
+> "serve it from `GET /home`" recommendation, and the §7/effort-table items
+> that port it to PROGMEM are **no longer actionable as written**. The intent
+> they carry — a household-aware fleet view served from a URL a new user can
+> find — still stands, but it would now be built from the canary-vision SPA,
+> not from the retired file.
+
 ---
 
 ## 1. UI surface inventory (WAP firmware)
@@ -178,6 +189,9 @@ We already have the pieces. We just have to wire them together and serve
 them from somewhere a new user will find.
 
 ### 4.1 The /home view (NEW)
+
+> *(No longer actionable as written — the file was retired; see the status
+> note at the top.)*
 
 Serve `firmware/fleet-manager.html` from `GET /home` on the WAP build
 (small change, large impact) so the wizard's "Finish" can link to

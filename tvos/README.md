@@ -38,10 +38,17 @@ live-view-only with **no history on tvOS**; and the one good first-party app
 (UniFi Protect) still demands cloud SSO login and $200+ hardware. Three
 categories are simply **empty**, and this app sits in all three:
 
-1. **Integrity you can see.** No shipping product on any TV platform renders
-   cryptographic proof that the record is intact. The Wall's "verified ✓" is
-   the Rust core actually verifying the kernel's chain — pinned by CI to the
-   kernel's own test vectors, never a hardcoded string.
+1. **Integrity you can see — and phrased honestly until it's proven.** No
+   shipping product on any TV platform renders cryptographic proof that the
+   record is intact. The Wall's verification core is real — a Rust
+   implementation of the kernel's chain math, pinned by CI to the kernel's
+   own test vectors — and the app asks every poll cycle for a sealed log
+   (`GET /api/sealed-log`) to run it on. When a source serves one, that
+   verdict — pass or fail — is what the banner says. **No kernel or firmware
+   ships that endpoint yet**, so today the Wall labels the fleet's status as
+   what it is — the devices' own report ("Your fleet reports verified
+   through …", "reports record ok") — and the word "Verified" stays reserved
+   for a chain this TV actually walked.
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
    well-known LAN addresses the desktop Flasher and Lab probe
    (`canary.local`), finds the fleet by itself, and remembers it. No account,
@@ -97,9 +104,11 @@ release path. If it ever fails, the TV is wrong. Never "fix" it by regenerating
 the vectors from this crate — that deletes the only thing keeping the two in
 agreement.
 
-The point, same as iOS: **reuse, don't rebuild.** The chain-verification logic
-is the workspace's existing Rust core, compiled for Apple TV — never a second
-implementation that could disagree with the kernel.
+The discipline this serves is **one definition, proven twice** — not "the same
+crate compiled twice", which the paragraph above explains is impossible here.
+The chain is defined once, by the kernel's pinned bytes and fixtures; this
+crate is a second implementation of exactly those bytes, and the CI vector
+check is what keeps it from ever becoming a second opinion.
 
 ## What you need (one time)
 

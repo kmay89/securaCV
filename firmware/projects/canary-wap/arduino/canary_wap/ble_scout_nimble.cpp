@@ -16,6 +16,20 @@
  *   nimble_scan_init()  — called from ble_scout_init() (device build only).
  *   nimble_scan_start() — start continuous passive scan.
  *   nimble_scan_stop()  — release the radio (e.g. for OTA).
+ *
+ * VENDORED COPY — intentional divergences from the canonical library
+ * (firmware/canary/lib/securacv_ble_scan/src/ble_scout_nimble.cpp), normalized
+ * away by firmware/scripts/check_ble_scan_sync.sh:
+ *   1. No fleet_roster_feed consumer. The canonical Scout offers each advert's
+ *      manufacturer data to fleet_roster_feed (tracking OTHER Canaries). The WAP
+ *      tracks its fleet through the mesh layer (mesh_network / ble_nearby),
+ *      never the Scout scan, so fleet_roster_feed — and its fleet_roster.h
+ *      dependency — is deliberately NOT staged into this sketch.
+ *   2. NimBLE init ownership. This build's single init owner is
+ *      bluetooth_channel.cpp (not the FEATURE_BLE_STATUS securacv_ble_status
+ *      service the canary PIO build uses), so the Scout brings the stack up
+ *      itself (idempotent) rather than deferring to a named owner. Both init
+ *      sites consult the SAME ble_heap_guard::can_init() crash guard.
  */
 
 /* FEATURE_BLE_SCAN comes from platformio.ini build_flags in the canary

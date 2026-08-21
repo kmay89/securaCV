@@ -204,22 +204,15 @@ static int test_manifest_message_cross_language_fixture()
 static int test_friendly_strings()
 {
     // Every error code needs a usable primary-UI sentence; raw enum names
-    // and hex codes must never reach the user.
-    const securacv_ota_error_t errors[] = {
-        SECURACV_OTA_ERR_NETWORK, SECURACV_OTA_ERR_MANIFEST_FETCH,
-        SECURACV_OTA_ERR_MANIFEST_PARSE, SECURACV_OTA_ERR_MANIFEST_INVALID,
-        SECURACV_OTA_ERR_NO_UPDATE, SECURACV_OTA_ERR_DOWNLOAD_FAILED,
-        SECURACV_OTA_ERR_SHA256_MISMATCH, SECURACV_OTA_ERR_SIGNATURE_INVALID,
-        SECURACV_OTA_ERR_SIZE_MISMATCH, SECURACV_OTA_ERR_FLASH_WRITE,
-        SECURACV_OTA_ERR_FLASH_READ, SECURACV_OTA_ERR_PARTITION,
-        SECURACV_OTA_ERR_VERSION_ROLLBACK, SECURACV_OTA_ERR_SELF_TEST_FAILED,
-        SECURACV_OTA_ERR_ALREADY_RUNNING, SECURACV_OTA_ERR_URL_POLICY,
-        SECURACV_OTA_ERR_PUBKEY_MISSING, SECURACV_OTA_ERR_DEFERRED,
-    };
+    // and hex codes must never reach the user. Iterate the WHOLE enum via
+    // the SECURACV_OTA_ERR__COUNT sentinel — a hand-copied list here once
+    // silently missed three newer codes (MANIFEST_SIG, NOT_INITIALIZED,
+    // OUT_OF_MEMORY), which is exactly the drift this test claims to stop.
     const char *banned[] = {"OTA", "SHA", "Ed25519", "NVS", "manifest",
                             "partition", "0x", "esp_"};
 
-    for (securacv_ota_error_t e : errors) {
+    for (int i = SECURACV_OTA_ERR_NONE + 1; i < SECURACV_OTA_ERR__COUNT; i++) {
+        const securacv_ota_error_t e = (securacv_ota_error_t)i;
         const char *msg = securacv_ota_friendly_error(e);
         CHECK(msg != NULL && strlen(msg) > 10);
         for (const char *word : banned) {

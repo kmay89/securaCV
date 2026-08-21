@@ -1,6 +1,6 @@
 # Security Model
 
-Canary Vision devices sit on the home LAN, serving an HTTP API without TLS (mDNS does not support certificates). This document describes the threat model and the 10 security decisions that mitigate the resulting risks.
+Canary Vision devices sit on the home LAN, serving an HTTP API without TLS (mDNS does not support certificates). This document describes the threat model and the 11 security decisions that mitigate the resulting risks.
 
 ## Threat Model
 
@@ -60,16 +60,17 @@ Host validation runs **before** authentication, so a DNS rebinding attack is blo
 
 ### D3: Restrictive CORS
 
-CORS headers are only set for origins that match known peers. The `Access-Control-Allow-Origin` header is **never** set to `*`. If the `Origin` header does not match a registered peer's IP or mDNS hostname, no CORS headers are added to the response.
+CORS is same-origin plus trust-on-pair. The `Access-Control-Allow-Origin` header is **never** set to `*`, and peer devices are **not** allowlisted just for being peers: a compromised peer could otherwise make cross-origin authenticated requests to every other device in the mesh (a lateral-movement vector).
 
-Allowed origins are constructed from the peer list:
-- `http://<peer_ip>` for each peer
-- `http://<peer_device_id>.local` for each peer
-- The device's own IP and mDNS hostname
+CORS headers are set only for:
 
-Preflight `OPTIONS` requests for unknown origins receive no CORS headers, causing the browser to block the actual request.
+- the device's own origin: `http://<device_ip>` and `http://<mdns_hostname>`;
+- origins enrolled by **trust-on-pair**: when a physical BOOT-button press releases the provisioning receipt, the origin that received the receipt is recorded as durably allowed. The press already authorizes handing out the API token itself, so trusting the recipient origin is strictly weaker;
+- any private-network origin, but **only** for `/api/provisioning-receipt` — that endpoint is unauthenticated by design, physically gated by the BOOT button, and one-shot, so its browser response is useless without a press.
 
-**Test:** `tests/security/cors.test.js`
+Every other origin — including a known peer's IP or mDNS hostname — gets no CORS headers, and preflight `OPTIONS` requests from such origins get none either, causing the browser to block the actual request.
+
+**Test:** `tests/security/cors.test.js` (asserts peer origins receive no CORS headers)
 
 ### D4: Chrome Private Network Access (PNA) Preflight
 
@@ -103,17 +104,21 @@ This limits the blast radius of a single compromised device. To update fleet con
 
 ### D7: Signed Firmware Updates
 
-Firmware update files include a SHA-256 hash and an Ed25519 signature. The `GET /api/v1/update/check` endpoint returns both. The device verifies the signature against a built-in public key before applying the update. Updates are uploaded as `multipart/form-data` via `POST /api/v1/update`.
+Firmware updates are uploaded to `POST /api/v1/update` as a raw binary body (`application/octet-stream`) with a detached Ed25519 signature over the whole payload in the `X-Firmware-Signature` header (hex-encoded, 64 bytes). The device verifies the signature against the configured signing public key before applying the update, parses an 8-byte `SCV\x01` version header from the binary, and rejects any version that is not strictly newer than the installed one (anti-downgrade). `GET /api/v1/update/check` additionally advertises the available version with its SHA-256 hash and signature.
 
 ### D8: Tamper-Evident Witness Chain
 
-Every detection event (motion, person, vehicle, animal) is appended to an Ed25519-signed hash chain. Each record contains:
+Every detection event (motion, person, vehicle, animal, object removal, contact change, restricted-zone presence, acoustic impulse) is appended to an Ed25519-signed hash chain. Each record contains:
 
 - `seq`: monotonically increasing sequence number
-- `hash`: `SHA256("${seq}:${prev_hash}:${timestamp}:${event_type}:${zone}")`
+- `hash`: `SHA256("${seq}:${prev_hash}:${timestamp}:${event_type}:${zone}:${time_source}:${gps_timestamp}")`
 - `prev_hash`: hash of the previous record (or 64 zeros for genesis)
 - `signature`: Ed25519 signature of the hash
 - `timestamp`, `event_type`, `zone`
+- `time_source`: `gps_utc` (satellite-derived UTC) or `device_clock`; a record without one hashes as `device_clock`
+- `gps_timestamp`: present only on `gps_utc` records; hashes as the empty string when absent
+
+The hash formula here matches the one the device embeds in its own `GET /api/v1/witness/export` `verification_instructions` — that endpoint is the executable statement of the contract.
 
 Any tampering (deletion, modification, insertion) breaks the chain. Third parties can verify integrity by walking the chain and checking hashes and signatures.
 
@@ -124,9 +129,11 @@ Three rate-limiting mechanisms protect the device:
 | Limit | Threshold | Window | Lockout |
 |-------|-----------|--------|---------|
 | General requests | 30 per IP | 60 seconds | N/A |
-| Auth failures | 5 per IP | 60 seconds | 60-second full lockout |
+| Auth failures | 5 per IP | failures retained for 300 seconds | Exponential: 2 s for the first lockout, doubling each subsequent lockout, capped at 300 s |
 | Reboot | 1 | 5 minutes | Until cooldown expires |
 | Firmware update | 1 | 1 hour | Until cooldown expires |
+
+The auth lockout mirrors the firmware's exponential backoff (`DEFAULT_AUTH_LOCKOUT_BASE_SEC=2`, `DEFAULT_AUTH_LOCKOUT_CAP_SEC=300`): the fifth failure triggers a lockout of `min(2 × 2^(lockouts−1), 300)` seconds, and a successful authentication resets the escalation.
 
 The IP tracking map uses LRU eviction with a maximum of 64 entries to bound memory usage on the ESP32.
 
@@ -134,9 +141,9 @@ All 429 responses include a `Retry-After` header.
 
 **Test:** `tests/security/rate-limit.test.js`
 
-### D10: Camera Peek Default Off
+### D10: Camera Peek Immutable via API
 
-The `camera_peek_enabled` setting defaults to `false`. Attempting to set it to `true` via the API does **not** immediately enable it. Instead, the response returns `pending_physical_confirm: ["camera_peek_enabled"]`, and the setting remains `false` until a physical button press on the device confirms the change (simulated via `POST /api/v1/confirm` in the reference server).
+The `camera_peek_enabled` setting defaults to `false` and **cannot be changed through the API at all** (Invariant I: No Raw Export). A config update that includes it does not fail outright: the key is stripped, the rest of the update applies normally, and the response carries `rejected_immutable: ["camera_peek_enabled"]` so clients can tell the user the toggle did not take. There is no HTTP endpoint that can flip it — enabling camera peek requires physical interaction with the device (the firmware's physical button mechanism).
 
 Additional privacy defaults:
 - `video_storage`: `"none"`
@@ -181,7 +188,7 @@ The SPA enforces additional client-side security constraints, verified by tests:
 **Tests:** `tests/spa/csp-compliance.test.js`, `tests/spa/token-storage.test.js`
 
 
-### D10 — Webhook SSRF and remote-exfiltration guard
+### D11 — Webhook SSRF and remote-exfiltration guard
 
 Webhook delivery is opt-in, but the configured `integrations.webhook_url` is still treated as a potential SSRF sink because witness events are posted by the device process. The API now validates webhook targets at configuration time and again immediately before dispatch:
 

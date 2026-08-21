@@ -212,8 +212,13 @@ def test_canary_request_http_error(monkeypatch):
 
 def _bare_handler():
     """A WizardHandler instance without running BaseHTTPRequestHandler's
-    socket-bound __init__ — enough to call the pure proxy method."""
-    return serve_wizard.WizardHandler.__new__(serve_wizard.WizardHandler)
+    socket-bound __init__ — enough to call the pure proxy method. Defaults to a
+    trusted (Supervisor-ingress) client address so do_GET/do_POST-driving tests
+    pass the ingress trust gate; the gate itself is tested via _gate_handler
+    with explicit untrusted IPs."""
+    handler = serve_wizard.WizardHandler.__new__(serve_wizard.WizardHandler)
+    handler.client_address = (serve_wizard.INGRESS_PROXY_IP, 40000)
+    return handler
 
 
 def test_handle_mesh_proxy_forwards_address_and_token(monkeypatch):
@@ -507,6 +512,7 @@ def _run_export_get(monkeypatch, path):
     """Drive do_GET through the export route with all socket IO stubbed."""
     handler = _bare_handler()
     handler.path = path
+    handler.client_address = (serve_wizard.INGRESS_PROXY_IP, 40000)
 
     sent = {"json": None, "status": None}
 
@@ -599,6 +605,9 @@ def _run_post(monkeypatch, content_length, body=b""):
     handler.path = "/api/verify"
     handler.headers = {"Content-Length": content_length}
     handler.rfile = io.BytesIO(body)
+    # Simulate a request that arrived through the Supervisor ingress proxy —
+    # direct connections from other IPs are refused before parsing.
+    handler.client_address = (serve_wizard.INGRESS_PROXY_IP, 40000)
 
     sent = {"json": None, "status": None}
 
@@ -792,6 +801,118 @@ def test_write_frigate_config_quotes_broker_host_against_yaml_injection(monkeypa
 
 
 # ---------------------------------------------------------------------------
+# Ingress trust gate: the wizard port is reachable on the Supervisor Docker
+# network, so a co-resident container must not be able to call ANY endpoint
+# directly — only the Supervisor ingress proxy (172.30.32.2) and loopback.
+# ---------------------------------------------------------------------------
+
+
+def _gate_handler(client_ip):
+    handler = serve_wizard.WizardHandler.__new__(serve_wizard.WizardHandler)
+    handler.client_address = (client_ip, 40000)
+    handler.path = "/api/status"
+    handler.headers = {"Content-Length": "0"}
+    handler.rfile = io.BytesIO(b"")
+    sent = {"json": None, "status": None}
+
+    def _fake_json(payload, status=200):
+        sent["json"] = payload
+        sent["status"] = status
+
+    handler._json_response = _fake_json
+    return handler, sent
+
+
+@pytest.mark.parametrize("client_ip", ["172.30.33.5", "10.0.0.9", "192.168.1.20"])
+def test_untrusted_client_gets_403_on_post(monkeypatch, client_ip):
+    handler, sent = _gate_handler(client_ip)
+    handler.path = "/api/save"
+    monkeypatch.delenv("INGRESS_PATH", raising=False)
+    monkeypatch.delenv("WIZARD_TRUSTED_CLIENT_IPS", raising=False)
+    handler.do_POST()
+    assert sent["status"] == 403
+    assert sent["json"]["ok"] is False
+
+
+def test_untrusted_client_gets_403_on_get(monkeypatch):
+    handler, sent = _gate_handler("172.30.33.5")
+    monkeypatch.delenv("INGRESS_PATH", raising=False)
+    monkeypatch.delenv("WIZARD_TRUSTED_CLIENT_IPS", raising=False)
+    handler.do_GET()
+    assert sent["status"] == 403
+
+
+@pytest.mark.parametrize("client_ip", [serve_wizard.INGRESS_PROXY_IP, "127.0.0.1"])
+def test_trusted_client_passes_the_gate(monkeypatch, client_ip):
+    handler, sent = _gate_handler(client_ip)
+    monkeypatch.delenv("INGRESS_PATH", raising=False)
+    monkeypatch.setattr(
+        serve_wizard.WizardHandler, "_handle_status", lambda self: {"ok": True}
+    )
+    handler.do_GET()
+    assert sent["status"] == 200
+    assert sent["json"] == {"ok": True}
+
+
+def test_extra_trusted_ip_via_env(monkeypatch):
+    handler, sent = _gate_handler("10.9.9.9")
+    monkeypatch.setenv("WIZARD_TRUSTED_CLIENT_IPS", "10.9.9.9")
+    monkeypatch.delenv("INGRESS_PATH", raising=False)
+    monkeypatch.setattr(
+        serve_wizard.WizardHandler, "_handle_status", lambda self: {"ok": True}
+    )
+    handler.do_GET()
+    assert sent["status"] == 200
+
+
+# ---------------------------------------------------------------------------
+# Device-key seed lifecycle: reconfigure must never silently mint or swap the
+# device identity the sealed log is bound to, and the seed is never echoed.
+# ---------------------------------------------------------------------------
+
+
+def test_save_response_never_echoes_the_seed(save_env):
+    handler = _bare_handler()
+    result = handler._handle_save({"mode": "frigate", "cameras": []})
+    assert result["ok"] is True
+    assert "device_key_seed" not in result
+    assert result["device_key_file"] == str(serve_wizard.DEVICE_KEY_FILE)
+
+
+def test_reconfigure_without_seed_reuses_existing_identity(save_env):
+    handler = _bare_handler()
+    assert handler._handle_save({"mode": "frigate", "cameras": []})["ok"] is True
+    original = serve_wizard.DEVICE_KEY_FILE.read_text().strip()
+
+    assert handler._handle_save({"mode": "frigate", "cameras": []})["ok"] is True
+    assert serve_wizard.DEVICE_KEY_FILE.read_text().strip() == original
+    assert save_env["options"]["device_key_seed"] == original
+
+
+def test_replacing_existing_seed_requires_proof_of_current_seed(save_env):
+    handler = _bare_handler()
+    assert handler._handle_save({"mode": "frigate", "cameras": []})["ok"] is True
+    original = serve_wizard.DEVICE_KEY_FILE.read_text().strip()
+
+    # Attacker-style replacement: knows a new seed, not the current one.
+    result = handler._handle_save(
+        {"mode": "frigate", "cameras": [], "device_key_seed": "ab" * 32}
+    )
+    assert result["ok"] is False
+    assert "current_device_key_seed" in result["error"]
+    assert serve_wizard.DEVICE_KEY_FILE.read_text().strip() == original
+
+    # Legitimate replacement: proves knowledge of the current seed.
+    result = handler._handle_save(
+        {
+            "mode": "frigate",
+            "cameras": [],
+            "device_key_seed": "ab" * 32,
+            "current_device_key_seed": original,
+        }
+    )
+    assert result["ok"] is True
+    assert serve_wizard.DEVICE_KEY_FILE.read_text().strip() == "ab" * 32
 # Query-string routing: paths are matched by exact string compare, so the
 # query must be stripped BEFORE routing ("/api/status?ts=1" previously fell
 # through to the static-file handler).

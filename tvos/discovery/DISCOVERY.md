@@ -18,18 +18,46 @@ GET /api/fleet        →  200 application/json
   "kernel": "kitchen-hub",
   "verified_through": "4:02 PM",
   "devices": [
-    { "name": "Front Door", "online": true,  "chain": "ok", "product": "canary-wap" },
+    { "name": "Front Door", "online": true,  "chain": "ok", "product": "canary-wap", "hub": "ok" },
     { "name": "Studio",     "online": true,  "chain": "ok", "product": "canary" },
-    { "name": "Driveway",   "online": false, "chain": "ok", "product": "canary-vision" }
+    { "name": "Driveway",   "online": false, "chain": "ok", "product": "canary-vision", "hw": "xiao-esp32c3" }
   ]
 }
 ```
 
-- Only `devices[].name` is required; `online` defaults to `true`. `chain` and
-  `product` are optional and shown when present. A bare JSON array of devices is
-  also accepted.
+- Only `devices[].name` is required; `online` defaults to `true`. `chain`,
+  `product`, `hw`, and `hub` are optional and shown when present. A bare JSON
+  array of devices is also accepted.
+- `hw` names the **board** the device compiled against (each pins header's
+  `CANARY_FIGURE_HARDWARE`, e.g. `"waveshare-esp32s3-lcd7"`). It is the only
+  field exact about the device's *shape* — several products share one
+  `product` string — so it is what resolves the figure a client draws.
+  Devices on firmware older than the field simply omit it.
+- `hub` is where the device stands with its hub, as a word: `"none"` (nobody
+  configured one), `"down"` (configured, unreachable), `"ok"`. Absent means
+  the device did not say — which a client must never render as "fine".
 - **No secrets, no raw media** — this is coarse fleet *presence and health*,
   exactly what the Witness Wall renders. It is not an evidence API.
+
+### The optional verification endpoint (nothing serves it yet)
+
+The native tvOS app also asks its source, every poll cycle, for
+
+```
+GET /api/sealed-log   →  200 application/json   (optional)
+```
+
+— the sealed-log document its Rust core verifies (`{ "verifying_key",
+"checkpoint_head"?, "entries": [...] }`, see
+`tvos/witness-core/include/securacv_witness_core.h`). **No kernel or firmware
+serves this endpoint today**, and its absence is an answer, not an error: the
+Wall then phrases the fleet's status as the devices' own report ("Your fleet
+reports verified through …") and reserves the word "Verified" for a chain it
+actually walked. A kernel that starts serving it makes the TV's verification
+light up with no app change. Everything above about `/api/fleet` being
+coarse and unauthenticated is exactly why this endpoint is separate: the
+sealed log is how a *display* gets to say something cryptographic instead of
+repeating the wire.
 
 ### CORS is the whole trick
 

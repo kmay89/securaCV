@@ -63,6 +63,50 @@ describe('envelope verification parity', () => {
     assert.match(report.error, /artifact hash mismatch/);
   });
 
+  it('verifies an envelope from a rotated device — the ledgers mix signers', async () => {
+    const envelope = loadFixture('valid_envelope_rotated.json');
+    const digest = await V.computeWholeEnvelopeDigest(envelope);
+    assert.equal(digest, envelope.whole_envelope_digest, 'cross-language digest mismatch');
+
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.sealed_events, 3); // pre-event, rotation record, post-event
+    assert.ok(report.checks.some((c) => /rotation/i.test(c)),
+      'the report should say the rotation lineage was followed');
+  });
+
+  it('rejects a rotated envelope whose rotation attestation is tampered', async () => {
+    const envelope = loadFixture('valid_envelope_rotated.json');
+    const rotIdx = envelope.ledgers.sealed_events.entries.findIndex(
+      (e) => e.payload_json.includes('key_rotation'));
+    assert.ok(rotIdx >= 0, 'fixture must carry the rotation record');
+    const payload = JSON.parse(envelope.ledgers.sealed_events.entries[rotIdx].payload_json);
+    payload.new_key_attestation[0] ^= 0xff;
+    envelope.ledgers.sealed_events.entries[rotIdx].payload_json = JSON.stringify(payload);
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, false);
+    // The lineage check names the rotation; a dodged variant would break the
+    // row's entry hash instead — rejected either way.
+    assert.match(report.error, /rotation|hash/i);
+  });
+
+  it('rejects an envelope whose export-receipts ledger head is not its own receipt', async () => {
+    // The export that seals an envelope appends its receipt LAST, so the
+    // export_receipt_entry must be the presented ledger's head — otherwise a
+    // retired-key holder could substitute a receipt ledger. Drop the only
+    // ledger row (an empty chain still hash-verifies trivially) and recompute
+    // the digest: only the head binding can catch it.
+    const envelope = loadFixture('valid_envelope.json');
+    envelope.ledgers.export_receipts.entries = [];
+    envelope.ledgers.export_receipts.head_hash = null;
+    envelope.ledgers.export_receipts.count = 0;
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /head does not match/);
+  });
+
   it('verifies the legacy (pre-auth_mode) envelope — old bundles stay valid forever', async () => {
     const envelope = loadFixture('valid_envelope_legacy.json');
     const digest = await V.computeWholeEnvelopeDigest(envelope);

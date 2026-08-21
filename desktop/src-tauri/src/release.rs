@@ -120,6 +120,41 @@ mod tests {
         );
     }
 
+    // The Vision-module channel (flash_vision_module) MUST reach the same
+    // verdicts as the firmware channel through this one function — the browser
+    // flasher already signs and enforces the model, and "two flashers, two
+    // frontends" requires the desktop to match. These pin the policy the model
+    // path relies on: a real pinned key with no manifest signature is refused
+    // (the exact hole the model channel had), a valid signature passes, and
+    // the pre-ceremony placeholder key stays checksum-only.
+    #[test]
+    fn model_channel_refuses_unsigned_once_key_is_pinned() {
+        let signing = SigningKey::from_bytes(&[9u8; 32]);
+        let bytes = b"vision-model";
+        let sha = sha256_hex(bytes);
+        let pubkey = hex(signing.verifying_key().to_bytes());
+        // No signature + real key → refuse (fail closed).
+        assert!(verify_signature(bytes.len(), &sha, None, &pubkey).is_err());
+        // Valid signature → pass.
+        let mut message = Vec::from((bytes.len() as u32).to_le_bytes());
+        message.extend(decode_hex::<32>(&sha, "sha").unwrap());
+        let signature = signing.sign(&message);
+        assert_eq!(
+            verify_signature(bytes.len(), &sha, Some(&hex(signature.to_bytes())), &pubkey).unwrap(),
+            "ed25519+sha256"
+        );
+    }
+
+    #[test]
+    fn model_channel_checksum_only_before_key_ceremony() {
+        // All-zero placeholder pinned key: unsigned model is accepted as
+        // checksum-only, exactly like the firmware channel pre-ceremony.
+        assert_eq!(
+            verify_signature(4, &sha256_hex(b"abcd"), None, &"00".repeat(32)).unwrap(),
+            "checksum-only"
+        );
+    }
+
     fn hex<const N: usize>(bytes: [u8; N]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }

@@ -281,6 +281,11 @@ var CanaryStorage = {
 function isPrivateUrl(url) {
   try {
     var parsed = new URL(url);
+    // Device traffic is HTTP-only (mDNS has no certificates), and the
+    // device-served CSP's connect-src lists only http:// LAN sources — a
+    // URL with any other scheme could never be fetched, so reject it here
+    // with a clear error instead of a silent CSP block.
+    if (parsed.protocol !== 'http:') return false;
     var hostname = parsed.hostname;
     if (hostname.endsWith('.local')) return true;
     if (hostname.match(/^192\.168\./)) return true;
@@ -1795,9 +1800,10 @@ function applyDeviceName(device, newName) {
   }).then(function (resp) {
     var updates = { name: resp.device_name || newName };
     // If we reach the device by its mDNS name, follow the rename — the
-    // old hostname stops resolving once mDNS re-announces. Preserve the
-    // scheme (TLS-enabled devices use https) and any explicit port.
-    var hostMatch = device.base_url.match(/^(https?:\/\/)canary-[a-z0-9-]+\.local(:[0-9]+)?$/);
+    // old hostname stops resolving once mDNS re-announces. Preserve any
+    // explicit port. Device traffic is http-only (the device CSP's
+    // connect-src has no https sources), so only http URLs are rewritten.
+    var hostMatch = device.base_url.match(/^(http:\/\/)canary-[a-z0-9-]+\.local(:[0-9]+)?$/);
     if (hostMatch && resp.mdns_host) {
       updates.base_url = hostMatch[1] + resp.mdns_host + '.local' + (hostMatch[2] || '');
     }
@@ -2782,11 +2788,17 @@ function renderConfigForm(container, device, section, config) {
         body: body,
       })
         .then(function (res) {
-          var msg = 'Configuration saved.';
-          if (res.pending_physical_confirm && res.pending_physical_confirm.length > 0) {
-            msg += ' Some settings require physical confirmation: ' + res.pending_physical_confirm.join(', ');
+          alertArea.appendChild(el('div', { className: 'alert alert-success', textContent: 'Configuration saved.' }));
+          // The server strips API-immutable keys (camera_peek_enabled) and
+          // reports them in rejected_immutable — surface that so the user
+          // knows the toggle did not take.
+          if (res.rejected_immutable && res.rejected_immutable.length > 0) {
+            alertArea.appendChild(el('div', {
+              className: 'alert alert-warning',
+              textContent: 'Not applied: ' + res.rejected_immutable.join(', ') +
+                ' — this setting can’t be changed from the app. It requires a physical button press on the device.',
+            }));
           }
-          alertArea.appendChild(el('div', { className: 'alert alert-success', textContent: msg }));
         })
         .catch(function (err) {
           alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));

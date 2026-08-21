@@ -40,11 +40,11 @@ canary-vision/
       host-validation.js    # DNS rebinding protection
       rate-limit.js         # Per-IP rate limiting + auth lockout
       pna.js                # Chrome Private Network Access preflight
-      cors.js               # Peer-only CORS allowlist
+      cors.js               # Same-origin + trust-on-pair CORS (no peer allowlist)
       auth.js               # X-Canary-Token validation
     routes/
       info.js           # GET /api/v1/info
-      config.js         # GET/PUT /api/v1/config, per-section, physical confirm
+      config.js         # GET/PUT /api/v1/config (full + per-section)
       logs.js           # GET /api/v1/logs
       witness.js        # GET /api/v1/witness
       peers.js          # GET /api/v1/peers
@@ -82,7 +82,7 @@ Each Canary device runs an HTTP server on the LAN. The reference implementation 
 3. Rate limiting (per-IP, with auth failure lockout)
 4. Static file serving (no auth required)
 5. Private Network Access preflight
-6. CORS (peer-only allowlist)
+6. CORS (same-origin + trust-on-pair; no peer allowlist)
 7. JSON body parsing (`/api/*` only)
 8. Token authentication (`/api/*` only)
 9. Route handlers
@@ -97,11 +97,11 @@ Devices are discovered via mDNS (`_securacv._tcp`), peer list exchange, manual e
 
 ### Witness Chain
 
-Each detected event (motion, person, vehicle, animal) is recorded in a tamper-evident hash chain. Records include a sequence number, SHA-256 hash of the chain data, link to the previous hash, and an Ed25519 signature. See [docs/api.md](docs/api.md#get-apiv1witness).
+Each detected event (motion, person, vehicle, animal, object removal, contact change, restricted-zone presence, acoustic impulse) is recorded in a tamper-evident hash chain. Records include a sequence number, SHA-256 hash of the chain data, link to the previous hash, and an Ed25519 signature. See [docs/api.md](docs/api.md#get-apiv1witness).
 
 ### Security
 
-Ten security decisions (D1-D10) govern the system design. All are enforced by tests. See [docs/security.md](docs/security.md).
+Eleven security decisions (D1-D11) govern the system design. All are enforced by tests. See [docs/security.md](docs/security.md).
 
 ## Device Identity
 

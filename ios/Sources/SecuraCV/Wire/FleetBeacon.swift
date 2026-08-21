@@ -26,6 +26,22 @@
 //   [7-8]  chain_height  low 16 bits, uint16 little-endian
 //   [9-10] fp2           last 2 bytes of the pubkey fingerprint
 //
+// VERSION 2 (13 bytes) is version 1 plus two trailing bytes, broadcast by
+// witnesses with an optical pipeline (canary-vision, unconditionally) so a
+// listener can show WHAT is currently seen — a class token and a confidence
+// percentage, deliberately nothing more (Invariant II: the vocabulary is the
+// ObjectClass enum, never a face or a plate):
+//
+//   [3]    0x02          schema version 2
+//   [11]   detect_class  0x00 none, 0x01 person, 0x02 vehicle, 0x03 animal,
+//                        0x04 package
+//   [12]   detect_score  detection confidence 0..100 (%), 0xFF = unknown
+//
+// Parsers accept BOTH versions — length and version must agree (a v2 version
+// byte on an 11-byte blob is rejected, and the other way round) — so a
+// v1-only sender (canary-sense, the WAP) stays understood unchanged, and a
+// v1-era parser simply never sees detections.
+//
 // PARITY DISCIPLINE (docs/FLEET_PARITY.md): the firmware keeps its copies
 // byte-identical with `check_fleet_beacon_sync.sh`. A Swift file can't be a
 // byte-copy of a C header, so the guard here is the TEST: FleetBeaconTests uses
@@ -42,14 +58,26 @@ struct FleetBeacon: Hashable, Sendable {
     static let companyID: UInt16 = 0xFFFF
     static let type: UInt8       = 0x10
     static let version: UInt8    = 0x01
+    static let versionV2: UInt8  = 0x02  // FLEET_BEACON_VERSION_2
     static let mfgLength         = 11    // FLEET_BEACON_MFG_LEN
+    static let mfgV2Length       = 13    // FLEET_BEACON_MFG_V2_LEN
     static let unknownPct: UInt8 = 0xFF
+    static let scoreUnknown: UInt8 = 0xFF  // FLEET_BEACON_SCORE_UNKNOWN
 
     static let flagTamper: UInt8     = 0x01
     static let flagMicMuted: UInt8   = 0x02
     static let flagDegraded: UInt8   = 0x04
     static let flagOnWiFiSTA: UInt8  = 0x08
     static let flagAlert: UInt8      = 0x10
+
+    // Detection class tokens for v2 byte [11] — the ObjectClass vocabulary
+    // and nothing beyond it (Invariant II: a face or plate class here is a
+    // rejected PR, not a config flag).
+    static let detectNone: UInt8    = 0x00
+    static let detectPerson: UInt8  = 0x01
+    static let detectVehicle: UInt8 = 0x02
+    static let detectAnimal: UInt8  = 0x03
+    static let detectPackage: UInt8 = 0x04
 
     // ── decoded fields ──
     var flags: UInt8
@@ -61,6 +89,13 @@ struct FleetBeacon: Hashable, Sendable {
     var chainLow16: UInt16
     var fpB0: UInt8
     var fpB1: UInt8
+    /// What the sender's presence FSM currently sees (v2 byte [11]) — one of
+    /// the `detect*` tokens. Always `detectNone` on a v1 beacon: a sender
+    /// with no optical pipeline never claims a detection.
+    var detectClass: UInt8 = 0x00
+    /// Detection confidence 0..100 (v2 byte [12]); nil when the wire carried
+    /// the 0xFF unknown sentinel, or on a v1 beacon.
+    var detectScore: Int? = nil
 
     var tamper: Bool     { flags & Self.flagTamper    != 0 }
     var micMuted: Bool   { flags & Self.flagMicMuted  != 0 }
@@ -89,26 +124,31 @@ struct FleetBeacon: Hashable, Sendable {
     }
 
     /// Parse the FULL manufacturer-data blob, company bytes included — exactly
-    /// what `CBAdvertisementDataManufacturerDataKey` delivers. Validates length,
-    /// company id, type and version; returns nil on any mismatch so a stray
-    /// advert from an unrelated device can never be read as a Canary.
+    /// what `CBAdvertisementDataManufacturerDataKey` delivers. Accepts BOTH
+    /// versions: 11 bytes with version 0x01, or 13 bytes with version 0x02 —
+    /// length and version must agree. Validates company id and type; returns
+    /// nil on any mismatch so a stray advert from an unrelated device can
+    /// never be read as a Canary.
     ///
     /// Mirrors `fleet_beacon_parse()` field for field.
     static func parse(manufacturerData mfg: Data) -> FleetBeacon? {
-        guard mfg.count == mfgLength else { return nil }
+        guard mfg.count == mfgLength || mfg.count == mfgV2Length else { return nil }
         // Index through a contiguous copy: Data slices can carry a non-zero
         // startIndex, and subscripting those with 0-based offsets traps.
         let b = [UInt8](mfg)
         guard b[0] == 0xFF, b[1] == 0xFF else { return nil }   // company id (LE)
         guard b[2] == type else { return nil }
-        guard b[3] == version else { return nil }
+        let isV2 = b.count == mfgV2Length
+        guard b[3] == (isV2 ? versionV2 : version) else { return nil }
         return FleetBeacon(
             flags: b[4],
             batteryPct: b[5] == unknownPct ? nil : Int(b[5]),
             healthPct:  b[6] == unknownPct ? nil : Int(b[6]),
             chainLow16: UInt16(b[7]) | (UInt16(b[8]) << 8),
             fpB0: b[9],
-            fpB1: b[10]
+            fpB1: b[10],
+            detectClass: isV2 ? b[11] : detectNone,
+            detectScore: isV2 && b[12] != scoreUnknown ? Int(b[12]) : nil
         )
     }
 
@@ -130,6 +170,22 @@ struct FleetBeacon: Hashable, Sendable {
         b.append(UInt8((low16 >> 8) & 0xFF))
         b.append(fpB0)
         b.append(fpB1)
+        return Data(b)
+    }
+
+    /// Build the 13-byte version-2 blob — `fleet_beacon_build_v2()`: the v1
+    /// layout with version 0x02 plus detect_class + detect_score. A score
+    /// outside 0...100 (or nil) maps to the 0xFF unknown sentinel, the same
+    /// convention battery/health use. Exists for the same reason `encode`
+    /// does: the tests round-trip the firmware's vectors through it.
+    static func encodeV2(flags: UInt8, batteryPct: Int?, healthPct: Int?,
+                         chainHeight: UInt32, fpB0: UInt8, fpB1: UInt8,
+                         detectClass: UInt8, detectScore: Int?) -> Data {
+        var b = [UInt8](encode(flags: flags, batteryPct: batteryPct, healthPct: healthPct,
+                               chainHeight: chainHeight, fpB0: fpB0, fpB1: fpB1))
+        b[3] = versionV2
+        b.append(detectClass)
+        b.append(pct(detectScore))     // same 0xFF-out-of-range rule as build_v2's score
         return Data(b)
     }
 

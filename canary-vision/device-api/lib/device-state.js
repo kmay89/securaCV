@@ -130,9 +130,6 @@ function createDeviceState(overrides = {}) {
   // Deep clone config
   const config = structuredClone(DEFAULT_CONFIG);
 
-  // Pending physical confirmations
-  const pendingPhysicalConfirm = new Set();
-
   // Witness chain
   const witnessRecords = [];
   let witnessSeq = 4800;
@@ -447,7 +444,6 @@ function createDeviceState(overrides = {}) {
   return {
     device,
     config,
-    pendingPhysicalConfirm,
     witnessRecords,
     logs,
     publicKey,

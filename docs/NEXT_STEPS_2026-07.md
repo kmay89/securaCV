@@ -80,6 +80,10 @@ the feature's entire purpose is to behave correctly when things go wrong.
 
 ### P1 — the Nightstand Line's tail
 
+> **Since closed (2026-08-21):** three of the four deferred items below have
+> landed since this snapshot was written. The original text is kept as the
+> record; each close-out is noted inline, verified against the tree.
+
 `#1210` (portrait face + beacon) and `#1222` (look engine) landed the firmware.
 Four things are honestly deferred in
 [`docs/hardware/display_nightstand_line.md`](hardware/display_nightstand_line.md) §7:
@@ -92,16 +96,31 @@ Four things are honestly deferred in
   today hardcodes `dev.glass.round ? "232px" : "464px"`
   (`canary-local/assets/app.js:286`). Requires an Emscripten session to rebuild
   the committed wasm the `canary_local` tests assert on.
+  *Since closed:* the slice landed — `build.sh` builds `nightstand` and
+  `touch169` flavors, `emulator/dist/canary-display-nightstand.{js,meta.json}`
+  is committed, and the registry (which lives at
+  `canary-local/devices/registry.json`, not the path this snapshot cites)
+  wires `createCanaryEmuNightstand`; twins now load on demand from the
+  registry's module path rather than `fleet.html` script tags, and the Dash 7
+  rides the dash build's `createCanaryEmuDash`. Residual: `buildDisplaySheet()`
+  still hardcodes the round/landscape widths (`app.js`, now ~line 289).
 - **The C6 build** (`canary-display-nightstand-c6`). Toolchain-blocked, not
   design-blocked: the C6 needs arduino-esp32 3.x, while the display graphics
   stack is pinned to `GFX@1.4.9`, the last core-2.x-compatible release. The
   gating work is a **core-3.x display base** — `GFX@^1.5.0` plus an LVGL/NimBLE
   3.x audit. That upgrade unblocks more than the C6; it is worth scheduling as
   its own piece rather than smuggling it into a feature PR.
+  *Since closed:* the core-3.x display base landed and
+  `[env:canary-display-nightstand-c6]` exists in
+  `firmware/envs/platformio/canary-display.ini` (extends
+  `canary_display_c6_core3`; listed in `firmware/flavors.json`).
 - **Portrait-native modal polish.** The shared modals render in the watch's
   240-wide style on the 172-wide glass — functional, slightly overflowing.
 - **BOOT-button input.** The 1.47" boards have no touch, so the button is the
   peek / summon-nightlight / acknowledge surface. Unwired.
+  *Since closed:* wired — `canary-display`'s `main.cpp` reads
+  `BOOT_BUTTON_PIN` through the `canary/io/boot_button.h` short/double/long
+  classifier ("tap = peek, double = lantern, hold = acknowledge").
 
 Plus the look-engine follow-ons `#1222` previewed but did not ship: the on-glass
 info carousel, the settings-surface scene picker, an MQTT look topic, and the

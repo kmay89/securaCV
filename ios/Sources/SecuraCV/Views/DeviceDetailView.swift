@@ -1,10 +1,10 @@
 // DeviceDetailView.swift
 //
 // One Canary up close: trust (chain length + badge + a "Verify now" that
-// re-checks Ed25519 on the phone), liveness/diagnostics, mute, and a link to
-// two-way talk / AirPlay chime where the hardware supports it. Config is
-// rendered from the device's OWN schema, so new firmware sections appear here
-// with no app update.
+// re-checks Ed25519 on the phone), liveness/diagnostics, mute, and the
+// AirPlay chime route where the hardware supports it. Config is rendered
+// from the device's OWN schema, so new firmware sections appear here with no
+// app update.
 
 import SwiftUI
 
@@ -113,8 +113,10 @@ struct DeviceDetailView: View {
             // "Where IS it?" — the hot/cold search over this Canary's own
             // Bluetooth beacon, plus (WAP-class) making the device chirp and
             // blink for you. Offered whenever the beacon can be recognized:
-            // matching needs the fingerprint, which every paired device and
-            // every beacon-attached row carries.
+            // matching needs the fingerprint, which a paired device carries
+            // once its key is pinned (FleetStore.poll, first successful poll)
+            // and every beacon-decorated row carries by construction. A row
+            // with no fingerprint honestly has nothing to match against.
             if !liveWitness.fingerprint.isEmpty {
                 Section {
                     NavigationLink {
@@ -142,7 +144,9 @@ struct DeviceDetailView: View {
             }
 
             if witness.deviceType == .wap {
-                Section("Two-way") {
+                // "Chime", not "Two-way": there is no talk feature, and a
+                // section header must not promise one (non-negotiable #4).
+                Section("Chime") {
                     HStack {
                         Label("AirPlay chime", systemImage: "airplayaudio")
                         Spacer()

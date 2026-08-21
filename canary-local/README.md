@@ -678,7 +678,7 @@ Anti-rot, same rule as everything here — nothing written twice:
 |---|---|
 | Thresholds, voxel grid, frame, cadences, aim timing | `include/canary/config.h` + `detect_config.h` |
 | Every MQTT topic | `include/canary/topics.h` |
-| The 16 HA entities | `src/ha/ha_discovery.cpp` |
+| The HA discovery entities (all 19) | `src/ha/ha_discovery.cpp` |
 | Class/score filter, best box, optical features + voxel math | `include/canary/vision/detection_pipeline.h` (compiled into both ESP32 and wasm) |
 | Runtime score/target/lost/dwell clamps | `src/detect_config.cpp` (the real implementation is linked into wasm) |
 | The event vocabulary, voxel stability + FSM order | `src/state/{voxel_tracker,presence_fsm}.cpp` (linked into wasm) |

@@ -182,26 +182,13 @@ impl<'a> InferenceView<'a> {
         guard.detect(&self.frame.data, self.frame.width, self.frame.height)
     }
 
-    /// Generate a privacy-preserving edge thumbnail from this frame.
-    ///
-    /// Applies Sobel edge detection (a lossy derivative transform) to produce
-    /// an image showing shapes and boundaries without identity-bearing features.
-    /// The transform is mathematically irreversible: absolute intensity, color,
-    /// and fine texture are discarded.
-    ///
-    /// This does NOT export raw bytes — only the edge-detected result leaves.
-    pub fn generate_thumbnail(
-        &self,
-        detections: &[crate::detect::Detection],
-    ) -> crate::thumbnail::EdgeThumbnail {
-        crate::thumbnail::generate(
-            &self.frame.data,
-            self.frame.width,
-            self.frame.height,
-            detections,
-            self.frame.timestamp_bucket,
-        )
-    }
+    // NOTE: an edge-thumbnail generator (Sobel edge map of the frame) used to
+    // hang off this view. It was removed: nothing ever consumed it, and a
+    // shipped image-derived artifact needs an explicit privacy review first —
+    // a 256×192 edge map of a near-field person can remain human-recognizable,
+    // and "irreversible to pixels" is not the non-identifiability bar
+    // Invariant I sets. Reintroduce only together with a consumer and that
+    // review (git history has the implementation).
 
     /// Attempt to export raw bytes. This MUST fail in normal operation.
     pub fn try_export_bytes(&self) -> Result<Vec<u8>> {
@@ -506,7 +493,13 @@ impl FrameBuffer {
     /// Drain frames for vault sealing. REQUIRES BreakGlassToken.
     ///
     /// This is the only way to extract frames from the buffer.
-    /// The buffer is cleared after drain.
+    /// The buffer is cleared after drain — dropping the returned iterator
+    /// removes and zeroizes every remaining frame. Because the drain is
+    /// destructive, callers MUST validate the token first
+    /// (`BreakGlass::assert_token_valid`, per spec/invariants.md §3.1):
+    /// possession of the token is enforced by this signature, but validity
+    /// cannot be checked here without the device key and receipt ledger.
+    /// Frames are yielded oldest-first; `.last()` is the newest.
     #[allow(dead_code)]
     pub fn drain_for_vault(
         &mut self,

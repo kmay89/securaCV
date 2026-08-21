@@ -192,10 +192,19 @@ fn run_inner(
         |id, entry_hash| on_item(VerifiedItem::Event { id, entry_hash }),
     )?;
 
+    // Receipt and policy-change rows are signed by the device key current at
+    // write time, so the ledger walks must accept every validated lineage key
+    // — verifying with genesis alone raises a false tamper alarm on the first
+    // post-rotation row (and witnessd then boots into safe mode on it).
+    let lineage_keys = lineage
+        .iter()
+        .map(|epoch| verifying_key_from_bytes(&epoch.public_key))
+        .collect::<Result<Vec<_>>>()?;
+
     let policy = verify::load_break_glass_policy(conn)?;
     let counts = verify::verify_break_glass_receipts_with(
         conn,
-        &verifying_key,
+        &lineage_keys,
         policy.as_ref(),
         signature_mode,
         pq_verifying_key.as_ref(),
@@ -207,7 +216,7 @@ fn run_inner(
 
     report.export_receipts_verified = verify::verify_export_receipts_with(
         conn,
-        &verifying_key,
+        &lineage_keys,
         signature_mode,
         pq_verifying_key.as_ref(),
         |id, entry_hash| on_item(VerifiedItem::ExportReceipt { id, entry_hash }),

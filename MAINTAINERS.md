@@ -19,7 +19,7 @@ listed here for a subsystem means your review is expected on changes to it.
 | **Home Assistant integration** (Python) | `custom_components/securacv/`, `integrations/` | @kmay89 | **seat open** |
 | **The Lab** (WASM demos) | `canary-local/`, `canary-vision/` | @kmay89 | **seat open** |
 | **Desktop / flasher** (Tauri) | `desktop/`, `desktop-lab/` | @kmay89 | **seat open** |
-| **Enclosures** (OpenSCAD) | `docs/hardware/enclosure/`, `scad/` | @kmay89 | **seat open** |
+| **Enclosures** (OpenSCAD) | `docs/hardware/enclosure/` | @kmay89 | **seat open** |
 | **Supply chain / BOM** | `docs/hardware/bom_*.csv`, `scripts/lint_bom.py` | @kmay89 | **seat open** |
 | **Docs & guides** | `docs/` | @kmay89 | **seat open** |
 
