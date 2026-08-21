@@ -24,6 +24,7 @@
 #include <stdio.h>
 
 #include "nightlight_ui.h"
+#include "motion.h"
 #include "lvgl_port.h"
 #include "theme.h"
 #include "canary_mark.h"
@@ -123,15 +124,18 @@ lv_obj_t* mk_digit(lv_obj_t* parent, SegDigit* d, int x, int y, int w, int h,
 }
 
 // value 0-9, or -1 = blank. Ghost segments keep the instrument's resting
-// shape by day and vanish at night — the Nightstand 7's rule, kept.
+// shape by day and vanish at night — the Nightstand 7's rule, kept. The
+// morph goes through the motion engine, which on this lean C3/C6 glass
+// resolves to the same instant write as always (dur_ms(Micro) == 0) — one
+// code path, per-tier truth.
 void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
   const uint8_t map = (value >= 0 && value <= 9) ? DIGIT_MAP[value] : 0;
   for (int i = 0; i < 7; i++) {
     if (!d->seg[i]) continue;
     lv_obj_set_style_bg_color(d->seg[i], color, 0);
     const bool lit = (map >> i) & 1;
-    lv_obj_set_style_bg_opa(
-        d->seg[i], lit ? LV_OPA_COVER : (night ? LV_OPA_0 : LV_OPA_10), 0);
+    motion::seg_opa(d->seg[i],
+                    lit ? LV_OPA_COVER : (night ? LV_OPA_0 : LV_OPA_10));
   }
 }
 

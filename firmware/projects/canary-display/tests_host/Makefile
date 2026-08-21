@@ -178,6 +178,26 @@ GREET_SRC = test_greeting.cpp
 $(GREET_BIN): $(GREET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(GREET_SRC)
 
+# The motion engine's pure half (canary/ui/motion_core.h): the capability
+# model against the real board rows, tier derivation, easing curves, the
+# frame-time governor's degrade/recover hysteresis, and the weather-scene
+# particle math (determinism, bounds, budgets). Pure header, no LVGL.
+MOTION_BIN = test_motion
+MOTION_SRC = test_motion.cpp
+
+$(MOTION_BIN): $(MOTION_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(MOTION_SRC)
+
+# The glass help QR's verdict (canary/ui/help_verdict.h): worst-first
+# precedence (verify failure > hub down > quiet witness > bare Help Desk),
+# the overflow-refusal compose, and the website #s- anchor charset contract.
+# Pure header, no LVGL.
+HELPV_BIN = test_help_verdict
+HELPV_SRC = test_help_verdict.cpp
+
+$(HELPV_BIN): $(HELPV_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(HELPV_SRC)
+
 # Round Frame geometry engine (canary/ui/round_frame_core.h): the chord-at-
 # latitude math every fitted watch label rides, equator-centered row stacks,
 # the inscribed QR square, and the polar helpers. Pure integers, no LVGL.
@@ -198,7 +218,7 @@ ROUNDFRAME11_SRC = test_round_frame_cpp11.cpp
 $(ROUNDFRAME11_BIN): $(ROUNDFRAME11_SRC)
 	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -o $@ $(ROUNDFRAME11_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -216,8 +236,10 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(DISPSET_BIN)
 	./$(CLOCKSTYLE_BIN)
 	./$(GREET_BIN)
+	./$(HELPV_BIN)
+	./$(MOTION_BIN)
 	./$(ROUNDFRAME_BIN)
 	./$(ROUNDFRAME11_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)

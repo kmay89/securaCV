@@ -1298,6 +1298,27 @@
 
 ## Display: what the glass actually shows
 
+### A QR widget can exist and still hold nothing — prove it rendered before you present it
+
+- **What happened:** The Settings "get help" page created its Help Desk QR
+  with the shared `mk_qrcode` + `lv_qrcode_update` recipe and showed a
+  "scan" caption unconditionally. Under memory pressure on LVGL 9 that can
+  present a blank white card with an inviting caption — on the exact page a
+  person opened because something was already wrong. Caught in review on
+  the page's first PR (#1567); `onboard_ui.cpp` had already learned the
+  same lesson and encoded the full check.
+- **Root cause:** two silent failure modes stack: the v9 `lv_qrcode_create`
+  path can return a canvas whose draw-buffer allocation lost (widget
+  exists, no pixels behind it), and `lv_qrcode_update` reports its own
+  verdict that is easy to ignore because the v8 call "always worked".
+- **Fix:** every QR presenter proves the render: null-check the widget, on
+  v9 check `lv_canvas_get_draw_buf() != NULL`, and take the update result.
+  On any failure, hide the card and degrade to the payload as plain text —
+  for the help page, the URL itself with "type it into any browser".
+- **Regression check:** none automatable on host (needs LVGL's allocator
+  under pressure). The rule is mechanical in review: a call to
+  `lv_qrcode_update` whose result is unused is the bug.
+
 ### The emulator's square canvas hides round-glass clipping — geometry must be an engine
 - **What happened:** The watch face laid out on the full 240x240 canvas with
   hand-tuned offsets, and everything looked right in the emulator and in

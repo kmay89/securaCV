@@ -30,6 +30,11 @@ struct AnalogClock {
   ClockLinePt hpts[2] = {};        // lv_line points must outlive the object
   ClockLinePt mpts[2] = {};
   int cx = 0, cy = 0, r = 0;       // center + radius, parent coordinates
+  // Minute-sweep state (the motion engine's eased tick): the angles the
+  // hands currently SHOW, x10 degrees; -1 = never painted, so the first
+  // valid time lands without a sweep from twelve.
+  int32_t shown_h10 = -1;
+  int32_t shown_m10 = -1;
 };
 
 // Build the dial centered on (cx, cy) with radius r. Colors land in update.

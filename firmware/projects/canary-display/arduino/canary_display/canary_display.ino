@@ -137,6 +137,8 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 
 #include <lvgl.h>
 #include "lvgl_port.h"
+#include "motion.h"     // the adaptive motion engine (tier + gates)
+#include "theme.h"      // col_bg for the veil's target ground
 #include "character.h"
 #include "splash.h"
 #include "settings_ui.h"
@@ -418,19 +420,23 @@ static void apply_brightness(uint32_t now, bool night) {
   using canary::fleet::Sev;
   namespace glass = canary::glass;
   // A live brightness editor / black-point wizard IS the brightness policy
-  // while it's open (The Screen Is the Preview) — stand down until it exits.
-  if (canary::ui::settings_ui_owns_backlight()) return;
+  // while it's open (The Screen Is the Preview) — stand down until it exits,
+  // and take any in-flight glide down with us so nothing fights the editor.
+  if (canary::ui::settings_ui_owns_backlight()) {
+    canary::ui::motion::backlight_glide_cancel();
+    return;
+  }
   // A commissioning code needs a bright glass: a camera lens is squinting
-  // at it from a hand-width away.
+  // at it from a hand-width away. Snap — a lens does not enjoy an ease.
   if (canary::ui::commission_ui_active()) {
-    canary::hal::backlight_set(CD_BRIGHT_DAY);
+    canary::ui::motion::backlight_glide(CD_BRIGHT_DAY, /*urgent=*/true);
     return;
   }
   // The First Light demo card is a showroom surface: full requested
   // brightness while it is open (the HAL's thermal ceiling still clips —
   // no modal outranks a heat budget).
   if (canary::ui::pair_demo_ui_active()) {
-    canary::hal::backlight_set(CD_BRIGHT_DAY);
+    canary::ui::motion::backlight_glide(CD_BRIGHT_DAY, /*urgent=*/true);
     return;
   }
   auto& fleet = canary::fleet::the_fleet();
@@ -466,6 +472,9 @@ static void apply_brightness(uint32_t now, bool night) {
   } else {
     // Steady night: the runtime "screen at night" choice, on the fine
     // 13-bit night profile so the calibrated floor is actually reachable.
+    // The glide serves the 8-bit day profile only — cancel it before any
+    // night-profile write so the two never interleave on the same pin.
+    canary::ui::motion::backlight_glide_cancel();
     if (wl > 0) {
       canary::hal::backlight_set((uint8_t)wl);  // dawn is already rising
       return;
@@ -487,7 +496,12 @@ static void apply_brightness(uint32_t now, bool night) {
     return;
   }
   if (wl > (int)level) level = (uint8_t)wl;
-  canary::hal::backlight_set(level);
+  // The ladder still decides WHAT the level is; the engine decides how to
+  // arrive: an alarm's brightness lands instantly, everything else glides
+  // between rungs on PWM glass (and snaps on binary backlights and the lean
+  // tier — see motion.cpp). The dawn ramp composes fine: each render tick
+  // just re-aims the glide at a slightly brighter rung.
+  canary::ui::motion::backlight_glide(level, urgent);
 }
 
 // ----------------------------------------------------------------------------
@@ -869,6 +883,37 @@ static void dash_face_create() {
 }
 #endif  // CD_FLAVOR_DASH
 
+// One rebuild path for every ground flip (day/night, Character, rotation,
+// clock style): clean the screen and build the flavor's face into the new
+// truth. Named — rather than inline in render() — so the motion engine's
+// veil can run it under full cover (ground_swap), turning what used to be a
+// one-frame hard cut into a dip-to-ground.
+static void rebuild_active_face() {
+  // Engine-owned state that points into the tree we are about to delete is
+  // forgotten HERE, not in the faces' create() resets — a rotation swaps
+  // WHICH face builds next (landscape bedside -> portrait column), so the
+  // outgoing face's create never runs and a teardown left there would leak
+  // a live timer aimed at freed objects (review catch on #1566).
+  canary::ui::motion::wx_layer_teardown();
+  lv_obj_clean(lv_scr_act());
+#ifdef CD_FLAVOR_WATCH
+  canary::ui::glance_ui_create();
+#endif
+#ifdef CD_FLAVOR_DASH
+  // Landscape poster or portrait column, per the saved rotation; the
+  // bedside face is itself two layouts (day complications vs. the night
+  // clock-focus) and the ground flip is when nightstand7 swaps between
+  // them (its create reads character_night()).
+  dash_face_create();
+#endif
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
+  canary::ui::portrait_ui_create();
+#endif
+#ifdef CD_NIGHTLIGHT
+  canary::ui::nightlight_ui_create();
+#endif
+}
+
 // ----------------------------------------------------------------------------
 // Render
 // ----------------------------------------------------------------------------
@@ -894,6 +939,13 @@ static void render(uint32_t now) {
   // point, so the light Almanac can never glow in a bedroom. Set before
   // anything below reads a col_* accessor.
   canary::ui::character_set_night(night);
+  // Feed the motion engine the three truths its class gates run on — once
+  // per pass, so every face below just asks motion::allowed().
+  canary::ui::motion::set_context(
+      night,
+      fleet.worst(now) >= canary::fleet::Sev::Alert && !fleet.ack_active(now),
+      canary::ui::settings_ui_active() || canary::ui::commission_ui_active() ||
+          canary::ui::pair_demo_ui_active());
   // Settings changed from OFF the glass (the phone's /api/set) land in the
   // blob only — the web handler keeps the mailbox discipline and never
   // touches LVGL from a request. This is where they take effect, on the
@@ -955,23 +1007,12 @@ static void render(uint32_t now) {
       s_ground_portrait = dash_is_portrait();
       s_ground_clock = canary::glass::settings().clock_style;
 #endif
-      lv_obj_clean(lv_scr_act());
-#ifdef CD_FLAVOR_WATCH
-      canary::ui::glance_ui_create();
-#endif
-#ifdef CD_FLAVOR_DASH
-      // Landscape poster or portrait column, per the saved rotation; the
-      // bedside face is itself two layouts (day complications vs. the night
-      // clock-focus) and the ground flip is when nightstand7 swaps between
-      // them (its create reads character_night()).
-      dash_face_create();
-#endif
-#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT)
-      canary::ui::portrait_ui_create();
-#endif
-#ifdef CD_NIGHTLIGHT
-      canary::ui::nightlight_ui_create();
-#endif
+      // The scene change, staged: the veil (colored to the TARGET ground —
+      // character_set_night already ran, so col_bg() is the world we are
+      // entering) dips over the old face, the rebuild runs under cover, and
+      // the veil lifts. The lean tier snaps, exactly as before.
+      canary::ui::motion::ground_swap(&rebuild_active_face,
+                                      canary::ui::col_bg());
     }
   }
   // "Night look" (settings wave): the red-shifted palette is the default
@@ -2160,7 +2201,14 @@ void loop() {
     }
   }
 
-  if (g_display_ok) lv_timer_handler();
+  if (g_display_ok) {
+    // The governor's whole diet: how long one handler pass really took on
+    // THIS glass under THIS load. Millisecond wall clock is deliberate —
+    // portable to the emulator, and the EWMA averages the quantization out.
+    const uint32_t t0 = millis();
+    lv_timer_handler();
+    canary::ui::motion::frame_sample(millis() - t0);
+  }
 
   delay(5);
 }

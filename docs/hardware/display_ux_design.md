@@ -165,15 +165,25 @@ glass raw: `humanize_event()` turns `presence_in_restricted_zone` into
 "Person in restricted zone", with curated copy for the known vocabulary and
 sentence-cased fallback for anything new.
 
-**Motion budget (rationed, each with a job):**
+**Motion budget (rationed, each with a job).** Since the motion-engine wave
+([display_motion_engine.md](./display_motion_engine.md)) the ration is
+enforced mechanically: every motion has a class (Semantic / Transition /
+Micro / Ambient), durations scale to a capability tier derived from the
+board's physics, and a frame-time governor parks decorative motion on a
+glass that runs out of headroom. Semantic motion is never traded away.
 
-| Motion | Duration | Why it exists |
-|---|---|---|
-| Page fade | 220 ms ease-out | orientation between pages |
-| Alert breathing (arc/card glow) | 2 s in-out, repeat | the one thing allowed to move at rest — and only while an Alert/Tamper is unacked |
-| Hold-to-ack ring | 900 ms linear sweep (= long-press) | makes acknowledge deliberate; a quick tap flashes a sliver of the ring — a silent hint that holding does more |
-| The heartbeat | 1.6 s swell, once per minute, day only | the sanctioned 4th motion — fires **only** when every witness is quiet AND every chain verified (its absence is information); [trailblazer spec §4](./display_trailblazer_spec.md) |
-| Everything else | none | calm technology: a wall object at rest is still |
+| Motion | Duration | Class | Why it exists |
+|---|---|---|---|
+| Page fade | 220 ms ease-out | Transition | orientation between pages |
+| Ground swap veil | ~160 ms in, ~320 ms out (snap on Lean) | Transition | day/night, Character, rotation and clock-style changes dip through the target ground instead of hard-cutting |
+| Alert breathing (arc/card glow) | 2 s in-out, repeat | Semantic | the one thing allowed to move at rest — and only while an Alert/Tamper is unacked |
+| Hold-to-ack ring | 900 ms linear sweep (= long-press) | Semantic | makes acknowledge deliberate; a quick tap flashes a sliver of the ring — a silent hint that holding does more |
+| The heartbeat | 1.6 s swell, once per minute, day only | Semantic | fires **only** when every witness is quiet AND every chain verified (its absence is information); [trailblazer spec §4](./display_trailblazer_spec.md) |
+| Digit morph / minute sweep | ~160 / ~320 ms ease-out (snap on Lean) | Micro | the minute lands instead of teleporting; yields to any unacked alarm |
+| Calendar month entrance | staggered ~320 ms fades | Micro | a new month arrives in reading order; a day change holds still |
+| Backlight glide | ~300 ms between ladder rungs (PWM glass) | Micro | Ambient↔Active stops being a light switch; an alarm still lands instantly |
+| Weather scene (7" bedside day face) | standing, condition-paced | Ambient | the forecast the wire already carries, moving — day only, calm only, no modal, rich governor only; clear weather is *still* |
+| Everything else | none | — | calm technology: a wall object at rest is still |
 
 **Iconography.** LVGL's built-in symbol set only (✓/✕/wifi/battery) — no
 custom pictograms until bench validation says the metaphors read at 3 m.

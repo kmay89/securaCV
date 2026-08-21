@@ -91,6 +91,10 @@ const lv_font_t* font_caption();
 const lv_font_t* font_clock();
 
 // ── Motion budget (calm tech: rationed, purposeful) ──────────────────────
+// These three are the historic fixed-duration motions. Everything newer
+// (tiered durations, effect-class gates, the veil, the governor) lives in
+// the motion engine — ui/motion.h — which also enforces the ration
+// mechanically (docs/hardware/display_motion_engine.md).
 constexpr uint32_t MOTION_PAGE_MS   = 220;   // page/screen fades, ease-out
 constexpr uint32_t MOTION_BREATH_MS = 2000;  // unacked-alert breathing, ONLY
 constexpr uint32_t MOTION_ACK_MS    = 900;   // hold-to-ack ring sweep (= CD_LONGPRESS_MS)

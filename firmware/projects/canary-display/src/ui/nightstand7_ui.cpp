@@ -29,6 +29,7 @@
 #include <time.h>
 
 #include "canary/ui/nightstand7_ui.h"
+#include "canary/ui/motion.h"
 #include "canary/ui/theme.h"
 #include "canary/ui/canary_mark.h"
 #include "canary/ui/character.h"
@@ -121,7 +122,9 @@ lv_obj_t* mk_digit(lv_obj_t* parent, SegDigit* d, int x, int y, int w, int h,
 // Paint a value (0-9, or -1 = blank) in `color`; unlit segments keep a
 // ghost presence by day when the style wants one (the resting shape of the
 // instrument) and always vanish at night (a dark room wants digits, not
-// scaffolding).
+// scaffolding). Segment changes MORPH through the motion engine — the
+// newly lit ease in, the dying ease out (an instant write on the lean tier
+// and under an alarm; motion::seg_opa carries all of that).
 void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
   const uint8_t map =
       (value >= 0 && value <= 9) ? DIGIT_MAP[value] : 0;
@@ -131,10 +134,10 @@ void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
     if (!d->seg[i]) continue;
     lv_obj_set_style_bg_color(d->seg[i], color, 0);
     const bool lit = (map >> i) & 1;
-    lv_obj_set_style_bg_opa(
+    motion::seg_opa(
         d->seg[i],
         lit ? LV_OPA_COVER
-            : ((night || !ghost_day) ? LV_OPA_0 : LV_OPA_10), 0);
+            : ((night || !ghost_day) ? LV_OPA_0 : LV_OPA_10));
   }
 }
 
@@ -352,6 +355,14 @@ void build_clock(lv_obj_t* scr, bool night) {
 void build_day(lv_obj_t* scr) {
   build_clock(scr, false);
 
+  // The living weather field (motion engine): a clipped strip behind the
+  // complication column where the day's condition MOVES — rain falls, snow
+  // sways, clouds drift in parallax. Built under the labels (creation
+  // order is z-order), fed by update, and self-gating: day, calm, rich
+  // governor, no modal — else it holds still and hides. Ambient class,
+  // display_motion_engine.md.
+  motion::wx_layer_create(scr, 540, 48, SCR_W - 548, 344);
+
   // Right column — the complications.
   const int cx = 568;
   int cy = 64;
@@ -503,6 +514,9 @@ void nightstand7_ui_create() {
 
   // Reset every handle: main.cpp rebuilds the face with lv_obj_clean() on a
   // ground flip, which deletes the old objects out from under these statics.
+  // The weather field first — its engine-owned timer must forget the
+  // objects the clean is about to delete.
+  motion::wx_layer_teardown();
   s_wash = nullptr;
   for (auto& d : s_digit) d = SegDigit{};
   for (auto& b : s_digit_box) b = nullptr;
@@ -583,7 +597,7 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
   for (auto* c : s_colon) {
     if (!c) continue;
     lv_obj_set_style_bg_color(c, digit_col, 0);
-    lv_obj_set_style_bg_opa(c, st.time_valid ? LV_OPA_COVER : LV_OPA_10, 0);
+    motion::seg_opa(c, st.time_valid ? LV_OPA_COVER : LV_OPA_10);
   }
   if (s_ampm) {
     if (twelve && st.time_valid) {
@@ -648,6 +662,12 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
       const int y = lt.tm_year + 1900, m = lt.tm_mon + 1, d = lt.tm_mday;
       const int ymd = y * 10000 + m * 100 + d;
       if (ymd != s_cal_drawn_ymd) {
+        // A new MONTH gets a choreographed entrance — the day numbers ease
+        // in reading order, a few ms apart (per-part text_opa: cheap on
+        // every glass, snap on lean). A mere day change just re-inks two
+        // cells; the grid holds still.
+        const bool month_changed =
+            s_cal_drawn_ymd < 0 || s_cal_drawn_ymd / 100 != ymd / 100;
         s_cal_drawn_ymd = ymd;
         lv_label_set_text_fmt(s_cal_head, "%s %d", cal_month_name(m), y);
         const int days = cal_days_in_month(y, m);
@@ -661,6 +681,11 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
           lv_label_set_text_fmt(cell, "%d", day);
           lv_obj_set_style_text_color(
               cell, day == d ? col_accent() : col_muted(), 0);
+          if (month_changed) {
+            motion::text_opa_fade(cell, LV_OPA_0, LV_OPA_COVER,
+                                  motion::Dur::Medium,
+                                  (uint32_t)(day - 1) * 8u);
+          }
         }
       }
       lv_obj_set_style_text_color(s_cal_head, col_text(), 0);
@@ -796,6 +821,13 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
     }
   }
 
+  // ── The weather field (day only; the layer gates itself further) ──
+  if (!night_mode) {
+    motion::wx_layer_set(have_wx ? motion::wx_scene_for_word(wx.cond)
+                                 : motion::WxScene::Still,
+                         col_muted());
+  }
+
   // ── The wash ──
   auto& lp = look_params();
   lp.night = night_mode;
@@ -807,6 +839,16 @@ void nightstand7_ui_update(const Fleet& fleet, uint32_t now,
                               0);
     lv_obj_set_style_bg_grad_color(
         s_wash, lv_color_make(ws[1].r, ws[1].g, ws[1].b), 0);
+    // The breath answers to the governor: when this glass is spending its
+    // frames elsewhere the oscillation parks (the color field stays live),
+    // and it resumes the moment headroom returns.
+    const bool breathing = lv_anim_get(s_wash, wash_opa_cb) != nullptr;
+    if (motion::quality() == 0 && !breathing) {
+      start_wash_breath();
+    } else if (motion::quality() > 0 && breathing) {
+      lv_anim_del(s_wash, wash_opa_cb);
+      lv_obj_set_style_bg_opa(s_wash, LV_OPA_20, 0);
+    }
   } else {
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
     // The rendered sunrise: this board cannot PWM its backlight, so the
