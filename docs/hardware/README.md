@@ -60,6 +60,7 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_platform_vision.md`](./display_platform_vision.md) | Why the family has a face — the display platform's north star. |
 | [`display_trailblazer_spec.md`](./display_trailblazer_spec.md) | The trailblazer device spec — first hardware to carry the vision. |
 | [`display_ux_design.md`](./display_ux_design.md) | Screen-by-screen UX design. |
+| [`display_motion_engine.md`](./display_motion_engine.md) | The adaptive motion engine — a capability tier derived from each board's physics, a frame-time governor, and the rationed motion grammar (veil transitions, digit morphs, the minute sweep, the weather scene) it enforces. |
 | [`display_character.md`](./display_character.md) | The canary character — how the mascot behaves and why. |
 | [`display_living_canary.md`](./display_living_canary.md) | The living-canary mood engine — honest moods mirroring system health. |
 | [`display_care_wave.md`](./display_care_wave.md) | The care wave — gentle presence signals between households. |

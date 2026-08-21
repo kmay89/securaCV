@@ -16,6 +16,7 @@
 #include <time.h>
 
 #include "canary/ui/portrait7_ui.h"
+#include "canary/ui/motion.h"
 #include "canary/ui/theme.h"
 #include "canary/ui/canary_mark.h"
 #include "canary/ui/character.h"
@@ -94,10 +95,12 @@ void set_digit(SegDigit* d, int value, lv_color_t color, bool night) {
     if (!d->seg[i]) continue;
     lv_obj_set_style_bg_color(d->seg[i], color, 0);
     const bool lit = (map >> i) & 1;
-    lv_obj_set_style_bg_opa(
+    // Segment changes morph through the motion engine (instant on the lean
+    // tier and under an alarm) — the bedside face's rule, kept here too.
+    motion::seg_opa(
         d->seg[i],
         lit ? LV_OPA_COVER
-            : ((night || !ghost_day) ? LV_OPA_0 : LV_OPA_10), 0);
+            : ((night || !ghost_day) ? LV_OPA_0 : LV_OPA_10));
   }
 }
 

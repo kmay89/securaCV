@@ -6,6 +6,7 @@
 #include <math.h>
 
 #include "canary/ui/clock_face.h"
+#include "canary/ui/motion.h"
 
 namespace canary::ui {
 
@@ -48,6 +49,46 @@ void set_hand(lv_obj_t* hand, ClockLinePt* pts, int cx, int cy, float deg,
   pts[1].x = (decltype(pts[1].x))tip_x;
   pts[1].y = (decltype(pts[1].y))tip_y;
   lv_line_set_points(hand, pts, 2);
+}
+
+// Paint both hands at the given x10 angles and remember what the dial
+// shows. Angles normalize into one turn here — a sweep may aim past 360°
+// to take the short way through twelve, but nothing stores or draws the
+// unwrapped value (floats lose arc-precision as angles grow).
+void paint_hands(AnalogClock* c, int32_t h10, int32_t m10) {
+  h10 = ((h10 % 3600) + 3600) % 3600;
+  m10 = ((m10 % 3600) + 3600) % 3600;
+  const float r = (float)c->r;
+  set_hand(c->hand_h, c->hpts, c->cx, c->cy, (float)h10 / 10.0f, r * 0.52f,
+           r * 0.12f);
+  set_hand(c->hand_m, c->mpts, c->cx, c->cy, (float)m10 / 10.0f, r * 0.78f,
+           r * 0.14f);
+  c->shown_h10 = h10;
+  c->shown_m10 = m10;
+}
+
+// ── The minute sweep ─────────────────────────────────────────────────────
+// One dial per face, so one sweep: the anim's var is the MINUTE HAND (LVGL
+// reaps it with the object when a rebuild cleans the screen — the engine's
+// var rule), and this pointer names the dial it belongs to. The exec guard
+// checks both, so a stale tick against a rebuilt face is a no-op.
+AnalogClock* s_sweep_c = nullptr;
+int32_t s_sweep_from_h10 = 0, s_sweep_to_h10 = 0;
+int32_t s_sweep_from_m10 = 0, s_sweep_to_m10 = 0;
+
+void sweep_exec(void* var, int32_t v) {
+  AnalogClock* c = s_sweep_c;
+  if (!c || !c->hand_h || !c->hand_m || (lv_obj_t*)var != c->hand_m) return;
+  paint_hands(c, motion::lerp1024(s_sweep_from_h10, s_sweep_to_h10, v),
+              motion::lerp1024(s_sweep_from_m10, s_sweep_to_m10, v));
+}
+
+// Shortest signed x10-degree path a..b (354° -> 0° sweeps +6°, not -354°).
+int32_t short_delta10(int32_t from10, int32_t to10) {
+  int32_t d = (to10 - from10) % 3600;
+  if (d < -1800) d += 3600;
+  if (d > 1800) d -= 3600;
+  return d;
 }
 
 }  // namespace
@@ -99,15 +140,45 @@ void analog_clock_update(AnalogClock* c, int hh, int mm, lv_color_t col,
   if (!valid) {
     lv_obj_add_flag(c->hand_h, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(c->hand_m, LV_OBJ_FLAG_HIDDEN);
+    c->shown_h10 = c->shown_m10 = -1;   // time's return lands, not sweeps
     return;
   }
   lv_obj_clear_flag(c->hand_h, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(c->hand_m, LV_OBJ_FLAG_HIDDEN);
-  const float r = (float)c->r;
-  const float hour_deg = (float)((hh % 12) * 30) + (float)mm * 0.5f;
-  const float min_deg = (float)(mm * 6);
-  set_hand(c->hand_h, c->hpts, c->cx, c->cy, hour_deg, r * 0.52f, r * 0.12f);
-  set_hand(c->hand_m, c->mpts, c->cx, c->cy, min_deg, r * 0.78f, r * 0.14f);
+  const int32_t to_h10 = (int32_t)((hh % 12) * 300) + mm * 5;
+  const int32_t to_m10 = (int32_t)mm * 60;
+  const uint32_t dur = motion::ms(motion::Dur::Medium);
+  if (c->shown_m10 < 0 || dur == 0 || !motion::allowed(motion::Fx::Micro)) {
+    // First paint, a returning clock, or a tier/state that says snap.
+    paint_hands(c, to_h10, to_m10);
+  } else if (to_m10 != c->shown_m10 || to_h10 != c->shown_h10) {
+    // A render tick lands mid-sweep on purpose (the model refreshes faster
+    // than a minute) — if the flight is already aimed at this time, let it
+    // fly rather than restarting from wherever the hands are.
+    if (s_sweep_c == c && lv_anim_get(c->hand_m, sweep_exec) &&
+        ((s_sweep_to_m10 % 3600) + 3600) % 3600 == to_m10 &&
+        ((s_sweep_to_h10 % 3600) + 3600) % 3600 == to_h10) {
+      lv_obj_set_style_line_color(c->hand_h, col, 0);
+      lv_obj_set_style_line_color(c->hand_m, col, 0);
+      return;
+    }
+    // The minute tick, eased: both hands glide the short way from what the
+    // dial shows to the new time. Re-aim any sweep already in flight.
+    s_sweep_c = c;
+    s_sweep_from_h10 = c->shown_h10;
+    s_sweep_to_h10 = c->shown_h10 + short_delta10(c->shown_h10, to_h10);
+    s_sweep_from_m10 = c->shown_m10;
+    s_sweep_to_m10 = c->shown_m10 + short_delta10(c->shown_m10, to_m10);
+    lv_anim_del(c->hand_m, sweep_exec);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, c->hand_m);
+    lv_anim_set_exec_cb(&a, sweep_exec);
+    lv_anim_set_values(&a, 0, motion::kMotionOne);
+    lv_anim_set_time(&a, dur);
+    lv_anim_set_path_cb(&a, motion::path_out_cubic);
+    lv_anim_start(&a);
+  }
   lv_obj_set_style_line_color(c->hand_h, col, 0);
   lv_obj_set_style_line_color(c->hand_m, col, 0);
 }

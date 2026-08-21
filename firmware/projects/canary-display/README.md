@@ -65,6 +65,18 @@ cataloged in
     acknowledge.
   - *dash* — header state sentence with severity glow, witness card
     gallery, event timeline column.
+- **Moves like it means it (the motion engine,
+  [`display_motion_engine.md`](../../../docs/hardware/display_motion_engine.md))**:
+  a capability tier derived from each board's physics (bus, PSRAM, CPU,
+  flash budget) plus a runtime frame-time governor decide what this glass
+  can afford — so ground changes dip through a veil instead of hard-cutting,
+  segment digits morph between minutes, the Analog hands sweep, a new
+  month's calendar staggers in, backlight rungs glide on PWM glass, and the
+  7" bedside face carries a living weather field (slanted rain, swaying
+  snow, parallax clouds) mapped from the wire's own condition words. All of
+  it class-gated (decoration parks at night, under alarms, under modals, on
+  lean glass, and under load) — the rationed-motion law, enforced
+  mechanically. Pure math host-tested in `tests_host/test_motion.cpp`.
 - **Night mode**: quiet hours render red-shifted and near-dark (watch dims
   via PWM; dash goes dark-theme + backlight-off — its expander backlight is
   on/off only). An **unacked Alert/Tamper overrides the night floor**.
@@ -232,6 +244,8 @@ include/canary/
   net/                wifi_mgr / mqtt_mgr / ota_mgr (canary-vision parity)
   hal/display.h       panel+touch HAL (UI never sees panel specifics)
   ui/                 theme (timeline-card palette) + glance/dash faces
+  ui/motion_core.h    the motion engine's pure half (tier, curves, governor)
+  ui/motion.h         its LVGL half (gates, veil, glide, weather field)
   ui/round_frame_core.h  the circle's geometry engine (pure, host-tested)
 src/                  implementations; hal+ui TUs are flavor-gated
 ```
