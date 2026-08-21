@@ -1186,3 +1186,29 @@ button.flash-map-key:hover { color: var(--text); }
   color: var(--muted, #9aa39a);
 }
 .nursery-minimal-toggle[aria-pressed="true"] { color: #ffd44f; border-color: rgba(255,212,79,0.5); }
+
+/* ── liveness: the elapsed clock, the sweep, the certificate placeholder ──
+   Nothing the user waits on may sit visually frozen: progress cards carry a
+   ticking elapsed readout (flash.js progressCard), and operations that
+   report nothing until they finish (full-chip erase, the chip's own MD5)
+   sweep the bar instead of parking it. Deliberately outside the minimal-mode
+   fold list — liveness is progress, and progress never folds. */
+.flash-stage-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.flash-stage-row .flash-stage { margin: 0; min-width: 0; }
+.flash-elapsed {
+  margin: 0; white-space: nowrap; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.flash-working .flash-elapsed { margin-top: 6px; }
+.flash-bar-indet .flash-bar-fill {
+  width: 30% !important;
+  animation: flash-bar-sweep 1.4s ease-in-out infinite;
+}
+@keyframes flash-bar-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(433%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-bar-indet .flash-bar-fill { animation-duration: 2.8s; }
+}
+.flash-cert-waiting { text-align: center; opacity: 0.7; }

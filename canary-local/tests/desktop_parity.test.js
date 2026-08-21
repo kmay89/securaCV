@@ -1763,3 +1763,122 @@ test("minimal mode never folds the backup-secret notice", () => {
     "a minimal-mode rule reaches into the done card — the backup-secret " +
     "notice lives there and must stay visible in every mode");
 });
+
+// ── Liveness: no wait may look stuck, on either flasher ─────────────────────
+//
+// The 2026-08 wait-state audit: a display factory image can erase for a
+// minute, download for minutes, and verify for half a minute — and every one
+// of those used to sit visually frozen on at least one frontend. The rule
+// this gate pins: every long operation shows something that MOVES (a real
+// fraction, a sweeping bar, or a ticking elapsed clock) plus honest words
+// about what the silence means. Both flashers, per rule 7.
+test("every long wait shows liveness on both flashers", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const browserCore = read(join(CANARY, "assets", "flash-core.js"));
+  const appJs = read(join(ROOT, "desktop", "src", "app.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+  const css = read(join(ROOT, "desktop", "src", "styles.css"));
+  const libRsSrc = read(join(ROOT, "desktop", "src-tauri", "src", "lib.rs"));
+
+  // 1. The elapsed clock: both frontends tick seconds through every long
+  //    operation — the difference between "working" and "hung".
+  assert.match(browser, /flash-elapsed/,
+    "browser progress cards lost their elapsed clock");
+  assert.match(appJs, /still working/,
+    "desktop op strip lost its quiet-stretch watchdog");
+  assert.match(browser, /still working/,
+    "browser progress cards lost their quiet-stretch watchdog");
+
+  // 2. Indeterminate motion for waits with no honest number (full-chip
+  //    erase, the chip's own MD5): a sweep, never a frozen bar.
+  assert.match(browserCss, /flash-bar-indet/,
+    "browser lost the indeterminate bar sweep");
+  assert.match(browser, /pulse\(/,
+    "browser progressCard lost pulse() — erase/verify would freeze the bar");
+  assert.match(css, /\.op-progress \.bar-fill\.indet/,
+    "desktop op strip lost its indeterminate sweep");
+
+  // 3. The erase is narrated with a size-shaped estimate on the browser
+  //    (eraseEstimateText, unit-tested in flash.test.js) and a stage line on
+  //    the desktop — the chip reports nothing while erasing, so the words
+  //    are the only honest signal.
+  assert.match(browserCore, /export function eraseEstimateText/,
+    "flash-core lost the erase estimate");
+  assert.match(browser, /eraseEstimateText/,
+    "the browser erase step no longer states its expected duration");
+  assert.match(appJs, /stays silent until it finishes/,
+    "the desktop erase stage no longer says what the silence means");
+
+  // 4. Downloads stream with progress on both sides. The browser reads the
+  //    response body; the desktop's Rust flash command emits structured
+  //    flash:progress events from a chunked download.
+  assert.match(browser, /resp\.body && resp\.body\.getReader/,
+    "the browser image download went back to a silent arrayBuffer()");
+  assert.match(libRsSrc, /flash:progress/,
+    "lib.rs no longer emits download progress events");
+  assert.match(libRsSrc, /resp\s*\.chunk\(\)/,
+    "lib.rs download went back to a silent bytes() buffer");
+  assert.match(appJs, /flash:progress/,
+    "desktop never listens for the download progress it is sent");
+
+  // 5. The desktop finally has a real bar for the Canary flow — driven by
+  //    espflash's own frames — and the connect-time passport read narrates.
+  assert.match(html, /id="flash-progress-wrap"/,
+    "desktop lost the Canary-flow progress strip");
+  assert.match(appJs, /function progressFromFrame/,
+    "desktop lost the espflash frame parser — the bar has no data source");
+  assert.match(libRsSrc, /passport:log/,
+    "board_passport went silent again — up to 25 s with zero events");
+  assert.match(appJs, /passport:log/,
+    "desktop never shows the passport narration it is sent");
+
+  // 6. The browser's write bar reaches 100 %: one tracker per file, in the
+  //    callback's own (compressed) units — the old single tracker was seeded
+  //    with the uncompressed length and topped out at the compression ratio.
+  assert.match(browser, /fileEtas\[i\]/,
+    "the browser write bar went back to the mis-scaled single tracker");
+  // …and the chip's MD5 pause is named instead of mysterious.
+  assert.match(browser, /recomputing its checksum \(MD5\)/,
+    "the browser no longer names the chip's verify pause");
+});
+
+// The desktop's frame parser against realistic espflash/indicatif shapes —
+// same grab-the-function pattern as the classifier tests above. A parser
+// that can't read a frame must return null (the strip degrades to sweep +
+// clock), never a wrong number.
+test("progressFromFrame reads espflash's bars and refuses everything else", () => {
+  const appJs = read(join(ROOT, "desktop", "src", "app.js"));
+  const grabFn = (name) => {
+    const i = appJs.indexOf("function " + name);
+    let p = 0, j = appJs.indexOf("(", i);
+    for (let k = j; k < appJs.length; k++) {
+      if (appJs[k] === "(") p++;
+      else if (appJs[k] === ")") { p--; if (!p) { j = k; break; } }
+    }
+    const b = appJs.indexOf("{", j);
+    let d = 0;
+    for (let k = b; k < appJs.length; k++) {
+      if (appJs[k] === "{") d++;
+      else if (appJs[k] === "}") { d--; if (!d) return appJs.slice(i, k + 1); }
+    }
+  };
+  const fn = new Function(
+    grabFn("looksLikeProgressFrame") + "\n" + grabFn("progressFromFrame") +
+    "\nreturn progressFromFrame;")();
+
+  // Percent frames, wherever the percent sits.
+  assert.strictEqual(fn("[00:00:12] [========>-------] 45%"), 0.45);
+  assert.strictEqual(fn("Writing [#####>..........] 12% (0x10000)"), 0.12);
+  // indicatif's precise-percent template: the whole decimal, never the
+  // digits after the dot (review catch — '12.34%' must not read as 34 %).
+  assert.strictEqual(fn("[=>--------------] 12.34%"), 0.1234);
+  // n/m beside a bracketed bar.
+  assert.strictEqual(fn("[=====>          ] 512/1024"), 0.5);
+  // Not frames: narration, plain numbers, a bare fraction with no bar.
+  assert.strictEqual(fn("→ downloading https://example"), null);
+  assert.strictEqual(fn("✓ chip write verified"), null);
+  assert.strictEqual(fn("Flash size: 8MB"), null);
+  // Degenerate frames must degrade to null, never a wrong number.
+  assert.strictEqual(fn("[=========] 1024/0"), null);
+});

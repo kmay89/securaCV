@@ -378,6 +378,15 @@ function applyMinimalMode() {
   if (!mount) return;
   mount.classList.toggle("flash-minimal", minimalEnabled());
   mount.classList.remove("flash-minimal-open");
+  // The per-phase bridge follows a mid-phase toggle too: flipping minimal ON
+  // must offer the promised way back on THIS screen (not the next one), and
+  // flipping it OFF must not strand a bar whose toggle now does nothing.
+  const flow = $("#flash-flow");
+  if (flow) {
+    const existing = flow.querySelector(".flash-minimal-more");
+    if (minimalEnabled() && !existing) flow.append(minimalMoreBar());
+    else if (!minimalEnabled() && existing) existing.remove();
+  }
 }
 
 // The bridge from the quiet screen to everything it folded: reveals the full
@@ -1004,6 +1013,15 @@ async function startVoice(consoleEl, onIdentity) {
   };
   setTimeout(ask, 900);
   setTimeout(ask, 2600);
+  // A board that never prints leaves "listening…" up forever, which reads as
+  // a hang. After 5 s of silence, say what silence means here.
+  setTimeout(() => {
+    if (state.voice === v && v.alive && !v.buf) {
+      v.consoleEl.textContent =
+        "listening… nothing yet — some firmware only talks when asked. " +
+        "Everything below still works; the flasher takes the port back by itself.";
+    }
+  }, 5000);
   const dec = new TextDecoder();
   (async () => {
     try {
@@ -1053,6 +1071,26 @@ async function ensureSession(statusCb) {
   }
 }
 
+// The one shape every bootloader action opens with: the click lands on a
+// LIVE progress card first, THEN the port re-syncs — narrated and swept, so
+// the seconds (sometimes much more) of hand-back never read as a dead
+// button. Returns true with a session in hand; on failure it has already
+// rendered the retry card and cleared the busy flag.
+async function resyncOnCard(box, failTitle) {
+  if (state.session) return true;
+  const stopSync = box.pulse(
+    "reconnecting to the board’s bootloader — automatic, no gestures needed…");
+  const ok = await ensureSession((t) => box.stage(t));
+  stopSync();
+  if (!ok) {
+    state.busy = false;
+    setPhase(errorRetry(failTitle,
+      new Error("the board didn’t re-enter download mode — unplug, replug, reconnect"),
+      phaseConnect));
+  }
+  return ok;
+}
+
 async function onConnect() {
   if (state.busy || state.connecting) return;
   state.connecting = true;   // synchronous guard: a double-click can't open two choosers
@@ -1072,6 +1110,14 @@ async function onConnect() {
   const status = el("h2", null, "Waking up your Canary…");
   const detail = el("p", "muted", "Reaching the board’s bootloader. This takes a few seconds.");
   box.append(status, detail);
+  // The elapsed clock: the connect + first reads can run well past "a few
+  // seconds" (a board not in download mode walks the whole baud ladder —
+  // a minute-plus), and a ticking number is the difference between "working"
+  // and "hung". attachElapsed retires it when the card leaves the DOM and
+  // adds "still working" through any 8 s quiet stretch.
+  const elapsed = el("p", "fineprint flash-elapsed", "0:00");
+  box.append(elapsed);
+  const connectClock = attachElapsed(elapsed);
   // A gentle recovery nudge if it's slow (native-USB boards sometimes need
   // the download-mode gesture the flashing lesson teaches).
   const nudge = el("div", "flash-hidden");
@@ -1091,7 +1137,7 @@ async function onConnect() {
   // instead of dead-ending.
   let opened;
   try {
-    opened = await openEsptool(port, (t) => { detail.textContent = t; });
+    opened = await openEsptool(port, (t) => { detail.textContent = t; connectClock.touch(); });
   } catch (e) {
     clearTimeout(nudgeTimer);
     state.busy = false;
@@ -1103,9 +1149,15 @@ async function onConnect() {
 
   try {
     state.chip = esploader.chip.CHIP_NAME;
+    // The bootloader answered — from here on, narrate every read. These take
+    // 3–10 s on a good cable and much longer on a marginal one (each stalled
+    // chunk retries for up to ~46 s), and the old card sat frozen on
+    // "Reaching the board's bootloader" the whole time.
+    status.textContent = `Found your ${state.chip} — reading its story…`;
     // A stalled read should fail fast and retry (we read in small chunks),
     // not sit out esptool-js's default 100 s silence window per packet.
     esploader.FLASH_READ_TIMEOUT = 15000;
+    detail.textContent = "Asking for its MAC address and flash size…";
     try { state.mac = await esploader.chip.readMac(esploader); } catch { state.mac = null; }
     try {
       const kb = await esploader.getFlashSize();
@@ -1116,9 +1168,13 @@ async function onConnect() {
     // Escalation from a failed install: reconnect, then jump straight to the
     // clean-install rescue flow the user asked for.
     if (state.resumeRescue) { state.resumeRescue = false; setPhase(phaseRescue()); return; }
+    const narrate = (t) => { detail.textContent = t; connectClock.touch(); };
+    narrate("Reading what firmware it’s running (nothing is changed)…");
     await readCurrentFirmware();     // best-effort; never throws out
-    await readPassport();            // the counters worth showing at hello
-    await runIntake();               // customs — read-only, before anything is written
+    narrate("Reading its passport — updates seen, boots, witness counters…");
+    await readPassport(narrate);     // the counters worth showing at hello
+    narrate("Customs — checking its security fuses and true flash size…");
+    await runIntake(narrate);        // customs — read-only, before anything is written
     ensureManifest();                // kick off (async) manifest load
     chirp("hello");                  // the Nursery says hi (only if invited)
     setPhase(phaseConnected());
@@ -1342,9 +1398,10 @@ async function readCurrentFirmware() {
 // un-brickable promise rests on. Any probe may fail (an old board, a chip
 // with no verified table, a flaky cable); a probe that fails is reported as
 // "not checked" and never as "checked and clean".
-async function runIntake() {
+async function runIntake(narrate) {
   state.intake = null;
   if (!state.session) return;
+  const say = narrate || (() => {});
   const { esploader } = state.session;
   const macStr = state.mac ? core.formatMac(state.mac) : null;
   const rosterHit = core.rosterFind(state.roster, macStr);
@@ -1355,6 +1412,7 @@ async function runIntake() {
   try {
     const base = esploader.chip && esploader.chip.EFUSE_BASE;
     if (Number.isFinite(base)) {
+      say("Customs — reading its security fuses…");
       const words = [];
       for (const addr of intake.efuseBlock0Addrs(base)) {
         words.push(await esploader.readReg(addr));
@@ -1372,10 +1430,13 @@ async function runIntake() {
   try {
     const declared = state.flashBytes;
     if (declared && declared > 0x2000) {
+      const candidates = intake.flashAliasCandidates(declared);
+      say(`Customs — probing the flash is really ${core.formatBytes(declared)} (1 of ${candidates.length + 1})…`);
       const head = await readFlashChunked(esploader, 0, 0x1000);
       const probes = [];
-      for (const at of intake.flashAliasCandidates(declared)) {
-        probes.push({ atBytes: at, bytes: await readFlashChunked(esploader, at, 0x1000) });
+      for (let i = 0; i < candidates.length; i++) {
+        say(`Customs — probing the flash is really ${core.formatBytes(declared)} (${i + 2} of ${candidates.length + 1})…`);
+        probes.push({ atBytes: candidates[i], bytes: await readFlashChunked(esploader, candidates[i], 0x1000) });
       }
       alias = intake.flashAliasVerdict({ declaredBytes: declared, head, probes });
     }
@@ -1413,12 +1474,13 @@ async function runIntake() {
 // lifetime boots, the witness-record count, the tamper flag, and whether it
 // has ever hard-crashed. Every read is optional — a brand-new board simply
 // has no story yet.
-async function readPassport() {
+async function readPassport(narrate) {
   state.passport = null;
   if (!state.pt || !state.session) return;
   const { esploader } = state.session;
   const { entries, apps } = state.pt;
   const passport = {};
+  const say = narrate || (() => {});
   try {
     const otaPart = entries.find(core.isOtaDataPart);
     const otaSlots = apps.filter((a) => a.subtype >= 0x10 && a.subtype < 0x20);
@@ -1437,7 +1499,10 @@ async function readPassport() {
   try {
     const nvs = entries.find(core.isNvsPart);
     if (nvs) {
-      const nb = await readFlashChunked(esploader, nvs.offset, nvs.size);
+      // The passport's longest single pull — narrate its bytes so the
+      // connect card keeps moving through it.
+      const nb = await readFlashChunked(esploader, nvs.offset, nvs.size, (done, total) =>
+        say(`Reading its witness counters — ${core.formatBytes(done)} of ${core.formatBytes(total)}…`));
       passport.witness = core.witnessSummary(core.parseNvs(nb));
     }
   } catch {}
@@ -1871,15 +1936,11 @@ async function takeBackup(box) {
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
   state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
-  if (!state.session && !(await ensureSession())) {
-    state.busy = false;
-    setPhase(errorRetry("Couldn’t reach the bootloader for the backup",
-      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
-      phaseConnect));
-    return;
-  }
+  // Card first, re-sync second: the click must land on a live screen, not on
+  // seconds of nothing while the bootloader hand-back runs.
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
+  if (!(await resyncOnCard(box, "Couldn’t reach the bootloader for the backup"))) return;
   // Name the stage so the coach deals its safety-copy lessons here too, not
   // only during an install's embedded backup step.
   box.stage("Saving a safety copy — reading every byte off the board. Nothing is changed.");
@@ -3797,24 +3858,20 @@ function renderWifiFields(box, product) {
 async function startFlash(opts) {
   if (state.busy) return;
   state.busy = true;
-  // The live voice may hold the port — hand it back to the bootloader first.
-  if (!state.session) {
-    const okSession = await ensureSession();
-    if (!okSession) {
-      state.busy = false;
-      setPhase(errorRetry("Couldn’t reach the bootloader again",
-        new Error("the board didn’t re-enter download mode — unplug, replug, reconnect"),
-        phaseConnect));
-      return;
-    }
-  }
-  const { esploader } = state.session;
   const eraseAll = !!opts.eraseAll;
   const label = opts.product ? `${opts.product.name} v${opts.entry.version}` : opts.label;
 
+  // The card goes up BEFORE the port re-sync. The old order ran ensureSession
+  // first, so clicking Install did literally nothing on screen for the 3–10 s
+  // (sometimes much more) the bootloader hand-back took — the single worst
+  // dead-air moment in the flow. Now the click lands on a live card instantly.
   const box = progressCard(`Installing ${label}`, "Getting the image ready…");
   box.card.dataset.step = "4";
   setPhase(box.card);
+
+  // The live voice may hold the port — hand it back to the bootloader first.
+  if (!(await resyncOnCard(box, "Couldn’t reach the bootloader again"))) return;
+  const { esploader } = state.session;
 
   // The layers tour rides along for the whole install — backup included —
   // and its hex slide starts showing the real image bytes the moment the
@@ -3867,14 +3924,41 @@ async function startFlash(opts) {
       } catch {}
     } else {
       nextStep("downloading the signed image");
-      const buf = await fetch(opts.entry.factory, { cache: "no-store" }).then((r) => {
-        if (!r.ok) throw new Error("download failed (HTTP " + r.status + ")");
-        return r.arrayBuffer();
-      });
-      bytes = new Uint8Array(buf);
+      // Streamed, not arrayBuffer(): a display factory image on a slow
+      // network is minutes, and a bar parked at 0 with no counter was the
+      // step that most read as "hung". The release's own size is the honest
+      // total (Content-Length can be the compressed transfer size).
+      const resp = await fetch(opts.entry.factory, { cache: "no-store" });
+      if (!resp.ok) throw new Error("download failed (HTTP " + resp.status + ")");
+      const dlTotal = Number(opts.entry.size) ||
+        Number(resp.headers.get("content-length")) || 0;
+      if (resp.body && resp.body.getReader) {
+        const reader = resp.body.getReader();
+        const dlEta = core.makeEtaTracker(dlTotal);
+        const chunks = [];
+        let got = 0;
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          got += value.length;
+          if (dlTotal > 0) {
+            const p = dlEta.feed(Math.min(got, dlTotal), performance.now());
+            box.set(p.frac, progressMeta(Math.min(got, dlTotal), dlTotal, p));
+          } else {
+            box.set(0, `${core.formatBytes(got)} downloaded…`);
+          }
+        }
+        bytes = new Uint8Array(got);
+        let at = 0;
+        for (const c of chunks) { bytes.set(c, at); at += c.length; }
+      } else {
+        bytes = new Uint8Array(await resp.arrayBuffer());
+      }
       // 2) Verify SHA-256 against the manifest BEFORE writing a byte.
       nextStep("checking the image is authentic (SHA-256)");
-      const digest = await crypto.subtle.digest("SHA-256", buf);
+      box.set(0, "");
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
       const got = core.hex(new Uint8Array(digest));
       if (got.toLowerCase() !== opts.entry.sha256) {
         throw new Error("Downloaded image failed its checksum — refusing to flash it. " +
@@ -3975,13 +4059,30 @@ async function startFlash(opts) {
     // 3) Write, with live progress + automatic chip MD5 verification —
     // the map lights up region by region as the write cursor passes.
     if (eraseAll) {
-      nextStep("erasing the whole chip");
-      await esploader.eraseFlash();
+      // The chip reports NOTHING while it erases — one command, then silence
+      // until it finishes (up to two minutes on a 16 MB part). Say how long
+      // the silence usually runs and keep the bar sweeping + the clock
+      // ticking, so the longest fully-quiet wait in the flow reads as work.
+      nextStep(`erasing the whole chip — ${core.eraseEstimateText(state.flashBytes)}; ` +
+        "the chip stays silent until it finishes");
+      const stopErase = box.pulse();
+      try {
+        await esploader.eraseFlash();
+      } finally {
+        stopErase();
+      }
     }
     nextStep(wifiFile ? "writing firmware + your settings" : "writing firmware");
     const liveMap = diff ? box.attachMap(diff.rows, bytes.length, state.flashBytes || bytes.length) : null;
     const data = core.bytesToBinaryString(bytes);
-    const eta = core.makeEtaTracker(bytes.length);
+    // One tracker PER FILE, built from the callback's own total. The engine
+    // reports COMPRESSED bytes; the old single tracker was seeded with the
+    // uncompressed length, so the bar topped out at the compression ratio
+    // (~50–70 %) and never visibly finished — and with a baked-settings
+    // second file the numbers were nonsense. written/total from the same
+    // callback are the same units, so this frac is honest by construction.
+    const fileEtas = [];
+    let verifyPulseStop = null;
     await esploader.writeFlash({
       fileArray: wifiFile ? [{ data, address: 0 }, wifiFile] : [{ data, address: 0 }],
       flashSize: "keep",
@@ -3989,13 +4090,34 @@ async function startFlash(opts) {
       flashFreq: "keep",
       eraseAll: false, // regions being written are erased as needed
       compress: true,
-      reportProgress: (_i, written, total) => {
-        const p = eta.feed(written, performance.now());
-        box.set(p.frac, progressMeta(written, total, p));
-        if (liveMap) liveMap.update(p.frac);
+      reportProgress: (i, written, total) => {
+        if (!fileEtas[i]) fileEtas[i] = core.makeEtaTracker(total);
+        const p = fileEtas[i].feed(written, performance.now());
+        const frac = total > 0 ? written / total : 0;
+        // The engine's last act per file is the chip recomputing an MD5 over
+        // everything written — seconds to half a minute on big images, with
+        // no callback of its own. Flip the story the moment a file's bytes
+        // are all sent so the pause is named, not mysterious — and flip back
+        // when the next file's blocks start moving.
+        if (written >= total && total > 0) {
+          if (!verifyPulseStop) {
+            box.set(frac, progressMeta(written, total, p));
+            verifyPulseStop = box.pulse(
+              "every byte sent — the chip is recomputing its checksum (MD5) over the written range…");
+          }
+        } else {
+          if (verifyPulseStop) {
+            verifyPulseStop();
+            verifyPulseStop = null;
+            box.stage(i > 0 ? "writing your settings" : "writing firmware");
+          }
+          box.set(frac, progressMeta(written, total, p));
+        }
+        if (liveMap) liveMap.update(frac);
       },
       calculateMD5Hash: (image) => md5Raw(image),
     });
+    if (verifyPulseStop) verifyPulseStop();
 
     box.stage("Verified — the chip holds exactly what we sent ✓");
     box.set(1, "");
@@ -4118,7 +4240,12 @@ async function loadHatchSpec() {
 async function hatchFingerprint(waitMs = 8000) {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const fp = state.voice && state.voice.identity && state.voice.identity.pubkey_fp;
+    // No live voice at all means nothing will ever answer — after an install
+    // the session stopped it before flashing, so this poll used to run its
+    // full 8 s for nothing, every time, leaving the certificate slot empty
+    // for exactly that long. No voice, no wait: mint the random name now.
+    if (!state.voice) return "";
+    const fp = state.voice.identity && state.voice.identity.pubkey_fp;
     if (fp) return String(fp);
     if (Date.now() > deadline) return "";
     await new Promise((r) => setTimeout(r, 200));
@@ -4127,14 +4254,18 @@ async function hatchFingerprint(waitMs = 8000) {
 
 async function renderHatchCert(slot, opts) {
   try {
+    // Never an empty slot while the spec fetch / identity wait runs — an
+    // empty gap reads as "no certificate exists" until it suddenly pops in.
+    const placeholder = el("p", "fineprint flash-cert-waiting", "minting its birth certificate…");
+    slot.append(placeholder);
     const spec = await loadHatchSpec();
-    if (!spec) return;
+    if (!spec) { placeholder.remove(); return; }
     const fingerprint = opts.fingerprint || await hatchFingerprint();
     let cert = mintCertificate(spec, {
       product: opts.product, deviceId: opts.deviceId, fingerprint,
       fleet: _hatchFleet, usedBases: _hatchUsed, now: Date.now(),
     });
-    if (!cert) return;
+    if (!cert) { placeholder.remove(); return; }
     _hatchUsed.add(cert.base);
     _hatchFleet.unshift({ base: cert.base, ringId: cert.ringId });
 
@@ -4810,16 +4941,11 @@ async function onRestoreFile(ev) {
 async function runHealthCheck() {
   if (state.busy) return;
   state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
-  if (!state.session && !(await ensureSession())) {
-    state.busy = false;
-    setPhase(errorRetry("Couldn’t reach the bootloader for the health check",
-      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
-      phaseConnect));
-    return;
-  }
-  const { esploader } = state.session;
+  // Card first, re-sync second — the click lands on a live screen.
   const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
   setPhase(box.card);
+  if (!(await resyncOnCard(box, "Couldn’t reach the bootloader for the health check"))) return;
+  const { esploader } = state.session;
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -4903,7 +5029,11 @@ async function runHealthCheck() {
         box.stage("Reading witness-chain state (NVS)");
         box.set(0.8, "");
         try {
-          const nb = await readFlashChunked(esploader, nvs.offset, nvs.size);
+          // The report's biggest single read — real bytes across its slice of
+          // the bar, so a slow pull moves instead of parking at 80 %.
+          const nb = await readFlashChunked(esploader, nvs.offset, nvs.size, (done, total) =>
+            box.set(0.8 + 0.2 * (total ? done / total : 0),
+              `${core.formatBytes(done)} of ${core.formatBytes(total)}`));
           const items = core.parseNvs(nb, [core.WITNESS_CHAIN_BLOB_KEY]);
           report.witness = core.witnessSummary(items);
         } catch {}
@@ -5920,11 +6050,37 @@ function attachCoach(card, afterEl) {
   };
 }
 
+// The one elapsed clock (review catch: three hand-rolled copies drifted —
+// and the copy on the connect card lacked the watchdog). Ticks m:ss onto
+// `elapsedEl` once a second until the element leaves the DOM; touch() feeds
+// the quiet-stretch watchdog, which appends "still working" after 8 s
+// without a signal so silence never reads as a hang.
+function attachElapsed(elapsedEl) {
+  const t0 = performance.now();
+  let last = t0;
+  const tick = setInterval(() => {
+    if (!elapsedEl.isConnected) { clearInterval(tick); return; }
+    const now = performance.now();
+    const s = Math.floor((now - t0) / 1000);
+    elapsedEl.textContent =
+      `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` +
+      (now - last > 8000 ? " — still working" : "");
+  }, 1000);
+  return { touch() { last = performance.now(); } };
+}
+
 function progressCard(title, subtitle) {
   const card = el("section", "flash-card flash-progress");
   card.append(el("h2", null, title));
+  const stageRow = el("div", "flash-stage-row");
   const stageEl = el("p", "flash-stage muted", subtitle || "");
-  card.append(stageEl);
+  // The elapsed clock: ticks every second for the card's whole life, so even
+  // a phase with nothing to count (an erase, a checksum, a stalled retry)
+  // visibly moves. Liveness is the product here — a frozen card and a hung
+  // card are indistinguishable, and this line is the difference.
+  const elapsedEl = el("p", "flash-elapsed fineprint", "0:00");
+  stageRow.append(stageEl, elapsedEl);
+  card.append(stageRow);
   const bar = el("div", "flash-bar");
   const fill = el("div", "flash-bar-fill");
   bar.append(fill);
@@ -5944,16 +6100,44 @@ function progressCard(title, subtitle) {
   logSink = pre;
   log.append(pre);
   card.append(log);
+
+  // The liveness clock + quiet-stretch watchdog (attachElapsed): every
+  // stage()/set() touches it; after 8 s of silence the elapsed line says
+  // "still working" so a retry loop or an on-chip operation with no callback
+  // never reads as a hang. The ticker retires itself when the card leaves
+  // the DOM (setPhase swaps cards without telling us).
+  const clock = attachElapsed(elapsedEl);
+
+  // Waits with no honest number (full-chip erase, the chip's own checksum):
+  // the bar sweeps instead of sitting frozen at its last value. Any set()
+  // call takes the bar back.
+  const setIndet = (on) => bar.classList.toggle("flash-bar-indet", !!on);
+
   return {
     card,
     stage(s) {
+      clock.touch();
       stageEl.textContent = s;
       if (coach) coach.stage(s);
     },
     set(frac, metaText) {
+      clock.touch();
+      setIndet(false);
       const pct = Math.max(0, Math.min(1, frac || 0)) * 100;
       fill.style.width = pct.toFixed(1) + "%";
       if (metaText != null) meta.textContent = metaText;
+    },
+    // An operation that reports nothing until it finishes: sweep the bar and
+    // (optionally) say what's happening. Returns a stop function; the next
+    // set() also ends the sweep.
+    pulse(stageText) {
+      clock.touch();
+      if (stageText != null) {
+        stageEl.textContent = stageText;
+        if (coach) coach.stage(stageText);
+      }
+      setIndet(true);
+      return () => setIndet(false);
     },
     // The live write map: the chip's regions, lighting up as the write
     // cursor passes through them — Arduino's console line, but visual.

@@ -553,6 +553,30 @@ export function formatDuration(s) {
   return `about ${m} minute${m === 1 ? "" : "s"}`;
 }
 
+// What to promise before a full-chip erase. The chip reports NOTHING while it
+// erases (a single stub command against a fixed 120 s engine timeout), so the
+// UI's only honest move is to say up front how long the silence usually runs.
+// Bounds are datasheet-shaped, deliberately wide: real 128 Mbit parts run
+// ~25–80 s chip-erase; small dies finish in seconds. Unknown size gets the
+// conservative sentence rather than a made-up number.
+export function eraseEstimateText(flashBytes) {
+  if (!Number.isFinite(flashBytes) || flashBytes <= 0) {
+    return "usually well under two minutes";
+  }
+  const mb = flashBytes / (1024 * 1024);
+  const lo = Math.max(5, Math.round(mb * 2.5));
+  const hi = Math.max(15, Math.round(mb * 6));
+  if (hi < 60) return `typically ${lo}–${hi} seconds`;
+  // Crossing the minute line: the ceiling always rounds UP (an estimate may
+  // overshoot, never undersell), pluralized properly; the floor stays in
+  // seconds until well past a minute so it never quietly loses 20 s to
+  // rounding.
+  const hiMin = Math.ceil(hi / 60);
+  const hiText = `${hiMin} minute${hiMin === 1 ? "" : "s"}`;
+  const loText = lo < 120 ? `${lo} seconds` : `${Math.floor(lo / 60)} minutes`;
+  return `typically ${loText} to ${hiText}`;
+}
+
 // ── serial console heuristics ───────────────────────────────────────────────
 // Baud candidates for the monitor, most likely first. The firmware console is
 // console_baud (115200); 74880 is the classic ESP32 boot-ROM rate; the rest
