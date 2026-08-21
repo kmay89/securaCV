@@ -1242,6 +1242,12 @@ pub struct Kernel {
     zone_policy: ZonePolicy,
 }
 
+/// The `(pq_public_key, pq_secret_key)` columns of `device_metadata`, each
+/// independently nullable. Named so the query site reads clearly and satisfies
+/// clippy::type_complexity.
+#[cfg(feature = "pqc-signatures")]
+type PqKeyColumns = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 struct SignatureKeyMaterial {
     device_key: SigningKey,
     #[cfg(feature = "pqc-signatures")]
@@ -1252,7 +1258,7 @@ impl SignatureKeyMaterial {
     fn signature_keys(&self) -> SignatureKeys<'_> {
         #[cfg(feature = "pqc-signatures")]
         {
-            return SignatureKeys::with_pq(&self.device_key, self.pq_secret_key.as_ref());
+            SignatureKeys::with_pq(&self.device_key, self.pq_secret_key.as_ref())
         }
         #[cfg(not(feature = "pqc-signatures"))]
         {
@@ -1631,7 +1637,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     #[cfg(feature = "pqc-signatures")]
     fn ensure_device_pq_keys(&mut self) -> Result<()> {
-        let row: Option<(Option<Vec<u8>>, Option<Vec<u8>>)> = self
+        let row: Option<PqKeyColumns> = self
             .conn
             .query_row(
                 "SELECT pq_public_key, pq_secret_key FROM device_metadata WHERE id = 1",
@@ -1660,10 +1666,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     fn signature_key_material(&self) -> SignatureKeyMaterial {
         #[cfg(feature = "pqc-signatures")]
         {
-            return SignatureKeyMaterial {
+            SignatureKeyMaterial {
                 device_key: self.device_key.clone(),
                 pq_secret_key: self.device_pq_key.as_ref().map(|key| key.secret_key),
-            };
+            }
         }
         #[cfg(not(feature = "pqc-signatures"))]
         {
@@ -2947,7 +2953,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     pub fn device_pq_public_key_ref(&self) -> Option<&PqPublicKey> {
         #[cfg(feature = "pqc-signatures")]
         {
-            return self.device_pq_key.as_ref().map(|key| &key.public_key);
+            self.device_pq_key.as_ref().map(|key| &key.public_key)
         }
         #[cfg(not(feature = "pqc-signatures"))]
         {
@@ -2958,10 +2964,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     pub fn device_pq_public_key_for_verify_only(&self) -> Option<Vec<u8>> {
         #[cfg(feature = "pqc-signatures")]
         {
-            return self
-                .device_pq_key
+            self.device_pq_key
                 .as_ref()
-                .map(|key| key.public_key_bytes());
+                .map(|key| key.public_key_bytes())
         }
         #[cfg(not(feature = "pqc-signatures"))]
         {
