@@ -1,6 +1,6 @@
 # Firmware Variant Policy
 
-**Last updated:** 2026-04-17
+**Last updated:** 2026-08-21 (added canary-sentinel / canary-companion / canary-fence-guard rows; reworded canary-ota after the engine's promotion to `common/ota`)
 **Owner:** firmware maintainers
 **Companion docs:** [ARCHITECTURE.md](ARCHITECTURE.md), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md), [FEATURES.md](FEATURES.md)
 
@@ -18,6 +18,7 @@ Every firmware variant is labeled with exactly one of the following statuses:
 | **COMPATIBILITY** | Maintained lane for a specific user base (e.g. Arduino IDE). Changes backported from ACTIVE when feasible. | Selective | Yes | No |
 | **SPECIALIZED** | Dedicated-purpose tree (board-specific, subsystem-focused). Scope is narrow by design. | Yes, within scope | Yes | No |
 | **ARCHIVED** | Frozen historical reference. Read-only. CI blocks edits unless the commit contains `[archive-edit]`. | No | No (fork forward instead) | Yes (`#error` unless override defined) |
+| **CONCEPT** | Research staged before any firmware exists: requirements, architecture sketch, open questions. Deliberately unbuildable (stub `#error`s on purpose); ships nothing. Becomes SPECIALIZED Phase 0 when work starts. | Design docs only | N/A (no code to fix) | Yes (`#error` stub) |
 
 ---
 
@@ -31,7 +32,10 @@ Every firmware variant is labeled with exactly one of the following statuses:
 | [`firmware/projects/canary-sense/`](./projects/canary-sense) | **SPECIALIZED** | XIAO ESP32-C6 + Seeed MR60BHA2 (60GHz mmWave) | Radar presence (+ opt-in wellbeing vitals) + signed witness chain + MQTT/HA publishing | This tree (scope: radar sensing + MQTT) |
 | [`firmware/projects/canary-display/`](./projects/canary-display) | **SPECIALIZED** | XIAO ESP32-S3 + Round Display (`watch`) / Waveshare ESP32-S3-Touch-LCD-4.3 (`dash`) | Fleet status display: MQTT subscribe + on-device Ed25519 chain verify + glance UI | This tree (scope: display + fleet rendering) |
 | [`firmware/projects/canary-tincan/`](./projects/canary-tincan) | **SPECIALIZED** | Waveshare ESP32-S3-Touch-AMOLED-2.06 (`waveshare-esp32s3-amoled206`) | The Tin Can: a kids' wrist Canary — parent-witnessed LAN-only "strings" carrying knocks/tugs/stamps, plus the parent's Ring. **Phase 0: pure cores host-tested in CI, no build env yet** | This tree (scope: paired kid messaging + the Tin Can UI) |
-| [`firmware/projects/canary-ota/`](./projects/canary-ota) | **SPECIALIZED** | ESP32 family | OTA A/B update subsystem + rollback safety | This tree (scope: OTA) |
+| [`firmware/projects/canary-sentinel/`](./projects/canary-sentinel) | **SPECIALIZED** | XIAO ESP32-C6 (Standard/Heavy tiers) / XIAO ESP32-C3 (Lite) | Doorway/window multi-sensor fusion guardian (five presets on the host-tested `common/fusion` brain). **Phase 0: fusion core host-tested in CI, build envs compile-checked, not in `flavors.json`; hardware bench pending** | This tree (scope: sensor fusion presets) |
+| [`firmware/projects/canary-companion/`](./projects/canary-companion) | **SPECIALIZED** | Waveshare ESP32-S3-Touch-AMOLED-2.06 (`waveshare-esp32s3-amoled206`) | The Night Watch (truly-dark AMOLED bedside clock) + the Pocket Canary (virtual pet). **Phase 0: pure cores host-tested in CI, no build env or runtime yet** | This tree (scope: Night Watch + Pocket Canary UI) |
+| [`firmware/projects/canary-fence-guard/`](./projects/canary-fence-guard) | **CONCEPT** | XIAO ESP32-S3 + Wio-SX1262 (proposed) | Perimeter fence witness over Meshtastic/LoRa — research staged, firmware pending; `src/main_stub.cpp` `#error`s on purpose, nothing builds or ships | This tree (scope: fence sensing over LoRa), if requested |
+| [`firmware/projects/canary-ota/`](./projects/canary-ota) | **SPECIALIZED** | ESP32 family | Standalone ESP-IDF OTA test/demo harness. The OTA engine itself was promoted to [`firmware/common/ota/`](./common/ota), which the ACTIVE variants consume; this tree is the harness that exercises it, and is built by no CI workflow | Engine: `common/ota` (CI-covered). Harness: this tree |
 | [`firmware/common/`](./common) | shared | all | Board-agnostic module headers and implementations | ACTIVE tree changes drive this |
 | [`firmware/boards/`](./boards) | shared | all | Pin maps + capability flags per board | Added alongside new board bring-up |
 | [`firmware/configs/`](./configs) | shared | all | Product composition (feature flags, build profiles) | Updated with ACTIVE tree |
@@ -48,6 +52,7 @@ Every firmware variant is labeled with exactly one of the following statuses:
 | COMPATIBILITY | Monthly security + regression sweep | 60 days without a push triggers review |
 | SPECIALIZED | Cadence driven by the owning subsystem roadmap | Flag if `git log` shows >90 days since last commit |
 | ARCHIVED | Never touched except to graduate fixes forward | N/A (frozen) |
+| CONCEPT | Revisited when a request issue lands (that is the graduation trigger) | N/A (no code to rot) |
 
 "Triage" means: open an issue to either (a) push an update, (b) re-label the tree, or (c) graduate it to ARCHIVED.
 

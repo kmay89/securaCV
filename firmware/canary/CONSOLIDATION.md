@@ -95,7 +95,7 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   - `GET /api/status`, `GET /api/chain`, `GET /api/logs`
   - `GET /api/wifi/status`, `GET /api/mqtt/status` (`FEATURE_HA_MQTT`)
   - `POST /api/peek/start`, `GET /api/peek/stream`, `POST /api/peek/stop`, `GET /api/peek/status` (`FEATURE_CAMERA_PEEK`)
-- Carve-outs still unauthenticated: `GET /` (the SPA shell itself — must be reachable to receive the token), `GET /api/wifi/scan` (not called from the SPA today; revisit when the WiFi setup tab lands).
+- Carve-out still unauthenticated: `GET /` (the SPA shell itself — must be reachable to receive the token). `GET /api/wifi/scan` was later brought under `auth_gate` like its sibling WiFi endpoints — the setup wizard and SPA both send the bearer token, so the carve-out was never needed.
 - Bearer credential remains confined to `securacv_auth`; `regression_check.sh` "Token isolation" rule still greps clean.
 - Gap #1 flipped to ✅.
 

@@ -228,9 +228,6 @@ canary-wap/
 │   └── canary_wap/           # The firmware sources (single tree, both toolchains)
 │       ├── canary_wap.ino    # Main sketch — PlatformIO's src_dir points here too
 │       └── ...               # Modules (see arduino/canary_wap/README.md)
-├── libraries/
-│   └── csi/                  # CSI sensing library (synced from common/csi)
-├── include/                  # Project-specific headers (app.h)
 ├── secrets/                  # Credentials (gitignored)
 ├── tests_host/               # Host-side unit tests
 ├── platformio.ini            # PlatformIO configuration (src_dir = arduino/canary_wap)

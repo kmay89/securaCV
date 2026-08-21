@@ -159,13 +159,19 @@ distclean:
 # CODE QUALITY
 # ============================================================================
 
+# Lints the real firmware tree (the arduino/ sketch — there is no src/;
+# that scaffold was archived, see platformio.ini). CI's pio-check job runs
+# `pio check --fail-on-defect medium` over the same sources; this target is
+# the quick local equivalent. --error-exitcode makes findings fail the
+# target instead of being swallowed by an output pipe.
 lint:
-	@echo "Running static analysis..."
+	@echo "Running static analysis on $(ARDUINO_DIR)..."
 	@if command -v cppcheck >/dev/null 2>&1; then \
 		cppcheck --enable=warning,style --std=c++17 \
+			--error-exitcode=1 --inline-suppr \
 			-I ../../common -I ../../boards/xiao-esp32s3-sense/pins \
-			-I ../../configs/canary-wap/default \
-			src/ include/ 2>&1 | head -50; \
+			-I $(ARDUINO_DIR) \
+			$(ARDUINO_DIR); \
 	else \
 		echo "cppcheck not found, skipping"; \
 	fi
@@ -173,7 +179,7 @@ lint:
 format:
 	@echo "Formatting code..."
 	@if command -v clang-format >/dev/null 2>&1; then \
-		find src include -name "*.cpp" -o -name "*.h" 2>/dev/null | xargs -r clang-format -i; \
+		find $(ARDUINO_DIR) -maxdepth 1 \( -name "*.cpp" -o -name "*.h" \) 2>/dev/null | xargs -r clang-format -i; \
 		echo "Done"; \
 	else \
 		echo "clang-format not found, skipping"; \
