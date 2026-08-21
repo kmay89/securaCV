@@ -9,7 +9,7 @@ use rand::TryRng;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -50,10 +50,49 @@ use crate::vault::format::VaultEnvelope;
 /// Fixed local vault path to satisfy invariant requirements.
 pub const DEFAULT_VAULT_PATH: &str = "vault/envelopes";
 
+/// How the vault master key is protected at rest.
+///
+/// `Plaintext` (default) is the legacy behavior: a raw `master.key` file beside
+/// the ciphertext. `Passphrase` wraps the master key under an Argon2id KEK in a
+/// `master.keyguard` container, so possession of the vault directory alone is no
+/// longer sufficient to decrypt evidence — the operator-held passphrase (never
+/// written to disk) is also required. Defense-in-depth against vault-file theft;
+/// it is not a cryptographic quorum (a single passphrase holder still decrypts).
+#[derive(Clone, Default)]
+pub enum VaultKeyMaterial {
+    #[default]
+    Plaintext,
+    Passphrase(Zeroizing<String>),
+}
+
+impl std::fmt::Debug for VaultKeyMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plaintext => write!(f, "Plaintext"),
+            // Never render the passphrase.
+            Self::Passphrase(_) => write!(f, "Passphrase(<redacted>)"),
+        }
+    }
+}
+
+impl VaultKeyMaterial {
+    /// Resolve from `SECURACV_VAULT_PASSPHRASE`: a non-empty value selects the
+    /// passphrase keyguard; otherwise legacy plaintext. Production vault
+    /// construction sites use this so passphrase mode is a pure env opt-in.
+    pub fn from_env() -> Self {
+        match std::env::var("SECURACV_VAULT_PASSPHRASE") {
+            Ok(s) if !s.trim().is_empty() => Self::Passphrase(Zeroizing::new(s)),
+            _ => Self::Plaintext,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct VaultConfig {
     pub local_path: PathBuf,
     pub crypto_mode: VaultCryptoMode,
+    /// Master-key protection at rest (default: legacy plaintext `master.key`).
+    pub key_material: VaultKeyMaterial,
 }
 
 impl Default for VaultConfig {
@@ -61,6 +100,7 @@ impl Default for VaultConfig {
         Self {
             local_path: PathBuf::from(DEFAULT_VAULT_PATH),
             crypto_mode: VaultCryptoMode::Classical,
+            key_material: VaultKeyMaterial::default(),
         }
     }
 }
@@ -185,7 +225,7 @@ pub struct FilesystemVaultStore {
 impl FilesystemVaultStore {
     pub fn new(cfg: VaultConfig) -> Result<Self> {
         fs::create_dir_all(&cfg.local_path)?;
-        let master_key = load_or_create_master_key(&cfg.local_path)?;
+        let master_key = load_or_create_master_key(&cfg.local_path, &cfg.key_material)?;
         let kem_keypair = load_or_create_kem_keypair(&cfg.local_path, cfg.crypto_mode)?;
         Ok(Self {
             root: cfg.local_path,
@@ -420,7 +460,76 @@ pub(crate) fn sanitize_envelope_id(envelope_id: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn load_or_create_master_key(root: &Path) -> Result<[u8; 32]> {
+fn load_or_create_master_key(root: &Path, key_material: &VaultKeyMaterial) -> Result<[u8; 32]> {
+    match key_material {
+        VaultKeyMaterial::Plaintext => load_or_create_plaintext_master_key(root),
+        VaultKeyMaterial::Passphrase(pw) => load_or_create_keyguard_master_key(root, pw),
+    }
+}
+
+/// Passphrase keyguard: the master key lives only inside `master.keyguard`,
+/// wrapped under an Argon2id KEK. No plaintext `master.key` is ever written in
+/// this mode, and one already present is refused (the operator must migrate it
+/// deliberately rather than silently keep a plaintext copy alongside).
+fn load_or_create_keyguard_master_key(root: &Path, passphrase: &str) -> Result<[u8; 32]> {
+    let guard_path = root.join("master.keyguard");
+    // Bind the container to its canonical vault directory so a keyguard file
+    // casually copied to a different path won't open with the same passphrase.
+    // Canonicalize so the same directory reached by a different spelling
+    // (relative vs absolute, trailing slash, symlink) still opens — the vault
+    // dir already exists here (create_dir_all ran in the store constructor).
+    // This is a deterrent against a careless copy, NOT a cryptographic
+    // anti-exfiltration control (an attacker who knows the path and passphrase
+    // can still open a copy placed there).
+    let path_aad = fs::canonicalize(root)
+        .unwrap_or_else(|_| root.to_path_buf())
+        .as_os_str()
+        .as_encoded_bytes()
+        .to_vec();
+    if guard_path.exists() {
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(&guard_path)?.permissions().mode() & 0o777;
+            if mode != 0o600 {
+                fs::set_permissions(&guard_path, fs::Permissions::from_mode(0o600))?;
+            }
+        }
+        let bytes = read_file(&guard_path)?;
+        crate::vault::crypto::keyguard_decode(&bytes, passphrase, &path_aad)
+    } else {
+        if root.join("master.key").exists() {
+            return Err(anyhow!(
+                "vault: a plaintext master.key exists but a passphrase was supplied. \
+                 Migrate it deliberately (re-seal under the keyguard) before enabling \
+                 passphrase mode, rather than keeping a plaintext key alongside."
+            ));
+        }
+        let mut key = [0u8; 32];
+        SysRng
+            .try_fill_bytes(&mut key[..])
+            .expect("OS RNG unavailable");
+        let container = crate::vault::crypto::keyguard_encode(&key, passphrase, &path_aad)?;
+        // Atomic write (temp + fsync + rename, 0600): a torn write must never
+        // leave a partial master.keyguard that then fails to decode and bricks
+        // vault init with no recovery path.
+        write_atomic(&guard_path, &container)?;
+        Ok(key)
+    }
+}
+
+fn load_or_create_plaintext_master_key(root: &Path) -> Result<[u8; 32]> {
+    // Fail closed if this is a keyguard-protected vault opened WITHOUT a
+    // passphrase: otherwise we'd mint a second, plaintext master.key and seal
+    // new evidence under it, splitting the vault across two keys (restoring the
+    // passphrase later silently reselects the first key). The operator must set
+    // SECURACV_VAULT_PASSPHRASE to open a keyguard vault.
+    if root.join("master.keyguard").exists() {
+        return Err(anyhow!(
+            "vault: master.keyguard is present but SECURACV_VAULT_PASSPHRASE is not set. \
+             Set the vault passphrase to open this keyguard-protected vault — refusing to \
+             create a second plaintext master.key that would split the vault."
+        ));
+    }
     let key_path = root.join("master.key");
     if key_path.exists() {
         let bytes = read_file(&key_path)?;
@@ -569,6 +678,70 @@ mod tests {
     use ed25519_dalek::{SigningKey, VerifyingKey};
     use sha2::{Digest, Sha256};
     use std::fs;
+
+    fn passphrase(s: &str) -> VaultKeyMaterial {
+        VaultKeyMaterial::Passphrase(Zeroizing::new(s.to_string()))
+    }
+
+    #[test]
+    fn keyguard_creates_container_not_plaintext_and_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let km = passphrase("open sesame please");
+        let k1 = load_or_create_master_key(root, &km).unwrap();
+        assert!(root.join("master.keyguard").exists());
+        assert!(
+            !root.join("master.key").exists(),
+            "keyguard mode must never write a plaintext master.key"
+        );
+        let k2 = load_or_create_master_key(root, &km).unwrap();
+        assert_eq!(k1, k2, "same passphrase recovers the same master key");
+    }
+
+    #[test]
+    fn keyguard_wrong_passphrase_fails_to_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_create_master_key(root, &passphrase("the-right-one")).unwrap();
+        assert!(load_or_create_master_key(root, &passphrase("the-wrong-one")).is_err());
+    }
+
+    #[test]
+    fn keyguard_refuses_alongside_plaintext_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_create_master_key(root, &VaultKeyMaterial::Plaintext).unwrap();
+        assert!(root.join("master.key").exists());
+        assert!(
+            load_or_create_master_key(root, &passphrase("pw")).is_err(),
+            "must refuse passphrase mode while a plaintext master.key is present"
+        );
+    }
+
+    #[test]
+    fn plaintext_refuses_when_keyguard_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_create_master_key(root, &passphrase("the passphrase")).unwrap();
+        assert!(root.join("master.keyguard").exists());
+        // Opening without the passphrase must refuse — never mint a second key.
+        assert!(load_or_create_master_key(root, &VaultKeyMaterial::Plaintext).is_err());
+        assert!(
+            !root.join("master.key").exists(),
+            "must not create a second plaintext key alongside a keyguard"
+        );
+    }
+
+    #[test]
+    fn plaintext_master_key_mode_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let k1 = load_or_create_master_key(root, &VaultKeyMaterial::Plaintext).unwrap();
+        assert!(root.join("master.key").exists());
+        assert!(!root.join("master.keyguard").exists());
+        let k2 = load_or_create_master_key(root, &VaultKeyMaterial::Plaintext).unwrap();
+        assert_eq!(k1, k2);
+    }
 
     fn make_break_glass_token(
         envelope_id: &str,

@@ -17,6 +17,54 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.6 — 2026-08-21
+
+**Nothing looks stuck anymore — every wait shows its work.**
+
+Flashing a big board involves real waits: a full-chip erase the chip runs
+in silence, a download on whatever network you're on, minutes of writing,
+and a verify at the end. The app now answers "is it stuck?" at a glance,
+everywhere:
+
+- **A real progress bar for flashing a Canary** — stage, percent, and an
+  elapsed clock that ticks every second, sitting above the console. The
+  console stays the verbatim transcript; the bar is read straight out of
+  the flashing engine's own progress output.
+- **The download shows its bytes.** The firmware image used to arrive in
+  one silent gulp; it now streams, with a live count against the release's
+  published size.
+- **The erase says what its silence means.** The chip reports nothing
+  while it erases — so the stage says so, estimates how long, and the bar
+  sweeps instead of freezing.
+- **The connect-time board read narrates.** "Reading the board first"
+  now walks through its steps (partition table, update history, what it's
+  running, witness counters) instead of holding one frozen label for up to
+  25 seconds.
+- **Rescue, health check, and local-file installs** get the same strip —
+  including the minutes-long full-chip backup.
+- **If nothing has moved for 8 seconds, the clock says "still working"**
+  out loud, and the Vision module flow narrates its model download and its
+  end-of-burn proof wait.
+
+The browser flasher gains the same liveness in the same release — elapsed
+clocks on every progress card, a streamed download, the erase and
+checksum pauses named and swept, and its write bar now genuinely reaches
+100 % (it used to top out early on compressed transfers). That parity is
+CI-gated like the rest.
+
+## 0.11.5 — 2026-08-20
+
+**Minimal mode — for the fortieth board of the day.**
+
+A new feather button in the rail (next to day/night) folds the explainer
+prose away: the page ledes, the product taglines, the settled support-tier
+lines and the provisioning note step aside, the cards tighten up, and the
+flash console collapses the progress bar's redraw spam into one live line.
+Every control, safety check, receipt and warning stays exactly where it was
+— including the first-contact wipe choice and the "never booted" tier note —
+and one click brings the full story back. The choice is remembered. The
+browser flasher gains the same mode in the same release.
+
 ## 0.11.4 — 2026-08-15
 
 **Flashes firmware 2.4.11 — the bedside fixes.**

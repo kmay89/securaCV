@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-08-20T09:49:13Z",
+  "as_of": "2026-08-21T09:51:12Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -28,7 +28,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 15.9,
-       "stock": 1526,
+       "stock": 1507,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/102010469/16652896"
       }
@@ -88,7 +88,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.16,
-       "stock": 60426,
+       "stock": 54151,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/diotec-semiconductor/2N7002/13163336"
       }
@@ -106,7 +106,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 855097,
+       "stock": 823443,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/onsemi/1N4148/458603"
       }
@@ -124,7 +124,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 934799,
+       "stock": 988387,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100RL/727543"
       }
@@ -154,7 +154,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 358577,
+       "stock": 357876,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
       }
@@ -172,7 +172,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 6492137,
+       "stock": 6409831,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
       }
@@ -238,7 +238,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.35,
-       "stock": 45549,
+       "stock": 45545,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
       }
@@ -280,7 +280,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 966196,
+       "stock": 1151792,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-071KL/727444"
       }
@@ -333,8 +333,8 @@
       "notes": "VBAT->R4->GPIO1(A0)->R5->GND; VBAT_DIVIDER_RATIO=2.0",
       "orderable": true,
       "live": {
-       "unit_usd": 0.1,
-       "stock": 1315000,
+       "unit_usd": 0.11,
+       "stock": 1308124,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100KL/727544"
       }
@@ -499,8 +499,8 @@
     "required_usd": 25.99,
     "full_usd": 101.98,
     "required_usd_live": 27.9,
-    "full_usd_live": 116.49,
-    "pricing_as_of": "2026-08-20T09:49:13Z",
+    "full_usd_live": 116.51,
+    "pricing_as_of": "2026-08-21T09:51:12Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -583,7 +583,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 15.99,
-       "stock": 137,
+       "stock": 136,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/101021112/22469630"
       }
@@ -601,7 +601,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 2.0,
-       "stock": 739,
+       "stock": 738,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/110990210/5482570"
       }
@@ -643,7 +643,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 358577,
+       "stock": 357876,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
       }
@@ -661,7 +661,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 6492137,
+       "stock": 6409831,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
       }
@@ -679,7 +679,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.35,
-       "stock": 45549,
+       "stock": 45545,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
       }
@@ -869,7 +869,7 @@
     "full_usd": 80.15,
     "required_usd_live": 29.49,
     "full_usd_live": 91.83,
-    "pricing_as_of": "2026-08-20T09:49:13Z",
+    "pricing_as_of": "2026-08-21T09:51:12Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1028,7 +1028,7 @@
     "full_usd": 40.0,
     "required_usd_live": 36.4,
     "full_usd_live": 41.96,
-    "pricing_as_of": "2026-08-20T09:49:13Z",
+    "pricing_as_of": "2026-08-21T09:51:12Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1068,7 +1068,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 7.49,
-       "stock": 11035,
+       "stock": 11005,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991114/19285530"
       }
@@ -1162,7 +1162,7 @@
     "full_usd": 41.94,
     "required_usd_live": 34.99,
     "full_usd_live": 44.14,
-    "pricing_as_of": "2026-08-20T09:49:13Z"
+    "pricing_as_of": "2026-08-21T09:51:12Z"
    }
   },
   "canary-display-dash": {
@@ -1258,7 +1258,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-08-20T09:49:13Z"
+    "pricing_as_of": "2026-08-21T09:51:12Z"
    }
   }
  }

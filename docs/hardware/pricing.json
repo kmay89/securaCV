@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-08-20T09:49:13Z",
+ "as_of": "2026-08-21T09:51:12Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
@@ -15,7 +15,7 @@
    "seed_usd": 15.99,
    "unit_usd": 15.99,
    "provenance": "digikey",
-   "stock": 137,
+   "stock": 136,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-101021112-ND"
@@ -38,7 +38,7 @@
    "seed_usd": 13.99,
    "unit_usd": 15.9,
    "provenance": "digikey",
-   "stock": 1526,
+   "stock": 1507,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-102010469",
@@ -85,7 +85,7 @@
    "seed_usd": 1.2,
    "unit_usd": 2.0,
    "provenance": "digikey",
-   "stock": 739,
+   "stock": 738,
    "lifecycle": "Active",
    "sku": {
     "mouser": "713-110990210",
@@ -109,7 +109,7 @@
    "seed_usd": 7.49,
    "unit_usd": 7.49,
    "provenance": "digikey",
-   "stock": 11035,
+   "stock": 11005,
    "lifecycle": "Active",
    "sku": {
     "digikey": "1597-113991114-ND"
@@ -197,7 +197,7 @@
    "seed_usd": 0.05,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 855097,
+   "stock": 823443,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-1N4148",
@@ -254,7 +254,7 @@
    "seed_usd": 0.1,
    "unit_usd": 0.16,
    "provenance": "digikey",
-   "stock": 60426,
+   "stock": 54151,
    "lifecycle": "Active",
    "sku": {
     "mouser": "512-2N7002LT1G",
@@ -447,7 +447,7 @@
    "seed_usd": 0.12,
    "unit_usd": 0.35,
    "provenance": "digikey",
-   "stock": 45549,
+   "stock": 45545,
    "lifecycle": "Active",
    "sku": {
     "mouser": "653-B3F-1000",
@@ -521,7 +521,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 6492137,
+   "stock": 6409831,
    "lifecycle": "Active",
    "sku": {
     "lcsc": "C49678",
@@ -1162,9 +1162,9 @@
    "desc": "Resistor 100k ohm 1% 0805 (VBAT 2:1 divider, qty 2)",
    "sourcing": "orderable",
    "seed_usd": 0.02,
-   "unit_usd": 0.1,
+   "unit_usd": 0.11,
    "provenance": "digikey",
-   "stock": 1315000,
+   "stock": 1308124,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100KL",
@@ -1174,35 +1174,35 @@
    "breaks": [
     {
      "qty": 1,
-     "usd": 0.1
+     "usd": 0.11
     },
     {
      "qty": 10,
-     "usd": 0.034
+     "usd": 0.036
     },
     {
      "qty": 25,
-     "usd": 0.0256
+     "usd": 0.0272
     },
     {
      "qty": 50,
-     "usd": 0.0208
+     "usd": 0.022
     },
     {
      "qty": 100,
-     "usd": 0.0171
+     "usd": 0.0181
     },
     {
      "qty": 250,
-     "usd": 0.01344
+     "usd": 0.01424
     },
     {
      "qty": 500,
-     "usd": 0.01136
+     "usd": 0.01204
     },
     {
      "qty": 1000,
-     "usd": 0.00973
+     "usd": 0.01032
     }
    ],
    "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100KL/727544",
@@ -1217,7 +1217,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 934799,
+   "stock": 988387,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07100RL",
@@ -1270,7 +1270,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 966196,
+   "stock": 1151792,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-071KL",
@@ -1323,7 +1323,7 @@
    "seed_usd": 0.02,
    "unit_usd": 0.1,
    "provenance": "digikey",
-   "stock": 358577,
+   "stock": 357876,
    "lifecycle": "Active",
    "sku": {
     "mouser": "603-RC0805FR-07330RL",

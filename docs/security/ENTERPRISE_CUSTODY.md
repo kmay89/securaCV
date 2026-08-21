@@ -27,22 +27,41 @@ possesses the vault directory — stolen disk, backup, snapshot, or a compromise
 host — can decrypt without any quorum. `kernel/architecture.md` (Invariant V) and
 `spec/invariants.md` now state this honestly.
 
-**Design to close it (in order of strength):**
+**Shipped now — passphrase keyguard (defense-in-depth).** Set
+`SECURACV_VAULT_PASSPHRASE` and the vault master key is no longer a plaintext
+file: it is wrapped under an Argon2id KEK in `master.keyguard` (an `MKG1`
+container, AAD-bound to the vault's canonical directory — a deterrent against a
+careless copy to a new path, not a cryptographic anti-exfiltration control),
+and **no plaintext `master.key` is ever written** in this mode. The passphrase
+is held only in memory, sourced from the environment, never on disk. Possession
+of the vault directory alone stops being sufficient — the operator-held
+passphrase is also required. This is honest defense-in-depth, **not** a
+cryptographic quorum: a single holder of the passphrase can still decrypt (see
+the threshold item below for the genuine-quorum end-state). The envelope crypto
+is untouched, so every already-sealed v1/v2 envelope stays byte-identical, and a
+legacy plaintext `master.key` keeps working unchanged (passphrase mode refuses
+to run alongside a plaintext key so an operator must migrate deliberately).
 
-1. **Threshold-wrap the DEK.** Split the DEK-wrapping key across trustees with
-   Shamir, or use threshold ML-KEM / threshold-ElGamal so decapsulation
-   genuinely requires *n* trustee shares. Break-glass then becomes the
-   cryptographic lock, not a policy check upstream of it.
+**Still tracked (in order of strength):**
+
+1. **Threshold-wrap the DEK/KEK.** Split the wrapping key across trustees with
+   Shamir (a vetted crate + cross-impl KATs), or use threshold ML-KEM /
+   threshold-ElGamal so decapsulation genuinely requires *n* trustee shares.
+   Break-glass then becomes the cryptographic lock, not a policy check upstream
+   of it. Pair it with `crypto_mode = pq/hybrid` so only *unseal* is
+   quorum-locked (sealing uses the public KEM key). Highest-risk item: a sharing
+   bug renders evidence permanently unopenable, so it ships on its own once the
+   `MKG1` container is in the field.
    *Design now specified:* `spec/quorum_unseal_v2.md` §2 — a vault KEK split
    n-of-m with VSS-hardened Shamir (commitments in the receipt chain,
    self-describing share envelopes, in-memory reconstruction at the unseal
    gate), the identical split applied to the ML-KEM-768 seed, a two-quorum
    operational/recovery structure, and proactive resharing as a first-class
    ceremony. The standards research behind it: `PROVENANCE_INTEROP.md` §1.4.
-2. **Hardware or passphrase KEK for `master.key`.** Seal the master key in an
-   HSM / TPM / PKCS#11 token, or wrap it under an Argon2id passphrase supplied
-   at unseal time — kept **outside** the vault directory — so possession of the
-   vault files is insufficient.
+2. **Hardware KEK for `master.keyguard`.** Seal the KEK in an HSM / TPM /
+   PKCS#11 token (a new `MKG1` kind) so even the passphrase (now shipped, above)
+   is not enough without the hardware. Feasible in code; needs hardware to test,
+   so excluded from default CI.
 
 **Operator control that already exists (partial, for the DB — not the vault).**
 The SQLCipher database key can already be decoupled from the device identity:

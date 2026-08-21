@@ -19,10 +19,7 @@ an exemption must be visible and reviewable, with a comment saying why):
       or release events must not set a bare `cancel-in-progress: true`
       (a run canceled mid-publish leaves half-uploaded assets)
   R4  every action ref is pinned to a tag or SHA — never a mutable
-      branch ref (@main/@master) or a floating docker :latest. In a
-      workflow that has secrets access, a THIRD-PARTY action must be
-      pinned to a commit SHA — a rolling branch channel like
-      dtolnay/rust-toolchain@stable/@nightly/@beta is rejected there
+      branch ref (@main/@master) or a floating docker :latest
   R5  pull_request workflows are path-filtered so unrelated PRs don't
       pay for them (or are listed in `unfiltered_ok` with a reason)
   R6  when push and pull_request both declare path filters, the two
@@ -30,6 +27,11 @@ an exemption must be visible and reviewable, with a comment saying why):
       changes what main verifies vs what PRs verify
   R7  a paths filter includes the workflow's own file, so editing a
       workflow always exercises it
+  R8  third-party actions (any owner outside actions/ and github/) are
+      pinned to a full 40-hex commit SHA, with a trailing `# <version>`
+      comment naming the tag it was resolved from — a tag is a mutable
+      ref the owner can move under a release run; Dependabot updates
+      SHA pins and their comments together
 """
 
 from __future__ import annotations
@@ -48,23 +50,16 @@ POLICY_PATH = os.path.join(REPO_ROOT, ".github", "ci-policy.yml")
 
 MUTABLE_REFS = {"main", "master", "latest", "HEAD"}
 
-# Moving BRANCH refs that third-party actions publish as a rolling channel —
-# dtolnay/rust-toolchain@stable / @nightly / @beta are branches that advance
-# with every Rust release, so they can change under a run exactly like @main.
-# They are not obviously mutable (they read like versions), which is why the
-# bare-MUTABLE_REFS check let them through. Rejected for THIRD-PARTY actions in
-# workflows that carry secrets — CI.md R4: "third-party actions with secrets
-# access get SHAs." (First-party actions/*, github/* keep the tag allowance.)
-THIRD_PARTY_BRANCH_REFS = {"stable", "nightly", "beta"}
-
-# Owners whose actions are "first-party" for R4's purposes.
+# R8: owners whose actions may ride a version tag instead of a SHA.
+# GitHub runs both orgs itself; everyone else's tags are mutable refs in
+# somebody else's hands, so they get 40-hex SHA pins.
 FIRST_PARTY_OWNERS = {"actions", "github"}
 
-# A workflow "has secrets access" when it interpolates a repository secret into
-# an expression — `${{ secrets.NAME }}`. Anchored inside a `${{ ... }}` so a
-# bare word like "…and no secrets." in a comment can't trip it, and requiring a
-# name char after the dot skips the `secrets/secrets.h` file path in heredocs.
-SECRET_REF_RE = re.compile(r"\$\{\{[^}]*\bsecrets\.[A-Za-z_]")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+# R8 (comment half): a `uses:` line pinned to a 40-hex SHA, with whatever
+# follows the SHA captured so the trailing comment can be checked.
+SHA_USES_LINE_RE = re.compile(r"uses:\s*([^\s#]+)@([0-9a-f]{40})(.*)$")
 
 
 def load_policy() -> dict:
@@ -97,14 +92,9 @@ def check_workflow(path: str, policy: dict) -> list[str]:
     problems: list[str] = []
 
     with open(path, encoding="utf-8") as f:
-        raw = f.read()
-    wf = yaml.safe_load(raw)
+        wf = yaml.safe_load(f)
     if not isinstance(wf, dict):
         return [f"{name}: does not parse as a workflow mapping"]
-
-    # Whether this workflow interpolates a repository secret anywhere — used to
-    # apply R4's stricter "third-party actions get SHAs" rule (see below).
-    has_secrets = bool(SECRET_REF_RE.search(raw))
 
     triggers = triggers_of(wf)
     jobs = wf.get("jobs") or {}
@@ -211,12 +201,10 @@ def check_workflow(path: str, policy: dict) -> list[str]:
             f"branch_cancel_ok with a reason."
         )
 
-    # R4 — pinned action refs, in workflows AND composite actions (collected
+    # R4/R8 — pinned action refs, in workflows AND composite actions (collected
     # by caller passing composite files through this same function is not
-    # needed; see check_action_pins()). `strict` (this workflow has secrets
-    # access) additionally rejects a third-party action riding a moving branch
-    # channel like @stable/@nightly.
-    problems.extend(check_action_pins(name, jobs, strict=has_secrets))
+    # needed; see check_action_pins()).
+    problems.extend(check_action_pins(name, jobs, policy))
 
     # R5 — pull_request path filtering
     if "pull_request" in triggers and name not in unfiltered_ok:
@@ -261,8 +249,9 @@ def check_workflow(path: str, policy: dict) -> list[str]:
     return problems
 
 
-def check_action_pins(label: str, jobs: dict, strict: bool = False) -> list[str]:
+def check_action_pins(label: str, jobs: dict, policy: dict) -> list[str]:
     problems = []
+    tag_ok = set(policy.get("third_party_tag_ok") or [])
     for job, spec in jobs.items():
         steps = (spec or {}).get("steps") or []
         for step in steps:
@@ -279,30 +268,57 @@ def check_action_pins(label: str, jobs: dict, strict: bool = False) -> list[str]
                     )
                 continue
             ref = uses.rsplit("@", 1)[1] if "@" in uses else ""
-            owner = uses.split("/", 1)[0].lower()
-            third_party = owner not in FIRST_PARTY_OWNERS
             if not ref or ref in MUTABLE_REFS:
                 problems.append(
                     f"{label}: R4 — `{uses}` in job `{job}` rides a mutable "
                     f"ref; pin to a version tag or commit SHA."
                 )
-            elif strict and third_party and ref in THIRD_PARTY_BRANCH_REFS:
-                # A rolling branch channel (@stable/@nightly/@beta) can change
-                # under a run just like @main. This workflow has secrets access,
-                # so a third-party action here must be pinned to a commit SHA.
+                continue
+            # R8 — third-party actions get a full commit SHA, not a tag.
+            owner = uses.split("/", 1)[0]
+            if (owner.lower() not in {o.lower() for o in FIRST_PARTY_OWNERS}
+                    and os.path.basename(label) not in tag_ok
+                    and not SHA_RE.match(ref)):
                 problems.append(
-                    f"{label}: R4 — `{uses}` in job `{job}` rides the moving "
-                    f"branch channel `@{ref}` and this workflow has secrets "
-                    f"access; a third-party action with secrets access must be "
-                    f"pinned to a commit SHA (CI.md R4). Pin to a 40-char SHA "
-                    f"(keep `# {ref}` as a trailing comment for readability), or "
-                    f"exempt in ci-policy.yml with a reason."
+                    f"{label}: R8 — `{uses}` in job `{job}` pins a "
+                    f"third-party action to a tag, which its owner can move "
+                    f"under a release run. Resolve it (`git ls-remote "
+                    f"https://github.com/{owner}/... 'refs/tags/{ref}^{{}}'`) "
+                    f"and pin the 40-hex SHA with a trailing `# {ref}` "
+                    f"comment; Dependabot keeps SHA pins fresh. Or exempt "
+                    f"the workflow in third_party_tag_ok with a reason."
                 )
     return problems
 
 
-def check_composite_actions() -> list[str]:
-    """R4 also applies to steps inside local composite actions."""
+def check_sha_pin_comments(path: str, label: str) -> list[str]:
+    """R8 (comment half): every SHA pin carries a trailing `# <version>`.
+
+    yaml.safe_load discards comments before check_action_pins ever sees a
+    step, so this half reads the raw text. Without the comment nobody —
+    reviewer or Dependabot — can tell which release a pin means, and a
+    stale or wrong pin becomes invisible in review.
+    """
+    problems = []
+    with open(path, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            m = SHA_USES_LINE_RE.search(line)
+            if not m:
+                continue
+            action, _sha, rest = m.groups()
+            if not re.match(r"\s+#\s*\S", rest):
+                problems.append(
+                    f"{label}:{lineno}: R8 — `{action}` is SHA-pinned but "
+                    f"has no trailing `# <version>` comment naming the ref "
+                    f"it was resolved from. Add it — it is what makes the "
+                    f"pin reviewable and lets Dependabot bump pin and "
+                    f"comment together."
+                )
+    return problems
+
+
+def check_composite_actions(policy: dict) -> list[str]:
+    """R4/R8 also apply to steps inside local composite actions."""
     problems = []
     pattern = os.path.join(REPO_ROOT, ".github", "actions", "**", "action.y*ml")
     for path in glob.glob(pattern, recursive=True):
@@ -310,7 +326,9 @@ def check_composite_actions() -> list[str]:
             action = yaml.safe_load(f) or {}
         steps = (action.get("runs") or {}).get("steps") or []
         rel = os.path.relpath(path, REPO_ROOT)
-        problems.extend(check_action_pins(rel, {"(composite)": {"steps": steps}}))
+        problems.extend(
+            check_action_pins(rel, {"(composite)": {"steps": steps}}, policy))
+        problems.extend(check_sha_pin_comments(path, rel))
     return problems
 
 
@@ -352,7 +370,9 @@ def main() -> int:
     all_problems: list[str] = []
     for path in files:
         all_problems.extend(check_workflow(path, policy))
-    all_problems.extend(check_composite_actions())
+        all_problems.extend(
+            check_sha_pin_comments(path, os.path.basename(path)))
+    all_problems.extend(check_composite_actions(policy))
 
     if all_problems:
         for p in all_problems:

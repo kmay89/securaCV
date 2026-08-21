@@ -13,7 +13,7 @@
 # 1.78+, the rumqttc-next family needs 1.89+); pinned to a recent stable.
 # The -bookworm variant matters: the runtime stage below is bookworm, and
 # the binaries must link against the same glibc/libssl generation.
-FROM rust:1.97-slim-bookworm@sha256:96c0af8cf054fd006435089f0076729716784ec9be485bd655de59c55df105ce AS build
+FROM rust:1.97-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -43,9 +43,11 @@ RUN cargo build --release \
 
 FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
-# mosquitto-clients powers the `doctor` subcommand's broker checks.
+# mosquitto-clients powers the `doctor` subcommand's broker checks;
+# curl powers the HEALTHCHECK below (same probe as the root witnessd image).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     libseccomp2 \
     libssl3 \
     mosquitto-clients \
@@ -68,5 +70,14 @@ WORKDIR /data
 VOLUME ["/data"]
 
 USER 1001:1001
+
+# Health check for orchestrators (compose `service_healthy` conditions,
+# swarm, `docker inspect`): probe witness_api's unauthenticated /health on
+# its loopback bind — same approach as the root witnessd image's
+# HEALTHCHECK. A wedged supervisor stops looking healthy instead of just
+# looking "running". start-period covers the entrypoint's broker wait (up
+# to BROKER_WAIT_SECS, default 30s) before witness_api is even started.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
+  CMD curl -fsS http://127.0.0.1:8799/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

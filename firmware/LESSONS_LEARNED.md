@@ -972,8 +972,16 @@
 - **Fix:** `load_credential` (display + vision + sense, all copies) falls back
   to `getBytesLength`/`getBytes` when the key exists but reads as an empty
   string — a blob under the key is the same human intent.
+- **Fix, inverse direction (2026-08):** the blob-side loaders got the mirror
+  fallback: `ScvNetworkManager::loadCredentials` (main canary) and the wap's
+  `wifi_load_credentials` read the key as a string when it exists but
+  `getBytesLength` is 0 — a string-typed seed is the same human intent too.
+  The canary-ota reference (`wifi_sta_connect_from_nvs`) additionally looks up
+  the standard `securacv` namespace (`wifi_ssid`/`wifi_pass`, string or blob)
+  when its own `wifi` namespace is empty, before the Kconfig defaults.
 - **Regression check:** `desktop_parity.test.js` pins the blob fallback in all
-  four loaders alongside the existing isKey assertion.
+  four string-scheme loaders alongside the existing isKey assertion, and the
+  string fallback in both blob-scheme loaders.
 - **Date learned:** 2026-08
 
 ---

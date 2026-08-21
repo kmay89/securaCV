@@ -1,17 +1,27 @@
 # SecuraCV sidecar quickstart — for Frigate users who ALREADY run an MQTT
 # broker (most do: Frigate needs one for its own MQTT features).
+# No broker yet? Use quickstart-with-broker.compose.yml instead.
 #
-#   1. Set FRIGATE_MQTT_HOST below to the broker host Frigate publishes to
-#      (the `mqtt: host:` value in your frigate config). If the broker runs
-#      in another compose project, join its network or use the host's IP.
-#   2. docker compose -f quickstart.compose.yml up -d
-#   3. docker compose -f quickstart.compose.yml run --rm securacv doctor
+# Three steps, nothing else:
+#
+#   Step 1 — Point it at your broker.
+#     Edit FRIGATE_MQTT_HOST below to the broker host Frigate publishes to
+#     (the `mqtt: host:` value in your frigate config). It must be the name
+#     or IP as seen FROM THIS CONTAINER: if the broker runs in another
+#     compose project, join its network or use the docker host's LAN IP.
+#
+#   Step 2 — Start it.
+#     docker compose -f quickstart.compose.yml up -d
+#
+#   Step 3 — Check it.
+#     docker compose -f quickstart.compose.yml run --rm securacv doctor
+#     (The doctor also listens for a real event — walk past a camera.)
 #
 # That's it. A device signing key is generated on first start and persisted
-# in the securacv_data volume (back it up!). Sanitized witness events appear
-# as Home Assistant MQTT Discovery sensors if HA shares the same broker.
-#
-# No broker yet? Use quickstart-with-broker.compose.yml instead.
+# in the securacv_data volume — back it up: it is what makes the sealed log
+# verifiable. Sanitized witness events appear as Home Assistant MQTT
+# Discovery sensors if HA shares the same broker; without HA the sealed
+# log works exactly the same and `log_verify` proves it offline.
 
 services:
   securacv:

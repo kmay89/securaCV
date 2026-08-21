@@ -601,6 +601,16 @@ jobs:
           chmod +x firmware/scripts/check_display_arduino_sync.sh
           firmware/scripts/check_display_arduino_sync.sh
 
+      - name: Verify provision_core.h stays identical in common/ and the display tree
+        # The onboarding pure helpers live canonically in common/network (the
+        # shared setup portal links them) with a byte-identical copy in the
+        # display tree until it migrates to the shared portal — the whole
+        # LESSONS_LEARNED history of onboarding is fixes landing in one portal
+        # and not the others, so drift fails here instead of shipping.
+        run: |
+          chmod +x firmware/scripts/check_provision_core_sync.sh
+          firmware/scripts/check_provision_core_sync.sh
+
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
         # draws a hollow box for anything else — no build error, and the browser

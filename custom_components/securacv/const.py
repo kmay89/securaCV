@@ -21,6 +21,9 @@ CONF_TOKEN_FILE = "token_file"
 DEFAULT_TOKEN_FILE = "/config/api_token"
 
 # Setup modes
+# `auto` is a flow-only choice: it probes for a running kernel and stores a
+# concrete mode (both / mqtt) in the entry — no entry ever persists "auto".
+SETUP_MODE_AUTO = "auto"
 SETUP_MODE_MQTT = "mqtt"
 SETUP_MODE_KERNEL = "kernel"
 SETUP_MODE_BOTH = "both"
@@ -110,7 +113,10 @@ MODEL_CANARY = "SecuraCV Canary"
 # =============================================================================
 # Default values
 # =============================================================================
-DEFAULT_KERNEL_URL = "http://privacy_witness_kernel:8799"
+# The kernel add-on's hostname as Supervisor DNS actually publishes it: the
+# full slug (repo hash + name) with underscores mapped to dashes. The bare
+# "privacy_witness_kernel" never resolved from HA core.
+DEFAULT_KERNEL_URL = "http://d0491a67-privacy-witness-kernel:8799"
 DEFAULT_MQTT_PREFIX = "securacv"
 
 # =============================================================================

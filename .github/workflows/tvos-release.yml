@@ -139,11 +139,7 @@ jobs:
       # (nightly + -Z build-std).
       - name: Set up Rust (+ tvOS core target)
         if: vars.ENABLE_TVOS_BUILD == 'true'
-        # SHA-pinned: this workflow carries the Apple signing secrets, so a
-        # third-party action gets a commit SHA (CI.md R4). `@nightly` is a moving
-        # branch, so `toolchain:` must be set explicitly — dtolnay's action
-        # otherwise derives it from the ref name, which is now a SHA.
-        uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: nightly
           components: rust-src

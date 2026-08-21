@@ -39,6 +39,22 @@ assert_eq "frigate_house/events" "$(resolve_frigate_topic "" "frigate_house")" \
 assert_eq "custom/topic" "$(resolve_frigate_topic "custom/topic" "frigate_house")" \
     "resolve_frigate_topic: legacy full topic wins"
 
+# ---- compose_discovery_payload ---------------------------------------------
+# The Supervisor /discovery announcement body: service name is pinned to
+# "securacv" and the host/port land under config, exactly what the SecuraCV
+# integration's discovery step consumes.
+assert_eq '{"service":"securacv","config":{"host":"myaddon","port":8799}}' \
+    "$(compose_discovery_payload "myaddon" 8799)" \
+    "discovery: payload carries service securacv + host + port"
+assert_eq '{"service":"securacv","config":{"host":"d0491a67-privacy-witness-kernel","port":8799}}' \
+    "$(compose_discovery_payload "d0491a67-privacy-witness-kernel")" \
+    "discovery: port defaults to 8799"
+# jq does the quoting, so a hostname with JSON metacharacters cannot corrupt
+# the payload.
+assert_eq '{"service":"securacv","config":{"host":"we\"ird","port":1234}}' \
+    "$(compose_discovery_payload 'we"ird' 1234)" \
+    "discovery: host with a quote stays valid JSON"
+
 # ---- resolve_device_key_seed -----------------------------------------------
 KEY_FILE="$TMPDIR_TEST/keys/device_key"
 

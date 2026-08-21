@@ -936,6 +936,12 @@ static esp_err_t ota_start_task(bool install_mode)
 
     s_ctx.install_mode = install_mode;
     s_ctx.task_should_abort = false;
+    // A new run starts with a clean verdict: the previous attempt's error
+    // must not outlive it. A stale error beside state=Checking reads as
+    // "this run already failed" to every status surface — the Flasher's
+    // fleet book checks `error` before `state` and would stop monitoring a
+    // perfectly healthy update.
+    s_ctx.last_error = SECURACV_OTA_ERR_NONE;
 
     xSemaphoreGive(s_ctx.mutex);
 

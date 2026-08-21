@@ -690,16 +690,43 @@ async fn flash(
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
-    let downloaded = client
+    // Chunked, not bytes(): on a slow link the transfer runs inside a 300 s
+    // window with — before this — no output at all, which reads as a hang.
+    // Every ~200 ms a structured `flash:progress` event carries done/total so
+    // the UI can show a real bar; the release size is the honest total (the
+    // Content-Length can be the compressed size behind a proxy).
+    let mut resp = client
         .get(&factory_url)
         .send()
         .await
         .map_err(|e| format!("download failed: {e}"))?
         .error_for_status()
-        .map_err(|e| format!("download failed: {e}"))?
-        .bytes()
-        .await
         .map_err(|e| format!("download failed: {e}"))?;
+    let total = if expected_size > 0 {
+        expected_size
+    } else {
+        resp.content_length().unwrap_or(0)
+    };
+    let mut downloaded: Vec<u8> = Vec::with_capacity(total as usize);
+    let mut last_tick = std::time::Instant::now();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("download failed: {e}"))?
+    {
+        downloaded.extend_from_slice(&chunk);
+        if last_tick.elapsed().as_millis() >= 200 {
+            last_tick = std::time::Instant::now();
+            let _ = app.emit(
+                "flash:progress",
+                serde_json::json!({ "stage": "download", "done": downloaded.len(), "total": total }),
+            );
+        }
+    }
+    let _ = app.emit(
+        "flash:progress",
+        serde_json::json!({ "stage": "download", "done": downloaded.len(), "total": total }),
+    );
 
     // TLS identifies GitHub; these checks identify the actual release bytes.
     let release_sha = release::verify_size_and_sha(&downloaded, expected_size, expected_sha)?;
@@ -1241,16 +1268,36 @@ async fn flash_vision_module(
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
-    let bytes = client
+    // Chunked so the console keeps moving on a slow link — the wait between
+    // "resolving…" and "verified" used to be a single silent bytes() call.
+    emit_log(format!(
+        "→ downloading the model ({} KB)…",
+        expected_size / 1024
+    ));
+    let mut resp = client
         .get(model_url)
         .send()
         .await
         .map_err(|e| format!("Vision model download failed: {e}"))?
         .error_for_status()
-        .map_err(|e| format!("Vision model download failed: {e}"))?
-        .bytes()
-        .await
         .map_err(|e| format!("Vision model download failed: {e}"))?;
+    let mut bytes: Vec<u8> = Vec::with_capacity(expected_size as usize);
+    let mut last_tick = std::time::Instant::now();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("Vision model download failed: {e}"))?
+    {
+        bytes.extend_from_slice(&chunk);
+        if last_tick.elapsed().as_millis() >= 500 {
+            last_tick = std::time::Instant::now();
+            emit_log(format!(
+                "  … {} of {} KB",
+                bytes.len() / 1024,
+                expected_size / 1024
+            ));
+        }
+    }
     let sha = release::verify_size_and_sha(&bytes, expected_size, expected_sha)?;
     // Same fail-closed trust model as the firmware channel (and the browser
     // flasher's verifyPinnedModelAsset): once a real release key is pinned, the
@@ -1877,6 +1924,14 @@ async fn board_passport(
     port: String,
     baud: u32,
 ) -> Result<Value, String> {
+    // Each region is its own espflash spawn (bootloader re-sync included), so
+    // the whole read runs 8–25 s — long enough that a silent label reads as a
+    // hang. `passport:log` narrates each step; the frontend shows the line in
+    // the flash-target label so the wait is visibly moving, never a freeze.
+    let narrate = |line: &str| {
+        let _ = app.emit("passport:log", line.to_string());
+    };
+    narrate("reading the partition table…");
     let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
     let entries = health::parse_partition_table(&pt);
     if entries.is_empty() {
@@ -1892,6 +1947,7 @@ async fn board_passport(
     let mut otadata: Option<health::OtaInfo> = None;
     if let Some(otap) = entries.iter().find(|e| health::is_ota_data(e)) {
         if !slots.is_empty() {
+            narrate("reading its update history…");
             if let Ok(ob) =
                 read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await
             {
@@ -1908,6 +1964,7 @@ async fn board_passport(
     // The firmware actually running, off the booted slot.
     let mut resident = Value::Null;
     if let Some(booted) = health::pick_booted_app_partition(&apps, otadata.as_ref()) {
+        narrate("reading what it's running…");
         if let Ok(db) = read_region(
             &app,
             &port,
@@ -1944,6 +2001,8 @@ async fn board_passport(
 
     let mut witness_json = Value::Null;
     if let Some(nv) = entries.iter().find(|e| health::is_nvs(e)) {
+        // The NVS read is the passport's longest single pull.
+        narrate("reading its witness counters…");
         if let Ok(nb) = read_region(&app, &port, nv.offset, nv.size, baud).await {
             let items = health::parse_nvs(&nb, &[health::WITNESS_CHAIN_BLOB_KEY]);
             if let Some(w) = health::witness_summary(&items) {

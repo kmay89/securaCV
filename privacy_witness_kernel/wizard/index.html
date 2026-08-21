@@ -223,7 +223,7 @@
   <p class="subtitle">
     A security camera with a 24-hour memory.<br>
     Clips stay on your hardware. They auto-delete. The only thing that
-    persists is a tamper-proof log that proves nobody altered the record.
+    persists is a tamper-evident log that shows nobody altered the record.
   </p>
 
   <div class="info-box blue">
@@ -252,6 +252,8 @@
     Enter the name and RTSP stream URL for each camera. You can add more later
     from the app configuration panel.
   </p>
+
+  <div id="discovered-note" class="info-box green hidden"></div>
 
   <div id="cameras-container"></div>
 
@@ -285,6 +287,17 @@
       Frigate clips older than this are automatically deleted.
       The witness log is kept forever (it's tiny).
     </small>
+  </div>
+
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">Daily digest notification</div>
+      <div class="toggle-sub">One summary per day of what your cameras witnessed</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="digest-enabled" checked>
+      <span class="slider"></span>
+    </label>
   </div>
 
   <div class="field">
@@ -353,11 +366,13 @@
     <div class="done-icon">✅</div>
     <div class="done-title">You're protected.</div>
     <div class="done-sub">SecuraCV is running. Restart Home Assistant to activate all sensors.</div>
+    <!-- Populated by showDoneSuccess from the /api/save response, so this
+         screen reports what actually happened (Frigate config location,
+         digest automation created or honestly skipped) — never a promise
+         the server silently dropped. -->
     <div class="info-box green">
       <strong>What happens next:</strong>
-      Camera clips will appear in Frigate with a verified ✓ badge per event.
-      Your daily digest will arrive at your configured time.
-      The SecuraCV integration will auto-discover via MQTT.
+      <div id="done-results" style="margin-top:6px"></div>
     </div>
     <ul class="step-list">
       <li>Restart Home Assistant to activate sensors</li>
@@ -567,6 +582,23 @@
      ================================================================ -->
 <script>
 // ---------------------------------------------------------------------------
+// API base
+//
+// Every request is joined relative to the page's own location, so the same
+// page works served directly (path "/") and behind the Home Assistant
+// ingress proxy (path "/api/hassio_ingress/<token>/"). The proxy strips its
+// prefix before forwarding, so serve_wizard.py always sees bare "/api/..."
+// paths — see its route table. Absolute "/api/..." URLs would escape the
+// ingress prefix and hit HA core instead of this add-on.
+// ---------------------------------------------------------------------------
+const base = (() => {
+  let p = location.pathname;
+  // Direct visits to /index.html must not produce an /index.html/api/ base.
+  if (p.endsWith("/index.html")) p = p.slice(0, -"index.html".length);
+  return p.endsWith("/") ? p : p + "/";
+})();
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 let currentStep = 1;
@@ -592,7 +624,10 @@ function goTo(step) {
     startBtn.innerHTML = "Start SecuraCV";
     document.getElementById("start-error").classList.add("hidden");
   }
-  if (step === 2 && cameras.length === 0) addCamera();
+  if (step === 2) {
+    if (cameras.length === 0) addCamera();
+    discoverCameras();
+  }
   if (step === 4) renderSummary();
 }
 
@@ -671,6 +706,35 @@ function updateCamera(id, key, val) {
   }
 }
 
+// go2rtc camera discovery: ask the wizard server for streams it can see and
+// pre-fill the camera rows, so a Frigate/go2rtc user types nothing. Runs
+// once, and only replaces rows the user has not started typing into.
+// Discovery is a convenience — any failure just leaves the empty row.
+let discoveryTried = false;
+async function discoverCameras() {
+  if (discoveryTried) return;
+  discoveryTried = true;
+  try {
+    const res = await fetch(base + "api/discover-cameras").then(r => r.json());
+    if (!res.ok || !res.cameras || res.cameras.length === 0) return;
+    const untouched = cameras.every(c => !c.name.trim() && !c.url.trim());
+    if (!untouched) return;
+    cameras = res.cameras.map(c => ({
+      id: ++cameraCounter,
+      name: c.name || "",
+      url: c.url || "",
+      zone_id: c.zone_id || "",
+    }));
+    renderCameras();
+    const note = document.getElementById("discovered-note");
+    note.textContent =
+      `Found ${res.cameras.length} camera${res.cameras.length === 1 ? "" : "s"} ` +
+      "via go2rtc and pre-filled the rows below. Check each one (Test " +
+      "Connection helps), remove any you don't want witnessed, then continue.";
+    note.classList.remove("hidden");
+  } catch (_) { /* discovery never blocks manual entry */ }
+}
+
 async function testCamera(id) {
   const cam = cameras.find(c => c.id === id);
   if (!cam) return;
@@ -686,7 +750,7 @@ async function testCamera(id) {
   el.style.display = "block";
 
   try {
-    const res = await api("/api/test-camera", { url: cam.url });
+    const res = await api("api/test-camera", { url: cam.url });
     if (res.ok) {
       el.className = "test-result ok";
       el.textContent = `✓ Connected to ${res.host}:${res.port}`;
@@ -733,15 +797,18 @@ function renderSummary() {
   list.innerHTML = "";
 
   const retention = document.getElementById("retention");
+  const digestEnabled = document.getElementById("digest-enabled").checked;
   const digestTime = document.getElementById("digest-time").value;
   const patternAlerts = document.getElementById("pattern-alerts").checked;
+  const integrityAlerts = document.getElementById("integrity-alerts").checked;
 
   const items = [
     ["Mode", "Frigate integration (recommended)"],
     ["Cameras", cameras.map(c => c.name || "(unnamed)").join(", ") || "—"],
     ["Clip retention", retention.options[retention.selectedIndex].text],
-    ["Daily digest", digestTime],
+    ["Daily digest", digestEnabled ? digestTime : "Disabled"],
     ["Pattern-break alerts", patternAlerts ? "Enabled" : "Disabled"],
+    ["Integrity failure alerts", integrityAlerts ? "Enabled" : "Disabled"],
   ];
 
   items.forEach(([key, val]) => {
@@ -764,8 +831,10 @@ async function startSetup() {
   btn.innerHTML = '<span class="spinner"></span> Saving…';
 
   const retention = document.getElementById("retention");
+  const digestEnabled = document.getElementById("digest-enabled").checked;
   const digestTime = document.getElementById("digest-time").value;
   const patternAlerts = document.getElementById("pattern-alerts").checked;
+  const integrityAlerts = document.getElementById("integrity-alerts").checked;
 
   const payload = {
     mode: "frigate",
@@ -775,35 +844,49 @@ async function startSetup() {
       zone_id: c.zone_id || `zone:${c.name.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
     })),
     retention_days: parseInt(retention.value, 10),
+    digest_enabled: digestEnabled,
     digest_time: digestTime,
     pattern_alerts: patternAlerts,
+    integrity_alerts: integrityAlerts,
     device_key_seed: deviceKeySeed,
   };
 
   try {
-    const res = await api("/api/save", payload);
+    const res = await api("api/save", payload);
     if (!res.ok) throw new Error(res.error || "Unknown error");
 
-    btn.innerHTML = '<span class="spinner"></span> Verifying kernel started…';
+    // The save response arrives BEFORE the server restarts the add-on
+    // (serve_wizard defers the restart until the response is flushed), so
+    // from here on the add-on is going down and coming back up. That takes
+    // well over 30 seconds on a Pi — poll for up to two minutes, narrating,
+    // and treat fetch failures as "still restarting", not as errors.
+    const VERIFY_WINDOW_S = 120;
+    const startedAt = Date.now();
+    btn.innerHTML = '<span class="spinner"></span> Saved — restarting the kernel…';
 
     let verified = false;
-    for (let i = 0; i < 15; i++) {
+    while ((Date.now() - startedAt) < VERIFY_WINDOW_S * 1000) {
       await delay(2000);
+      const elapsed = Math.round((Date.now() - startedAt) / 1000);
+      btn.innerHTML = '<span class="spinner"></span> ' +
+        `Waiting for the kernel to report healthy… ${elapsed}s / ${VERIFY_WINDOW_S}s`;
       try {
-        const check = await fetch((window.hassioIngress || "") + "/api/verify", {
+        const check = await fetch(base + "api/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: "{}",
         }).then(r => r.json());
         if (check.ok) { verified = true; break; }
-      } catch (_) {}
+      } catch (_) { /* add-on mid-restart; keep polling */ }
     }
 
     goTo(5);
     if (verified) {
-      showDoneSuccess();
+      showDoneSuccess(res);
     } else {
-      showDoneError("Verification timed out — the kernel did not report healthy in time. Check the app / install logs to confirm SecuraCV started correctly.");
+      showDoneError("Verification timed out — the kernel did not report healthy within " +
+        VERIFY_WINDOW_S + " seconds. The configuration was saved; check the app logs " +
+        "(Settings → Apps → Privacy Witness Kernel → Logs) to see why it is not starting.");
     }
   } catch (e) {
     btn.disabled = false;
@@ -818,7 +901,7 @@ async function restartHA() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Restarting…';
   try {
-    const res = await api("/api/restart-ha", {});
+    const res = await api("api/restart-ha", {});
     if (!res || res.ok === false) throw new Error((res && res.error) || "restart failed");
     btn.innerHTML = "✓ Restarting — page will reload shortly";
   } catch (_) {
@@ -827,7 +910,36 @@ async function restartHA() {
   }
 }
 
-function showDoneSuccess() {
+// The done screen reports what the save actually did, from the /api/save
+// response: where the Frigate config landed (saveResult.frigate_config) and
+// whether the daily-digest automation was really created (saveResult.digest)
+// — never a promise the server silently skipped.
+function showDoneSuccess(saveResult) {
+  const result = saveResult || {};
+  const lines = [
+    "Camera events will appear in Frigate, each one witnessed in the sealed log.",
+  ];
+  if (result.frigate_config) {
+    lines.push(result.frigate_config);
+  }
+  const digest = result.digest || {};
+  if (digest.created) {
+    lines.push("✓ Daily digest automation created: " + (digest.detail || ""));
+  } else if (digest.detail === "digest disabled in the wizard") {
+    lines.push("Daily digest: disabled (your choice in Settings).");
+  } else {
+    lines.push("Daily digest was NOT set up" +
+      (digest.detail ? ": " + digest.detail : ".") );
+  }
+  lines.push("The SecuraCV integration will appear under Settings → Devices & Services.");
+  const box = document.getElementById("done-results");
+  box.innerHTML = "";
+  lines.forEach(line => {
+    const div = document.createElement("div");
+    div.textContent = line;
+    div.style.marginBottom = "4px";
+    box.appendChild(div);
+  });
   document.getElementById("done-success").classList.remove("hidden");
   document.getElementById("done-error").classList.add("hidden");
 }
@@ -896,20 +1008,20 @@ async function meshStartPairing() {
   // (fetch reject / non-JSON body) throws out of api(); catch it so the UI
   // never freezes with the button stuck disabled.
   try {
-    const r1 = await api("/api/mesh/pair/start", meshInit);
+    const r1 = await api("api/mesh/pair/start", meshInit);
     if (!r1.ok) { meshStartFailed(r1.error || "Existing Canary refused to start pairing"); return; }
-    const r2 = await api("/api/mesh/pair/join", meshJoin);
+    const r2 = await api("api/mesh/pair/join", meshJoin);
     if (!r2.ok) {
       // The initiator is already in pairing mode; cancel it (best effort) so
       // an immediate retry isn't blocked until the initiator's own timeout.
-      try { await api("/api/mesh/pair/cancel", meshInit); } catch (e) { /* best effort */ }
+      try { await api("api/mesh/pair/cancel", meshInit); } catch (e) { /* best effort */ }
       meshStartFailed(r2.error || "New Canary refused to join");
       return;
     }
   } catch (e) {
     // Unknown which side is mid-pairing after a network fault; cancel both.
-    try { await api("/api/mesh/pair/cancel", meshInit); } catch (_) {}
-    try { await api("/api/mesh/pair/cancel", meshJoin); } catch (_) {}
+    try { await api("api/mesh/pair/cancel", meshInit); } catch (_) {}
+    try { await api("api/mesh/pair/cancel", meshJoin); } catch (_) {}
     meshStartFailed("Network error contacting a Canary: " + ((e && e.message) || e));
     return;
   }
@@ -942,8 +1054,8 @@ async function meshPollForCodes() {
     await delay(2000);
     let si, sj;
     try {
-      si = await api("/api/mesh/status", meshInit);
-      sj = await api("/api/mesh/status", meshJoin);
+      si = await api("api/mesh/status", meshInit);
+      sj = await api("api/mesh/status", meshJoin);
     } catch (e) {
       if (++fails >= 5) { meshPollFailed("A Canary became unreachable. Check the network and try again."); return; }
       continue;
@@ -962,8 +1074,8 @@ async function meshPollForCodes() {
       // out-of-band step exists to catch — refuse to offer confirmation and
       // abort the pairing rather than let a click bypass the only OOB check.
       if (ci !== cj) {
-        try { await api("/api/mesh/pair/cancel", meshInit); } catch (e) {}
-        try { await api("/api/mesh/pair/cancel", meshJoin); } catch (e) {}
+        try { await api("api/mesh/pair/cancel", meshInit); } catch (e) {}
+        try { await api("api/mesh/pair/cancel", meshJoin); } catch (e) {}
         meshPollFailed("Pairing codes do not match (" + ci + " vs " + cj +
           ") — possible wrong device or tampered link. Pairing aborted.");
         return;
@@ -998,8 +1110,8 @@ async function meshConfirm() {
   // Confirm both ends; report which one rejected so the failure isn't
   // masked by the generic "did not complete" timeout below.
   try {
-    const c1 = await api("/api/mesh/pair/confirm", meshInit);
-    const c2 = await api("/api/mesh/pair/confirm", meshJoin);
+    const c1 = await api("api/mesh/pair/confirm", meshInit);
+    const c2 = await api("api/mesh/pair/confirm", meshJoin);
     if (!c1.ok || !c2.ok) {
       const which = !c1.ok ? "existing" : "new";
       meshPollFailed("The " + which + " Canary rejected the confirmation: " +
@@ -1018,8 +1130,8 @@ async function meshConfirm() {
     await delay(2000);
     let si, sj;
     try {
-      si = await api("/api/mesh/status", meshInit);
-      sj = await api("/api/mesh/status", meshJoin);
+      si = await api("api/mesh/status", meshInit);
+      sj = await api("api/mesh/status", meshJoin);
     } catch (e) {
       if (++fails >= 5) { meshPollFailed("A Canary became unreachable while completing. Try again."); return; }
       continue;
@@ -1045,8 +1157,8 @@ async function meshCancel() {
   // Best-effort cancel on both ends; never let a network error trap the user
   // in the wizard.
   try {
-    if (meshInit) await api("/api/mesh/pair/cancel", meshInit);
-    if (meshJoin) await api("/api/mesh/pair/cancel", meshJoin);
+    if (meshInit) await api("api/mesh/pair/cancel", meshInit);
+    if (meshJoin) await api("api/mesh/pair/cancel", meshJoin);
   } catch (e) { /* ignore — closing regardless */ }
   closeMeshWizard();
 }
@@ -1054,8 +1166,9 @@ async function meshCancel() {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+// POST helper. `path` is relative ("api/save") and joined onto the page's
+// own base so it survives the HA ingress prefix.
 function api(path, data) {
-  const base = (window.hassioIngress || "");
   return fetch(base + path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1082,19 +1195,30 @@ async function runPreflight() {
   const box = document.getElementById("preflight-box");
   const results = document.getElementById("preflight-results");
   try {
-    const res = await fetch((window.hassioIngress || "") + "/api/preflight");
+    const res = await fetch(base + "api/preflight");
     const data = await res.json();
     if (data.ok) {
       const c = data.checks;
+      // "Install it for me" buttons POST api/preflight/install with a fixed
+      // target name — the server only accepts its two known Supervisor
+      // targets, so nothing user-controlled picks what gets installed.
+      const installControls = (target, label) =>
+        '<div style="margin:6px 0 10px">' +
+        `<button class="btn btn-primary btn-sm" id="install-btn-${target}" ` +
+        `onclick="installPrereq('${target}')">${label}</button>` +
+        `<div id="install-note-${target}" style="margin-top:6px;color:var(--text-muted)"></div>` +
+        "</div>";
       let html = "";
       html += c.mosquitto
         ? '<div style="color:#2e7d32">✓ Mosquitto MQTT broker is running</div>'
-        : '<div style="color:#c62828">✗ Mosquitto not running — install from Settings → Apps</div>';
+        : '<div style="color:#c62828">✗ Mosquitto MQTT broker is not running.</div>' +
+          installControls("mosquitto", "Install Mosquitto for me");
       html += c.frigate
         ? (c.frigate_running
             ? '<div style="color:#2e7d32">✓ Frigate NVR is running</div>'
             : '<div style="color:#fb8c00">! Frigate is installed but not running — start it after setup</div>')
-        : '<div style="color:#c62828">✗ Frigate not installed — install from Settings → Apps</div>';
+        : '<div style="color:#c62828">✗ Frigate NVR is not installed.</div>' +
+          installControls("frigate", "Install Frigate for me");
       html += c.mqtt_service
         ? `<div style="color:#2e7d32">✓ MQTT credentials auto-discovered (${escHtml(c.mqtt_host)}:${escHtml(c.mqtt_port)}${c.mqtt_auth ? ", authenticated" : ""}) — nothing to type</div>`
         : '<div style="color:#fb8c00">! No shared MQTT service found — broker defaults will be used</div>';
@@ -1114,6 +1238,51 @@ async function runPreflight() {
   } catch (_) {
     results.innerHTML = '<div style="color:var(--text-muted)">Could not check prerequisites (running outside HA?)</div>';
   }
+}
+
+// One-click prerequisite install. The request stays in flight while the
+// Supervisor pulls the container image (minutes on a Pi), so the button
+// narrates elapsed time instead of appearing hung, then the preflight
+// re-runs to show the new state.
+async function installPrereq(target) {
+  const btn = document.getElementById(`install-btn-${target}`);
+  const note = document.getElementById(`install-note-${target}`);
+  if (!btn || !note) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Installing…';
+  const startedAt = Date.now();
+  const pretty = target === "mosquitto" ? "Mosquitto" : "Frigate";
+  note.textContent = `Asking the Supervisor to install ${pretty}. This pulls a ` +
+    "container image and can take several minutes — leave this page open.";
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - startedAt) / 1000);
+    btn.innerHTML = `<span class="spinner"></span> Installing… ${s}s`;
+  }, 1000);
+  try {
+    const res = await api("api/preflight/install", { target });
+    clearInterval(tick);
+    if (res.ok) {
+      note.style.color = "#2e7d32";
+      note.textContent = res.message || `${pretty} installed.`;
+    } else {
+      note.style.color = "#c62828";
+      note.textContent = `Install failed: ${res.error || "unknown error"}. ` +
+        "You can install it manually from Settings → Apps → App Store.";
+      btn.disabled = false;
+      btn.innerHTML = "Try again";
+      return;
+    }
+  } catch (e) {
+    clearInterval(tick);
+    note.style.color = "#c62828";
+    note.textContent = "Install request failed: " + ((e && e.message) || e) +
+      ". You can install it manually from Settings → Apps → App Store.";
+    btn.disabled = false;
+    btn.innerHTML = "Try again";
+    return;
+  }
+  // Success: refresh the checklist so the ✓ replaces the button.
+  runPreflight();
 }
 
 // ---------------------------------------------------------------------------
@@ -1146,7 +1315,7 @@ let statusZones = [];
 async function statusRefresh() {
   const health = document.getElementById("status-health");
   try {
-    const res = await api("/api/verify", {});
+    const res = await api("api/verify", {});
     if (res.ok) {
       health.className = "info-box green";
       health.innerHTML = "<strong>✓ Witness kernel is healthy</strong><div style='margin-top:6px;font-size:0.88rem'>Event API responded on port 8799.</div>";
@@ -1159,7 +1328,7 @@ async function statusRefresh() {
     health.innerHTML = "<strong>✗ Health check failed</strong>";
   }
   try {
-    const res = await fetch((window.hassioIngress || "") + "/api/kernel/digest");
+    const res = await fetch(base + "api/kernel/digest");
     const data = await res.json();
     if (data.ok && data.data) {
       renderDigest(data.data);
@@ -1167,7 +1336,7 @@ async function statusRefresh() {
     }
   } catch (_) { /* ignore */ }
   try {
-    const res = await fetch((window.hassioIngress || "") + "/api/status");
+    const res = await fetch(base + "api/status");
     const data = await res.json();
     if (data.ok && data.options) {
       const o = data.options;
@@ -1225,7 +1394,7 @@ async function verifyNow() {
   btn.disabled = true;
   btn.textContent = "Verifying…";
   try {
-    const res = await api("/api/kernel/verify", {});
+    const res = await api("api/kernel/verify", {});
     if (res.ok && res.data) {
       renderChain(res.data);
     } else {
@@ -1245,7 +1414,7 @@ function downloadEvents() {
   const query = windowSel ? "?last=" + encodeURIComponent(windowSel) : "";
   // Plain navigation: the wizard proxy marks the response as an attachment,
   // so the browser saves the signed bundle without leaving the panel.
-  window.location.href = (window.hassioIngress || "") + "/api/kernel/export" + query;
+  window.location.href = base + "api/kernel/export" + query;
 }
 
 function generateDashboard() {
@@ -1297,7 +1466,7 @@ function copyDashboard() {
 (async function init() {
   let configured = false;
   try {
-    const res = await fetch((window.hassioIngress || "") + "/api/status");
+    const res = await fetch(base + "api/status");
     const data = await res.json();
     configured = !!(data.ok && data.configured);
   } catch (_) { /* ignore */ }

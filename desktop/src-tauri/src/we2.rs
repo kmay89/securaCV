@@ -411,6 +411,9 @@ where
         version: &str,
         sha256: &str,
     ) -> Result<(Option<Value>, Option<Value>, Value), String> {
+        // The proof runs up to ~25 s (VER?/ID?/INFO plus one real inference)
+        // with nothing else printing — say so before going quiet.
+        (self.log)("asking the module to prove itself — VER/ID/INFO + one live inference (up to ~25 s)…".into());
         let version_reply = self
             .at_command("VER?", Duration::from_secs(4))?
             .filter(at_ok);

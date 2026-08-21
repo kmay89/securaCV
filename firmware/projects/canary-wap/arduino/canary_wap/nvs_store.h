@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <cstddef>  // For std::nullptr_t
+#include <cstring>  // For memcpy
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS NAMESPACES (centralized definitions)
@@ -147,6 +148,21 @@ public:
 
   size_t putBytes(const char* key, const void* value, size_t len) {
     return m_prefs.putBytes(key, value, len);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // String operations
+  // ──────────────────────────────────────────────────────────────────────────
+  // Copies the value into buf NUL-terminated. Returns chars copied; 0 when
+  // the key is absent, not string-typed, or the value plus NUL doesn't fit.
+  size_t getString(const char* key, char* buf, size_t maxLen) {
+    if (buf == nullptr || maxLen == 0) return 0;
+    String v = m_prefs.getString(key, "");
+    const size_t n = v.length();
+    if (n + 1 > maxLen) return 0;
+    memcpy(buf, v.c_str(), n);
+    buf[n] = '\0';
+    return n;
   }
 
   // ──────────────────────────────────────────────────────────────────────────

@@ -588,6 +588,39 @@ function toggleTheme() {
   logEvent("info", "Switched to " + next + " mode");
 }
 
+// ── density (minimal / full detail), applied before first paint ──────────────
+// The Flasher narrates on purpose; minimal mode is for the fortieth board of
+// the day. Every control, check and receipt stays — only the teaching prose
+// folds away (styles.css owns the exact list), and the flash console collapses
+// espflash's progress-bar redraw frames into one live line instead of hundreds
+// (see appendFlashLog). Mirrors the browser flasher's minimal.js — the
+// two-flashers rule: a mode added to one belongs in both.
+(function applyStoredDensity() {
+  if (prefs.minimal) document.documentElement.setAttribute("data-density", "minimal");
+})();
+
+function minimalMode() {
+  return document.documentElement.getAttribute("data-density") === "minimal";
+}
+function toggleDensity() {
+  prefs.minimal = !prefs.minimal;
+  savePrefs();
+  if (prefs.minimal) document.documentElement.setAttribute("data-density", "minimal");
+  else document.documentElement.removeAttribute("data-density");
+  syncDensityButton();
+  logEvent("info", prefs.minimal
+    ? "Minimal mode on — the full story stays one click away"
+    : "Minimal mode off — the full story is back");
+}
+function syncDensityButton() {
+  const b = $("density-toggle");
+  if (!b) return;
+  b.setAttribute("aria-pressed", String(!!prefs.minimal));
+  b.title = prefs.minimal
+    ? "Minimal mode is on — click to bring the full story back"
+    : "Minimal mode — fold the explainers away; every control and check stays";
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
   initShell();
@@ -879,6 +912,17 @@ async function boot() {
   await listen("vision:progress", (ev) => {
     $("module-progress").textContent = Math.round(Number(ev.payload) * 100) + "%";
   });
+  // The connect-time passport read runs 8–25 s with five separate espflash
+  // spawns and — before this — not a single visible change: one frozen label
+  // for the whole wait. The backend now narrates each region; show the step
+  // in the label the user is actually watching.
+  await listen("passport:log", (ev) => {
+    if (!state.passportPending) return;
+    const t = $("flash-target");
+    if (t && t.textContent.startsWith("Reading the board first")) {
+      t.textContent = `Reading the board first — ${ev.payload}`;
+    }
+  });
 
   checkForUpdate();     // best-effort, in the background
   // …and keep checking: on a routine while the window stays open, plus a
@@ -1167,7 +1211,9 @@ const fleetBook = {
   // (canary/wap :80, displays on newer firmware), else the probed :80
   // upgrade (fielded displays that still announce the port-1 formality).
   // Vision and sense really have no server — their rows stay
-  // presence-and-version only (their OTA rides MQTT).
+  // presence-and-version only. (They still update themselves: the same
+  // signed daily HTTPS pull every variant runs; MQTT is only the Home
+  // Assistant trigger/status surface, not the transport.)
   webPortFor(entry) {
     const s = entry.deviceId && this.sightings[entry.deviceId];
     if (!s || !(s.ip || s.host)) return 0;
@@ -1244,7 +1290,7 @@ const fleetBook = {
           break;
         }
         if (inst.httpStatus === 401) { this.note(key, this.staleTokenNote()); return; }
-        if (inst.httpStatus === 404) { this.note(key, "This build doesn't carry the update engine — reflash over USB instead."); return; }
+        if (inst.httpStatus === 404) { this.note(key, "This firmware predates one-click installs — update once over USB or from Home Assistant, and later updates work from here."); return; }
         if (inst.httpStatus === 409) { this.note(key, "The board's update engine is busy — waiting for it to free up…"); continue; }
         if (inst.httpStatus >= 400) { this.note(key, "The board refused to start the update (HTTP " + inst.httpStatus + "). Try again in a minute."); return; }
         started = true;
@@ -1905,6 +1951,8 @@ function initShell() {
     b.addEventListener("click", () => navigate(b.dataset.nav))
   );
   $("theme-toggle").addEventListener("click", toggleTheme);
+  $("density-toggle").addEventListener("click", toggleDensity);
+  syncDensityButton();
   $("health-about").addEventListener("click", () => navigate("about"));
   $("health-update").addEventListener("click", () => navigate("about"));
   $("splash").addEventListener("click", dismissSplash);
@@ -2807,13 +2855,23 @@ async function onFlash() {
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
-  const unlisten = await listen("flash:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
-  const unlistenRescue = await listen("rescue:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
+  // The glanceable strip above the console: stage + elapsed + a real bar.
+  const op = opFor(con);
+  op.begin("Getting ready…");
+
+  const unlisten = await listen("flash:log", (ev) => appendFlashLog(con, ev.payload));
+  const unlistenRescue = await listen("rescue:log", (ev) => appendFlashLog(con, ev.payload));
+  // The image download streams structured {stage, done, total} events — the
+  // one long wait espflash's own output can't narrate.
+  const unlistenProgress = await listen("flash:progress", (ev) => {
+    const p = ev.payload || {};
+    if (p.stage !== "download") return;
+    if (p.total > 0) {
+      op.stage(`Downloading the signed image — ${Math.round(p.done / 1024)} of ${Math.round(p.total / 1024)} KB…`);
+      op.frac(p.done / p.total);
+    } else {
+      op.stage(`Downloading the signed image — ${Math.round(p.done / 1024)} KB…`);
+    }
   });
   // The change map arrives once, after the image is verified and before a
   // byte is written — the moment both sides of the comparison exist.
@@ -2853,7 +2911,7 @@ async function onFlash() {
   if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
       backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
-      con.textContent += "→ safety copy first — reading the whole chip before anything is written…\n";
+      appendFlashLog(con, "→ safety copy first — reading the whole chip before anything is written…");
       await invoke("backup_flash", {
         port: state.port,
         outPath: backupPath,
@@ -2866,8 +2924,8 @@ async function onFlash() {
       backupPath = null;
       noMapReason = "No change map this time — the safety copy it's drawn from couldn't be " +
         "read off this board.";
-      con.textContent += "⚠ Couldn't take the safety copy (" + e + ") — continuing. " +
-        "Advanced → Rescue can still try a manual backup.\n";
+      appendFlashLog(con, "⚠ Couldn't take the safety copy (" + e + ") — continuing. " +
+        "Advanced → Rescue can still try a manual backup.");
     }
   }
   if (!backupPath && noMapReason) renderChangeMapUnavailable(noMapReason);
@@ -2959,6 +3017,7 @@ async function onFlash() {
     // browser's classifyFlashError — same kinds, same remedies).
     const c = classifyFlashError(e);
     state.lastError = String(e);
+    op.fail("Didn't finish — the details are below and in the console.");
     setStatus(
       "flash-result",
       (c.title ? c.title + ". " : "The flash didn't finish. ") + c.hint +
@@ -2968,8 +3027,10 @@ async function onFlash() {
     logEvent("err", "Flash failed [" + c.kind + "]: " + e);
     hideHatchCard();
   } finally {
+    op.end();
     unlisten();
     unlistenRescue();
+    unlistenProgress();
     unlistenMap(); // or every reflash stacks another map listener
     btn.disabled = false;
     btn.textContent = "Flash my Canary";
@@ -3047,13 +3108,12 @@ function readProvisioning(product) {
   // not on the glass, whose portal only ever asked for Wi-Fi.
   const broker = product.broker_nvs === true;
   // Wi-Fi-only boards: an empty SSID just means "skip the preload" — the
-  // board's own setup path still works, so nothing to validate or write.
-  // A chosen room preset is a thing to write, exactly like a network or a
-  // broker. Today every dial-carrying product is usb-secrets so this arm can't
-  // be reached by one — but relying on that coincidence would mean a future
-  // dial product silently drops the preset the user picked.
+  // board's own setup path still works. A chosen room preset is a thing to
+  // write, exactly like a network or a broker. And since the auto-update
+  // checkbox arrived there is ALWAYS an answer to seed — checked writes 1,
+  // unchecked an explicit 0 — so an empty form no longer means "nothing to
+  // write": every flash carries at least the OTA choice.
   const dials = dialsForFlash(product);
-  if (!usbSecrets && !$("wifi-ssid").value && !$("mqtt-host").value && !dials) return null;
   const fields = ["wifi-ssid", "wifi-pass"]
     .concat(usbSecrets || broker ? ["device-id"] : [])
     .concat(broker ? ["mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"] : []);
@@ -3087,6 +3147,12 @@ function readProvisioning(product) {
     // Room presets as clamped typed ints, or empty when the user left the
     // dials as they ship (the backend writes no dial keys at all then).
     dials: dials || { u8: {}, u32: {} },
+    // The OTA opt-in, seeded into the engine's own NVS namespace
+    // ("securacv_ota"/auto_upd — securacv_ota.cpp). Checked (the default)
+    // writes 1 and the board keeps itself on Ed25519-signed releases with
+    // A/B rollback; unchecked writes an explicit 0 — the engine's default
+    // anyway, but a recorded human choice instead of an absence.
+    autoUpdate: !!($("auto-update") && $("auto-update").checked),
   };
 }
 
@@ -3535,18 +3601,21 @@ async function runRescue(label, op, { keepChip = false } = {}) {
   setStatus("rescue-result", "");
   resetOutcome();
   await stopMonitor();
-  const unlisten = await listen("rescue:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
+  // The liveness strip: minutes-long full-chip reads and writes run here.
+  const strip = opFor(con);
+  strip.begin(label + "…");
+  const unlisten = await listen("rescue:log", (ev) => appendFlashLog(con, ev.payload));
   try {
     const okMsg = await op();
+    strip.end();
     setStatus("rescue-result", okMsg, "ok");
     logEvent("ok", `${label} ✓`);
   } catch (e) {
+    strip.fail("Didn't finish — the details are below.");
     setStatus("rescue-result", String(e), "err");
     logEvent("err", `${label} failed: ` + e);
   } finally {
+    strip.end();
     unlisten();
     state.busy = false;
     if (!keepChip) {
@@ -3678,12 +3747,15 @@ async function onHealthCheck() {
   setStatus("health-result", "");
   resetOutcome();
   await stopMonitor();
-  const unlisten = await listen("health:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
+  // Its espflash reads are deliberately captured (streaming them would bury
+  // the console), so the strip's sweep + elapsed clock are the liveness here.
+  const strip = opFor(con);
+  strip.begin("Reading the board's story — nothing is changed…");
+  strip.indet();
+  const unlisten = await listen("health:log", (ev) => appendFlashLog(con, ev.payload));
   try {
     const report = await invoke("health_check", { port, chip, mac, flashBytes, baud: flashBaud() });
+    strip.end();
     report.generatedAt = new Date().toISOString(); // the browser stamps this too
     renderHealthReport(report);
     const v = report.verdict || {};
@@ -3691,9 +3763,11 @@ async function onHealthCheck() {
       v.level === "attn" ? "err" : "ok");
     logEvent("ok", "Health check read");
   } catch (e) {
+    strip.fail("Didn't finish — the details are below.");
     setStatus("health-result", String(e), "err");
     logEvent("err", "Health check failed: " + e);
   } finally {
+    strip.end();
     unlisten();
     state.busy = false; // read-only — the board wasn't touched, keep the detected chip
     if (btn) btn.textContent = "Run a health check";
@@ -3903,10 +3977,9 @@ async function onFlashLocalFile() {
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
-  const unlisten = await listen("flash:log", (ev) => {
-    con.textContent += ev.payload + "\n";
-    con.scrollTop = con.scrollHeight;
-  });
+  const strip = opFor(con);
+  strip.begin("Writing your file to the board…");
+  const unlisten = await listen("flash:log", (ev) => appendFlashLog(con, ev.payload));
 
   try {
     // The inspected size + fingerprint ride along so the backend can prove
@@ -3933,9 +4006,11 @@ async function onFlashLocalFile() {
     // Same as the release path: the boot log should just be there.
     startMonitor({ postFlash: true });
   } catch (e) {
+    strip.fail("Didn't finish — the details are below.");
     setStatus("local-result", String(e), "err");
     logEvent("err", "Local-file flash failed: " + e);
   } finally {
+    strip.end();
     unlisten();
     btn.textContent = "Write this file to the board";
     $("dev-channel").disabled = false;
@@ -4144,6 +4219,9 @@ function setMonitorButtons(running) {
 function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
+  // A fresh operation begins from a clean strip; each flow's begin() re-shows
+  // its own. (The registry may not have entries yet — first run mounts them.)
+  for (const id in opRegistry) opRegistry[id].hide();
   try { renderTokenOnce(null); } catch (_) {}
   // The previous install's map describes bytes that are about to stop being
   // true — showing it beside a new flash would be a lie by staleness.
@@ -4165,6 +4243,187 @@ function resetOutcome() {
   $("sense-tune").classList.add("hidden");
   senseTune.active = false;
   clearTimeout(senseTune.timer);
+}
+
+// The flash consoles relay espflash verbatim — including its progress bar,
+// which redraws with carriage returns, so every animation frame of it lands
+// as its own line. In minimal mode consecutive frames overwrite each other:
+// one live line that keeps moving, instead of hundreds of stale ones. Full
+// mode keeps the verbatim transcript, untouched.
+function looksLikeProgressFrame(line) {
+  const t = String(line).trim();
+  return /\[[=\-#>. ]{3,}\]/.test(t) ||
+    /\b\d{1,3}\s*%$/.test(t) ||
+    (/\b\d+\s*\/\s*\d+\b/.test(t) && /\[/.test(t));
+}
+
+// Pull the honest fraction out of an espflash progress frame: a percent when
+// the line carries one, else an n/m counter beside a bracketed bar. Returns
+// 0..1 or null. Kept regex-liberal on purpose — espflash's indicatif layout
+// has moved between releases, and a parser that returns null degrades to the
+// sweep + elapsed clock, never to a wrong number.
+function progressFromFrame(line) {
+  const t = String(line).trim();
+  if (!looksLikeProgressFrame(t)) return null;
+  // Decimals captured whole: indicatif's precise-percent template prints
+  // "12.34%", and matching only the integer run would land on the "34"
+  // after the dot — a wrong number, which this parser must never return.
+  const pct = /(\d{1,3}(?:\.\d+)?)\s*%/.exec(t);
+  if (pct) return Math.min(100, parseFloat(pct[1])) / 100;
+  const ratio = /(\d+)\s*\/\s*(\d+)/.exec(t);
+  if (ratio) {
+    const done = parseInt(ratio[1], 10), total = parseInt(ratio[2], 10);
+    if (total > 0 && done <= total) return done / total;
+  }
+  return null;
+}
+
+// ── op progress: stage + elapsed + a real bar, above every working console ──
+// The consoles stay the verbatim transcript; this strip is the glanceable
+// answer to "is it stuck?". Three inputs drive it: espflash's own progress
+// frames (parsed to a fraction), the flash's narration lines (mapped to
+// plain-language stages below), and structured events (the download's
+// flash:progress). The elapsed clock ticks every second regardless — after
+// 8 s with no signal it says "still working" out loud — and a stage with no
+// honest number sweeps the bar (.bar-fill.indet) rather than freezing it.
+// Mirrors the browser flasher's progressCard; the hub bar was the pattern.
+const OP_STAGES = [
+  // [line prefix or marker, stage text (null = show the line itself), bar mode]
+  // "full" marks a milestone (bar to 100 %, sweep off) but NEVER ends the
+  // run — each flow owns its own end()/fail() in its finally block. A mode
+  // that called end() here killed the strip for the whole rest of onFlash
+  // the moment the safety copy's "✓ backup saved" line arrived (review
+  // catch): every later stage and every write frame was dropped on a dead
+  // controller, which is precisely the looks-stuck failure this strip exists
+  // to prevent.
+  ["→ safety copy first", "Safety copy — reading the whole chip before anything is written…", "zero"],
+  // "indet", not "zero": the health check's reads are captured (no frames
+  // ever stream), so its bar sweeps; a backup's first streamed frame takes
+  // the bar over immediately.
+  ["→ reading ", null, "indet"],
+  ["→ resolving", "Resolving the verified release…", "indet"],
+  ["→ downloading", "Downloading the signed image…", "zero"],
+  // Coarse words only — a specific number would read like a benchmark
+  // nobody ran; erase time grows with the die and varies by vendor.
+  ["→ first contact", "Erasing the whole chip — the chip stays silent until it finishes (small chips take seconds; big ones can run a minute or more)…", "indet"],
+  ["→ erasing the whole chip", "Erasing the whole chip — the chip stays silent until it finishes (small chips take seconds; big ones can run a minute or more)…", "indet"],
+  ["✓ chip erased", "Chip erased ✓", null],
+  ["bytes staged", "Writing firmware to the board…", "zero"],
+  ["→ writing ", null, "zero"],
+  ["✓ chip write verified", "Write verified ✓", "full"],
+  ["✓ backup saved", "Backup saved ✓", "full"],
+  ["✓ written — the board is rebooting", "Written ✓ — the board is rebooting", "full"],
+  ["✓ health check complete", "Health check complete ✓", "full"],
+  ["✓ read complete", "Read complete ✓", "full"],
+];
+const opRegistry = {}; // console element id → controller
+
+function opFor(con) {
+  if (opRegistry[con.id]) return opRegistry[con.id];
+  // The Canary flow's strip is static markup; every other console grows one
+  // the first time its flow runs.
+  let wrap = con.id === "console" ? $("flash-progress-wrap") : null;
+  let stageEl, elapsedEl, fillEl;
+  if (wrap) {
+    stageEl = $("flash-op-stage"); elapsedEl = $("flash-op-elapsed"); fillEl = $("flash-op-fill");
+  } else {
+    wrap = document.createElement("div");
+    wrap.className = "op-progress hidden";
+    wrap.setAttribute("role", "status");
+    wrap.setAttribute("aria-live", "polite");
+    const row = document.createElement("div");
+    row.className = "op-progress-row";
+    stageEl = document.createElement("p"); stageEl.className = "muted";
+    elapsedEl = document.createElement("p"); elapsedEl.className = "muted";
+    // The clock mutates every second — outside the live region's voice, or a
+    // screen reader re-announces the strip once per tick for the whole flash.
+    elapsedEl.setAttribute("aria-hidden", "true");
+    row.append(stageEl, elapsedEl);
+    const bar = document.createElement("div"); bar.className = "bar";
+    fillEl = document.createElement("div"); fillEl.className = "bar-fill";
+    bar.append(fillEl);
+    wrap.append(row, bar);
+    con.before(wrap);
+  }
+  let t0 = 0, lastSignal = 0, ticker = null;
+  const mmss = (ms) => {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  const ctl = {
+    active: false,
+    begin(stageText) {
+      this.active = true;
+      t0 = lastSignal = Date.now();
+      wrap.classList.remove("hidden");
+      stageEl.textContent = stageText || "Working…";
+      elapsedEl.textContent = "0:00";
+      fillEl.classList.remove("indet");
+      fillEl.style.width = "0%";
+      clearInterval(ticker);
+      ticker = setInterval(() => {
+        if (!this.active) { clearInterval(ticker); return; }
+        const now = Date.now();
+        elapsedEl.textContent = mmss(now - t0) +
+          (now - lastSignal > 8000 ? " — still working" : "");
+      }, 1000);
+    },
+    stage(text) { lastSignal = Date.now(); stageEl.textContent = text; },
+    frac(f) {
+      lastSignal = Date.now();
+      fillEl.classList.remove("indet");
+      fillEl.style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(1) + "%";
+    },
+    indet() { lastSignal = Date.now(); fillEl.classList.add("indet"); },
+    // Every relayed line passes through here: frames become the bar, the
+    // flash's own narration becomes the stage.
+    feedLine(line) {
+      if (!this.active) return;
+      const f = progressFromFrame(line);
+      if (f != null) { this.frac(f); return; }
+      const t = String(line).trim();
+      for (const [marker, text, mode] of OP_STAGES) {
+        if (!t.startsWith(marker) && !(marker === "bytes staged" && t.includes(marker))) continue;
+        this.stage(text || t.replace(/^[→✓⚠]\s*/, ""));
+        if (mode === "zero") this.frac(0);
+        else if (mode === "indet") this.indet();
+        else if (mode === "full") this.frac(1);
+        return;
+      }
+      lastSignal = Date.now(); // any output at all is a sign of life
+    },
+    end() {
+      this.active = false;
+      clearInterval(ticker);
+      fillEl.classList.remove("indet");
+    },
+    fail(text) {
+      this.end();
+      if (text) stageEl.textContent = text;
+    },
+    hide() {
+      this.end();
+      wrap.classList.add("hidden");
+    },
+  };
+  opRegistry[con.id] = ctl;
+  return ctl;
+}
+
+function appendFlashLog(con, text) {
+  const line = String(text);
+  const op = opRegistry[con.id];
+  if (op) op.feedLine(line);
+  const frame = looksLikeProgressFrame(line);
+  if (minimalMode() && frame && con.dataset.lastLineWasFrame === "1") {
+    const t = con.textContent;
+    const cut = t.lastIndexOf("\n", Math.max(0, t.length - 2));
+    con.textContent = t.slice(0, cut + 1) + line + "\n";
+  } else {
+    con.textContent += line + "\n";
+  }
+  con.dataset.lastLineWasFrame = frame ? "1" : "0";
+  con.scrollTop = con.scrollHeight;
 }
 
 function appendConsole(id, text) {

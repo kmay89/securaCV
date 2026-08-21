@@ -1,0 +1,48 @@
+name: Dependency Review
+
+# PR-scoped complement to audit.yml: audit.yml's jobs check the WHOLE
+# committed tree against advisory DBs (weekly, and on PRs touching the
+# root/canary-vision manifests it audits). This gate instead diffs
+# base..head through GitHub's dependency graph and fails if the PR
+# *introduces* a dependency with a known high/critical advisory —
+# catching a bad dep at the moment it enters, instead of at the next
+# Monday sweep.
+#
+# Its own workflow, not a job in audit.yml, because the coverage differs:
+# audit.yml is path-filtered to the manifests its jobs actually audit,
+# while the dependency graph tracks every manifest in the repo (the
+# desktop-lab / desktop/src-tauri / desktop/hub-io / tvos lockfiles
+# included) — so this trigger matches any manifest anywhere, present or
+# future.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - 'package-lock.json'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '.github/workflows/dependency-review.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dependency-review:
+    name: Dependency review (PR diff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Flag vulnerable dependencies added by this PR
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

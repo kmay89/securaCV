@@ -71,7 +71,7 @@
     "integration": {
       "domain": "securacv",
       "name": "SecuraCV",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "min_ha": "2024.4.1",
       "source": "canary-local/devices/homeassistant.json:integration"
     },

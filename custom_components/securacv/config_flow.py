@@ -1,14 +1,22 @@
 """Config flow for SecuraCV integration.
 
-Supports three setup modes:
-  A) Canary devices via MQTT (recommended for most users)
+Setup modes:
+  auto) Zero-decision (default): probe for a running Privacy Witness Kernel
+        and create the right entry without asking anything further.
+  A) Canary devices via MQTT
   B) Witness Kernel via HTTP API
   C) Both MQTT + HTTP Kernel
+
+Discovery entry points:
+  - MQTT: a publish under the manifest's `securacv/#` filter lands in
+    async_step_mqtt and ends in a zero-field confirm step.
+  - Supervisor add-on: the kernel add-on POSTs discovery service "securacv"
+    with {host, port}; async_step_hassio configures (or updates) the entry.
 """
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import voluptuous as vol
 
@@ -17,9 +25,6 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsF
 from homeassistant.const import CONF_TOKEN, CONF_URL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
-if TYPE_CHECKING:
-    from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
 from .const import (
     DOMAIN,
@@ -31,6 +36,7 @@ from .const import (
     DEFAULT_KERNEL_URL,
     DEFAULT_MQTT_PREFIX,
     DEFAULT_TOKEN_FILE,
+    SETUP_MODE_AUTO,
     SETUP_MODE_MQTT,
     SETUP_MODE_KERNEL,
     SETUP_MODE_BOTH,
@@ -79,6 +85,48 @@ def _kernel_auth_errors(user_input: dict[str, Any]) -> dict[str, str]:
     return {}
 
 
+def _kernel_schema(
+    values: dict[str, Any] | None, *, include_prefix: bool
+) -> vol.Schema:
+    """Kernel/both form schema, seeded with `values` as the defaults.
+
+    On a validation error the form is rebuilt from what the user just
+    submitted, so a typo'd URL comes back for correction instead of being
+    silently reset to the static defaults.
+    """
+    values = values or {}
+    fields: dict[Any, Any] = {
+        vol.Required(
+            CONF_URL, default=values.get(CONF_URL, DEFAULT_KERNEL_URL)
+        ): str,
+        vol.Optional(
+            CONF_TOKEN_FILE,
+            default=values.get(CONF_TOKEN_FILE, DEFAULT_TOKEN_FILE),
+        ): str,
+    }
+    if values.get(CONF_TOKEN):
+        fields[vol.Optional(CONF_TOKEN, default=values[CONF_TOKEN])] = str
+    else:
+        fields[vol.Optional(CONF_TOKEN)] = str
+    if include_prefix:
+        fields[
+            vol.Optional(
+                CONF_MQTT_PREFIX,
+                default=values.get(CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX),
+            )
+        ] = str
+    if values.get(CONF_ADAPTER_STATS_URL):
+        fields[
+            vol.Optional(
+                CONF_ADAPTER_STATS_URL,
+                default=values[CONF_ADAPTER_STATS_URL],
+            )
+        ] = str
+    else:
+        fields[vol.Optional(CONF_ADAPTER_STATS_URL)] = str
+    return vol.Schema(fields)
+
+
 class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for SecuraCV."""
 
@@ -90,24 +138,47 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the OptionsFlow handler for this entry."""
         return SecuraCVOptionsFlow(config_entry)
 
+    # Discovery-step state. Class-level defaults (not an __init__) so the
+    # base flow machinery's construction is left completely alone.
+    _discovered_prefix: str | None = None
+    _hassio_url: str | None = None
+
+    def _mqtt_prefix_already_configured(self, prefix: str) -> bool:
+        """True if any existing entry already subscribes to this prefix.
+
+        MQTT-only entries key their unique_id on the prefix while
+        kernel/both entries key on the URL, so unique_id alone can't stop
+        one system from ending up with two subscriptions on the same
+        prefix. Every path that would enable MQTT checks here first.
+        """
+        for entry in self._async_current_entries():
+            data = getattr(entry, "data", None) or {}
+            if data.get(CONF_ENABLE_MQTT) and (
+                data.get(CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX) == prefix
+            ):
+                return True
+        return False
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step — choose setup mode."""
         if user_input is not None:
-            mode = user_input.get(CONF_SETUP_MODE, SETUP_MODE_MQTT)
+            mode = user_input.get(CONF_SETUP_MODE, SETUP_MODE_AUTO)
             if mode == SETUP_MODE_MQTT:
                 return await self.async_step_mqtt_config()
             elif mode == SETUP_MODE_KERNEL:
                 return await self.async_step_kernel()
-            else:
+            elif mode == SETUP_MODE_BOTH:
                 return await self.async_step_both()
+            return await self._async_finish_auto()
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_SETUP_MODE, default=SETUP_MODE_MQTT): vol.In(
+                vol.Required(CONF_SETUP_MODE, default=SETUP_MODE_AUTO): vol.In(
                     {
-                        SETUP_MODE_MQTT: "Canary devices via MQTT (Recommended)",
+                        SETUP_MODE_AUTO: "Automatic — detect what's installed",
+                        SETUP_MODE_MQTT: "Canary devices via MQTT",
                         SETUP_MODE_KERNEL: "Witness Kernel via HTTP API",
                         SETUP_MODE_BOTH: "Both MQTT + HTTP Kernel",
                     }
@@ -120,6 +191,84 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
         )
 
+    async def _async_finish_auto(self) -> ConfigFlowResult:
+        """Zero-decision setup: probe the kernel, create the right entry.
+
+        Never shows another form. If the kernel answers at the default
+        add-on URL (an auth error counts — something answered), create a
+        kernel+MQTT "both" entry; otherwise an MQTT-only entry with the
+        default prefix. Aborts `already_configured` when an equivalent
+        entry exists.
+        """
+        probe = {
+            CONF_URL: DEFAULT_KERNEL_URL,
+            CONF_TOKEN: "",
+            CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
+        }
+        try:
+            await _async_validate_kernel(self.hass, probe)
+            kernel_present = True
+        except InvalidAuth:
+            # Auth failure proves something is answering at the kernel URL.
+            kernel_present = True
+        except CannotConnect:
+            kernel_present = False
+        except Exception:  # noqa: BLE001 - auto must never dead-end in a form
+            _LOGGER.debug("kernel probe failed unexpectedly", exc_info=True)
+            kernel_present = False
+
+        if kernel_present:
+            await self.async_set_unique_id(DEFAULT_KERNEL_URL)
+            self._abort_if_unique_id_configured()
+            if self._mqtt_prefix_already_configured(DEFAULT_MQTT_PREFIX):
+                # An MQTT-only entry already owns the prefix — the common
+                # story is "configured Canaries first, installed the kernel
+                # later". Aborting here would strand the kernel, so promote
+                # that entry to `both` (keeping its subscription) instead of
+                # refusing.
+                for entry in self._async_current_entries():
+                    data = dict(getattr(entry, "data", None) or {})
+                    if not data.get(CONF_ENABLE_MQTT):
+                        continue
+                    if data.get(CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX) != (
+                        DEFAULT_MQTT_PREFIX
+                    ):
+                        continue
+                    if not data.get(CONF_URL):
+                        data[CONF_URL] = DEFAULT_KERNEL_URL
+                        data.setdefault(CONF_TOKEN, "")
+                        data.setdefault(CONF_TOKEN_FILE, DEFAULT_TOKEN_FILE)
+                        data[CONF_SETUP_MODE] = SETUP_MODE_BOTH
+                        self.hass.config_entries.async_update_entry(
+                            entry, data=data
+                        )
+                    break
+                return self.async_abort(reason="already_configured")
+            return self.async_create_entry(
+                title="SecuraCV",
+                data={
+                    CONF_URL: DEFAULT_KERNEL_URL,
+                    CONF_TOKEN: "",
+                    CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
+                    CONF_ENABLE_MQTT: True,
+                    CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
+                    CONF_SETUP_MODE: SETUP_MODE_BOTH,
+                },
+            )
+
+        await self.async_set_unique_id(f"mqtt_{DEFAULT_MQTT_PREFIX}")
+        self._abort_if_unique_id_configured()
+        if self._mqtt_prefix_already_configured(DEFAULT_MQTT_PREFIX):
+            return self.async_abort(reason="already_configured")
+        return self.async_create_entry(
+            title=f"SecuraCV ({DEFAULT_MQTT_PREFIX})",
+            data={
+                CONF_ENABLE_MQTT: True,
+                CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
+                CONF_SETUP_MODE: SETUP_MODE_MQTT,
+            },
+        )
+
     async def async_step_mqtt_config(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -128,6 +277,8 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             prefix = user_input.get(CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX)
             await self.async_set_unique_id(f"mqtt_{prefix}")
             self._abort_if_unique_id_configured()
+            if self._mqtt_prefix_already_configured(prefix):
+                return self.async_abort(reason="already_configured")
 
             return self.async_create_entry(
                 title=f"SecuraCV ({prefix})",
@@ -139,7 +290,9 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # Pre-fill with the prefix seen by MQTT discovery, if any.
-        default_prefix = self.context.get("mqtt_prefix", DEFAULT_MQTT_PREFIX)
+        default_prefix = self._discovered_prefix or self.context.get(
+            "mqtt_prefix", DEFAULT_MQTT_PREFIX
+        )
         data_schema = vol.Schema(
             {
                 vol.Optional(CONF_MQTT_PREFIX, default=default_prefix): str,
@@ -182,18 +335,11 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data[CONF_ADAPTER_STATS_URL] = user_input[CONF_ADAPTER_STATS_URL]
                 return self.async_create_entry(title="SecuraCV", data=data)
 
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_URL, default=DEFAULT_KERNEL_URL): str,
-                vol.Optional(CONF_TOKEN_FILE, default=DEFAULT_TOKEN_FILE): str,
-                vol.Optional(CONF_TOKEN): str,
-                vol.Optional(CONF_ADAPTER_STATS_URL): str,
-            }
-        )
-
+        # Rebuild the form from what was just submitted (if anything) so a
+        # validation error doesn't throw away the user's typing.
         return self.async_show_form(
             step_id="kernel",
-            data_schema=data_schema,
+            data_schema=_kernel_schema(user_input, include_prefix=False),
             errors=errors,
         )
 
@@ -215,14 +361,18 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 await self.async_set_unique_id(user_input[CONF_URL])
                 self._abort_if_unique_id_configured()
+                prefix = user_input.get(CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX)
+                if self._mqtt_prefix_already_configured(prefix):
+                    # A different entry (e.g. MQTT-only, keyed mqtt_<prefix>)
+                    # already subscribes here — a second entry would double
+                    # every Canary's messages.
+                    return self.async_abort(reason="already_configured")
 
                 data = {
                     CONF_URL: user_input[CONF_URL],
                     CONF_TOKEN: user_input.get(CONF_TOKEN, ""),
                     CONF_ENABLE_MQTT: True,
-                    CONF_MQTT_PREFIX: user_input.get(
-                        CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX
-                    ),
+                    CONF_MQTT_PREFIX: prefix,
                     CONF_SETUP_MODE: SETUP_MODE_BOTH,
                 }
                 if user_input.get(CONF_TOKEN_FILE):
@@ -231,42 +381,165 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data[CONF_ADAPTER_STATS_URL] = user_input[CONF_ADAPTER_STATS_URL]
                 return self.async_create_entry(title="SecuraCV", data=data)
 
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_URL, default=DEFAULT_KERNEL_URL): str,
-                vol.Optional(CONF_TOKEN_FILE, default=DEFAULT_TOKEN_FILE): str,
-                vol.Optional(CONF_TOKEN): str,
-                vol.Optional(CONF_MQTT_PREFIX, default=DEFAULT_MQTT_PREFIX): str,
-                vol.Optional(CONF_ADAPTER_STATS_URL): str,
-            }
-        )
-
+        # Rebuild the form from what was just submitted (if anything) so a
+        # validation error doesn't throw away the user's typing.
         return self.async_show_form(
             step_id="both",
-            data_schema=data_schema,
+            data_schema=_kernel_schema(user_input, include_prefix=True),
             errors=errors,
         )
 
-    async def async_step_mqtt(
-        self, discovery_info: MqttServiceInfo
-    ) -> ConfigFlowResult:
+    async def async_step_mqtt(self, discovery_info: Any) -> ConfigFlowResult:
         """Handle MQTT auto-discovery.
 
-        Triggered when HA sees a message on a topic matching the 'mqtt' key
-        in manifest.json (securacv/#). Since HA 2022.6 the flow receives an
-        MqttServiceInfo — a slots dataclass with NO dict access, so the
-        topic must be read as an attribute; ``.get()`` raises
-        AttributeError here and kills the advertised discovery prompt.
+        Triggered when HA sees a message on a topic matching the 'mqtt'
+        key in manifest.json (securacv/#). Since HA 2022.6 the argument
+        is an attribute-style MqttServiceInfo; read it via getattr with a
+        dict fallback so older cores (and test stubs) keep working —
+        `.get()` on the ServiceInfo is what used to crash this step into
+        "Unknown error".
         """
-        topic = discovery_info.topic or ""
+        topic = getattr(discovery_info, "topic", None)
+        if topic is None and isinstance(discovery_info, dict):
+            topic = discovery_info.get("topic")
+        topic = topic or ""
+
         parts = topic.split("/")
+        prefix = parts[0] if len(parts) >= 2 and parts[0] else DEFAULT_MQTT_PREFIX
 
-        if len(parts) >= 2:
-            prefix = parts[0]
-            self.context["title_placeholders"] = {"name": f"SecuraCV ({prefix})"}
-            self.context["mqtt_prefix"] = prefix
+        self._discovered_prefix = prefix
+        self.context["title_placeholders"] = {"name": prefix}
+        self.context["mqtt_prefix"] = prefix
 
-        return await self.async_step_mqtt_config()
+        await self.async_set_unique_id(f"mqtt_{prefix}")
+        self._abort_if_unique_id_configured()
+        if self._mqtt_prefix_already_configured(prefix):
+            # A kernel+MQTT entry may already cover this prefix under a
+            # URL-keyed unique_id; don't offer to configure it twice.
+            return self.async_abort(reason="already_configured")
+
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Zero-input confirmation for MQTT discovery.
+
+        Everything is already known (the prefix came off the wire); the
+        form has no fields — submitting it creates the entry.
+        """
+        prefix = self._discovered_prefix or DEFAULT_MQTT_PREFIX
+        if user_input is not None:
+            if self._mqtt_prefix_already_configured(prefix):
+                return self.async_abort(reason="already_configured")
+            return self.async_create_entry(
+                title=f"SecuraCV ({prefix})",
+                data={
+                    CONF_ENABLE_MQTT: True,
+                    CONF_MQTT_PREFIX: prefix,
+                    CONF_SETUP_MODE: SETUP_MODE_MQTT,
+                },
+            )
+
+        return self.async_show_form(
+            step_id="confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders={"prefix": prefix},
+        )
+
+    async def async_step_hassio(self, discovery_info: Any) -> ConfigFlowResult:
+        """Handle Supervisor add-on discovery.
+
+        The Privacy Witness Kernel add-on POSTs discovery service
+        "securacv" with config {host, port}. Accept the HassioServiceInfo
+        defensively (attribute-style or plain dict) so older cores and
+        test stubs both work.
+        """
+        try:
+            # Imported for its side effects on typing only; the payload is
+            # read defensively below so stub environments need no module.
+            from homeassistant.helpers.service_info.hassio import (  # noqa: F401
+                HassioServiceInfo,
+            )
+        except Exception:  # noqa: BLE001 - older cores / test stubs
+            pass
+
+        config = getattr(discovery_info, "config", None)
+        if config is None and isinstance(discovery_info, dict):
+            # Older cores handed the posted config dict straight through,
+            # possibly nested under a "config" key.
+            config = discovery_info.get("config", discovery_info)
+        if not isinstance(config, dict):
+            return self.async_abort(reason="invalid_discovery_info")
+
+        host = config.get("host")
+        port = config.get("port")
+        if not host or not port:
+            return self.async_abort(reason="invalid_discovery_info")
+        url = f"http://{host}:{port}"
+
+        addon_name = (
+            config.get("addon")
+            or getattr(discovery_info, "name", None)
+            or "Add-on"
+        )
+        self.context["title_placeholders"] = {"name": str(addon_name)}
+
+        await self.async_set_unique_id("hassio")
+        self._abort_if_unique_id_configured(updates={CONF_URL: url})
+
+        # Any existing entry means this system is already set up; refresh
+        # its kernel URL from the add-on's announcement rather than
+        # prompting for a second entry.
+        existing = list(self._async_current_entries())
+        if existing:
+            entry = next(
+                (
+                    e
+                    for e in existing
+                    if (getattr(e, "data", None) or {}).get(CONF_URL)
+                ),
+                existing[0],
+            )
+            new_data = dict(getattr(entry, "data", None) or {})
+            new_data[CONF_URL] = url
+            new_data.setdefault(CONF_TOKEN, "")
+            new_data.setdefault(CONF_TOKEN_FILE, DEFAULT_TOKEN_FILE)
+            if new_data.get(CONF_SETUP_MODE) == SETUP_MODE_MQTT:
+                # The kernel just announced itself; an MQTT-only entry can
+                # now use it too.
+                new_data[CONF_SETUP_MODE] = SETUP_MODE_BOTH
+            self.hass.config_entries.async_update_entry(entry, data=new_data)
+            return self.async_abort(reason="already_configured")
+
+        self._hassio_url = url
+        return await self.async_step_hassio_confirm()
+
+    async def async_step_hassio_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Zero-input confirmation for Supervisor add-on discovery."""
+        url = self._hassio_url or DEFAULT_KERNEL_URL
+        if user_input is not None:
+            if self._mqtt_prefix_already_configured(DEFAULT_MQTT_PREFIX):
+                return self.async_abort(reason="already_configured")
+            return self.async_create_entry(
+                title="SecuraCV",
+                data={
+                    CONF_URL: url,
+                    CONF_TOKEN: "",
+                    CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
+                    CONF_ENABLE_MQTT: True,
+                    CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
+                    CONF_SETUP_MODE: SETUP_MODE_BOTH,
+                },
+            )
+
+        return self.async_show_form(
+            step_id="hassio_confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders={"url": url},
+        )
 
 
 # =============================================================================
