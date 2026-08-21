@@ -25,7 +25,7 @@ name = "hub_io"
 #   xz2 .... liblzma bindings, `static` so no system library is required
 [dependencies]
 bcrypt = "0.19.2"
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 hub-core = { path = "../hub-core" }
 serde_json = "1.0.151"
 sha2 = "0.10"
