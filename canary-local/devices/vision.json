@@ -10,8 +10,8 @@
     "model": "Canary Vision (Grove Vision AI V2)",
     "board_short": "Grove Vision AI V2",
     "board_id": "seeed_grove_vision_ai_v2",
-    "fw_version": "2.4.12",
-    "fw_train": "2.4.12",
+    "fw_version": "2.4.13",
+    "fw_train": "2.4.13",
     "ota_product": "securacv-canary-vision",
     "senses": [
       "camera (on-module inference)"
@@ -303,7 +303,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary Vision",
-      "              d b          v2.4.12",
+      "              d b          v2.4.13",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
