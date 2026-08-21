@@ -47,8 +47,12 @@ char *scv_verify_sealed_log(const char *json);
  * Accepts the documented object form or a bare array of devices.
  *
  * Returns the normalized snapshot as JSON:
- *   { "kernel"?, "verified_through"?, "devices": [ { "name", "online", "chain"?, "product"? } ] }
+ *   { "kernel"?, "verified_through"?,
+ *     "devices": [ { "name", "online", "chain"?, "product"?, "hw"?, "hub"? } ] }
  * or, on bad input, { "error": "<why>" }.
+ * `hw` is the board id (resolves the figure a client draws); `hub` is the
+ * device's hub standing ("none" / "down" / "ok"). Both pass through only
+ * when the device sent them — absent stays absent, never a default.
  *
  * Caller frees the result with scv_string_free.
  */

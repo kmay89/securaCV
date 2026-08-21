@@ -89,7 +89,8 @@ surface to rot.
 | Hours | Always calm | **Open-hours vs after-hours** witness postures |
 
 Both editions share the non-negotiables: **local, $0/mo, no cloud**; an
-Ed25519-signed, hash-chained record; the *same* Rust verifier as the kernel;
+Ed25519-signed, hash-chained record; a Rust verifier proven against the
+kernel's own test fixtures in CI (see §4);
 and — the hook that makes Business land — **it works with the cameras they
 already own.**
 

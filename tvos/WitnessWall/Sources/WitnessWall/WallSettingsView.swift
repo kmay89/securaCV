@@ -94,6 +94,8 @@ struct WallSettingsView: View {
 
                 Section("About") {
                     LabeledContent("App", value: Self.appVersion)
+                    LabeledContent("Build", value: Self.buildRev)
+                    LabeledContent("Firmware train", value: Self.firmwareTrain)
                     LabeledContent("Witness core", value: model.coreVersion)
                     Text("Witnessing without watching — no video on this screen.")
                         .font(.caption)
@@ -102,11 +104,34 @@ struct WallSettingsView: View {
             }
             .navigationTitle("Witness Wall")
         }
-        .onAppear { typedAddress = model.hubAddress }
+        .onAppear {
+            // Pre-fill only when "connected to" IS an address a person might
+            // edit. In discovered multi-source mode `hubAddress` is a display
+            // sentence ("2 Canaries · found on your network"), and pre-filling
+            // it armed the Connect button with a non-address: pressing it fed
+            // the sentence to FleetAddress.normalize, flashed an "isn't an
+            // address" error, and dismissed the panel. An empty field shows
+            // the placeholder and keeps Connect disabled instead.
+            if model.sources.count == 1 { typedAddress = model.hubAddress }
+        }
     }
 
     private static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    }
+
+    /// Build identity, baked at build time: scripts/stamp_build.sh hands the
+    /// git rev and firmware train to xcodebuild, and Support/Info.plist
+    /// carries them into the bundle — so "which build is on this TV?" is
+    /// never a guess. Same story every Apple surface's About screen tells
+    /// (ios/Shared/BuildInfo.swift); the keys differ because each target
+    /// reads its own Info.plist.
+    private static var buildRev: String {
+        Bundle.main.object(forInfoDictionaryKey: "SecuraCVBuildRev") as? String ?? "dev"
+    }
+
+    private static var firmwareTrain: String {
+        Bundle.main.object(forInfoDictionaryKey: "SecuraCVFirmwareTrain") as? String ?? "0.x"
     }
 }
 

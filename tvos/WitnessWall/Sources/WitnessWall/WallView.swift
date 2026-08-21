@@ -168,10 +168,18 @@ struct WallView: View {
                     title: "Showing the last report received at \(asOf.formatted(date: .omitted, time: .shortened))",
                     detail: stale
                 )
+            } else if let report = model.report, !report.ok {
+                // This TV walked the chain itself and it did not verify —
+                // the one verdict that outranks every self-report below.
+                StatusBanner(
+                    tone: .alarm,
+                    title: "The record did not verify",
+                    detail: report.message
+                )
             } else if fleet.hasChainTrouble {
                 StatusBanner(
                     tone: .alarm,
-                    title: "A Canary's record didn't verify",
+                    title: "A Canary reports its record didn't verify",
                     detail: "One or more devices report a chain that isn't ok. Open the Canary's page on your hub to see why."
                 )
             } else if offlineBanner, !offlineNames(fleet).isEmpty {
@@ -185,11 +193,24 @@ struct WallView: View {
                     detail: nil
                 )
             } else if let verifiedThrough = fleet.verifiedThrough {
-                StatusBanner(
-                    tone: .calm,
-                    title: "Verified through \(verifiedThrough)",
-                    detail: nil
-                )
+                // Two sentences for two claims. "Verified" belongs to this
+                // TV's own verdict (the Rust core walking a served sealed
+                // log); without one, the same timestamp is the fleet's own
+                // report and is labeled as exactly that — the wire string
+                // must never wear this screen's authority.
+                if let report = model.report, report.ok {
+                    StatusBanner(
+                        tone: .calm,
+                        title: "Verified through \(verifiedThrough)",
+                        detail: "Chain of \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries") checked on this Apple TV."
+                    )
+                } else {
+                    StatusBanner(
+                        tone: .calm,
+                        title: "Your fleet reports verified through \(verifiedThrough)",
+                        detail: nil
+                    )
+                }
             }
         }
     }
@@ -316,14 +337,17 @@ struct WallView: View {
 /// on the grid and the detail view can never phrase the same state two ways.
 extension FleetSnapshot.Device {
     var wallStatusLine: String {
-        if chainIsTroubled { return "Record didn't verify" }
+        if chainIsTroubled { return "Reports its record didn't verify" }
         // "record ok" is a claim about a chain, so it may only be said by a
         // device that HAS one. A display holds none — it renders other
         // devices' — and answers "unknown"; saying "record ok" there would
         // invent a verification, exactly as calling it trouble invented a
-        // failure.
+        // failure. And in either direction the sentence says "reports":
+        // this field is the device's own word over an unauthenticated wire,
+        // not a verification the TV performed — that claim belongs solely to
+        // the header's verify verdict (WallModel.report).
         guard chain == "ok" else { return online ? "Online" : "Offline" }
-        return online ? "Online · record ok" : "Offline"
+        return online ? "Online · reports record ok" : "Offline"
     }
 
     var wallHubLine: String {

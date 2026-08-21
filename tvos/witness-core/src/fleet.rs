@@ -135,9 +135,9 @@ mod tests {
       "kernel": "kitchen-hub",
       "verified_through": "4:02 PM",
       "devices": [
-        { "name": "Front Door", "online": true,  "chain": "ok", "product": "canary-wap" },
+        { "name": "Front Door", "online": true,  "chain": "ok", "product": "canary-wap", "hub": "ok" },
         { "name": "Studio",     "online": true,  "chain": "ok", "product": "canary" },
-        { "name": "Driveway",   "online": false, "chain": "ok", "product": "canary-vision" }
+        { "name": "Driveway",   "online": false, "chain": "ok", "product": "canary-vision", "hw": "xiao-esp32c3" }
       ]
     }"#;
 
@@ -149,6 +149,11 @@ mod tests {
         assert_eq!(fleet.online_count(), 2);
         assert!(!fleet.has_chain_trouble());
         assert_eq!(fleet.summary(), "2 of 3 Canaries online");
+        // The doc's optional fields survive the parse: the board id that
+        // resolves a figure, and the hub standing.
+        assert_eq!(fleet.devices[0].hub.as_deref(), Some("ok"));
+        assert_eq!(fleet.devices[2].hw.as_deref(), Some("xiao-esp32c3"));
+        assert_eq!(fleet.devices[1].hw, None);
     }
 
     #[test]
