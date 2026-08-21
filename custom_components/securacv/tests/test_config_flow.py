@@ -253,6 +253,81 @@ def test_auto_mode_aborts_on_equivalent_entry(monkeypatch):
     assert result["reason"] == "already_configured"
 
 
+def test_auto_mode_promotes_mqtt_only_entry_when_kernel_appears(monkeypatch):
+    """Canaries first, kernel later: Automatic must not strand the kernel.
+
+    With an MQTT-only entry already owning the default prefix and a kernel
+    now answering, auto aborts (no second entry) but promotes the existing
+    entry to `both` so the kernel is actually used.
+    """
+
+    async def fake_validate(hass, data):
+        return None  # kernel answered
+
+    monkeypatch.setattr(config_flow, "_async_validate_kernel", fake_validate)
+
+    existing = make_entry(
+        {
+            CONF_ENABLE_MQTT: True,
+            CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
+            CONF_SETUP_MODE: SETUP_MODE_MQTT,
+        },
+        unique_id=f"mqtt_{DEFAULT_MQTT_PREFIX}",
+    )
+    updates = []
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_update_entry=lambda entry, **kw: updates.append((entry, kw))
+        ),
+        data={},
+    )
+    flow = make_flow(entries=[existing], hass=hass)
+    result = drive(flow.async_step_user({CONF_SETUP_MODE: SETUP_MODE_AUTO}))
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+    assert len(updates) == 1
+    data = updates[0][1]["data"]
+    assert data[CONF_URL] == DEFAULT_KERNEL_URL
+    assert data[CONF_SETUP_MODE] == SETUP_MODE_BOTH
+    assert data[CONF_TOKEN_FILE] == DEFAULT_TOKEN_FILE
+    # The subscription it already had survives.
+    assert data[CONF_ENABLE_MQTT] is True
+    assert data[CONF_MQTT_PREFIX] == DEFAULT_MQTT_PREFIX
+
+
+def test_auto_mode_leaves_promoted_entry_alone_on_rerun(monkeypatch):
+    """A second auto run against an already-promoted entry changes nothing."""
+
+    async def fake_validate(hass, data):
+        return None
+
+    monkeypatch.setattr(config_flow, "_async_validate_kernel", fake_validate)
+
+    existing = make_entry(
+        {
+            CONF_URL: "http://custom-host:8799",
+            CONF_ENABLE_MQTT: True,
+            CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
+            CONF_SETUP_MODE: SETUP_MODE_BOTH,
+        },
+        unique_id=f"mqtt_{DEFAULT_MQTT_PREFIX}",
+    )
+    updates = []
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_update_entry=lambda entry, **kw: updates.append((entry, kw))
+        ),
+        data={},
+    )
+    flow = make_flow(entries=[existing], hass=hass)
+    result = drive(flow.async_step_user({CONF_SETUP_MODE: SETUP_MODE_AUTO}))
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+    assert updates == []  # a user's custom kernel URL is never stomped
+
+
 def test_user_form_defaults_to_auto():
     flow = make_flow()
     result = drive(flow.async_step_user(None))

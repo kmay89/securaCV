@@ -725,15 +725,29 @@ docker_path() {
   fetch_source
 
   log_step "Choose the deployment — reuse your MQTT broker if one is running, otherwise bundle one"
-  local broker src_compose plan_line
+  local broker broker_net src_compose plan_line
   broker="$(docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null \
     | grep -iE 'mosquitto|emqx|nanomq' | head -n1 | awk '{print $1}' || true)"
+  broker_net=""
+  if [ -n "$broker" ]; then
+    # Reusing the broker only works if the sidecar can resolve its container
+    # name — which needs a user-defined Docker network. On the default
+    # bridge, container names do not resolve across compose projects, so a
+    # sidecar pointed there would just wait on DNS and give up.
+    broker_net="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' "$broker" 2>/dev/null \
+      | grep -vE '^(bridge|host|none)?$' | head -n1 || true)"
+    if [ -z "$broker_net" ]; then
+      log_warn "Found broker container '${broker}', but it lives on Docker's default bridge, where container names don't resolve across projects."
+      log_warn "Bundling a broker instead. To reuse '${broker}', put it on a named network (compose does this by default) and re-run."
+      broker=""
+    fi
+  fi
   if [ -n "$broker" ]; then
     src_compose="${SRC_ROOT}/docker/sidecar/quickstart.compose.yml"
-    plan_line="Found broker container '${broker}' — the sidecar will publish to it (no second broker installed)."
+    plan_line="Found broker container '${broker}' on network '${broker_net}' — the sidecar joins that network and publishes to it (no second broker installed)."
   else
     src_compose="${SRC_ROOT}/docker/sidecar/quickstart-with-broker.compose.yml"
-    plan_line="No MQTT broker container detected — bundling Mosquitto, bound to 127.0.0.1 so it stays off your LAN by default."
+    plan_line="No reusable MQTT broker detected — bundling Mosquitto, bound to 127.0.0.1 so it stays off your LAN by default."
   fi
   log_info "$plan_line"
   [ -f "$src_compose" ] || die "The source archive is missing $(basename "$src_compose") — was the download truncated? Re-run to retry."
@@ -756,6 +770,20 @@ docker_path() {
       # The .bak + rm form is portable across GNU and BSD/macOS sed.
       sed -i.securacv.bak "s/FRIGATE_MQTT_HOST: \"mosquitto\"/FRIGATE_MQTT_HOST: \"${broker}\"/" "$dest_compose"
       rm -f "${dest_compose}.securacv.bak"
+    fi
+    if [ -n "$broker" ]; then
+      # Join the broker's network so its container name actually resolves
+      # from the sidecar (this project's default network becomes that one).
+      {
+        printf '\n'
+        printf '# Added by the SecuraCV installer: join the network your broker already\n'
+        printf '# lives on, so the sidecar reaches it by container name.\n'
+        printf 'networks:\n'
+        printf '  default:\n'
+        printf '    name: %s\n' "$broker_net"
+        printf '    external: true\n'
+      } >> "$dest_compose"
+      log_ok "Sidecar joins existing Docker network '${broker_net}'"
     fi
     log_ok "Placed $(basename "$src_compose") as ${dest_compose}"
   fi

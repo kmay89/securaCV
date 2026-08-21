@@ -302,9 +302,12 @@ def cmd_finish(args: argparse.Namespace) -> int:
     }
     say("Summary: " + "; ".join(f"{name}: {pretty[state]}" for name, state in results.items()))
 
-    if any(state in ("ok", "skipped") for state in results.values()):
+    # Success is gated on the one thing onboarding exists for: the SecuraCV
+    # config entry. A skipped digest (no phone yet) or a manual MQTT click
+    # must not let "finished" mask a missing entry.
+    if results["securacv entry"] in ("ok", "skipped"):
         return 0
-    say("Nothing here succeeded — the lines above say what to fix; re-running is safe.")
+    say("The SecuraCV entry is not set up — the lines above say what to click; re-running is safe.")
     return 1
 
 

@@ -60,6 +60,9 @@ class MockCore:
         self.requests = []  # (method, path, parsed-body-or-None)
         self.auth_headers = []
         self.flow_counter = 0
+        # When set, the securacv config flow POST is refused (HTTP 400) —
+        # what a core that has not loaded the integration answers.
+        self.refuse_securacv_flow = False
 
 
 def make_handler(state: MockCore):
@@ -107,6 +110,9 @@ def make_handler(state: MockCore):
             state.requests.append(("POST", self.path, body))
             state.auth_headers.append(self.headers.get("Authorization"))
             if self.path == "/core/api/config/config_entries/flow":
+                if state.refuse_securacv_flow:
+                    self._send(400, {"message": "Handler not found"})
+                    return
                 state.flow_counter += 1
                 self._send(
                     200,
@@ -243,6 +249,16 @@ class TestFinish(OnboardTestBase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("no mobile_app notification targets", result.stdout)
         self.assertEqual(self.posts(AUTOMATION_PATH), [])
+
+    def test_finish_fails_when_securacv_entry_cannot_be_created(self):
+        """A skipped digest must not mask a missing SecuraCV entry: when the
+        core refuses the setup flow (integration not loaded), finish exits
+        nonzero even though the other sub-steps degrade politely."""
+        self.state.refuse_securacv_flow = True
+        self.state.entries = [{"domain": "mqtt", "entry_id": "m1"}]
+        result = self.run_onboard("finish", "--config-dir", str(self.config_dir))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("securacv entry: failed", result.stdout)
 
     def test_finish_missing_mqtt_warns_and_continues(self):
         self.state.entries = []  # no mqtt entry at all

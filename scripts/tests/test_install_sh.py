@@ -205,7 +205,8 @@ case "${1:-}" in
   compose)
     if [ "${2:-}" = "version" ]; then echo "Docker Compose version v2.27.0"; fi
     exit 0 ;;
-  ps) exit 0 ;;
+  ps) [ -n "${FAKE_DOCKER_PS:-}" ] && printf '%s\\n' "$FAKE_DOCKER_PS"; exit 0 ;;
+  inspect) [ -n "${FAKE_DOCKER_INSPECT:-}" ] && printf '%s\\n' "$FAKE_DOCKER_INSPECT"; exit 0 ;;
 esac
 exit 0
 """
@@ -498,6 +499,42 @@ class TestDockerPath(InstallShTestBase):
         # Narration: where events go, and how to watch without HA.
         self.assertIn("mosquitto_sub -h localhost -t 'witness/#' -v", result.stdout)
         self.assertIn("announced via MQTT discovery", result.stdout)
+
+    def test_standalone_reuses_broker_on_named_network(self):
+        """A broker on a user-defined network is reused: the compose gets its
+        container name AND joins its network so the name actually resolves."""
+        env = self.base_env()
+        env["FAKE_DOCKER_LOG"] = str(self.docker_log)
+        env["SECURACV_HOME"] = str(self.home)
+        env["FAKE_DOCKER_PS"] = "frigate-mosquitto eclipse-mosquitto:2"
+        env["FAKE_DOCKER_INSPECT"] = "frigate_default"
+        result = self.run_install(env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        compose = (self.home / "compose.yml").read_text(encoding="utf-8")
+        self.assertIn('FRIGATE_MQTT_HOST: "frigate-mosquitto"', compose)
+        self.assertIn("name: frigate_default", compose)
+        self.assertIn("external: true", compose)
+        # It chose the reuse compose, not the bundled-broker one.
+        self.assertNotIn("image: eclipse-mosquitto", compose)
+
+    def test_standalone_default_bridge_broker_falls_back_to_bundled(self):
+        """A broker on Docker's default bridge is honestly not reusable
+        (names don't resolve across projects): bundle one and say why."""
+        env = self.base_env()
+        env["FAKE_DOCKER_LOG"] = str(self.docker_log)
+        env["SECURACV_HOME"] = str(self.home)
+        env["FAKE_DOCKER_PS"] = "lonely-mosquitto eclipse-mosquitto:2"
+        env["FAKE_DOCKER_INSPECT"] = "bridge"
+        result = self.run_install(env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.assertIn("default bridge", result.stdout)
+        compose = (self.home / "compose.yml").read_bytes()
+        self.assertEqual(
+            compose,
+            (REPO / "docker" / "sidecar" / "quickstart-with-broker.compose.yml").read_bytes(),
+        )
 
 
 if __name__ == "__main__":

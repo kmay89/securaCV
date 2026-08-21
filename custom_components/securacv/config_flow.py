@@ -221,6 +221,28 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(DEFAULT_KERNEL_URL)
             self._abort_if_unique_id_configured()
             if self._mqtt_prefix_already_configured(DEFAULT_MQTT_PREFIX):
+                # An MQTT-only entry already owns the prefix — the common
+                # story is "configured Canaries first, installed the kernel
+                # later". Aborting here would strand the kernel, so promote
+                # that entry to `both` (keeping its subscription) instead of
+                # refusing.
+                for entry in self._async_current_entries():
+                    data = dict(getattr(entry, "data", None) or {})
+                    if not data.get(CONF_ENABLE_MQTT):
+                        continue
+                    if data.get(CONF_MQTT_PREFIX, DEFAULT_MQTT_PREFIX) != (
+                        DEFAULT_MQTT_PREFIX
+                    ):
+                        continue
+                    if not data.get(CONF_URL):
+                        data[CONF_URL] = DEFAULT_KERNEL_URL
+                        data.setdefault(CONF_TOKEN, "")
+                        data.setdefault(CONF_TOKEN_FILE, DEFAULT_TOKEN_FILE)
+                        data[CONF_SETUP_MODE] = SETUP_MODE_BOTH
+                        self.hass.config_entries.async_update_entry(
+                            entry, data=data
+                        )
+                    break
                 return self.async_abort(reason="already_configured")
             return self.async_create_entry(
                 title="SecuraCV",
