@@ -174,6 +174,31 @@ the baud ceiling a rung and the retry writes at the gentler speed (reset for a
 fresh board). And the "Clean install" escalation carries the product you were
 installing into the rescue, so it can't default to the wrong firmware.
 
+## Liveness (nothing may look stuck)
+
+Real flashes carry real waits — a full-chip erase the silicon runs in
+silence (up to ~two minutes on 16 MB parts), a download on whatever network
+is at hand, minutes of writing, an on-chip checksum at the end — and a
+frozen screen is indistinguishable from a hung one. The rule, enforced by
+`desktop_parity.test.js` on both flashers: **every wait shows something that
+moves**, plus honest words about what any silence means.
+
+- Every progress card carries an **elapsed clock** ticking once a second;
+  after 8 s with no other signal it adds "still working" out loud.
+- Waits with no honest number — the erase, the chip recomputing its MD5 —
+  **sweep the bar** (`pulse()`) instead of freezing it, and the stage names
+  the pause with a size-shaped estimate (`eraseEstimateText`, unit-tested).
+- The **image download streams** with live bytes/rate/ETA against the
+  release's published size; the write bar counts the engine's own
+  (compressed) units per file, so it genuinely reaches 100 %.
+- The connect-time reads narrate step by step (current firmware, passport,
+  customs — including each flash-capacity probe), clicking Install lands on
+  a live card *before* the port re-sync instead of after it, and the serial
+  "listening…" line explains itself after five quiet seconds.
+- The desktop Flasher mirrors all of it with a progress strip above each
+  working console (stage + elapsed + bar), fed by the engine's own progress
+  frames, structured download events, and a narrated `board_passport`.
+
 ## Minimal mode (the quiet dress)
 
 The Nursery narrates by default — right for a first flash, a lot of reading

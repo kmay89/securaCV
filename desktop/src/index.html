@@ -324,6 +324,24 @@
                   writes the value, then reads back what the module actually holds.</p>
               </div>
             </section>
+            <!-- The install's live progress: stage + elapsed clock + a real
+                 bar. Driven by opProgress (app.js) from three signals — the
+                 structured flash:progress download events, the percent parsed
+                 out of espflash's own progress frames, and the flash's
+                 narration lines. The console below stays the verbatim
+                 transcript; this strip is the glanceable answer to "is it
+                 stuck?" — the elapsed clock ticks every second no matter
+                 what, and stages with no honest number sweep the bar instead
+                 of freezing it. Mirrors the browser flasher's progressCard;
+                 the hub flow's bar (#hub-progress-wrap) was the pattern. -->
+            <div id="flash-progress-wrap" class="op-progress hidden" role="status" aria-live="polite">
+              <!-- aria-hidden on the clock: it rewrites every second, and a
+                   polite live region would re-announce the whole strip each
+                   tick — hundreds of "0:01… 0:02…" burying the real stage
+                   changes. Only the stage text speaks. -->
+              <div class="op-progress-row"><p id="flash-op-stage" class="muted"></p><p id="flash-op-elapsed" class="muted" aria-hidden="true"></p></div>
+              <div class="bar"><div id="flash-op-fill" class="bar-fill"></div></div>
+            </div>
             <pre id="console" class="console hidden" aria-live="polite"></pre>
             <!-- What this install touches, from the safety copy vs the verified
                  image. Filled by renderChangeMap() off the flash:changemap

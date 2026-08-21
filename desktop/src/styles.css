@@ -1082,3 +1082,33 @@ html[data-density="minimal"] #product-list .p-verdict-detail {
 html[data-density="minimal"] .card { padding: 12px 16px; margin-bottom: 10px; }
 
 html[data-density="minimal"] #density-toggle { color: var(--accent, #ffd44f); }
+
+/* ── op progress: the liveness strip above every working console ─────────
+   (app.js opFor/opProgress.) Same anatomy as the hub bar — stage + elapsed
+   row over a slim bar — reusing the hub's .bar-fill.indet sweep by carrying
+   the same class names, restated here because the hub's rules are scoped
+   under .hub-progress on purpose (the parity gate keeps hub folds scoped).
+   The elapsed clock ticks every second whatever the backend is doing; a
+   stage with no honest number sweeps instead of freezing. */
+.op-progress { margin: 12px 0 2px; }
+.op-progress .op-progress-row {
+  display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+}
+.op-progress .op-progress-row p { margin: 0; }
+.op-progress .op-progress-row p:last-child {
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.op-progress .bar {
+  margin-top: 6px; height: 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border); overflow: hidden;
+}
+.op-progress .bar-fill {
+  height: 100%; width: 0%; background: var(--brand); transition: width .25s linear;
+}
+.op-progress .bar-fill.indet {
+  width: 30%;
+  animation: bar-indet 1.2s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .op-progress .bar-fill.indet { animation-duration: 2.4s; }
+}
