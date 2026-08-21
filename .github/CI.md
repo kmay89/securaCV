@@ -17,6 +17,7 @@ introducing PR — the rules below can't rot by forgetting.
 | R5 | `pull_request` workflows are path-filtered | Unrelated PRs shouldn't pay for your workflow. Repo-wide checks that are unfiltered *on purpose* are listed in `ci-policy.yml → unfiltered_ok`, each with a reason |
 | R6 | `push` and `pull_request` path lists are identical | Copy-paste drift between the two silently makes main verify different things than PRs |
 | R7 | A paths filter includes the workflow's own file | Editing a workflow must run it — the classic "merged a broken workflow that never triggered" gap |
+| R8 | Third-party actions (any owner outside `actions/` and `github/`) are pinned to a full commit SHA with a `# <version>` comment | A tag is a mutable ref in someone else's hands — a compromised or careless owner can move it under a run that holds secrets. SHA pins make the supply chain content-addressed; Dependabot bumps the pin and comment together. Exemptions: `ci-policy.yml → third_party_tag_ok`, each with a reason |
 
 Exemptions live in `.github/ci-policy.yml`, never in the checker — each
 one carries a comment saying why. Run the checker locally with
@@ -54,8 +55,9 @@ one carries a comment saying why. Run the checker locally with
 3. `timeout-minutes` on every job.
 4. Path-filter `push`/`pull_request` identically, and include
    `.github/workflows/<your-file>.yml` in the filter.
-5. Pin every action to a major tag (first-party) or SHA (third-party
-   with secrets access).
+5. Pin `actions/`/`github/` actions to a major tag; pin every other
+   action to its 40-hex commit SHA with a `# <version>` comment
+   (resolve with `git ls-remote … 'refs/tags/<tag>^{}'`).
 6. Reuse the caching patterns above instead of inventing new ones.
 
 The policy check tells you about 1–5 on the PR if you forget; 6 is on
