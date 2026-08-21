@@ -39,7 +39,7 @@ serde_json = "1"
 hub-core = { path = "../hub-core" }
 hub-io = { path = "../hub-io" }
 base64 = "0.22"
-ed25519-dalek = "2"
+ed25519-dalek = "3"
 # OS randomness for the whoami challenge nonce. Already in the lock via
 # transitive deps, so declaring it directly adds no new tree.
 getrandom = "0.2"
