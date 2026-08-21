@@ -1746,3 +1746,20 @@ test("minimal mode never hides a destructive choice", () => {
   assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*(?<!#product-list )\.p-tag\b/,
     "no minimal-mode rule may fold .p-tag outside the Canary picker");
 });
+
+// And the disclosure it may never fold: the done card's safety-copy line is
+// the ONLY notice that a credential-bearing file — the board's identity key
+// and saved WiFi inside — just landed in the downloads folder without a
+// click. (Codex catch on #1575, where a parallel fold list hid it.) The fold
+// list above targets .flash-hello and .flash-voice fineprints by scope on
+// purpose; this gate keeps the done card out of every present and future
+// minimal-mode rule, so the warning always rides the file it describes.
+test("minimal mode never folds the backup-secret notice", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  assert.match(browser, /Treat it like a spare house key/,
+    "the backup-secret wording moved — re-point this gate at its new home");
+  assert.doesNotMatch(browserCss, /flash-minimal[^{}]*\.flash-done/,
+    "a minimal-mode rule reaches into the done card — the backup-secret " +
+    "notice lives there and must stay visible in every mode");
+});
