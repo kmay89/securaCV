@@ -1148,58 +1148,41 @@ button.flash-map-key:hover { color: var(--text); }
   user-select: all; word-break: break-all;
 }
 
-/* ── Simple view: the same flasher, folded to its essentials ────────────── */
-/* body.flash-simple is the whole mechanism (flash.js applyView). Detail is
-   tagged .flash-xtra in the DOM and hidden here — never removed — and each
-   card holding folded detail grows one .flash-more-btn chip that unfolds it
-   (.flash-open). Controls, progress, verdicts and error guidance are never
-   tagged, so they can't fold. The desktop Flasher mirrors this as
-   [data-density="simple"] (desktop/src/styles.css); desktop_parity.test.js
-   holds the two together. */
-.flash-simple .flash-xtra { display: none !important; }
-.flash-simple .flash-open .flash-xtra { display: revert !important; }
-/* revert lands on the UA's block — right for every tagged node except the
-   flex ones, which get their authored display back by name: */
-.flash-simple .flash-open .flash-reassure.flash-xtra { display: flex !important; }
-.flash-simple .flash-open .flash-cert-slot.flash-xtra { display: flex !important; }
-.flash-simple .flash-open .flash-feel.flash-xtra { display: flex !important; }
-.flash-simple .flash-open .flash-autobackup.flash-xtra { display: flex !important; }
-
-/* The "full story" chip: invisible in Guided view (nothing is folded), one
-   quiet dashed pill at the foot of a folded card in Simple view. */
-.flash-more-btn { display: none; }
-.flash-simple .flash-more-btn {
-  display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
-  padding: 3px 12px; border-radius: 999px; border: 1px dashed var(--edge);
-  background: none; cursor: pointer; color: var(--muted); font-size: 12.5px;
+/* ── minimal mode: the quiet dress (minimal.js owns the preference) ──────
+   #flash carries .flash-minimal while the mode is on; the per-phase "show
+   the full story" button adds .flash-minimal-open, which un-folds all of it
+   for that screen. Only teaching prose folds — never a control, a check, a
+   receipt, an error, or anything that explains a destructive choice (the
+   forced-erase note stays put on purpose). The layers tour and the coach
+   are skipped in flash.js instead: they run timers. */
+#flash.flash-minimal:not(.flash-minimal-open) .flash-reassure-strip,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-coldstart p:not(.flash-coldstart-note),
+#flash.flash-minimal:not(.flash-minimal-open) .flash-connect > .muted,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-connect-hint,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-module-card .muted,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-help,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-picker > .muted,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-autobackup,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-hello > .fineprint,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-voice > .fineprint,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-reassure:not(.flash-forced-erase),
+#flash.flash-minimal:not(.flash-minimal-open) .flash-reassure-lite {
+  display: none;
 }
-.flash-simple .flash-more-btn:hover { color: #e8e2cf; border-color: #3a3a3a; }
 
-/* The view toggle rides the journey bar beside the chirp + gear. */
-.flash-view-toggle { white-space: nowrap; }
+/* Quiet is also compact: same cards, less air. */
+#flash.flash-minimal .flash-card { padding: 16px 18px 18px; }
+#flash.flash-minimal .flash-card h2 { font-size: 20px; }
+#flash.flash-minimal .flash-big-emoji { font-size: 32px; }
+#flash.flash-minimal .flash-chip-emoji { font-size: 30px; }
 
-/* The hero calms down with the rest of the page: name and version pills
-   stay, the lede and the link row fold into the toggle like everything
-   else. Same for the footer's provenance paragraph — its settings opener
-   survives. */
-.flash-simple .hub-hero .lede,
-.flash-simple .hub-hero > .fineprint,
-.flash-simple .nursery-sub { display: none; }
-.flash-simple .hub-hero { padding-bottom: 10px; }
-.flash-simple #foot p:first-of-type { display: none; }
+/* the per-phase bridge back to the full story */
+.flash-minimal-more { text-align: center; margin: 2px 0 12px; }
 
-/* A touch denser overall — Simple is for the batch day. */
-.flash-simple .flash-card { padding: 18px 20px 20px; }
-.flash-simple .flash-card h2 { font-size: 21px; }
-
-/* The cold-start brief is a fold now (details.flash-fold): open in Guided
-   view, one calm line in Simple — with the BOOT gesture in the summary
-   itself, so folding the why never folds the what. */
-.flash-coldstart summary {
-  cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 6px;
+/* the minimal toggle rides the journey bar, dressed like its chirp sibling */
+.nursery-minimal-toggle {
+  padding: 3px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
 }
-.flash-coldstart summary::before { content: "▸"; color: var(--canary, #ffd44f); font-size: 12px; }
-.flash-coldstart[open] summary::before { content: "▾"; }
-.flash-coldstart summary::-webkit-details-marker { display: none; }
-.flash-coldstart summary h3 { margin: 0; }
-.flash-coldstart[open] summary { margin-bottom: 8px; }
+.nursery-minimal-toggle[aria-pressed="true"] { color: #ffd44f; border-color: rgba(255,212,79,0.5); }

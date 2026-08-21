@@ -174,25 +174,29 @@ the baud ceiling a rung and the retry writes at the gentler speed (reset for a
 fresh board). And the "Clean install" escalation carries the product you were
 installing into the rescue, so it can't default to the wrong firmware.
 
-## Simple view (the guided page, folded)
+## Minimal mode (the quiet dress)
 
 The Nursery narrates by default — right for a first flash, a lot of reading
-for the fifteenth. The **simple view** toggle in the journey bar (also under
-⚙ settings) folds the explanations, lessons and tours away and keeps
-everything that does the work: the journey bar, every control, the live
-status line, the progress bar with bytes and time left, the verdicts
-(customs, install, self-check) and every error card. Mechanically it is
-hide-not-remove: detail is tagged `flash-xtra` in the DOM, one body class
-(`flash-simple`) folds it, and each calmed card grows a "the full story"
-chip that unfolds that card's own detail back. The choice is sticky per
-browser (`nursery.view.v1`), and `?view=simple` seeds it for a bookmarkable
-link — the toggle owns it afterwards, same posture as `?channel=dev`
-(`viewFromSearch`).
+for the fortieth. The **🪶 minimal** toggle in the journey bar (also under
+⚙ settings) folds the teaching away and keeps everything that does the
+work: the journey bar, every control, the live status line, the progress
+bar with bytes and time left, the verdicts (customs, install, self-check)
+and every error card. Mechanically it is hide-not-remove: one root class on
+`#flash` (`flash-minimal`), with `flash.css` owning the exact fold list;
+each screen carries a "show the full story for this step" bridge that
+un-folds everything for that phase without touching the preference. The
+layers tour and the coach are skipped rather than hidden — they run timers.
+The choice is sticky per browser (`nursery.minimal` — `minimal.js` owns the
+preference), and off by default: quiet is opted into, never sprung.
 
-Error guidance and safety surfaces never fold, in either view — an error
-that folds away is an error that never happened. The desktop Flasher
-carries the same switch (rail foot, `prefs.density`), and
-`desktop_parity.test.js` holds the two together.
+Error guidance and safety surfaces never fold, in either mode — an error
+that folds away is an error that never happened, and the fold list exempts
+anything that explains a destructive choice (the forced-erase note) or
+discloses a credential-bearing artifact (the done card's safety-copy line).
+The desktop Flasher carries the same mode (the feather in the rail,
+`prefs.minimal`, `html[data-density="minimal"]`), where it also collapses
+espflash's progress-bar redraw frames into one live console line;
+`desktop_parity.test.js` holds the two flashers together.
 
 ## Post-flash proof
 

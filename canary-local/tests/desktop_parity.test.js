@@ -1675,86 +1675,91 @@ test("a derived name offers no re-roll on either flasher", () => {
     /cert\.derived\s*\n?\s*\?\s*null/, "flash.js must not build a re-roll for a derived name");
 });
 
-// ── Simple view: one density switch, both flashers ──────────────────────────
+// ── Minimal mode: one quiet dress, both flashers ──────────────────────────
 //
-// The minimalist flasher for people who flash boards every day: controls,
-// live status, progress and verdicts stay exactly where they are; the
-// explanations, lessons and tours fold away, each card keeping a "full
-// story" chip that unfolds its own detail back. Rule 7 ("two flashers, two
-// frontends") makes this a both-sides feature by definition, so this gate
-// pins the mechanism on each — and pins the posture that makes it safe:
-// detail folds, controls and safety surfaces never do.
-test("simple view ships on both flashers — sticky, hide-not-remove, safety never folds", () => {
-  const browser = read(join(CANARY, "assets/flash.js"));
-  const browserCss = read(join(CANARY, "assets/flash.css"));
-  const appJs = read(join(ROOT, "desktop/src/app.js"));
-  const html = read(join(ROOT, "desktop/src/index.html"));
-  const css = read(join(ROOT, "desktop/src/styles.css"));
+// The verbose flasher is the front door; minimal mode is the regular's
+// entrance. It is a user-facing feature, so the two-flashers rule applies in
+// full: if either frontend loses its toggle, its persistence, or the promise
+// that quiet is opted into (never the default), half the users keep — or
+// lose — a mode the other half has. These greps hold both sides together.
+test("minimal mode exists on both flashers, opt-in, persisted, reversible", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserMod = read(join(CANARY, "assets", "minimal.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const desktop = read(join(ROOT, "desktop", "src", "app.js"));
+  const desktopHtml = read(join(ROOT, "desktop", "src", "index.html"));
+  const desktopCss = read(join(ROOT, "desktop", "src", "styles.css"));
 
-  // 1. The switch exists and is reachable on both frontends.
-  assert.match(browser, /flash-view-toggle/,
-    "browser flasher lost its Simple-view toggle (journey bar + settings)");
-  assert.match(html, /id="density-toggle"/,
-    "desktop flasher lost its Simple-view toggle (rail foot)");
+  // Browser: a persisted preference module, mounted as a toggle, driving a
+  // root class that flash.css folds prose under — plus the per-phase bridge
+  // back to the full story.
+  assert.match(browserMod, /nursery\.minimal/,
+    "minimal.js must persist the choice under the nursery.* localStorage family");
+  assert.match(browserMod, /=== "on"/,
+    "minimal.js must treat anything but an explicit 'on' as off — opt-in, never sprung");
+  assert.match(browser, /minimalToggle\(/,
+    "flash.js must mount the minimal toggle");
+  assert.match(browser, /flash-minimal/,
+    "flash.js must dress #flash with the flash-minimal root class");
+  assert.match(browser, /minimalMoreBar|flash-minimal-open/,
+    "flash.js must offer the per-phase way back to the full story");
+  assert.match(browserCss, /\.flash-minimal:not\(\.flash-minimal-open\)/,
+    "flash.css must scope the folding so the reveal un-folds everything");
 
-  // 2. It sticks — a batch operator flips it once, not once per visit.
-  assert.match(browser, /nursery\.view\.v1/,
-    "browser Simple view no longer persists (VIEW_KEY)");
-  assert.match(appJs, /prefs\.density/,
-    "desktop Simple view no longer persists (prefs.density)");
+  // Desktop: the same mode as a density attribute — persisted in prefs,
+  // toggled from the rail, folded by styles.css.
+  assert.match(desktop, /prefs\.minimal/,
+    "desktop app.js must persist the choice in prefs");
+  assert.match(desktop, /data-density/,
+    "desktop app.js must carry the mode as a data-density attribute");
+  assert.match(desktopHtml, /id="density-toggle"/,
+    "desktop index.html must keep the rail toggle");
+  assert.match(desktopCss, /html\[data-density="minimal"\]/,
+    "styles.css must fold under the density attribute");
 
-  // 3. It applies before the first paint, so neither page folds after render.
-  assert.match(browser, /applyView\(\); \/\/ before the first render/,
-    "browser must apply the view before its first render");
-  assert.match(appJs, /function applyStoredDensity/,
-    "desktop must apply the stored density before first paint, like the theme");
+  // The desktop's minimal console collapses espflash's progress-bar redraw
+  // frames into one live line — the single biggest verbosity win, and the
+  // easiest one to lose in a refactor of the log listeners.
+  assert.match(desktop, /function appendFlashLog\b/,
+    "desktop app.js must route flash logs through the collapsing appender");
+  assert.match(desktop, /looksLikeProgressFrame/,
+    "desktop app.js must keep the progress-frame detector");
+});
 
-  // 4. The mechanism is hide-not-remove: one tag class per frontend, hidden
-  //    by the density style, revealed per card by the "full story" chip. A
-  //    build that deletes detail instead of folding it fails here.
-  assert.match(browser, /function xtra\(/,
-    "browser lost the xtra() detail tag — Simple view must fold, not remove");
-  assert.match(browserCss, /\.flash-simple \.flash-xtra \{ display: none/,
-    "browser flash.css no longer folds tagged detail in Simple view");
-  assert.match(css, /html\[data-density="simple"\] \.xtra \{ display: none/,
-    "desktop styles.css no longer folds tagged detail in Simple view");
-  assert.match(browser, /flash-more-btn/,
-    "browser cards lost the full-story chip (decorateMore)");
-  assert.match(appJs, /function decorateDensityChips/,
-    "desktop cards lost the full-story chip (decorateDensityChips)");
+// What minimal mode may never fold: the destructive-choice affordances. The
+// first-contact wipe label was once folded into a disclosure and cost a
+// review catch (see index.html's comment); minimal mode must not repeat that
+// mistake by CSS, and the browser's forced-erase explainer stays visible the
+// same way.
+test("minimal mode never hides a destructive choice", () => {
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  const desktopCss = read(join(ROOT, "desktop", "src", "styles.css"));
+  assert.match(browserCss, /\.flash-reassure:not\(\.flash-forced-erase\)/,
+    "flash.css must exempt the forced-erase explainer from the fold");
+  assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*\.coldstart-ask/,
+    "styles.css must never fold the first-contact wipe label under minimal mode");
+  // The hub's write-target rows reuse .p-tag for the disk path and capacity —
+  // the facts that tell two identical card readers apart before a destructive
+  // write. The tagline fold must stay scoped to the Canary firmware picker.
+  assert.match(desktopCss, /#product-list \.p-tag/,
+    "styles.css must scope the tagline fold to #product-list, never app-wide");
+  assert.doesNotMatch(desktopCss, /data-density="minimal"\][^{}]*(?<!#product-list )\.p-tag\b/,
+    "no minimal-mode rule may fold .p-tag outside the Canary picker");
+});
 
-  // 5. The safety posture, textually provable: the destructive first-contact
-  //    wipe choice, the dev-channel banner and the picker's honest status
-  //    line must never carry the fold tag — a safety surface that folds away
-  //    in the view most repeat users live in is a regression, not a tidy-up.
-  for (const id of ["first-contact", "dev-banner", "pick-sub", "flash-result", "hub-confirm"]) {
-    const tag = new RegExp(`<[^>]*id="${id}"[^>]*>`).exec(html);
-    assert.ok(tag, `desktop index.html lost #${id}`);
-    assert.ok(!/\bxtra\b/.test(tag[0]),
-      `desktop #${id} is tagged xtra — this surface must not fold in Simple view`);
-  }
-  assert.ok(!html.includes("coldstart-ask xtra") && !html.includes("xtra coldstart-ask"),
-    "the desktop first-contact label must not fold — review catch on the original card");
-  // Browser errors never fold: errorBox/flashError build untagged nodes.
-  const errorBoxSrc = /function errorBox\([\s\S]{0,500}?\n}/.exec(browser);
-  assert.ok(errorBoxSrc && !/xtra\(/.test(errorBoxSrc[0]),
-    "browser errorBox must not tag its content — error guidance never folds");
-
-  // 6. The desktop Canary flow's only live progress surface is the console
-  //    (there is no bar), so Simple view may shorten it but never hide it.
-  assert.match(css, /html\[data-density="simple"\] #console \{ max-height/,
-    "desktop Simple view lost the compact console rule");
-  assert.ok(!/html\[data-density="simple"\][^{]*#console[^{]*\{[^}]*display:\s*none/.test(css),
-    "desktop Simple view must never hide #console — it is the flash's only live progress");
-
-  // 7. The one disclosure a batch operator must never lose (Codex on the
-  //    Simple-view PR): the done card's safety-copy line is the ONLY notice
-  //    that a credential-bearing file — identity key and saved WiFi inside —
-  //    just landed in the downloads folder without a click. It rides the
-  //    file's creation in every view, so it must stay untagged.
-  assert.match(browser, /Treat it like a spare house key\.`\)\);[\s\S]{0,500}?box\.append\(bk\);/,
-    "the browser's backup-secret notice no longer renders untagged on the done card");
-  assert.ok(!/box\.append\(xtra\(bk\)\)/.test(browser),
-    "the browser's backup-secret notice is tagged xtra — the warning must not fold " +
-    "away from the file it describes");
+// And the disclosure it may never fold: the done card's safety-copy line is
+// the ONLY notice that a credential-bearing file — the board's identity key
+// and saved WiFi inside — just landed in the downloads folder without a
+// click. (Codex catch on #1575, where a parallel fold list hid it.) The fold
+// list above targets .flash-hello and .flash-voice fineprints by scope on
+// purpose; this gate keeps the done card out of every present and future
+// minimal-mode rule, so the warning always rides the file it describes.
+test("minimal mode never folds the backup-secret notice", () => {
+  const browser = read(join(CANARY, "assets", "flash.js"));
+  const browserCss = read(join(CANARY, "assets", "flash.css"));
+  assert.match(browser, /Treat it like a spare house key/,
+    "the backup-secret wording moved — re-point this gate at its new home");
+  assert.doesNotMatch(browserCss, /flash-minimal[^{}]*\.flash-done/,
+    "a minimal-mode rule reaches into the done card — the backup-secret " +
+    "notice lives there and must stay visible in every mode");
 });

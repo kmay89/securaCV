@@ -29,6 +29,7 @@ import { visionChecklistCard } from "./vision-checklist.js";
 import { hatchMomentCard } from "./hatch-card.js";
 import { mintCertificate } from "./hatchery.js";
 import { chirp, chirpToggle } from "./chirp.js";
+import { minimalEnabled, minimalToggle } from "./minimal.js";
 import { mountBoardIdentity } from "./board-identity.js";
 import * as intake from "./intake.js";
 
@@ -53,32 +54,6 @@ function loadRoster() {
 }
 function saveRoster(list) {
   try { sessionStorage.setItem(ROSTER_KEY, JSON.stringify(list)); } catch { /* private mode */ }
-}
-
-// ── Simple view: the same flasher, folded to its essentials ────────────────
-// One sticky switch for the people who flash boards every day (or just don't
-// want the reading): controls, live status, progress, verdicts and errors
-// stay exactly where they are; the explanations, lessons and tours fold away.
-// Nothing is removed — every folded node keeps living in the DOM tagged
-// `flash-xtra`, each card grows a "full story" chip that unfolds its own
-// detail, and the toggle flips the whole page back at any moment.
-// localStorage (not sessionStorage) on purpose: the batch operator who picks
-// Simple wants it to still be Simple tomorrow. `?view=simple` seeds it for a
-// bookmarkable link; the toggle owns it afterwards (channelFromSearch's
-// posture, see core.viewFromSearch).
-const VIEW_KEY = "nursery.view.v1";
-function loadViewPref() {
-  try { return localStorage.getItem(VIEW_KEY) === "simple"; } catch { return false; }
-}
-function saveViewPref(simple) {
-  try { localStorage.setItem(VIEW_KEY, simple ? "simple" : "guided"); } catch { /* private mode */ }
-}
-// Tag a node as Guided-view detail. Tag whole block-level nodes (p, div, ul,
-// details, aside) — the Simple stylesheet hides them with display:none and
-// reveals them with display:revert, which resolves to the UA's block.
-function xtra(node) {
-  node.classList.add("flash-xtra");
-  return node;
 }
 
 const state = {
@@ -114,77 +89,7 @@ const state = {
   // the board's own claim about what firmware it runs never does, because on
   // an untrusted board that claim is attacker-controlled.
   ownerClaimed: false,
-  // Simple view (see VIEW_KEY above): saved preference unless the URL seeds
-  // this load. Read here so the very first render is already right — a page
-  // that flashes Guided and then folds would be worse than either view.
-  simple: loadViewPref(),
 };
-
-// Apply the current view to the whole page: one body class the stylesheet
-// keys on, plus the folds (details.flash-fold) that follow the view — open in
-// Guided, folded in Simple — unless the visitor toggled that fold by hand
-// this phase (their click outranks the mode).
-function applyView() {
-  document.body.classList.toggle("flash-simple", !!state.simple);
-  document.querySelectorAll("details.flash-fold").forEach((d) => {
-    if (!d.dataset.userToggled) d.open = !state.simple;
-  });
-  document.querySelectorAll(".flash-view-toggle").forEach(syncViewToggle);
-}
-
-function syncViewToggle(btn) {
-  btn.textContent = state.simple ? "📖 full view" : "☰ simple view";
-  btn.setAttribute("aria-pressed", String(!!state.simple));
-  btn.title = state.simple
-    ? "Back to the guided view — every explanation unfolded"
-    : "Simple view — fold the explanations away; everything stays one click away";
-}
-
-function makeViewToggle() {
-  const btn = el("button", "flash-view-toggle ghost small");
-  btn.type = "button";
-  btn.addEventListener("click", () => {
-    state.simple = !state.simple;
-    saveViewPref(state.simple);
-    applyView();
-  });
-  syncViewToggle(btn);
-  return btn;
-}
-
-// In Simple view, any card holding folded detail grows one quiet chip that
-// unfolds that card's own full story (class flash-open; the chip is invisible
-// in Guided view, where nothing is folded). Idempotent — safe to re-run when
-// a card gains detail later (the live write map, the layers tour).
-function decorateMore(root) {
-  if (!root || !root.querySelectorAll) return;
-  const scopes = root.matches && root.matches(".flash-card, .flash-reassure-strip")
-    ? [root, ...root.querySelectorAll(".flash-card")]
-    : [...root.querySelectorAll(".flash-card, .flash-reassure-strip")];
-  for (const scope of scopes) {
-    if (!scope.querySelector(".flash-xtra")) continue;
-    if (scope.querySelector(":scope > .flash-more-btn")) continue;
-    const btn = el("button", "flash-more-btn");
-    btn.type = "button";
-    const sync = () => {
-      const open = scope.classList.contains("flash-open");
-      btn.textContent = open ? "fold the story back ⌃" : "the full story ⌄";
-      btn.setAttribute("aria-expanded", String(open));
-    };
-    btn.addEventListener("click", () => {
-      const open = scope.classList.toggle("flash-open");
-      // "The full story" means the whole card as Guided view shows it — the
-      // folds inside come along (and follow the view again on fold-back),
-      // unless the visitor already toggled one by hand.
-      scope.querySelectorAll("details.flash-fold").forEach((d) => {
-        if (!d.dataset.userToggled) d.open = open || !state.simple;
-      });
-      sync();
-    });
-    sync();
-    scope.append(btn);
-  }
-}
 
 // ── boot ───────────────────────────────────────────────────────────────────
 // ── global safety net ───────────────────────────────────────────────────────
@@ -208,13 +113,6 @@ function installSafetyNet() {
 
 async function boot() {
   installSafetyNet();
-  // `?view=` seeds the density for THIS load only (a bookmarkable link a
-  // batch operator can share); it deliberately does NOT persist — a link
-  // someone else wrote must not overwrite the visitor's own saved choice.
-  // The on-page toggle is the only thing that saves.
-  const seeded = core.viewFromSearch(location.search);
-  if (seeded) state.simple = seeded === "simple";
-  applyView(); // before the first render — the page must not fold after paint
   const mount = $("#flash");
   mount.innerHTML = "";
 
@@ -257,6 +155,7 @@ async function boot() {
   mount.append(flow);
   mountJourney(flow);
   mount.append(renderReassurance());
+  applyMinimalMode();
 
   // The footer's opener stays hidden until the catalog (and its about block)
   // actually loaded — a dead settings button would be worse than none.
@@ -332,7 +231,7 @@ function mountJourney(before) {
     journeyEl.append(s);
   });
   const side = el("span", "flash-journey-side");
-  side.append(makeViewToggle());
+  side.append(minimalToggle({ onChange: applyMinimalMode }));
   side.append(chirpToggle());
   const gear = el("button", "flash-settings-open", "⚙︎");
   gear.type = "button";
@@ -398,22 +297,11 @@ function openSettings() {
     "(tools/gen_flash.py) and drift-checked in CI — the facts here can’t be " +
     "typed wrong, only parsed wrong loudly."));
 
-  // ── view ──
-  const sView = sec("View");
-  const viewRow = el("div", "flash-row");
-  viewRow.append(makeViewToggle());
-  sView.append(viewRow);
-  sView.append(el("p", "fineprint",
-    "Simple view folds the explanations, lessons and tours away and keeps the " +
-    "controls, progress and verdicts — for batch days and repeat visits. " +
-    "Nothing is removed: every card keeps its “full story” chip, and this " +
-    "switch brings the guided version back whole. Your choice is remembered " +
-    "on this browser."));
-
-  // ── sound & lessons ──
-  const sPref = sec("Sound & lessons");
+  // ── sound, lessons & detail ──
+  const sPref = sec("Sound, lessons & detail");
   const prefRow = el("div", "flash-row");
   prefRow.append(chirpToggle());
+  prefRow.append(minimalToggle({ onChange: applyMinimalMode }));
   if (coachDismissed()) {
     const coachBtn = el("button", "ghost small", "☕ bring back the lessons");
     coachBtn.addEventListener("click", () => {
@@ -427,8 +315,10 @@ function openSettings() {
   }
   sPref.append(prefRow);
   sPref.append(el("p", "fineprint",
-    "Motion follows your system’s reduce-motion setting automatically — " +
-    "nothing to configure here."));
+    "Minimal mode folds the explainers away for people who flash all day — " +
+    "every control, check and receipt stays, and each screen offers its full " +
+    "story back with one click. Motion follows your system’s reduce-motion " +
+    "setting automatically — nothing to configure here."));
 
   // ── this page's memory ──
   const sData = sec("What this page remembers");
@@ -451,10 +341,9 @@ function openSettings() {
   dataRow.append(forget, clearRoster);
   sData.append(dataRow);
   sData.append(el("p", "fineprint",
-    "All of it lives only in this browser: the WiFi copy so a batch provisions " +
+    "Both live only in this browser: the WiFi copy so a batch provisions " +
     "without retyping, the roster so a batch keeps its place (public facts " +
-    "only — never credentials), and the Simple/Guided view choice above. " +
-    "None of it ever leaves this page."));
+    "only — never credentials). Neither ever leaves this page."));
 
   // ── legal ──
   const sLegal = sec("Legal");
@@ -480,6 +369,40 @@ function openSettings() {
   dlg.showModal();
 }
 
+// ── minimal mode: the quiet dress for the whole page ────────────────────────
+// One root class on #flash; flash.css owns what folds away. The transient
+// "-open" reveal (the per-phase "full story" button below) never survives a
+// mode flip or a phase change — each screen starts quiet again.
+function applyMinimalMode() {
+  const mount = $("#flash");
+  if (!mount) return;
+  mount.classList.toggle("flash-minimal", minimalEnabled());
+  mount.classList.remove("flash-minimal-open");
+}
+
+// The bridge from the quiet screen to everything it folded: reveals the full
+// story for THIS phase (and the reassurance strip below) without touching the
+// saved preference. The layers tour and the coach are the one honest gap —
+// they run timers, so minimal mode skips rendering them; they ride again on
+// the next install with minimal off.
+function minimalMoreBar() {
+  const bar = el("div", "flash-minimal-more");
+  const btn = el("button", "ghost small flash-minimal-more-btn");
+  btn.type = "button";
+  const sync = () => {
+    const open = $("#flash").classList.contains("flash-minimal-open");
+    btn.textContent = open ? "fold the detail away again ↑" : "show the full story for this step ↓";
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  btn.addEventListener("click", () => {
+    $("#flash").classList.toggle("flash-minimal-open");
+    sync();
+  });
+  sync();
+  bar.append(btn);
+  return bar;
+}
+
 // One check, used everywhere motion is decorative rather than informative.
 function prefersCalm() {
   try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
@@ -490,8 +413,12 @@ function setPhase(node) {
   const flow = $("#flash-flow");
   flow.innerHTML = "";
   flow.append(node);
-  decorateMore(node);  // Simple view: each card's "full story" chip
-  applyView();         // fresh folds land in the state the view asks for
+  // A fresh phase starts quiet again; the reveal is per-screen on purpose.
+  const mount = $("#flash");
+  if (mount) {
+    mount.classList.remove("flash-minimal-open");
+    if (minimalEnabled()) flow.append(minimalMoreBar());
+  }
   if (node.dataset && node.dataset.step) renderJourney(Number(node.dataset.step));
   // Land screen-reader / keyboard focus on the new phase's heading, so a
   // phase change is announced instead of silently swapping content.
@@ -521,10 +448,7 @@ function renderReassurance() {
     ul.append(li);
   });
   promise.append(ul);
-  // Simple view folds the reassurance reading, but never the diagnostics: the
-  // recovery fixes below stay put in both views — a stuck board is a stuck
-  // board whichever density you read at.
-  wrap.append(xtra(promise));
+  wrap.append(promise);
 
   const help = el("details", "flash-card flash-recovery");
   help.append(el("summary", null, "Board not showing up? Fixes →"));
@@ -555,15 +479,14 @@ function renderReassurance() {
   bt.append(btBtn);
   wrap.append(bt);
 
-  wrap.append(xtra(renderTrustCard()));
+  wrap.append(renderTrustCard());
 
   const privacy = el("p", "fineprint flash-privacy");
   privacy.textContent =
     "Everything runs in your browser. The flasher engine is served from this " +
     "site, not a CDN; the only network call is fetching the signed firmware " +
     "image you choose. Nothing about your board leaves this page.";
-  wrap.append(xtra(privacy));
-  decorateMore(wrap); // the strip renders once at boot, outside setPhase
+  wrap.append(privacy);
   return wrap;
 }
 
@@ -855,18 +778,8 @@ function accessCards() {
 // (docs/browser_flasher.md § What the Canary is called over USB), so there is
 // nothing to measure. Claiming otherwise would be a comforting lie.
 function coldStartCard() {
-  // A fold, not a section (the desktop Flasher's posture, index.html
-  // #coldstart): the summary line carries the whole safety move — hold BOOT
-  // while plugging in — so folding the why never folds the what. Guided view
-  // opens it; Simple view shows the one calm line. A hand-toggle sticks for
-  // the phase (the summary click outranks applyView).
-  const card = el("details", "flash-coldstart flash-fold");
-  card.open = !state.simple;
-  const sum = el("summary");
-  sum.append(el("h3", null,
-    "🛡 New board from a shop or marketplace? Hold BOOT while plugging it in — here’s why"));
-  sum.addEventListener("click", () => { card.dataset.userToggled = "1"; });
-  card.append(sum);
+  const card = el("section", "flash-coldstart");
+  card.append(el("h3", null, "🛡 New board from a shop or marketplace? Do this first"));
   card.append(el("p", null,
     "It arrives running somebody else's firmware. On a board with native USB " +
     "(the S3 and C-series Canaries) that firmware can introduce itself to your " +
@@ -939,10 +852,10 @@ function phaseConnect() {
   box.dataset.step = "1";
   box.append(el("div", "flash-big-emoji flash-plug", "🔌"));
   box.append(el("h2", null, "Plug in your Canary, then let’s meet it"));
-  box.append(xtra(el("p", "muted",
+  box.append(el("p", "muted",
     "Connect the board to this computer with a USB-C data cable. When you " +
     "click Connect, your browser asks which device — pick the one that " +
-    "appears (often “USB JTAG/serial” or “USB Serial”).")));
+    "appears (often “USB JTAG/serial” or “USB Serial”)."));
 
   // ── the one move that actually protects the computer ──
   // A board bought unflashed arrives running somebody else's firmware, and an
@@ -963,7 +876,7 @@ function phaseConnect() {
 
   const hint = el("p", "fineprint flash-connect-hint",
     "Nothing is written yet — connecting only lets the page look at the board.");
-  box.append(xtra(hint));
+  box.append(hint);
 
   // The BOOT/RESET gesture, one click away. Most boards never need it — the
   // flasher flips them into download mode itself — but knowing the move is
@@ -982,10 +895,10 @@ function phaseConnect() {
     const mod = el("button", "flash-module-card");
     mod.append(el("span", "flash-module-icon", "📷"),
       el("strong", null, "Building a Canary Vision? Load the camera module’s brain here"),
-      xtra(el("span", "muted",
+      el("span", "muted",
         "The Grove Vision AI V2’s person-detection model, burned from this page over the " +
         "MODULE’s USB-C port — pinned, SHA-256-verified, with a live bench check after. " +
-        "No vendor site, no account, no choices to get wrong.")));
+        "No vendor site, no account, no choices to get wrong."));
     mod.addEventListener("click", () => setPhase(phaseModule({
       catalog: state.catalog,
       setPhase,
@@ -1607,7 +1520,7 @@ function phaseConnected() {
     const ask = el("button", "ghost small", "🩺 ask the board itself");
     ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
     feel.append(ask);
-    hello.append(xtra(feel));
+    hello.append(feel);
   }
 
   const tools = el("div", "flash-row flash-tools");
@@ -1627,7 +1540,7 @@ function phaseConnected() {
     "Health check reads the board’s story without changing a byte. The serial " +
     "monitor is the board’s live voice over USB — watch it and send commands. " +
     "Rescue brings a misbehaving board back to a known-good state.");
-  hello.append(xtra(toolsNote));
+  hello.append(toolsNote);
   wrap.append(hello);
 
   // Customs: what the read-only intake check found, before anything is written.
@@ -1640,16 +1553,14 @@ function phaseConnected() {
   if (state.current && !state.current.unknown) {
     const voice = el("section", "flash-card flash-voice");
     voice.append(el("h3", null, "🎙 Its live voice — before anything is written"));
-    voice.append(xtra(el("p", "fineprint",
+    voice.append(el("p", "fineprint",
       "The flasher let the board boot; this is its own serial console, live " +
       "over the cable. Install below whenever you’re ready — the flasher " +
-      "flips it back into download mode by itself.")));
+      "flips it back into download mode by itself."));
     const idSlot = el("div", "flash-voice-id");
     voice.append(idSlot);
     const vcon = el("pre", "flash-console flash-voice-console", "listening…");
-    // Simple view keeps the verdict chips (self-check, heat) and folds the
-    // raw console scroll — the words stay one chip away.
-    voice.append(xtra(vcon));
+    voice.append(vcon);
     // A Sense on the wire gets its bench one click away — the console is its
     // voice, but the radar bench is its senses.
     const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
@@ -1699,8 +1610,7 @@ function phaseConnected() {
   // "Which board am I holding?" — a labeled identity panel for each product
   // this chip can be, drawn from the honest boards/enclosures catalogs so the
   // user can match the board in their hand and see the product it becomes.
-  // Guided-view furniture: the repeat visitor knows their board on sight.
-  const idWrap = xtra(el("div", "flash-identity-wrap"));
+  const idWrap = el("div", "flash-identity-wrap");
   wrap.append(idWrap);
   try {
     const forChip = (state.catalog.products || []).filter((p) => p.chip === state.chip);
@@ -1738,9 +1648,9 @@ function renderIntakeCard() {
     v.level === "stop" ? "⛔" : v.level === "attention" ? "⚠️" : "✅"));
   head.append(el("h3", null, v.headline));
   card.append(head);
-  card.append(xtra(el("p", "fineprint",
+  card.append(el("p", "fineprint",
     "Customs — read off the board without changing a byte: its security fuses, " +
-    "whether the flash is the size it claims, and what it arrived running.")));
+    "whether the flash is the size it claims, and what it arrived running."));
 
   for (const f of v.findings) {
     const row = el("div", `flash-intake-finding flash-intake-${f.level}`);
@@ -1989,11 +1899,11 @@ function renderPicker() {
 
   const matches = core.productsForChip(state.catalog, state.chip);
   const info = core.chipInfo(state.catalog, state.chip) || {};
-  card.append(xtra(el("p", "muted",
+  card.append(el("p", "muted",
     `Pick your firmware below and press Install this. That's the whole job — ` +
     `we back the board up first, write the new firmware, and check every byte ` +
     `landed, all on their own. Only firmware built for your ` +
-    `${info.label || state.chip} is shown, so you can't pick a wrong one.`)));
+    `${info.label || state.chip} is shown, so you can't pick a wrong one.`));
 
   const manifestState = el("div", "flash-manifest-state");
   manifestState.id = "flash-manifest-state";
@@ -2025,9 +1935,9 @@ function renderPicker() {
     if (!inFam.length) continue;
     const head = el("div", "flash-family");
     head.append(el("div", "flash-family-name", fam.name));
-    head.append(xtra(el("div", "flash-family-pitch muted", fam.pitch)));
+    head.append(el("div", "flash-family-pitch muted", fam.pitch));
     if (inFam.length > 1 && fam.pick) {
-      head.append(xtra(el("div", "flash-family-pick fineprint", fam.pick)));
+      head.append(el("div", "flash-family-pick fineprint", fam.pick));
     }
     headers.push(head);
     list.append(head);
@@ -2077,7 +1987,7 @@ function renderPicker() {
       " Before anything is written, a full copy of the board is saved to your " +
       "downloads automatically — your undo button, no clicks needed. (Keep " +
       "backup files private: they contain the board's identity key.)"));
-    card.append(xtra(bk));
+    card.append(bk);
   }
 
   // Advanced: dev channel, local file, erase toggle, skip-backup, restore.
@@ -3285,9 +3195,9 @@ function phaseConfirm(product, entry) {
   }
 
   box.append(el("h2", null, `Install ${product.name}?`));
-  box.append(xtra(el("p", "muted", state.current && state.current.unknown
+  box.append(el("p", "muted", state.current && state.current.unknown
     ? "This is the one-time first setup — after it, the board is a Canary."
-    : "This is the same “flash” process as first setup — the board just gets the new firmware.")));
+    : "This is the same “flash” process as first setup — the board just gets the new firmware."));
   const sum = el("div", "flash-summary");
   sum.append(fact("Firmware", `${product.name} · v${entry.version}`));
   sum.append(fact("For chip", entry.chipFamily));
@@ -3330,7 +3240,7 @@ function phaseConfirm(product, entry) {
       : (willBackup ? "a clean install is written." : "This writes a clean install.")) +
     settingsLine +
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
-  box.append(xtra(promise));
+  box.append(promise);
 
   // Say WHY the erase isn't optional here, rather than silently ticking a box
   // the user can see is unticked in Advanced.
@@ -3426,7 +3336,7 @@ function phaseConfirm(product, entry) {
 function renderDetectDials(box, dials) {
   const sec = el("div", "flash-dials");
   sec.append(el("h3", null, "Dial it in for its room (optional)"));
-  sec.append(xtra(el("p", "fineprint", dials.note)));
+  sec.append(el("p", "fineprint", dials.note));
 
   const chosen = { preset: "ships", values: { ...dials.defaults } };
   const fmtS = (ms) => (ms / 1000) % 1 ? (ms / 1000).toFixed(2) + "s" : (ms / 1000) + "s";
@@ -3523,7 +3433,7 @@ function renderReflexes(box, product) {
   const note = el("p", "fineprint", r.note);
   const fh = helpDot("sense_flavor");
   if (fh) note.append(fh);
-  sec.append(xtra(note));
+  sec.append(note);
 
   // Static fallback for an old catalog: the read-only knob list.
   if (!runtime) {
@@ -3600,7 +3510,7 @@ function renderReflexes(box, product) {
   const a = el("a", null, "Open the Sense Lab →");
   a.href = r.lab;
   lb.append(a);
-  sec.append(xtra(lb));
+  sec.append(lb);
 
   function sync(opts = {}) {
     for (const [b, pr] of cards) {
@@ -3699,7 +3609,7 @@ function renderWifiFields(box, product) {
   const err = el("p", "flash-note flash-note-soft flash-hidden");
   sec.append(err);
   const prov = (product && product.provisioning) || "usb-secrets";
-  sec.append(xtra(el("p", "fineprint", {
+  sec.append(el("p", "fineprint", {
     "ap":
       "Fill this in and it’s written into the chip during the install, so the " +
       "Canary joins your WiFi on its very first boot. If it can’t connect — " +
@@ -3718,7 +3628,7 @@ function renderWifiFields(box, product) {
       "first boot, no custom build needed. Leave it empty and the firmware " +
       "keeps its compiled defaults. What you type stays on this page and " +
       "goes only to the chip over the cable.",
-  }[prov] || "")));
+  }[prov] || ""));
 
   // Type it once, provision a whole batch. By default the network is kept in
   // memory for this tab only (gone when you close it, never written to disk);
@@ -3800,10 +3710,10 @@ function renderWifiFields(box, product) {
   if (product && product.broker_nvs === true) {
     const ha = el("div", "flash-mqtt");
     ha.append(el("h3", null, "Home Assistant / MQTT (optional)"));
-    ha.append(xtra(el("p", "fineprint",
+    ha.append(el("p", "fineprint",
       "Bake in your broker and a device id and the Canary reports to Home Assistant on " +
       "its first boot — no extra setup. Leave blank to configure later. Written into the " +
-      "chip’s settings exactly the way the native app does; it goes only to the chip.")));
+      "chip’s settings exactly the way the native app does; it goes only to the chip."));
     const mk = (ph, kind) => {
       const i = el("input"); i.type = "text"; i.placeholder = ph;
       i.autocomplete = "off";
@@ -3911,9 +3821,11 @@ async function startFlash(opts) {
   // download lands (imageBytesRef is filled in below).
   const imageBytesRef = { bytes: opts.localBytes || null };
   const logEl = box.card.querySelector(".flash-log");
-  box.card.insertBefore(
-    xtra(installStory(() => imageBytesRef.bytes || (state.backup && state.backup.bytes))), logEl);
-  decorateMore(box.card); // the tour landed after setPhase — the chip must know
+  // Minimal mode skips the tour rather than hiding it: the deck runs two
+  // timers, and a hidden slideshow ticking away helps nobody.
+  if (!minimalEnabled()) {
+    box.card.insertBefore(installStory(() => imageBytesRef.bytes || (state.backup && state.backup.bytes)), logEl);
+  }
 
   // Announce the whole journey up front — "step 2 of 4" is what makes the
   // bar predictable instead of a mystery that keeps restarting.
@@ -4298,7 +4210,7 @@ function phaseDone(opts) {
   // the native app mints. Async: the done card renders now; the certificate
   // appears once the shared hatch.json spec loads (or quietly not at all).
   if (hatchNo && opts.product && !opts.isBackup && !opts.isLocal) {
-    const certSlot = xtra(el("div", "flash-cert-slot"));
+    const certSlot = el("div", "flash-cert-slot");
     box.append(certSlot);
     renderHatchCert(certSlot, {
       product: opts.product,
@@ -4438,10 +4350,6 @@ function phaseDone(opts) {
       ` Safety copy saved to your downloads as ${opts.backupName} — restore it any time from Advanced. ` +
       `Keep the file private: it holds everything that was on the board, including its identity key ` +
       `and any saved WiFi. Treat it like a spare house key.`));
-    // Deliberately NOT tagged for Simple view: a credential-bearing file just
-    // landed in the downloads folder without a click, and this line is its
-    // only disclosure — it rides the file's creation in every view. (Review
-    // catch on the Simple-view PR; the parity gate pins it.)
     box.append(bk);
   } else if (opts.backupFailed) {
     box.append(el("p", "fineprint",
@@ -4450,9 +4358,8 @@ function phaseDone(opts) {
   }
 
   // What actually changed — the byte-verified answer, region by region.
-  // Guided-view detail; the receipts fold below stays in both views.
   if (opts.diff) {
-    const sec = xtra(el("div", "flash-report-sec"));
+    const sec = el("div", "flash-report-sec");
     sec.append(el("h3", null, "What this install changed"));
     if (opts.wifiSsid) {
       sec.append(el("p", "flash-note flash-note-kept",
@@ -4564,13 +4471,11 @@ function phaseDone(opts) {
   // half could later read as "both done"). Guided continuation uses the checklist
   // CTA above, not this button, so it's unaffected.
   again.addEventListener("click", () => onDisconnect().then(() => { visionSession.reset(); setPhase(phaseConnect()); }));
-  const tour = xtra(el("button", "ghost", "replay the layers tour"));
+  const tour = el("button", "ghost", "replay the layers tour");
   let tourEl = null;
   tour.addEventListener("click", () => {
     if (tourEl) { tourEl.remove(); tourEl = null; return; }
-    // Tagged like its button, so folding the card back folds the running
-    // tour with it — never a slideshow left playing with no visible control.
-    tourEl = xtra(installStory(() => state.lastImage));
+    tourEl = installStory(() => state.lastImage);
     box.append(tourEl);
   });
   row.append(watch);
@@ -4635,11 +4540,11 @@ function phaseBluetoothCheck(back) {
   const box = el("section", "flash-card flash-ble");
   box.append(el("div", "flash-big-emoji", "🔵"));
   box.append(el("h2", null, "Is it on? Reach a Canary over Bluetooth"));
-  box.append(xtra(el("p", "muted",
+  box.append(el("p", "muted",
     "A separate check from flashing: a Canary keeps a read-only Bluetooth " +
     "“console” alive even when WiFi is down. This asks your browser to find " +
     "one, connect, and read its live snapshot — proof it’s on and talking. " +
-    "Nothing is written to the board.")));
+    "Nothing is written to the board."));
 
   const status = el("p", "flash-ble-status muted", "");
   box.append(status);
@@ -4795,13 +4700,13 @@ function phaseRescue() {
   const box = el("section", "flash-card flash-rescue");
   box.dataset.step = "3";
   box.append(el("h2", null, "Rescue this board"));
-  box.append(xtra(el("p", "muted",
+  box.append(el("p", "muted",
     "For a Canary that’s acting wrong and you just want it back to known-good. " +
     "Three steps: a safety copy is attempted first (a corrupted board may not " +
     "give one — the rescue continues anyway), the whole chip is wiped, and the " +
     "newest signed firmware for your exact chip is written and verified. This " +
     "works the same for every future firmware release — the flasher always " +
-    "fetches the latest signed image for the silicon in hand.")));
+    "fetches the latest signed image for the silicon in hand."));
 
   // Rescue writes without a confirm screen, so the size gate has to happen
   // in the candidate list itself: offering a 16 MB image to an 8 MB chip
@@ -4872,13 +4777,13 @@ function phaseRescue() {
   // Restoring a saved backup file: raw bytes, so it can never go stale.
   const restore = el("div", "flash-local flash-rescue-restore");
   restore.append(el("h3", null, "…or put back a backup you saved earlier"));
-  restore.append(xtra(el("p", "muted",
+  restore.append(el("p", "muted",
     "Every install here saves a full copy of the board to your downloads " +
     "(canary-…-backup.bin). Restoring one rewinds the board to that exact " +
     "moment — firmware, settings, witness chain, everything. Backups are raw " +
     "flash bytes, so a file from any past or future version restores the same " +
     "way. That completeness cuts both ways: a backup holds the board's " +
-    "identity key and saved WiFi, so store it like a house key.")));
+    "identity key and saved WiFi, so store it like a house key."));
   const file = el("input");
   file.type = "file";
   file.accept = ".bin";
@@ -5058,7 +4963,7 @@ function renderReport(r) {
     });
     const note = el("p", "fineprint",
       "“Built” is the firmware’s own compile stamp — the closest thing a board keeps to “when it was last flashed”.");
-    sec.append(xtra(note));
+    sec.append(note);
     box.append(sec);
   }
 
@@ -5072,8 +4977,8 @@ function renderReport(r) {
       sec.append(reportRow("Over-the-air updates", `${r.ota.updatesSeen} slot switch${r.ota.updatesSeen === 1 ? "" : "es"} recorded`));
       sec.append(reportRow("Boot state", r.ota.stateText, r.ota.pendingVerify ? "warn" : null));
       if (r.ota.pendingVerify) {
-        sec.append(xtra(el("p", "fineprint",
-          "“Pending verify” means the last update hasn’t confirmed itself yet — if the board reboots before it does, it rolls back. Usually it just needs one good boot.")));
+        sec.append(el("p", "fineprint",
+          "“Pending verify” means the last update hasn’t confirmed itself yet — if the board reboots before it does, it rolls back. Usually it just needs one good boot."));
       }
     }
     box.append(sec);
@@ -5085,8 +4990,8 @@ function renderReport(r) {
   if (r.coredump) {
     if (r.coredump.present) {
       health.append(reportRow("Crash dump", `found (${core.formatBytes(r.coredump.size)}) — the board hard-crashed at some point and kept the evidence`, "warn"));
-      health.append(xtra(el("p", "fineprint",
-        "Not an emergency: the dump is from an earlier fault, and flashing fresh firmware (or a full erase) clears it. If a board keeps crashing, this is the breadcrumb to mention in a bug report.")));
+      health.append(el("p", "fineprint",
+        "Not an emergency: the dump is from an earlier fault, and flashing fresh firmware (or a full erase) clears it. If a board keeps crashing, this is the breadcrumb to mention in a bug report."));
     } else {
       health.append(reportRow("Crash dump", "none stored — no hard crashes on record", "ok"));
     }
@@ -5288,11 +5193,11 @@ function phaseMonitor(port, opts = {}) {
   box.dataset.step = "5";
   box.append(el("h2", null, "Serial monitor"));
   box.append(modeBadge("running"));
-  box.append(xtra(el("p", "muted",
+  box.append(el("p", "muted",
     "This is the board’s own voice: a live text feed the firmware prints over " +
     "the USB cable, plus single-key commands you can send back. It’s how you " +
     "check on a Canary without touching anything — and nothing you type here " +
-    "can break the board.")));
+    "can break the board."));
   const status = el("p", "muted flash-mon-status", "Opening the console…");
   box.append(status);
 
@@ -5422,11 +5327,11 @@ function phaseMonitor(port, opts = {}) {
   const done = el("button", "ghost", "← back to the flasher");
   row.append(done);
   box.append(row);
-  box.append(xtra(el("p", "fineprint",
+  box.append(el("p", "fineprint",
     "The right speed is already chosen for you (on native-USB Canaries the " +
     "number barely matters). Nothing here leaves your computer. To flash " +
     "again, go back — the flasher returns the board to download mode itself " +
-    "(or: hold BOOT, tap RESET, release BOOT).")));
+    "(or: hold BOOT, tap RESET, release BOOT)."));
 
   // — wire it up —
   //
@@ -5939,14 +5844,9 @@ function coachDismissed() {
   try { return sessionStorage.getItem(COACH_KEY) === "off"; } catch { return false; }
 }
 function attachCoach(card, afterEl) {
-  // The coach always rides; Simple view merely folds it (the flash-xtra tag
-  // below). Attaching regardless of the current view is what lets a
-  // mid-install flip to "full view" bring the live lessons back — a deck
-  // that only existed if the install STARTED guided would quietly break the
-  // toggle's promise. (The × stays the "stop for the session" control.)
-  if (coachDismissed() || !state.catalog ||
-      !Array.isArray(state.catalog.lessons) || !state.catalog.lessons.length) return null;
-  const box = el("aside", "flash-coach flash-xtra");
+  if (coachDismissed() || !state.catalog || !Array.isArray(state.catalog.lessons) ||
+      !state.catalog.lessons.length) return null;
+  const box = el("aside", "flash-coach");
   box.setAttribute("aria-label", "Optional lesson while you wait");
   const head = el("div", "flash-coach-head");
   head.append(el("span", "flash-coach-kicker", "☕ while it works — a 20-second lesson"));
@@ -6034,7 +5934,9 @@ function progressCard(title, subtitle) {
   const reassure = el("p", "flash-reassure-lite fineprint",
     "Safe to interrupt — you can’t brick it. If anything stops, just start again.");
   card.append(reassure);
-  const coach = attachCoach(card, reassure);
+  // Minimal mode skips the coach entirely (it self-advances on a timer);
+  // the settings dialog's lesson switch still governs the full mode.
+  const coach = minimalEnabled() ? null : attachCoach(card, reassure);
   // expose esptool log
   const log = el("details", "flash-log");
   log.append(el("summary", null, "show technical log"));
@@ -6056,9 +5958,7 @@ function progressCard(title, subtitle) {
     // The live write map: the chip's regions, lighting up as the write
     // cursor passes through them — Arduino's console line, but visual.
     attachMap(rows, imageLen, flashLen) {
-      // Rich detail: the bar + meta above already carry the essentials, so
-      // Simple view folds the region map with the rest of the story.
-      const wrap = xtra(el("div", "flash-livemap"));
+      const wrap = el("div", "flash-livemap");
       const barEl = el("div", "flash-map");
       const segs = [];
       rows.forEach((r) => {

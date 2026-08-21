@@ -786,20 +786,6 @@ export function channelFromSearch(search) {
   }
 }
 
-// `?view=simple|guided` SEEDS the view density for this load (a link a batch
-// operator can bookmark); the on-page toggle owns it afterwards, exactly the
-// channelFromSearch posture. Anything else — absent, typo'd — is null, so the
-// caller falls back to the visitor's saved preference rather than a default
-// this function would have to invent.
-export function viewFromSearch(search) {
-  try {
-    const v = new URLSearchParams(search || "").get("view");
-    return v === "simple" || v === "guided" ? v : null;
-  } catch {
-    return null;
-  }
-}
-
 // ── WiFi pre-provisioning (write NVS, not just read it) ────────────────────
 // The firmware reads its WiFi from the standard NVS partition — namespace
 // "securacv", blobs wifi_ssid / wifi_pass, bool wifi_en (canary_wap.ino).

@@ -17,28 +17,18 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
-## 0.12.0 — 2026-08-20
+## 0.11.5 — 2026-08-20
 
-**Simple view — the same Flasher, folded to its essentials.**
+**Minimal mode — for the fortieth board of the day.**
 
-For the days when you're flashing a batch (or you've simply read it all
-before): a new toggle at the bottom of the left rail folds the explanations
-away and keeps everything that does the work — the connection bar, the
-picker, the first-boot form, the flash button, the live console (shorter,
-still scrolling), the verdicts, and every error message. Nothing was
-removed: each calmed-down card grows a quiet "the full story" chip that
-unfolds that card's own detail, and the toggle brings the whole guided
-version back at any time. Your choice is remembered, like day/night.
-
-The safety surfaces don't participate: the "wipe the whole chip" choice,
-the dev-channel stripe, the install verdict, and the type-ERASE confirm
-stay on screen in both views.
-
-The browser flasher (the Canary Nursery) gained the same switch in the
-same release, so the two flashers keep telling the same story at the same
-volume — that parity is now CI-gated like the rest.
-
-Still flashes firmware 2.4.11, unchanged from 0.11.4.
+A new feather button in the rail (next to day/night) folds the explainer
+prose away: the page ledes, the product taglines, the settled support-tier
+lines and the provisioning note step aside, the cards tighten up, and the
+flash console collapses the progress bar's redraw spam into one live line.
+Every control, safety check, receipt and warning stays exactly where it was
+— including the first-contact wipe choice and the "never booted" tier note —
+and one click brings the full story back. The choice is remembered. The
+browser flasher gains the same mode in the same release.
 
 ## 0.11.4 — 2026-08-15
 

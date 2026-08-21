@@ -1063,42 +1063,22 @@ details.coldstart[open] > summary { margin-bottom: 8px; }
   font-size: 11.5px; resize: vertical;
 }
 
-/* ── Simple view (density): the same app, folded to its essentials ─────── */
-/* html[data-density="simple"] is set before first paint (app.js, beside the
-   theme). Detail is tagged .xtra in index.html and hidden here — never
-   removed — and each card holding folded detail grows one .more-btn chip
-   (app.js decorateDensityChips) that unfolds that card back (.show-detail).
-   Controls, status lines, verdicts, the first-contact wipe choice, the
-   dev-channel banner and every error surface are never tagged, so they
-   cannot fold. Mirror of the browser flasher's body.flash-simple
-   (canary-local/assets/flash.css); desktop_parity.test.js holds the two
-   together. */
-html[data-density="simple"] .xtra { display: none !important; }
-/* :not(.disabled): a card that collapses back to its numbered heading
-   (`.card.disabled > :not(.step-head)`) must win over a stale show-detail —
-   without the guard, the !important reveal would float this card's detail
-   inside an otherwise-empty grayed-out card. */
-html[data-density="simple"] .card.show-detail:not(.disabled) .xtra { display: revert !important; }
-/* revert resolves to the UA's block — right for the tagged paragraphs; the
-   one flex block gets its authored display back by name: */
-html[data-density="simple"] .card.show-detail:not(.disabled) .reassure.xtra { display: flex !important; }
-
-/* The "full story" chip: invisible in the guided view (nothing is folded),
-   one quiet dashed pill at the foot of a folded card in Simple view. */
-.more-btn { display: none; }
-html[data-density="simple"] .more-btn {
-  display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
-  padding: 3px 12px; border-radius: 999px; border: 1px dashed var(--border);
-  background: none; cursor: pointer; color: var(--text-muted); font-size: 12px;
-}
-html[data-density="simple"] .more-btn:hover {
-  color: var(--text); border-color: var(--border-strong);
+/* ── minimal mode (the feather in the rail; app.js toggleDensity) ─────────
+   html carries data-density="minimal" while the mode is on. Only teaching
+   prose folds — never a control, a check, a receipt, or anything that
+   explains a destructive choice: the first-contact wipe label and the
+   "never booted" support tier stay put on purpose. The flash console's
+   progress-frame collapsing lives in app.js (appendFlashLog), not here.
+   Same mode, same rule, as the browser flasher's minimal.js. */
+html[data-density="minimal"] .detail-only,
+html[data-density="minimal"] .pane-head .lede,
+html[data-density="minimal"] #product-list .p-tag,
+html[data-density="minimal"] #product-list .p-tier:not(.is-first),
+html[data-density="minimal"] #product-list .p-verdict-detail {
+  display: none;
 }
 
-/* The Canary flow's live progress IS the console (there is no bar), so
-   Simple view keeps it — just shorter, still scrolling, still indicative.
-   The serial monitor keeps its full height either way. */
-html[data-density="simple"] #console { max-height: 132px; }
+/* Quiet is also compact: same cards, less air. */
+html[data-density="minimal"] .card { padding: 12px 16px; margin-bottom: 10px; }
 
-/* The rail button shows its state. */
-html[data-density="simple"] #density-toggle { color: var(--brand); }
+html[data-density="minimal"] #density-toggle { color: var(--accent, #ffd44f); }
