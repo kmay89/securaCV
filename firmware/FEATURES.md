@@ -98,7 +98,14 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | TLS (HTTPS self-signed) | ❌ | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ |
 | Provisioning gate (BOOT button) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
-| `SECURACV_RELEASE_BUILD` fail-closed guards | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ (archive-only) |
+| Release-build fail-closed guards¹ | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ (archive-only) |
+
+> **¹ Release-guard macro names differ per tree:** the canary (PIO) tree
+> gates on `SECURACV_BUILD_RELEASE` (defined in `canary/platformio.ini`),
+> while the canary-wap tree gates on the transposed `SECURACV_RELEASE_BUILD`
+> (`build_config.h`). Each tree is internally consistent, but a guard copied
+> verbatim between trees compiles as an always-false `#if defined(...)` and
+> silently drops the protection — check the spelling when porting guards.
 
 > **2026-07-11 rows:** the mDNS fleet advert and identify rows reflect code
 > that is compile/CI-verified but not yet bench-verified on hardware for
@@ -225,7 +232,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 
 | Feature | WAP Snapshot | Arduino IDE | PlatformIO (canary/) | PlatformIO (canary-wap/) |
 |---------|:---:|:---:|:---:|:---:|
-| GPS fix state tracking | ✅ (full FSM) | ❌ | ✅ gnss_parser_t | ⚠️ |
+| GPS fix state tracking | ✅ (full FSM) | ❌ | ✅ `securacv_gps` (own NMEA parser) | ⚠️ |
 | Lat/Lon in witness records | ✅ | ❌ | ✅ | ⚠️ |
 | Speed, altitude, heading | ✅ | ❌ | ✅ | ⚠️ |
 | NMEA parsing (GGA, RMC, GSA, VTG) | ✅ | ❌ | ✅ | ⚠️ |

@@ -33,7 +33,7 @@ Request arrives
   |
   5. PNA Preflight             -- Handle OPTIONS with PNA header, return 204
   |
-  6. CORS                      -- Set CORS headers for peer origins only
+  6. CORS                      -- Same-origin + trust-on-pair origins only
   |                               Handle non-PNA OPTIONS, return 204
   |
   7. JSON Body Parsing         -- Parse body for /api/* routes
@@ -65,7 +65,7 @@ The XIAO ESP32S3 has approximately 512 KB of usable RAM. Keep these budgets in m
 
 ### Firmware Upload Handling
 
-The `POST /api/v1/update` endpoint receives a firmware binary as `multipart/form-data`. On the ESP32, stream the upload directly to the OTA partition rather than buffering it in RAM. Use the ESP-IDF OTA API:
+The `POST /api/v1/update` endpoint receives the firmware binary as the raw request body (`application/octet-stream`), with a detached Ed25519 signature over the whole payload in the `X-Firmware-Signature` header and an 8-byte `SCV\x01` version header at the start of the binary (see [api.md](api.md#post-apiv1update)). On the ESP32, stream the upload directly to the OTA partition rather than buffering it in RAM (verify the signature incrementally or from the written partition before setting the boot partition). Use the ESP-IDF OTA API:
 
 ```c
 esp_ota_handle_t ota_handle;
@@ -222,7 +222,7 @@ The SPA is approximately 40 KB total (26 KB JS + 9 KB CSS + HTML + manifest), we
 
 Use `mbedtls_sha256` for hashing and `mbedtls_pk_sign` (with `MBEDTLS_PK_ED25519` if available, or a TweetNaCl port) for Ed25519 signing.
 
-Hash input format: `"${seq}:${prev_hash}:${timestamp}:${event_type}:${zone}"`
+Hash input format: `"${seq}:${prev_hash}:${timestamp}:${event_type}:${zone}:${time_source}:${gps_timestamp}"` — `time_source` defaults to `device_clock` and `gps_timestamp` to the empty string when the record has no GPS fix, matching the reference server's `lib/witness-chain.js` and the `verification_instructions` in `GET /api/v1/witness/export`.
 
 Store `witness_seq` and `witness_last_hash` in NVS after each new record so the chain survives reboots. Keep the most recent 500 records in a RAM ring buffer for API queries; older records can be persisted to SPIFFS or discarded.
 

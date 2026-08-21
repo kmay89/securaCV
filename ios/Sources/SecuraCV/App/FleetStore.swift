@@ -343,8 +343,18 @@ final class FleetStore: ObservableObject {
                 // A hub answers for itself AND its peers, so every row counts —
                 // and each needs its own id (see provisionalWitness).
                 for (index, row) in report.devices.enumerated() {
-                    if let i = next.firstIndex(where: { $0.name == row.name && !row.name.isEmpty }) {
-                        FleetMerge.fold(row, into: &next[i])
+                    // The self-report carries no id, so the display name is
+                    // the only key — and names are NOT unique (Discovery
+                    // documents that every unit flashed from one config seeds
+                    // the same one). Fold only when the name picks out
+                    // exactly ONE row; on ambiguity, stand alone rather than
+                    // decorate the wrong Canary — the same conservative rule
+                    // FleetMerge.attach applies to two-byte beacon suffixes.
+                    let matches = next.indices.filter {
+                        next[$0].name == row.name && !row.name.isEmpty
+                    }
+                    if matches.count == 1 {
+                        FleetMerge.fold(row, into: &next[matches[0]])
                     } else {
                         next.append(FleetMerge.provisionalWitness(from: row, host: host, index: index))
                     }
@@ -716,6 +726,17 @@ final class FleetStore: ObservableObject {
             return (w, [])
         }
         var w = Witness(id: info.deviceID, deviceType: ref.deviceType, name: info.name)
+        // TOFU: on FIRST sight of a device with no pinned key, fetch its
+        // public key and pin it — the pairing receipt deliberately carries no
+        // key, so this poll is where trust-on-first-use actually happens.
+        // pin() never overwrites: once pinned, the key is only ever READ, and
+        // a device that starts presenting a different key keeps failing the
+        // verification below (badge .failed → alert-severity, mute-proof) —
+        // the loud path a changed key must take.
+        if PinnedKeyStore.key(for: ref.id) == nil,
+           let pub = try? await api.publicKey() {
+            PinnedKeyStore.pin(pub, for: ref.id)
+        }
         // Derive the device's fingerprint from the key we already pinned, using
         // the firmware's own scheme (Wire/DeviceFingerprint). Without this the
         // field stays empty, FleetMerge.attach can never tie a heard beacon to

@@ -468,6 +468,58 @@ fn nonempty_output_dir_is_refused() -> Result<()> {
 }
 
 #[test]
+fn custody_position_is_ordinal_not_rowid() -> Result<()> {
+    // The custody record claims "receipt N of M in the signed export chain".
+    // N must be the receipt's ORDINAL position in the chain, not its SQLite
+    // rowid — those diverge whenever the ledger has a rowid gap. AUTOINCREMENT
+    // never reuses ids, so deleting the two newest receipts (tail truncation,
+    // which still leaves a chain that verifies) and then exporting again yields
+    // a receipt whose rowid is 4 but whose ordinal position is 2. "receipt 4
+    // of 2" would be a false statement in a court document.
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    for _ in 0..3 {
+        add_test_event(&mut kernel, &cfg)?;
+        let _ = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    }
+    // Delete receipts 2 and 3. The surviving head is receipt 1; the next
+    // append (read from the DB, ORDER BY id DESC) chains onto it, so the chain
+    // stays valid — but AUTOINCREMENT hands the new row id 4, not 2.
+    kernel
+        .conn
+        .execute("DELETE FROM export_receipts WHERE id IN (2, 3)", [])?;
+    add_test_event(&mut kernel, &cfg)?;
+    let latest = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    let bundle_path = temp.path().join("witness_export.json");
+    std::fs::write(&bundle_path, serde_json::to_vec(&latest)?)?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit_ordinal");
+    let out = run_court_export(&db_path, &bundle_path, &kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Two receipts survive (ordinals 1 and 2); the packaged bundle is the
+    // second one in the chain even though its rowid is 4.
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("2 of 2"),
+        "custody must report the ordinal position (2 of 2), got: {custody}"
+    );
+    assert!(
+        !custody.contains("4 of 2"),
+        "custody must not report the SQLite rowid as the chain position"
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("receipt 2 of 2"));
+    Ok(())
+}
+
+#[test]
 fn tampered_interior_receipt_row_is_refused() -> Result<()> {
     // The custody record says "receipt N of M in the signed export chain" —
     // so the WHOLE chain must verify, not just the bundle's own row. Tamper

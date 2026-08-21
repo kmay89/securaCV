@@ -73,6 +73,10 @@ jobs:
 
       - name: Commit + push the refreshed dist (only if it changed)
         run: |
+          # The commit the dist was BUILT from — captured before we commit or
+          # rebase, so the staleness guard below can tell whether the branch has
+          # moved its compile inputs out from under this rebuild.
+          BUILD_BASE=$(git rev-parse HEAD)
           # status --porcelain, not diff: a NEW flavor's first build creates
           # untracked dist files that git diff cannot see.
           if [ -z "$(git status --porcelain -- canary-local/emulator/dist)" ]; then
@@ -96,12 +100,27 @@ jobs:
             fi
             echo "push rejected (attempt ${attempt}) — rebasing onto the branch and retrying"
             git fetch origin "${GITHUB_REF_NAME}"
-            # If the arriving commits changed the firmware, these bytes are
-            # already stale; say so rather than pushing a rebuild of an older
-            # tree over a newer one. Re-dispatch is the fix.
+            # If the arriving commits TEXTUALLY conflict, these bytes are already
+            # stale; say so rather than pushing a rebuild of an older tree over a
+            # newer one. Re-dispatch is the fix.
             if ! git rebase "origin/${GITHUB_REF_NAME}"; then
               git rebase --abort || true
               echo "::error::dist rebuild conflicts with new commits on ${GITHUB_REF_NAME} — re-run this workflow on the updated branch."
+              exit 1
+            fi
+            # A clean rebase is NOT proof the rebuild is current: a firmware /
+            # emulator-input commit that only edits sources the dist is COMPILED
+            # from never conflicts with our dist-only commit, so the rebase
+            # succeeds and we would push bytes built from the older tree (the
+            # drift gate then fails on a file nobody touched — the exact failure
+            # this workflow exists to prevent). Compare the compile inputs
+            # between the build base and the branch head; if any changed, the
+            # rebuild is stale — fail and ask for a re-dispatch, don't push.
+            stale=$(git diff --name-only "$BUILD_BASE" "origin/${GITHUB_REF_NAME}" -- \
+              firmware canary-local/emulator ':(exclude)canary-local/emulator/dist')
+            if [ -n "$stale" ]; then
+              echo "::error::firmware / emulator inputs changed on ${GITHUB_REF_NAME} since this dist was built (base ${BUILD_BASE}); the rebuilt bytes are stale. Re-run this workflow on the updated branch."
+              printf '%s\n' "$stale" | sed 's/^/  changed input: /'
               exit 1
             fi
             sleep $((attempt * 5))

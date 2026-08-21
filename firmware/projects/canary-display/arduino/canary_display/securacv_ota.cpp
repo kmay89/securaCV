@@ -652,9 +652,17 @@ esp_err_t securacv_ota_get_manifest_url(char *buf, size_t buf_len)
 
 bool securacv_ota_manifest_url_is_override(void)
 {
-    char buf[8];
-    return nvs_load_str(NVS_KEY_MANIFEST_URL, buf, sizeof(buf)) != ESP_ERR_NVS_NOT_FOUND &&
-           buf[0] != '\0';
+    // Size the probe buffer to the real maximum URL, not a token 8 bytes: an
+    // override is a full https URL, so nvs_get_str used to return
+    // ESP_ERR_NVS_INVALID_LENGTH and leave `buf` UNWRITTEN, after which the
+    // old `buf[0]` read uninitialized stack for every real override. Treat a
+    // too-long stored value as proof an override exists rather than reading an
+    // untouched buffer. An empty string is never persisted (nvs_store_str
+    // erases the key for one), so the key being present at all IS the override.
+    char buf[sizeof(s_ctx.manifest.url)];
+    esp_err_t err = nvs_load_str(NVS_KEY_MANIFEST_URL, buf, sizeof(buf));
+    if (err == ESP_ERR_NVS_INVALID_LENGTH) return true;
+    return err == ESP_OK && buf[0] != '\0';
 }
 
 esp_err_t securacv_ota_set_channel(securacv_ota_channel_t channel)

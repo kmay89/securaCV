@@ -149,8 +149,9 @@ fn host_is_local(host: &str) -> bool {
 }
 
 /// `http://host[:port]` (or https) with a local host — anything else is
-/// refused before a socket opens.
-fn base_ok(base: &str) -> bool {
+/// refused before a socket opens. `pub(crate)` because `witness_discover`
+/// (lib.rs) enforces the same policy over its candidate bases.
+pub(crate) fn base_ok(base: &str) -> bool {
     let rest = if let Some(r) = base.strip_prefix("http://") {
         r
     } else if let Some(r) = base.strip_prefix("https://") {

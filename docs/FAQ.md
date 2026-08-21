@@ -283,9 +283,11 @@ PIR would report; one opt-in setting can add the coarse object class —
 person, vehicle, animal, package — never identity), so your automations can
 answer the witness — lights on when a person crosses the driveway, the whole
 house responding to tamper. Built today: the hub speaks HAP directly
-(bridge site B — the Home app pairs with it, no Home Assistant in the path;
-the two-minute wizard is in the
-[Apple Home quickstart](integrations/apple-home-quickstart.md)), and if you
+(bridge site B, no Home Assistant in the path — the pairing transcript is
+proven by tests driving an independently written controller, but it has not
+yet paired against a real Apple TV or HomePod, and the
+[Apple Home quickstart](integrations/apple-home-quickstart.md) — which has
+the two-minute wizard — says so plainly until it has), and if you
 run the Home Assistant hub, HA's own HomeKit Bridge projects the securacv
 sensors with zero new code — the worked recipe is
 [apple-home-homekit-bridge.md](integrations/apple-home-homekit-bridge.md).

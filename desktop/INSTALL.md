@@ -68,19 +68,21 @@ internet" tag Apple stamps on the file. Identical on Apple Silicon and Intel.
 
 ## Linux
 
-Two formats on the release page — take your pick:
+Two formats on the release page — take your pick. (GitHub stores release
+asset names with dots where the app's name has spaces, so the downloads are
+named `SecuraCV.Flasher_…`.)
 
 - **AppImage** (self-updating, runs anywhere):
 
   ```sh
-  chmod +x SecuraCV-Flasher_*.AppImage
-  ./SecuraCV-Flasher_*.AppImage
+  chmod +x SecuraCV.Flasher_*_amd64.AppImage
+  ./SecuraCV.Flasher_*_amd64.AppImage
   ```
 
 - **.deb** (Debian/Ubuntu):
 
   ```sh
-  sudo apt install ./SecuraCV-Flasher_*_amd64.deb
+  sudo apt install ./SecuraCV.Flasher_*_amd64.deb
   ```
 
 ### Serial access (one time)
@@ -158,4 +160,37 @@ covers the macOS `.app` and the Linux **AppImage**; `.deb` users update through
 - **Linux AppImage:** delete the file.
 - **Linux .deb:** `sudo apt remove securacv-flasher`.
 
-Nothing else is left behind on your machine.
+That removes the app itself, but the Flasher keeps working data on your
+machine that removing the app does **not** delete — and some of it is
+sensitive, so here is the complete list:
+
+- **The app data folder** — remove it to erase everything in this list's
+  first three bullets at once:
+  - macOS: `~/Library/Application Support/com.securacv.flasher/`
+  - Linux: `~/.local/share/com.securacv.flasher/` (or under `$XDG_DATA_HOME`)
+
+  It holds:
+  - `backups/` — the automatic pre-flash **full-chip safety copies**. Each is
+    everything that was on a board, including its settings partition — which
+    can carry the board's saved Wi-Fi credentials and its device identity
+    key. Treat these files like the board itself.
+  - `hub-ssh/` — the **maintenance SSH keypair** minted for hub self-setup.
+    The private key grants root console access (port 22222) to any hub whose
+    card was seeded with its public half. Deleting the folder removes the key
+    from this computer; to revoke access on the hub side, remove the matching
+    line from the hub's `authorized_keys` (or reflash the card).
+  - `launch.log` / `launch-state.json` — the launch journal (no secrets).
+- **Saved passwords and device tokens** live in the OS credential store, not
+  in a file: on macOS open **Keychain Access** and delete the entries whose
+  service is **"SecuraCV Flasher"** (saved Wi-Fi/broker passwords and
+  per-Canary API tokens). They survive an app reinstall by design.
+- **Webview data** (window preferences, no secrets):
+  - macOS: `~/Library/WebKit/com.securacv.flasher`,
+    `~/Library/Caches/com.securacv.flasher`,
+    `~/Library/HTTPStorages/com.securacv.flasher`
+  - Linux: inside the app data folder above, plus
+    `~/.cache/com.securacv.flasher`
+- **Linux udev rules**, only if you added them by hand for the AppImage:
+  `/etc/udev/rules.d/60-rpiboot.rules` and
+  `/etc/udev/rules.d/61-securacv-canary.rules`. (The `.deb`'s copies under
+  `/usr/lib/udev/rules.d/` are removed with the package.)

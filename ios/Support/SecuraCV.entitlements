@@ -33,7 +33,10 @@
     <string>iCloud.com.securacv.witness</string>
   </array>
 
-  <!-- Shared container so the widget + NSE can read cached fleet state. -->
+  <!-- Shared container so the widgets can read cached fleet state. (The NSE
+       does not join it yet: its target carries no entitlements file at all —
+       when wake hydration lands, give the NSE its own entitlements with this
+       group, or it cannot open the container.) -->
   <key>com.apple.security.application-groups</key>
   <array>
     <string>group.com.securacv.witness</string>

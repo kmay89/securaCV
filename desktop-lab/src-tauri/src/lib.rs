@@ -67,6 +67,67 @@ fn native_capabilities() -> serde_json::Value {
     })
 }
 
+/// Only ever talk to a host that can be on this network: `.local`-style
+/// names, single-label LAN hostnames, or private/loopback/link-local IP
+/// literals. Keep in lockstep with `desktop/src-tauri/src/fleet.rs`
+/// (`host_is_local`) — one policy, two crates: a fleet call must never be
+/// steerable at an internet host (docs/firmware_ota.md §Transport).
+fn host_is_local(host: &str) -> bool {
+    let host = host.trim_matches(['[', ']']);
+    if host.is_empty() {
+        return false;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    // fe80::/10 link-local and fc00::/7 unique-local
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+            }
+        };
+    }
+    let lower = host.to_ascii_lowercase();
+    for suffix in [".local", ".lan", ".internal", ".home.arpa"] {
+        if lower.ends_with(suffix) && lower.len() > suffix.len() {
+            return true;
+        }
+    }
+    // A single-label hostname ("canary-3f2a") can only resolve locally.
+    !lower.contains('.')
+}
+
+/// `http://host[:port]` (or https) with a local host — anything else is
+/// refused before a socket opens. Lockstep twin of the Flasher's
+/// `fleet::base_ok` (`desktop/src-tauri/src/fleet.rs`).
+fn base_ok(base: &str) -> bool {
+    let rest = if let Some(r) = base.strip_prefix("http://") {
+        r
+    } else if let Some(r) = base.strip_prefix("https://") {
+        r
+    } else {
+        return false;
+    };
+    let host_port = rest.split('/').next().unwrap_or_default();
+    if host_port.is_empty() {
+        return false;
+    }
+    // Split a trailing :port (careful with bracketed IPv6).
+    let host = if let Some(end) = host_port.rfind(']') {
+        &host_port[..=end]
+    } else if let Some((h, port)) = host_port.rsplit_once(':') {
+        if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() {
+            h
+        } else {
+            host_port
+        }
+    } else {
+        host_port
+    };
+    host_is_local(host)
+}
+
 /// Find Canaries on the LAN and return the first kernel fleet that answers.
 ///
 /// Byte-for-byte the same command as the Flasher's
@@ -80,6 +141,17 @@ fn native_capabilities() -> serde_json::Value {
 /// `tvos/discovery/DISCOVERY.md`.
 #[tauri::command]
 async fn witness_discover(bases: Vec<String>) -> Result<serde_json::Value, String> {
+    // Same transport policy as the Flasher's fleet book (fleet.rs base_ok): a
+    // discovery probe must never be steerable at an internet host. Candidates
+    // that fail the local-host gate are skipped, not fatal — the list is
+    // best-effort by design and the `.local` defaults always qualify.
+    let bases: Vec<&String> = bases.iter().filter(|b| base_ok(b)).collect();
+    if bases.is_empty() {
+        return Err(
+            "no local device address to try — device addresses must be local/private hosts"
+                .to_string(),
+        );
+    }
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Lab")
         .timeout(std::time::Duration::from_secs(2))
@@ -126,6 +198,34 @@ pub fn run() {
         witness_discover
     ]);
 
+    // If a self-update is REPLACING the app bundle when the user closes the
+    // window, hold the close: nothing in the bundle is guaranteed complete
+    // until the install returns, and quitting mid-write is the one thing that
+    // can leave the Lab unable to open at all (the Flasher's guard, ported —
+    // desktop/src-tauri/src/lib.rs). Not negotiable, so no "quit anyway";
+    // the install takes seconds and the app relaunches itself.
+    #[cfg(desktop)]
+    let builder = builder.on_window_event(|window, event| {
+        use tauri::Manager as _;
+        use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons};
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if self_update::install_in_progress(window.app_handle()) {
+                api.prevent_close();
+                window
+                    .dialog()
+                    .message(
+                        "An update is being written over the app right now. \
+                         Quitting mid-write is the one thing that can leave the \
+                         Lab unable to open at all, so this has to finish — \
+                         it takes a few seconds, then the app relaunches itself.",
+                    )
+                    .title("Finishing the update")
+                    .buttons(MessageDialogButtons::OkCustom("OK".into()))
+                    .show(|_| {});
+            }
+        }
+    });
+
     builder
         .setup(|_app| {
             // The freshness routine: first check shortly after launch, then
@@ -143,6 +243,64 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running the SecuraCV Lab")
+        .build(tauri::generate_context!())
+        .expect("error while building the SecuraCV Lab")
+        .run(|_app, _event| {
+            // Cmd-Q / the app menu's Quit never pass through CloseRequested —
+            // they request an application exit directly, and this is the only
+            // place that can stop them (the Flasher's guard, ported).
+            #[cfg(desktop)]
+            if let tauri::RunEvent::ExitRequested { api, .. } = &_event {
+                if self_update::install_in_progress(_app) {
+                    use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons};
+                    api.prevent_exit();
+                    _app.dialog()
+                        .message(
+                            "An update is being written over the app right now. \
+                             Quitting mid-write is the one thing that can leave the \
+                             Lab unable to open at all, so this has to finish — \
+                             it takes a few seconds, then the app relaunches itself.",
+                        )
+                        .title("Finishing the update")
+                        .buttons(MessageDialogButtons::OkCustom("OK".into()))
+                        .show(|_| {});
+                }
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mirrors the Flasher's fleet.rs tests — the lockstep twin must refuse
+    // and accept the same hosts, or the two apps' discovery policies drift.
+    #[test]
+    fn local_hosts_pass_and_public_hosts_are_refused() {
+        for h in [
+            "canary.local", "homeassistant.local", "hub.lan", "pi.home.arpa",
+            "canary-3f2a", "192.168.1.40", "10.0.0.5", "172.16.9.9",
+            "127.0.0.1", "169.254.10.10", "::1", "fe80::1", "fd00::abcd",
+        ] {
+            assert!(host_is_local(h), "{h} should be local");
+        }
+        for h in [
+            "example.com", "github.com", "evil.local.example.com",
+            "8.8.8.8", "172.32.0.1", "2001:4860:4860::8888", "", ".local",
+        ] {
+            assert!(!host_is_local(h), "{h} must be refused");
+        }
+    }
+
+    #[test]
+    fn base_urls_are_gated() {
+        assert!(base_ok("http://192.168.1.40"));
+        assert!(base_ok("http://canary-3f2a.local:80"));
+        assert!(base_ok("https://canary.local"));
+        assert!(base_ok("http://10.0.0.7:8099/"));
+        assert!(!base_ok("http://example.com"));
+        assert!(!base_ok("ftp://192.168.1.40"));
+        assert!(!base_ok("192.168.1.40"));
+        assert!(!base_ok("http://"));
+    }
 }

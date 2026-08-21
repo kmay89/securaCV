@@ -61,9 +61,79 @@ updates:
       - dependency-name: "libsqlite3-sys"
         update-types: ["version-update:semver-major"]
 
+  # Shipped desktop / tvOS crates. Each has its OWN Cargo.lock outside the root
+  # (no [workspace]), so the root cargo entry above never updates them — and
+  # audit.yml now flags advisories in exactly these lockfiles, so Dependabot is
+  # the companion that opens the fixing PRs. Minor/patch grouped per crate.
+  - package-ecosystem: "cargo"
+    directory: "/desktop/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "cargo"
+    directory: "/desktop-lab/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # hub-core is intentionally absent here: it is a zero-dependency, pure-`std`
+  # crate whose Cargo.lock is gitignored, so Dependabot has no manifest deps or
+  # lockfile to act on (it would only log a "can't find Cargo.lock" error).
+  - package-ecosystem: "cargo"
+    directory: "/desktop/hub-io"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "cargo"
+    directory: "/tvos/witness-core"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   # Node fleet UI + device-API (npm workspace rooted at canary-vision/).
   - package-ecosystem: "npm"
     directory: "/canary-vision"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Shipped desktop Lab UI (desktop-lab/package-lock.json). desktop/ has no
+  # committed package-lock.json, so it has no npm entry here (nothing to audit
+  # or update); add one if a lockfile is ever committed there.
+  - package-ecosystem: "npm"
+    directory: "/desktop-lab"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

@@ -93,14 +93,11 @@ PROJECTS = REPO / "firmware" / "projects"
 # is a deliberate, reviewed statement — "this is not wired up yet and we know
 # it" — not a way to silence the guard. Wire the module up or delete it, and
 # drop the waiver in the same PR.
-WAIVERS = {
-    "bluetooth/ble_debug_beacon.cpp": (
-        "Orphaned since it landed: nothing includes ble_debug_beacon.h and no "
-        "env compiles the .cpp. The header documents activation 'by boot-button "
-        "hold or compile flag', but that wiring was never added. Either wire it "
-        "to a FEATURE_* flag and give common/bluetooth a manifest, or remove it."
-    ),
-}
+#
+# (bluetooth/ble_debug_beacon.cpp carried the only waiver for a year: orphaned
+# since it landed, nothing ever included its header. It was deleted rather than
+# wired up, and its waiver left with it.)
+WAIVERS: dict[str, str] = {}
 
 
 def read(path: Path) -> str:

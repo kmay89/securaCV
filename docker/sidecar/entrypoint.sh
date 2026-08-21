@@ -364,13 +364,27 @@ EOF
     log "frigate_bridge started (PID ${pids[-1]})"
 
     if [ "$publish" = "true" ]; then
+        # The public HA device id must carry ZERO bits of the signing seed.
+        # DEVICE_KEY_SEED is the secret Ed25519 seed users are told to back up,
+        # and the device id is published in MQTT discovery topics every broker
+        # client can read — so derive the id from sha256(seed) under a
+        # domain-separation prefix. Stable per seed, but the seed is not
+        # recoverable from it (previously it exposed the first 32 seed bits).
+        #
+        # HA entity-id MIGRATION: this changes the id from `pwk_<seed[0:8]>` to
+        # `pwk_<sha256(...)[0:8]>`, so entity_ids (sensor.pwk_<id>_*) change on
+        # upgrade — old entities orphan and re-create under the new id. Re-map
+        # any dashboards/automations that referenced the old ids once, or delete
+        # the orphaned entities in HA.
+        local ha_device_id
+        ha_device_id="pwk_$(printf '%s' "securacv:ha-device-id:v1:${DEVICE_KEY_SEED}" | sha256sum | cut -c1-8)"
         local pub_args=(
             --daemon
             --mqtt-broker-addr "$addr"
             --api-token-path "$TOKEN_FILE"
             --ha-discovery-prefix "${HA_DISCOVERY_PREFIX:-homeassistant}"
             --mqtt-topic-prefix "${MQTT_TOPIC_PREFIX:-witness}"
-            --ha-device-id "pwk_${DEVICE_KEY_SEED:0:8}"
+            --ha-device-id "$ha_device_id"
             --poll-interval "${POLL_INTERVAL:-30}"
             --verify-interval-secs "${VERIFY_INTERVAL_SECS:-86400}"
         )

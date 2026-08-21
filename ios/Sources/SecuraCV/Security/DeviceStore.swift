@@ -20,10 +20,17 @@ final class DeviceStore: ObservableObject {
     @Published private(set) var devices: [PairedDeviceRef] = []
 
     private let defaultsKey = "paired_devices_v1"
+    private let tombstonesKey = "unpaired_tombstones_v1"
 
     init() { load() }
 
     func add(_ ref: PairedDeviceRef, token: String) {
+        // Re-pairing is a fresh decision — the old removal must not veto it.
+        if tombstones[ref.id] != nil {
+            var stones = tombstones
+            stones.removeValue(forKey: ref.id)
+            tombstones = stones
+        }
         try? TokenStore.set(token, for: ref.id)
         if let idx = devices.firstIndex(where: { $0.id == ref.id }) {
             devices[idx] = ref
@@ -36,7 +43,29 @@ final class DeviceStore: ObservableObject {
     func remove(_ id: String) {
         devices.removeAll { $0.id == id }
         TokenStore.forget(id)
+        // The pinned key goes with the pairing: re-pairing is a fresh
+        // physical-presence ceremony, so trust is re-established on first
+        // sight then (TOFU) — a factory-reset device with a new key must not
+        // inherit a permanent "signature failed" from its previous life.
+        PinnedKeyStore.forget(id)
+        // The cloud copy goes too — `push` only writes devices still present,
+        // so without an explicit delete the next hydration resurrects this
+        // one. The tombstone below covers the gap: iCloud may be unavailable
+        // right now, and a pull can race the delete.
+        var stones = tombstones
+        stones[id] = Date()
+        tombstones = stones
+        CloudSync.shared.delete(id)
         persist()
+    }
+
+    /// Unpair tombstones: device id → when THIS phone removed it. Read by
+    /// `mergeFromCloud` so a cloud record that predates the removal cannot
+    /// resurrect the device; a re-pair (here via `add`, or elsewhere via a
+    /// NEWER `pairedAt`) wins over the stone.
+    private var tombstones: [String: Date] {
+        get { UserDefaults.standard.dictionary(forKey: tombstonesKey) as? [String: Date] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: tombstonesKey) }
     }
 
     func token(for id: String) -> String? { TokenStore.token(for: id) }
@@ -68,6 +97,11 @@ final class DeviceStore: ObservableObject {
     func mergeFromCloud(_ incoming: [PairedDeviceRef]) {
         var byID = Dictionary(devices.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for ref in incoming {
+            // A device this phone unpaired stays unpaired: a cloud copy no
+            // newer than the removal is the record the delete hasn't caught
+            // up with yet, not a decision. A re-pair made later on another
+            // device carries a NEWER pairedAt and wins honestly.
+            if let removed = tombstones[ref.id], ref.pairedAt <= removed { continue }
             if let existing = byID[ref.id], existing.pairedAt >= ref.pairedAt { continue }
             byID[ref.id] = ref
         }

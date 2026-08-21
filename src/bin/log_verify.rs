@@ -558,7 +558,7 @@ mod tests {
         let policy = verify::load_break_glass_policy(&conn)?;
         verify::verify_break_glass_receipts_with(
             &conn,
-            &verifying_key,
+            std::slice::from_ref(&verifying_key),
             policy.as_ref(),
             SignatureMode::Compat,
             None,
@@ -566,7 +566,7 @@ mod tests {
         )?;
         verify::verify_export_receipts_with(
             &conn,
-            &verifying_key,
+            std::slice::from_ref(&verifying_key),
             SignatureMode::Compat,
             None,
             |_, _| {},
@@ -715,7 +715,7 @@ mod tests {
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
             &conn,
-            &verifying_key,
+            std::slice::from_ref(&verifying_key),
             policy.as_ref(),
             SignatureMode::Compat,
             None,
@@ -765,7 +765,7 @@ mod tests {
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
             &conn,
-            &verifying_key,
+            std::slice::from_ref(&verifying_key),
             policy.as_ref(),
             SignatureMode::Compat,
             None,
@@ -820,7 +820,7 @@ mod tests {
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
             &conn,
-            &verifying_key,
+            std::slice::from_ref(&verifying_key),
             policy.as_ref(),
             SignatureMode::Compat,
             None,
@@ -875,7 +875,7 @@ mod tests {
         let policy = verify::load_break_glass_policy(&conn)?;
         let result = verify::verify_break_glass_receipts_with(
             &conn,
-            &verifying_key,
+            std::slice::from_ref(&verifying_key),
             policy.as_ref(),
             SignatureMode::Compat,
             None,

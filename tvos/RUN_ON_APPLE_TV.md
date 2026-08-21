@@ -7,9 +7,12 @@ afternoon on. There are two tracks — pick by what you're trying to do.
 > **Step 0:** the native SwiftUI tvOS target is **built and continuously
 > tested** (`WitnessWall/` — see [`README.md`](README.md)): the wall with
 > home / business / apartment profiles and skins, zero-typing LAN discovery
-> (it probes `canary.local` by itself), and real chain verification through
-> the Rust core. What's left is Apple's side — the account and keys — which
-> is exactly what Tracks B and C below walk through.
+> (it probes `canary.local` by itself), and the Rust verification core wired
+> into the poll loop — it verifies a sealed log whenever a source serves one,
+> and phrases the fleet's status as the fleet's own report until then (no
+> kernel ships the sealed-log endpoint yet). What's left is Apple's side —
+> the account and keys — which is exactly what Tracks B and C below walk
+> through.
 
 | I want to… | Track | Time | Apple Developer account? |
 |---|---|---|---|
@@ -95,9 +98,12 @@ low-headache path.
   blocking the TV from reaching `canary.local`. Put both on one subnet and
   turn isolation off; the Wall keeps re-searching by itself and will pick the
   fleet up the moment the route exists.
-- **Kernel is `http://` on the LAN.** Add an **App Transport Security**
-  exception for the local domain (or use the kernel's TLS). Details land in
-  [`README.md`](README.md) with the target.
+- **Kernel is `http://` on the LAN.** Already handled — the shipped
+  `Support/Info.plist` sets `NSAllowsLocalNetworking`, which permits plain
+  `http://` to hosts on your own network (and only those; arbitrary public
+  `http://` stays blocked). Nothing to add. The one setup that needs more is
+  a kernel served over `https://` with a self-signed certificate — use a
+  trusted certificate or plain LAN `http://` instead.
 - **Simulator can't see real Canaries.** Bonjour to physical devices is
   unreliable from the Simulator — use a real Apple TV for live data, or the demo
   dataset in the Simulator.
@@ -140,7 +146,7 @@ read it before touching an `APPLE_*` secret.
 6. **Flip the repo variable** `ENABLE_TVOS_BUILD` to `true` (Settings →
    Secrets and variables → Actions → Variables). The gate is on the upload,
    not the build — PR CI has been compiling and testing the app all along.
-7. **Dry-run first**: Actions → *tvOS app — build & TestFlight* →
+7. **Dry-run first**: Actions → *tvOS release (Witness Wall)* →
    `publish: false`, `export_method: app-store-connect`. This proves signing
    end-to-end without spending a version number (a post-upload rejection
    burns one).

@@ -6,7 +6,6 @@ use crate::crypto::signatures::PqPublicKey;
 use crate::device_public_key_from_db;
 #[cfg(feature = "pqc-signatures")]
 use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
-#[cfg(feature = "pqc-signatures")]
 use rusqlite::OptionalExtension;
 
 pub fn load_verifying_key(
@@ -95,6 +94,44 @@ fn load_pq_key_from_db_optional(conn: &Connection) -> Result<Option<PqPublicKey>
     PqPublicKey::from_bytes(&bytes)
         .map(Some)
         .map_err(|e| anyhow!("invalid pq public key bytes: {}", e))
+}
+
+/// The device keys that may legitimately sign receipt-ledger and policy-change
+/// rows: the genesis-anchored key lineage, genesis first.
+///
+/// Receipts and policy-change records are signed by the device key **current at
+/// write time**, so after a `rotate_device_identity` the ledgers legitimately
+/// carry rows signed by different lineage keys. Verifying them all against the
+/// genesis key alone raises a false tamper alarm on every post-rotation row.
+/// The lineage reconstruction cryptographically validates every epoch
+/// (possession attestation + predecessor authorization anchored at genesis), so
+/// any key it returns is trustworthy.
+///
+/// A database with no `device_key_history` table (pre-rotation vintage, or a
+/// bare export inspected by an external verifier) has a genesis-only lineage.
+pub fn lineage_verifying_keys(
+    conn: &Connection,
+    genesis: &VerifyingKey,
+) -> Result<Vec<VerifyingKey>> {
+    let has_history: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_key_history' LIMIT 1",
+            [],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !has_history {
+        return Ok(vec![*genesis]);
+    }
+    let lineage = crate::reconstruct_device_key_lineage_from(conn, &genesis.to_bytes())?;
+    lineage
+        .iter()
+        .map(|epoch| {
+            VerifyingKey::from_bytes(&epoch.public_key)
+                .map_err(|e| anyhow!("invalid lineage verifying key: {}", e))
+        })
+        .collect()
 }
 
 pub fn hex32(b: &[u8; 32]) -> String {

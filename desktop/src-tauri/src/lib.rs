@@ -94,9 +94,11 @@ const PARTITION_MAGIC_LE: [u8; 2] = [0xAA, 0x50];
 // The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
 // `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
 // app binary (Contents/MacOS/espflash), and Tauri resolves the sidecar by that
-// basename. It must match the scope `name` in capabilities/default.json.
-// (Using "binaries/espflash" here makes Tauri look for MacOS/binaries/espflash,
-// which doesn't exist → "No such file or directory".)
+// basename. (Using "binaries/espflash" here makes Tauri look for
+// MacOS/binaries/espflash, which doesn't exist → "No such file or directory".)
+// No capability scope is involved: shell scopes gate only the webview's own
+// plugin:shell IPC (which this app never grants — see capabilities/
+// default.json); Rust-side `shell().sidecar()` resolves by externalBin alone.
 const ESPFLASH: &str = "espflash";
 
 /// Stage a firmware image in an atomically-created, randomly named private
@@ -458,10 +460,35 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
     }
 }
 
+/// The manifest URLs this app will ever fetch: the catalog's pinned stable
+/// release, the fixed fw-dev-latest dev constant, and the catalog's pinned
+/// Vision-module manifest. `fetch_manifest` is reachable straight from the
+/// webview, so the gate lives HERE, not only in the flash paths that happen
+/// to call it — the same closed-set discipline flash() and
+/// flash_vision_module() already apply before a byte moves.
+fn manifest_url_allowed(url: &str) -> bool {
+    if url == DEV_FLASH_MANIFEST_URL {
+        return true;
+    }
+    let Ok(catalog) = serde_json::from_str::<Value>(EMBEDDED_CATALOG) else {
+        return false;
+    };
+    let bundled = |v: Option<&Value>| v.and_then(Value::as_str) == Some(url);
+    bundled(catalog.get("manifest_url"))
+        || bundled(
+            catalog
+                .get("we2_module")
+                .and_then(|module| module.get("manifest_url")),
+        )
+}
+
 /// Fetch the live release manifest so the UI can show what version is
 /// currently published for each product (mirrors the website's manifest state).
 #[tauri::command]
 async fn fetch_manifest(manifest_url: String) -> Result<Value, String> {
+    if !manifest_url_allowed(&manifest_url) {
+        return Err("refusing an unbundled manifest URL".into());
+    }
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
         .timeout(std::time::Duration::from_secs(30))
@@ -501,6 +528,17 @@ async fn fetch_manifest(manifest_url: String) -> Result<Value, String> {
 /// endpoint the emulator's "connect" uses (see `tvos/discovery/DISCOVERY.md`).
 #[tauri::command]
 async fn witness_discover(bases: Vec<String>) -> Result<Value, String> {
+    // Same transport policy as every fleet-book call (fleet.rs base_ok): a
+    // discovery probe must never be steerable at an internet host. Candidates
+    // that fail the local-host gate are skipped, not fatal — the list is
+    // best-effort by design and the `.local` defaults always qualify.
+    let bases: Vec<&String> = bases.iter().filter(|b| fleet::base_ok(b)).collect();
+    if bases.is_empty() {
+        return Err(
+            "no local device address to try — device addresses must be local/private hosts"
+                .to_string(),
+        );
+    }
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
         .timeout(std::time::Duration::from_secs(2))
@@ -1261,8 +1299,25 @@ async fn flash_vision_module(
         }
     }
     let sha = release::verify_size_and_sha(&bytes, expected_size, expected_sha)?;
+    // Same fail-closed trust model as the firmware channel (and the browser
+    // flasher's verifyPinnedModelAsset): once a real release key is pinned, the
+    // model manifest MUST carry a valid Ed25519 signature over
+    // uint32_le(size)||sha256 — a checksum alone is repointable by whoever can
+    // swap release assets. checksum-only survives only the pre-key ceremony
+    // (all-zero pinned key). "Two flashers, two frontends": this must match the
+    // browser channel, and desktop_parity asserts it.
+    let release_pubkey = catalog
+        .get("release_pubkey")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "bundled catalog has no release public key".to_string())?;
+    let model_verification = release::verify_signature(
+        bytes.len(),
+        &sha,
+        model.get("signature").and_then(Value::as_str),
+        release_pubkey,
+    )?;
     emit_log(format!(
-        "✓ model verified: {} bytes · SHA-256 {}…",
+        "✓ model verified: {} bytes · SHA-256 {}… ({model_verification})",
         bytes.len(),
         &sha[..16]
     ));
@@ -1599,12 +1654,46 @@ async fn read_region(
     Ok(data)
 }
 
+/// The checks a save path must pass before this app writes to it. The comment
+/// on `save_text_file` used to be the only guard ("the save dialog already
+/// blessed it") — but a comment binds nobody, and this command is reachable
+/// straight from the webview, so an injected script could hand it any path at
+/// all. Enforce the shape a save-dialog answer actually has: an absolute
+/// path, into a directory that already exists (canonicalized, so `..` can't
+/// dress one directory up as another), ending in the one extension the
+/// export feature offers (`.json` — the health report). Returns the resolved
+/// path to write.
+fn validated_save_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err("save path must be absolute — pick it in the save dialog".into());
+    }
+    let ext_ok = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    if !ext_ok {
+        return Err("this app only saves .json exports".into());
+    }
+    let name = p
+        .file_name()
+        .ok_or_else(|| "save path has no file name".to_string())?;
+    let dir = p
+        .parent()
+        .ok_or_else(|| "save path has no parent directory".to_string())?
+        .canonicalize()
+        .map_err(|e| format!("save folder doesn't exist: {e}"))?;
+    Ok(dir.join(name))
+}
+
 /// Write UTF-8 text to a path the user just chose in the OS save panel — the
-/// health report's JSON export. No FS plugin, no ambient access: the frontend
-/// hands over a path the save dialog already blessed.
+/// health report's JSON export. No FS plugin, no ambient access — and the
+/// path is validated (`validated_save_path`), not merely trusted to have come
+/// from the dialog.
 #[tauri::command]
 async fn save_text_file(path: String, contents: String) -> Result<(), String> {
-    std::fs::write(&path, contents).map_err(|e| format!("couldn't save {path}: {e}"))
+    let out = validated_save_path(&path)?;
+    std::fs::write(&out, contents).map_err(|e| format!("couldn't save {path}: {e}"))
 }
 
 fn verdict_json(v: &health::Verdict) -> Value {
@@ -2150,6 +2239,53 @@ mod local_image_tests {
         factory[PARTITION_TABLE_OFFSET] = 0xAA;
         factory[PARTITION_TABLE_OFFSET + 1] = 0x50;
         assert!(check_local_image(&factory).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod webview_boundary_tests {
+    use super::{manifest_url_allowed, validated_save_path, DEV_FLASH_MANIFEST_URL};
+
+    #[test]
+    fn only_the_bundled_manifest_urls_are_fetchable() {
+        // The closed set: catalog stable pin, dev constant, Vision-module pin.
+        let catalog: serde_json::Value = serde_json::from_str(super::EMBEDDED_CATALOG).unwrap();
+        let stable = catalog.get("manifest_url").and_then(|v| v.as_str()).unwrap();
+        assert!(manifest_url_allowed(stable));
+        assert!(manifest_url_allowed(DEV_FLASH_MANIFEST_URL));
+        if let Some(we2) = catalog
+            .get("we2_module")
+            .and_then(|m| m.get("manifest_url"))
+            .and_then(|v| v.as_str())
+        {
+            assert!(manifest_url_allowed(we2));
+        }
+        // Anything else — including lookalikes — is refused before a socket.
+        assert!(!manifest_url_allowed("https://example.com/manifest-flash.json"));
+        assert!(!manifest_url_allowed(&format!("{DEV_FLASH_MANIFEST_URL}.evil")));
+        assert!(!manifest_url_allowed(""));
+    }
+
+    #[test]
+    fn save_paths_are_validated_not_trusted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let good = dir.path().join("canary-report.json");
+        let resolved = validated_save_path(good.to_str().unwrap()).expect("a dialog-shaped path");
+        assert_eq!(resolved.file_name().unwrap(), "canary-report.json");
+
+        // Relative paths, non-.json targets, and missing folders are refused.
+        assert!(validated_save_path("report.json").is_err());
+        assert!(validated_save_path(dir.path().join("evil.sh").to_str().unwrap()).is_err());
+        assert!(validated_save_path(
+            dir.path().join("no-such-dir/report.json").to_str().unwrap()
+        )
+        .is_err());
+
+        // `..` segments are resolved away, never written through blindly.
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let sneaky = dir.path().join("sub/../canary-report.json");
+        let resolved = validated_save_path(sneaky.to_str().unwrap()).expect("canonicalized");
+        assert_eq!(resolved, dir.path().canonicalize().unwrap().join("canary-report.json"));
     }
 }
 

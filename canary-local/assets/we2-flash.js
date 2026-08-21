@@ -23,7 +23,7 @@
 
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
-import { helpTopic, hatchMoment, isVisionBoard } from "./flash-core.js";
+import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset } from "./flash-core.js";
 import { chirp } from "./chirp.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
@@ -285,8 +285,8 @@ function phaseModuleConnected(ctx, s) {
   const src = el("div", "we2-src");
   const pinned = el("button", "card we2-src-card");
   pinned.append(el("strong", null, "The pinned model (recommended)"),
-    el("span", "muted", m.model.name + " — fetched from the project’s signed release, " +
-      "SHA-256 checked against the release manifest before anything is written."),
+    el("span", "muted", m.model.name + " — fetched from the project’s signed release; " +
+      "SHA-256 and the Ed25519 release signature are checked before anything is written."),
     el("code", "fineprint", "manifest-vision-model.json · " + m.model_addr));
   const local = el("button", "card we2-src-card");
   local.append(el("strong", null, "A model file you already have"),
@@ -322,8 +322,24 @@ function phaseModuleConnected(ctx, s) {
         return r.arrayBuffer();
       }));
       const hex = await sha256hex(bytes);
-      if (hex !== String(asset.sha256).toLowerCase()) {
-        note.textContent = "✗ SHA-256 mismatch — refusing to flash. Expected " + asset.sha256 + ", got " + hex + ".";
+      // Same fail-closed trust model as the firmware images (flash-core):
+      // sha256 must match AND, once a real release key is pinned, the
+      // manifest entry must carry a valid Ed25519 release signature — a
+      // checksum alone is repointable by whoever can swap release assets.
+      const verdict = await verifyPinnedModelAsset({
+        bytes, sha256Hex: hex, asset,
+        releasePubkey: ctx.catalog.release_pubkey,
+      });
+      if (!verdict.ok) {
+        note.textContent =
+          verdict.why === "sha256"
+            ? "✗ SHA-256 mismatch — refusing to flash. Expected " + asset.sha256 + ", got " + hex + "."
+            : verdict.why === "require-signature"
+              ? "✗ The release manifest carries no model signature, but this build pins a real " +
+                "release key — refusing to flash an unsigned model. A release cut after the key " +
+                "ceremony ships a signed manifest; until then use a local file you trust."
+              : "✗ Model signature verification failed — refusing to flash. The asset does not " +
+                "match what the release key signed.";
         return;
       }
       ctx.setPhase(phaseModuleFlash(ctx, s, {

@@ -39,6 +39,7 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <NimBLEScan.h>
+#include "ble_heap_guard.h"
 #include <string>
 
 namespace ble_scout {
@@ -112,6 +113,17 @@ bool nimble_scan_init() {
 #if defined(FEATURE_BLE_STATUS) && FEATURE_BLE_STATUS
     return false;
 #else
+    /* Fail closed on low memory: if there's no room for the ~30 KB contiguous
+     * controller allocation, don't call init() — it would assert and boot-loop
+     * the device (the "BLE_INIT: Malloc failed" panic seen on no-PSRAM builds).
+     * Skip the Scout instead; enabling PSRAM is the fix. This is the same guard
+     * the canary-wap NimBLE init owner (bluetooth_channel.cpp / ble_heap_guard.h)
+     * consults — the guard header's rule is that EVERY NimBLEDevice::init() call
+     * site checks first, and this is the Scout-only build's own init site. */
+    if (!ble_heap_guard::can_init(nullptr)) {
+      Serial.println("[SCOUT] BLE stack not started: insufficient heap (enable PSRAM)");
+      return false;
+    }
     if (!NimBLEDevice::init("securacv-scout")) {
       return false;
     }

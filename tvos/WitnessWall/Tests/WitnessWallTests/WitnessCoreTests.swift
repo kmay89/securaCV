@@ -73,9 +73,9 @@ final class WitnessCoreTests: XCTestCase {
           "kernel": "kitchen-hub",
           "verified_through": "4:02 PM",
           "devices": [
-            { "name": "Front Door", "online": true,  "chain": "ok", "product": "canary-wap" },
+            { "name": "Front Door", "online": true,  "chain": "ok", "product": "canary-wap", "hub": "ok" },
             { "name": "Studio",     "online": true,  "chain": "ok", "product": "canary" },
-            { "name": "Driveway",   "online": false, "chain": "ok", "product": "canary-vision" }
+            { "name": "Driveway",   "online": false, "chain": "ok", "product": "canary-vision", "hw": "xiao-esp32c3" }
           ]
         }
         """
@@ -85,6 +85,11 @@ final class WitnessCoreTests: XCTestCase {
         XCTAssertEqual(fleet.onlineCount, 2)
         XCTAssertFalse(fleet.hasChainTrouble)
         XCTAssertEqual(fleet.summary, "2 of 3 Canaries online")
+        // The doc's optional fields survive the round trip through the Rust
+        // normalizer: the board id that resolves a figure, and the hub word.
+        XCTAssertEqual(fleet.devices[0].hub, "ok")
+        XCTAssertEqual(fleet.devices[2].hw, "xiao-esp32c3")
+        XCTAssertNil(fleet.devices[1].hw)
     }
 
     func testOnlineDefaultsToTrueWhenOmitted() throws {

@@ -18,6 +18,7 @@ Choose your project and board:
 | **Canary WAP** | XIAO ESP32-S3 Sense | GPS tracking, SD storage, mesh network | [Get Started →](projects/canary-wap/) |
 | **Canary Vision** | ESP32-C3 + Grove Vision AI | Person detection, Home Assistant | [Get Started →](projects/canary-vision/) |
 | **Canary Sense** | XIAO ESP32-C6 + MR60BHA2 | Presence + breathing radar, Home Assistant | [Get Started →](projects/canary-sense/) |
+| **Canary Display** | XIAO ESP32-S3 + Round Display (watch) / Waveshare 4.3" (dash) / 1.47" sticks (nightstand, nightlight) / 7" panels | Fleet status glass: MQTT subscribe, on-device Ed25519 chain verify, glance UI | [Get Started →](projects/canary-display/) |
 | **Canary Sentinel** | XIAO ESP32-C3 / C6+MR60 (+S3 hub) | Multi-sensor fusion people detection (PIR + radar + WiFi/BLE + light), Lite/Standard/Heavy | [Get Started →](projects/canary-sentinel/) |
 
 ### Canary WAP (Recommended First Project)

@@ -73,7 +73,9 @@ jobs:
     - name: Build with no default features
       run: cargo check --no-default-features
     - name: Build with PQC features
-      run: cargo check --features pqc-signatures,pqc-vault,pqc-tls
+      # clippy -D warnings (not bare check): this is the only job compiling the
+      # pqc-tls combination, so a plain check left its warnings unenforceable.
+      run: cargo clippy --all-targets --features pqc-signatures,pqc-vault,pqc-tls -- -D warnings
     - name: Test with PQC features
       run: cargo test --features pqc-signatures,pqc-vault
     # c2pa-export tests actually execute here (not just compile-gate): the

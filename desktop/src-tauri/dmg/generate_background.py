@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Build the branded .dmg window background for the SecuraCV Flasher installer.
 
+The star of the bottom panel is the **Terminal one-liner** that clears macOS's
+quarantine flag — because on recent macOS (Sequoia+) right-click → Open no
+longer offers a bypass, so the command is the reliable path, not a fallback.
+(Same copy as the Lab's dmg/generate_background.py — keep the two in step.)
+
 Layout is deliberately COLLISION-PROOF: Finder places the two icons (the app
 and the Applications alias) roughly in the vertical middle, and their exact Y
 can't be pixel-tuned without a real Mac. So all artwork lives in the top and
@@ -39,9 +44,10 @@ TEXT = (233, 238, 250)
 MUTED = (150, 162, 186)
 
 # Vertical safe zones (points). Nothing is drawn in the middle band, where the
-# icons + their labels live.
+# icons + their labels live. The icons center at y=225, so the panel starts
+# 80 pt below that — the same clearance the Lab's 220/300 layout keeps.
 TOP_LIMIT = 150      # artwork stays above this
-BOTTOM_LIMIT = 330   # artwork stays below this
+BOTTOM_LIMIT = 305   # the first-open panel starts here
 
 
 def font(name, pt):
@@ -96,20 +102,41 @@ def main():
 
     # (icons + their Finder labels render in the clear band here — no artwork)
 
-    # ── BOTTOM safe zone: the one-time first-open note ─────────────────────
+    # ── BOTTOM safe zone: the one-time first-open command (the star) ───────
+    # Command-first, pill-highlighted — right-click → Open stopped being a
+    # bypass on macOS 15 (Sequoia), so it must not lead here. Same copy as
+    # the Lab's generator; INSTALL.md carries the full per-version steps.
     py0, py1 = BOTTOM_LIMIT * S, (WIN_H - 22) * S
     panel = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(panel).rounded_rectangle([40 * S, py0, W - 40 * S, py1],
+    ImageDraw.Draw(panel).rounded_rectangle([32 * S, py0, W - 32 * S, py1],
                                             radius=18 * S, fill=(255, 255, 255, 15))
     img = Image.alpha_composite(img, panel)
     d = ImageDraw.Draw(img)
-    center(d, W // 2, py0 + 26 * S,
-           "First launch: right-click the app in Applications → Open  (one time only)",
+
+    center(d, W // 2, py0 + 24 * S,
+           "First launch blocked? macOS quarantines apps from the web.",
            font("DejaVuSans-Bold.ttf", 14), TEXT)
-    center(d, W // 2, py0 + 55 * S, "— or, in Terminal —", font("DejaVuSans.ttf", 11), MUTED)
-    center(d, W // 2, py0 + 81 * S,
-           'xattr -dr com.apple.quarantine "/Applications/SecuraCV Flasher.app"',
-           font("DejaVuSansMono.ttf", 12), CANARY)
+    center(d, W // 2, py0 + 47 * S,
+           "Open Terminal (⌘-Space → “Terminal”), paste this line, press return:",
+           font("DejaVuSans.ttf", 12), MUTED)
+
+    # The command, on its own highlighted pill — the thing to copy.
+    cmd = 'xattr -dr com.apple.quarantine "/Applications/SecuraCV Flasher.app"'
+    cmd_f = font("DejaVuSansMono-Bold.ttf", 12)
+    cl, ct, cr, cb = d.textbbox((0, 0), cmd, font=cmd_f)
+    cw = cr - cl
+    pill_y = py0 + 66 * S
+    pill = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(pill).rounded_rectangle(
+        [W // 2 - cw // 2 - 16 * S, pill_y, W // 2 + cw // 2 + 16 * S, pill_y + 30 * S],
+        radius=8 * S, fill=(0, 0, 0, 90))
+    img = Image.alpha_composite(img, pill)
+    d = ImageDraw.Draw(img)
+    center(d, W // 2, pill_y + 15 * S, cmd, cmd_f, CANARY)
+
+    center(d, W // 2, py1 - 14 * S,
+           "Then launch it normally, forever. Full steps: INSTALL.md / the release notes.",
+           font("DejaVuSans.ttf", 10), MUTED)
 
     # Downscale the supersampled canvas to the exact window size — Finder maps
     # image pixels to window points, so anything else renders wrong-scale.

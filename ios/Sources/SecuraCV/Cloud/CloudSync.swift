@@ -66,6 +66,19 @@ final class CloudSync {
         #endif
     }
 
+    /// Delete one device's cloud record — the other half of `push`. Without
+    /// it, unpairing never sticks: the next `pull` re-adds the removed device
+    /// token-less, it polls dark, and raises a false "gone dark" alert.
+    /// Best-effort like `push`; DeviceStore's local tombstone covers the gap
+    /// until the delete lands.
+    func delete(_ deviceID: String) {
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        guard isAvailable else { return }
+        let db = CloudContainer.shared.privateCloudDatabase
+        db.delete(withRecordID: .init(recordName: deviceID)) { _, _ in /* best-effort */ }
+        #endif
+    }
+
     /// Pull the private-DB copy on launch / on iCloud-account change.
     func pull() async -> [PairedDeviceRef] {
         #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT

@@ -3646,6 +3646,12 @@
             }
           ]
         }
+      ],
+      "deps": [
+        {
+          "file": "canary_mark_lib.scad",
+          "sha256": "ed31240c982b12abaf29c482f5e359f19e304e4e8f22d387c38be5dab429c6bc"
+        }
       ]
     }
   ]

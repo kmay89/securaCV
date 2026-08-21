@@ -4,7 +4,8 @@
 // fleet rather than one board family. Two layers, deliberately separated:
 //
 //   1. PRESENCE BEACON (universal). Every Canary continuously broadcasts the
-//      11-byte fleet-link presence beacon as its PRIMARY advertisement —
+//      fleet-link presence beacon (11-byte v1, or the 13-byte v2 that vision
+//      boards send with a coarse detection hint) as its PRIMARY advertisement —
 //      canary-vision and canary-sense from `src/net/fleet_beacon_adv.cpp`,
 //      canary-wap/canary-display through `securacv_ble_status`. No broker, no
 //      home Wi-Fi, no pairing, no connection. Decoding is pure: Wire/FleetBeacon.

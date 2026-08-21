@@ -94,7 +94,7 @@ echo "── Security: AP password ──"
 
 AP_HITS=$(grep -rn '"witness2026"' "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//.*witness2026" | grep -v "LEGACY\|REMOVED\|OLD" || true)
 if [ -n "$AP_HITS" ]; then
-  check_warn "Hardcoded AP password 'witness2026' found — should be device-unique"
+  check_fail "Hardcoded AP password 'witness2026' found — must be device-unique"
   echo "$AP_HITS" | while read -r line; do blue "  $line"; done
   blue "  See: LESSONS_LEARNED.md → Security → AP password must be device-unique"
 else

@@ -161,9 +161,10 @@ fn main() -> Result<()> {
     let mut verified_entry_hashes: Vec<[u8; 32]> = Vec::new();
     {
         let _stage = ui.stage("Verify export receipts");
+        let lineage_keys = verify_helpers::lineage_verifying_keys(&conn, &verifying_key)?;
         let count = verify::verify_export_receipts_with(
             &conn,
-            &verifying_key,
+            &lineage_keys,
             signature_mode,
             pq_verifying_key.as_ref(),
             |id, entry_hash| {

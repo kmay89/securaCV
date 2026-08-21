@@ -29,10 +29,65 @@ pub const RECHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// UI yet, an eternal decline would strand someone who changes their mind.
 const DECLINE_SNOOZE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-/// One update conversation at a time.
+/// One update conversation at a time — held by the routine check AND by the
+/// Settings panel's `install_update`, so the two can never race two
+/// `install` operations over the same app bundle.
 #[derive(Default)]
 pub struct UpdateGate {
     busy: bool,
+    /// True only while the updater is REPLACING the app bundle on disk.
+    /// The quit guards in lib.rs read this: being killed inside that window
+    /// is the one thing that can leave the Lab unable to open at all
+    /// (RELEASE_LESSONS 2026-07-31). Deliberately NOT set during the
+    /// download — a slow connection must never read as "don't quit".
+    installing: bool,
+}
+
+/// Whether an update is overwriting the app bundle right now — what the
+/// close/exit guards in lib.rs ask before letting a quit through.
+pub fn install_in_progress(app: &AppHandle) -> bool {
+    app.try_state::<Mutex<UpdateGate>>()
+        .map(|gate| gate.lock().map(|g| g.installing).unwrap_or(false))
+        .unwrap_or(false)
+}
+
+fn set_installing(app: &AppHandle, value: bool) {
+    if let Some(gate) = app.try_state::<Mutex<UpdateGate>>() {
+        if let Ok(mut g) = gate.lock() {
+            g.installing = value;
+        }
+    }
+}
+
+/// Download, then install, journaling each act. Split on purpose (the
+/// Flasher's shape): the download touches nothing but a buffer, so being
+/// interrupted there costs a re-download and nothing else. Only `install`
+/// moves the app bundle on disk, so only `install` is wrapped in the
+/// `installing` flag the quit guards read.
+async fn download_then_install(
+    app: &AppHandle,
+    update: tauri_plugin_updater::Update,
+) -> Result<(), String> {
+    let version = update.version.clone();
+    journal(app, &format!("downloading v{version}…"));
+    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| {
+        let msg = format!("update download failed: {e}");
+        journal(app, &msg);
+        msg
+    })?;
+    journal(app, &format!("installing v{version}…"));
+    set_installing(app, true);
+    let outcome = update.install(bytes);
+    // Cleared on failure too: an install that returned an error unwound and
+    // put the bundle back, so there is nothing mid-write left to protect.
+    set_installing(app, false);
+    outcome.map_err(|e| {
+        let msg = format!("update install failed: {e}");
+        journal(app, &msg);
+        msg
+    })?;
+    journal(app, &format!("installed v{version} — relaunching"));
+    Ok(())
 }
 
 /// What an update offer looks like to the frontend seam (same DTO shape as
@@ -44,6 +99,11 @@ pub struct UpdateDto {
     notes: Option<String>,
 }
 
+// KEEP IN LOCKSTEP with `desktop/src-tauri/src/launch_guard.rs`
+// (`epoch_secs` / `utc_stamp`): the Flasher's launch guard carries a
+// byte-for-byte copy of these two functions (two crates, no shared crate yet,
+// and a helper crate for two tiny functions isn't worth its ceremony). A fix
+// to either copy belongs in both.
 fn epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -192,26 +252,56 @@ pub async fn check_update(app: AppHandle) -> Result<Option<UpdateDto>, String> {
 
 /// Download and install the pending update, journaling the act, then
 /// relaunch into the new version.
+///
+/// Holds the same [`UpdateGate`] as `routine_check`: without it, a
+/// Settings-panel "Update & relaunch" could race a routine-check dialog's
+/// install — two `install` operations over the same app bundle. Whoever got
+/// there first owns the conversation; the loser gets told, not queued.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("update check failed: {e}"))?
-        .ok_or_else(|| "already up to date".to_string())?;
-    let version = update.version.clone();
-    journal(&app, &format!("installing v{version}…"));
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|e| {
-            let msg = format!("update install failed: {e}");
+    {
+        let gate = app.state::<Mutex<UpdateGate>>();
+        let mut g = gate.lock().unwrap();
+        if g.busy {
+            return Err("an update conversation is already in progress".to_string());
+        }
+        g.busy = true;
+    }
+    let done = |app: &AppHandle| {
+        let gate = app.state::<Mutex<UpdateGate>>();
+        gate.lock().unwrap().busy = false;
+    };
+
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            let msg = format!("update check unavailable: {e}");
             journal(&app, &msg);
-            msg
-        })?;
-    journal(&app, &format!("installed v{version} — relaunching"));
-    app.restart()
+            done(&app);
+            return Err(msg);
+        }
+    };
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            done(&app);
+            return Err("already up to date".to_string());
+        }
+        Err(e) => {
+            let msg = format!("update check failed: {e}");
+            journal(&app, &msg);
+            done(&app);
+            return Err(msg);
+        }
+    };
+    match download_then_install(&app, update).await {
+        // `restart()` diverges (`!`), so the gate needs no release on success.
+        Ok(()) => app.restart(),
+        Err(msg) => {
+            done(&app);
+            Err(msg)
+        }
+    }
 }
 
 /// Markdown release notes → the plain text a native dialog can show:
@@ -313,15 +403,9 @@ pub async fn routine_check(app: AppHandle) {
         return done(&app);
     }
 
-    journal(&app, &format!("installing v{version}…"));
-    match update.download_and_install(|_, _| {}, || {}).await {
-        Ok(()) => {
-            journal(&app, &format!("installed v{version} — relaunching"));
-            app.restart();
-        }
-        Err(e) => {
-            journal(&app, &format!("update install failed: {e}"));
-            done(&app);
-        }
+    match download_then_install(&app, update).await {
+        Ok(()) => app.restart(),
+        // download_then_install already journaled the failure.
+        Err(_) => done(&app),
     }
 }
