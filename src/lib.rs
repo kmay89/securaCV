@@ -98,7 +98,7 @@ pub use storage_health::{
     SharedStorageHealth, StorageHealthMonitor, StorageHealthReport, StorageHealthStatus,
 };
 pub use vault::crypto::VaultCryptoMode;
-pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultStore};
+pub use vault::{FilesystemVaultStore, Vault, VaultConfig, VaultKeyMaterial, VaultStore};
 
 pub fn shared_memory_uri() -> String {
     let mut bytes = [0u8; 8];
@@ -3021,17 +3021,44 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 /// Seeds shorter than this are brute-forceable.
 pub const MIN_SEED_LENGTH: usize = 32;
 
+/// Prefix marking a v1 Argon2id device seed. Full form:
+/// `seed-argon2id:v1:m=<KiB>,t=<iters>,p=<lanes>:<salt-hex>:<passphrase>`.
+/// A seed carrying this prefix is derived with the memory-hard Argon2id KDF so
+/// a low-entropy passphrase cannot be brute-forced offline the way the fast
+/// SHA-256 legacy derivation allows.
+pub const ARGON2_SEED_PREFIX: &str = "seed-argon2id:v1:";
+/// Upper bound on Argon2 memory (KiB) accepted from a seed string — bounds
+/// memory exhaustion from a malformed or hostile `m=` field. 512 MiB.
+const ARGON2_MAX_M_KIB: u32 = 512 * 1024;
+/// Floor below which the memory cost is too weak to be worth the format. 8 MiB.
+const ARGON2_MIN_M_KIB: u32 = 8 * 1024;
+/// Upper bounds on the time/parallelism cost accepted from a seed string. The
+/// device-open path derives the key without a strength gate, so an unbounded
+/// `t` (argon2 accepts up to u32::MAX) would hang startup on a typo'd or hostile
+/// seed; these caps keep the derivation bounded while leaving ample strength.
+const ARGON2_MAX_T: u32 = 16;
+const ARGON2_MAX_P: u32 = 8;
+/// Minimum salt length (bytes) for a v1 Argon2id seed.
+const ARGON2_MIN_SALT_LEN: usize = 16;
+
 pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
     let trimmed = seed.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("device_key_seed is required"));
+    }
+    // Memory-hard path (opt-in via explicit prefix). Everything WITHOUT the
+    // prefix falls through to the exact legacy derivation below, so every
+    // existing device identity is byte-for-byte unchanged.
+    if let Some(rest) = trimmed.strip_prefix(ARGON2_SEED_PREFIX) {
+        return signing_key_from_argon2_seed(rest);
     }
     if trimmed == "devkey:mvp" {
         return Err(anyhow!("device_key_seed must not use MVP placeholder"));
     }
     // Enforce minimum entropy: firmware uses hardware RNG (32+ bytes).
     // Seeds shorter than MIN_SEED_LENGTH are likely dictionary words or
-    // short passphrases and are brute-forceable.
+    // short passphrases and are brute-forceable. For a memorable passphrase,
+    // use the `seed-argon2id:v1:` format (see `make_argon2id_seed`) instead.
     if trimmed.len() < MIN_SEED_LENGTH {
         return Err(anyhow!(
             "device_key_seed too short: {} chars (minimum {} required). \
@@ -3046,8 +3073,204 @@ pub fn signing_key_from_seed(seed: &str) -> Result<SigningKey> {
     Ok(SigningKey::from_bytes(&digest))
 }
 
+/// Derive an Ed25519 signing key from the body of a `seed-argon2id:v1:` seed
+/// (`m=..,t=..,p=..:<salt-hex>:<passphrase>`). The passphrase is the remainder
+/// after the second `:` and MAY itself contain colons.
+fn signing_key_from_argon2_seed(rest: &str) -> Result<SigningKey> {
+    let mut parts = rest.splitn(3, ':');
+    let params_str = parts
+        .next()
+        .ok_or_else(|| anyhow!("argon2 seed: missing params"))?;
+    let salt_hex = parts
+        .next()
+        .ok_or_else(|| anyhow!("argon2 seed: missing salt"))?;
+    let passphrase = parts
+        .next()
+        .ok_or_else(|| anyhow!("argon2 seed: missing passphrase"))?;
+    if passphrase.is_empty() {
+        return Err(anyhow!("argon2 seed: passphrase is empty"));
+    }
+
+    let (mut m, mut t, mut p) = (None, None, None);
+    for kv in params_str.split(',') {
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| anyhow!("argon2 seed: malformed param '{kv}'"))?;
+        let n: u32 = v
+            .parse()
+            .map_err(|_| anyhow!("argon2 seed: non-numeric param '{kv}'"))?;
+        match k {
+            "m" => m = Some(n),
+            "t" => t = Some(n),
+            "p" => p = Some(n),
+            other => return Err(anyhow!("argon2 seed: unknown param '{other}'")),
+        }
+    }
+    let m = m.ok_or_else(|| anyhow!("argon2 seed: missing m="))?;
+    let t = t.ok_or_else(|| anyhow!("argon2 seed: missing t="))?;
+    let p = p.ok_or_else(|| anyhow!("argon2 seed: missing p="))?;
+    if !(ARGON2_MIN_M_KIB..=ARGON2_MAX_M_KIB).contains(&m) {
+        return Err(anyhow!(
+            "argon2 seed: m={m} KiB out of range [{ARGON2_MIN_M_KIB}, {ARGON2_MAX_M_KIB}]"
+        ));
+    }
+    if t == 0 || p == 0 {
+        return Err(anyhow!("argon2 seed: t and p must be >= 1"));
+    }
+    if t > ARGON2_MAX_T || p > ARGON2_MAX_P {
+        return Err(anyhow!(
+            "argon2 seed: t/p too large (max t={ARGON2_MAX_T}, p={ARGON2_MAX_P}) — \
+             bounded to keep device-open from hanging"
+        ));
+    }
+
+    let salt = hex::decode(salt_hex).map_err(|_| anyhow!("argon2 seed: salt is not hex"))?;
+    if salt.len() < ARGON2_MIN_SALT_LEN {
+        return Err(anyhow!(
+            "argon2 seed: salt too short ({} bytes, need >= {ARGON2_MIN_SALT_LEN})",
+            salt.len()
+        ));
+    }
+
+    let params = argon2::Params::new(m, t, p, None)
+        .map_err(|e| anyhow!("argon2 seed: invalid params: {e}"))?;
+    let kdf = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let mut out = Zeroizing::new([0u8; 32]);
+    kdf.hash_password_into(passphrase.as_bytes(), &salt, out.as_mut())
+        .map_err(|e| anyhow!("argon2 seed: derivation failed: {e}"))?;
+    Ok(SigningKey::from_bytes(&out))
+}
+
+/// Build a `seed-argon2id:v1:` seed string from a passphrase, with a fresh
+/// random 16-byte salt and interactive-strength defaults (64 MiB, 3 passes).
+/// Provisioning tools should offer this instead of hashing a bare passphrase.
+/// The returned string carries the passphrase, so it is `Zeroizing`.
+pub fn make_argon2id_seed(passphrase: &str) -> Zeroizing<String> {
+    let mut salt = [0u8; 16];
+    rand::fill(&mut salt[..]);
+    let s = format!(
+        "{ARGON2_SEED_PREFIX}m=65536,t=3,p=1:{}:{}",
+        hex::encode(salt),
+        passphrase
+    );
+    // The salt is public (it is embedded in the seed string), so no scrub.
+    Zeroizing::new(s)
+}
+
+/// Reject a seed that a *new* provisioning would derive weakly. Accepts the
+/// memory-hard `seed-argon2id:v1:` format, the structured `devkey:` seeds
+/// (dev/random), and a full-entropy 64-hex string; rejects a bare short/low-
+/// entropy passphrase (which the legacy SHA-256 path would leave brute-forceable).
+/// Intended for operator-facing provisioning tools; it is NOT applied on the
+/// device-open path, so an already-provisioned device is never locked out.
+pub fn validate_new_seed_strength(seed: &str) -> Result<()> {
+    let trimmed = seed.trim();
+    if trimmed.starts_with(ARGON2_SEED_PREFIX) || trimmed.starts_with("devkey:") {
+        return Ok(());
+    }
+    let is_full_entropy_hex = trimmed.len() >= 64 && trimmed.bytes().all(|b| b.is_ascii_hexdigit());
+    if is_full_entropy_hex {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "device_key_seed is not strong enough to provision: use a full-entropy \
+         64-hex seed (`openssl rand -hex 32`) or a memory-hard passphrase seed \
+         (`seed-argon2id:v1:...`, see make_argon2id_seed). A bare passphrase would \
+         be brute-forceable through the legacy derivation."
+    ))
+}
+
 pub fn verifying_key_from_seed(seed: &str) -> Result<VerifyingKey> {
     Ok(signing_key_from_seed(seed)?.verifying_key())
+}
+
+#[cfg(test)]
+mod argon2_seed_tests {
+    use super::*;
+
+    // A fast Argon2id vector for tests (8 MiB, 1 pass — the minimum accepted).
+    const A2_SEED: &str =
+        "seed-argon2id:v1:m=8192,t=1,p=1:000102030405060708090a0b0c0d0e0f:correct horse staple";
+
+    #[test]
+    fn legacy_derivation_is_byte_stable() {
+        // The legacy SHA-256 path must NEVER change — this pins a known seed's
+        // public key so any future edit to the derivation is caught in CI.
+        let pk = verifying_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0").unwrap();
+        assert_eq!(
+            hex::encode(pk.to_bytes()),
+            "ad220887aa0ba4d061b3f42712d73c9ce796dcb57be1f62dd2d9bd22ec29526c"
+        );
+    }
+
+    #[test]
+    fn argon2_seed_is_deterministic_and_pinned() {
+        let a = verifying_key_from_seed(A2_SEED).unwrap();
+        let b = verifying_key_from_seed(A2_SEED).unwrap();
+        assert_eq!(
+            a.to_bytes(),
+            b.to_bytes(),
+            "argon2 derivation is deterministic"
+        );
+        assert_eq!(
+            hex::encode(a.to_bytes()),
+            "f47ec890ca4d4afb9c68fda4a0d9da4f6bd9e097f5afe0516d673ddbba2bbae4",
+            "argon2 vector is host/thread-independent"
+        );
+    }
+
+    #[test]
+    fn argon2_seed_varies_by_salt() {
+        let s1 = "seed-argon2id:v1:m=8192,t=1,p=1:000102030405060708090a0b0c0d0e0f:pw";
+        let s2 = "seed-argon2id:v1:m=8192,t=1,p=1:0f0e0d0c0b0a09080706050403020100:pw";
+        assert_ne!(
+            verifying_key_from_seed(s1).unwrap().to_bytes(),
+            verifying_key_from_seed(s2).unwrap().to_bytes()
+        );
+    }
+
+    #[test]
+    fn passphrase_may_contain_colons() {
+        let s = "seed-argon2id:v1:m=8192,t=1,p=1:000102030405060708090a0b0c0d0e0f:a:b:c";
+        assert!(signing_key_from_seed(s).is_ok());
+    }
+
+    #[test]
+    fn argon2_parse_errors_do_not_panic() {
+        let salt = "000102030405060708090a0b0c0d0e0f";
+        for bad in [
+            "seed-argon2id:v1:".to_string(),
+            "seed-argon2id:v1:m=8192,t=1,p=1:zzzz:pw".to_string(),
+            "seed-argon2id:v1:m=8192,t=1,p=1:0001:pw".to_string(),
+            format!("seed-argon2id:v1:m=1,t=1,p=1:{salt}:pw"),
+            format!("seed-argon2id:v1:m=99999999,t=1,p=1:{salt}:pw"),
+            format!("seed-argon2id:v1:m=8192,t=0,p=1:{salt}:pw"),
+            format!("seed-argon2id:v1:m=8192,t=999,p=1:{salt}:pw"), // t over cap
+            format!("seed-argon2id:v1:m=8192,t=1,p=999:{salt}:pw"), // p over cap
+            format!("seed-argon2id:v1:x=1:{salt}:pw"),
+            format!("seed-argon2id:v1:m=8192,t=1,p=1:{salt}:"),
+        ] {
+            assert!(signing_key_from_seed(&bad).is_err(), "should reject: {bad}");
+        }
+    }
+
+    #[test]
+    fn make_argon2id_seed_round_trips() {
+        let seed = make_argon2id_seed("a memorable passphrase");
+        assert!(seed.starts_with(ARGON2_SEED_PREFIX));
+        let k1 = signing_key_from_seed(seed.as_str()).unwrap();
+        let k2 = signing_key_from_seed(seed.as_str()).unwrap();
+        assert_eq!(k1.to_bytes(), k2.to_bytes());
+    }
+
+    #[test]
+    fn strength_gate_accepts_strong_rejects_weak() {
+        assert!(validate_new_seed_strength("devkey:test:abc").is_ok());
+        assert!(validate_new_seed_strength(&"0".repeat(64)).is_ok());
+        assert!(validate_new_seed_strength("correct horse battery staple").is_err());
+        assert!(validate_new_seed_strength("short").is_err());
+        assert!(validate_new_seed_strength(make_argon2id_seed("pw").as_str()).is_ok());
+    }
 }
 
 pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {

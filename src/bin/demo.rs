@@ -153,6 +153,7 @@ fn main() -> Result<()> {
     let vault = Vault::new(VaultConfig {
         local_path: vault_path.clone(),
         crypto_mode: policy.vault.crypto_mode,
+        key_material: witness_kernel::VaultKeyMaterial::from_env(),
     })?;
 
     let export_path = out_dir.join("export_bundle.json");
