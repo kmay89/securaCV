@@ -244,6 +244,9 @@ export class We2Flasher {
     }
     this.onLog("sending " + bytes.length + " bytes over XMODEM…");
     await this.xmodemSend(bytes, progressBase, progressSpan);
+    // The bar sits at 100 % while the bootloader digests the transfer and
+    // offers its prompt (up to ~10 s) — name the pause, or it reads as a hang.
+    this.onLog("all blocks acknowledged — waiting for the bootloader's prompt (up to ~10 s)…");
     await this.answerPrompt(finish ? "y" : "n");
     if (finish) {
       this.onLog("done — rebooting the module");

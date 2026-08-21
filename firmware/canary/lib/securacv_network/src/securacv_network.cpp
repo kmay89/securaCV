@@ -111,8 +111,13 @@ esp_err_t http_send_json(httpd_req_t* req, const char* json) {
 }
 
 esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {
+  // Every status a caller actually passes must map, or it silently ships as
+  // 400: the OTA handlers' 409 ("busy — retry") degraded exactly that way,
+  // so the desktop Flasher's retry-on-busy branch never fired.
   httpd_resp_set_status(req, status_code == 400 ? "400 Bad Request" :
                               status_code == 404 ? "404 Not Found" :
+                              status_code == 409 ? "409 Conflict" :
+                              status_code == 503 ? "503 Service Unavailable" :
                               status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
@@ -373,6 +378,17 @@ bool ScvNetworkManager::loadCredentials() {
 
     m_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
     m_creds.configured = (strlen(m_creds.ssid) > 0);
+  } else if (ssid_len == 0 && nvs.isKey(NVS_KEY_WIFI_SSID)) {
+    // String-typed seed: isKey() is type-blind and getBytesLength() is 0 for
+    // string entries, so a present key with no blob bytes is the other
+    // encoding, not absence (LESSONS_LEARNED "A seeded credential key is
+    // honored whichever NVS TYPE wrote it"). Same caps as the blob path;
+    // an empty string ssid stays unconfigured.
+    if (nvs.getString(NVS_KEY_WIFI_SSID, m_creds.ssid, sizeof(m_creds.ssid)) > 0) {
+      nvs.getString(NVS_KEY_WIFI_PASS, m_creds.password, sizeof(m_creds.password));
+      m_creds.enabled = nvs.getBool(NVS_KEY_WIFI_EN, true);
+      m_creds.configured = true;
+    }
   }
 
   nvs.end();

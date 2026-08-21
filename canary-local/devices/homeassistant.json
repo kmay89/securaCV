@@ -3,7 +3,7 @@
   "integration": {
     "domain": "securacv",
     "name": "SecuraCV",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "iot_class": "local_push",
     "min_ha": "2024.4.1",
     "source": "custom_components/securacv/manifest.json + hacs.json"

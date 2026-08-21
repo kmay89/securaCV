@@ -126,13 +126,18 @@ final class AlertCenter: NSObject, ObservableObject {
     static let witnessCategoryID = "SECURACV_WITNESS"
     static let ackActionID = "SECURACV_ACK"
     static let muteActionID = "SECURACV_MUTE_1H"
+    /// The 3am action: the barking-dog night wants "until morning", and
+    /// making someone unlock the phone to find it is how one bad night
+    /// turns into notifications-off forever. Same MuteDuration the sheet
+    /// and the wrist use — it always expires (AlertSnooze's one rule).
+    static let muteMorningActionID = "SECURACV_MUTE_MORNING"
     /// The self-test's thread — the one alert Mute/Ack make no sense for.
     static let selfTestThread = "selftest"
 
     /// Wired by FleetStore: the notification actions land here, on the
     /// witness id carried as the thread identifier.
     var onAck: ((String) -> Void)?
-    var onMute: ((String) -> Void)?
+    var onMute: ((String, MuteDuration) -> Void)?
 
     private let center = UNUserNotificationCenter.current()
 
@@ -157,8 +162,10 @@ final class AlertCenter: NSObject, ObservableObject {
                                        title: "Acknowledge")
         let mute = UNNotificationAction(identifier: Self.muteActionID,
                                         title: "Mute 1 hour")
+        let muteMorning = UNNotificationAction(identifier: Self.muteMorningActionID,
+                                               title: "Mute until morning")
         let category = UNNotificationCategory(identifier: Self.witnessCategoryID,
-                                              actions: [ack, mute],
+                                              actions: [ack, mute, muteMorning],
                                               intentIdentifiers: [])
         center.setNotificationCategories([category])
     }
@@ -375,7 +382,10 @@ extension AlertCenter: UNUserNotificationCenterDelegate {
                 self.onAck?(threadID)
                 self.clearDelivered(thread: threadID)
             case Self.muteActionID:
-                self.onMute?(threadID)
+                self.onMute?(threadID, .oneHour)
+                self.clearDelivered(thread: threadID)
+            case Self.muteMorningActionID:
+                self.onMute?(threadID, .untilMorning)
                 self.clearDelivered(thread: threadID)
             default:
                 break   // default tap just opens the app — the Today tab is the answer

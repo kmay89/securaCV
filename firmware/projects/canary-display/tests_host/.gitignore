@@ -4,6 +4,7 @@ dump_voice_score
 test_arcade_logic
 test_beacon_parse
 test_bedside_models
+test_clock_styles
 test_demo_script
 test_display_settings
 test_fleet_beacon_model
@@ -13,6 +14,8 @@ test_mic_logic
 test_mode_registry
 test_nightlight
 test_orientation
+test_round_frame_core
+test_round_frame_cpp11
 test_rtc_pcf
 test_rtc_pcf85063
 test_voice_clearance

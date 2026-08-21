@@ -60,6 +60,18 @@ resolve_device_key_seed() {
     echo "$seed"
 }
 
+# compose_discovery_payload HOST [PORT]
+# Build the JSON body for the Supervisor /discovery announcement that lets
+# the SecuraCV integration show a zero-click discovered card. jq handles
+# the quoting so an unusual hostname can't corrupt the JSON. Pure: no
+# network, no bashio — unit-tested in tests/test_run_lib.sh.
+compose_discovery_payload() {
+    local host="${1:?compose_discovery_payload: host required}"
+    local port="${2:-8799}"
+    jq -cn --arg host "$host" --argjson port "$port" \
+        '{service: "securacv", config: {host: $host, port: $port}}'
+}
+
 # resolve_frigate_topic LEGACY_TOPIC TOPIC_PREFIX
 # The historical `frigate.mqtt_topic` option (a full topic) still wins when
 # set, so saved configs keep working; otherwise the topic is derived from

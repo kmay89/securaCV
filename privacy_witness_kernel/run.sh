@@ -22,8 +22,12 @@ source /usr/local/bin/run_lib.sh
 # Log startup
 bashio::log.info "Starting Privacy Witness Kernel add-on..."
 
-export SUPERVISOR_TOKEN="${HASSIO_TOKEN:-}"
-export INGRESS_PATH="${SUPERVISOR_INGRESS_PATH:-}"
+# The Supervisor provides SUPERVISOR_TOKEN directly; HASSIO_TOKEN is the
+# deprecated alias and only a fallback. Never let the alias clobber the
+# real token — on modern Supervisors HASSIO_TOKEN can be empty, and
+# overwriting SUPERVISOR_TOKEN with it broke every Supervisor API call
+# (wizard saves, discovery, restarts).
+export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-${HASSIO_TOKEN:-}}"
 
 # ============================================================================
 # First-run detection: the device key is auto-generated, so its absence no
@@ -124,6 +128,64 @@ bashio::log.info "Retention: $RETENTION_DAYS days"
 bashio::log.info "Time bucket: $TIME_BUCKET_MIN minutes"
 
 # ============================================================================
+# Event API exposure. The API binds all interfaces inside the container so
+# the SecuraCV integration (running in HA core) can reach it over the
+# internal add-on network at http://d0491a67-privacy-witness-kernel:8799.
+# This is NOT the LAN: config.yaml ships the 8799 host port mapping
+# disabled, so nothing outside the Supervisor network can connect unless
+# the user enables the port explicitly. Every data endpoint still requires
+# the rotating capability token from $TOKEN_FILE — the bind address never
+# relaxes authentication. The kernel refuses a non-loopback bind unless
+# this opt-in is set (its config file has no such field; the env var is
+# the implemented switch).
+# ============================================================================
+export WITNESS_API_ALLOW_INSECURE=1
+API_BIND_ADDR="0.0.0.0:8799"
+
+# ============================================================================
+# Supervisor discovery announcement. Once the kernel's Event API answers
+# /health, tell the Supervisor where it lives so the SecuraCV integration
+# can show a zero-click discovered card. Non-fatal: setup works without
+# it — discovery only removes typing on the integration side.
+# ============================================================================
+announce_discovery() {
+    local addon_host payload
+    addon_host=$(bashio::addon.hostname 2>/dev/null || hostname)
+    if [ -z "$addon_host" ]; then
+        bashio::log.warning "Discovery: could not determine the add-on hostname; skipping announcement."
+        return 0
+    fi
+
+    bashio::log.info "Discovery: waiting for the Event API before announcing to the Supervisor..."
+    local ready="false"
+    for _ in $(seq 1 60); do
+        if curl -sf http://127.0.0.1:8799/health > /dev/null 2>&1; then
+            ready="true"
+            break
+        fi
+        sleep 2
+    done
+    if [ "$ready" != "true" ]; then
+        bashio::log.warning "Discovery: Event API never became healthy; skipping announcement."
+        return 0
+    fi
+
+    payload=$(compose_discovery_payload "$addon_host" 8799)
+    if curl -sf -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        http://supervisor/discovery > /dev/null 2>&1; then
+        bashio::log.info "Discovery: announced the Event API to the Supervisor (${addon_host}:8799)."
+        bashio::log.info "Discovery: the SecuraCV integration will now appear under Settings -> Devices & Services."
+    else
+        bashio::log.warning "Discovery: announcement to the Supervisor failed (non-fatal)."
+        bashio::log.warning "Discovery: add the SecuraCV integration manually; the kernel itself is unaffected."
+    fi
+    return 0
+}
+
+# ============================================================================
 # Function to write API config for Frigate mode
 # ============================================================================
 write_frigate_api_config() {
@@ -132,7 +194,7 @@ write_frigate_api_config() {
   "db_path": "$DB_PATH",
   "ruleset_id": "ruleset:frigate_v1",
   "api": {
-    "addr": "127.0.0.1:8799",
+    "addr": "$API_BIND_ADDR",
     "token_path": "$TOKEN_FILE"
   },
   "retention": {
@@ -349,6 +411,10 @@ if [ "$MODE" = "frigate" ]; then
     WITNESS_API_PID=$!
     bashio::log.info "Witness API started (PID: $WITNESS_API_PID)"
 
+    # Announce the Event API for zero-click integration setup (background;
+    # waits for /health itself, never blocks or fails startup).
+    announce_discovery &
+
     # Start MQTT publisher in background if enabled (for HA Discovery)
     if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
         start_mqtt_publisher
@@ -434,7 +500,7 @@ else
   "db_path": "$DB_PATH",
   "ruleset_id": "ruleset:homeassistant_v1",
   "api": {
-    "addr": "127.0.0.1:8799",
+    "addr": "$API_BIND_ADDR",
     "token_path": "$TOKEN_FILE"
   },
   "rtsp": {
@@ -463,6 +529,10 @@ EOF
             start_mqtt_publisher
         ) &
     fi
+
+    # Announce the Event API for zero-click integration setup (background;
+    # waits for /health itself, never blocks or fails startup).
+    announce_discovery &
 
     bashio::log.info "Starting witnessd..."
     exec /usr/local/bin/witnessd

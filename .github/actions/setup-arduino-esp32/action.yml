@@ -41,7 +41,7 @@ runs:
   using: composite
   steps:
     - name: Install Arduino CLI
-      uses: arduino/setup-arduino-cli@v2
+      uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
       with:
         # Pinned to the 1.x line: "latest" crossing a major would change
         # CLI flags under every firmware job at once.

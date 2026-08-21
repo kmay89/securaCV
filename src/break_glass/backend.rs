@@ -41,9 +41,15 @@ impl KernelVaultOps {
         })
     }
 
-    /// Store (or replace) the quorum policy. Convenience for provisioning.
+    /// Store the quorum policy through the quorum-gated path: a fresh
+    /// database bootstraps freely; replacing a live policy requires
+    /// current-quorum approvals, which this provisioning convenience does not
+    /// carry — use the CLI `policy propose`/`approve`/`set --approvals` flow
+    /// for changes (Invariant V).
     pub fn set_policy(&mut self, policy: &QuorumPolicy) -> Result<()> {
-        self.kernel.set_break_glass_policy(policy)
+        self.kernel
+            .set_break_glass_policy_gated(policy, &[], crate::TimeBucket::now_10min()?)
+            .map(|_| ())
     }
 }
 
@@ -90,6 +96,7 @@ impl BreakGlassOps for KernelVaultOps {
         let vault = Vault::new(VaultConfig {
             local_path: self.vault_path.clone().into(),
             crypto_mode: policy.vault.crypto_mode,
+            key_material: crate::VaultKeyMaterial::from_env(),
         })?;
         let verifying_key = self.kernel.device_verifying_key();
         let mut clear = vault.unseal(
@@ -97,7 +104,13 @@ impl BreakGlassOps for KernelVaultOps {
             &mut token,
             self.ruleset_hash,
             &verifying_key,
-            |hash| self.kernel.break_glass_receipt_outcome(hash),
+            |hash| {
+                self.kernel.break_glass_receipt_outcome(
+                    &request.vault_envelope_id,
+                    self.ruleset_hash,
+                    hash,
+                )
+            },
         )?;
 
         // Write the recovered envelope to the server-configured directory (0600).
@@ -338,11 +351,12 @@ mod tests {
             let vault = Vault::new(VaultConfig {
                 local_path: vault_path.clone().into(),
                 crypto_mode: policy.vault.crypto_mode,
+                key_material: crate::VaultKeyMaterial::default(),
             })?;
             let vk = kernel.device_verifying_key();
             let mut raw = secret.clone();
             vault.seal(envelope, &mut token, cfg.ruleset_hash, &mut raw, &vk, |h| {
-                kernel.break_glass_receipt_outcome(h)
+                kernel.break_glass_receipt_outcome(envelope, cfg.ruleset_hash, h)
             })?;
         }
 

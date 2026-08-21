@@ -38,6 +38,15 @@ pub const DOMAIN_KEY_ROTATION_AUTHZ: &str = "securacv:pwk:device-key-rotation-au
 // a trustee's consent to its own context so a signature minted elsewhere
 // cannot stand in for an approval (and vice versa).
 pub const DOMAIN_TRUSTEE_APPROVAL: &str = "securacv:pwk:trustee-approval:v2";
+// A trustee's consent to a QUORUM POLICY CHANGE (roster, threshold, or vault
+// crypto settings). Deliberately disjoint from DOMAIN_TRUSTEE_APPROVAL so an
+// unlock-request approval can never stand in for consent to rewrite the
+// trustee roster, and vice versa — the two consents authorize different
+// powers (see spec/quorum_unseal_v2.md §3.1).
+pub const DOMAIN_POLICY_CHANGE_APPROVAL: &str = "securacv:pwk:policy-change-approval:v1";
+// The device's signature over an appended policy-change history record (the
+// chained ledger row itself, not a trustee's consent).
+pub const DOMAIN_POLICY_CHANGE_RECORD: &str = "securacv:pwk:policy-change-record:v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {

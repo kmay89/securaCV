@@ -2220,3 +2220,28 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   script when adding a target, and add each embedded path to `watch:`.
   (The tvOS/iOS apps are safe today — their only cross-tree embeds are
   Swift sources listed in project.yml, inside watched paths.)
+
+### 2026-08-20 — a non-blocking build matrix let products vanish from a release with only a ::warning
+
+- **Symptom:** the firmware-release build matrix degrades most per-product
+  steps (display SKUs, vision variants, the reach ports) to `::warning …
+  absent from this release` on a failed compile — by design, so one broken
+  SKU cannot sink the signed release around it. The unpriced half of that
+  bargain: nothing ever compared release N+1's product set to release N's,
+  so a board that shipped last month could silently drop out of
+  `manifest-flash.json` and the first person to notice would be its owner,
+  reflashing.
+- **Fix:** `firmware/scripts/check_manifest_completeness.py` runs after the
+  manifest build and BEFORE anything publishes: it diffs the fresh
+  `manifest-flash.json` product ids against the previous stable release's
+  (downloaded via `gh release download`), fails on any product that used to
+  ship and is now missing, and prints the shipped/added/dropped table into
+  the step summary. The `allow_dropped_products` workflow_dispatch input is
+  the explicit "yes, ship without it" sign-off; dev-channel prereleases run
+  the same diff in advisory mode. First release (no previous manifest)
+  skips cleanly.
+- **Applies to:** every release path built as a non-blocking matrix. A
+  step that degrades a failure to a warning needs a paired gate that diffs
+  the OUTPUT SET against the last shipped release — warnings scroll away,
+  a missing product id in a set comparison does not. When adding such a
+  gate, feed it a doctored manifest once and watch it go red (rule (x)).

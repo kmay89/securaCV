@@ -33,6 +33,10 @@ struct GlassSettingsSheet: View {
     @State private var busy = false
     @State private var wxPlace = ""
     @State private var wxPlaceStatus: String?
+    /// Every knob as the device reported it when this sheet OPENED — the
+    /// safety net under a session of fiddling. Captured once; "Undo
+    /// changes" replays it through the ordinary write path (SettingsRevert).
+    @State private var snapshot: [GlassKnob]?
 
     var body: some View {
         NavigationStack {
@@ -105,6 +109,14 @@ struct GlassSettingsSheet: View {
             .navigationTitle(witness.displayName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    // Offered only while there is honestly something to walk
+                    // back — a clean session never grows the button.
+                    if !revertWrites.isEmpty {
+                        Button("Undo changes") { Task { await revert() } }
+                            .disabled(busy)
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
@@ -120,9 +132,35 @@ struct GlassSettingsSheet: View {
             settings = s
             knobs = GlassAPI.knobs(for: s)
             problem = nil
+            // The first successful read is the session's "before" — the
+            // state "Undo changes" walks back to. Never overwritten: the
+            // net is only worth anything anchored where the session began.
+            if snapshot == nil { snapshot = knobs }
         } catch {
             problem = error.localizedDescription
         }
+    }
+
+    /// What "Undo changes" would write right now — empty means clean.
+    private var revertWrites: [GlassKnob] {
+        guard let snapshot else { return [] }
+        return SettingsRevert.writes(toRestore: snapshot, from: knobs)
+    }
+
+    /// Walk the device back to the opening snapshot, one key per POST (the
+    /// device's own contract), then re-read so the glass has the last word.
+    private func revert() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        for knob in revertWrites {
+            do {
+                try await GlassAPI.set(knob.key, GlassAPI.wireValue(for: knob), at: base)
+            } catch {
+                problem = "“\(knob.title)” wouldn't go back — \(error.localizedDescription)"
+            }
+        }
+        await load()
     }
 
     /// Post one key, then re-read. The re-read is the honest part: the glass

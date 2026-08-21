@@ -19,6 +19,7 @@ struct FleetView: View {
     @EnvironmentObject var store: FleetStore
     @State private var pairing: DiscoveredCanary?
     @State private var query = ""
+    @State private var showingFleetWiFi = false
     @AppStorage("fleet_view_style") private var styleRaw = FleetViewStyle.auto.rawValue
 
     /// The comb starts earning its keep around a handful of cells.
@@ -105,6 +106,18 @@ struct FleetView: View {
                         Toggle("Demo fleet", isOn: Binding(
                             get: { store.demoMode },
                             set: { store.setDemoMode($0) }))
+                        // The one chore that used to be N chores: the router
+                        // password changes once, the fleet follows once.
+                        // Offered only when there is a real fleet to move —
+                        // a demo-only comb has no Wi-Fi to update.
+                        if !store.devices.devices.isEmpty || store.witnesses.contains(where: { !$0.id.hasPrefix(DemoFleet.idPrefix) }) {
+                            Divider()
+                            Button {
+                                showingFleetWiFi = true
+                            } label: {
+                                Label("Update fleet Wi-Fi…", systemImage: "wifi")
+                            }
+                        }
                     } label: {
                         Label("Options", systemImage: "ellipsis.circle")
                     }
@@ -112,6 +125,7 @@ struct FleetView: View {
             }
             .navigationDestination(for: Witness.self) { DeviceDetailView(witness: $0) }
             .sheet(item: $pairing) { PairView(canary: $0) }
+            .sheet(isPresented: $showingFleetWiFi) { FleetWiFiSheet(store: store) }
             .modifier(FleetSearchModifier(query: $query,
                                           enabled: store.witnesses.count >= Self.searchThreshold))
         }

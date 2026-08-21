@@ -110,6 +110,23 @@ struct DeviceDetailView: View {
                 if !witness.firmware.isEmpty { LabeledContent("Firmware", value: witness.firmware) }
             }
 
+            // "Where IS it?" — the hot/cold search over this Canary's own
+            // Bluetooth beacon, plus (WAP-class) making the device chirp and
+            // blink for you. Offered whenever the beacon can be recognized:
+            // matching needs the fingerprint, which every paired device and
+            // every beacon-attached row carries.
+            if !liveWitness.fingerprint.isEmpty {
+                Section {
+                    NavigationLink {
+                        FindCanaryView(witness: liveWitness)
+                    } label: {
+                        Label("Find this Canary", systemImage: "location.north.circle")
+                    }
+                } footer: {
+                    Text("Warmer/colder over its Bluetooth beacon — room-level, honest words, no fake arrow. A WAP-class Canary can also chirp and blink so it finds you back.")
+                }
+            }
+
             if home.isEnabled {
                 // The Doctor row: what Apple Home and the fleet each say
                 // about this Canary, and one calm line when they disagree.
