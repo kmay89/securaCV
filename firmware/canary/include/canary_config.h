@@ -164,7 +164,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define DEVICE_TYPE           "canary"
-#define FIRMWARE_VERSION      "2.4.12"
+#define FIRMWARE_VERSION      "2.4.13"
 
 // Optional build-time provenance for the 'f' fingerprint command. CI/PlatformIO
 // can inject the short commit with -DFIRMWARE_GIT_HASH=\"abc1234\"; when it
