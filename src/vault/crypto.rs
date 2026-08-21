@@ -477,7 +477,7 @@ impl KemKeypair {
 fn kem_encapsulate(kem: &KemKeypair) -> Result<(Vec<u8>, Vec<u8>)> {
     #[cfg(feature = "pqc-vault")]
     {
-        use pqcrypto_traits::kem::{Ciphertext, PublicKey, SharedSecret};
+        use pqcrypto_traits::kem::{Ciphertext, SharedSecret};
         let (shared, ct) = pqcrypto_mlkem::mlkem768::encapsulate(&kem.public);
         return Ok((ct.as_bytes().to_vec(), shared.as_bytes().to_vec()));
     }

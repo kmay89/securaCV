@@ -2,8 +2,11 @@
 #
 # Builds the Grove Vision AI V2 person-detection model asset +
 # manifest-vision-model.json for an fw-v* release and attaches them, exactly
-# the way flasher-release.yml handles the ESP32 factory images: trust =
-# SHA-256 + same-origin manifest (docs/browser_flasher.md § Trust model).
+# the way the firmware images are handled: SHA-256 in the manifest AND an
+# Ed25519 release signature over uint32_le(size) || sha256(asset), made with
+# the same OTA release key the firmware channel pins (flash.json
+# release_pubkey). The flasher fails closed: once a real key is pinned, an
+# unsigned model manifest is refused (docs/browser_flasher.md § Trust model).
 #
 # Anti-rot: this fires AUTOMATICALLY on every published release, so the
 # flasher's `releases/latest/download/manifest-vision-model.json` never 404s
@@ -172,12 +175,54 @@ jobs:
           echo "VELA_SOURCE=himax-config" >> "$GITHUB_ENV"
           ls -la
 
+      - name: Sign the model asset with the OTA release key
+        # Same key, same scheme as the firmware images: Ed25519 over
+        # uint32_le(size) || sha256(asset) (firmware/scripts/ota_release.py).
+        # Without the signature, whoever can swap release assets could
+        # re-point the manifest's sha256 at a malicious model — the exact
+        # substitution the firmware channel's signature already stops.
+        id: sign
+        if: steps.tag.outputs.skip != '1'
+        env:
+          OTA_SIGNING_KEY_PEM: ${{ secrets.OTA_SIGNING_KEY_PEM }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OTA_SIGNING_KEY_PEM" ]; then
+            # Pre-key-ceremony rebuilds still work; the flasher refuses the
+            # unsigned manifest as soon as a real release key is pinned, so
+            # this cannot silently weaken a provisioned deployment.
+            echo "::warning::OTA_SIGNING_KEY_PEM is not set — publishing an UNSIGNED model manifest. A flasher with a real pinned release key will refuse it."
+            echo "signature=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "$OTA_SIGNING_KEY_PEM" > /tmp/releaser.pem
+          chmod 600 /tmp/releaser.pem
+          pip install --quiet cryptography
+          # Same drift guard as firmware-release.yml: artifacts signed with a
+          # key that is not the committed release key would be refused by
+          # every flasher in the field.
+          python firmware/scripts/ota_release.py pubkey-header \
+            --private-key /tmp/releaser.pem --out /tmp/expected_key.h
+          extract_key_bytes() {
+            sed -n '/SECURACV_OTA_RELEASE_PUBKEY\[32\]/,/};/p' "$1" | grep -o '0x[0-9a-fA-F][0-9a-fA-F]' | tr '[:upper:]' '[:lower:]'
+          }
+          extract_key_bytes /tmp/expected_key.h > /tmp/expected_bytes
+          extract_key_bytes firmware/common/ota/src/ota_release_key.h > /tmp/committed_bytes
+          cmp -s /tmp/expected_bytes /tmp/committed_bytes || {
+            echo "::error::OTA_SIGNING_KEY_PEM does not match the committed release public key"; exit 1; }
+          SIG=$(python firmware/scripts/ota_release.py sign \
+            --private-key /tmp/releaser.pem --firmware /tmp/model/model_vela.tflite)
+          echo "signature=$SIG" >> "$GITHUB_OUTPUT"
+          echo "model asset signed (sig ${SIG:0:16}…)"
+
       - name: Build manifest-vision-model.json + checksums
         if: steps.tag.outputs.skip != '1'
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
           FLASH_ADDR: ${{ steps.flashaddr.outputs.flash_addr }}
+          MODEL_SIGNATURE: ${{ steps.sign.outputs.signature }}
         run: |
           cd /tmp/model
           test -s model_vela.tflite || { echo "::error::no model artifact produced"; exit 1; }
@@ -190,29 +235,38 @@ jobs:
           asset, size, sha = sys.argv[1], int(sys.argv[2]), sys.argv[3]
           tag = os.environ["TAG"]; version = os.environ["VERSION"]
           flash_addr = os.environ["FLASH_ADDR"]  # from flash.json ← we2-core.js
+          signature = os.environ.get("MODEL_SIGNATURE", "").strip()
           repo = os.environ.get("GITHUB_REPOSITORY", "kmay89/securaCV")
+          model = {
+              "name": asset,
+              "url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
+              "size": size,
+              "sha256": sha,
+              "flash_addr": flash_addr,
+              "arch": "Swift-YOLO (tiny) 192x192x3 INT8, Vela-compiled for Ethos-U55",
+              # How it was compiled, on the record — so the manifest can be
+              # audited and the freshness job can insist it stays honest.
+              "vela_source": os.environ.get("VELA_SOURCE", "unknown"),
+              "vela": {
+                  "accelerator": "ethos-u55-64",
+                  "system_config": "My_Sys_Cfg",
+                  "memory_mode": "My_Mem_Mode_Parent",
+                  "config": "Himax himax_vela.ini (vendored in vision-model-release.yml)",
+              },
+          }
+          if signature:
+              # Ed25519 release signature over uint32_le(size)||sha256(asset) —
+              # same key and scheme as the firmware images; the flasher fails
+              # closed on official manifests without it once a real release
+              # key is pinned.
+              model["signature"] = signature
           json.dump({
               "$doc": "Pinned Grove Vision AI V2 model for the browser module-flasher. "
-                      "The flasher verifies sha256 before a byte is written.",
+                      "The flasher verifies sha256 AND the Ed25519 release signature "
+                      "before a byte is written.",
               "version": version,
               "tag": tag,
-              "model": {
-                  "name": asset,
-                  "url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
-                  "size": size,
-                  "sha256": sha,
-                  "flash_addr": flash_addr,
-                  "arch": "Swift-YOLO (tiny) 192x192x3 INT8, Vela-compiled for Ethos-U55",
-                  # How it was compiled, on the record — so the manifest can be
-                  # audited and the freshness job can insist it stays honest.
-                  "vela_source": os.environ.get("VELA_SOURCE", "unknown"),
-                  "vela": {
-                      "accelerator": "ethos-u55-64",
-                      "system_config": "My_Sys_Cfg",
-                      "memory_mode": "My_Mem_Mode_Parent",
-                      "config": "Himax himax_vela.ini (vendored in vision-model-release.yml)",
-                  },
-              },
+              "model": model,
               "license": "MIT — Seeed SSCMA model zoo (person detection); "
                          "redistributed with attribution, see NOTICE in the repo",
               "source": "https://github.com/Seeed-Studio/sscma-model-zoo",

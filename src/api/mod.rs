@@ -14,13 +14,16 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use subtle::ConstantTimeEq;
 
-#[cfg(feature = "pqc-tls")]
-use std::io::{BufReader, BufWriter};
-
 const MAX_REQUEST_BYTES: usize = 8192;
 
-/// TLS configuration for the kernel API server.
-/// Mirrors firmware's DEFAULT_TLS_REQUIRED policy.
+/// TLS front-proxy attestation material (PEM cert/key paths an operator
+/// points at their terminating proxy's material).
+///
+/// NOTE: nothing in this crate terminates TLS in-process. The break-glass
+/// server uses this struct to *attest* that a front proxy is configured
+/// (see `break_glass::server::validate_exposure`); the event API deliberately
+/// has no TLS field at all — its socket is loopback-only unless
+/// `WITNESS_API_ALLOW_INSECURE=1` explicitly accepts plaintext exposure.
 #[derive(Clone, Debug, Default)]
 pub struct ApiTlsConfig {
     /// PEM-encoded certificate chain.
@@ -57,8 +60,6 @@ pub struct ApiConfig {
     pub addr: String,
     pub export_options: ExportOptions,
     pub token_path: Option<PathBuf>,
-    /// TLS configuration. When set, the API server uses TLS.
-    pub tls: Option<ApiTlsConfig>,
     /// Allow plaintext HTTP without TLS. Logs a conformance alarm if true.
     pub allow_insecure: bool,
     /// Max requests per client IP per minute on every endpoint except
@@ -79,7 +80,6 @@ impl Default for ApiConfig {
             addr: "127.0.0.1:8799".to_string(),
             export_options: ExportOptions::default(),
             token_path: None,
-            tls: None,
             allow_insecure: false,
             rate_limit_per_minute: DEFAULT_API_RATE_LIMIT_PER_MINUTE,
         }
@@ -176,16 +176,19 @@ impl ApiServer {
     }
 
     pub fn spawn(self) -> Result<ApiHandle> {
-        // Firmware alignment: DEFAULT_TLS_REQUIRED = 1
-        // Log a conformance alarm if running without TLS and not explicitly allowed.
-        if (self.cfg.tls.is_none() || !self.cfg.tls.as_ref().is_some_and(|t| t.is_configured()))
-            && !self.cfg.allow_insecure
-        {
+        // Firmware alignment: DEFAULT_TLS_REQUIRED = 1. The event API
+        // terminates no TLS in-process, so the honest remedies are the ones
+        // that actually exist: keep the default loopback bind and put a TLS
+        // reverse proxy or SSH tunnel in front of it, or accept plaintext
+        // exposure explicitly with WITNESS_API_ALLOW_INSECURE=1. (Earlier
+        // versions of this warning named --api-tls-cert/--api-tls-key flags
+        // that were never implemented.)
+        if !self.cfg.allow_insecure {
             log::warn!(
-                "CONFORMANCE: API server starting WITHOUT TLS. \
-                 This violates firmware policy DEFAULT_TLS_REQUIRED=1. \
-                 Use --api-tls-cert and --api-tls-key to enable TLS, \
-                 or --allow-insecure-api to suppress this warning."
+                "CONFORMANCE: event API serves plaintext HTTP (no in-process TLS; \
+                 firmware policy DEFAULT_TLS_REQUIRED=1). Keep the bind loopback \
+                 behind a TLS reverse proxy or SSH tunnel, or set \
+                 WITNESS_API_ALLOW_INSECURE=1 to accept plaintext exposure."
             );
         }
 

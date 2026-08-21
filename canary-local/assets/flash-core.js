@@ -267,6 +267,31 @@ export async function verifyImageSignature(signatureHex, pubkeyHex, size, sha256
   } catch { return false; }
 }
 
+// One verdict for a downloaded MODEL asset (the WE2 module channel). Applies
+// the SAME fail-closed policy as the firmware images: once a real release key
+// is pinned, the official model manifest must carry a valid Ed25519 signature
+// over uint32_le(size) || sha256(asset) — a checksum alone can be re-pointed
+// by whoever can swap release assets, the exact substitution the signature
+// check exists to stop. The model manifest URL is pinned in flash.json (no
+// ?manifest= override reaches it), so selfHosted is always false here.
+// Returns { ok:true, policy } or { ok:false, why:"sha256"|"require-signature"|"signature" }.
+export async function verifyPinnedModelAsset({ bytes, sha256Hex, asset, releasePubkey }) {
+  if (String(sha256Hex).toLowerCase() !== String(asset.sha256 || "").toLowerCase()) {
+    return { ok: false, why: "sha256" };
+  }
+  const policy = imageVerificationPolicy({
+    keyReal: isRealPubkey(releasePubkey),
+    hasSignature: !!asset.signature,
+    selfHosted: false,
+  });
+  if (policy === "checksum-only") return { ok: true, policy };
+  if (policy === "require-signature") return { ok: false, why: "require-signature" };
+  const good = await verifyImageSignature(
+    asset.signature, releasePubkey, bytes.length, hexToBytes(sha256Hex),
+  );
+  return good ? { ok: true, policy } : { ok: false, why: "signature" };
+}
+
 // Resolve the `?manifest=<url>` override for self-hosted / air-gapped use.
 // Security: an unrestricted override on the public Lab would be a
 // firmware-phishing vector (a crafted link pointing the flasher at a hostile

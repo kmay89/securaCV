@@ -67,7 +67,6 @@ pub mod module_runtime;
 pub mod relay;
 pub mod storage;
 pub mod storage_health;
-pub mod thumbnail;
 pub mod transport;
 pub mod tsa;
 pub mod vault;

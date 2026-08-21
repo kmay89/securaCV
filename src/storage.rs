@@ -109,7 +109,15 @@ impl SqliteSealedLogStore {
         ensure_columns(
             &self.conn,
             "checkpoints",
-            &[("pq_signature", "BLOB"), ("pq_scheme", "TEXT")],
+            &[
+                ("pq_signature", "BLOB"),
+                ("pq_scheme", "TEXT"),
+                // enforce_retention_with_checkpoint INSERTs this column, so the
+                // standalone store must create it itself — previously only
+                // Kernel::ensure_schema did, and a store opened on a fresh path
+                // failed its own checkpoint INSERT.
+                ("signer_public_key", "BLOB"),
+            ],
         )?;
         Ok(())
     }

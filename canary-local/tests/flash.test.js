@@ -1341,6 +1341,57 @@ test("imageVerificationPolicy: fail-closed once a real key is pinned", async () 
   assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
 });
 
+test("verifyPinnedModelAsset: model channel gets the same fail-closed policy as firmware", async () => {
+  const { verifyPinnedModelAsset } = await core();
+  const { pubHex, sigHex, size, sha } = makeSignedImage();
+  const bytes = new Uint8Array(size);
+  const shaHex = Buffer.from(sha).toString("hex");
+
+  // Genuine: sha matches + valid signature under the real pinned key.
+  const good = await verifyPinnedModelAsset({
+    bytes, sha256Hex: shaHex,
+    asset: { sha256: shaHex, signature: sigHex },
+    releasePubkey: pubHex,
+  });
+  assert.strictEqual(good.ok, true);
+  assert.strictEqual(good.policy, "verify");
+
+  // sha mismatch → refused before any signature logic.
+  const badSha = await verifyPinnedModelAsset({
+    bytes, sha256Hex: shaHex,
+    asset: { sha256: "ff".repeat(32), signature: sigHex },
+    releasePubkey: pubHex,
+  });
+  assert.deepStrictEqual(badSha, { ok: false, why: "sha256" });
+
+  // Real key + unsigned manifest → REFUSE (the substitution hole the model
+  // channel used to have: checksum-only with a repointable manifest).
+  const unsigned = await verifyPinnedModelAsset({
+    bytes, sha256Hex: shaHex,
+    asset: { sha256: shaHex },
+    releasePubkey: pubHex,
+  });
+  assert.deepStrictEqual(unsigned, { ok: false, why: "require-signature" });
+
+  // Real key + tampered signature → refuse.
+  const flipped = sigHex.slice(0, -2) + (sigHex.endsWith("00") ? "01" : "00");
+  const badSig = await verifyPinnedModelAsset({
+    bytes, sha256Hex: shaHex,
+    asset: { sha256: shaHex, signature: flipped },
+    releasePubkey: pubHex,
+  });
+  assert.deepStrictEqual(badSig, { ok: false, why: "signature" });
+
+  // Pre-ceremony (all-zero placeholder key) → checksum-only still flashes.
+  const preKey = await verifyPinnedModelAsset({
+    bytes, sha256Hex: shaHex,
+    asset: { sha256: shaHex },
+    releasePubkey: "00".repeat(32),
+  });
+  assert.strictEqual(preKey.ok, true);
+  assert.strictEqual(preKey.policy, "checksum-only");
+});
+
 // ── supply-chain hardening: CSP + Subresource-Integrity on the flasher page ──
 // flash.html ships a strict Content-Security-Policy (only same-origin, vendored
 // code runs) and an import map carrying SRI hashes for the vendored third-party
