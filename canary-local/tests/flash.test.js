@@ -683,24 +683,23 @@ test("detectBrowser: safari, firefox, iPhone, iPad-as-Mac, android, chrome-ish",
 
 // ── release channels (dev toggle) ───────────────────────────────────────────
 // ── liveness: the erase promise ─────────────────────────────────────────────
-test("eraseEstimateText: honest, size-shaped, never a bare freeze", async () => {
+test("eraseEstimateText: honest, size-shaped, no invented precision", async () => {
   const { eraseEstimateText } = await core();
   // A chip that never reported a size gets the conservative sentence, not a
   // made-up number.
   assert.strictEqual(eraseEstimateText(null), "usually well under two minutes");
   assert.strictEqual(eraseEstimateText(0), "usually well under two minutes");
   assert.strictEqual(eraseEstimateText(NaN), "usually well under two minutes");
-  // Real sizes get a range that scales with the die: bigger chip, longer
-  // promise — and the words always say "typically", never a hard bound the
-  // silicon doesn't owe us.
+  // Real sizes shape the words coarsely — never a numeric range that reads
+  // like a benchmark nobody ran (review catch on #1577). The one number we
+  // may state is structural: the engine's fixed two-minute ceiling.
   const four = eraseEstimateText(4 * 1024 * 1024);
   const sixteen = eraseEstimateText(16 * 1024 * 1024);
-  assert.match(four, /^typically /);
-  assert.match(sixteen, /^typically /);
-  assert.match(four, /seconds/);
-  // 16 MB crosses the minute line — datasheet chip-erase on 128 Mbit parts
-  // runs tens of seconds to over a minute.
-  assert.match(sixteen, /minute/);
+  assert.match(four, /under a minute/);
+  assert.match(sixteen, /minute or more/);
+  assert.match(sixteen, /up to two/);
+  assert.doesNotMatch(four, /\d+\s*[–-]\s*\d+\s*seconds/);
+  assert.doesNotMatch(sixteen, /\d+ seconds/);
 });
 
 test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed constant", async () => {

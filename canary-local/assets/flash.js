@@ -4113,7 +4113,13 @@ async function startFlash(opts) {
           }
           box.set(frac, progressMeta(written, total, p));
         }
-        if (liveMap) liveMap.update(frac);
+        // The map's axis is the FACTORY image's address space, so only file
+        // 0's fraction may drive it: the baked-settings second file restarts
+        // its own fraction at zero, and mapping that across the whole image
+        // replayed "now writing" labels over regions the write never touched
+        // (review catch on #1577). The final update(1) after writeFlash
+        // still closes the map out.
+        if (liveMap && i === 0) liveMap.update(frac);
       },
       calculateMD5Hash: (image) => md5Raw(image),
     });

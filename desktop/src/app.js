@@ -4296,8 +4296,10 @@ const OP_STAGES = [
   ["→ reading ", null, "indet"],
   ["→ resolving", "Resolving the verified release…", "indet"],
   ["→ downloading", "Downloading the signed image…", "zero"],
-  ["→ first contact", "Erasing the whole chip — the chip stays silent until it finishes (seconds on small parts, about a minute on 16 MB)…", "indet"],
-  ["→ erasing the whole chip", "Erasing the whole chip — the chip stays silent until it finishes (seconds on small parts, about a minute on 16 MB)…", "indet"],
+  // Coarse words only — a specific number would read like a benchmark
+  // nobody ran; erase time grows with the die and varies by vendor.
+  ["→ first contact", "Erasing the whole chip — the chip stays silent until it finishes (small chips take seconds; big ones can run a minute or more)…", "indet"],
+  ["→ erasing the whole chip", "Erasing the whole chip — the chip stays silent until it finishes (small chips take seconds; big ones can run a minute or more)…", "indet"],
   ["✓ chip erased", "Chip erased ✓", null],
   ["bytes staged", "Writing firmware to the board…", "zero"],
   ["→ writing ", null, "zero"],
