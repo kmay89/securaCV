@@ -44,4 +44,14 @@ bool wifi_is_placeholder();
 // the refreshed cache from here on.
 void set_wifi_credentials(const char* ssid, const char* pass);
 
+// Erase the stored WiFi credentials (settings › reset › wifi › forget) so
+// the join wizard reopens on the next boot — the on-glass path for a puck
+// that moves house or a router that changed its password. Identity, broker
+// pins, and screen settings all stay. Returns false when NVS is unavailable
+// (nothing was erased; the caller should not reboot into a wizard that
+// won't come). Note the compiled-credentials rule still applies after the
+// erase: a unit built with real secrets re-persists them next boot — for
+// dev units, USB owns the configuration, by design.
+bool forget_wifi_credentials();
+
 } // namespace canary::cfg

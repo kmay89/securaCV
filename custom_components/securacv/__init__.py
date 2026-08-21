@@ -109,6 +109,49 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         _LOGGER.debug("SecuraCV Lovelace cards not registered", exc_info=True)
 
 
+def _mqtt_issue_id(entry: ConfigEntry) -> str:
+    """Stable Repairs-issue id for this entry's MQTT subscribe failure."""
+    return f"mqtt_subscribe_failed_{entry.entry_id}"
+
+
+def _async_report_mqtt_subscribe_failed(
+    hass: HomeAssistant, entry: ConfigEntry, prefix: Any, err: Exception
+) -> None:
+    """Raise a Repairs issue so an MQTT subscribe failure is visible.
+
+    A log warning is easy to miss; a Repairs issue puts "your Canaries
+    are silent, here is the fix" on the Settings page. Imported lazily
+    and wrapped so headless/stub environments skip cleanly.
+    """
+    try:
+        from homeassistant.helpers import issue_registry as ir
+
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _mqtt_issue_id(entry),
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            learn_more_url="https://www.home-assistant.io/integrations/mqtt/",
+            translation_key="mqtt_subscribe_failed",
+            translation_placeholders={"prefix": str(prefix), "error": str(err)},
+        )
+    except Exception:  # noqa: BLE001 - repairs are best-effort, never fatal
+        _LOGGER.debug("could not create MQTT repairs issue", exc_info=True)
+
+
+def _async_clear_mqtt_subscribe_issue(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Clear the MQTT-subscribe Repairs issue once the subscribe works."""
+    try:
+        from homeassistant.helpers import issue_registry as ir
+
+        ir.async_delete_issue(hass, DOMAIN, _mqtt_issue_id(entry))
+    except Exception:  # noqa: BLE001 - repairs are best-effort, never fatal
+        _LOGGER.debug("could not clear MQTT repairs issue", exc_info=True)
+
+
 class SecuraCVApiError(Exception):
     """Base error for the SecuraCV API client."""
 
@@ -197,7 +240,7 @@ class SecuraCVApi:
             headers = {"Authorization": f"Bearer {current_token}"}
             try:
                 async with self._session.get(
-                    url, headers=headers, timeout=10
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
                 ) as resp:
                     if resp.status == 401:
                         if attempt == 0 and await self._async_refresh_token(
@@ -243,7 +286,9 @@ class SecuraCVApi:
         """Check kernel health status."""
         url = f"{self._base_url}/health"
         try:
-            async with self._session.get(url, timeout=5) as resp:
+            async with self._session.get(
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status != 200:
                     return {"status": "error", "code": resp.status}
                 return await resp.json()
@@ -298,7 +343,9 @@ class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch the per-adapter stats JSON. Returns {} only on an empty body."""
         try:
-            async with self._session.get(self._url, timeout=10) as resp:
+            async with self._session.get(
+                self._url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 if resp.status != 200:
                     raise UpdateFailed(f"stats endpoint status {resp.status}")
                 # The endpoint sends application/json; tolerate a missing/odd content-type.
@@ -432,8 +479,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             entry_data["unsub_mqtt"].append(unsub_health)
             _LOGGER.info("SecuraCV MQTT subscriptions active (prefix: %s)", mqtt_prefix)
+            _async_clear_mqtt_subscribe_issue(hass, entry)
         except Exception as err:
             _LOGGER.warning("MQTT setup failed, continuing without MQTT: %s", err)
+            _async_report_mqtt_subscribe_failed(hass, entry, mqtt_prefix, err)
 
     # The watch tick: evaluates every watch, delivers what fired, and
     # announces expiry. Without it a started watch would be recorded but

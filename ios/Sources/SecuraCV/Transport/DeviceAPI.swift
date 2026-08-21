@@ -52,6 +52,31 @@ struct ProvisioningReceipt: Codable, Sendable {
     }
 }
 
+/// `GET /api/wifi`, the fields the rollout cares about. Tolerant: anything
+/// the firmware adds later decodes right past us.
+struct WiFiStatus: Codable, Sendable {
+    var ok: Bool?
+    var state: String?
+    var staConnected: Bool?
+    var staSSID: String?
+    var rssi: Int?
+    var configured: Bool?
+    var failReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, state, rssi, configured
+        case staConnected = "sta_connected"
+        case staSSID = "sta_ssid"
+        case failReason = "fail_reason"
+    }
+}
+
+/// The `{"ok": …, "error": …}` envelope the WAP Wi-Fi routes answer with.
+struct WiFiReply: Codable, Sendable {
+    var ok: Bool?
+    var error: String?
+}
+
 enum DeviceError: Error, LocalizedError {
     case notPrivateAddress
     case http(Int, String)
@@ -117,6 +142,58 @@ actor DeviceAPI {
     /// Physical-presence confirm for gated settings (camera peek, etc.).
     func confirm() async throws { _ = try await postRaw("/api/v1/confirm", body: Data()) }
 
+    /// `POST /api/identify` — ask the Canary to make itself known: ~15 s of
+    /// LED blink plus its chirp (Hue-style). Returns true when the device
+    /// says it is set to VISUAL-ONLY (its chirp is disabled), so the Find
+    /// screen can say "watch for the blink" instead of promising a sound
+    /// that will not come.
+    func identify(durationMS: Int = 15_000) async throws -> Bool {
+        struct Reply: Codable {
+            var ok: Bool?
+            var visualOnly: Bool?
+            enum CodingKeys: String, CodingKey { case ok; case visualOnly = "visual_only" }
+        }
+        let body = try JSONEncoder().encode(["duration_ms": durationMS])
+        let data = try await postRaw("/api/identify", body: body)
+        let reply = try? JSONDecoder().decode(Reply.self, from: data)
+        if reply?.ok == false {
+            throw DeviceError.http(200, "The Canary declined to identify.")
+        }
+        return reply?.visualOnly ?? false
+    }
+
+    // MARK: - the Wi-Fi surface (fleet credential rollout)
+
+    /// The head of the witness chain, one record's worth — the cheap "did
+    /// anything happen?" read the 5-second sentinel can afford. Nil when the
+    /// device reports an empty chain.
+    func witnessHeadSeq() async throws -> UInt64? {
+        let page: WitnessChainPage = try await get("/api/v1/witness?last=1")
+        return page.records.map(\.seq).max()
+    }
+
+    /// `GET /api/wifi` — where this Canary stands with its network, as it
+    /// tells it. Tolerantly decoded; only the fields the rollout needs.
+    func wifiStatus() async throws -> WiFiStatus {
+        try await get("/api/wifi")
+    }
+
+    /// `POST /api/wifi/connect` — hand this Canary new credentials. The
+    /// firmware validates (SSID 1–32, password ≤ 64), persists to NVS, and
+    /// kicks its connect state machine; the device then LEAVES this network,
+    /// so no answer after the accept is expected — the rollout verifies by
+    /// watching for the device to answer again, not by trusting this call.
+    func wifiConnect(ssid: String, password: String) async throws {
+        struct Body: Encodable { let ssid: String; let password: String }
+        let body = try JSONEncoder().encode(Body(ssid: ssid, password: password))
+        let data = try await postRaw("/api/wifi/connect", body: body)
+        // The firmware answers 200 with {"ok": false, "error": …} on
+        // validation refusals — surface that as the failure it is.
+        if let reply = try? JSONDecoder().decode(WiFiReply.self, from: data), reply.ok == false {
+            throw DeviceError.http(200, reply.error ?? "The Canary refused the credentials.")
+        }
+    }
+
     // MARK: - plumbing
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -126,7 +203,7 @@ actor DeviceAPI {
 
     private func getRaw(_ path: String) async throws -> Data {
         var req = URLRequest(url: base.appendingPathComponent(path))
-        req.setValue(token, forHTTPHeaderField: "X-Canary-Token")
+        authorize(&req)
         return try await send(req)
     }
 
@@ -134,9 +211,20 @@ actor DeviceAPI {
         var req = URLRequest(url: base.appendingPathComponent(path))
         req.httpMethod = "POST"
         req.httpBody = body
-        req.setValue(token, forHTTPHeaderField: "X-Canary-Token")
+        authorize(&req)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return try await send(req)
+    }
+
+    /// Both credential dialects, every request. The `/api/v1/*` contract
+    /// (canary-vision/docs/api.md) reads `X-Canary-Token`; the WAP admin
+    /// routes (`/api/wifi/*`, `/api/identify`) read `Authorization: Bearer`.
+    /// Each side ignores the header it doesn't know, so sending both means
+    /// one client speaks to both dialects without a per-route table that
+    /// would drift the first time firmware moved an endpoint.
+    private func authorize(_ req: inout URLRequest) {
+        req.setValue(token, forHTTPHeaderField: "X-Canary-Token")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
 
     private func send(_ req: URLRequest) async throws -> Data {

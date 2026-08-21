@@ -458,10 +458,31 @@ impl Lockout {
         })
     }
 
+    /// Drop entries that are fully settled — neither currently locked nor
+    /// mid-streak — so the table cannot accumulate one dead entry per source
+    /// IP that ever failed once.
+    fn prune(&mut self) {
+        let now = Self::now_ms();
+        self.entries
+            .retain(|_, &mut (attempts, _, until)| attempts > 0 || until > now);
+    }
+
     fn fail(&mut self, ip: IpAddr) {
+        // Bound the table against a spoofed-source flood: without a cap, a peer
+        // rotating source IPs could grow this map without limit (memory DoS).
+        // The event-API rate tracker carries the same cap.
+        const MAX_ENTRIES: usize = 4096;
         const MAX_ATTEMPTS: u32 = 5;
         const BASE_MS: u64 = 2_000;
         const CAP_MS: u64 = 300_000;
+        self.prune();
+        if !self.entries.contains_key(&ip) && self.entries.len() >= MAX_ENTRIES {
+            // The table is full of live lockouts. Don't grow it; a not-yet-
+            // tracked IP simply isn't rate-limited this round (the pre-existing
+            // behavior for any untracked IP), which never wrongly locks a
+            // legitimate peer.
+            return;
+        }
         let entry = self.entries.entry(ip).or_insert((0, 0, 0));
         entry.0 += 1;
         if entry.0 >= MAX_ATTEMPTS {

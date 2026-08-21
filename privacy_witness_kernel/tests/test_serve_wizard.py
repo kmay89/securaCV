@@ -17,6 +17,7 @@ so importing it is side-effect free.
 import importlib.util
 import io
 import json
+import time
 import urllib.error
 from pathlib import Path
 
@@ -124,6 +125,40 @@ def test_canary_request_rejects_malformed_address(address, monkeypatch):
     result = serve_wizard._canary_request(address, "tok", "GET", "/api/mesh", None)
     assert result["ok"] is False
     assert "address" in result["error"].lower()
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",          # canonical loopback
+        "127.1",              # short-form loopback (inet_aton accepts, ipaddress rejects)
+        "0",                  # 0.0.0.0 (unspecified)
+        "2130706433",         # decimal loopback
+        "0x7f.0.0.1",         # hex octet loopback
+        "0177.0.0.1",         # octal octet loopback
+        "localhost",          # blocked service name
+        "supervisor",         # internal Supervisor name
+        "169.254.10.10",      # link-local
+    ],
+)
+def test_canary_request_blocks_loopback_including_noncanonical_forms(address, monkeypatch):
+    # The OS socket resolver accepts non-canonical numeric IPv4 forms and maps
+    # them to loopback; the SSRF guard must block them even though the strict
+    # `ipaddress` parser rejects them as non-IPs. urlopen must never be reached.
+    def _must_not_call(*a, **k):  # pragma: no cover - asserts it isn't reached
+        raise AssertionError(f"urlopen called for blocked address {address!r}")
+
+    monkeypatch.setattr(serve_wizard.urllib.request, "urlopen", _must_not_call)
+    result = serve_wizard._canary_request(address, "tok", "GET", "/api/mesh", None)
+    assert result["ok"] is False
+    assert "address" in result["error"].lower()
+
+
+def test_is_blocked_host_allows_legitimate_lan_targets():
+    # Real LAN devices (private ranges) and unresolved hostnames must NOT be
+    # blocked — the guard targets only loopback/link-local/internal surfaces.
+    for host in ("192.168.1.50", "10.0.0.5", "172.16.0.9", "camera-1", "nvr.local"):
+        assert serve_wizard._is_blocked_host(host) is False, host
 
 
 @pytest.mark.parametrize("address", ["192.168.1.50", "canary.local", "10.0.0.5:80"])
@@ -329,6 +364,10 @@ def save_env(monkeypatch, tmp_path):
     device key file under tmp_path."""
     captured: dict = {}
     monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    # Keep the save hermetic: wizard prefs land in tmp_path, never /config.
+    monkeypatch.setattr(
+        serve_wizard, "WIZARD_PREFS_FILE", tmp_path / "wizard_prefs.json"
+    )
     monkeypatch.setattr(
         serve_wizard, "set_addon_options", lambda opts: captured.update(options=opts)
     )
@@ -468,7 +507,6 @@ def _run_export_get(monkeypatch, path):
     """Drive do_GET through the export route with all socket IO stubbed."""
     handler = _bare_handler()
     handler.path = path
-    monkeypatch.delenv("INGRESS_PATH", raising=False)
 
     sent = {"json": None, "status": None}
 
@@ -559,7 +597,6 @@ def test_export_query_suffix_rejects_empty_param_name():
 def _run_post(monkeypatch, content_length, body=b""):
     handler = serve_wizard.WizardHandler.__new__(serve_wizard.WizardHandler)
     handler.path = "/api/verify"
-    monkeypatch.delenv("INGRESS_PATH", raising=False)
     handler.headers = {"Content-Length": content_length}
     handler.rfile = io.BytesIO(body)
 
@@ -725,6 +762,544 @@ def test_write_frigate_config_rejects_bad_scheme(monkeypatch, tmp_path):
     text = written["text"]
     assert "file:///etc/passwd" not in text
     assert "'rtsp://10.0.0.9/stream'" in text  # quoted scalar
+
+
+def test_write_frigate_config_quotes_broker_host_against_yaml_injection(monkeypatch):
+    # A wizard-supplied broker host carrying a newline + YAML keys must not
+    # inject configuration into frigate.yml — it is emitted as a single-line
+    # quoted scalar, mirroring the camera-URL treatment.
+    written = {}
+    monkeypatch.setattr(
+        serve_wizard.Path, "write_text",
+        lambda self, text: written.update(text=text), raising=False,
+    )
+    handler = _bare_handler()
+    handler._write_frigate_config(
+        [{"name": "cam", "url": "rtsp://10.0.0.9/stream"}],
+        retention_days=1,
+        broker_host="evil\nlogger:\n  level: debug",
+    )
+    text = written["text"]
+    assert "logger:" not in text, "YAML key injected via broker host"
+    assert "  host: 'evil'" in text
+    try:
+        import yaml
+        parsed = yaml.safe_load(text)
+        assert parsed["mqtt"]["host"] == "evil"
+        assert "logger" not in parsed
+    except ImportError:
+        pass  # structural assertions above already prove containment
+
+
+# ---------------------------------------------------------------------------
+# Query-string routing: paths are matched by exact string compare, so the
+# query must be stripped BEFORE routing ("/api/status?ts=1" previously fell
+# through to the static-file handler).
+# ---------------------------------------------------------------------------
+
+
+def _routed_get(monkeypatch, path, handler_name, response):
+    handler = _bare_handler()
+    handler.path = path
+    sent = {"json": None, "status": None}
+    handler._json_response = (
+        lambda data, status=200: sent.update(json=data, status=status)
+    )
+    monkeypatch.setattr(
+        serve_wizard.WizardHandler, handler_name, lambda self: response
+    )
+    handler.do_GET()
+    return sent
+
+
+def test_get_status_routes_with_query_string(monkeypatch):
+    sent = _routed_get(
+        monkeypatch, "/api/status?ts=1755760000", "_handle_status",
+        {"ok": True, "configured": True, "options": {}},
+    )
+    assert sent["json"] == {"ok": True, "configured": True, "options": {}}
+
+
+def test_get_preflight_routes_with_query_string(monkeypatch):
+    sent = _routed_get(
+        monkeypatch, "/api/preflight?cachebust=abc", "_handle_preflight",
+        {"ok": True, "checks": {}},
+    )
+    assert sent["json"] == {"ok": True, "checks": {}}
+
+
+def test_get_discover_cameras_routes_with_query_string(monkeypatch):
+    rows = [{"name": "FrontDoor", "url": "rtsp://10.0.0.9/s", "zone_id": "zone:frontdoor"}]
+    monkeypatch.setattr(serve_wizard, "_discover_go2rtc_cameras", lambda: rows)
+    handler = _bare_handler()
+    handler.path = "/api/discover-cameras?x=1"
+    sent = {"json": None}
+    handler._json_response = lambda data, status=200: sent.update(json=data)
+    handler.do_GET()
+    assert sent["json"] == {"ok": True, "cameras": rows}
+
+
+def test_post_routes_with_query_string(monkeypatch):
+    # Reuses the do_POST driver: /api/verify with a query must still route.
+    handler = _bare_handler()
+    handler.path = "/api/verify?nocache=1"
+    handler.headers = {"Content-Length": "2"}
+    handler.rfile = io.BytesIO(b"{}")
+    sent = {"json": None, "status": None}
+    handler._json_response = (
+        lambda data, status=200: sent.update(json=data, status=status)
+    )
+    monkeypatch.setattr(
+        serve_wizard.WizardHandler, "_handle_verify", lambda self: {"ok": True}
+    )
+    handler.do_POST()
+    assert sent["json"] == {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# /api/preflight/install — one-click prerequisite install. The target is a
+# fixed two-value enum; anything else must be refused BEFORE any Supervisor
+# request, and the accepted targets may only compose the known Supervisor
+# paths (the SSRF posture of the rest of the server: no browser-supplied
+# host, slug, or URL ever reaches the network).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "",  # missing
+        "core_ssh",  # arbitrary add-on slug
+        "http://evil.example/install",  # URL smuggling
+        "../addons/self/uninstall",  # path traversal
+        "mosquitto ",  # near miss must not fuzzy-match
+        None,
+        {"nested": "mosquitto"},
+    ],
+)
+def test_install_refuses_non_supervisor_targets(target, monkeypatch):
+    def _must_not_call(*a, **k):  # pragma: no cover - asserts it isn't reached
+        raise AssertionError("Supervisor request made for a refused target")
+
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", _must_not_call)
+    handler = _bare_handler()
+    result = handler._handle_preflight_install({"target": target})
+    assert result["ok"] is False
+    assert "unknown install target" in result["error"]
+
+
+def _capture_supervisor(calls, fail_paths=()):
+    def _fake(method, path, data=None, timeout=10):
+        calls.append({"method": method, "path": path, "data": data,
+                      "timeout": timeout})
+        if path in fail_paths:
+            raise RuntimeError(f"Supervisor API error 400: {path}")
+        return {}
+
+    return _fake
+
+
+def test_install_mosquitto_installs_then_starts(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        serve_wizard, "_supervisor_request", _capture_supervisor(calls)
+    )
+    handler = _bare_handler()
+    result = handler._handle_preflight_install({"target": "mosquitto"})
+
+    assert result["ok"] is True
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("POST", "/store/addons/core_mosquitto/install"),
+        ("POST", "/addons/core_mosquitto/start"),
+    ]
+    # Store installs pull images: the install call must carry a long timeout.
+    assert calls[0]["timeout"] >= 300
+    assert result["steps"] == ["installed core_mosquitto", "started core_mosquitto"]
+
+
+def test_install_frigate_registers_repo_then_installs_pinned_slug(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        serve_wizard, "_supervisor_request", _capture_supervisor(calls)
+    )
+    handler = _bare_handler()
+    result = handler._handle_preflight_install({"target": "frigate"})
+
+    assert result["ok"] is True
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("POST", "/store/repositories"),
+        ("POST", "/store/addons/ccab4aaf_frigate/install"),
+    ]
+    assert calls[0]["data"] == {
+        "repository": "https://github.com/blakeblackshear/frigate-hass-addons"
+    }
+    assert calls[1]["timeout"] >= 300
+
+
+def test_install_frigate_tolerates_repo_already_registered(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        serve_wizard, "_supervisor_request",
+        _capture_supervisor(calls, fail_paths=("/store/repositories",)),
+    )
+    handler = _bare_handler()
+    result = handler._handle_preflight_install({"target": "frigate"})
+    assert result["ok"] is True  # repo add is best-effort; install is the test
+    assert any("already present" in s for s in result["steps"])
+
+
+def test_install_mosquitto_reports_failure_honestly(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        serve_wizard, "_supervisor_request",
+        _capture_supervisor(calls, fail_paths=("/store/addons/core_mosquitto/install",)),
+    )
+    handler = _bare_handler()
+    result = handler._handle_preflight_install({"target": "mosquitto"})
+    assert result["ok"] is False
+    assert "error" in result
+    # No start attempt after a failed install.
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("POST", "/store/addons/core_mosquitto/install"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Save-race fix: the /api/save response must be written BEFORE the add-on
+# restart is scheduled (the restart kills this process — firing it first made
+# the browser report a network failure for a save that succeeded).
+# ---------------------------------------------------------------------------
+
+
+def _run_save_post(monkeypatch, save_result):
+    handler = _bare_handler()
+    handler.path = "/api/save"
+    handler.headers = {"Content-Length": "2"}
+    handler.rfile = io.BytesIO(b"{}")
+
+    events = []
+    handler._json_response = (
+        lambda data, status=200: events.append(("response", data))
+    )
+    monkeypatch.setattr(
+        serve_wizard.WizardHandler, "_handle_save",
+        lambda self, payload: save_result,
+    )
+    monkeypatch.setattr(
+        serve_wizard, "_restart_addon_soon",
+        lambda: events.append(("restart_scheduled",)),
+    )
+    handler.do_POST()
+    return events
+
+
+def test_save_response_precedes_restart_scheduling(monkeypatch):
+    events = _run_save_post(monkeypatch, {"ok": True})
+    assert events == [("response", {"ok": True}), ("restart_scheduled",)]
+
+
+def test_failed_save_never_schedules_restart(monkeypatch):
+    events = _run_save_post(monkeypatch, {"ok": False, "error": "nope"})
+    assert events == [("response", {"ok": False, "error": "nope"})]
+
+
+def test_restart_addon_soon_is_deferred_not_synchronous(monkeypatch):
+    calls = []
+    monkeypatch.setattr(serve_wizard, "restart_addon", lambda: calls.append("restart"))
+    monkeypatch.setattr(serve_wizard, "RESTART_DELAY_SECONDS", 0.05)
+
+    serve_wizard._restart_addon_soon()
+    # Synchronously: nothing yet — the response gets its head start.
+    assert calls == []
+    deadline = time.monotonic() + 5
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert calls == ["restart"]
+
+
+# ---------------------------------------------------------------------------
+# Wizard preferences persistence (/config/.securacv/wizard_prefs.json)
+# ---------------------------------------------------------------------------
+
+
+def test_persist_and_load_wizard_prefs_roundtrip(monkeypatch, tmp_path):
+    prefs_file = tmp_path / ".securacv" / "wizard_prefs.json"
+    monkeypatch.setattr(serve_wizard, "WIZARD_PREFS_FILE", prefs_file)
+    prefs = {
+        "digest_enabled": True,
+        "digest_time": "07:30",
+        "pattern_alerts": False,
+        "integrity_alerts": True,
+    }
+    serve_wizard._persist_wizard_prefs(prefs)
+    assert json.loads(prefs_file.read_text()) == prefs
+    assert serve_wizard.load_wizard_prefs() == prefs
+
+
+def test_load_wizard_prefs_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(serve_wizard, "WIZARD_PREFS_FILE", tmp_path / "missing.json")
+    assert serve_wizard.load_wizard_prefs() == {}
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    monkeypatch.setattr(serve_wizard, "WIZARD_PREFS_FILE", bad)
+    assert serve_wizard.load_wizard_prefs() == {}
+    non_dict = tmp_path / "list.json"
+    non_dict.write_text("[1, 2]")
+    monkeypatch.setattr(serve_wizard, "WIZARD_PREFS_FILE", non_dict)
+    assert serve_wizard.load_wizard_prefs() == {}
+
+
+def test_save_persists_prefs_and_reports_digest_result(save_env, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        serve_wizard, "_setup_digest_automation",
+        lambda t: {"created": True, "detail": f"daily digest at {t}"},
+    )
+    handler = _bare_handler()
+    result = handler._handle_save({
+        "mode": "frigate",
+        "cameras": [],
+        "digest_enabled": True,
+        "digest_time": "07:30",
+        "pattern_alerts": True,
+        "integrity_alerts": False,
+    })
+    assert result["ok"] is True
+    prefs = json.loads(serve_wizard.WIZARD_PREFS_FILE.read_text())
+    assert prefs == {
+        "digest_enabled": True,
+        "digest_time": "07:30",
+        "pattern_alerts": True,
+        "integrity_alerts": False,
+    }
+    assert result["digest"]["created"] is True
+
+
+def test_save_with_digest_disabled_skips_automation(save_env, monkeypatch):
+    def _must_not_call(_time):  # pragma: no cover - asserts it isn't reached
+        raise AssertionError("digest automation created despite being disabled")
+
+    monkeypatch.setattr(serve_wizard, "_setup_digest_automation", _must_not_call)
+    handler = _bare_handler()
+    result = handler._handle_save(
+        {"mode": "frigate", "cameras": [], "digest_enabled": False}
+    )
+    assert result["ok"] is True
+    assert result["digest"]["created"] is False
+    assert "disabled" in result["digest"]["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Daily-digest automation composition (POST via the core API proxy)
+# ---------------------------------------------------------------------------
+
+
+_SERVICES_WITH_MOBILE_APP = [
+    {"domain": "light", "services": {"turn_on": {}}},
+    {"domain": "notify", "services": {
+        "persistent_notification": {},
+        "mobile_app_pixel_8": {},
+        "mobile_app_iphone": {},
+    }},
+]
+
+
+@pytest.fixture
+def digest_env(monkeypatch, tmp_path):
+    """Blueprint file present + a mobile-app notify service discoverable."""
+    blueprint = tmp_path / "securacv_daily_digest.yaml"
+    blueprint.write_text("blueprint: {}\n")
+    monkeypatch.setattr(serve_wizard, "DIGEST_BLUEPRINT_FILE", blueprint)
+
+    calls = []
+
+    def _fake(method, path, data=None, timeout=10):
+        if path == "/core/api/services":
+            return _SERVICES_WITH_MOBILE_APP
+        calls.append({"method": method, "path": path, "data": data})
+        return {}
+
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", _fake)
+    return calls
+
+
+def test_digest_automation_post_composition(digest_env):
+    result = serve_wizard._setup_digest_automation("08:00")
+    assert result["created"] is True
+
+    assert len(digest_env) == 1
+    call = digest_env[0]
+    assert call["method"] == "POST"
+    assert call["path"] == "/core/api/config/automation/config/securacv_daily_digest"
+    blueprint = call["data"]["use_blueprint"]
+    assert blueprint["path"] == "securacv/securacv_daily_digest.yaml"
+    assert blueprint["input"]["digest_time"] == "08:00:00"
+    # Deterministic pick: first mobile_app service in sorted order.
+    assert blueprint["input"]["notify_service"] == "notify.mobile_app_iphone"
+    # The done screen shows the detail — it must name the real time+service.
+    assert "08:00" in result["detail"]
+    assert "notify.mobile_app_iphone" in result["detail"]
+
+
+def test_digest_automation_skips_when_blueprint_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        serve_wizard, "DIGEST_BLUEPRINT_FILE", tmp_path / "absent.yaml"
+    )
+
+    def _must_not_post(*a, **k):  # pragma: no cover
+        raise AssertionError("automation POSTed without a blueprint")
+
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", _must_not_post)
+    result = serve_wizard._setup_digest_automation("08:00")
+    assert result["created"] is False
+    assert "blueprint" in result["detail"]
+
+
+def test_digest_automation_skips_without_mobile_app_notify(monkeypatch, tmp_path):
+    blueprint = tmp_path / "securacv_daily_digest.yaml"
+    blueprint.write_text("blueprint: {}\n")
+    monkeypatch.setattr(serve_wizard, "DIGEST_BLUEPRINT_FILE", blueprint)
+
+    posts = []
+
+    def _fake(method, path, data=None, timeout=10):
+        if path == "/core/api/services":
+            return [{"domain": "notify", "services": {"persistent_notification": {}}}]
+        posts.append(path)
+        return {}
+
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", _fake)
+    result = serve_wizard._setup_digest_automation("08:00")
+    assert result["created"] is False
+    assert "companion app" in result["detail"]
+    assert posts == []  # no automation without a notify target
+
+
+@pytest.mark.parametrize(
+    ("raw", "normalized"),
+    [
+        ("08:00", "08:00:00"),
+        ("23:59", "23:59:00"),
+        ("06:15:30", "06:15:30"),
+        ("8:00", ""),      # not zero-padded
+        ("24:00", ""),     # invalid hour
+        ("nope", ""),
+        ("", ""),
+    ],
+)
+def test_normalize_digest_time(raw, normalized):
+    assert serve_wizard._normalize_digest_time(raw) == normalized
+
+
+def test_digest_automation_rejects_invalid_time(digest_env):
+    result = serve_wizard._setup_digest_automation("25:99")
+    assert result["created"] is False
+    assert digest_env == []  # nothing POSTed
+
+
+# ---------------------------------------------------------------------------
+# Frigate config destination: modern add-on dir when mounted, legacy path as
+# fallback — and NEVER overwrite an existing config.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def frigate_paths(monkeypatch, tmp_path):
+    addon_dir = tmp_path / "addon_configs" / "ccab4aaf_frigate"
+    legacy = tmp_path / "config" / "frigate.yml"
+    legacy.parent.mkdir(parents=True)
+    monkeypatch.setattr(serve_wizard, "FRIGATE_ADDON_CONFIG_DIR", addon_dir)
+    monkeypatch.setattr(serve_wizard, "LEGACY_FRIGATE_CONF", legacy)
+    return addon_dir, legacy
+
+
+def test_frigate_dest_addon_dir_fresh(frigate_paths):
+    addon_dir, _legacy = frigate_paths
+    addon_dir.mkdir(parents=True)
+    target, note = serve_wizard._frigate_config_destination()
+    assert target == addon_dir / "config.yml"
+    assert str(target) in note
+
+
+@pytest.mark.parametrize("existing_name", ["config.yml", "config.yaml"])
+def test_frigate_dest_never_overwrites_existing_addon_config(
+    frigate_paths, existing_name
+):
+    addon_dir, _legacy = frigate_paths
+    addon_dir.mkdir(parents=True)
+    existing = addon_dir / existing_name
+    existing.write_text("mqtt:\n  enabled: true\n")
+
+    target, note = serve_wizard._frigate_config_destination()
+    assert target == addon_dir / "config.yml.new"
+    assert "left untouched" in note
+    assert str(existing) in note
+    # And the pre-existing config really is untouched by a full save-path
+    # write to the returned target.
+    handler = _bare_handler()
+    handler._write_frigate_config(
+        [{"name": "cam", "url": "rtsp://10.0.0.9/s"}], retention_days=1, dest=target
+    )
+    assert existing.read_text() == "mqtt:\n  enabled: true\n"
+    assert target.exists()
+
+
+def test_frigate_dest_legacy_fallback_names_both_paths(frigate_paths):
+    addon_dir, legacy = frigate_paths  # addon_dir NOT created
+    target, note = serve_wizard._frigate_config_destination()
+    assert target == legacy
+    # The note must name both locations so the user can move the file after
+    # installing Frigate.
+    assert str(legacy) in note
+    assert str(addon_dir / "config.yml") in note
+
+
+def test_frigate_dest_leaves_real_legacy_config_alone(frigate_paths):
+    _addon_dir, legacy = frigate_paths
+    legacy.write_text("mqtt:\n  host: mine\n")
+    target, note = serve_wizard._frigate_config_destination()
+    assert target is None  # write nothing
+    assert "left" in note and "untouched" in note
+
+
+def test_frigate_dest_placeholder_legacy_config_is_replaceable(frigate_paths):
+    _addon_dir, legacy = frigate_paths
+    legacy.write_text("# PLACEHOLDER — replaced by the wizard\n")
+    target, _note = serve_wizard._frigate_config_destination()
+    assert target == legacy
+
+
+# ---------------------------------------------------------------------------
+# go2rtc discovery transform (mirrors discover_cameras.sh): producers are
+# objects carrying "url" (legacy plain strings also accepted), streams with
+# no usable URL are skipped, and zone IDs are lowercased BEFORE the
+# character sweep so "FrontDoor" -> zone:frontdoor.
+# ---------------------------------------------------------------------------
+
+
+def test_go2rtc_transform_object_producers_and_zone_case():
+    streams = {
+        "FrontDoor": {"producers": [{"url": "rtsp://10.0.0.9/stream"}]},
+        "no_producers": {"producers": []},
+        "no_urls": {"producers": [{"other": "field"}]},
+        "legacy_strings": {"producers": ["rtsp://10.0.0.8/s"]},
+        "prefers_rtsp": {"producers": [
+            {"url": "webrtc://10.0.0.7/x"},
+            {"url": "rtsp://10.0.0.7/s"},
+        ]},
+    }
+    cameras = serve_wizard._go2rtc_streams_to_cameras(streams)
+    by_name = {c["name"]: c for c in cameras}
+    assert "no_producers" not in by_name
+    assert "no_urls" not in by_name
+    assert by_name["FrontDoor"]["url"] == "rtsp://10.0.0.9/stream"
+    assert by_name["FrontDoor"]["zone_id"] == "zone:frontdoor"
+    assert by_name["legacy_strings"]["url"] == "rtsp://10.0.0.8/s"
+    assert by_name["prefers_rtsp"]["url"] == "rtsp://10.0.0.7/s"
+
+
+def test_go2rtc_transform_rejects_non_dict_payload():
+    assert serve_wizard._go2rtc_streams_to_cameras(["not", "a", "dict"]) == []
+    assert serve_wizard._go2rtc_streams_to_cameras(None) == []
 
 
 if __name__ == "__main__":

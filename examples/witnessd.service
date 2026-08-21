@@ -1,0 +1,51 @@
+# SecuraCV Privacy Witness Kernel — witnessd container under systemd.
+#
+# The no-compose way to run the standalone kernel (see docs/container.md):
+# one container, one data volume, restarted only when it actually fails
+# (Restart=on-failure — a clean `systemctl stop` stays stopped).
+#
+# Install:
+#   1. sudo cp examples/witnessd.service /etc/systemd/system/witnessd.service
+#   2. sudo systemctl edit witnessd.service   # override WITNESS_RTSP_URL
+#   3. sudo systemctl enable --now witnessd.service
+#
+# The device signing key is auto-generated on first start and persisted in
+# the data directory as witness.ed25519.seed — back that file up: it is
+# what makes the sealed log's signatures verifiable.
+
+[Unit]
+Description=SecuraCV Privacy Witness Kernel (witnessd container)
+Documentation=https://github.com/kmay89/securaCV/blob/main/docs/container.md
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+# Point this at your camera — preferably via `systemctl edit` (a drop-in
+# override), so upgrades to this file never clobber your URL.
+Environment=WITNESS_RTSP_URL=rtsp://user:pass@camera.example/stream
+Environment=WITNESS_IMAGE=ghcr.io/kmay89/securacv-witnessd:latest
+Environment=WITNESS_DATA_DIR=/var/lib/securacv
+
+# The container runs as UID 1001; make sure the data directory exists and
+# is writable by it before the first start.
+ExecStartPre=/usr/bin/install -d -o 1001 -g 1001 ${WITNESS_DATA_DIR}
+# A leftover container from an unclean shutdown would make `docker run`
+# fail with a name conflict; remove it first (`-` ignores "no such
+# container").
+ExecStartPre=-/usr/bin/docker rm -f witnessd
+
+# The Event API is published on loopback only by default — widen the -p
+# binding deliberately (and put TLS in front) if other machines need it.
+ExecStart=/usr/bin/docker run --name witnessd --rm \
+    -e WITNESS_RTSP_URL=${WITNESS_RTSP_URL} \
+    -p 127.0.0.1:8799:8799 \
+    -v ${WITNESS_DATA_DIR}:/data \
+    ${WITNESS_IMAGE}
+ExecStop=/usr/bin/docker stop witnessd
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

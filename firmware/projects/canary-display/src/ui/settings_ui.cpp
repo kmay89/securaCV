@@ -55,11 +55,13 @@
 #include "canary/ui/commission_ui.h"
 #include "canary/ui/help_verdict.h"   // the "get help" QR's pure verdict → URL
 #include "canary/net/mqtt_mgr.h"      // hub link state for the help verdict
+#include "canary/ui/round_frame.h"
 #include "canary/ui/theme.h"
 #include "canary/ui/character.h"
 #include "canary/ui/clock_styles.h"
 #include "canary/glass_settings.h"
 #include "canary/hal/display.h"
+#include "canary/runtime_config.h"   // the wifi-forget doorway (reset sheet)
 #include "pins.h"                    // HAS_ISOLATED_IO (board -I path)
 // The 7"/dash RGB glass carries orientation + rendered brightness + a
 // firmware page. These are compiled out on the round watch and the fixed-
@@ -131,7 +133,9 @@ enum class Page {
   CalBlink,
   CalWarn,
   CalDone,
+  ResetChoice,  // which reset: the screen's defaults, or the WiFi it joined
   ResetConfirm,
+  NetForget,    // confirm-gated: forget WiFi, reboot into the join wizard
 #ifdef CD_SET_MODES
   ModesList,    // the non-fleet gears this build carries
   ModeConfirm,  // confirm-gated: latch the chosen gear + reboot into it
@@ -224,7 +228,9 @@ void add_item(lv_obj_t* obj, int id) {
 }
 
 // One row: centered single label on the round watch (a circle likes centered
-// text at every latitude); name-left value-right on the dash sheet.
+// text at every latitude — and the Round Frame fit gives each row exactly the
+// chord its latitude offers, so a low row ellipsizes instead of running off
+// the rim); name-left value-right on the dash sheet.
 lv_obj_t* mk_row(int y, const char* name, const char* value, int id,
                  bool selected = false) {
 #ifdef CD_FLAVOR_WATCH
@@ -234,7 +240,7 @@ lv_obj_t* mk_row(int y, const char* name, const char* value, int id,
     lv_label_set_text_fmt(l, "%s • %s", name, value);
   else
     lv_label_set_text(l, name);
-  lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
+  rf_fit_top(l, y);
   add_item(l, id);
   return l;
 #else
@@ -259,7 +265,10 @@ void mk_back(const char* title) {
   lv_obj_t* l = mk_label(s_host, font_caption(), col_faint());
   lv_label_set_text_fmt(l, LV_SYMBOL_LEFT " %s", title);
 #ifdef CD_FLAVOR_WATCH
-  lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 16);
+  // y=24, not 16: the disc offers 126 px there against 98 at the old line —
+  // the rim was cutting long titles mid-character. The fit ellipsizes any
+  // title that still outruns its chord.
+  rf_fit_top(l, 24);
 #else
   lv_obj_align(l, LV_ALIGN_TOP_LEFT, 28, 18);
 #endif
@@ -369,7 +378,13 @@ void cal_blink_cb(lv_timer_t*) {
 // ── Page builders ────────────────────────────────────────────────────────
 
 void build_root() {
+#if RF_GLASS_ROUND
+  // The full invitation outruns the top chord (126 px at y=24) — on the
+  // round glass the ‹ glyph carries "leave", as it does on every sub-page.
+  mk_back("settings");
+#else
   mk_back("settings • tap to leave");
+#endif
   char v[24];
 #ifdef CD_FLAVOR_WATCH
   // Ten rows since the get-help row joined (eleven with the modes doorway)
@@ -992,6 +1007,22 @@ void build_cal_done() {
   lv_obj_align(body, LV_ALIGN_CENTER, 0, 8);
 }
 
+// Which reset — the screen's own defaults, or the WiFi this glass joined.
+// The second one exists because a puck that moves house (or a router that
+// changes its password) had no way back into the join wizard short of a
+// USB reflash: nothing anywhere erased the NVS credentials.
+void build_reset_choice() {
+  mk_back("reset");
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "screen", "defaults", IT_OPT_A);
+  y += ROW_H;
+  // A never-provisioned unit (compiled placeholder, nothing in NVS) has no
+  // network to forget; say so instead of offering a no-op.
+  mk_row(y, "wifi",
+         canary::cfg::wifi_is_placeholder() ? "not set up" : "forget",
+         IT_OPT_B);
+}
+
 void build_reset_confirm() {
   mk_back("reset");
   lv_obj_t* body = mk_label(s_host, font_body(), col_text());
@@ -1004,6 +1035,27 @@ void build_reset_confirm() {
   add_item(yes, IT_YES);
   lv_obj_t* no = mk_label(s_host, font_body(), col_muted());
   lv_label_set_text(no, "keep");
+  lv_obj_align(no, LV_ALIGN_CENTER, 52, 44);
+  add_item(no, IT_NO);
+}
+
+// Forget WiFi, confirm-gated like every destructive act on this glass. On
+// yes: erase the NVS credentials and reboot — the unit comes back up in the
+// join wizard (its own SoftAP + QR), exactly like first boot. MQTT broker
+// pins and identity stay; a re-join on the same network resumes seamlessly.
+void build_net_forget() {
+  mk_back("forget wifi");
+  lv_obj_t* body = mk_label(s_host, font_body(), col_text());
+  lv_label_set_text_fmt(body, "Leave \"%.20s\"?\nSetup reopens after.",
+                        canary::cfg::get().wifi_ssid);
+  lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(body, LV_ALIGN_CENTER, 0, -26);
+  lv_obj_t* yes = mk_label(s_host, font_body(), col_signed());
+  lv_label_set_text(yes, "forget");
+  lv_obj_align(yes, LV_ALIGN_CENTER, -52, 44);
+  add_item(yes, IT_YES);
+  lv_obj_t* no = mk_label(s_host, font_body(), col_muted());
+  lv_label_set_text(no, "stay");
   lv_obj_align(no, LV_ALIGN_CENTER, 52, 44);
   add_item(no, IT_NO);
 }
@@ -1168,7 +1220,9 @@ void build(Page pg) {
     case Page::CalBlink:     build_cal_blink(); break;
     case Page::CalWarn:      build_cal_warn(); break;
     case Page::CalDone:      build_cal_done(); break;
+    case Page::ResetChoice:  build_reset_choice(); break;
     case Page::ResetConfirm: build_reset_confirm(); break;
+    case Page::NetForget:    build_net_forget(); break;
 #ifdef CD_SET_MODES
     case Page::ModesList:    build_modes_list(); break;
     case Page::ModeConfirm:  build_mode_confirm(); break;
@@ -1280,7 +1334,7 @@ void dispatch(int id) {
 #endif
         case IT_ROW_STYLE:  build(Page::EditStyle); return;
         case IT_ROW_CAL:    build(Page::CalIntro); return;
-        case IT_ROW_RESET:  build(Page::ResetConfirm); return;
+        case IT_ROW_RESET:  build(Page::ResetChoice); return;
         case IT_ROW_ADD:
           close_instant();
           commission_ui_open();
@@ -1539,6 +1593,14 @@ void dispatch(int id) {
       build(Page::Root);
       return;
 
+    case Page::ResetChoice:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_OPT_A) { build(Page::ResetConfirm); return; }
+      if (id == IT_OPT_B && !canary::cfg::wifi_is_placeholder()) {
+        build(Page::NetForget);
+      }
+      return;
+
     case Page::ResetConfirm:
       if (id == IT_YES) {
         settings_reset();
@@ -1548,6 +1610,16 @@ void dispatch(int id) {
         character_apply((Character)settings().character);
         restyle_open_surface();
       }
+      build(Page::Root);
+      return;
+
+    case Page::NetForget:
+      if (id == IT_YES && canary::cfg::forget_wifi_credentials()) {
+        // Reboot into the join wizard. Does not return on hardware; the
+        // emulator's shim falls through, so land somewhere sane anyway.
+        ESP.restart();
+      }
+      // No / NVS balked (the log says which): back to the root, still joined.
       build(Page::Root);
       return;
 

@@ -167,6 +167,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Device trust & PKI](device_trust.md) — pinned keys, stricter than TOFU
 - [Log verification](log_verify.md) — proving the chain, offline
 - [Timestamping](timestamping.md) — coarse time as a feature
+- [Court export](court_export.md) — the FRE 902(13)/(14) disclosure kit: evidence + digests + custody record + anchor tokens + certification drafts, verifiable with `sha256sum` and `openssl` alone
 - [Sealed snapshot vault](sealed_snapshot_vault.md) · [scheduled exports](scheduled_exports.md)
 - [C2PA Content Credentials for exports (design)](design/c2pa_export.md) — implemented behind `c2pa-export`: `export_events --c2pa` signs an industry-standard sidecar manifest any Content Credentials tool can verify — keys derived from the device seed, reproducible device-local CA, fully offline, chain stays the root of trust
 - [The Witness Reading Room (scope)](design/witness_log_viewer.md) — scoping RFC for the log viewer + verifier: one app that verifies everything (chain, receipts, C2PA) *and* shows the record — timeline, disclosure audit, chain health; offline single-file first, live `witness_api` mode second, native full-fat verification third

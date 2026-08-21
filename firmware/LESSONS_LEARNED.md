@@ -972,8 +972,16 @@
 - **Fix:** `load_credential` (display + vision + sense, all copies) falls back
   to `getBytesLength`/`getBytes` when the key exists but reads as an empty
   string — a blob under the key is the same human intent.
+- **Fix, inverse direction (2026-08):** the blob-side loaders got the mirror
+  fallback: `ScvNetworkManager::loadCredentials` (main canary) and the wap's
+  `wifi_load_credentials` read the key as a string when it exists but
+  `getBytesLength` is 0 — a string-typed seed is the same human intent too.
+  The canary-ota reference (`wifi_sta_connect_from_nvs`) additionally looks up
+  the standard `securacv` namespace (`wifi_ssid`/`wifi_pass`, string or blob)
+  when its own `wifi` namespace is empty, before the Kconfig defaults.
 - **Regression check:** `desktop_parity.test.js` pins the blob fallback in all
-  four loaders alongside the existing isKey assertion.
+  four string-scheme loaders alongside the existing isKey assertion, and the
+  string fallback in both blob-scheme loaders.
 - **Date learned:** 2026-08
 
 ---
@@ -1287,6 +1295,32 @@
 - **Regression check:** none automatable on host (needs LVGL's allocator
   under pressure). The rule is mechanical in review: a call to
   `lv_qrcode_update` whose result is unused is the bug.
+
+### The emulator's square canvas hides round-glass clipping — geometry must be an engine
+- **What happened:** The watch face laid out on the full 240x240 canvas with
+  hand-tuned offsets, and everything looked right in the emulator and in
+  screenshots. On the physical round display the corners of that canvas do
+  not exist: list rows near the top and bottom ran past the circle's chord
+  and the glass cut them mid-character, and a settings back-line at y=16
+  (where the chord is 98 px) lost a third of its text. A separate print-time
+  cap (`%.24s`) then mangled "restricted zone" to "restricted zon" even on
+  rows with room for the whole phrase.
+- **Root cause:** no single owner for the circle. Each face respected the
+  disc by local discipline — centered labels, "packs tighter" comments, an
+  inscribed-square derivation in a comment — and every reviewer surface
+  (emulator canvas, screenshots, square dev panels) renders the corners the
+  product doesn't have, so nothing ever showed the loss.
+- **Fix:** the Round Frame engine (`include/canary/ui/round_frame_core.h`,
+  pure host-tested integer geometry; `round_frame.h/.cpp` the LVGL fit
+  layer). A label near the rim gets the width its latitude honestly offers
+  and ellipsizes instead of spilling; list pages ride equator-centered row
+  stacks; QR budgets static_assert against the engine's inscribed square.
+  Print-time caps were loosened to buffer bounds — visual truncation is the
+  engine's job, and its ellipsis is honest.
+- **Regression check:** `tests_host/test_round_frame_core.cpp` pins the
+  exact chord/stack/square values the glass computes. The rule going
+  forward: never hand a face a new magic number for the circle — extend the
+  engine and its test instead.
 - **Date learned:** 2026-08
 
 ### Re-addressing a panel is not repainting it — a rotation leaves the old frame behind

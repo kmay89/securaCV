@@ -9,8 +9,10 @@
 #
 # Environment contract (only FRIGATE_MQTT_HOST is required):
 #   FRIGATE_MQTT_HOST       broker hostname Frigate publishes to   (required*)
+#                           (hostname, IPv4, or IPv6 literal)
 #   FRIGATE_MQTT_PORT       broker port                            (1883)
 #   MQTT_BROKER_ADDR        full host:port override; replaces the two above
+#                           (bracket IPv6 literals: [fd00::5]:1883)
 #   MQTT_USERNAME           broker auth                            (none)
 #   MQTT_PASSWORD           broker auth                            (none)
 #   FRIGATE_TOPIC_PREFIX    Frigate's mqtt.topic_prefix            (frigate)
@@ -62,7 +64,24 @@ resolve_broker_addr() {
   in your frigate config), e.g.  FRIGATE_MQTT_HOST=mosquitto
   Or set MQTT_BROKER_ADDR=host:port directly."
     fi
-    echo "${FRIGATE_MQTT_HOST}:${FRIGATE_MQTT_PORT:-1883}"
+    local host="${FRIGATE_MQTT_HOST}" port="${FRIGATE_MQTT_PORT:-1883}"
+    case "$host" in
+        \[*\])
+            # Bracketed IPv6 literal — append the port.
+            ;;
+        *:*:*)
+            # Bare IPv6 literal: bracket it, so both the shell-side split
+            # below and the Rust bridges ([ipv6]:port) parse it the same way.
+            host="[${host}]"
+            ;;
+        *:*)
+            # Someone put host:port into FRIGATE_MQTT_HOST — accept it as-is
+            # rather than producing host:port:port.
+            echo "$host"
+            return
+            ;;
+    esac
+    echo "${host}:${port}"
 }
 
 resolve_device_key_seed() {
@@ -97,8 +116,51 @@ tcp_check() {
     (exec 3<>"/dev/tcp/${host}/${port}") 2>/dev/null
 }
 
-split_addr_host() { echo "${1%:*}"; }
-split_addr_port() { echo "${1##*:}"; }
+# Split "host[:port]" without mangling IPv6 literals. Only a single
+# trailing :<digits> counts as a port; "[::1]:1883" and "[::1]" keep the
+# address inside the brackets; a bare IPv6 literal ("fd00::5") is all host
+# (add brackets to give one a port). The old ${1%:*}/${1##*:} split turned
+# "::1" into host ":" port "1".
+split_addr_host() {
+    local addr="$1"
+    case "$addr" in
+        \[*\]*) addr="${addr#\[}"; echo "${addr%%\]*}" ;;
+        *:*:*)  echo "$addr" ;;
+        *:*)
+            local tail="${addr##*:}"
+            if [[ "$tail" =~ ^[0-9]+$ ]]; then
+                echo "${addr%:*}"
+            else
+                echo "$addr"
+            fi
+            ;;
+        *) echo "$addr" ;;
+    esac
+}
+split_addr_port() {
+    local addr="$1" default_port="${FRIGATE_MQTT_PORT:-1883}"
+    case "$addr" in
+        \[*\]:*)
+            local tail="${addr##*\]:}"
+            if [[ "$tail" =~ ^[0-9]+$ ]]; then
+                echo "$tail"
+            else
+                echo "$default_port"
+            fi
+            ;;
+        \[*\]) echo "$default_port" ;;
+        *:*:*) echo "$default_port" ;;
+        *:*)
+            local tail="${addr##*:}"
+            if [[ "$tail" =~ ^[0-9]+$ ]]; then
+                echo "$tail"
+            else
+                echo "$default_port"
+            fi
+            ;;
+        *) echo "$default_port" ;;
+    esac
+}
 
 # ---------------------------------------------------------------------------
 # doctor — diagnose the integration without changing anything
@@ -178,6 +240,38 @@ doctor() {
     return "$failures"
 }
 
+# Exit (non-zero, on purpose: compose restart policies and the e2e harness
+# rely on a real failure) with a message that says exactly what to fix.
+broker_unreachable_exit() {
+    local addr="$1" waited="$2"
+    cat >&2 <<EOF
+[securacv] ------------------------------------------------------------------
+[securacv] ERROR: no MQTT broker is answering at ${addr} (waited ${waited}s).
+[securacv]
+[securacv] The sidecar listens to the same broker Frigate publishes to, so it
+[securacv] cannot start without one. Three things fix almost every case:
+[securacv]
+[securacv]   1. Point FRIGATE_MQTT_HOST at your broker. It must be the
+[securacv]      hostname or IP as seen FROM THIS CONTAINER — usually the
+[securacv]      broker's compose service name, or the docker host's LAN IP.
+[securacv]      In docker/sidecar/quickstart.compose.yml it is the line:
+[securacv]          FRIGATE_MQTT_HOST: "mosquitto"   # <- edit this value
+[securacv]
+[securacv]   2. Make sure the broker container is running and on the same
+[securacv]      docker network as this one (a broker in another compose
+[securacv]      project is NOT, unless you join its network).
+[securacv]
+[securacv]   3. No broker at all yet? Use the quickstart that bundles one:
+[securacv]          docker compose -f quickstart-with-broker.compose.yml up -d
+[securacv]      (file: docker/sidecar/quickstart-with-broker.compose.yml)
+[securacv]
+[securacv] To diagnose interactively:
+[securacv]     docker compose run --rm securacv doctor
+[securacv] ------------------------------------------------------------------
+EOF
+    exit 1
+}
+
 # ---------------------------------------------------------------------------
 # run — supervise the three daemons
 # ---------------------------------------------------------------------------
@@ -207,9 +301,7 @@ run() {
     local broker_wait="${BROKER_WAIT_SECS:-30}" waited=0
     until tcp_check "$host" "$port"; do
         if [ "$waited" -ge "$broker_wait" ]; then
-            die "MQTT broker $addr is not reachable (waited ${waited}s).
-  - Is the broker container running and on the same docker network?
-  - Run the diagnostics:  docker compose run securacv doctor"
+            broker_unreachable_exit "$addr" "$waited"
         fi
         if [ "$waited" -eq 0 ]; then
             log "waiting for MQTT broker $addr to accept connections (up to ${broker_wait}s)..."

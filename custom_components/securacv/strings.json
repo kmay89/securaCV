@@ -1,16 +1,24 @@
 {
   "config": {
-    "flow_title": "SecuraCV",
+    "flow_title": "SecuraCV {name}",
     "step": {
       "user": {
         "title": "SecuraCV Setup",
-        "description": "Choose how to connect to your SecuraCV devices.",
+        "description": "Choose how to connect to your SecuraCV devices. Automatic is right for almost everyone: it detects what's installed and configures itself with no further questions.",
         "data": {
           "setup_mode": "Setup mode"
         },
         "data_description": {
-          "setup_mode": "Most users should choose 'Canary devices via MQTT' — devices auto-discover via MQTT Discovery."
+          "setup_mode": "Automatic probes for a running Privacy Witness Kernel and enables MQTT for Canary devices. Pick a manual mode only if you need a non-default URL or topic prefix."
         }
+      },
+      "confirm": {
+        "title": "Add SecuraCV",
+        "description": "Canary devices are publishing on the MQTT prefix `{prefix}`. Nothing else is needed — submit to add them to Home Assistant."
+      },
+      "hassio_confirm": {
+        "title": "Add SecuraCV",
+        "description": "The Privacy Witness Kernel add-on announced itself at {url}. Submit to connect to it and enable MQTT discovery for Canary devices — nothing else is needed."
       },
       "mqtt_config": {
         "title": "MQTT Configuration",
@@ -32,7 +40,7 @@
           "adapter_stats_url": "Adapter host stats URL (optional)"
         },
         "data_description": {
-          "url": "URL of the Privacy Witness Kernel Event API (e.g., http://privacy_witness_kernel:8799)",
+          "url": "URL of the Privacy Witness Kernel Event API (e.g., http://d0491a67-privacy-witness-kernel:8799 for the add-on)",
           "token_file": "Path to the kernel's rotating token file; re-read automatically when the token rotates (default: /config/api_token)",
           "token": "Bearer token pasted from the kernel's api_token file — goes stale within 10 minutes unless a token file is also set",
           "adapter_stats_url": "Read-only adapter_host stats endpoint, e.g. http://adapter-host:8799 — surfaces per-adapter health as a diagnostic sensor."
@@ -63,7 +71,14 @@
       "token_required": "Provide an API token file path or a static token (the token file is recommended — the kernel rotates the token every 10 minutes)."
     },
     "abort": {
-      "already_configured": "This integration is already configured."
+      "already_configured": "This SecuraCV system is already configured.",
+      "invalid_discovery_info": "The discovery announcement was missing its connection details (host and port)."
+    }
+  },
+  "issues": {
+    "mqtt_subscribe_failed": {
+      "title": "SecuraCV can't subscribe to MQTT",
+      "description": "Home Assistant's MQTT integration isn't connected, so SecuraCV can't hear your Canary devices on `{prefix}/#`.\n\nTo fix it: install the Mosquitto broker add-on (Settings > Add-ons > Add-on store > Mosquitto broker), then add the MQTT integration (Settings > Devices & Services > Add Integration > MQTT) and point it at that broker. Then reload the SecuraCV integration — this issue clears itself once the subscription succeeds.\n\nError: {error}"
     }
   },
   "options": {

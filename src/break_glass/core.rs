@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::crypto::signatures::{
-    sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN, DOMAIN_TRUSTEE_APPROVAL,
+    sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN,
+    DOMAIN_POLICY_CHANGE_APPROVAL, DOMAIN_TRUSTEE_APPROVAL,
 };
 use crate::vault::crypto::VaultCryptoMode;
 use crate::TimeBucket;
@@ -123,6 +124,21 @@ impl QuorumPolicy {
             hasher.update(id_bytes);
             hasher.update(pk);
         }
+        hasher.finalize().into()
+    }
+
+    /// A commitment to the WHOLE policy: the quorum identity (`commitment`)
+    /// plus the vault crypto settings. `commitment()` deliberately covers only
+    /// the quorum (it is the receipt-era identifier), so a policy change that
+    /// alters ONLY `vault.crypto_mode` would be invisible to it — this variant
+    /// exists so policy-change consent binds every field a mutation can move.
+    pub fn full_commitment(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(self.commitment());
+        let mode = self.vault.crypto_mode.to_string();
+        let mode_bytes = mode.as_bytes();
+        hasher.update((mode_bytes.len() as u32).to_le_bytes());
+        hasher.update(mode_bytes);
         hasher.finalize().into()
     }
 }
@@ -269,6 +285,95 @@ pub fn count_valid_distinct_approvals(
             continue;
         };
         if !verify_approval(&trustee.public_key, request_hash, &approval.signature) {
+            continue;
+        }
+        distinct.insert(trustee.public_key);
+    }
+    distinct.len()
+}
+
+/// A proposed change to the stored quorum policy. Consent to it is a distinct
+/// power from consent to an unlock request, carried in its own signature
+/// domain (`DOMAIN_POLICY_CHANGE_APPROVAL`) so neither can stand in for the
+/// other. The hash binds the FULL previous and proposed policies (via
+/// `QuorumPolicy::full_commitment`, which covers roster, threshold, and vault
+/// crypto settings) and a freshness bucket — any change to any of them
+/// invalidates every collected approval.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PolicyChangeProposal {
+    /// `full_commitment()` of the policy being replaced; all-zero when
+    /// bootstrapping an empty database (there is no quorum yet to consult).
+    pub prev_policy_commitment: [u8; 32],
+    pub new_policy: QuorumPolicy,
+    pub time_bucket: TimeBucket,
+}
+
+impl PolicyChangeProposal {
+    pub fn change_hash(&self) -> [u8; 32] {
+        // Every field is fixed-size (two 32-byte commitments, two u64 bucket
+        // fields), so the concatenation is self-delimiting and needs no
+        // length prefixes (mirrors `request_hash`'s reasoning).
+        let mut hasher = Sha256::new();
+        hasher.update(self.prev_policy_commitment);
+        hasher.update(self.new_policy.full_commitment());
+        hasher.update(self.time_bucket.start_epoch_s.to_le_bytes());
+        hasher.update(self.time_bucket.size_s.to_le_bytes());
+        hasher.finalize().into()
+    }
+}
+
+/// Sign a trustee's consent to a policy change, domain-separated to
+/// `DOMAIN_POLICY_CHANGE_APPROVAL`.
+pub fn sign_policy_change_approval(signing_key: &SigningKey, change_hash: &[u8; 32]) -> [u8; 64] {
+    sign_ed25519_only(DOMAIN_POLICY_CHANGE_APPROVAL, signing_key, change_hash)
+}
+
+/// Verify a policy-change approval signature. Rejects malformed keys,
+/// wrong-length signatures, and — critically — signatures minted under any
+/// other domain (an unlock-request approval never counts as roster consent).
+pub fn verify_policy_change_approval(
+    public_key: &[u8; 32],
+    change_hash: &[u8; 32],
+    signature: &[u8],
+) -> bool {
+    let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    let Ok(sig_array) = <[u8; 64]>::try_from(signature) else {
+        return false;
+    };
+    verify_ed25519_only(
+        DOMAIN_POLICY_CHANGE_APPROVAL,
+        &verifying_key,
+        change_hash,
+        &sig_array,
+    )
+    .is_ok()
+}
+
+/// Count the DISTINCT current-trustee public keys carrying a valid,
+/// domain-separated policy-change approval over `change_hash`. The policy
+/// consulted is the CURRENT (stored) policy — the quorum being replaced is
+/// the one that must consent — and, as with unlock quorums, deduping is on
+/// the KEY so a reused key can never inflate the count.
+pub fn count_valid_distinct_policy_change_approvals(
+    current_policy: &QuorumPolicy,
+    change_hash: &[u8; 32],
+    approvals: &[Approval],
+) -> usize {
+    let mut distinct = std::collections::HashSet::new();
+    for approval in approvals {
+        if &approval.request_hash != change_hash {
+            continue;
+        }
+        let Some(trustee) = current_policy
+            .trustees
+            .iter()
+            .find(|t| t.id.0 == approval.trustee.0)
+        else {
+            continue;
+        };
+        if !verify_policy_change_approval(&trustee.public_key, change_hash, &approval.signature) {
             continue;
         }
         distinct.insert(trustee.public_key);
@@ -1181,6 +1286,143 @@ mod tests {
             .unwrap()
             .request_hash();
         assert_ne!(a, b, "boundary shift must change the request hash");
+    }
+
+    // ─── policy-change consent is its own domain and binds every field ───
+
+    fn two_trustee_policy(alice: &SigningKey, bob: &SigningKey, n: u8) -> QuorumPolicy {
+        QuorumPolicy::new(
+            n,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: alice.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: bob.verifying_key().to_bytes(),
+                },
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn full_commitment_binds_vault_crypto_mode() {
+        let alice = SigningKey::from_bytes(&[1u8; 32]);
+        let bob = SigningKey::from_bytes(&[2u8; 32]);
+        let classical = two_trustee_policy(&alice, &bob, 2);
+        let mut pq = classical.clone();
+        pq.vault.crypto_mode = crate::vault::crypto::VaultCryptoMode::Pq;
+        // The quorum-era commitment ignores vault settings by design…
+        assert_eq!(classical.commitment(), pq.commitment());
+        // …so policy-change consent must use the full commitment, which
+        // must not.
+        assert_ne!(classical.full_commitment(), pq.full_commitment());
+    }
+
+    #[test]
+    fn policy_change_hash_binds_prev_new_and_bucket() {
+        let alice = SigningKey::from_bytes(&[1u8; 32]);
+        let bob = SigningKey::from_bytes(&[2u8; 32]);
+        let carol = SigningKey::from_bytes(&[3u8; 32]);
+        let bucket = TimeBucket {
+            start_epoch_s: 600,
+            size_s: 600,
+        };
+        let old = two_trustee_policy(&alice, &bob, 2);
+        let new = two_trustee_policy(&alice, &carol, 2);
+        let base = PolicyChangeProposal {
+            prev_policy_commitment: old.full_commitment(),
+            new_policy: new.clone(),
+            time_bucket: bucket,
+        };
+        let h = base.change_hash();
+
+        let mut other_prev = base.clone();
+        other_prev.prev_policy_commitment = [9u8; 32];
+        assert_ne!(h, other_prev.change_hash(), "prev commitment must bind");
+
+        let mut other_new = base.clone();
+        other_new.new_policy = two_trustee_policy(&alice, &bob, 1);
+        assert_ne!(h, other_new.change_hash(), "new policy must bind");
+
+        let mut other_bucket = base;
+        other_bucket.time_bucket = TimeBucket {
+            start_epoch_s: 1200,
+            size_s: 600,
+        };
+        assert_ne!(h, other_bucket.change_hash(), "time bucket must bind");
+    }
+
+    #[test]
+    fn policy_change_approval_domain_is_disjoint_from_unlock_approval() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let hash = [5u8; 32];
+        let pk = key.verifying_key().to_bytes();
+
+        // An unlock-request approval signature must not count as consent to a
+        // policy change…
+        let unlock_sig = sign_approval(&key, &hash);
+        assert!(!verify_policy_change_approval(&pk, &hash, &unlock_sig));
+        // …and policy-change consent must not count as an unlock approval.
+        let change_sig = sign_policy_change_approval(&key, &hash);
+        assert!(!verify_approval(&pk, &hash, &change_sig));
+        // Each verifies only in its own domain.
+        assert!(verify_policy_change_approval(&pk, &hash, &change_sig));
+        assert!(verify_approval(&pk, &hash, &unlock_sig));
+    }
+
+    #[test]
+    fn policy_change_count_uses_current_quorum_and_dedupes_by_key() {
+        let alice = SigningKey::from_bytes(&[1u8; 32]);
+        let bob = SigningKey::from_bytes(&[2u8; 32]);
+        let mallory = SigningKey::from_bytes(&[6u8; 32]);
+        let current = two_trustee_policy(&alice, &bob, 2);
+        let proposed = two_trustee_policy(&alice, &mallory, 1);
+        let proposal = PolicyChangeProposal {
+            prev_policy_commitment: current.full_commitment(),
+            new_policy: proposed,
+            time_bucket: TimeBucket {
+                start_epoch_s: 0,
+                size_s: 600,
+            },
+        };
+        let h = proposal.change_hash();
+
+        let a = Approval::new(
+            TrusteeId::new("alice"),
+            h,
+            sign_policy_change_approval(&alice, &h).to_vec(),
+        );
+        let a_dup = a.clone();
+        let b = Approval::new(
+            TrusteeId::new("bob"),
+            h,
+            sign_policy_change_approval(&bob, &h).to_vec(),
+        );
+        // Mallory is in the PROPOSED roster, not the current one — her
+        // consent must not count toward replacing the current quorum.
+        let m = Approval::new(
+            TrusteeId::new("mallory"),
+            h,
+            sign_policy_change_approval(&mallory, &h).to_vec(),
+        );
+
+        assert_eq!(
+            count_valid_distinct_policy_change_approvals(&current, &h, &[a.clone(), a_dup]),
+            1,
+            "duplicate signer counts once"
+        );
+        assert_eq!(
+            count_valid_distinct_policy_change_approvals(&current, &h, &[a.clone(), m]),
+            1,
+            "a proposed-roster key is not a current trustee"
+        );
+        assert_eq!(
+            count_valid_distinct_policy_change_approvals(&current, &h, &[a, b]),
+            2
+        );
     }
 
     // ─── H1: quorum re-derivation counts distinct valid trustees only ────

@@ -3,7 +3,7 @@
 
 name: "Privacy Witness Kernel"
 description: "Privacy-preserving video surveillance that produces claims, not recordings"
-version: "0.6.0"
+version: "0.7.0"
 slug: "privacy_witness_kernel"
 url: "https://github.com/kmay89/securaCV"
 # Pre-built multi-arch image published by .github/workflows/addon-image.yml.
@@ -23,17 +23,34 @@ hassio_api: true
 services:
   - "mqtt:want"
 
-# Network configuration
+# Announce the Event API to the Supervisor after startup so the SecuraCV
+# integration can offer a zero-click discovered card (run.sh POSTs
+# /discovery once the kernel answers /health).
+discovery:
+  - securacv
+
+# Network configuration. The Event API binds inside the container so the HA
+# integration reaches it over the internal add-on network at
+# http://d0491a67-privacy-witness-kernel:8799 (every request needs the
+# capability token from /config/api_token). The host port mapping is
+# DISABLED by default — enable it in the add-on's Network settings only if
+# something outside Home Assistant needs the API on your LAN.
 ports:
-  8799/tcp: 8799  # Event API (loopback by default, exposed for HA integration)
+  8799/tcp: null
 ports_description:
-  8799/tcp: "Event API for retrieving privacy-preserving event claims"
+  8799/tcp: >-
+    Event API (token-required) for privacy-preserving event claims. Leave
+    disabled unless a client outside Home Assistant needs it; the SecuraCV
+    integration already reaches the API over the internal add-on network.
 
 # Persistent storage
 map:
   - config:rw      # For witness.db and configuration
   - share:rw       # For vault storage
   - ssl:ro         # For camera certificates if needed
+  # For the wizard-generated Frigate config: the modern Frigate add-on reads
+  # /addon_configs/ccab4aaf_frigate/config.yml, not /config/frigate.yml.
+  - all_addon_configs:rw
 
 # Add-on options (configurable via HA UI)
 options:

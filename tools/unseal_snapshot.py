@@ -141,7 +141,16 @@ def cmd_gen_key(args: argparse.Namespace) -> int:
     # chmod): under a permissive umask a plain open() would leave a window
     # where the file is world-readable — and this key unlocks every snapshot
     # sealed to it. O_EXCL doubles as the no-overwrite guard.
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if args.force else os.O_EXCL)
+    # --force replaces an existing key. Unlink first, then create with O_EXCL,
+    # so the new secret is never written into a pre-existing (possibly laxer,
+    # possibly symlinked) file: the private key exists only at 0600 from the
+    # instant of creation, closing the reuse-a-laxer-file window.
+    if args.force:
+        try:
+            os.unlink(priv_path)
+        except FileNotFoundError:
+            pass
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(priv_path, flags, 0o600)
     except FileExistsError:
@@ -149,7 +158,6 @@ def cmd_gen_key(args: argparse.Namespace) -> int:
         return 1
     with os.fdopen(fd, "w", encoding="ascii") as fh:
         fh.write(priv_raw.hex() + "\n")
-    os.chmod(priv_path, 0o600)  # --force may have reused a laxer existing file
     with open(pub_path, "w", encoding="ascii") as fh:
         fh.write(pub_raw.hex() + "\n")
 
@@ -213,8 +221,20 @@ def cmd_unseal(args: argparse.Namespace) -> int:
         return 1
 
     out = args.out or (os.path.splitext(args.file)[0] + ".jpg")
-    with open(out, "wb") as fh:
+    # The unsealed frame is raw witnessed media — the most sensitive artifact
+    # this tool produces. Write it 0600 atomically (mode on os.open, not a
+    # post-hoc chmod) so a permissive umask cannot leave a world-readable
+    # window, and O_NOFOLLOW so a pre-planted symlink at `out` cannot redirect
+    # the plaintext. O_TRUNC preserves the "overwrite the output" convenience.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(out, flags, 0o600)
+    except OSError as exc:
+        print(f"refusing to write {out}: {exc}", file=sys.stderr)
+        return 1
+    with os.fdopen(fd, "wb") as fh:
         fh.write(plain)
+    os.chmod(out, 0o600)  # enforce 0600 even if `out` already existed laxer
     print(f"unsealed {len(plain)} bytes -> {out}")
     print(f"trigger {h['trigger_tag']}, time bucket {bucket_str(h['time_bucket'])}")
     return 0

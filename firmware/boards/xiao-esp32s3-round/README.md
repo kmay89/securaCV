@@ -34,7 +34,9 @@ backlight/touch-INT lines against your display revision.
   (MISO belongs to the SD card).
 - `BUZZER_PIN` (D0/GPIO1) is a provision for an optional passive piezo —
   unpopulated on stock builds; `FEATURE_CHIME` stays 0 until fitted.
-- BOOT button (GPIO0, active LOW) doubles as the factory-reset long-press.
+- BOOT button (GPIO0, active LOW) is reserved for a future factory-reset
+  long-press — no gesture is wired to it yet. To re-run WiFi setup today,
+  use the on-glass path: settings › reset › wifi › forget.
 
 ## Used By
 

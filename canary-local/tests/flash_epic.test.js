@@ -325,6 +325,31 @@ test("buildNvsSeedImage: ints alone (the Vision usb-secrets case) still valid", 
   assert.ok(!items.some((i) => i.key === "wifi_en"), "no wifi keys when none given");
 });
 
+test("buildNvsSeedImage: auto_upd rides along and round-trips under the OTA engine's namespace", async () => {
+  const c = await core();
+  const img = c.buildNvsSeedImage({
+    wifi: { ssid: "birdhouse", pass: "hunter22" },
+    u8: { det_score: 85 },
+    autoUpdate: true,
+  }, 0x6000);
+  const items = c.parseNvs(img);
+  // The engine (securacv_ota.cpp) opens its OWN namespace — the key must sit
+  // there, not under "securacv" with everything else.
+  const auto = items.find((i) => i.namespace === "securacv_ota" && i.key === "auto_upd");
+  assert.ok(auto, "auto_upd must be readable under securacv_ota");
+  assert.strictEqual(auto.value, 1);
+  assert.ok(!items.some((i) => i.namespace === "securacv" && i.key === "auto_upd"),
+    "auto_upd must not leak into the securacv namespace");
+  assert.ok(items.some((i) => i.namespace === "securacv" && i.key === "det_score"),
+    "the dials stay under securacv beside the second namespace");
+  // Declined → an explicit 0 (a recorded choice); left out → no key at all.
+  assert.strictEqual(
+    c.parseNvs(c.buildNvsSeedImage({ autoUpdate: false }, 0x4000))
+      .find((i) => i.namespace === "securacv_ota" && i.key === "auto_upd").value, 0);
+  assert.ok(!c.parseNvs(c.buildNvsSeedImage({ u8: { det_score: 70 } }, 0x4000))
+    .some((i) => i.key === "auto_upd"), "no opt, no key");
+});
+
 test("buildNvsSeedImage: refuses bad keys and values", async () => {
   const c = await core();
   assert.throws(() => c.buildNvsSeedImage({ u8: { "a-key-way-too-long": 1 } }, 0x4000));
@@ -595,6 +620,14 @@ test("chirp module: safe headless — off by default, every call a quiet no-op",
   assert.doesNotThrow(() => c.chirp("hatch"));
   assert.doesNotThrow(() => c.chirp("no-such-song"));
   assert.doesNotThrow(() => c.setChirpsEnabled(true)); // no localStorage here — still safe
+});
+
+test("minimal module: safe headless — the full story by default, quiet is a choice", async () => {
+  const m = await import("../assets/minimal.js");
+  assert.strictEqual(m.minimalEnabled(), false, "minimal is opted into, never sprung");
+  assert.doesNotThrow(() => m.setMinimalEnabled(true)); // no localStorage here — still safe
+  assert.strictEqual(m.minimalEnabled(), false, "no storage means the choice can't stick — still off");
+  assert.strictEqual(m.minimalToggle(), null, "no document — no chip, and no throw either");
 });
 
 test("flash.json: the coach's lesson deck — real stages, unique ids, teaching-weight copy", () => {

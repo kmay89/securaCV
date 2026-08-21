@@ -22,11 +22,21 @@ Privacy-preserving video surveillance that produces **claims, not recordings**.
 
 3. Start the app and open its **Web UI** — the setup wizard handles the
    rest. There is nothing to type for a standard setup:
+   - **Prerequisites**: the wizard checks for Mosquitto and Frigate and
+     offers an **"Install it for me"** button for each one that is missing
+     (Mosquitto is installed and started; Frigate's add-on repository is
+     registered and the add-on installed, ready to start after setup)
+   - **Cameras**: pre-filled from go2rtc when it is reachable — review the
+     rows instead of typing RTSP URLs
    - **Device key**: auto-generated (persisted to
      `/config/.securacv/device_key`; included in HA backups — back it up)
    - **MQTT broker**: auto-discovered from the Supervisor when the
      Mosquitto app is installed (host, port, credentials)
    - **HA entities**: created automatically via MQTT Discovery
+   - **Daily digest**: when the SecuraCV digest blueprint is installed and
+     a Home Assistant companion app is registered, the wizard creates the
+     digest automation for you; when either is missing, the done screen
+     says so and names the manual step instead of pretending
 
    Manual YAML is only needed for an external broker or a non-default
    Frigate `topic_prefix` — see
@@ -35,6 +45,31 @@ Privacy-preserving video surveillance that produces **claims, not recordings**.
 After setup, the same Web UI is a **status panel**: chain-integrity badge,
 24-hour digest, a **Verify now** button, and a dashboard generator that
 emits Lovelace YAML for your live zones.
+
+### Where the wizard writes Frigate's config
+
+The current Frigate add-on reads its config from
+`/addon_configs/ccab4aaf_frigate/config.yml`, and that is where the wizard
+writes the generated camera config. An existing `config.yml`/`config.yaml`
+is **never overwritten** — the wizard writes `config.yml.new` beside it and
+tells you, so you can merge or rename deliberately. When the add-on config
+directory does not exist (Frigate not installed yet, or a legacy setup),
+the config goes to the legacy `/config/frigate.yml` path and the done
+screen names both locations.
+
+### Event API exposure
+
+The kernel's Event API listens on port 8799 **inside the add-on's
+container**, reachable by other add-ons and HA core over the Supervisor's
+internal network at `http://d0491a67-privacy-witness-kernel:8799` — that is
+how the SecuraCV integration connects. The **host port mapping ships
+disabled**, so nothing on your LAN can reach the API unless you enable the
+port in the add-on's Network settings. Every data endpoint requires the
+rotating capability token from `/config/api_token` regardless of where the
+request comes from; only `/health` answers without it. After startup the
+add-on announces the API to the Supervisor (discovery), so the SecuraCV
+integration appears under **Settings → Devices & Services** without typing
+a URL.
 
 ## Features
 
