@@ -31,13 +31,16 @@ pub struct DownloadReceipt {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    ureq::Agent::config_builder()
         .user_agent("SecuraCV-Flasher")
-        .timeout_connect(std::time::Duration::from_secs(15))
-        // No overall timeout: a HAOS image is hundreds of MB and a slow link
-        // is not an error. Reads still fail fast on a dead socket.
-        .timeout_read(std::time::Duration::from_secs(60))
+        .timeout_connect(Some(std::time::Duration::from_secs(15)))
+        // No overall/body timeout: a HAOS image is hundreds of MB and a slow
+        // link is not an error. The response headers must still arrive
+        // promptly; a dead socket mid-body is left to TCP to detect (ureq 3
+        // has no per-read timeout, only whole-body deadlines we can't use).
+        .timeout_recv_response(Some(std::time::Duration::from_secs(60)))
         .build()
+        .into()
 }
 
 /// The suffix a download-in-progress wears until it's complete. A crash or a
@@ -72,11 +75,15 @@ pub fn download(
         .call()
         .map_err(|e| format!("download failed: {e}"))?;
     let total = response
-        .header("Content-Length")
+        .headers()
+        .get("Content-Length")
+        .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse::<u64>().ok());
 
     let tmp = partial_path(dest);
-    let mut reader = response.into_reader();
+    // `into_reader` is deliberately unlimited — the convenience readers cap
+    // at 10MB and an image is far bigger than that.
+    let mut reader = response.into_body().into_reader();
     let mut file = std::fs::File::create(&tmp)
         .map_err(|e| format!("couldn't create {}: {e}", tmp.display()))?;
 
@@ -164,7 +171,10 @@ pub fn fetch_published_sha256(image_url: &str) -> Result<Option<String>, String>
         Err(_) => return Ok(None),
     };
     let mut text = String::new();
-    let mut limited = response.into_reader().take(SHA256_FILE_MAX as u64 + 1);
+    let mut limited = response
+        .into_body()
+        .into_reader()
+        .take(SHA256_FILE_MAX as u64 + 1);
     if limited.read_to_string(&mut text).is_err() {
         return Ok(None);
     }
