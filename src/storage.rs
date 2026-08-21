@@ -391,34 +391,43 @@ impl SealedLogStore for SqliteSealedLogStore {
         limit: usize,
         log_alarm: &mut dyn FnMut(&str, &str) -> Result<()>,
     ) -> Result<Vec<SealedLogRecord>> {
-        let payloads = {
+        // The limit counts RETURNED records, so it is applied after the
+        // rotation skip, not in SQL — a LIMIT in the query would let each
+        // rotation row consume a result slot (an [event, rotation, event] log
+        // read with limit 2 would return one event, and a window of rotations
+        // would come back empty despite eligible later events). Rows stream
+        // and the scan stops as soon as `limit` records are collected; the
+        // reprocess guard runs afterwards because the alarm sink may need the
+        // connection this statement borrows.
+        let records = {
             let mut stmt = self
                 .conn
-                .prepare("SELECT payload_json FROM sealed_events ORDER BY id ASC LIMIT ?1")?;
-            let mut rows = stmt.query(params![limit as i64])?;
-            let mut payloads = Vec::new();
+                .prepare("SELECT payload_json FROM sealed_events ORDER BY id ASC")?;
+            let mut rows = stmt.query([])?;
+            let mut records = Vec::new();
 
-            while let Some(row) = rows.next()? {
+            while records.len() < limit {
+                let Some(row) = rows.next()? else { break };
                 let payload: String = row.get(0)?;
-                payloads.push(payload);
+                let record = SealedLogRecord::deserialize_compat(&payload)?;
+
+                // Key rotations are identity-administration records with no
+                // ruleset binding (their ruleset_hash is all-zero), so they are
+                // exempt from the reprocess guard and excluded from the read —
+                // otherwise a single rotation would fail every subsequent read
+                // with a false CONFORMANCE_REPROCESS_VIOLATION. Mirrors the
+                // export path's skip.
+                if matches!(record, SealedLogRecord::KeyRotation(_)) {
+                    continue;
+                }
+                records.push(record);
             }
 
-            payloads
+            records
         };
 
-        let mut out = Vec::with_capacity(payloads.len());
-        for payload in payloads {
-            let record = SealedLogRecord::deserialize_compat(&payload)?;
-
-            // Key rotations are identity-administration records with no ruleset
-            // binding (their ruleset_hash is all-zero), so they are exempt from
-            // the reprocess guard and excluded from the read — otherwise a
-            // single rotation would fail every subsequent read with a false
-            // CONFORMANCE_REPROCESS_VIOLATION. Mirrors the export path's skip.
-            if matches!(record, SealedLogRecord::KeyRotation(_)) {
-                continue;
-            }
-
+        let mut out = Vec::with_capacity(records.len());
+        for record in records {
             if let Err(e) =
                 ReprocessGuard::assert_same_ruleset(expected_ruleset_hash, record.ruleset_hash())
             {
@@ -521,16 +530,15 @@ impl SealedLogStore for InMemorySealedLogStore {
         limit: usize,
         log_alarm: &mut dyn FnMut(&str, &str) -> Result<()>,
     ) -> Result<Vec<SealedLogRecord>> {
-        let payloads = self
-            .events
-            .iter()
-            .take(limit)
-            .map(|entry| entry.payload_json.clone())
-            .collect::<Vec<_>>();
-
-        let mut out = Vec::with_capacity(payloads.len());
-        for payload in payloads {
-            let record = SealedLogRecord::deserialize_compat(&payload)?;
+        // As in the SQLite store: the limit counts RETURNED records, so the
+        // rotation skip runs before `take` — otherwise rotations would consume
+        // result slots.
+        let mut out = Vec::new();
+        for entry in &self.events {
+            if out.len() >= limit {
+                break;
+            }
+            let record = SealedLogRecord::deserialize_compat(&entry.payload_json)?;
 
             // Key rotations carry no ruleset binding — exempt and excluded,
             // matching the SQLite store above.

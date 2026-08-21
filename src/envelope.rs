@@ -557,14 +557,44 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     if computed_entry_hash != envelope.export_receipt_entry.entry_hash {
         return Err(anyhow!("export receipt entry hash mismatch"));
     }
-    verify_entry_signature_any_of(
-        &lineage_keys,
+    // The export-receipt entry is created in the SAME export call that stamps
+    // provenance, so its signer is exactly the provenance key — never an
+    // earlier lineage key. Verifying it any-of would let the holder of a
+    // RETIRED (rotated-away, possibly compromised) key re-sign a forged
+    // artifact+receipt inside an otherwise-genuine envelope and recompute the
+    // unsigned whole-envelope digest. Strict here; only the ledger walks
+    // accept historical signers.
+    let provenance_key =
+        ed25519_dalek::VerifyingKey::from_bytes(&envelope.provenance.device_public_key)
+            .map_err(|e| anyhow!("invalid device public key: {}", e))?;
+    verify_entry_signature(
+        &provenance_key,
         &envelope.export_receipt_entry.entry_hash,
         &envelope.export_receipt_entry.signatures,
         mode,
         pq_key.as_ref(),
         DOMAIN_EXPORT_RECEIPT,
-    )?;
+    )
+    .map_err(|e| {
+        anyhow!(
+            "export receipt signature does not verify under the provenance key \
+             (the key current at seal time): {}",
+            e
+        )
+    })?;
+    // And that entry must BE the head of the presented export-receipts ledger:
+    // the export that sealed this envelope appended its receipt last, so a
+    // ledger whose verified head is a different row is a substituted ledger.
+    // With the head signature pinned to the current key above, the chain
+    // linkage then protects every interior row — a retired-key holder cannot
+    // append or replace an export-receipt row without moving the head, and
+    // the head must verify under the key they no longer control.
+    if exp_head != envelope.export_receipt_entry.entry_hash {
+        return Err(anyhow!(
+            "export-receipts ledger head does not match the envelope's export receipt \
+             entry — the receipt ledger is not the one this export sealed"
+        ));
+    }
 
     // Warnings & status.
     let has_pq_material = envelope.provenance.pq_public_key.is_some();

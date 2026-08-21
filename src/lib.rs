@@ -4308,6 +4308,93 @@ mod tests {
     }
 
     #[test]
+    fn evidence_envelope_rejects_receipt_resigned_by_retired_key() -> Result<()> {
+        // A retired (rotated-away, possibly compromised) key must not be able
+        // to forge NEW evidence: re-sign the export-receipt entry with the old
+        // key inside an otherwise-genuine post-rotation envelope, recompute
+        // the unsigned whole-envelope digest — verification must refuse. The
+        // entry is created in the same export call that stamps provenance, so
+        // it verifies strictly under the provenance key, never any-of.
+        let cfg = rotation_cfg(":memory:", ROT_OLD_SEED);
+        let mut kernel = Kernel::open(&cfg)?;
+        seal_one_event(&mut kernel, &cfg, "zone:pre")?;
+        kernel.rotate_device_identity(ROT_NEW_SEED)?;
+        seal_one_event(&mut kernel, &cfg, "zone:post")?;
+        let envelope = kernel.build_evidence_envelope_for_api(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+            &cfg.ruleset_id,
+            &cfg.kernel_version,
+        )?;
+
+        let mut forged = envelope.clone();
+        let retired = signing_key_from_seed(ROT_OLD_SEED)?;
+        let sig_set = crate::crypto::signatures::sign_with_domain(
+            DOMAIN_EXPORT_RECEIPT,
+            &crate::crypto::signatures::SignatureKeys::new(&retired),
+            &forged.export_receipt_entry.entry_hash,
+        )?;
+        forged.export_receipt_entry.signatures = sig_set;
+        forged.whole_envelope_digest = envelope::compute_whole_envelope_digest(&forged)?;
+
+        let err = verify_envelope(&forged, SignatureMode::Compat)
+            .expect_err("a retired key must not sign the export receipt entry");
+        assert!(
+            format!("{err:#}").contains("provenance key"),
+            "must be refused by the strict provenance-key check, got: {err:#}"
+        );
+        // Sanity: the untampered envelope still verifies.
+        verify_envelope(&envelope, SignatureMode::Compat)?;
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_rejects_substituted_receipt_ledger() -> Result<()> {
+        // A validly-signed export-receipts ledger from a DIFFERENT export of
+        // the same device must not be swappable under this envelope's receipt:
+        // the entry must be the presented ledger's head. Build two envelopes
+        // from one kernel (each export appends a receipt, so their ledgers
+        // differ), graft the second envelope's longer ledger into the first,
+        // and recompute the digest — every row still verifies, the summary
+        // matches, but the head is no longer this envelope's receipt.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        let opts = || ExportOptions {
+            jitter_s: 0,
+            ..ExportOptions::default()
+        };
+        let first = kernel.build_evidence_envelope_for_api(
+            cfg.ruleset_hash,
+            opts(),
+            &cfg.ruleset_id,
+            &cfg.kernel_version,
+        )?;
+        let second = kernel.build_evidence_envelope_for_api(
+            cfg.ruleset_hash,
+            opts(),
+            &cfg.ruleset_id,
+            &cfg.kernel_version,
+        )?;
+
+        let mut forged = first.clone();
+        forged.ledgers.export_receipts = second.ledgers.export_receipts.clone();
+        forged.whole_envelope_digest = envelope::compute_whole_envelope_digest(&forged)?;
+        let err = verify_envelope(&forged, SignatureMode::Compat)
+            .expect_err("a substituted receipt ledger must be refused");
+        assert!(
+            format!("{err:#}").contains("head does not match"),
+            "must be refused by the head binding, got: {err:#}"
+        );
+        // Both genuine envelopes verify.
+        verify_envelope(&first, SignatureMode::Compat)?;
+        verify_envelope(&second, SignatureMode::Compat)?;
+        Ok(())
+    }
+
+    #[test]
     fn evidence_envelope_rejects_unchained_rotation_claim() -> Result<()> {
         // A rotation record whose new key is NOT the provenance-anchored
         // lineage cannot smuggle an attacker key into the acceptable-signer
@@ -6485,6 +6572,18 @@ mod tests {
                 .all(|r| !matches!(r, SealedLogRecord::KeyRotation(_))),
             "identity-administration records are not events"
         );
+
+        // The limit counts RETURNED records: the rotation row between the two
+        // events must not consume a result slot (a SQL-side LIMIT would return
+        // only the first event here).
+        let limited = kernel.read_events_ruleset_bound(cfg.ruleset_hash, 2)?;
+        assert_eq!(
+            limited.len(),
+            2,
+            "limit=2 over [event, rotation, event] must return both events"
+        );
+        let first_only = kernel.read_events_ruleset_bound(cfg.ruleset_hash, 1)?;
+        assert_eq!(first_only.len(), 1);
         let alarms: i64 =
             kernel
                 .conn

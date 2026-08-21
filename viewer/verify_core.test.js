@@ -91,6 +91,22 @@ describe('envelope verification parity', () => {
     assert.match(report.error, /rotation|hash/i);
   });
 
+  it('rejects an envelope whose export-receipts ledger head is not its own receipt', async () => {
+    // The export that seals an envelope appends its receipt LAST, so the
+    // export_receipt_entry must be the presented ledger's head — otherwise a
+    // retired-key holder could substitute a receipt ledger. Drop the only
+    // ledger row (an empty chain still hash-verifies trivially) and recompute
+    // the digest: only the head binding can catch it.
+    const envelope = loadFixture('valid_envelope.json');
+    envelope.ledgers.export_receipts.entries = [];
+    envelope.ledgers.export_receipts.head_hash = null;
+    envelope.ledgers.export_receipts.count = 0;
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /head does not match/);
+  });
+
   it('verifies the legacy (pre-auth_mode) envelope — old bundles stay valid forever', async () => {
     const envelope = loadFixture('valid_envelope_legacy.json');
     const digest = await V.computeWholeEnvelopeDigest(envelope);

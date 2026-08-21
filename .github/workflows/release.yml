@@ -99,7 +99,17 @@ jobs:
       - name: Generate SHA-256 checksums
         run: |
           set -euo pipefail
-          ( cd artifacts && find . -type f -name '*.tar.gz' | sort | xargs sha256sum ) > sha256sums.txt
+          # download-artifact places each tarball under artifacts/<name>/, but
+          # the release publishes them as FLAT assets by basename — so the
+          # checksum lines must carry basenames, or a user who downloads the
+          # assets into one directory can never run `sha256sum -c`. Basenames
+          # are unique per-arch; fail loudly if that ever stops being true
+          # rather than emitting an ambiguous checksum file.
+          find artifacts -type f -name '*.tar.gz' -printf '%f\n' | sort | uniq -d | grep . \
+            && { echo "::error::duplicate tarball basenames across artifacts"; exit 1; } || true
+          find artifacts -type f -name '*.tar.gz' | sort | while read -r f; do
+            ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" )
+          done > sha256sums.txt
           cat sha256sums.txt
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4

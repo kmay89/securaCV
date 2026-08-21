@@ -244,7 +244,16 @@ This is a deliberate subset of RFC 8785 that is trivially reproducible in JavaSc
    granted/denied.
 6. Disclosure: confirm any `omitted_entry_hashes` link the chain across the omission.
 7. Artifact: confirm `SHA256(serde_json_bytes(artifact)) == export_receipt_entry.receipt.artifact_hash`
-   and verify the export-receipt entry signature.
+   and verify the export-receipt entry signature — **strictly under the provenance key**, never
+   any-of: the entry is created in the same export call that stamps provenance, so accepting an
+   earlier lineage key here would let the holder of a retired (possibly compromised) key re-sign
+   a forged artifact+receipt and recompute the unsigned whole-envelope digest. The entry MUST
+   also equal the head of the presented `export_receipts` ledger (the sealing export appends its
+   receipt last); with the head pinned to the current key, the chain linkage then protects every
+   interior receipt row against a retired-key signer. (The `break_glass_receipts` ledger has no
+   such in-format order anchor relative to rotations — a limitation of the v1 wire format; its
+   authoritative protection is the quorum re-derivation performed against the database, and a
+   future format revision should add a signed epoch binding to receipt rows.)
 
 Overall status: `ok` (all pass, no gaps/warnings) / `valid_with_warnings` (valid but gaps,
 PQ-unchecked, or redactions present) / `compromised` (any chain, hash, or signature failure).

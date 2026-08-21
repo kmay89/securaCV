@@ -790,10 +790,26 @@ async function verifyEnvelope(envelope) {
       throw new Error('export receipt entry_hash mismatch');
     }
     if (sigCheckable) {
+      // Strictly the provenance key, never any-of: this entry is created in
+      // the SAME export call that stamps provenance, so accepting an earlier
+      // lineage key here would let the holder of a RETIRED (possibly
+      // compromised) key re-sign a forged artifact+receipt and recompute the
+      // unsigned whole-envelope digest. Only the ledger walks accept
+      // historical signers.
       const rMsg = await domainSeparatedHash(domains.export_receipt, toBytes(rEntry.entry_hash));
       const rSig = Uint8Array.from(rEntry.signatures.ed25519_signature);
-      if (!(await verifyEd25519AnyOf(lineage.keys, rSig, rMsg))) throw new Error('export receipt signature verification failed');
+      if (!(await verifyEd25519(pubKey, rSig, rMsg))) {
+        throw new Error('export receipt signature does not verify under the provenance key (the key current at seal time)');
+      }
       result.checks.push('Export receipt signature valid (provenance bound)');
+    }
+    // And that entry must BE the head of the presented export-receipts ledger:
+    // the export that sealed this envelope appended its receipt last, so a
+    // ledger whose verified head is a different row is a substituted ledger.
+    // With the head signature pinned to the current key, chain linkage then
+    // protects every interior row against a retired-key holder.
+    if (!bytesEqual(expHead, toBytes(rEntry.entry_hash))) {
+      throw new Error('export-receipts ledger head does not match the envelope\'s export receipt entry — the receipt ledger is not the one this export sealed');
     }
 
     // Warnings & status.
