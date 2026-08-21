@@ -84,9 +84,17 @@ Two rules make it safe to run without a human per ticket:
     `#s-ble-not-working` anchors — two ten-entry probe lists exist and
     they are NOT the same list) live in the pure, host-tested
     `help_qr_logic.h`. The website honors `#probe-<id>` deep links as of
-    securacv_website#171. Still open: the canary-display glass rendering
-    (moves the emulator `dist/` — its own carefully-ordered change) and a
-    console key.
+    securacv_website#171.
+    **Also SHIPPED: the canary-display glass rendering** — a "get help"
+    row in Settings on every flavor renders the Help Desk QR on the glass
+    (`Page::HelpQr`; verdict composed by the pure, host-tested
+    `canary/ui/help_verdict.h`: verify failure > hub down > quiet
+    witness, with the FSR_HUB_NONE "no hub is not broken" distinction).
+    Its verdict inputs are what Settings reaches without new plumbing —
+    the hub link via `mqtt_mgr`. Still open: a console key, and feeding
+    the fleet model's witness-staleness/verification signals into the
+    glass verdict (they live in main.cpp's fleet instance; the bare Help
+    Desk covers them meanwhile).
   - **Build-order warning:** a canary-display change moves the committed
     emulator `dist/` when it touches what `canary-local/emulator/build.sh`
     actually compiles — `src/main.cpp`, the LVGL faces, `care/`, `fleet/`,
