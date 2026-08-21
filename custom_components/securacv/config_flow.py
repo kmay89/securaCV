@@ -8,7 +8,7 @@ Supports three setup modes:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 
@@ -17,6 +17,9 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsF
 from homeassistant.const import CONF_TOKEN, CONF_URL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
 from .const import (
     DOMAIN,
@@ -245,14 +248,17 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_mqtt(
-        self, discovery_info: dict[str, Any]
+        self, discovery_info: MqttServiceInfo
     ) -> ConfigFlowResult:
         """Handle MQTT auto-discovery.
 
-        Triggered when HA sees a message on a topic matching
-        the 'mqtt' key in manifest.json (securacv/#).
+        Triggered when HA sees a message on a topic matching the 'mqtt' key
+        in manifest.json (securacv/#). Since HA 2022.6 the flow receives an
+        MqttServiceInfo — a slots dataclass with NO dict access, so the
+        topic must be read as an attribute; ``.get()`` raises
+        AttributeError here and kills the advertised discovery prompt.
         """
-        topic = discovery_info.get("topic", "")
+        topic = discovery_info.topic or ""
         parts = topic.split("/")
 
         if len(parts) >= 2:

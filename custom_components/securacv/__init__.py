@@ -54,6 +54,38 @@ DEFAULT_UPDATE_INTERVAL = timedelta(seconds=30)
 # anything larger is malformed or hostile and gets dropped before json.loads.
 MAX_MQTT_PAYLOAD_BYTES = 64 * 1024
 
+
+def mqtt_payload_within_cap(payload: Any) -> bool:
+    """True when a raw MQTT payload is within the untrusted-broker cap."""
+    try:
+        return len(payload) <= MAX_MQTT_PAYLOAD_BYTES
+    except TypeError:
+        return False
+
+
+def parse_mqtt_json(payload: Any) -> dict[str, Any] | None:
+    """Decode an MQTT payload into a JSON object, or None.
+
+    The single defensive gate every MQTT callback shares: enforces the
+    untrusted-broker size cap BEFORE decoding, tolerates bytes or str, and
+    only ever returns a dict. Valid JSON that is a bare scalar or array
+    returns None too — every handler indexes by key, and a hostile broker
+    must never be able to AttributeError a @callback out of existence
+    (payload "5" would make ``data.get(...)`` raise on the int).
+    """
+    if not mqtt_payload_within_cap(payload):
+        return None
+    if isinstance(payload, bytes):
+        try:
+            payload = payload.decode()
+        except UnicodeDecodeError:
+            return None
+    try:
+        data = json.loads(payload)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
 # Lovelace cards (custom_components/securacv/www/). Served and auto-loaded
 # best-effort so `type: custom:securacv-timeline-card` /
 # `custom:securacv-aim-card` resolve without the user hand-adding a frontend
@@ -527,7 +559,7 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
         parts = msg.topic.split("/")
         if len(parts) < 3:
             return
-        if len(msg.payload) > MAX_MQTT_PAYLOAD_BYTES:
+        if not mqtt_payload_within_cap(msg.payload):
             return
 
         device_id = parts[-2]
@@ -542,23 +574,16 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
             _LOGGER.info("Discovered SecuraCV Canary device: %s", device_id)
             devices[device_id] = {"status": status_payload}
 
-            # Parse status for device info enrichment
-            fw_version = None
-            hw_version = None
-            config_url = None
-            friendly_name = None
-            try:
-                status_data = json.loads(status_payload) if isinstance(status_payload, str) else {}
-                if not isinstance(status_data, dict):
-                    status_data = {}
-                fw_version = status_data.get("firmware_version") or status_data.get("fw_version")
-                hw_version = status_data.get("hardware") or status_data.get("board")
-                friendly_name = status_data.get("device_name") or status_data.get("name")
-                config_url = _safe_config_url(
-                    status_data.get("ap_ip") or status_data.get("ip")
-                )
-            except (json.JSONDecodeError, TypeError):
-                pass
+            # Parse status for device info enrichment. A bare "online"
+            # string (non-JSON) or a non-object payload parses to None and
+            # simply skips the enrichment.
+            status_data = parse_mqtt_json(status_payload) or {}
+            fw_version = status_data.get("firmware_version") or status_data.get("fw_version")
+            hw_version = status_data.get("hardware") or status_data.get("board")
+            friendly_name = status_data.get("device_name") or status_data.get("name")
+            config_url = _safe_config_url(
+                status_data.get("ap_ip") or status_data.get("ip")
+            )
 
             display_name = friendly_name or f"SecuraCV Canary {device_id}"
 
@@ -576,26 +601,21 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
         else:
             devices[device_id]["status"] = status_payload
 
-            try:
-                status_data = json.loads(status_payload) if isinstance(status_payload, str) else {}
-                if not isinstance(status_data, dict):
-                    status_data = {}
-                fw = status_data.get("firmware_version") or status_data.get("fw_version")
-                if fw and fw != devices[device_id].get("_last_fw"):
-                    devices[device_id]["_last_fw"] = fw
-                    dev_registry = dr.async_get(hass)
-                    hw = status_data.get("hardware") or status_data.get("board")
-                    dev_registry.async_get_or_create(
-                        config_entry_id=entry.entry_id,
-                        identifiers={(DOMAIN, f"canary_{device_id}")},
-                        sw_version=fw,
-                        hw_version=hw,
-                        configuration_url=_safe_config_url(
-                            status_data.get("ap_ip") or status_data.get("ip")
-                        ),
-                    )
-            except (json.JSONDecodeError, TypeError):
-                pass
+            status_data = parse_mqtt_json(status_payload) or {}
+            fw = status_data.get("firmware_version") or status_data.get("fw_version")
+            if fw and fw != devices[device_id].get("_last_fw"):
+                devices[device_id]["_last_fw"] = fw
+                dev_registry = dr.async_get(hass)
+                hw = status_data.get("hardware") or status_data.get("board")
+                dev_registry.async_get_or_create(
+                    config_entry_id=entry.entry_id,
+                    identifiers={(DOMAIN, f"canary_{device_id}")},
+                    sw_version=fw,
+                    hw_version=hw,
+                    configuration_url=_safe_config_url(
+                        status_data.get("ap_ip") or status_data.get("ip")
+                    ),
+                )
 
     return _callback
 
@@ -653,8 +673,6 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         parts = msg.topic.split("/")
         if len(parts) < 3:
             return
-        if len(msg.payload) > MAX_MQTT_PAYLOAD_BYTES:
-            return
         device_id = parts[-2]
         entry_data = hass.data[DOMAIN].get(entry.entry_id)
         if not entry_data:
@@ -662,12 +680,8 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         trust_store: TrustStore = entry_data["trust_store"]
         if trust_store.is_pinned(device_id):
             return
-        try:
-            payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
-            data = json.loads(payload)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return
-        if not isinstance(data, dict):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
         pubkey_hex = data.get("public_key")
         if not pubkey_hex or not isinstance(pubkey_hex, str) or len(pubkey_hex) != 64:

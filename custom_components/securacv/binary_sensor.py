@@ -6,7 +6,6 @@ show which paths are alive and what threats have been detected.
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -64,6 +63,7 @@ from .const import (
     homekit_signals_for_event,
 )
 from homeassistant.helpers.event import async_call_later
+from . import mqtt_payload_within_cap, parse_mqtt_json
 from .health_metrics import (
     canary_sd_replace_recommended,
     replacement_recommended,
@@ -237,12 +237,18 @@ async def _setup_mqtt_binary_sensors(
         if new_entities:
             async_add_entities(new_entities)
 
-    # Subscribe for discovery on all relevant topics
+    # Subscribe for discovery on all relevant topics. The unsubscribe
+    # callables land in entry_data["unsub_mqtt"] so async_unload_entry
+    # releases them — otherwise every reload leaks wildcard subscriptions
+    # whose closures hold the previous entities_added/async_add_entities.
+    unsubs = hass.data[DOMAIN][entry.entry_id].setdefault("unsub_mqtt", [])
     for topic_suffix in [TOPIC_STATUS, TOPIC_CHAIN, TOPIC_HEALTH, TOPIC_TAMPER, TOPIC_TRANSPORT, TOPIC_MESH, TOPIC_CHIRP, TOPIC_EVENTS]:
-        await mqtt.async_subscribe(
-            hass,
-            f"{prefix}/+/{topic_suffix}",
-            _async_discover_binary_sensors,
+        unsubs.append(
+            await mqtt.async_subscribe(
+                hass,
+                f"{prefix}/+/{topic_suffix}",
+                _async_discover_binary_sensors,
+            )
         )
 
 
@@ -380,17 +386,24 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT status topic."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_STATUS}",
-            self._handle_message,
+        """Subscribe to MQTT status topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_STATUS}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle status message."""
-        payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
+        if not mqtt_payload_within_cap(msg.payload):
+            return
+        try:
+            payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
+        except UnicodeDecodeError:
+            return
         self._attr_is_on = payload.lower().strip() in ("online", "1", "true", "connected")
         self.async_write_ha_state()
 
@@ -403,36 +416,41 @@ class SecuraCVCanaryChainValidSensor(SecuraCVCanaryBinarySensorBase):
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
         super().__init__(prefix, device_id, entry, "Chain Valid", "chain_valid")
-        self._attr_is_on = True  # Assume valid until proven otherwise
+        # Unknown until a chain publish is actually verified. Defaulting to
+        # "on" would say "verified" about a chain nobody has checked yet —
+        # inverted from the project's honesty rule. HA renders None honestly
+        # as unknown.
+        self._attr_is_on: bool | None = None
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT chain topic."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_CHAIN}",
-            self._handle_message,
+        """Subscribe to MQTT chain topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_CHAIN}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle chain message."""
-        try:
-            data = json.loads(msg.payload)
-            valid = data.get("valid", data.get("integrity", True))
-            # Sensor-side chain handler already ran verify_chain and
-            # stamped entry_data["verify"][device_id]; just read it
-            # here so chain_valid surfaces both the chain-integrity
-            # bit (the device's self-report) AND the PKI sig state.
-            trust_view = _read_trust_view(self.hass, self._entry, self._device_id)
-            self._attr_is_on = bool(valid) and trust_view["verified"]
-            self._attr_extra_state_attributes = {
-                "chain_length": data.get("length", 0),
-                "latest_hash": data.get("latest_hash", ""),
-                "verification_error": data.get("error", None),
-                **trust_view,
-            }
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
+        valid = data.get("valid", data.get("integrity", True))
+        # Sensor-side chain handler already ran verify_chain and
+        # stamped entry_data["verify"][device_id]; just read it
+        # here so chain_valid surfaces both the chain-integrity
+        # bit (the device's self-report) AND the PKI sig state.
+        trust_view = _read_trust_view(self.hass, self._entry, self._device_id)
+        self._attr_is_on = bool(valid) and trust_view["verified"]
+        self._attr_extra_state_attributes = {
+            "chain_length": data.get("length", 0),
+            "latest_hash": data.get("latest_hash", ""),
+            "verification_error": data.get("error", None),
+            **trust_view,
+        }
         self.async_write_ha_state()
 
 
@@ -448,43 +466,45 @@ class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT health and tamper topics."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
-            self._handle_message,
+        """Subscribe to MQTT health and tamper topics; release on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_message,
+            )
         )
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_TAMPER}",
-            self._handle_tamper_message,
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_TAMPER}",
+                self._handle_tamper_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle health message for tamper detection."""
-        try:
-            data = json.loads(msg.payload)
-            tamper = data.get("tamper_detected", data.get("tamper", False))
-            self._attr_is_on = bool(tamper)
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
+        tamper = data.get("tamper_detected", data.get("tamper", False))
+        self._attr_is_on = bool(tamper)
         self.async_write_ha_state()
 
     @callback
     def _handle_tamper_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle dedicated tamper message."""
-        try:
-            data = json.loads(msg.payload)
-            # Any tamper event triggers this sensor
-            self._attr_is_on = True
+        data = parse_mqtt_json(msg.payload)
+        # Any publish on the tamper topic triggers this sensor; a JSON
+        # object additionally carries detail attributes.
+        self._attr_is_on = True
+        if data is not None:
             self._attr_extra_state_attributes = {
                 "tamper_type": data.get("type", "unknown"),
                 "timestamp": data.get("timestamp", ""),
                 "detail": data.get("detail", ""),
             }
-        except (json.JSONDecodeError, TypeError):
-            self._attr_is_on = True  # Raw tamper message = tamper detected
         self.async_write_ha_state()
 
 
@@ -514,42 +534,53 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
         self._last_triggered: str | None = None
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT tamper and health topics."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_TAMPER}",
-            self._handle_tamper_message,
+        """Subscribe to MQTT tamper and health topics; release on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_TAMPER}",
+                self._handle_tamper_message,
+            )
         )
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
-            self._handle_health_message,
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_health_message,
+            )
         )
 
     @callback
     def _handle_tamper_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle dedicated tamper topic message."""
-        try:
-            data = json.loads(msg.payload)
-            # Check if this tamper type is active
-            if data.get("type") == self._tamper_type or data.get(self._tamper_type):
-                self._attr_is_on = True
-                self._last_triggered = datetime.now(timezone.utc).isoformat()
-                self._attr_extra_state_attributes = {
-                    "last_triggered": self._last_triggered,
-                    "detail": data.get("detail", ""),
-                    "severity": data.get("severity", "tamper"),
-                }
-                self.async_write_ha_state()
-        except (json.JSONDecodeError, TypeError):
-            pass
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            return
+        # Check if this tamper type is active
+        if data.get("type") == self._tamper_type or data.get(self._tamper_type):
+            self._attr_is_on = True
+            self._last_triggered = datetime.now(timezone.utc).isoformat()
+            self._attr_extra_state_attributes = {
+                "last_triggered": self._last_triggered,
+                "detail": data.get("detail", ""),
+                "severity": data.get("severity", "tamper"),
+            }
+            self.async_write_ha_state()
 
     @callback
     def _handle_health_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle health message for tamper indicators."""
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            return
         try:
-            data = json.loads(msg.payload)
             tamper_data = data.get("tamper", {})
+            if not isinstance(tamper_data, dict):
+                # The general tamper sensor accepts the boolean spelling
+                # ({"tamper": true}); a bare boolean names no specific
+                # tamper type, so it contributes nothing to THIS sensor —
+                # but it must not AttributeError the callback either.
+                tamper_data = {}
 
             # Check various tamper fields
             is_triggered = False
@@ -586,7 +617,9 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
                 "last_triggered": self._last_triggered,
             }
             self.async_write_ha_state()
-        except (json.JSONDecodeError, TypeError):
+        except TypeError:
+            # Unexpected value types inside an otherwise well-shaped dict
+            # (e.g. "sd_errors" as a string) — skip this publish.
             pass
 
 
@@ -607,19 +640,20 @@ class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT health topic."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
-            self._handle_message,
+        """Subscribe to MQTT health topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_HEALTH}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle health message for the SD replacement flag."""
-        try:
-            data = json.loads(msg.payload)
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
         self._attr_is_on = canary_sd_replace_recommended(data)
         self.async_write_ha_state()
@@ -650,34 +684,35 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT transport topic."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_TRANSPORT}",
-            self._handle_message,
+        """Subscribe to MQTT transport topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_TRANSPORT}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle transport status message."""
-        try:
-            data = json.loads(msg.payload)
-            transport_data = data.get(self._transport_type, {})
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            return
+        transport_data = data.get(self._transport_type, {})
 
-            if isinstance(transport_data, dict):
-                self._attr_is_on = transport_data.get("connected", False)
-                self._attr_extra_state_attributes = {
-                    "rssi": transport_data.get("rssi"),
-                    "message_count": transport_data.get("messages", 0),
-                    "error_count": transport_data.get("errors", 0),
-                    "last_activity": transport_data.get("last_activity"),
-                }
-            elif isinstance(transport_data, bool):
-                self._attr_is_on = transport_data
+        if isinstance(transport_data, dict):
+            self._attr_is_on = transport_data.get("connected", False)
+            self._attr_extra_state_attributes = {
+                "rssi": transport_data.get("rssi"),
+                "message_count": transport_data.get("messages", 0),
+                "error_count": transport_data.get("errors", 0),
+                "last_activity": transport_data.get("last_activity"),
+            }
+        elif isinstance(transport_data, bool):
+            self._attr_is_on = transport_data
 
-            self.async_write_ha_state()
-        except (json.JSONDecodeError, TypeError):
-            pass
+        self.async_write_ha_state()
 
 
 class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
@@ -693,6 +728,14 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
     The signal auto-clears after a hold window, the way a real motion sensor
     does. Without it a single event would latch the sensor on forever and
     every automation written against it would fire once and never reset.
+
+    Trust honesty: state follows the repo-wide warn-loudly-accept policy
+    (an unsigned or key-mismatched publish still moves the sensor — the
+    Apple Home recipe documents this hop as unverified by design), but the
+    verdict must ride along like it does on every other surface. Each
+    assertion stamps the device's current trust view into the attributes so
+    downstream consumers can see "verified: false" instead of a laundered
+    signal.
     """
 
     _signal: str = ""
@@ -704,21 +747,20 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
         self._cancel_clear = None
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to the events topic."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_EVENTS}",
-            self._handle_event,
+        """Subscribe to the events topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_EVENTS}",
+                self._handle_event,
+            )
         )
 
     @callback
     def _handle_event(self, msg: mqtt.ReceiveMessage) -> None:
         """Assert this signal if the event maps to it."""
-        try:
-            data = json.loads(msg.payload)
-            if not isinstance(data, dict):
-                return
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
             return
         event_type = data.get("event_type", data.get("type", data.get("event", "")))
         if self._signal not in homekit_signals_for_event(str(event_type)):
@@ -726,9 +768,22 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
         self._assert()
 
     @callback
+    def _stamp_trust(self) -> None:
+        """Annotate the state with the device's current trust verdict.
+
+        Reads the verify slice sensor.py's events handler stamps (both
+        callbacks share the events topic), the same way the chain-valid
+        sensor does — this entity never runs a verifier itself.
+        """
+        self._attr_extra_state_attributes = _read_trust_view(
+            self.hass, self._entry, self._device_id
+        )
+
+    @callback
     def _assert(self) -> None:
         """Turn on, and (re)arm the auto-clear."""
         self._attr_is_on = True
+        self._stamp_trust()
         if self._cancel_clear is not None:
             self._cancel_clear()
         self._cancel_clear = async_call_later(
@@ -786,20 +841,19 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
     async def async_added_to_hass(self) -> None:
         """Subscribe to events and to the retained state snapshot."""
         await super().async_added_to_hass()
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_STATE}",
-            self._handle_state,
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_STATE}",
+                self._handle_state,
+            )
         )
 
     @callback
     def _handle_state(self, msg: mqtt.ReceiveMessage) -> None:
         """Track reported presence, which is a state rather than an event."""
-        try:
-            data = json.loads(msg.payload)
-            if not isinstance(data, dict) or "presence" not in data:
-                return
-        except (json.JSONDecodeError, TypeError):
+        data = parse_mqtt_json(msg.payload)
+        if data is None or "presence" not in data:
             return
         present = data["presence"]
         if isinstance(present, str):
@@ -810,6 +864,7 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
             self._cancel_clear()
             self._cancel_clear = None
         self._attr_is_on = bool(present)
+        self._stamp_trust()
         self.async_write_ha_state()
 
 
@@ -825,18 +880,22 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT mesh topic."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_MESH}",
-            self._handle_message,
+        """Subscribe to MQTT mesh topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_MESH}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle mesh status message."""
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            return
         try:
-            data = json.loads(msg.payload)
             peer_count = data.get("peer_count", len(data.get("peers", [])))
             self._attr_is_on = peer_count > 0
 
@@ -848,7 +907,9 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
                 "relay_count": data.get("relayed", 0),
             }
             self.async_write_ha_state()
-        except (json.JSONDecodeError, TypeError):
+        except TypeError:
+            # Unexpected value types inside an otherwise well-shaped dict
+            # (e.g. "peers" as a number) — skip this publish.
             pass
 
 
@@ -867,29 +928,30 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to MQTT chirp topic."""
-        await mqtt.async_subscribe(
-            self.hass,
-            f"{self._prefix}/{self._device_id}/{TOPIC_CHIRP}",
-            self._handle_message,
+        """Subscribe to MQTT chirp topic; release the subscription on removal."""
+        self.async_on_remove(
+            await mqtt.async_subscribe(
+                self.hass,
+                f"{self._prefix}/{self._device_id}/{TOPIC_CHIRP}",
+                self._handle_message,
+            )
         )
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle chirp status message."""
-        try:
-            data = json.loads(msg.payload)
-            self._attr_is_on = data.get("enabled", False) and data.get("ready", False)
+        data = parse_mqtt_json(msg.payload)
+        if data is None:
+            return
+        self._attr_is_on = bool(data.get("enabled", False) and data.get("ready", False))
 
-            self._attr_extra_state_attributes = {
-                "session_emoji": data.get("session_id", ""),  # 3-emoji identity
-                "cooldown_tier": data.get("cooldown_tier", 0),
-                "presence_minutes": data.get("presence_minutes", 0),
-                "can_broadcast": data.get("can_broadcast", False),
-                "alerts_sent": data.get("sent", 0),
-                "alerts_received": data.get("received", 0),
-                "confirmations_given": data.get("confirmed", 0),
-            }
-            self.async_write_ha_state()
-        except (json.JSONDecodeError, TypeError):
-            pass
+        self._attr_extra_state_attributes = {
+            "session_emoji": data.get("session_id", ""),  # 3-emoji identity
+            "cooldown_tier": data.get("cooldown_tier", 0),
+            "presence_minutes": data.get("presence_minutes", 0),
+            "can_broadcast": data.get("can_broadcast", False),
+            "alerts_sent": data.get("sent", 0),
+            "alerts_received": data.get("received", 0),
+            "confirmations_given": data.get("confirmed", 0),
+        }
+        self.async_write_ha_state()

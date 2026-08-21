@@ -34,6 +34,11 @@ _LOGGER = logging.getLogger(__name__)
 # plenty and keeps a sleeping hub asleep.
 TICK_INTERVAL_SECONDS = 300
 
+# The trailing window the deviation concerns measure event rate over. One
+# day, because that is the rhythm the design speaks in ("about three a
+# day" — docs/design/watches.md).
+EVENT_RATE_WINDOW_SECONDS = watches.DAY
+
 
 def _bucket(hass: HomeAssistant) -> list[dict[str, Any]]:
     domain_data = hass.data.get(DOMAIN)
@@ -43,20 +48,45 @@ def _bucket(hass: HomeAssistant) -> list[dict[str, Any]]:
     return bucket if isinstance(bucket, list) else []
 
 
+def _event_value(watch: dict[str, Any], now: float) -> float:
+    """What one event arrival is worth to this watch's concern.
+
+    ``every`` and ``stopped`` reason about *timing* — each event is one
+    beat, and the value is irrelevant — so they observe a plain 1.0.
+
+    The deviation concerns (``unusual``/``more``/``less``, and ``unusual``
+    is the default) compare a LEVEL against a learned baseline. Feeding
+    them the constant 1.0 made them mathematically unable to fire: the
+    baseline median was 1, every delta was 0, and "I'll tell you if
+    anything changes" was a promise the code could not keep. Instead each
+    event observes the trailing daily rate (this event included), so the
+    baseline learns a real rhythm ("about three a day") and a busier or
+    quieter signal actually moves the number.
+    """
+    concern = watch.get("concern")
+    if concern in (watches.CONCERN_EVERY, watches.CONCERN_STOPPED):
+        return 1.0
+    # Each prior event contributed exactly one observation, so counting
+    # observation timestamps inside the window counts events.
+    cutoff = now - EVENT_RATE_WINDOW_SECONDS
+    recent = sum(1 for t, _v in watch.get("observations", []) if t > cutoff)
+    return float(recent + 1)
+
+
 @callback
 def async_observe_event(hass: HomeAssistant, device_id: str, now: float) -> None:
     """Record one event against every watch bound to this device.
 
-    Event-kind watches count events, so each arrival is a single
-    observation of value 1; the engine's baseline turns that into a
-    rhythm it can miss.
+    Timing concerns observe one beat; deviation concerns observe the
+    trailing daily rate (see ``_event_value``), so the engine's baseline
+    learns a rhythm it can actually miss.
     """
     if not device_id:
         return
     for watch in _bucket(hass):
         subject = watch.get("subject") or {}
         if subject.get("kind") == "event" and subject.get("ref") == device_id:
-            watches.observe(watch, 1.0, now)
+            watches.observe(watch, _event_value(watch, now), now)
 
 
 def _notify(hass: HomeAssistant, title: str, message: str, note_id: str) -> None:
