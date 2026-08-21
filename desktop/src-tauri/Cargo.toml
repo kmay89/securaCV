@@ -56,7 +56,7 @@ libc = "0.2.189"
 # The fleet book's LAN discovery: a real browse of `_securacv._tcp` (pure
 # Rust, std sockets) — the OS resolver alone can find `.local` HOSTNAMES but
 # cannot enumerate a service, and vision/sense announce mDNS-only.
-mdns-sd = "0.13"
+mdns-sd = "0.21"
 
 # The secret drawer behind setup profiles and per-device API tokens: the OS
 # credential store, platform-gated so the Linux CI check compiles with no new
