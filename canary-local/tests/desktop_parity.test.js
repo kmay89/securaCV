@@ -1746,4 +1746,15 @@ test("simple view ships on both flashers — sticky, hide-not-remove, safety nev
     "desktop Simple view lost the compact console rule");
   assert.ok(!/html\[data-density="simple"\][^{]*#console[^{]*\{[^}]*display:\s*none/.test(css),
     "desktop Simple view must never hide #console — it is the flash's only live progress");
+
+  // 7. The one disclosure a batch operator must never lose (Codex on the
+  //    Simple-view PR): the done card's safety-copy line is the ONLY notice
+  //    that a credential-bearing file — identity key and saved WiFi inside —
+  //    just landed in the downloads folder without a click. It rides the
+  //    file's creation in every view, so it must stay untagged.
+  assert.match(browser, /Treat it like a spare house key\.`\)\);[\s\S]{0,500}?box\.append\(bk\);/,
+    "the browser's backup-secret notice no longer renders untagged on the done card");
+  assert.ok(!/box\.append\(xtra\(bk\)\)/.test(browser),
+    "the browser's backup-secret notice is tagged xtra — the warning must not fold " +
+    "away from the file it describes");
 });

@@ -4438,7 +4438,11 @@ function phaseDone(opts) {
       ` Safety copy saved to your downloads as ${opts.backupName} — restore it any time from Advanced. ` +
       `Keep the file private: it holds everything that was on the board, including its identity key ` +
       `and any saved WiFi. Treat it like a spare house key.`));
-    box.append(xtra(bk));
+    // Deliberately NOT tagged for Simple view: a credential-bearing file just
+    // landed in the downloads folder without a click, and this line is its
+    // only disclosure — it rides the file's creation in every view. (Review
+    // catch on the Simple-view PR; the parity gate pins it.)
+    box.append(bk);
   } else if (opts.backupFailed) {
     box.append(el("p", "fineprint",
       "The safety copy couldn’t be read off this board first — common when a board " +
