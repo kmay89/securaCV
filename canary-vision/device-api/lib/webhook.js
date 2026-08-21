@@ -5,13 +5,20 @@ const http = require('node:http');
 const { URL } = require('node:url');
 const { validateWebhookUrl } = require('./webhook-url');
 
-const TIMEOUT_MS = 5000;
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 1000;
+// Tunables live on one object so the test suite can shrink the backoff and
+// substitute the URL validator (loopback is rejected by the SSRF guard, so
+// tests can't otherwise point sendWebhook at a local server). Production
+// code never mutates this. Exposed via module.exports._test.
+const TUNING = {
+  timeoutMs: 5000,
+  maxRetries: 2,
+  retryDelayMs: 1000,
+  validateUrl: validateWebhookUrl,
+};
 
 function sendWebhook(url, payload, attempt = 0) {
   return new Promise((resolve, reject) => {
-    const validation = validateWebhookUrl(url);
+    const validation = TUNING.validateUrl(url);
     if (!validation.ok) {
       return reject(new Error(validation.error));
     }
@@ -24,10 +31,10 @@ function sendWebhook(url, payload, attempt = 0) {
     function retry(err) {
       if (handled) return;
       handled = true;
-      if (attempt < MAX_RETRIES) {
+      if (attempt < TUNING.maxRetries) {
         setTimeout(() => {
           sendWebhook(url, payload, attempt + 1).then(resolve, reject);
-        }, RETRY_DELAY_MS * (attempt + 1));
+        }, TUNING.retryDelayMs * (attempt + 1));
       } else {
         reject(err);
       }
@@ -40,7 +47,7 @@ function sendWebhook(url, payload, attempt = 0) {
         'Content-Length': Buffer.byteLength(body),
         'User-Agent': 'SecuraCV-Canary/1.0',
       },
-      timeout: TIMEOUT_MS,
+      timeout: TUNING.timeoutMs,
     }, (res) => {
       let data = '';
       let bytesRead = 0;
@@ -56,12 +63,16 @@ function sendWebhook(url, payload, attempt = 0) {
       });
       res.on('end', () => {
         if (handled) return;
-        handled = true;
         if (res.statusCode >= 200 && res.statusCode < 300) {
+          handled = true;
           resolve({ status: res.statusCode, body: data });
         } else if (res.statusCode >= 500) {
+          // retry() owns the `handled` flag. Setting it here first made
+          // retry() bail out immediately: no retry was ever scheduled and
+          // the promise never settled (webhook test requests hung).
           retry(new Error(`Webhook returned ${res.statusCode}`));
         } else {
+          handled = true;
           reject(new Error(`Webhook returned ${res.statusCode}`));
         }
       });
@@ -113,3 +124,5 @@ function createWebhookDispatcher(state) {
 }
 
 module.exports = { createWebhookDispatcher, sendWebhook };
+// Exports for testing only — see the TUNING comment above.
+module.exports._test = { TUNING };

@@ -33,6 +33,7 @@ node --test tests/api/peers.test.js
 node --test tests/api/reboot.test.js
 node --test tests/api/update.test.js
 node --test tests/api/provision.test.js
+node --test tests/api/webhook.test.js
 
 # Run SPA tests
 echo ""
