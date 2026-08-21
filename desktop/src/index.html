@@ -73,6 +73,13 @@
         <button id="theme-toggle" class="icon-btn" aria-label="Toggle day / night" title="Day / night">
           <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
         </button>
+        <!-- Simple view: fold the explanations, keep every control — the
+             browser flasher carries the same switch (desktop_parity.test.js).
+             Sticky in prefs (app.js toggleDensity), applied before first
+             paint as html[data-density="simple"]. -->
+        <button id="density-toggle" class="icon-btn" aria-label="Toggle simple / guided view" aria-pressed="false" title="Simple view — fold the explanations away; everything stays one click away">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"/></svg>
+        </button>
         <span class="rail-build" id="rail-build"><b>v—</b><br>build —</span>
       </div>
     </aside>
@@ -109,7 +116,10 @@
           <div class="pane-head">
             <div class="kicker">Flash a Canary</div>
             <h1>Plug it in and go</h1>
-            <p class="lede">No browser, no terminal — the flashing engine is built in.
+            <!-- .xtra = Guided-view detail; Simple view folds it (styles.css
+                 [data-density="simple"]). Controls, status lines, verdicts
+                 and safety choices are never tagged. -->
+            <p class="lede xtra">No browser, no terminal — the flashing engine is built in.
               You can't pick the wrong image, and you can't brick the board.</p>
           </div>
 
@@ -131,7 +141,7 @@
 
           <section class="card" id="step-detect">
             <div class="step-head"><span class="step-n">1</span><h2>Plug in your Canary</h2></div>
-            <p class="muted">Connect it over USB-C with a <em>data</em> cable. It's picked up
+            <p class="muted xtra">Connect it over USB-C with a <em>data</em> cable. It's picked up
               automatically — the status bar above tracks it live, no button to press.</p>
 
             <!-- Cold start. The one control on this page that has to happen BEFORE
@@ -216,6 +226,9 @@
 
           <section class="card disabled" id="step-pick">
             <div class="step-head"><span class="step-n">2</span><h2>Pick the firmware</h2></div>
+            <!-- #pick-sub stays in BOTH densities: it doubles as the honest
+                 manifest-failure line (renderProducts), and an error that
+                 folds away is an error that never happened. -->
             <p class="muted" id="pick-sub">We'll only show images built for your board's chip.</p>
             <div id="product-list" class="product-list"></div>
           </section>
@@ -224,7 +237,7 @@
             <div class="step-head"><span class="step-n">3</span><h2>Flash it</h2></div>
             <section id="provisioning" class="provision hidden" aria-labelledby="provision-title">
               <h3 id="provision-title">First-boot connection</h3>
-              <p class="muted" id="provision-note">These values are written directly
+              <p class="muted xtra" id="provision-note">These values are written directly
                 into this board’s settings partition, never logged and never saved by the app.</p>
               <div class="form-grid">
                 <label class="usb-only">Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
@@ -270,7 +283,7 @@
             </div>
             <section id="module-flow" class="module-flow hidden">
               <h3>Grove Vision AI V2 module</h3>
-              <p class="muted">CH343 / WiseEye2 recognized. This writes the pinned, SHA-256-verified
+              <p class="muted xtra">CH343 / WiseEye2 recognized. This writes the pinned, SHA-256-verified
                 person model to <span class="mono">0x400000</span>, then requires an AT response and one real inference.</p>
               <div class="row">
                 <button id="module-flash-btn" class="btn btn-primary">Flash &amp; prove the Vision module</button>
@@ -283,7 +296,7 @@
                    bench (same INVOKE/BREAK/TSCORE/TIOU protocol). -->
               <div id="bench" class="bench">
                 <h4>Live bench — see what it sees</h4>
-                <p class="muted">Streams camera frames from the module to this app over
+                <p class="muted xtra">Streams camera frames from the module to this app over
                   your USB cable — the attended, one-time bench check from the guide.
                   Frames render below and go nowhere else.</p>
                 <details id="bench-guide" class="hint hidden">
@@ -313,7 +326,7 @@
                     <input id="bench-tiou" type="range" min="0" max="100" value="45" disabled>
                     <output id="bench-tiou-out">45</output></label>
                 </div>
-                <p class="fineprint muted">Thresholds live on the module itself — a slider
+                <p class="fineprint muted xtra">Thresholds live on the module itself — a slider
                   writes the value, then reads back what the module actually holds.</p>
               </div>
             </section>
@@ -554,7 +567,7 @@
           <div class="pane-head">
             <div class="kicker">Build a Hub</div>
             <h1>Turn a card into a Home Assistant hub</h1>
-            <p class="lede">The brain your Canaries report home to. Only external, removable
+            <p class="lede xtra">The brain your Canaries report home to. Only external, removable
               disks are ever offered — and the write runs only after you type ERASE.</p>
           </div>
 
@@ -584,7 +597,7 @@
 
           <section class="card" id="hub-step-what">
             <div class="step-head"><span class="step-n">1</span><h2>What you're making</h2></div>
-            <p class="muted">A <strong>Home Assistant hub</strong> for your Canaries: we download the
+            <p class="muted xtra">A <strong>Home Assistant hub</strong> for your Canaries: we download the
               official <span id="hub-os-label" class="mono">Home Assistant OS</span> image,
               verify it <span id="hub-pin-state"></span>, write it to your card, read every byte
               back to prove the write, and seed your Wi-Fi so the Pi joins your network on
@@ -633,7 +646,7 @@
 
           <section class="card disabled" id="hub-step-wifi">
             <div class="step-head"><span class="step-n">3</span><h2>Your Wi-Fi &amp; account</h2></div>
-            <p class="muted">All written onto the card only — never logged, never sent anywhere.
+            <p class="muted xtra">All written onto the card only — never logged, never sent anywhere.
               The hub joins your Wi-Fi the moment it boots.</p>
             <div class="form-grid">
               <label>Wi-Fi name<input id="hub-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
@@ -722,7 +735,9 @@
             <p class="muted" id="hub-write-summary"></p>
             <p id="hub-preflight" class="muted"></p>
 
-            <div class="reassure">
+            <!-- Reading, not a control — the type-ERASE confirm below is the
+                 safety gate and stays put in both densities. -->
+            <div class="reassure xtra">
               <span class="reassure-i" aria-hidden="true">✓</span>
               <span><strong>Only the card you picked gets written</strong> — your computer's own drives are
                 never even offered as a target. Every byte is read back afterward and checked, so you know it
@@ -779,7 +794,7 @@
           <div class="pane-head">
             <div class="kicker">Explore</div>
             <h1>Everything, one calm map</h1>
-            <p class="lede">Your Canaries on the web and the field knowledge baked into this
+            <p class="lede xtra">Your Canaries on the web and the field knowledge baked into this
               build — organized, offline-safe, and refreshed every time the app updates.</p>
           </div>
           <div id="atlas-body"></div>
@@ -799,7 +814,7 @@
           <div class="pane-head">
             <div class="kicker">About &amp; Health</div>
             <h1>Rock solid, never stale</h1>
-            <p class="lede">Exactly which build you're running, when it was cut, and whether
+            <p class="lede xtra">Exactly which build you're running, when it was cut, and whether
               it's current — the app checks itself and heals forward on its own.</p>
           </div>
           <div id="about-body"></div>

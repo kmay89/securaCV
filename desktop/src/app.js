@@ -588,6 +588,67 @@ function toggleTheme() {
   logEvent("info", "Switched to " + next + " mode");
 }
 
+// ── Simple view (density), applied before first paint like the theme ─────────
+// The same flasher, folded to its essentials: controls, status, progress and
+// verdicts stay exactly where they are; the explanations fold away, tagged
+// `.xtra` in index.html and hidden by styles.css [data-density="simple"].
+// Nothing is removed — each card holding folded detail grows a "full story"
+// chip that unfolds that card back, and the toggle flips the whole app.
+// Sticky in prefs beside the theme, for the batch operator who flashes boards
+// every day. Safety surfaces are never tagged: the first-contact wipe choice,
+// the dev-channel banner, the install verdict and every error line stay put
+// in both densities. Mirror of the browser flasher's Simple view
+// (canary-local/assets/flash.js applyView) — desktop_parity.test.js holds
+// the two together.
+(function applyStoredDensity() {
+  if (prefs.density === "simple") document.documentElement.setAttribute("data-density", "simple");
+})();
+
+function densitySimple() {
+  return document.documentElement.getAttribute("data-density") === "simple";
+}
+function syncDensityToggle() {
+  const btn = $("density-toggle");
+  if (!btn) return;
+  const on = densitySimple();
+  btn.setAttribute("aria-pressed", String(on));
+  btn.title = on
+    ? "Simple view is on — click for the guided view, every explanation unfolded"
+    : "Simple view — fold the explanations away; everything stays one click away";
+}
+function toggleDensity() {
+  const next = densitySimple() ? "guided" : "simple";
+  prefs.density = next;
+  savePrefs();
+  if (next === "simple") document.documentElement.setAttribute("data-density", "simple");
+  else document.documentElement.removeAttribute("data-density");
+  syncDensityToggle();
+  logEvent("info", next === "simple" ? "Simple view on" : "Back to the guided view");
+}
+
+// Every card holding folded `.xtra` detail gets one quiet "full story" chip
+// (visible only in Simple view, styles.css). Runs once at boot — the desktop
+// cards are static HTML, so the set never changes.
+function decorateDensityChips() {
+  document.querySelectorAll(".card").forEach((card) => {
+    if (!card.querySelector(".xtra") || card.querySelector(":scope > .more-btn")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "more-btn";
+    const sync = () => {
+      const open = card.classList.contains("show-detail");
+      btn.textContent = open ? "fold the story back ⌃" : "the full story ⌄";
+      btn.setAttribute("aria-expanded", String(open));
+    };
+    btn.addEventListener("click", () => {
+      card.classList.toggle("show-detail");
+      sync();
+    });
+    sync();
+    card.append(btn);
+  });
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
   initShell();
@@ -1905,6 +1966,9 @@ function initShell() {
     b.addEventListener("click", () => navigate(b.dataset.nav))
   );
   $("theme-toggle").addEventListener("click", toggleTheme);
+  $("density-toggle").addEventListener("click", toggleDensity);
+  syncDensityToggle();
+  decorateDensityChips();
   $("health-about").addEventListener("click", () => navigate("about"));
   $("health-update").addEventListener("click", () => navigate("about"));
   $("splash").addEventListener("click", dismissSplash);

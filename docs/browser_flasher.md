@@ -174,6 +174,26 @@ the baud ceiling a rung and the retry writes at the gentler speed (reset for a
 fresh board). And the "Clean install" escalation carries the product you were
 installing into the rescue, so it can't default to the wrong firmware.
 
+## Simple view (the guided page, folded)
+
+The Nursery narrates by default — right for a first flash, a lot of reading
+for the fifteenth. The **simple view** toggle in the journey bar (also under
+⚙ settings) folds the explanations, lessons and tours away and keeps
+everything that does the work: the journey bar, every control, the live
+status line, the progress bar with bytes and time left, the verdicts
+(customs, install, self-check) and every error card. Mechanically it is
+hide-not-remove: detail is tagged `flash-xtra` in the DOM, one body class
+(`flash-simple`) folds it, and each calmed card grows a "the full story"
+chip that unfolds that card's own detail back. The choice is sticky per
+browser (`nursery.view.v1`), and `?view=simple` seeds it for a bookmarkable
+link — the toggle owns it afterwards, same posture as `?channel=dev`
+(`viewFromSearch`).
+
+Error guidance and safety surfaces never fold, in either view — an error
+that folds away is an error that never happened. The desktop Flasher
+carries the same switch (rail foot, `prefs.density`), and
+`desktop_parity.test.js` holds the two together.
+
 ## Post-flash proof
 
 "Watch it boot & prove itself →" doesn't just stream the log — it asks the

@@ -694,6 +694,20 @@ test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed c
   assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
 });
 
+// ── view density (?view= seeds Simple view) ─────────────────────────────────
+test("viewFromSearch: exact values seed the view; anything else defers to the saved preference", async () => {
+  const { viewFromSearch } = await core();
+  assert.strictEqual(viewFromSearch("?view=simple"), "simple");
+  assert.strictEqual(viewFromSearch("?view=guided"), "guided");
+  // null means "no opinion" — the page falls back to localStorage, so a typo
+  // in a shared link can't silently flip a visitor's saved view.
+  assert.strictEqual(viewFromSearch(""), null);
+  assert.strictEqual(viewFromSearch("?foo=1"), null);
+  assert.strictEqual(viewFromSearch("?view=SIMPLE"), null);   // exact opt-in only
+  assert.strictEqual(viewFromSearch("?view=compact"), null);
+  assert.strictEqual(viewFromSearch(null), null);
+});
+
 test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", async () => {
   const { releaseTagFromManifestUrl, DEV_FLASH_MANIFEST_URL } = await core();
   // The catalog's own pin — the case that matters. A tag bumped but never

@@ -1674,3 +1674,76 @@ test("a derived name offers no re-roll on either flasher", () => {
   assert.match(read(join(CANARY, "assets", "flash.js")),
     /cert\.derived\s*\n?\s*\?\s*null/, "flash.js must not build a re-roll for a derived name");
 });
+
+// ── Simple view: one density switch, both flashers ──────────────────────────
+//
+// The minimalist flasher for people who flash boards every day: controls,
+// live status, progress and verdicts stay exactly where they are; the
+// explanations, lessons and tours fold away, each card keeping a "full
+// story" chip that unfolds its own detail back. Rule 7 ("two flashers, two
+// frontends") makes this a both-sides feature by definition, so this gate
+// pins the mechanism on each — and pins the posture that makes it safe:
+// detail folds, controls and safety surfaces never do.
+test("simple view ships on both flashers — sticky, hide-not-remove, safety never folds", () => {
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const browserCss = read(join(CANARY, "assets/flash.css"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const css = read(join(ROOT, "desktop/src/styles.css"));
+
+  // 1. The switch exists and is reachable on both frontends.
+  assert.match(browser, /flash-view-toggle/,
+    "browser flasher lost its Simple-view toggle (journey bar + settings)");
+  assert.match(html, /id="density-toggle"/,
+    "desktop flasher lost its Simple-view toggle (rail foot)");
+
+  // 2. It sticks — a batch operator flips it once, not once per visit.
+  assert.match(browser, /nursery\.view\.v1/,
+    "browser Simple view no longer persists (VIEW_KEY)");
+  assert.match(appJs, /prefs\.density/,
+    "desktop Simple view no longer persists (prefs.density)");
+
+  // 3. It applies before the first paint, so neither page folds after render.
+  assert.match(browser, /applyView\(\); \/\/ before the first render/,
+    "browser must apply the view before its first render");
+  assert.match(appJs, /function applyStoredDensity/,
+    "desktop must apply the stored density before first paint, like the theme");
+
+  // 4. The mechanism is hide-not-remove: one tag class per frontend, hidden
+  //    by the density style, revealed per card by the "full story" chip. A
+  //    build that deletes detail instead of folding it fails here.
+  assert.match(browser, /function xtra\(/,
+    "browser lost the xtra() detail tag — Simple view must fold, not remove");
+  assert.match(browserCss, /\.flash-simple \.flash-xtra \{ display: none/,
+    "browser flash.css no longer folds tagged detail in Simple view");
+  assert.match(css, /html\[data-density="simple"\] \.xtra \{ display: none/,
+    "desktop styles.css no longer folds tagged detail in Simple view");
+  assert.match(browser, /flash-more-btn/,
+    "browser cards lost the full-story chip (decorateMore)");
+  assert.match(appJs, /function decorateDensityChips/,
+    "desktop cards lost the full-story chip (decorateDensityChips)");
+
+  // 5. The safety posture, textually provable: the destructive first-contact
+  //    wipe choice, the dev-channel banner and the picker's honest status
+  //    line must never carry the fold tag — a safety surface that folds away
+  //    in the view most repeat users live in is a regression, not a tidy-up.
+  for (const id of ["first-contact", "dev-banner", "pick-sub", "flash-result", "hub-confirm"]) {
+    const tag = new RegExp(`<[^>]*id="${id}"[^>]*>`).exec(html);
+    assert.ok(tag, `desktop index.html lost #${id}`);
+    assert.ok(!/\bxtra\b/.test(tag[0]),
+      `desktop #${id} is tagged xtra — this surface must not fold in Simple view`);
+  }
+  assert.ok(!html.includes("coldstart-ask xtra") && !html.includes("xtra coldstart-ask"),
+    "the desktop first-contact label must not fold — review catch on the original card");
+  // Browser errors never fold: errorBox/flashError build untagged nodes.
+  const errorBoxSrc = /function errorBox\([\s\S]{0,500}?\n}/.exec(browser);
+  assert.ok(errorBoxSrc && !/xtra\(/.test(errorBoxSrc[0]),
+    "browser errorBox must not tag its content — error guidance never folds");
+
+  // 6. The desktop Canary flow's only live progress surface is the console
+  //    (there is no bar), so Simple view may shorten it but never hide it.
+  assert.match(css, /html\[data-density="simple"\] #console \{ max-height/,
+    "desktop Simple view lost the compact console rule");
+  assert.ok(!/html\[data-density="simple"\][^{]*#console[^{]*\{[^}]*display:\s*none/.test(css),
+    "desktop Simple view must never hide #console — it is the flash's only live progress");
+});
