@@ -17,13 +17,16 @@ on:
       - 'canary-vision/package.json'
       - 'canary-vision/device-api/package.json'
       - 'canary-vision/package-lock.json'
-      # Shipped desktop Flasher / Lab + hub crates and the tvOS core — each has
-      # its own Cargo.lock (the root Cargo.toml declares no [workspace], so the
-      # root audit never sees them). These are self-updating apps, so a known
-      # advisory in one must gate the same as the kernel's.
+      # Shipped desktop Flasher / Lab + the hub-io crate and the tvOS core —
+      # each has its own Cargo.lock (the root Cargo.toml declares no
+      # [workspace], so the root audit never sees them). These are self-updating
+      # apps, so a known advisory in one must gate the same as the kernel's.
+      # NOTE: hub-core is deliberately NOT listed. It is a zero-dependency,
+      # pure-`std` crate and its Cargo.lock is gitignored (desktop/.gitignore),
+      # so there is nothing to audit and no committed lockfile to load — adding
+      # it back makes `cargo audit -f` fail with "Couldn't load … Cargo.lock".
       - 'desktop/src-tauri/Cargo.lock'
       - 'desktop-lab/src-tauri/Cargo.lock'
-      - 'desktop/hub-core/Cargo.lock'
       - 'desktop/hub-io/Cargo.lock'
       - 'tvos/witness-core/Cargo.lock'
       - 'desktop-lab/package.json'
@@ -73,19 +76,21 @@ jobs:
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
 
-      # The desktop Flasher/Lab, the hub-core/hub-io crates, and the tvOS core
-      # each carry their OWN Cargo.lock outside the root (no [workspace]), so the
-      # root audit above never touches them. They ship in signed, self-updating
-      # apps — audit them against the same advisory DB and fail on any advisory.
+      # The desktop Flasher/Lab, the hub-io crate, and the tvOS core each carry
+      # their OWN Cargo.lock outside the root (no [workspace]), so the root audit
+      # above never touches them. They ship in signed, self-updating apps — audit
+      # them against the same advisory DB and fail on any advisory.
       # `-f <lock>` audits that exact lockfile; the shared .cargo/audit.toml
       # ignore list still applies (run from the repo root).
+      # hub-core is intentionally excluded: it is a zero-dependency, pure-`std`
+      # crate whose Cargo.lock is gitignored, so there is nothing to audit and
+      # `cargo audit -f desktop/hub-core/Cargo.lock` would fail to load the file.
       - name: Audit shipped desktop / tvOS lockfiles
         run: |
           set -e
           for lock in \
             desktop/src-tauri/Cargo.lock \
             desktop-lab/src-tauri/Cargo.lock \
-            desktop/hub-core/Cargo.lock \
             desktop/hub-io/Cargo.lock \
             tvos/witness-core/Cargo.lock; do
             echo "::group::cargo audit -f $lock"

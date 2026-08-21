@@ -89,18 +89,9 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  - package-ecosystem: "cargo"
-    directory: "/desktop/hub-core"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "deps(cargo)"
-    groups:
-      cargo-minor-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
+  # hub-core is intentionally absent here: it is a zero-dependency, pure-`std`
+  # crate whose Cargo.lock is gitignored, so Dependabot has no manifest deps or
+  # lockfile to act on (it would only log a "can't find Cargo.lock" error).
   - package-ecosystem: "cargo"
     directory: "/desktop/hub-io"
     schedule:
