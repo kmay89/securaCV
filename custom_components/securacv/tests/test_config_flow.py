@@ -26,13 +26,13 @@ from .conftest import run
 
 from homeassistant import data_entry_flow
 
-from custom_components.securacv import config_flow
-from custom_components.securacv.config_flow import (
+from .. import config_flow
+from ..config_flow import (
     CannotConnect,
     InvalidAuth,
     SecuraCVConfigFlow,
 )
-from custom_components.securacv.const import (
+from ..const import (
     CONF_ENABLE_MQTT,
     CONF_MQTT_PREFIX,
     CONF_SETUP_MODE,
