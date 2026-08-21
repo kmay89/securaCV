@@ -35,6 +35,11 @@
 #define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
 #define FEATURE_MDNS_DISCOVERY      1   // fleet discovery: find/gossip the broker
 #define FEATURE_PROOF_QR            1   // tap-for-proof QR (trailblazer spec 1)
+#define FEATURE_QR_COMMISSION       1   // "add a canary" SCV1 QR minting
+                                        // The surface has always compiled here
+                                        // (empty-nest long-press + settings
+                                        // row); the flag lets /api/device
+                                        // finally SAY so (glass_web reads it).
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #ifndef FEATURE_CHIME  // -D overridable so the emulator (not real hardware) can force the chime on

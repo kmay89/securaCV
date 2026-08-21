@@ -271,6 +271,9 @@ button.flash-map-key:hover { color: var(--text); }
 }
 .flash-nextstep-title { font-weight: 640; color: var(--canary); }
 .flash-nextstep-body { margin: 5px 0 0; color: #d8d8d8; font-size: 14px; line-height: 1.5; }
+/* The catalog hatch moment reuses the next-step card; the kicker is the same
+   small-caps line the birth certificate (and the desktop's hatch card) opens with. */
+.flash-nextstep-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--canary); margin-bottom: 2px; }
 @keyframes flash-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
 /* ── two-port Vision: the "did you do BOTH ports?" completion checklist ───── */
@@ -1149,3 +1152,68 @@ button.flash-map-key:hover { color: var(--text); }
   font: 13px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: #b9c7b9;
   user-select: all; word-break: break-all;
 }
+
+/* ── minimal mode: the quiet dress (minimal.js owns the preference) ──────
+   #flash carries .flash-minimal while the mode is on; the per-phase "show
+   the full story" button adds .flash-minimal-open, which un-folds all of it
+   for that screen. Only teaching prose folds — never a control, a check, a
+   receipt, an error, or anything that explains a destructive choice (the
+   forced-erase note stays put on purpose). The layers tour and the coach
+   are skipped in flash.js instead: they run timers. */
+#flash.flash-minimal:not(.flash-minimal-open) .flash-reassure-strip,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-coldstart p:not(.flash-coldstart-note),
+#flash.flash-minimal:not(.flash-minimal-open) .flash-connect > .muted,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-connect-hint,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-module-card .muted,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-help,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-picker > .muted,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-autobackup,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-hello > .fineprint,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-voice > .fineprint,
+#flash.flash-minimal:not(.flash-minimal-open) .flash-reassure:not(.flash-forced-erase),
+#flash.flash-minimal:not(.flash-minimal-open) .flash-reassure-lite {
+  display: none;
+}
+
+/* Quiet is also compact: same cards, less air. */
+#flash.flash-minimal .flash-card { padding: 16px 18px 18px; }
+#flash.flash-minimal .flash-card h2 { font-size: 20px; }
+#flash.flash-minimal .flash-big-emoji { font-size: 32px; }
+#flash.flash-minimal .flash-chip-emoji { font-size: 30px; }
+
+/* the per-phase bridge back to the full story */
+.flash-minimal-more { text-align: center; margin: 2px 0 12px; }
+
+/* the minimal toggle rides the journey bar, dressed like its chirp sibling */
+.nursery-minimal-toggle {
+  padding: 3px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
+}
+.nursery-minimal-toggle[aria-pressed="true"] { color: #ffd44f; border-color: rgba(255,212,79,0.5); }
+
+/* ── liveness: the elapsed clock, the sweep, the certificate placeholder ──
+   Nothing the user waits on may sit visually frozen: progress cards carry a
+   ticking elapsed readout (flash.js progressCard), and operations that
+   report nothing until they finish (full-chip erase, the chip's own MD5)
+   sweep the bar instead of parking it. Deliberately outside the minimal-mode
+   fold list — liveness is progress, and progress never folds. */
+.flash-stage-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.flash-stage-row .flash-stage { margin: 0; min-width: 0; }
+.flash-elapsed {
+  margin: 0; white-space: nowrap; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.flash-working .flash-elapsed { margin-top: 6px; }
+.flash-bar-indet .flash-bar-fill {
+  width: 30% !important;
+  animation: flash-bar-sweep 1.4s ease-in-out infinite;
+}
+@keyframes flash-bar-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(433%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-bar-indet .flash-bar-fill { animation-duration: 2.8s; }
+}
+.flash-cert-waiting { text-align: center; opacity: 0.7; }

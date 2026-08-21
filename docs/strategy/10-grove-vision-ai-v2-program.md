@@ -54,9 +54,11 @@ without learning a new workflow.** Concretely, every flavor converges on:
 
 1. **Same build/flash loop** — `cp secrets.example.h secrets.h` → `pio run
    -e <flavor> -t upload` → `pio device monitor`. (canary-vision: ✅ today.)
-2. **Same provisioning** — the ACTIVE tree's onboarding (AP + captive
-   portal / web UI) instead of compile-time secrets. (canary-vision: ❌ —
-   Phase 1.)
+2. **Same provisioning** — on-device onboarding (AP + captive portal)
+   instead of compile-time secrets. (canary-vision: ⚠️ — the Wi-Fi half
+   shipped 2026-08 via the shared setup portal,
+   `firmware/common/network/setup_portal`, plus flasher NVS seeding; the
+   on-device MQTT/device-ID web UI remains Phase 1.)
 3. **Same update story** — signed pull-OTA, HA `update` entity. (✅ —
    shared engine already wired.)
 4. **Same observability** — boot banner, health log categories, MQTT
@@ -83,9 +85,13 @@ load the model, flash, and see HA entities using only repo docs.
 
 ### Phase 1 — Provisioning & workflow parity
 
-- Runtime provisioning: bring the ACTIVE tree's AP + captive-portal
-  onboarding to canary-vision so WiFi/MQTT/device-ID are set on-device, not
-  in `secrets.h`. Reuse `firmware/common/network` + the canary onboarding UI.
+- Runtime provisioning: bring AP + captive-portal onboarding to
+  canary-vision so WiFi/MQTT/device-ID are set on-device, not in
+  `secrets.h`. **Wi-Fi half shipped (2026-08):** the shared setup portal
+  (`firmware/common/network/setup_portal`) raises a `SecuraCV-XXXX` SoftAP
+  + captive join wizard when the board is unprovisioned or a saved join
+  keeps failing fixably, and the flashers seed credentials into NVS at
+  flash time. Still open: MQTT/device-ID set on-device.
 - ~~Runtime detection config~~ **shipped (#788)**: `PERSON_TARGET`,
   `SCORE_MIN`, lost/dwell windows are NVS-backed settings exposed as HA
   number entities (`canary/detect_config`), so changing the loaded model

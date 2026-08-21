@@ -129,12 +129,13 @@ jobs:
             file wget curl unzip
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.rust-targets }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: desktop/src-tauri -> target
 
@@ -430,7 +431,7 @@ jobs:
       # APPLE_* env is inert, so one gate drives both matrix legs.
       - name: Build & release (unsigned)
         if: vars.ENABLE_MACOS_SIGNING != 'true'
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # TAURI_SIGNING_PRIVATE_KEY / _PASSWORD come from job-level env
@@ -585,7 +586,7 @@ jobs:
 
       - name: Build & release (signed + notarized macOS)
         if: vars.ENABLE_MACOS_SIGNING == 'true'
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Developer ID signing + notarization. Tauri imports APPLE_CERTIFICATE

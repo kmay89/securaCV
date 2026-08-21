@@ -405,9 +405,12 @@ export const FIGURES = [
     id: 'device.canary-display-watch',
     title: 'Canary Watch Station',
     role: 'device', of: 'canary-display-watch',
-    sketch: { w: 52, d: 21.8, h: 52 },
+    // v0.2 CAD (canary_watch_station.scad): drum Ø49.0, seated depth 23.2
+    // (drum 21.0 + snap-bezel face 2.2) — the v0.1 "screwed drum" sketch
+    // said Ø52 x 21.8, dimensions the measured board could never seat.
+    sketch: { w: 49, d: 23.2, h: 49 },
     build: (E) => [
-      // a screwed drum looking at you: shell, bezel-inset glass, lit face
+      // a snap-bezel drum looking at you: shell, bezel-inset glass, lit face
       { kind: 'cyl', m: 'shell', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: E.d - 2.4 },
       { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - 2.4 - EPS, E.h / 2], r: E.w / 2 - 3.5, h: 2.0 },
       { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d - 0.4, E.h / 2], r: E.w / 2 - 7, h: 0.4 },

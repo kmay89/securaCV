@@ -978,8 +978,10 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
                                 e->sev >= Sev::Warn ? ec : tcol, 0);
     lv_label_set_text_fmt(r.name, "%.26s", human);
     lv_obj_set_style_text_color(r.meta, mcol, 0);
+    // The pencil, not the word — same signature mark the watch rows wear
+    // (badge_text's Signed rule; the check stays earned by verification).
     lv_label_set_text_fmt(r.meta, "%s ago  •  %.14s%s", age, e->device,
-                          e->signed_flag ? "  •  signed" : "");
+                          e->signed_flag ? "  " LV_SYMBOL_EDIT : "");
   }
 
   // The heartbeat (spec §4): the header glow swells once a minute, only

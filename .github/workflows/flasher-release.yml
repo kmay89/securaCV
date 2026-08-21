@@ -556,7 +556,7 @@ jobs:
         # Adds/updates the flasher assets on the tag's release, creating the
         # release if it doesn't exist yet (the pre-key path). Existing release
         # notes and OTA assets are preserved.
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: |
@@ -571,7 +571,7 @@ jobs:
         # stable fw-v* release. A prerelease is never returned by GitHub's
         # getLatestRelease — and `fw-dev-latest` doesn't match the `^fw-v` test
         # in .github/actions/keep-firmware-latest either. Both deliberate.
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Canary Firmware — dev channel (rolling)

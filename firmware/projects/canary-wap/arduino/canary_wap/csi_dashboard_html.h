@@ -1203,6 +1203,15 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
         <p class="fleet-qr-caption">Point a new Canary's camera at this code.</p>
       </div>
     </section>
+    <section class="fleet-section">
+      <h3 class="fleet-label">Something wrong? Scan for the fix</h3>
+      <p class="fleet-qr-caption">One code opens the Help Desk on the exact fix for this Canary's current state &mdash; safe mode, hub trouble, or a failing self-test.</p>
+      <button class="calibrate" id="helpQrBtn" style="margin-top:4px">Show Help QR</button>
+      <div id="helpQrWrap" class="fleet-qr-wrap" style="display:none">
+        <div id="helpQrImg" class="fleet-qr-img"></div>
+        <p class="fleet-qr-caption">Scan with your phone's camera.</p>
+      </div>
+    </section>
   </div>
 </aside>
 
@@ -2438,6 +2447,29 @@ document.getElementById('fleetGenBtn').addEventListener('click', async () => {
     wrap.style.display = '';
   } catch {
     img.innerHTML = '<p style="color:#c00;padding:20px">Network error &mdash; is the Canary still reachable?</p>';
+    wrap.style.display = '';
+  }
+});
+
+/* Help QR — the Help Desk deep link for the device's current verdict.
+ * Plain fetch on purpose: the endpoint is public (selftest-parity
+ * boundary), so this works from the wizard on the AP too. Every failure
+ * path names the fallback a person can act on — the Help Desk URL works
+ * from any browser, QR or no QR. */
+document.getElementById('helpQrBtn').addEventListener('click', async () => {
+  const wrap = document.getElementById('helpQrWrap');
+  const img = document.getElementById('helpQrImg');
+  try {
+    const r = await fetch('/api/help-qr', {cache: 'no-store'});
+    if (!r.ok) {
+      img.innerHTML = '<p style="color:#c00;padding:20px">Could not build the code (error ' + r.status + ') &mdash; securacv.com/help works from any browser too.</p>';
+      wrap.style.display = '';
+      return;
+    }
+    img.innerHTML = await r.text();
+    wrap.style.display = '';
+  } catch {
+    img.innerHTML = '<p style="color:#c00;padding:20px">Network error &mdash; securacv.com/help works from any browser too.</p>';
     wrap.style.display = '';
   }
 });

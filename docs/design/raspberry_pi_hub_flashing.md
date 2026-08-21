@@ -382,6 +382,33 @@ Raspberry Pi Imager.
     and host-tested in `hub_core::hub_headless`; both seeds are non-fatal notes
     on a stumble, like the account seed. A quit mid-first-boot resumes: the
     "last flash" record remembers an owed setup run.
+  - *Hub display — the plan's second opt-in extra (landed 2026-08-17; first
+    on-hardware run OUTSTANDING, like self-setup itself):* the hub stays
+    headless by default and the no-monitor promise stays intact — but a hub
+    with an HDMI touchscreen plugged in (reference panel: 7" 1024x600 IPS,
+    USB touch) can now opt into a dashboard on that screen. Rides the exact
+    mechanism Pi-hole proved: a feature-tagged step in the generated plan
+    (`--with display`), zero footprint unless enabled, surfaced as a checkbox
+    in both the desktop Flasher's self-setup panel and the browser guide. The
+    step registers the HAOSKiosk community add-on's repository and installs it
+    — an X server + browser running ON the HAOS host, showing Home Assistant
+    full-screen with touch mapped to the panel — and deliberately does NOT
+    start it: the kiosk signs in as the operator's own Home Assistant user, a
+    credential the plan never mints or carries, so the last move (typing the
+    login into the add-on's Configuration tab and pressing Start) is the
+    user's, and the plan's `user_must_finish` says exactly that. With no
+    screen attached the add-on simply refuses to start and nothing else on
+    the hub is affected. The kiosk's login is a **dedicated non-admin HA
+    user** by instruction (the add-on keeps that password in its options, and
+    a screen only views dashboards — same reasoning as the broker's `canary`
+    account). Trust posture, said out loud: like Frigate and Pi-hole, the
+    add-on's repository is registered **unpinned** — the Supervisor's store
+    model tracks upstream releases and offers no ref-pinning — so the plan
+    and docs state it as the community add-on it is; vendoring it into this
+    repo's own add-on repository is the available hardening step if the
+    feature graduates from experimental. Validation home:
+    [`hub_validation_runbook.md`](../hub_validation_runbook.md) §5 opt-in
+    extras.
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain,
     and — the genuinely unresolved, on-hardware-pinned piece — a **true
     zero-touch first-boot hook** (the hub running the bundle with no companion

@@ -87,6 +87,16 @@ BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 WIFIJOIN_HDR = ../common/network/wifi_join_policy.h
 WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 
+# Shared headless setup portal (common/network): the pure timing choreography
+# (AP linger, quiet background retry, stuck-phone hint) plus the canonical
+# provision_core byte-math (A-only captive DNS, probe classification, JSON
+# escaping, the unambiguous password alphabet) that the sense/vision portal
+# links. The display's byte-identical provision_core copy is pinned separately
+# by firmware/scripts/check_provision_core_sync.sh.
+PORTAL_HDRS = ../common/network/setup_portal_logic.h \
+              ../common/network/provision_core.h
+PORTAL_BIN  = $(BUILD_DIR)/test_setup_portal_logic
+
 # Power-event lineage + outage log (common/power/power_events.h): the pure
 # decision half of "harden against brownouts / flickers / outages and keep a
 # correct log of when the power went out." Proves the whole classification table
@@ -278,6 +288,9 @@ $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
 
+$(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
+
 $(POWEREVT_BIN): test_power_events.cpp $(POWEREVT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_power_events.cpp -o $@
 
@@ -332,7 +345,7 @@ $(CALMATH_BIN): test_calendar_math.cpp $(CALMATH_HDR) Makefile | $(BUILD_DIR)
 $(WXCORE_BIN): test_wx_core.cpp $(WXCORE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../projects/canary-display/include test_wx_core.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -342,6 +355,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
 	./$(WIFIJOIN_BIN)
+	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
 	./$(FLEETVIEW_BIN)

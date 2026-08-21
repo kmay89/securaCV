@@ -178,7 +178,27 @@ GREET_SRC = test_greeting.cpp
 $(GREET_BIN): $(GREET_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(GREET_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN)
+# Round Frame geometry engine (canary/ui/round_frame_core.h): the chord-at-
+# latitude math every fitted watch label rides, equator-centered row stacks,
+# the inscribed QR square, and the polar helpers. Pure integers, no LVGL.
+ROUNDFRAME_BIN = test_round_frame_core
+ROUNDFRAME_SRC = test_round_frame_core.cpp
+
+$(ROUNDFRAME_BIN): $(ROUNDFRAME_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(ROUNDFRAME_SRC)
+
+# The engine's C++11 contract — built with -std=gnu++11 ON PURPOSE (the
+# Arduino core-2.0.17 rows compile the flat sketch at that standard, where
+# a constexpr body is a single return statement). A cleanup that reintroduces
+# loops into the header's constexpr functions passes every C++17 build and
+# fails only in Arduino CI; this target fails first, locally, and says why.
+ROUNDFRAME11_BIN = test_round_frame_cpp11
+ROUNDFRAME11_SRC = test_round_frame_cpp11.cpp
+
+$(ROUNDFRAME11_BIN): $(ROUNDFRAME11_SRC)
+	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -o $@ $(ROUNDFRAME11_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -196,6 +216,8 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(DISPSET_BIN)
 	./$(CLOCKSTYLE_BIN)
 	./$(GREET_BIN)
+	./$(ROUNDFRAME_BIN)
+	./$(ROUNDFRAME11_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)

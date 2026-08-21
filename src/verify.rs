@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
 use ed25519_dalek::VerifyingKey;
-use rusqlite::{Connection, Row};
+use rusqlite::{Connection, OptionalExtension, Row};
 use serde::Serialize;
 
 use crate::crypto::signatures::{
     verify_rotation_attestation, verify_rotation_authorization, PqPublicKey, SignatureMode,
     SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT, DOMAIN_EXPORT_RECEIPT,
-    DOMAIN_SEALED_LOG_ENTRY,
+    DOMAIN_POLICY_CHANGE_RECORD, DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::{
     approvals_commitment, hash_entry, verify_approval, verify_entry_signature, Approval,
@@ -205,6 +205,223 @@ pub fn load_break_glass_policy(conn: &Connection) -> Result<Option<QuorumPolicy>
     }
 }
 
+/// The quorum policies that the policy-change history proves were genuinely in
+/// force — the ground truth for "was this receipt's declared policy era ever
+/// real?". Unlike a naive read of the payloads, this **authenticates the whole
+/// ledger** before trusting any era, so a device-key holder cannot inject a
+/// fabricated era to launder a forged receipt:
+///
+/// 1. **Chain + device signature.** Each row must link (`prev_hash`), hash
+///    (`entry_hash = SHA256(prev_hash ‖ payload_json)`) and carry a valid
+///    device signature under `DOMAIN_POLICY_CHANGE_RECORD`.
+/// 2. **Approvals binding.** The stored `approvals_json` must match the
+///    `approvals_commitment` inside the signed payload (so approvals cannot be
+///    swapped or deleted after signing).
+/// 3. **Per-transition quorum consent.** Every non-bootstrap row must carry
+///    ≥ `prev_policy.n` distinct valid policy-change approvals from its own
+///    `prev_policy` over the recorded `change_hash`, and its `prev_policy` must
+///    be the previous row's `new_policy` (era continuity). Only the first row
+///    may be a device-key-only bootstrap.
+///
+/// A row that fails any check makes the whole ledger untrusted (`Err`) — a
+/// tamper signal, not a silent skip. On a legacy database with no history table
+/// this returns an empty vec and callers keep the pre-history lenient behavior.
+///
+/// Residual (tracked, ENTERPRISE_CUSTODY §2): a host attacker who deletes the
+/// entire ledger and re-bootstraps with their own quorum defeats this, but that
+/// re-roots every era — previously-valid receipts stop resolving, and the
+/// change is visible against an out-of-band anchor of the history head. That is
+/// the same host-trust boundary the external high-water-mark work closes.
+pub fn load_authenticated_policy_eras(
+    conn: &Connection,
+    device_key: &VerifyingKey,
+    pq_public_key: Option<&PqPublicKey>,
+) -> Result<Vec<QuorumPolicy>> {
+    // The table may not exist on a pre-feature database.
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='policy_change_history' LIMIT 1",
+            [],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme \
+         FROM policy_change_history ORDER BY id ASC",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut out: Vec<QuorumPolicy> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut expected_prev = [0u8; 32];
+    let mut prev_new_commitment: Option<[u8; 32]> = None;
+    let mut index = 0u64;
+    while let Some(row) = rows.next()? {
+        let payload: String = row.get(0)?;
+        let approvals_json: String = row.get(1)?;
+        let prev_hash = blob32(row, 2)?;
+        let entry_hash = blob32(row, 3)?;
+        let signature: Vec<u8> = row.get(4)?;
+        let pq_signature: Option<Vec<u8>> = row.get(5)?;
+        let pq_scheme: Option<String> = row.get(6)?;
+
+        // (1) chain linkage + entry hash.
+        if prev_hash != expected_prev {
+            return Err(anyhow!(
+                "policy-change history broken at row {}: prev_hash does not link",
+                index
+            ));
+        }
+        if crate::hash_entry(&expected_prev, payload.as_bytes()) != entry_hash {
+            return Err(anyhow!(
+                "policy-change history broken at row {}: entry_hash mismatch",
+                index
+            ));
+        }
+        // (1) device signature over the entry hash.
+        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
+        verify_entry_signature(
+            device_key,
+            &entry_hash,
+            &signature_set,
+            SignatureMode::Compat,
+            pq_public_key,
+            DOMAIN_POLICY_CHANGE_RECORD,
+        )
+        .map_err(|e| {
+            anyhow!(
+                "policy-change history row {}: device signature invalid: {}",
+                index,
+                e
+            )
+        })?;
+
+        let record: crate::PolicyChangeRecord = serde_json::from_str(&payload)?;
+        record.new_policy.validate()?;
+
+        // (2) approvals binding: the stored approvals must match the signed
+        // commitment.
+        let approvals: Vec<Approval> = serde_json::from_str(&approvals_json)?;
+        if approvals_commitment(&approvals) != record.approvals_commitment {
+            return Err(anyhow!(
+                "policy-change history row {}: approvals do not match the signed commitment",
+                index
+            ));
+        }
+
+        if record.bootstrap {
+            // Only the FIRST row may be a bootstrap (device-key-only).
+            if index != 0 {
+                return Err(anyhow!(
+                    "policy-change history row {}: bootstrap after the first entry",
+                    index
+                ));
+            }
+        } else {
+            // (3) per-transition quorum consent from the prior era.
+            let prev = record.prev_policy.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "policy-change history row {}: non-bootstrap change without a prev_policy",
+                    index
+                )
+            })?;
+            prev.validate()?;
+            // Era continuity: this change must start from the era the previous
+            // row ended at.
+            if let Some(prev_commitment) = prev_new_commitment {
+                if prev.full_commitment() != prev_commitment {
+                    return Err(anyhow!(
+                        "policy-change history row {}: prev_policy is not the prior era",
+                        index
+                    ));
+                }
+            }
+            // The recorded change_hash must be the one over (prev, new, bucket).
+            let expected_change_hash = crate::break_glass::PolicyChangeProposal {
+                prev_policy_commitment: prev.full_commitment(),
+                new_policy: record.new_policy.clone(),
+                time_bucket: record.time_bucket,
+            }
+            .change_hash();
+            if expected_change_hash != record.change_hash {
+                return Err(anyhow!(
+                    "policy-change history row {}: change_hash does not match its policies",
+                    index
+                ));
+            }
+            let valid = crate::break_glass::count_valid_distinct_policy_change_approvals(
+                prev,
+                &record.change_hash,
+                &approvals,
+            );
+            if valid < prev.n as usize {
+                return Err(anyhow!(
+                    "policy-change history row {}: only {} of {} required prior-quorum approvals are valid",
+                    index,
+                    valid,
+                    prev.n
+                ));
+            }
+        }
+
+        for policy in [record.prev_policy.clone(), Some(record.new_policy.clone())]
+            .into_iter()
+            .flatten()
+        {
+            if policy.validate().is_ok() && seen.insert(policy.commitment()) {
+                out.push(policy);
+            }
+        }
+        prev_new_commitment = Some(record.new_policy.full_commitment());
+        expected_prev = entry_hash;
+        index += 1;
+    }
+    Ok(out)
+}
+
+/// Resolve the quorum policy a receipt should be re-derived against, using the
+/// receipt's recorded `policy_commitment`:
+/// - zero (a pre-field receipt) or the current policy's commitment → the
+///   current policy;
+/// - otherwise a historical era: the policy from `history` whose commitment
+///   matches. When `history` is non-empty and none matches, the receipt claims
+///   an era that never existed — `Err` (a forged/unverifiable receipt).
+/// - `Ok(None)` means "unresolved on a legacy database (no history recorded)":
+///   the caller preserves the pre-history behavior of not re-deriving, since it
+///   cannot prove the era either way.
+fn resolve_receipt_policy<'a>(
+    current_policy: &'a QuorumPolicy,
+    history: &'a [QuorumPolicy],
+    receipt: &BreakGlassReceipt,
+) -> Result<Option<&'a QuorumPolicy>> {
+    if receipt.policy_commitment == [0u8; 32]
+        || receipt.policy_commitment == current_policy.commitment()
+    {
+        return Ok(Some(current_policy));
+    }
+    if let Some(p) = history
+        .iter()
+        .find(|p| p.commitment() == receipt.policy_commitment)
+    {
+        return Ok(Some(p));
+    }
+    if history.is_empty() {
+        // Legacy database: no policy-change history exists, so an era mismatch
+        // cannot be distinguished from a legitimate pre-feature rotation.
+        // Preserve the historical lenient behavior (do not re-derive) rather
+        // than raise a false tamper alarm on an old deployment.
+        return Ok(None);
+    }
+    Err(anyhow!(
+        "break-glass receipt policy_commitment {} matches neither the current policy nor any \
+         recorded policy-change history entry — the policy era it claims cannot be verified",
+        hex::encode(receipt.policy_commitment)
+    ))
+}
+
 pub fn verify_events_with<F>(
     conn: &Connection,
     verifying_key: &VerifyingKey,
@@ -376,6 +593,11 @@ where
         "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts ORDER BY id ASC",
     )?;
 
+    // Ground truth for a receipt's declared policy era: the authenticated
+    // policy-change history (chain + device signature + approvals binding +
+    // per-transition quorum consent). Loaded once for the whole ledger walk.
+    let history = load_authenticated_policy_eras(conn, verifying_key, pq_public_key)?;
+
     let mut rows = stmt.query([])?;
     let mut expected_prev = [0u8; 32];
     let mut count = 0u64;
@@ -473,7 +695,7 @@ where
                 ),
             ));
         }
-        verify_approvals_against_policy(policy, &receipt, &approvals).map_err(|e| {
+        verify_receipt_quorum(policy, &history, &receipt, &approvals).map_err(|e| {
             fail(
                 FailedLedger::BreakGlassReceipts,
                 Some(id),
@@ -788,26 +1010,34 @@ pub fn classify_warning(warning: &str) -> WarningKind {
     }
 }
 
-fn verify_approvals_against_policy(
-    policy: &QuorumPolicy,
+/// Re-derive a break-glass receipt's quorum against the policy that was
+/// actually in force when it was authorized (Invariant V). Never trusts the
+/// receipt's recorded `outcome`: a device-key holder can forge a `Granted`
+/// receipt, but cannot manufacture the trustee signatures the quorum requires.
+///
+/// A receipt records the `policy_commitment` of its authorizing policy era.
+/// Earlier this check simply *skipped* re-derivation whenever that commitment
+/// was not the current policy's — which let a forged receipt carrying an
+/// arbitrary non-current `policy_commitment` slip through the audit entirely.
+/// It now RESOLVES the era against the signed, hash-chained policy-change
+/// history (`load_authenticated_policy_eras`) and re-derives against that
+/// historical policy's own roster and threshold. A commitment that matches no
+/// real era (with history present) is a forgery and fails. On a legacy
+/// database with no history the pre-history lenient behavior is preserved
+/// (the era cannot be proven either way), so old deployments do not
+/// false-alarm.
+pub(crate) fn verify_receipt_quorum(
+    current_policy: &QuorumPolicy,
+    history: &[QuorumPolicy],
     receipt: &BreakGlassReceipt,
     approvals: &[Approval],
 ) -> Result<()> {
-    // A receipt is decided under the quorum policy in force at its authorize
-    // time, recorded as `policy_commitment`. If that differs from the current
-    // policy, this receipt belongs to an earlier policy era: its approvals were
-    // signed by trustee keys that may no longer be in the policy, and its
-    // quorum met a threshold that may since have changed. Re-deriving it
-    // against the *current* policy would raise false tamper alarms on a
-    // legitimate policy rotation (raised threshold, rotated trustee). The chain
-    // hash and device signature (checked by the caller) remain the tamper
-    // evidence for the receipt's bytes; the quorum re-derivation only applies
-    // when the current policy IS the one this receipt was decided under. A
-    // zero commitment marks a pre-field receipt and is treated as current-era.
-    let current = policy.commitment();
-    if receipt.policy_commitment != [0u8; 32] && receipt.policy_commitment != current {
+    let Some(policy) = resolve_receipt_policy(current_policy, history, receipt)? else {
+        // Legacy, unresolvable era: keep the pre-history behavior (do not
+        // re-derive). The chain hash and device signature the caller already
+        // verified remain the tamper evidence for the receipt's bytes.
         return Ok(());
-    }
+    };
 
     let mut distinct_keys = std::collections::HashSet::new();
     for approval in approvals {
@@ -836,11 +1066,10 @@ fn verify_approvals_against_policy(
         }
         distinct_keys.insert(trustee.public_key);
     }
-    // Quorum re-derivation (Invariant V): never trust the receipt's recorded
-    // outcome. A Granted receipt MUST carry at least `policy.n` distinct valid
-    // trustee approvals. A device-key holder who forges `Granted` over an
-    // empty or under-quorum approval set is rejected here — the recorded
-    // outcome is not, by itself, evidence that the quorum was met.
+    // A Granted receipt MUST carry at least `policy.n` distinct valid trustee
+    // approvals. A device-key holder who forges `Granted` over an empty or
+    // under-quorum approval set is rejected here — the recorded outcome is not,
+    // by itself, evidence that the quorum was met.
     if matches!(receipt.outcome, BreakGlassOutcome::Granted)
         && distinct_keys.len() < policy.n as usize
     {
@@ -1032,13 +1261,12 @@ mod tests {
             policy_commitment: policy.commitment(),
             outcome: BreakGlassOutcome::Granted,
         };
-        assert!(verify_approvals_against_policy(&policy, &forged, &[]).is_err());
+        assert!(verify_receipt_quorum(&policy, &[], &forged, &[]).is_err());
 
         // Legit: the same Granted receipt WITH a real trustee approval passes.
         let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
         assert!(
-            verify_approvals_against_policy(&policy, &forged, std::slice::from_ref(&approval))
-                .is_ok()
+            verify_receipt_quorum(&policy, &[], &forged, std::slice::from_ref(&approval)).is_ok()
         );
 
         // A Denied receipt carries no quorum floor — empty approvals are fine.
@@ -1048,7 +1276,56 @@ mod tests {
             },
             ..forged.clone()
         };
-        assert!(verify_approvals_against_policy(&policy, &denied, &[]).is_ok());
+        assert!(verify_receipt_quorum(&policy, &[], &denied, &[]).is_ok());
+    }
+
+    // ─── the era guard is not a bypass: a receipt claiming a policy era that
+    // never existed is a forgery when the policy-change history is present. ──
+
+    #[test]
+    fn granted_receipt_with_fabricated_policy_era_is_rejected_when_history_present() {
+        use crate::break_glass::{TrusteeEntry, TrusteeId, UnlockRequest};
+        use crate::TimeBucket;
+
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let key = SigningKey::from_bytes(&[1u8; 32]);
+        let request = UnlockRequest::new("vault:v", [1u8; 32], "incident", bucket).unwrap();
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+
+        // A device-key holder forges Granted with ZERO approvals and stamps a
+        // policy_commitment that is neither the current policy nor any real
+        // era — the old code skipped re-derivation on any era mismatch, so
+        // this passed. With a non-empty history recording the real eras, an
+        // era that appears nowhere is a forgery and must fail.
+        let forged = BreakGlassReceipt {
+            vault_envelope_id: "vault:v".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [1u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![],
+            approvals_commitment: approvals_commitment(&[]),
+            policy_commitment: [0x99u8; 32],
+            outcome: BreakGlassOutcome::Granted,
+        };
+        // history contains only the real current policy's era.
+        let history = vec![policy.clone()];
+        assert!(
+            verify_receipt_quorum(&policy, &history, &forged, &[]).is_err(),
+            "a fabricated policy era must be rejected when history is present"
+        );
+        // On a legacy DB (empty history) the era cannot be disproven, so the
+        // pre-history lenient behavior is preserved (not flagged).
+        assert!(verify_receipt_quorum(&policy, &[], &forged, &[]).is_ok());
     }
 
     // ─── R1: historical receipts audit against THEIR policy era, not the
@@ -1104,19 +1381,30 @@ mod tests {
         )
         .unwrap();
         assert_ne!(new_policy.commitment(), old_policy.commitment());
-        assert!(verify_approvals_against_policy(
+        // With the old era recorded in history, auditing the old receipt
+        // against the NEW current policy resolves it to old_policy and fully
+        // re-derives (passing on its real approval) — no false alarm, but no
+        // free pass either.
+        let history = vec![old_policy.clone(), new_policy.clone()];
+        assert!(verify_receipt_quorum(
             &new_policy,
+            &history,
             &receipt,
             std::slice::from_ref(&approval)
         )
         .is_ok());
+        // And a forged old-era Granted with NO approvals is now caught, where
+        // the pre-history code would have waved it through.
+        let forged_old = BreakGlassReceipt {
+            outcome: BreakGlassOutcome::Granted,
+            ..receipt.clone()
+        };
+        assert!(verify_receipt_quorum(&new_policy, &history, &forged_old, &[]).is_err());
 
         // Under its OWN (old) policy it still fully re-derives and passes.
-        assert!(verify_approvals_against_policy(
-            &old_policy,
-            &receipt,
-            std::slice::from_ref(&approval)
-        )
-        .is_ok());
+        assert!(
+            verify_receipt_quorum(&old_policy, &[], &receipt, std::slice::from_ref(&approval))
+                .is_ok()
+        );
     }
 }

@@ -62,7 +62,7 @@ inline constexpr FigureRef kFigures[] = {
   { "canary-nightlight", "device.canary-nightlight", "27f621f7", "prototype" },
   { "canary-sense", "device.canary-sense", "112abb6d", "shipping" },
   { "canary-vision", "device.canary-vision", "421d34f1", "shipping" },
-  { "canary-watch", "device.canary-display-watch", "64d11931", "prototype" },
+  { "canary-watch", "device.canary-display-watch", "17e158d1", "prototype" },
   { "canary_wap", "device.canary-wap", "5fab1e20", "shipping" },
   { "canary_wap_mobile", "device.canary-wap", "5fab1e20", "shipping" },
 };
@@ -82,7 +82,7 @@ inline constexpr HardwareRef kHardware[] = {
   { "xiao-esp32c3", "device.canary-vision", "421d34f1", "shipping", false },  // 1 build
   { "xiao-esp32c6-mr60", "device.canary-sense", "112abb6d", "shipping", false },  // 3 builds
   { "xiao-esp32s3", "device.canary-vision", "421d34f1", "shipping", false },  // 1 build
-  { "xiao-esp32s3-round", "device.canary-display-watch", "64d11931", "prototype", false },  // 3 builds
+  { "xiao-esp32s3-round", "device.canary-display-watch", "17e158d1", "prototype", false },  // 3 builds
 };
 inline constexpr size_t kHardwareCount = sizeof(kHardware) / sizeof(kHardware[0]);
 

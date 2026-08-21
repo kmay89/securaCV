@@ -57,7 +57,10 @@
 #define TFT_PIN_CS              2     // D1
 #define TFT_PIN_DC              4     // D3
 #define TFT_PIN_RST             -1    // not broken out — board reset only
-#define TFT_PIN_BL              43    // D6, backlight enable (PWM-dimmable)
+#define TFT_PIN_BL              43    // D6, backlight enable (PWM-dimmable).
+                                      // VERIFY at bench (Track W4): Seeed has
+                                      // revised this board's backlight line
+                                      // before — confirm against your revision.
 #define TFT_BL_ACTIVE_HIGH      1
 #define TFT_WIDTH               240
 #define TFT_HEIGHT              240
@@ -73,7 +76,9 @@
 #define I2C_FREQ_FAST           400000
 
 #define TOUCH_I2C_ADDR          0x15  // CST816S
-#define TOUCH_PIN_INT           44    // D7 (active low)
+#define TOUCH_PIN_INT           44    // D7 (active low). VERIFY at bench
+                                      // (Track W3): confirm the INT line
+                                      // against your display revision.
 #define TOUCH_PIN_RST           -1    // not broken out
 
 // ============================================================================
@@ -109,7 +114,9 @@
 // on stock builds (FEATURE_CHIME=0 until fitted). VERIFY free at bench.
 #define BUZZER_PIN              1
 
-// BOOT button (GPIO0, active LOW) — used for factory-reset long-press.
+// BOOT button (GPIO0, active LOW) — reserved for a future factory-reset
+// long-press; no gesture is wired to it yet. The on-glass path exists
+// today: settings › reset › wifi › forget reopens the join wizard.
 #define BOOT_BUTTON_PIN         0
 #define BOOT_BUTTON_ACTIVE      LOW
 

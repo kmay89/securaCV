@@ -46,6 +46,16 @@ pub struct Provisioning {
     // lock.
     #[serde(default)]
     pub dials: Dials,
+    // OTA auto-update opt-in, seeded into the ENGINE'S OWN NVS namespace —
+    // "securacv_ota"/auto_upd u8 (firmware/common/ota/src/securacv_ota.cpp),
+    // not "securacv" like everything above. Tri-state on purpose:
+    // Some(true) writes 1 — the board keeps itself on Ed25519-signed
+    // releases with A/B rollback; Some(false) writes an explicit 0, the
+    // engine's default anyway, but a recorded human choice instead of an
+    // absence; None (older callers) writes neither the key nor the
+    // namespace, keeping the seed byte-identical to the pre-OTA one.
+    #[serde(default)]
+    pub auto_update: Option<bool>,
 }
 
 /// Typed integer NVS entries, split by width because ESP-IDF Preferences
@@ -187,6 +197,10 @@ fn api_token_shape_ok(token: &str) -> bool {
 struct NvsWriter {
     page: Vec<u8>,
     next: usize,
+    // The namespace index items are written under. namespace() hands out
+    // 1, 2, … in call order and switches here, exactly as ESP-IDF does —
+    // a namespace's index IS its definition entry's data byte.
+    ns: u8,
 }
 
 impl NvsWriter {
@@ -194,6 +208,7 @@ impl NvsWriter {
         Self {
             page: vec![0xff; NVS_PAGE],
             next: 0,
+            ns: 0,
         }
     }
 
@@ -241,7 +256,8 @@ impl NvsWriter {
         self.ensure(1)?;
         let index = self.next;
         self.header(index, 0, 0x01, 1, name);
-        self.page[Self::item_offset(index) + 24] = 1;
+        self.ns += 1; // "securacv" → 1, "securacv_ota" → 2, …
+        self.page[Self::item_offset(index) + 24] = self.ns;
         self.finish_item(index);
         self.next += 1;
         Ok(())
@@ -257,7 +273,7 @@ impl NvsWriter {
         let span = 1 + payload_entries;
         self.ensure(span)?;
         let index = self.next;
-        self.header(index, 1, 0x21, span as u8, key);
+        self.header(index, self.ns, 0x21, span as u8, key);
         let offset = Self::item_offset(index);
         self.page[offset + 24..offset + 26].copy_from_slice(&(payload.len() as u16).to_le_bytes());
         let payload_crc = crc32_esp_rom(&payload);
@@ -274,7 +290,7 @@ impl NvsWriter {
     fn u8(&mut self, key: &str, value: u8) -> Result<(), String> {
         self.ensure(1)?;
         let index = self.next;
-        self.header(index, 1, 0x01, 1, key);
+        self.header(index, self.ns, 0x01, 1, key);
         let offset = Self::item_offset(index);
         self.page[offset + 24] = value;
         self.finish_item(index);
@@ -289,7 +305,7 @@ impl NvsWriter {
         let payload_entries = bytes.len().div_ceil(32);
         self.ensure(1 + payload_entries + 1)?;
         let index = self.next;
-        self.header(index, 1, 0x42, (1 + payload_entries) as u8, key);
+        self.header(index, self.ns, 0x42, (1 + payload_entries) as u8, key);
         let offset = Self::item_offset(index);
         // chunk index byte (header() writes 0xff): VER_0 chunk 0
         self.page[offset + 3] = 0;
@@ -303,7 +319,7 @@ impl NvsWriter {
         self.next += 1 + payload_entries;
 
         let index = self.next;
-        self.header(index, 1, 0x48, 1, key);
+        self.header(index, self.ns, 0x48, 1, key);
         let offset = Self::item_offset(index);
         self.page[offset + 24..offset + 28].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
         self.page[offset + 28] = 1; // chunkCount
@@ -316,7 +332,7 @@ impl NvsWriter {
     fn u16(&mut self, key: &str, value: u16) -> Result<(), String> {
         self.ensure(1)?;
         let index = self.next;
-        self.header(index, 1, 0x02, 1, key);
+        self.header(index, self.ns, 0x02, 1, key);
         let offset = Self::item_offset(index);
         self.page[offset + 24..offset + 26].copy_from_slice(&value.to_le_bytes());
         self.finish_item(index);
@@ -331,7 +347,7 @@ impl NvsWriter {
     fn u32(&mut self, key: &str, value: u32) -> Result<(), String> {
         self.ensure(1)?;
         let index = self.next;
-        self.header(index, 1, 0x04, 1, key);
+        self.header(index, self.ns, 0x04, 1, key);
         let offset = Self::item_offset(index);
         self.page[offset + 24..offset + 28].copy_from_slice(&value.to_le_bytes());
         self.finish_item(index);
@@ -415,6 +431,17 @@ fn build_nvs(config: &Provisioning, partition_size: usize) -> Result<Vec<u8>, St
         }
         writer.u32(key, *value)?;
     }
+    // The OTA auto-update opt-in last, and under the ENGINE'S OWN namespace:
+    // the shared engine (securacv_ota.cpp) reads "securacv_ota"/auto_upd with
+    // nvs_get_u8, default 0 (off). Some(true) → 1 and the board keeps itself
+    // on Ed25519-signed releases with A/B rollback, no hub needed;
+    // Some(false) → an explicit 0 recording the human's choice; None →
+    // nothing, byte-identical to the pre-OTA seed. Mirrors the browser's
+    // buildNvsSeedImage `autoUpdate` opt byte-for-byte.
+    if let Some(enabled) = config.auto_update {
+        writer.namespace("securacv_ota")?;
+        writer.u8("auto_upd", u8::from(enabled))?;
+    }
     Ok(writer.finish(partition_size))
 }
 
@@ -445,6 +472,7 @@ mod tests {
             wifi_nvs: String::new(),
             api_token: String::new(),
             dials: Dials::default(),
+            auto_update: None,
         }
     }
 
@@ -769,5 +797,82 @@ mod tests {
         let mut bad = config();
         bad.wifi_pass = "short".into();
         assert!(patch_factory_image(&mut factory(), &bad).is_err());
+    }
+
+    // The OTA opt-in lives in the ENGINE'S OWN namespace: securacv_ota.cpp
+    // opens "securacv_ota" and reads auto_upd with nvs_get_u8 — a u8 under
+    // "securacv" would read back as missing. So the page must carry a SECOND
+    // namespace-definition entry (index 2, right after "securacv"'s 1) and
+    // the u8 under that index, with valid item CRCs — the browser's
+    // buildNvsSeedImage writes the same bytes.
+    #[test]
+    fn auto_update_on_seeds_the_engines_own_namespace() {
+        let cfg = Provisioning {
+            auto_update: Some(true),
+            ..config()
+        };
+        let nvs = build_nvs(&cfg, 0x5000).expect("auto-update seed builds");
+
+        // The namespace definition: an item under index 0, type 0x01, whose
+        // data byte names the new index — 2.
+        let ns_def = nvs
+            .windows("securacv_ota".len())
+            .position(|w| w == b"securacv_ota")
+            .expect("securacv_ota namespace entry present")
+            - 8;
+        assert_eq!(nvs[ns_def], 0, "a namespace definition lives under index 0");
+        assert_eq!(nvs[ns_def + 1], 0x01, "namespace entries are type 0x01");
+        assert_eq!(nvs[ns_def + 24], 2, "securacv_ota must be namespace index 2");
+
+        // The u8 itself: under index 2, type 0x01, value 1 inline at +24.
+        let item = nvs
+            .windows("auto_upd".len())
+            .position(|w| w == b"auto_upd")
+            .expect("auto_upd item present")
+            - 8;
+        assert_eq!(nvs[item], 2, "auto_upd must live under namespace index 2");
+        assert_eq!(nvs[item + 1], 0x01, "the engine reads auto_upd as a u8");
+        assert_eq!(nvs[item + 24], 1);
+
+        // Its item CRC verifies the way ESP-IDF will check it on first boot.
+        let mut covered = [0u8; 28];
+        covered[..4].copy_from_slice(&nvs[item..item + 4]);
+        covered[4..].copy_from_slice(&nvs[item + 8..item + 32]);
+        assert_eq!(
+            u32::from_le_bytes(nvs[item + 4..item + 8].try_into().unwrap()),
+            crc32_esp_rom(&covered),
+            "auto_upd item CRC must verify"
+        );
+    }
+
+    // Declined is still a CHOICE: an explicit 0, not an absent key. The
+    // engine's default is 0 anyway, but the page recording a decision is
+    // what lets a later reader tell "turned off" from "never asked".
+    #[test]
+    fn auto_update_declined_writes_an_explicit_zero() {
+        let cfg = Provisioning {
+            auto_update: Some(false),
+            ..config()
+        };
+        let nvs = build_nvs(&cfg, 0x5000).expect("declined seed builds");
+        let item = nvs
+            .windows("auto_upd".len())
+            .position(|w| w == b"auto_upd")
+            .expect("declined choice must still write the key")
+            - 8;
+        assert_eq!(nvs[item], 2);
+        assert_eq!(nvs[item + 1], 0x01);
+        assert_eq!(nvs[item + 24], 0, "declined means an explicit 0");
+    }
+
+    // No choice at all (older callers): neither the key nor the namespace —
+    // the seed stays byte-identical to what it was before this field existed.
+    #[test]
+    fn no_auto_update_choice_writes_neither_key_nor_namespace() {
+        let nvs = build_nvs(&config(), 0x5000).unwrap();
+        assert!(nvs.windows("auto_upd".len()).all(|w| w != b"auto_upd"));
+        assert!(nvs
+            .windows("securacv_ota".len())
+            .all(|w| w != b"securacv_ota"));
     }
 }

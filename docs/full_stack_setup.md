@@ -92,6 +92,24 @@ Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
 The hub needs an MQTT broker, then the securaCV kernel that turns detections into
 signed claims.
 
+**The one-command path:** already looking at the Home Assistant dashboard?
+Install the **Terminal & SSH** app (Settings → Apps → App Store), open it,
+and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
+```
+
+It installs and wires this step *and* step 4a in one narrated, idempotent
+run: Mosquitto (minting a `canary` broker login for your devices — the
+password stays out of the terminal; read it under **Settings → Apps →
+Mosquitto broker → Configuration → Logins**), the hub's own MQTT connection,
+Frigate with the curated config already placed, the kernel in frigate mode,
+the SecuraCV integration with its config entry created, and the blueprints
+and dashboards. What's left for you is exactly what should be: your cameras'
+RTSP URLs (step 4) and your Canaries' broker login (step 5). Details:
+[`homeassistant_setup.md`](homeassistant_setup.md).
+
 > **The no-hands path (experimental):** if you ticked **"Let this app finish hub
 > setup by itself"** when flashing, skip this whole step — keep the Flasher open
 > and it does it for you. The card carries the self-setup bundle and a
@@ -116,6 +134,26 @@ signed claims.
 > uploaded, and retention is yours to shorten or switch off in Pi-hole's
 > settings (blocking still works with query logging off). It does nothing at
 > all until you point your router's DNS at the hub's IP.
+>
+> **A screen on the hub (optional):** the hub never needs one — but if you've
+> plugged an HDMI display into the Pi (say a 7" 1024x600 IPS touchscreen with
+> USB touch), self-setup can also install **HAOSKiosk** (tick "Also install the
+> hub display" in the Flasher; manual: append `--with display`). It runs a
+> small browser on the hub itself and shows your dashboard on that screen
+> full-screen, touch and all. No vendor cloud and no new account — though it is
+> a real browser, so a dashboard that embeds outside content (a weather card, a
+> remote image) fetches it on the screen exactly as your phone does opening the
+> same dashboard. One step stays yours, and the installer never mints or
+> carries a password: give the screen a **dedicated non-admin user** (Settings
+> → People → Users → Add User — name it `screen`, leave Administrator off; the
+> add-on keeps that password in its configuration, and a screen only needs to
+> view dashboards), then open Settings → Apps → **HAOS Kiosk Display** →
+> Configuration, enter that login, and press Start. Zoom, rotation, and
+> screen-timeout for your particular panel live in the same tab. No screen
+> attached? The add-on simply won't start, and nothing else cares. By hand
+> instead: add `https://github.com/puterboy/HAOS-kiosk` as an app repository
+> and install **HAOS Kiosk Display** from it — same result. Like Frigate and
+> Pi-hole above, it's a community add-on tracking its own upstream releases.
 
 By hand, it's two installs:
 
@@ -147,7 +185,10 @@ Frigate does the vision; securaCV subscribes to it over MQTT and turns detection
 into identity-stripped, signed claims. **Pick where detection runs:**
 
 ### Option A — on the hub (simplest)
-Install the **Frigate** app (its store repo:
+If you ran the one-command path in step 3, Frigate is already installed and
+the curated config is already at `/addon_configs/ccab4aaf_frigate/config.yml`
+— skip straight to the camera edits below. By hand: install the **Frigate**
+app (its store repo:
 `https://github.com/blakeblackshear/frigate-hass-addons`, app slug
 `ccab4aaf_frigate`) and use our curated config as the starting point:
 [`homeassistant/frigate/config.yaml`](../homeassistant/frigate/config.yaml) →
@@ -255,7 +296,7 @@ This page is **living** — kept honest as the stack is exercised on real hardwa
 |---|---|
 | 1. Flash the hub | ✅ write + read-back verify proven on macOS (Pi 5, 64 GB card); the rdisk cache-sync fix is required |
 | 2. First boot | ⏳ Wi-Fi seed acceptance on real HAOS not yet confirmed end to end |
-| 3. Broker + securaCV | ⏳ documented from the shipped apps; not yet re-walked on a fresh flash. The Flasher's **self-setup** option now automates this step (see below) — same validation caveat |
+| 3. Broker + securaCV | ⏳ documented from the shipped apps; not yet re-walked on a fresh flash. The one-command installer (`scripts/install.sh`) and the Flasher's **self-setup** option both automate this step now (see below) — same validation caveat |
 | 4a. Frigate on the hub | ⏳ curated config committed **and** an executor that installs it via the Supervisor API (`hub_seed_apply.py`, host-tested, idempotent); the Flasher's first-boot companion now invokes it unattended |
 | 4b. Jetson detector | ⏳ scaffold follows Frigate's official Jetson guidance; unvalidated on an Orin |
 | 5. Canaries | ✅ shipping path, covered by its own guide |
@@ -266,8 +307,11 @@ configs are committed, [`hub_seed_apply.py`](../canary-local/tools/hub_seed_appl
 installs the whole stack unattended via the Supervisor API, and the Flasher
 seeds the bundle onto the card and **runs it itself** once the hub answers —
 over the HAOS developer console (port 22222), unlocked by a maintenance key
-seeded at flash time, so the hub never needs a monitor. What's left is honest:
-hardware validation on a real Pi — the Wi-Fi seed, the key import, and a full
-companion-driven install have not yet been watched end-to-end on a fresh flash,
-which is why the option is labeled experimental and this guide keeps the
-by-hand path.
+seeded at flash time, so the hub never needs a monitor. The same plan also
+runs on any hub that's already booted: the one-command installer in step 3
+(`scripts/install.sh` from the Terminal & SSH app) executes it through the
+Supervisor API, narrated and idempotent, with no Flasher involved. What's
+left is honest: hardware validation on a real Pi — the Wi-Fi seed, the key
+import, and a full companion-driven install have not yet been watched
+end-to-end on a fresh flash, which is why the Flasher option is labeled
+experimental and this guide keeps the by-hand path.

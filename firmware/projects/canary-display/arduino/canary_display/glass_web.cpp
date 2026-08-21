@@ -11,6 +11,7 @@
 #include "wifi_mgr.h"
 #include "tz_auto.h"
 #include "mqtt_mgr.h"   // hub state for the /api/fleet self-report
+#include "ota_web.h"    // the /api/ota routes' facade (ota_mgr)
 #include "mirror_html.h"
 #include "tv_html.h"
 #include "character.h"
@@ -490,6 +491,89 @@ void handle_tz_set() {
   s_server->send(200, "application/json", "{\"ok\":true}");
 }
 
+// ── /api/ota — the flagship canary's one-click update contract, on the
+// glass. The signed pull engine has always been aboard (ota_mgr wires it
+// for HA's update entity); what was missing was this trigger surface, so
+// the desktop Flasher's "Update over the air" button 404ed on every
+// display while telling the user the engine didn't exist. Every call
+// routes through ota_mgr (ota_web.h) — the exact path HA's MQTT Install
+// button takes — so HTTP and MQTT can never disagree about a run in
+// flight; the engine's own guard answers "busy" for both.
+//
+// LAN-open like every write here (/api/set, /api/tz): the glass mints no
+// bearer credential, the LAN is the trust boundary, and the worst a
+// caller can do is start a check for firmware the device then verifies
+// against its pinned Ed25519 release key.
+
+// Shared answer for the two kick routes: 200 started / 409 busy / 500
+// refused — the same statuses and body shapes as the canary's handlers,
+// so the Flasher's retry logic ("409 = the engine is mid-run, wait and
+// re-ring") works unchanged. The engine runs on its own worker task, so
+// the 200 is on the wire long before any reboot.
+void send_ota_kick(OtaKick kick, const char* started_msg,
+                   const char* fail_code) {
+  char body[192];
+  switch (kick) {
+    case OtaKick::Started:
+      snprintf(body, sizeof(body), "{\"ok\":true,\"message\":\"%s\"}",
+               started_msg);
+      s_server->send(200, "application/json", body);
+      return;
+    case OtaKick::Busy:
+      s_server->send(409, "application/json",
+                     "{\"ok\":false,\"error\":\"ota_busy\"}");
+      return;
+    default:
+      snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}",
+               fail_code);
+      s_server->send(500, "application/json", body);
+      return;
+  }
+}
+
+// GET /api/ota/status — versions, state, progress, error; the subset of
+// the canary's status document this engine surface carries, same field
+// names. Booleans are real JSON booleans (the Flasher compares ===).
+void handle_ota_status() {
+  const OtaWebStatus s = ota_web_status();
+  char body[768];
+  size_t o = 0;
+  const size_t C = sizeof(body);
+  // Engine strings are static ASCII — JSON-safe by construction. The one
+  // remotely sourced value (the manifest's version) leaves through the
+  // same escaper the MQTT names use.
+  o = bappend(body, C, o,
+              "{\"ok\":true,\"installed_version\":\"%s\",\"state\":\"%s\","
+              "\"state_text\":\"%s\",\"progress\":%u,\"error\":\"%s\","
+              "\"error_text\":\"%s\",\"update_available\":%s,"
+              "\"auto_update\":%s",
+              s.installed, s.state, s.state_text, (unsigned)s.progress,
+              s.error, s.error_text, s.update_available ? "true" : "false",
+              s.auto_update ? "true" : "false");
+  if (s.latest != nullptr) {
+    o = bappend(body, C, o, ",\"latest_version\":");
+    o = bappend_jstr(body, C, o, s.latest);
+  }
+  o = bappend(body, C, o, "}");
+  s_server->send(200, "application/json", body);
+}
+
+// POST /api/ota/check — fetch the manifest and compare versions, without
+// installing. Results land in /api/ota/status (poll while state=Checking).
+void handle_ota_check() {
+  send_ota_kick(ota_web_check(), "Checking for updates...",
+                "ota_check_failed");
+}
+
+// POST /api/ota/install — check-and-install as one async run (a separate
+// check first would make this 409). The device restarts into the new
+// firmware on success, with automatic rollback if it fails its probe.
+void handle_ota_install() {
+  send_ota_kick(ota_web_install(),
+                "Installing the update. Your Canary will restart on its own.",
+                "ota_install_failed");
+}
+
 }  // namespace
 
 // The receipt: what this unit IS — chip, memory, radio, firmware, and the
@@ -651,6 +735,9 @@ void glass_web_init() {
   s_server->on("/api/settings", HTTP_GET, handle_settings_get);
   s_server->on("/api/set", HTTP_POST, handle_settings_set);
   s_server->on("/api/tz", HTTP_POST, handle_tz_set);
+  s_server->on("/api/ota/status", HTTP_GET, handle_ota_status);
+  s_server->on("/api/ota/check", HTTP_POST, handle_ota_check);
+  s_server->on("/api/ota/install", HTTP_POST, handle_ota_install);
   s_server->onNotFound([]() { s_server->send(404, "text/plain", "not here"); });
   s_server->begin();
   canary::log_line("WEB", "Glass mirror serving on :80");

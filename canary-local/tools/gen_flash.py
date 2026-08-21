@@ -639,6 +639,38 @@ BOARD_ACCESS = {
         "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/"
                "canary_sense_ports_and_access.md",
     },
+    "securacv-canary-display-watch": {
+        # The Watch Station puck: the XIAO ESP32-S3 rides the Round Display's
+        # back socket, USB-C pointing radially out through the drum's side
+        # slot. The desk stand is a full-depth cradle — the drum sinks in far
+        # enough to bury that slot (canary_watch_station.scad: pocket_dep
+        # "buries the USB slot"), and the chin channel under the cradle
+        # passes a cable that is already plugged, not a hand plugging one.
+        # Keyed by product id: the rest of the display family plugs straight
+        # in and must not inherit this ceremony.
+        "headline": "In the desk stand the USB-C is buried — lift the drum "
+                    "out first",
+        "flash_port": "the XIAO ESP32-S3's own USB-C, through the drum's "
+                      "side slot",
+        "other_port": "—",
+        "other_effect": "",
+        "steps": [
+            "Flash the bare display+XIAO stack, or lift the drum out of the "
+            "desk stand first — the thumb scallops on the cradle rim are for "
+            "exactly this.",
+            "Plug a USB-C DATA cable into the XIAO's port through the drum's "
+            "side slot and flash.",
+            "Re-seat the drum with the cable already plugged — it runs out "
+            "the side slot and down the chin channel under the cradle.",
+        ],
+        "enclosure_note": "Printed the SecuraCV desk stand? Its cradle "
+                          "deliberately buries the side slot (the pocket is "
+                          "what keeps the puck from rocking), and the chin "
+                          "channel passes the cable through, not a plug. The "
+                          "bare drum keeps the slot reachable.",
+        "doc": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/"
+               "enclosure/README.md",
+    },
 }
 
 PROVISIONING = {

@@ -46,33 +46,25 @@ Prefer to explore first? The [SecuraCV Lab](https://kmay89.github.io/securaCV/ca
 
 ## Install
 
-### Home Assistant app
+### Install on Home Assistant
 
-Requires Home Assistant 2024.4.1 or newer. (Home Assistant now calls these
-**apps**; older versions call them add-ons, and the steps are the same either way.)
+Requires Home Assistant 2024.4.1 or newer. On Home Assistant OS, run this from the **Terminal & SSH** app:
 
-1. In Home Assistant, install the official **Mosquitto broker** app.
-2. Add these repositories in **Settings → Apps → App Store → ⋮ → Repositories**:
-   - `https://github.com/blakeblackshear/frigate-hass-addons`
-   - `https://github.com/kmay89/securaCV`
+`curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash`
 
-   Or add the SecuraCV repository in one click:
-   [add to my Home Assistant](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV).
-3. Install **Frigate** and **Privacy Witness Kernel**.
-4. Open the Privacy Witness Kernel Web UI and follow the setup wizard.
-5. Point Frigate at your cameras. The wizard writes a starter config template to `/config/frigate.yml`; copy it into Frigate's config, replace the placeholder RTSP URLs, then start Frigate.
+One idempotent, narrated command installs and wires the whole stack — Mosquitto with a `canary` broker login, Home Assistant's MQTT connection, Frigate with a curated config, the Privacy Witness Kernel, the SecuraCV integration and its config entry, blueprints, and dashboards — and it is safe to re-run.
 
-After setup, SecuraCV publishes witness sensors, chain-integrity status, daily digest state, and a **Verify Now** action into Home Assistant. Frigate keeps handling clips and retention; SecuraCV adds the privacy boundary and verifiable event log.
+Prefer clicking? Add [the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV) (`https://github.com/kmay89/securaCV`) and [the integration via HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89&repository=securacv-homeassistant&category=integration) in one click each, then install **Privacy Witness Kernel** and let its setup wizard finish the job — it can install Mosquitto and Frigate (`https://github.com/blakeblackshear/frigate-hass-addons`) itself if they are missing.
 
-The happiest path today is Home Assistant + Frigate + Mosquitto on a Raspberry Pi 4 or x86 host with RTSP cameras.
+The full walkthrough, what stays yours either way (pointing Frigate at your cameras, pointing Canaries at the broker), and troubleshooting: [Home Assistant setup](docs/homeassistant_setup.md).
 
-### Docker beside Frigate
+### Without Home Assistant
 
-Use the compose quickstart, doctor check, bundled-broker option, and API-token setup in [Frigate integration](docs/frigate_integration.md).
+The Docker sidecar runs the same witness stack beside an existing Frigate: one compose file (`quickstart.compose.yml`, or `quickstart-with-broker.compose.yml` to bundle Mosquitto) plus a narrated `doctor` check — and if you add Home Assistant later, it discovers everything over MQTT with zero reconfiguration. See the [Docker quickstart](docs/frigate_integration.md#quick-start-docker-no-home-assistant).
 
 ### From source
 
-On a supported Linux host, the repository installer is `curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash`.
+On a supported Linux host:
 
 ```bash
 # Ubuntu/Debian prerequisites

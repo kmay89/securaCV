@@ -104,14 +104,17 @@ pub fn valid_host(host: &str) -> bool {
 }
 
 /// The remote command the companion runs: the bundle's own host-side runner,
-/// optionally in preview mode, optionally with the plan's opt-in Pi-hole
-/// feature. Assembled from fixed strings on purpose — the companion never
-/// composes remote shell from user input; the two booleans are the entire
-/// input surface.
-pub fn remote_command(dry_run: bool, with_pihole: bool) -> String {
+/// optionally in preview mode, optionally with the plan's opt-in extras
+/// (Pi-hole, the hub display). Assembled from fixed strings on purpose — the
+/// companion never composes remote shell from user input; the three booleans
+/// are the entire input surface.
+pub fn remote_command(dry_run: bool, with_pihole: bool, with_display: bool) -> String {
     let mut cmd = format!("sh {REMOTE_RUNNER}");
     if with_pihole {
         cmd.push_str(" --with pihole");
+    }
+    if with_display {
+        cmd.push_str(" --with display");
     }
     if dry_run {
         cmd.push_str(" --dry-run");
@@ -144,6 +147,7 @@ pub fn ssh_args(
     known_hosts_file: &str,
     dry_run: bool,
     with_pihole: bool,
+    with_display: bool,
 ) -> Result<Vec<String>, String> {
     if !valid_host(host) {
         return Err("that doesn't look like a hostname".to_string());
@@ -168,7 +172,7 @@ pub fn ssh_args(
         "-o".to_string(),
         format!("UserKnownHostsFile={known_hosts_file}"),
         format!("root@{}", host.trim()),
-        remote_command(dry_run, with_pihole),
+        remote_command(dry_run, with_pihole, with_display),
     ])
 }
 
@@ -250,22 +254,30 @@ mod tests {
     #[test]
     fn the_remote_command_is_the_bundles_own_runner() {
         assert_eq!(
-            remote_command(false, false),
+            remote_command(false, false, false),
             "sh /mnt/boot/CONFIG/securacv/host_provision.sh"
         );
         assert_eq!(
-            remote_command(true, false),
+            remote_command(true, false, false),
             "sh /mnt/boot/CONFIG/securacv/host_provision.sh --dry-run"
         );
-        // The one opt-in extra rides as the executor's own --with flag; flag
-        // order matters (--with before --dry-run so a preview previews it).
+        // The opt-in extras ride as the executor's own --with flags; flag
+        // order matters (--with before --dry-run so a preview previews them).
         assert_eq!(
-            remote_command(false, true),
+            remote_command(false, true, false),
             "sh /mnt/boot/CONFIG/securacv/host_provision.sh --with pihole"
         );
         assert_eq!(
-            remote_command(true, true),
+            remote_command(true, true, false),
             "sh /mnt/boot/CONFIG/securacv/host_provision.sh --with pihole --dry-run"
+        );
+        assert_eq!(
+            remote_command(false, false, true),
+            "sh /mnt/boot/CONFIG/securacv/host_provision.sh --with display"
+        );
+        assert_eq!(
+            remote_command(true, true, true),
+            "sh /mnt/boot/CONFIG/securacv/host_provision.sh --with pihole --with display --dry-run"
         );
     }
 
@@ -275,6 +287,7 @@ mod tests {
             "homeassistant.local",
             "/k/id",
             "/k/known_hosts",
+            false,
             false,
             false,
         )
@@ -291,7 +304,7 @@ mod tests {
         assert!(joined.contains("UserKnownHostsFile=/k/known_hosts"));
         assert!(joined
             .ends_with("root@homeassistant.local sh /mnt/boot/CONFIG/securacv/host_provision.sh"));
-        assert!(ssh_args("bad host", "/k/id", "/k/kh", false, false).is_err());
+        assert!(ssh_args("bad host", "/k/id", "/k/kh", false, false, false).is_err());
     }
 
     #[test]

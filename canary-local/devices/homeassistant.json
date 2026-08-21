@@ -3,7 +3,7 @@
   "integration": {
     "domain": "securacv",
     "name": "SecuraCV",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "iot_class": "local_push",
     "min_ha": "2024.4.1",
     "source": "custom_components/securacv/manifest.json + hacs.json"
@@ -61,6 +61,11 @@
         "item": "Ethernet cable (recommended)",
         "note": "a hub wants wire",
         "from_doc": false
+      },
+      {
+        "item": "HDMI touchscreen (optional)",
+        "note": "e.g. a 7\" 1024x600 IPS panel with USB touch \u2014 the hub runs headless by default, but with a screen it can show your dashboard (the \u201cdisplay\u201d extra in self-setup)",
+        "from_doc": true
       }
     ],
     "frame": {

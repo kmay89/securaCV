@@ -51,6 +51,10 @@ on:
         description: "Version to cut, e.g. 2.3.0 (release) or 2.3.0-dev.1 (dev). Blank = read the triple from source (release only). Must match the bumped FIRMWARE_VERSION / CANARY_FW_VERSION in every variant."
         type: string
         default: ""
+      allow_dropped_products:
+        description: "Comma-separated flasher product ids allowed to be ABSENT from this release (the sign-off for a knowingly broken build). Blank = every product that shipped last release must ship again, or the completeness gate fails before publishing."
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -834,6 +838,50 @@ jobs:
           (cd /tmp/release && sha256sum ./*.bin ./*.json > sha256sums.txt)
           ls -la /tmp/release/*-factory.bin /tmp/release/manifest-flash.json || true
 
+      - name: No product silently drops out of the flasher between releases
+        # The build matrix above is deliberately non-blocking — one SKU's
+        # compile failure must not sink the signed release. This is the other
+        # half of that bargain: before anything publishes, the fresh
+        # manifest-flash.json is diffed against the PREVIOUS release's, and a
+        # product that used to ship but is now missing fails the run unless it
+        # was named in the allow_dropped_products input (the explicit "ship
+        # without it" sign-off). Dev-channel prereleases report but never
+        # block. First release (no previous manifest) skips cleanly.
+        #
+        # The tag-push path has no inputs and a re-run keeps them empty, so
+        # the sign-off there is the ALLOW_DROPPED_PRODUCTS repository
+        # variable (Settings → Secrets and variables → Actions → Variables):
+        # set it, re-run the failed job, then clear it — a standing value
+        # would silently wave the next accidental drop through too.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALLOW_DROPPED: ${{ inputs.allow_dropped_products || vars.ALLOW_DROPPED_PRODUCTS || '' }}
+          THIS_TAG: ${{ steps.ver.outputs.tag }}
+          CHANNEL: ${{ steps.ver.outputs.channel }}
+        run: |
+          set -euo pipefail
+          # Newest published stable fw-v* release that is not the one being cut.
+          PREV_TAG="$(gh release list --limit 100 \
+              --json tagName,isPrerelease,isDraft \
+              -q '.[] | select(.isPrerelease | not) | select(.isDraft | not) | .tagName' \
+            | grep '^fw-v' | grep -vx "$THIS_TAG" | head -1 || true)"
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous stable fw-v* release found — completeness gate skipped (first release)."
+            exit 0
+          fi
+          if ! gh release download "$PREV_TAG" --pattern manifest-flash.json \
+              --output /tmp/prev-manifest-flash.json; then
+            echo "::warning::previous release $PREV_TAG carries no manifest-flash.json — completeness gate skipped"
+            exit 0
+          fi
+          EXTRA=""
+          [ "$CHANNEL" = "dev" ] && EXTRA="--advisory"
+          python3 firmware/scripts/check_manifest_completeness.py \
+            --current /tmp/release/manifest-flash.json \
+            --previous /tmp/prev-manifest-flash.json \
+            --allow-dropped "$ALLOW_DROPPED" \
+            $EXTRA
+
       - name: Attest build provenance (SLSA) for the published artifacts
         # Sign an in-toto provenance statement binding every published .bin /
         # manifest / checksum to THIS workflow run + commit via GitHub's OIDC
@@ -860,7 +908,7 @@ jobs:
         run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           # On a tag push this is the pushed tag; on the one-click path it
           # creates this tag. target_commitish pins the created tag to the
@@ -958,7 +1006,7 @@ jobs:
       # releases/download/fw-dev-latest/manifest-<product>.json.
       - name: Mirror channel manifests to the rolling dev release
         if: steps.ver.outputs.prerelease == 'true'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: fw-dev-latest
           name: Canary Firmware — dev channel (rolling)

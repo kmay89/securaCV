@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "canary/ui/onboard_ui.h"
+#include "canary/ui/round_frame.h"
 #include "canary/ui/theme.h"
 #include "canary/ui/canary_mark.h"
 #include "canary/net/provision_core.h"
@@ -55,6 +56,36 @@ ObStage s_stage = ObStage::Hello;
 bool s_qr_ok = false;                  // the join QR actually rendered
 char s_ap_ssid[33] = {0};
 char s_ap_pass[17] = {0};
+char s_hint_text[96] = {0};            // the live coach line (see refresh_bottom)
+
+// The two low-latitude lines, owned in one place. On the round glass the old
+// single "ssid  •  pass" line at -34 outran its chord (152 px against ~165 px
+// of text — the physical rim ate the password's tail), so the Join scene
+// splits them: the network name rides the wider -46 band and the password
+// takes -30. A live hint OUTRANKS the password line while it stands — every
+// hint fires either when the phone has already joined (password moot) or
+// when the fix is on the phone itself, and the QR keeps carrying both
+// credentials the whole time. Rectangular glass keeps the joined line and a
+// separate hint slot; everything still runs through the engine's fit.
+void refresh_bottom() {
+  if (!s_creds || !s_hint) return;
+#if RF_GLASS_ROUND
+  if (s_stage == ObStage::Join) {
+    lv_label_set_text(s_creds, s_ap_ssid);
+    if (s_hint_text[0]) {
+      lv_obj_set_style_text_color(s_hint, col_faint(), 0);
+      lv_label_set_text(s_hint, s_hint_text);
+    } else {
+      // The password is load-bearing here — muted, not faint.
+      lv_obj_set_style_text_color(s_hint, col_muted(), 0);
+      lv_label_set_text_fmt(s_hint, "pass  %s", s_ap_pass);
+    }
+    return;
+  }
+  lv_obj_set_style_text_color(s_hint, col_faint(), 0);
+#endif
+  lv_label_set_text(s_hint, s_hint_text);
+}
 
 // Scene fade, applied to the TEXT of the four labels rather than as one
 // style `opa` on the full-screen content container. Under LVGL 9 a group
@@ -219,16 +250,22 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
 
 #ifdef CD_FLAVOR_WATCH
   s_title = mk(font_body(), col_text());
-  lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 28);
+  rf_fit_top(s_title, 28);
   s_qr_card = lv_obj_create(s_content);
   lv_obj_set_size(s_qr_card, QR_CARD, QR_CARD);
   lv_obj_align(s_qr_card, LV_ALIGN_CENTER, 0, 2);
   s_body = mk(font_caption(), col_muted());
-  lv_obj_align(s_body, LV_ALIGN_CENTER, 0, 0);
+  rf_fit_center(s_body, 0);
   s_creds = mk(font_caption(), col_muted());
-  lv_obj_align(s_creds, LV_ALIGN_BOTTOM_MID, 0, -34);
   s_hint = mk(font_caption(), col_faint());
-  lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -18);
+#if RF_GLASS_ROUND
+  // Round glass: two stacked low-band lines (see refresh_bottom).
+  rf_fit_bottom(s_creds, -46);
+  rf_fit_bottom(s_hint, -30);
+#else
+  rf_fit_bottom(s_creds, -34);
+  rf_fit_bottom(s_hint, -18);
+#endif
 #else
   s_title = mk(font_title(), col_text());
   lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 96);
@@ -278,7 +315,7 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
 void onboard_ui_stage(ObStage st, const char* detail) {
   if (!s_scr) return;
   s_stage = st;
-  lv_label_set_text(s_hint, "");
+  s_hint_text[0] = '\0';  // a scene change retires the coach line
 
   switch (st) {
     case ObStage::Hello:
@@ -300,10 +337,14 @@ void onboard_ui_stage(ObStage st, const char* detail) {
       canary_mark_mood(s_qr_ok ? CanaryMood::Hidden  // the QR owns the room
                                : CanaryMood::Idle);
 #ifdef CD_FLAVOR_WATCH
-      lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 24);
+      rf_fit_top(s_title, 24);
       lv_label_set_text(s_title, s_qr_ok ? "Scan me" : "On your phone");
       lv_label_set_text(s_body, "");
+#if !RF_GLASS_ROUND
+      // Round glass splits ssid/pass across the two bottom lines instead
+      // (refresh_bottom below); the nightstand keeps the joined line.
       lv_label_set_text_fmt(s_creds, "%s  •  %s", s_ap_ssid, s_ap_pass);
+#endif
 #else
       lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 64);
       lv_label_set_text(s_title, s_qr_ok ? "Scan with your phone camera"
@@ -370,11 +411,14 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   if (st != ObStage::Fail && st != ObStage::Success) {
     lv_obj_set_style_text_color(s_title, col_text(), 0);
   }
+  refresh_bottom();
   content_enter();
 }
 
 void onboard_ui_hint(const char* line) {
-  if (s_hint) lv_label_set_text(s_hint, line ? line : "");
+  if (!s_hint) return;
+  snprintf(s_hint_text, sizeof(s_hint_text), "%s", line ? line : "");
+  refresh_bottom();
 }
 
 void onboard_ui_tick(uint32_t /*now_ms*/) {
@@ -400,6 +444,7 @@ void onboard_ui_finish() {
   s_ring = s_content = s_title = s_body = nullptr;
   s_qr_card = s_qr = s_creds = s_hint = nullptr;
   s_qr_ok = false;
+  s_hint_text[0] = '\0';
 }
 
 }  // namespace canary::ui

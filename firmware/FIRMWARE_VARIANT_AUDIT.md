@@ -1,6 +1,6 @@
 # Firmware Variant Audit (Canary Family)
 
-**Last updated:** 2026-07-11 (added canary-sense to the comparison matrix; refreshed the canary-vision row for the 2026-07 robustness-parity work)
+**Last updated:** 2026-08-20 (refreshed canary-vision + canary-sense onboarding readiness: both now raise the shared setup portal from `firmware/common/network/setup_portal` when unprovisioned or recovery-stuck, alongside flasher NVS credential seeding)
 **Original audit date:** 2026-03-07
 **Scope:** per-variant risk analysis. For lifecycle labels see [VARIANT_POLICY.md](VARIANT_POLICY.md). For per-feature parity see [FEATURES.md](FEATURES.md).
 
@@ -28,8 +28,8 @@ Purpose: identify which firmware path is currently most active and most user-fri
 | `firmware/canary` | ACTIVE | Main ESP32-S3 witness firmware (modular libs) | Recent feature work in 2026-02 for MQTT + WiFi STA, plus storage counter implementation 2026-04 | **High** (modern dashboard in `securacv_webui`) | **High** (WiFi scan/connect + MQTT config HTTP APIs) | Low |
 | `firmware/projects/canary-wap` | COMPATIBILITY | Arduino-IDE-first WAP sketch (PlatformIO + Arduino) | Security hardening + real ESP-NOW RSSI landed 2026-04 | High (large embedded dashboard) | Medium/High (rich feature set, heavier maintenance) | Medium |
 | `firmware/projects/_archive/canary-wap-snapshot` _(removed 2026-05-29)_ | REMOVED | Frozen reference of WAP sketch | Archived 2026-02-20, deleted 2026-05-29 | n/a | n/a | **Removed** (history in git) |
-| `firmware/projects/canary-vision` | SPECIALIZED | Vision events + MQTT/HA integration | 2026-07: S3-tree robustness parity (supervised WiFi STA, heap degradation, HA diagnostics) + mDNS fleet advert + HA identify button | Low (no primary local onboarding UI focus) | Medium (good integration story, less local setup UX) | Low/Medium (actively tracked to the S3 tree) |
-| `firmware/projects/canary-sense` | SPECIALIZED | 60GHz mmWave radar presence witness (MR60BHA2 / XIAO ESP32-C6): signed witness chain + MQTT/HA integration | New 2026-07 (Phase 2: full net/witness/OTA stack + mDNS fleet advert; compile/CI-verified, bench validation pending) | Low (no local onboarding UI by design) | Medium (HA discovery + identify button; compiled secrets, no captive portal) | Medium until bench-validated |
+| `firmware/projects/canary-vision` | SPECIALIZED | Vision events + MQTT/HA integration | 2026-07: S3-tree robustness parity (supervised WiFi STA, heap degradation, HA diagnostics) + mDNS fleet advert + HA identify button | Low (no primary local onboarding UI focus) | Medium/High (flasher NVS seeding + the shared setup portal — `SecuraCV-XXXX` SoftAP + captive join wizard when unprovisioned or a saved join keeps failing fixably; no full local dashboard) | Low/Medium (actively tracked to the S3 tree) |
+| `firmware/projects/canary-sense` | SPECIALIZED | 60GHz mmWave radar presence witness (MR60BHA2 / XIAO ESP32-C6): signed witness chain + MQTT/HA integration | New 2026-07 (Phase 2: full net/witness/OTA stack + mDNS fleet advert; compile/CI-verified, bench validation pending) | Low (no local onboarding UI by design) | Medium/High (HA discovery + identify button; flasher NVS seeding + the shared setup portal for the no-credentials and recovery cases — sensing continues under it) | Medium until bench-validated |
 | `firmware/projects/canary-ota` | SPECIALIZED | OTA framework and rollback safety | Active in 2026-02 | N/A (not a WAP UX product) | N/A | Low/Medium |
 | `firmware/projects/canary-display` | SPECIALIZED | Fleet status displays (watch puck + 4.3" dash): MQTT subscribe, TOFU + Ed25519 chain verify, glance UI | New 2026-07 (v0.1, compile/CI-verified; bench validation pending) | **High** (the product IS an on-device UI) | Low (flashes with compiled secrets; provisioning parity on roadmap) | Medium until bench-validated |
 | `firmware/common` + `firmware/configs` + `firmware/boards` | shared | Shared platform layers | Mixed cadence | N/A | N/A | Low |
@@ -78,7 +78,7 @@ Conclusion:
 ### 4) `canary-vision` and `canary-ota` remain SPECIALIZED
 
 Why:
-- `canary-vision` is optimized for external inference/event flows and MQTT/HA usage, not local AP onboarding UX.
+- `canary-vision` is optimized for external inference/event flows and MQTT/HA usage, not local AP onboarding UX. (Since 2026-08 it does carry the shared setup portal for provisioning and recovery — that is a safety net, not a product UI.)
 - `canary-ota` is an OTA subsystem project and should not be conflated with WAP product UX ownership.
 
 Conclusion:

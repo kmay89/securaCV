@@ -17,8 +17,8 @@
         "touch": "CST816S"
       },
       "body_mm": {
-        "d": 52,
-        "depth": 21.8,
+        "d": 49,
+        "depth": 23.2,
         "stand_tilt_deg": 25
       },
       "senses": [],
@@ -30,7 +30,7 @@
       ],
       "network": {
         "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
-        "web": "first-boot portal only",
+        "web": "first-boot portal, then the live glass mirror (/, /api)",
         "mqtt": "fleet subscriber + own heartbeat"
       },
       "emulator": {

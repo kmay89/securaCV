@@ -272,9 +272,20 @@ around the browser Lab for Mac/Linux. A different app from the Flasher.
 
 **The Hub** — Home Assistant on a Raspberry Pi, running the kernel as an app
 ([`privacy_witness_kernel/`](../privacy_witness_kernel)) plus the integration
-([`custom_components/securacv/`](../custom_components)).
+([`custom_components/securacv/`](../custom_components)). Headless by default —
+it never needs a screen.
 → [the full stack, end to end](full_stack_setup.md),
 [Home Assistant setup](homeassistant_setup.md)
+
+**The hub display** — The opt-in extra (`--with display` / the Flasher's "Also
+install the hub display" tick) for a hub with an HDMI touchscreen plugged in:
+it installs the community **HAOSKiosk** add-on, a small browser running on the
+hub itself that shows the household dashboard on that screen, touch included.
+Not **Canary Display** (the ESP32 device line) and not **the Witness Wall**
+(the Apple TV app) — this is a screen on the hub Pi itself. Zero footprint
+unless chosen; with no screen attached the add-on simply won't start.
+→ [the full stack](full_stack_setup.md),
+[hub validation runbook](hub_validation_runbook.md)
 
 **The Witness Wall** — The Apple TV surface: the *verified record* on the shared
 screen for homes and venues, not a wall of live feeds.
