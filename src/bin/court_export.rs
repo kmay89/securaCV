@@ -123,8 +123,8 @@ fn open_db(args: &Args) -> Result<Connection> {
 /// alone is not enough either: the hashed payload carries no device identity,
 /// so two devices exporting identical content in the same bucket produce
 /// colliding entry hashes — the identity and signature checks below are what
-/// tie the row to the bundle's signer. Returns the row's chain position
-/// (1-based id) and the chain length.
+/// tie the row to the bundle's signer. Returns the receipt's 1-based ORDINAL
+/// position in the chain (counted from genesis) and the chain length.
 fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(i64, i64)> {
     // The database's pinned device identity must BE the bundle's signer.
     let db_device_key = witness_kernel::device_public_key_from_db(conn)
@@ -148,15 +148,23 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
     // taken from the database when stored (Compat mode: the PQ signature is
     // verified when a key is available, mandatory in neither).
     let pq_public_key = verify_helpers::load_pq_verifying_key(conn, None, None)?;
-    let mut position: Option<i64> = None;
+    // The custody record says "receipt N of M in the signed export chain", so N
+    // must be the receipt's ordinal position (its rank from genesis), NOT its
+    // SQLite rowid. AUTOINCREMENT never reuses ids, so a chain that survived a
+    // tail truncation and kept appending carries rowid gaps: rowid 4 in a
+    // 2-long chain would render "receipt 4 of 2" — a false custody statement.
+    // Track the running ordinal here and keep the rowid only to re-read the row.
+    let mut matched: Option<(i64, i64)> = None; // (1-based ordinal, SQLite rowid)
+    let mut ordinal: i64 = 0;
     let total = witness_kernel::verify::verify_export_receipts_with(
         conn,
         &lineage_keys,
         SignatureMode::Compat,
         pq_public_key.as_ref(),
         |id, entry_hash| {
+            ordinal += 1;
             if entry_hash == bundle.receipt_entry.entry_hash {
-                position = Some(id);
+                matched = Some((ordinal, id));
             }
         },
     )
@@ -167,7 +175,7 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
             e
         )
     })? as i64;
-    let Some(id) = position else {
+    let Some((chain_position, id)) = matched else {
         return Err(anyhow!(
             "custody break: the bundle's export receipt is not present in this database's \
              export-receipt chain — this bundle did not come from this database, or the \
@@ -209,7 +217,7 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
             "custody break: the stored receipt's device signature differs from the bundle's"
         ));
     }
-    Ok((id, total))
+    Ok((chain_position, total))
 }
 
 /// Copy every stored RFC 3161 anchor token into `anchors/`, marking which
@@ -248,20 +256,27 @@ fn package_anchors(
     // asserted on the strength of an unexamined blob. A chain-head anchor
     // must additionally reference a hash actually recorded in this database's
     // chain history, or it fixes nothing about THIS ledger.
-    let mut relevant = Vec::new();
+    //
+    // The issuance time rendered into the kit must come from the TOKEN, not the
+    // anchor row's `gen_time` column: the row is database-supplied and could
+    // diverge from the countersigned genTime, so presenting it as fact would
+    // repeat the same "trust the row, not the token" mistake the imprint check
+    // above exists to prevent. We already parse the token here, so take its
+    // genTime while we have it. (Carried alongside each kept anchor.)
+    let mut relevant: Vec<(tsa::AnchorRecord, String)> = Vec::new();
     for a in anchors {
         if !(&a.subject_hash == bundle_sha256 || a.subject == "chain_head") {
             continue;
         }
-        match tsa::parse_token_imprint(&a.token_der) {
-            Ok(imprint) if imprint == a.subject_hash => {}
-            Ok(imprint) => {
+        let token_gen_time = match tsa::parse_token(&a.token_der) {
+            Ok(token) if token.imprint.as_slice() == a.subject_hash.as_slice() => token.gen_time,
+            Ok(token) => {
                 eprintln!(
                     "WARNING: anchor #{} excluded from the kit: its token's message imprint \
                      ({}) is not the digest the anchor row claims ({}). Run `log_anchor \
                      verify` on this database.",
                     a.id,
-                    hex::encode(imprint),
+                    hex::encode(&token.imprint),
                     hex::encode(a.subject_hash)
                 );
                 continue;
@@ -275,7 +290,7 @@ fn package_anchors(
                 );
                 continue;
             }
-        }
+        };
         if a.subject == "chain_head"
             && &a.subject_hash != bundle_sha256
             && !tsa::hash_in_history(conn, &a.subject_hash)?
@@ -288,7 +303,7 @@ fn package_anchors(
             );
             continue;
         }
-        relevant.push(a);
+        relevant.push((a, token_gen_time));
     }
     if relevant.is_empty() {
         return Ok(Vec::new());
@@ -296,7 +311,7 @@ fn package_anchors(
     let dir = kit_dir.join("anchors");
     std::fs::create_dir_all(&dir)?;
     let mut out = Vec::new();
-    for anchor in relevant {
+    for (anchor, token_gen_time) in relevant {
         let covers_bundle = &anchor.subject_hash == bundle_sha256;
         // The subject is database-supplied TEXT: sanitize before it becomes a
         // path component, so a tampered row cannot steer the write outside
@@ -318,7 +333,7 @@ fn package_anchors(
         out.push(KitAnchor {
             file_name,
             subject: anchor.subject,
-            gen_time: anchor.gen_time,
+            gen_time: token_gen_time,
             tsa_url: anchor.tsa_url,
             covers_bundle,
         });
