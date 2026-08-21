@@ -38,7 +38,10 @@ fn rotated_fixture_verifies() {
     let envelope = load("valid_envelope_rotated.json");
     let report =
         verify_envelope(&envelope, SignatureMode::Compat).expect("rotated fixture must verify");
-    assert_eq!(report.sealed_events, 3, "pre-event, rotation record, post-event");
+    assert_eq!(
+        report.sealed_events, 3,
+        "pre-event, rotation record, post-event"
+    );
     assert_eq!(report.export_receipts, 1);
 }
 

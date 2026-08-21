@@ -1995,8 +1995,7 @@ fn cmd_receipts(
     // authenticated policy-change history (chain + device signature + approvals
     // binding + per-transition quorum consent). See verify::verify_receipt_quorum.
     let lineage_keys = crate::verify_helpers::lineage_verifying_keys(&conn, &verifying_key)?;
-    let policy_history =
-        crate::verify::load_authenticated_policy_eras(&conn, &lineage_keys, None)?;
+    let policy_history = crate::verify::load_authenticated_policy_eras(&conn, &lineage_keys, None)?;
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts ORDER BY id ASC",
     )?;

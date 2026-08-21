@@ -766,8 +766,8 @@ fn envelope_key_lineage(
     let rotations: Vec<Rot> = entries
         .iter()
         .enumerate()
-        .filter_map(|(row, e)| {
-            match crate::SealedLogRecord::deserialize_compat(&e.payload_json) {
+        .filter_map(
+            |(row, e)| match crate::SealedLogRecord::deserialize_compat(&e.payload_json) {
                 Ok(crate::SealedLogRecord::KeyRotation(r)) => Some(Rot {
                     row,
                     prev: r.prev_public_key,
@@ -776,8 +776,8 @@ fn envelope_key_lineage(
                     authorization: r.prev_key_authorization,
                 }),
                 _ => None,
-            }
-        })
+            },
+        )
         .collect();
 
     // Backward: anchor at provenance, follow prev-links through validated

@@ -4487,7 +4487,9 @@ mod tests {
         // signed by the retired one — exactly the mixed-signer case.
         assert_eq!(
             envelope.provenance.device_public_key,
-            signing_key_from_seed(ROT_NEW_SEED)?.verifying_key().to_bytes()
+            signing_key_from_seed(ROT_NEW_SEED)?
+                .verifying_key()
+                .to_bytes()
         );
         let report = verify_envelope(&envelope, SignatureMode::Compat)?;
         assert_eq!(report.sealed_events, 3, "two events + the rotation record");
@@ -4514,8 +4516,7 @@ mod tests {
         let mut att: Vec<u8> = att.iter().map(|v| v.as_u64().unwrap() as u8).collect();
         att[0] ^= 0xff;
         value["new_key_attestation"] = serde_json::json!(att);
-        forged.ledgers.sealed_events.entries[rot_row].payload_json =
-            serde_json::to_string(&value)?;
+        forged.ledgers.sealed_events.entries[rot_row].payload_json = serde_json::to_string(&value)?;
         forged.whole_envelope_digest = envelope::compute_whole_envelope_digest(&forged)?;
         // The lineage check rejects the bad attestation; even a variant of
         // this tamper that dodged it would break the row's entry hash — the
@@ -5974,7 +5975,11 @@ mod tests {
         let pq = kernel.device_pq_public_key_ref();
 
         // The genuine bootstrap authenticates.
-        let eras = crate::verify::load_authenticated_policy_eras(&kernel.conn, std::slice::from_ref(&dev), pq)?;
+        let eras = crate::verify::load_authenticated_policy_eras(
+            &kernel.conn,
+            std::slice::from_ref(&dev),
+            pq,
+        )?;
         assert!(eras.iter().any(|p| p.commitment() == policy_a.commitment()));
 
         // Forge a chained, device-signed row claiming a new attacker-controlled
@@ -6017,7 +6022,12 @@ mod tests {
             params![0i64, payload, "[]", prev_hash.to_vec(), entry_hash.to_vec(), sig.to_vec()],
         )?;
         assert!(
-            crate::verify::load_authenticated_policy_eras(&kernel.conn, std::slice::from_ref(&dev), pq).is_err(),
+            crate::verify::load_authenticated_policy_eras(
+                &kernel.conn,
+                std::slice::from_ref(&dev),
+                pq
+            )
+            .is_err(),
             "a device-signed era with no prior-quorum consent must be rejected"
         );
 
@@ -6047,7 +6057,12 @@ mod tests {
         kernel2.set_break_glass_policy_gated(&policy_b, &[alice_consent], bucket)?;
         let dev2 = kernel2.device_verifying_key();
         // Authentic history authenticates.
-        assert!(crate::verify::load_authenticated_policy_eras(&kernel2.conn, std::slice::from_ref(&dev2), None).is_ok());
+        assert!(crate::verify::load_authenticated_policy_eras(
+            &kernel2.conn,
+            std::slice::from_ref(&dev2),
+            None
+        )
+        .is_ok());
         // Swap the change row's approvals to the empty set (valid JSON) — the
         // approvals no longer match the signed commitment.
         kernel2.conn.execute(
@@ -6055,7 +6070,12 @@ mod tests {
             [],
         )?;
         assert!(
-            crate::verify::load_authenticated_policy_eras(&kernel2.conn, std::slice::from_ref(&dev2), None).is_err(),
+            crate::verify::load_authenticated_policy_eras(
+                &kernel2.conn,
+                std::slice::from_ref(&dev2),
+                None
+            )
+            .is_err(),
             "swapped approvals must fail the signed-commitment binding"
         );
         Ok(())

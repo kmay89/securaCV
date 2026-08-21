@@ -83,10 +83,12 @@ char s_csrf[33];  // 16 RNG bytes as 32 lowercase-hex chars + NUL
 void csrf_init() {
   uint8_t r[16];
   esp_fill_random(r, sizeof(r));
-  static const char HEX[] = "0123456789abcdef";
+  // NOT named HEX: the Arduino core #defines HEX as the print-base constant
+  // (16), so `HEX[i]` would expand to `16[i]` and fail to compile.
+  static const char kHexDigits[] = "0123456789abcdef";
   for (int i = 0; i < 16; i++) {
-    s_csrf[2 * i]     = HEX[(r[i] >> 4) & 0xF];
-    s_csrf[2 * i + 1] = HEX[r[i] & 0xF];
+    s_csrf[2 * i]     = kHexDigits[(r[i] >> 4) & 0xF];
+    s_csrf[2 * i + 1] = kHexDigits[r[i] & 0xF];
   }
   s_csrf[32] = '\0';
 }
