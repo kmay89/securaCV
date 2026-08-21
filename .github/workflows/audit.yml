@@ -17,6 +17,17 @@ on:
       - 'canary-vision/package.json'
       - 'canary-vision/device-api/package.json'
       - 'canary-vision/package-lock.json'
+      # Shipped desktop Flasher / Lab + hub crates and the tvOS core — each has
+      # its own Cargo.lock (the root Cargo.toml declares no [workspace], so the
+      # root audit never sees them). These are self-updating apps, so a known
+      # advisory in one must gate the same as the kernel's.
+      - 'desktop/src-tauri/Cargo.lock'
+      - 'desktop-lab/src-tauri/Cargo.lock'
+      - 'desktop/hub-core/Cargo.lock'
+      - 'desktop/hub-io/Cargo.lock'
+      - 'tvos/witness-core/Cargo.lock'
+      - 'desktop-lab/package.json'
+      - 'desktop-lab/package-lock.json'
       - '.github/workflows/audit.yml'
       # The ignore list must re-run the gate it suppresses. Without this,
       # a PR that only edits .cargo/audit.toml skips this workflow, and a
@@ -62,6 +73,26 @@ jobs:
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
 
+      # The desktop Flasher/Lab, the hub-core/hub-io crates, and the tvOS core
+      # each carry their OWN Cargo.lock outside the root (no [workspace]), so the
+      # root audit above never touches them. They ship in signed, self-updating
+      # apps — audit them against the same advisory DB and fail on any advisory.
+      # `-f <lock>` audits that exact lockfile; the shared .cargo/audit.toml
+      # ignore list still applies (run from the repo root).
+      - name: Audit shipped desktop / tvOS lockfiles
+        run: |
+          set -e
+          for lock in \
+            desktop/src-tauri/Cargo.lock \
+            desktop-lab/src-tauri/Cargo.lock \
+            desktop/hub-core/Cargo.lock \
+            desktop/hub-io/Cargo.lock \
+            tvos/witness-core/Cargo.lock; do
+            echo "::group::cargo audit -f $lock"
+            cargo audit -f "$lock"
+            echo "::endgroup::"
+          done
+
   cargo-deny:
     name: cargo deny (licenses / bans / sources)
     runs-on: ubuntu-latest
@@ -88,9 +119,16 @@ jobs:
         run: cargo deny check bans licenses sources
 
   npm-audit:
-    name: npm audit (canary-vision)
+    name: npm audit (${{ matrix.dir }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # canary-vision (fleet UI / device-api) and the shipped desktop Lab
+        # (desktop-lab) each have their own package-lock.json. desktop/ has NO
+        # package-lock.json committed, so it can't be `npm ci`-audited here.
+        dir: [canary-vision, desktop-lab]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -100,8 +138,8 @@ jobs:
       # retired and now 400s; installing first makes npm audit use the bulk
       # advisory endpoint against the real tree.
       - name: Install deps for the audit tree
-        working-directory: canary-vision
+        working-directory: ${{ matrix.dir }}
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Audit npm deps (fail on high/critical)
-        working-directory: canary-vision
+        working-directory: ${{ matrix.dir }}
         run: npm audit --audit-level=high

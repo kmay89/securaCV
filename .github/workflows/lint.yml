@@ -68,14 +68,21 @@ jobs:
         # rule now lives once in common/network/wifi_join_policy.h, and this
         # lint is what stops a fifth copy appearing.
         run: python3 scripts/lint_wifi_join_policy.py
-      - name: Tests for the lints themselves
-        # The Wi-Fi lint decides whether a reboot is gated by walking C++ brace
-        # depth with regexes — a heuristic, and an untested heuristic is a guard
-        # that reads as covered while catching nothing. THREE defects were found
-        # in that one lint before it worked: a proximity window that missed its
-        # own bug class, an innermost-block check that rejected correct code,
-        # and `\bever_online\b` failing to match `s_ever_online` because `_` is
-        # a word character. Each is pinned as a test.
+      - name: scripts/tests suites (lints, board cost model, BOM pricing)
+        # `discover` runs EVERY test_*.py in scripts/tests exactly once, so the
+        # board cost model (test_board_design.py) and BOM pricing contract
+        # (test_bom_pricing.py) run here too — they used to also have their own
+        # steps, which just ran the same suites a second time. What each guards:
+        #  • Wi-Fi lint — an untested brace-depth heuristic is a guard that reads
+        #    as covered while catching nothing; three defects were found before
+        #    it worked (a proximity window that missed its own bug class, an
+        #    innermost-block check that rejected correct code, `\bever_online\b`
+        #    not matching `s_ever_online`). Each is pinned.
+        #  • Board cost model — cost_model.json emits a GO/STOP word a human
+        #    reads before spending NRE; the tests pin which quote applies at the
+        #    basis volume and that a qty-1 price yields UNRESOLVED, not GO.
+        #  • BOM pricing — a distributor miss must demote, never republish stale
+        #    data as live; every exception kind fires only when its condition holds.
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
@@ -163,15 +170,6 @@ jobs:
         # the carrier has quietly stopped being drop-in — and nothing would
         # notice until a populated board came back from the fab.
         run: python3 scripts/lint_board_design.py
-      - name: Board cost model — quote selection and GO/STOP verdict
-        # cost_model.json emits a word a human reads before spending NRE, and
-        # two quiet heuristics stand behind it: which quote applies at the
-        # basis volume, and whether the model may decide at all. Review found
-        # the first (a 100-unit promo could outrank a 1000-unit quote); these
-        # tests found two more — a 10-unit quote reading as GO, and quoting the
-        # published crossover back landing a hair above it. Untested, this is a
-        # guard that reads as covered while deciding money wrong.
-        run: python3 scripts/tests/test_board_design.py
       - name: Board cost models are regenerated
         # cost_model.json/connections.csv are generated from board.json +
         # pricing.json. Committed so the model is reviewable in a diff and
@@ -182,7 +180,5 @@ jobs:
         # verbatim (via scripts/gen_hub_voice_setup.py), so the wizard can
         # never install a different sentence grammar than the docs promise.
         run: python3 scripts/gen_hub_voice_setup.py --check
-      - name: BOM pricing engine — contract tests
-        run: python3 scripts/tests/test_bom_pricing.py
       - name: verify_pipeline.sh false-pass regression tests
         run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh

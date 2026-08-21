@@ -19,7 +19,10 @@ an exemption must be visible and reviewable, with a comment saying why):
       or release events must not set a bare `cancel-in-progress: true`
       (a run canceled mid-publish leaves half-uploaded assets)
   R4  every action ref is pinned to a tag or SHA — never a mutable
-      branch ref (@main/@master) or a floating docker :latest
+      branch ref (@main/@master) or a floating docker :latest. In a
+      workflow that has secrets access, a THIRD-PARTY action must be
+      pinned to a commit SHA — a rolling branch channel like
+      dtolnay/rust-toolchain@stable/@nightly/@beta is rejected there
   R5  pull_request workflows are path-filtered so unrelated PRs don't
       pay for them (or are listed in `unfiltered_ok` with a reason)
   R6  when push and pull_request both declare path filters, the two
@@ -44,6 +47,24 @@ WORKFLOWS_DIR = os.path.join(REPO_ROOT, ".github", "workflows")
 POLICY_PATH = os.path.join(REPO_ROOT, ".github", "ci-policy.yml")
 
 MUTABLE_REFS = {"main", "master", "latest", "HEAD"}
+
+# Moving BRANCH refs that third-party actions publish as a rolling channel —
+# dtolnay/rust-toolchain@stable / @nightly / @beta are branches that advance
+# with every Rust release, so they can change under a run exactly like @main.
+# They are not obviously mutable (they read like versions), which is why the
+# bare-MUTABLE_REFS check let them through. Rejected for THIRD-PARTY actions in
+# workflows that carry secrets — CI.md R4: "third-party actions with secrets
+# access get SHAs." (First-party actions/*, github/* keep the tag allowance.)
+THIRD_PARTY_BRANCH_REFS = {"stable", "nightly", "beta"}
+
+# Owners whose actions are "first-party" for R4's purposes.
+FIRST_PARTY_OWNERS = {"actions", "github"}
+
+# A workflow "has secrets access" when it interpolates a repository secret into
+# an expression — `${{ secrets.NAME }}`. Anchored inside a `${{ ... }}` so a
+# bare word like "…and no secrets." in a comment can't trip it, and requiring a
+# name char after the dot skips the `secrets/secrets.h` file path in heredocs.
+SECRET_REF_RE = re.compile(r"\$\{\{[^}]*\bsecrets\.[A-Za-z_]")
 
 
 def load_policy() -> dict:
@@ -76,9 +97,14 @@ def check_workflow(path: str, policy: dict) -> list[str]:
     problems: list[str] = []
 
     with open(path, encoding="utf-8") as f:
-        wf = yaml.safe_load(f)
+        raw = f.read()
+    wf = yaml.safe_load(raw)
     if not isinstance(wf, dict):
         return [f"{name}: does not parse as a workflow mapping"]
+
+    # Whether this workflow interpolates a repository secret anywhere — used to
+    # apply R4's stricter "third-party actions get SHAs" rule (see below).
+    has_secrets = bool(SECRET_REF_RE.search(raw))
 
     triggers = triggers_of(wf)
     jobs = wf.get("jobs") or {}
@@ -187,8 +213,10 @@ def check_workflow(path: str, policy: dict) -> list[str]:
 
     # R4 — pinned action refs, in workflows AND composite actions (collected
     # by caller passing composite files through this same function is not
-    # needed; see check_action_pins()).
-    problems.extend(check_action_pins(name, jobs))
+    # needed; see check_action_pins()). `strict` (this workflow has secrets
+    # access) additionally rejects a third-party action riding a moving branch
+    # channel like @stable/@nightly.
+    problems.extend(check_action_pins(name, jobs, strict=has_secrets))
 
     # R5 — pull_request path filtering
     if "pull_request" in triggers and name not in unfiltered_ok:
@@ -233,7 +261,7 @@ def check_workflow(path: str, policy: dict) -> list[str]:
     return problems
 
 
-def check_action_pins(label: str, jobs: dict) -> list[str]:
+def check_action_pins(label: str, jobs: dict, strict: bool = False) -> list[str]:
     problems = []
     for job, spec in jobs.items():
         steps = (spec or {}).get("steps") or []
@@ -251,10 +279,24 @@ def check_action_pins(label: str, jobs: dict) -> list[str]:
                     )
                 continue
             ref = uses.rsplit("@", 1)[1] if "@" in uses else ""
+            owner = uses.split("/", 1)[0].lower()
+            third_party = owner not in FIRST_PARTY_OWNERS
             if not ref or ref in MUTABLE_REFS:
                 problems.append(
                     f"{label}: R4 — `{uses}` in job `{job}` rides a mutable "
                     f"ref; pin to a version tag or commit SHA."
+                )
+            elif strict and third_party and ref in THIRD_PARTY_BRANCH_REFS:
+                # A rolling branch channel (@stable/@nightly/@beta) can change
+                # under a run just like @main. This workflow has secrets access,
+                # so a third-party action here must be pinned to a commit SHA.
+                problems.append(
+                    f"{label}: R4 — `{uses}` in job `{job}` rides the moving "
+                    f"branch channel `@{ref}` and this workflow has secrets "
+                    f"access; a third-party action with secrets access must be "
+                    f"pinned to a commit SHA (CI.md R4). Pin to a 40-char SHA "
+                    f"(keep `# {ref}` as a trailing comment for readability), or "
+                    f"exempt in ci-policy.yml with a reason."
                 )
     return problems
 

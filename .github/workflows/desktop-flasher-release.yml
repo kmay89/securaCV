@@ -36,17 +36,31 @@ env:
   # esptool's Rust sibling. Pinned so a board is only ever written by a flash
   # engine we chose on purpose. Bump deliberately.
   ESPFLASH_VERSION: "3.3.0"
+  # sha256 of each prebuilt espflash release asset for ESPFLASH_VERSION. GitHub
+  # release assets are MUTABLE (an asset can be replaced without the tag
+  # moving), and these binaries are bundled as sidecars inside the signed,
+  # self-updating app — so verify the download before trusting it, and fail the
+  # release on any mismatch. Recompute when ESPFLASH_VERSION changes:
+  #   curl -fL .../espflash-<triple>.zip | sha256sum
+  ESPFLASH_SHA256_AARCH64_APPLE_DARWIN: "e2b6b7f1c48c89069c23b425ce9ed368b242de52e0080d31155bb220847f794a"
+  ESPFLASH_SHA256_X86_64_APPLE_DARWIN: "7b18f89e0e584da8024b09ac5ba9400481a505fc59b0ad15c47254adb50a5ded"
+  ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU: "83611abe54c8e3d8c5a6b44948f4505b9cee05505577e2d9276e35a51e503d64"
   # raspberrypi/usbboot ref for the rpiboot sidecar + mass-storage gadget.
-  # Honest-before-pin (same posture as the hub image): empty tracks upstream's
-  # default branch until the Pi-over-USB-C path is validated on real hardware —
-  # that session MUST replace this with the exact tag it validated, and each
-  # build logs the resolved commit SHA so a working build is reproducible.
-  USBBOOT_REF: ""
+  # Pinned to a real upstream tag (was empty, which tracked the moving default
+  # branch — a supply-chain gap, since a poisoned branch HEAD would ship inside
+  # the Flasher). USBBOOT_SHA is the commit that tag currently resolves to; the
+  # clone step asserts HEAD matches it, so a moved/retagged upstream fails loud.
+  # NOTE: not yet validated on real Pi-over-USB-C hardware — a session that
+  # validates a build may re-pin both to the exact ref/SHA it tested.
+  USBBOOT_REF: "20250908-162618"
+  USBBOOT_SHA: "d90eab5130c4fe4a6d92699e5268c1956f46939c"
   # libusb, built from source on macOS so the rpiboot sidecar gets a real
   # x86_64 slice. Homebrew only ever has the runner's own arch, which is what
   # shipped an arm64-only "universal" sidecar and broke every Intel Mac.
-  # Pinned deliberately (RELEASE_LESSONS Principle 2).
+  # Pinned deliberately (RELEASE_LESSONS Principle 2). sha256 of the release
+  # tarball, verified after download (same mutable-asset reasoning as espflash).
   LIBUSB_VERSION: "1.0.27"
+  LIBUSB_SHA256: "ffaa41d741a8a3bee244ac8e54a72ea05bf2879663c098c82fc5757853441575"
 
 jobs:
   build:
@@ -129,12 +143,17 @@ jobs:
             file wget curl unzip
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        # SHA-pinned: this workflow carries the Tauri updater signing key, so a
+        # third-party action gets a commit SHA (CI.md R4). `@stable` is a moving
+        # branch, so `toolchain:` must be set explicitly — dtolnay's action
+        # otherwise derives it from the ref name, which is now a SHA.
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.rust-targets }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: desktop/src-tauri -> target
 
@@ -165,6 +184,15 @@ jobs:
           fetch() {
             local triple="$1" out="$bin/espflash-$1"
             if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+              # Verify the prebuilt asset against its pinned sha256 before we
+              # trust it — a mutable release asset must not silently change the
+              # flash engine we bundle. The env var name is the triple upcased.
+              local var want
+              var="ESPFLASH_SHA256_$(printf '%s' "$triple" | tr 'a-z-' 'A-Z_')"
+              want="${!var:-}"
+              [ -n "$want" ] || { echo "::error::no pinned sha256 for espflash-$triple (add ${var})"; exit 1; }
+              echo "${want}  e.zip" | sha256sum -c - \
+                || { echo "::error::espflash-$triple.zip sha256 mismatch — refusing to bundle an unverified flash engine"; exit 1; }
               rm -rf ex && unzip -q e.zip -d ex
               cp "$(find ex -type f -name espflash | head -n1)" "$out"
             else
@@ -192,6 +220,9 @@ jobs:
           out="desktop/src-tauri/binaries/espflash-$triple"
           mkdir -p desktop/src-tauri/binaries
           if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+            # Verify the mutable release asset before bundling it (see macOS).
+            echo "${ESPFLASH_SHA256_X86_64_UNKNOWN_LINUX_GNU}  e.zip" | sha256sum -c - \
+              || { echo "::error::espflash-$triple.zip sha256 mismatch — refusing to bundle an unverified flash engine"; exit 1; }
             unzip -q e.zip -d ex
             cp "$(find ex -type f -name espflash | head -n1)" "$out"
           else
@@ -233,6 +264,10 @@ jobs:
           # ── libusb, one build per arch (brew only ever has the runner's) ────
           curl -fL "https://github.com/libusb/libusb/releases/download/v${LIBUSB_VERSION}/libusb-${LIBUSB_VERSION}.tar.bz2" \
             -o libusb.tar.bz2
+          # Verify the release tarball before we compile and ship it as a signed
+          # framework in the bundle — a mutable asset must match its pinned hash.
+          echo "${LIBUSB_SHA256}  libusb.tar.bz2" | sha256sum -c - \
+            || { echo "::error::libusb-${LIBUSB_VERSION}.tar.bz2 sha256 mismatch — refusing to build an unverified libusb into the bundle"; exit 1; }
           mkdir -p libusb-src
           tar -xjf libusb.tar.bz2 -C libusb-src --strip-components=1
           for pair in "arm64:aarch64-apple-darwin" "x86_64:x86_64-apple-darwin"; do
@@ -252,12 +287,16 @@ jobs:
           # ── usbboot: rpiboot host tool + the signed gadget payload ──────────
           git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
             https://github.com/raspberrypi/usbboot usbboot-src
-          # Surface the resolved commit rather than burying it in build output —
-          # USBBOOT_REF is empty, so this tracks upstream's default branch
-          # (RELEASE_LESSONS Principle 2). The session that finally pins it needs
-          # the SHA of a build it watched work; read it off here.
+          # USBBOOT_REF is a pinned upstream tag; assert the commit it resolved
+          # to matches USBBOOT_SHA so a moved/retagged upstream fails the build
+          # instead of silently shipping different bytes into the signed app.
+          # The SHA is surfaced so a hardware-validated build stays reproducible.
           usbboot_sha=$(cd usbboot-src && git rev-parse HEAD)
-          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}') — pin USBBOOT_REF to this once validated on real hardware"
+          if [ -n "${USBBOOT_SHA:-}" ] && [ "$usbboot_sha" != "$USBBOOT_SHA" ]; then
+            echo "::error::usbboot HEAD ${usbboot_sha} != pinned USBBOOT_SHA ${USBBOOT_SHA} (ref '${USBBOOT_REF}') — upstream tag moved; re-validate on hardware and update the pin"
+            exit 1
+          fi
+          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}')"
           echo "- \`usbboot\` @ \`${usbboot_sha}\` (ref: \`${USBBOOT_REF:-upstream default branch}\`)" >> "$GITHUB_STEP_SUMMARY"
 
           # rpiboot links straight from source in one command (no .o files), so
@@ -338,12 +377,16 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq libusb-1.0-0-dev
           git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
             https://github.com/raspberrypi/usbboot usbboot-src
-          # Surface the resolved commit rather than burying it in build output —
-          # USBBOOT_REF is empty, so this tracks upstream's default branch
-          # (RELEASE_LESSONS Principle 2). The session that finally pins it needs
-          # the SHA of a build it watched work; read it off here.
+          # USBBOOT_REF is a pinned upstream tag; assert the commit it resolved
+          # to matches USBBOOT_SHA so a moved/retagged upstream fails the build
+          # instead of silently shipping different bytes into the signed app.
+          # The SHA is surfaced so a hardware-validated build stays reproducible.
           usbboot_sha=$(cd usbboot-src && git rev-parse HEAD)
-          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}') — pin USBBOOT_REF to this once validated on real hardware"
+          if [ -n "${USBBOOT_SHA:-}" ] && [ "$usbboot_sha" != "$USBBOOT_SHA" ]; then
+            echo "::error::usbboot HEAD ${usbboot_sha} != pinned USBBOOT_SHA ${USBBOOT_SHA} (ref '${USBBOOT_REF}') — upstream tag moved; re-validate on hardware and update the pin"
+            exit 1
+          fi
+          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}')"
           echo "- \`usbboot\` @ \`${usbboot_sha}\` (ref: \`${USBBOOT_REF:-upstream default branch}\`)" >> "$GITHUB_STEP_SUMMARY"
           (cd usbboot-src && make rpiboot)
           bin=desktop/src-tauri/binaries
@@ -430,7 +473,8 @@ jobs:
       # APPLE_* env is inert, so one gate drives both matrix legs.
       - name: Build & release (unsigned)
         if: vars.ENABLE_MACOS_SIGNING != 'true'
-        uses: tauri-apps/tauri-action@v1
+        # SHA-pinned (third-party action, runs with the updater signing key).
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # TAURI_SIGNING_PRIVATE_KEY / _PASSWORD come from job-level env
@@ -585,7 +629,8 @@ jobs:
 
       - name: Build & release (signed + notarized macOS)
         if: vars.ENABLE_MACOS_SIGNING == 'true'
-        uses: tauri-apps/tauri-action@v1
+        # SHA-pinned (third-party action, runs with the updater + Apple secrets).
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Developer ID signing + notarization. Tauri imports APPLE_CERTIFICATE
