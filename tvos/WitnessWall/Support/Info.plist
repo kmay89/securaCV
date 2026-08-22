@@ -22,6 +22,12 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Export compliance: only Apple's OS crypto (CryptoKit / TLS) with
+	     standard algorithms — the exempt category. Same declaration as the
+	     iPhone app's Info.plist; without it every TestFlight build parks on
+	     the manual "Missing Compliance" questionnaire (tvos-v0.2.2 did). -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>arm64</string>
