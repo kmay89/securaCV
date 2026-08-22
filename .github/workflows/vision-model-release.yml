@@ -212,7 +212,7 @@ jobs:
           cmp -s /tmp/expected_bytes /tmp/committed_bytes || {
             echo "::error::OTA_SIGNING_KEY_PEM does not match the committed release public key"; exit 1; }
           SIG=$(python firmware/scripts/ota_release.py sign \
-            --private-key /tmp/releaser.pem --firmware /tmp/model/model_vela.tflite)
+            --private-key /tmp/releaser.pem /tmp/model/model_vela.tflite)
           echo "signature=$SIG" >> "$GITHUB_OUTPUT"
           echo "model asset signed (sig ${SIG:0:16}…)"
 

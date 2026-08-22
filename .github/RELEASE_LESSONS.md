@@ -145,6 +145,26 @@ declare it, and let the app render what the device says it has.
 
 ## Entries
 
+### 2026-08-22 — A CLI cleanup changed one flag to positional, and the workflow that broke was the one no PR gate compiles
+
+- **Symptom:** the fw-v2.4.13 release published every board's firmware, then
+  went red 20 minutes later on "vision model asset never landed" — the chained
+  `vision-model-release.yml` run had died in 2 seconds on
+  `ota_release.py: error: unrecognized arguments: --firmware`.
+- **Cause:** `ota_release.py`'s `sign` subcommand takes the binary as a
+  positional argument, and `firmware-release.yml` calls it that way — but
+  `vision-model-release.yml` still passed `--firmware`. A script's CLI is a
+  wire contract with every workflow that shells out to it, and nothing
+  compiles a workflow's inline bash: the first execution IS the test, and for
+  a release-only workflow that execution is a release.
+- **Fix:** pass the path positionally (this entry's commit), and when changing
+  any `firmware/scripts/*` CLI, `grep -rn` the script's name across
+  `.github/workflows/` — every hit is a caller on the same contract.
+- **Applies to:** every workflow that shells out to a repo script — the
+  firmware release, the vision model asset, the factory-image rebuilds, and
+  any future chained dispatch. The failure mode is invisible until the one
+  moment it matters.
+
 ### 2026-08-09 — A committed build number of `1` meant every marketing version got exactly one upload, ever
 
 - **Symptom:** an App Store Connect / TestFlight build could never be respun.
