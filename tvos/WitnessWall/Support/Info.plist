@@ -22,10 +22,16 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<!-- Export compliance: only Apple's OS crypto (CryptoKit / TLS) with
-	     standard algorithms — the exempt category. Same declaration as the
-	     iPhone app's Info.plist; without it every TestFlight build parks on
-	     the manual "Missing Compliance" questionnaire (tvos-v0.2.2 did). -->
+	<!-- Export compliance: the app's crypto inventory is Apple's OS stack
+	     (TLS) plus the bundled Rust witness-core (pure-Rust sha2 +
+	     ed25519-dalek), and the Rust core's use is LIMITED to SHA-256
+	     hashing and Ed25519 signature VERIFICATION — authentication, not
+	     data encryption — which is the exempt category (EAR Cat.5 Pt.2
+	     Note 4 / 740.17(b)). The kernel's sqlcipher storage is deliberately
+	     not compiled for Apple TV (see witness-core's lib.rs). Same
+	     declaration as the iPhone app's Info.plist; without it every
+	     TestFlight build parks on the manual "Missing Compliance"
+	     questionnaire (tvos-v0.2.2 did). -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIRequiredDeviceCapabilities</key>
