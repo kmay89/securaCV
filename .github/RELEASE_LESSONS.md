@@ -145,6 +145,29 @@ declare it, and let the app render what the device says it has.
 
 ## Entries
 
+### 2026-08-22 — The upload succeeded, the tag was cut, and TestFlight showed nothing: the tvOS plist never declared export compliance
+
+- **Symptom:** tvos-v0.2.2 uploaded to App Store Connect with "No errors
+  uploading archive", the workflow went green and tagged the version — and no
+  build appeared in TestFlight. Nothing was broken on our side to look at.
+- **Cause:** `ITSAppUsesNonExemptEncryption` lives in the iPhone app's two
+  Info.plists (added precisely "so TestFlight builds don't park on Missing
+  Compliance") but was never copied to `tvos/WitnessWall/Support/Info.plist`.
+  Without it, App Store Connect accepts the build and then parks it on the
+  manual export-compliance questionnaire — invisible and uninstallable in
+  TestFlight, with the only signals living in ASC's web UI and the account
+  holder's email, neither of which CI can see. A green "upload" step proves
+  delivery, not distribution.
+- **Fix:** declare the key in the tvOS plist (this entry's commit) so every
+  future build clears compliance automatically. The already-uploaded build is
+  released by answering the questionnaire once in App Store Connect →
+  TestFlight → the build's "Manage" link.
+- **Applies to:** every current and future App Store Connect target. When a
+  new Apple target is added, its Info.plist must carry the same declaration —
+  and remember the general shape: a per-platform plist is a copy, not a
+  shared file, so an "every build parks" fix on one platform fixes exactly
+  one platform.
+
 ### 2026-08-22 — A CLI cleanup changed one flag to positional, and the workflow that broke was the one no PR gate compiles
 
 - **Symptom:** the fw-v2.4.13 release published every board's firmware, then
