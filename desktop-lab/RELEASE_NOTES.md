@@ -16,6 +16,20 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.2.3 — 2026-08-21
+
+- **A quit can no longer break an install.** The updater now marks the brief
+  window while it is replacing the app bundle on disk, and the Lab's close and
+  exit paths wait for it — being interrupted during the download costs only a
+  re-download, and quitting mid-install (the one thing that could leave the
+  Lab unable to open) is held off until the swap completes.
+- **One update at a time.** The routine background check and the Settings
+  page's "Install update" button now share a single gate, so they can never
+  race two installs over the same app bundle.
+- **Under the hood:** dependency updates across the desktop stack and the
+  whole-repo audit cleanup, with no change to what the Lab stores or sends —
+  everything stays on your machine.
+
 ## 0.2.2 — 2026-08-07
 
 - **A Settings page that tells you what the app is doing.** New "Updates &

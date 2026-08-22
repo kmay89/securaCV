@@ -1,6 +1,6 @@
 [package]
 name = "securacv-lab"
-version = "0.2.2"
+version = "0.2.3"
 description = "SecuraCV Lab — the local-first Canary workshop"
 authors = ["Errer Labs"]
 license = "Apache-2.0"

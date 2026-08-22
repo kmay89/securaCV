@@ -43,6 +43,25 @@ overhaul.
   GHCR, the sidecar gains a healthcheck and IPv6-safe broker parsing, and
   both quickstart compose files read as a three-step wizard.
 
+## [2.4.13] - 2026-08-21
+
+### The AMOLED flagship, motion that matches the glass, and help where you need it
+
+- **Canary Glance — the AMOLED flagship display.** First-class support for the
+  Waveshare ESP32-S3-Touch-AMOLED-2.41 as its own product, with device 3D
+  models shipped in both flashers and the iPhone app so what you're holding is
+  what you see on screen.
+- **The adaptive motion engine.** Displays grade their graphics, transitions,
+  and the living weather scenes to the hardware tier they're actually on —
+  the flagship animates, the small glass stays crisp, nobody drops frames.
+- **Get help on the glass.** The display Settings page now shows the Help
+  Desk QR — scan it and land on help for the exact device in your hand.
+- **The first meeting learns brevity.** The out-of-box greeting says the same
+  things in half the lines.
+- **Key-rotation correctness and security hardening.** The whole-repo audit's
+  firmware share: rotation no longer trips false tamper alarms downstream,
+  plus dead-code removal and honest-status fixes across the tree.
+
 ## [2.4.12] - 2026-08-21
 
 ### WiFi that flashes and saves, a setup network on every board, and updates that install themselves
