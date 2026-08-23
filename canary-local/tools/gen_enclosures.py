@@ -70,6 +70,16 @@ NON_PRODUCT_SCADS = {
                                       # geometry for other parts to wear, not a
                                       # part in its own right
     "canary_s3_lcd7_stamp.scad",      # generated build stamp (gen_stamp.py)
+    "canary_core_lib.scad",           # shared 2D/3D helpers + process floors —
+                                      # the catalog's geometry vocabulary, not a part
+    "canary_mount_lib.scad",          # the stud/keyhole hanging interface — the
+                                      # CONTRACT every case and mount mates through
+    "canary_snap_lib.scad",           # snap-fit engineering (strain budgets, the
+                                      # derived-window rule) — math, not a part
+    "canary_port_lib.scad",           # connector opening profiles + the insertion-
+                                      # length gate — cuts other parts make
+    "canary_board_lib.scad",          # the BOARD REGISTRY — measured module
+                                      # dimensions cases are built AROUND
 }
 
 # Preview meshes rendered for in-development designs the device sheets
