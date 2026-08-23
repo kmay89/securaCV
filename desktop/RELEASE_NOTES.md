@@ -17,6 +17,21 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.8 — 2026-08-23
+
+**If your 2.41″ AMOLED stayed dark after flashing — this release carries
+the fix.**
+
+The Canary Glance AMOLED image in 0.11.7's catalog initialized the panel
+with another board's personality: the serial monitor showed a healthy boot
+while the glass showed nothing. Firmware 2.4.14 plays the init sequence
+bench-tested on this exact panel, so first boot now means first light. This
+release bakes in the 2.4.14 catalog; flash the board again from the picker
+and the display comes up with the join QR.
+
+No app-side behavior changes — this is the catalog refresh that gets the
+fixed firmware into your hands.
+
 ## 0.11.7 — 2026-08-21
 
 **A new board joins the picker — the 2.41″ AMOLED in the metal case — and

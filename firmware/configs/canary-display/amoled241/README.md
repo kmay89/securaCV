@@ -24,5 +24,6 @@ What makes it the flagship:
 
 Board truth lives in
 [`firmware/boards/waveshare-esp32s3-amoled241/`](../../../boards/waveshare-esp32s3-amoled241/README.md)
-— including the four things that will bite you (the GPIO16 power latch, the
-expander-routed touch INT, the 16-px panel window, the busless charger).
+— including the five things that will bite you (the GPIO16 power latch, the
+expander-routed touch INT, the 16-px panel window, the busless charger, and
+the stock RM690B0 init table being the wrong panel personality).
