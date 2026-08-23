@@ -106,6 +106,11 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 - Changed an enclosure `.scad`? Attach PNG previews of every affected part
   for the requester — the change must be seeable, not just readable
   (recipe: `docs/hardware/enclosure/README.md`, "Preview renders")
+- Changed a builder-curated `.scad`, one of its `use<>` libraries, or the
+  fleet figures? Refresh the website's carried copies too:
+  `docs/hardware/enclosure/gen_builder_manifest.py --site <website-checkout>`
+  (the site pins them by sha256; its weekly "Update everything" carry job
+  catches a forgotten refresh, but a week is a long time to serve stale CAD)
 - Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
   `test`, `refactor`, `chore`
 
