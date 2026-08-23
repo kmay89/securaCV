@@ -47,7 +47,7 @@ the CircuitPython port is the best code-level authority available.
 This is *source* verification, not our bench validation. The tier is
 `compile-tested` until a hardware test report promotes it.
 
-## Four things that will bite you
+## Five things that will bite you
 
 ### 1. GPIO16 is the power latch AND the panel power
 
@@ -78,6 +78,17 @@ Battery telemetry is the GPIO17 divider only, and the divider ratio is
 **unverified** (siblings use VBAT = VADC × 3). Calibrate before showing a
 battery percentage anyone might trust. The PWR button (GPIO15) *is*
 firmware-readable, unlike the Touch-LCD-1.69's latch-only button.
+
+### 5. The stock Arduino_GFX RM690B0 init is the WRONG panel personality
+
+`Arduino_RM690B0`'s built-in table is the LilyGO T4-S3's: its `0x5A`/`0x5B`
+writes ("SWIRE FOR BV6804") program that module's AMOLED **power chip**.
+Played into this panel, the controller keeps ACKing every command — serial
+looks perfect — and the glass emits nothing. The HAL
+(`display_amoled241.cpp`) overrides `tftInit()` to play the bench-tested
+CircuitPython sequence for this exact panel instead (no SWIRE writes, and
+the page-0x13 `0xEB=0x0E` register set before sleep-out). Don't "simplify"
+it back to the stock `begin()`.
 
 ## Antenna note
 
