@@ -34,7 +34,9 @@ pub struct VerifyReport {
     /// out-of-band verifying key was supplied; `"self-consistent; identity
     /// unverified"` when the anchor was taken from the database under audit
     /// (a self-anchored verdict proves internal consistency, not identity);
-    /// `"tampered"` when the chain failed. Additive — `chain_valid` is
+    /// `"verification failed"` when the chain did not verify — which does not by
+    /// itself prove manipulation (it can be a wrong key or a stale DB); the
+    /// precise cause is in `failure`/`error`. Additive — `chain_valid` is
     /// unchanged and remains the machine-readable pass/fail.
     pub verdict: String,
     /// Whether the identity anchor came from *outside* the audited database
@@ -192,7 +194,13 @@ fn run_full_verify_impl(
             "self-consistent; identity unverified".to_string()
         }
     } else {
-        "tampered".to_string()
+        // A failed chain does not, by itself, prove data was manipulated: it can
+        // equally be a wrong out-of-band key, a mismatched genesis anchor, or a
+        // stale/partial database. So the verdict says "did not verify" without
+        // asserting a cause — the precise cause lives in `failure.kind` and
+        // `error` (an entry/prev-hash mismatch there does prove tampering; a
+        // signature/lineage mismatch may just be a key/provenance error).
+        "verification failed".to_string()
     };
     Ok(report)
 }
@@ -711,7 +719,7 @@ mod tests {
         let failure = report.failure.expect("structured failure");
         assert_eq!(failure.ledger, verify::FailedLedger::HighWaterMark);
         assert_eq!(failure.kind, verify::FailureKind::HighWaterRegression);
-        assert_eq!(report.verdict, "tampered");
+        assert_eq!(report.verdict, "verification failed");
     }
 
     #[test]
@@ -953,6 +961,67 @@ mod tests {
         .expect("runner runs");
         assert!(report.chain_valid, "{:?}", report.error);
         assert!(report.high_water_mark_checked);
+
+        let _ = std::fs::remove_file(&hwm_path);
+    }
+
+    #[test]
+    fn boot_verify_fails_closed_on_rollback_when_mark_configured() {
+        // Codex P1: witnessd's boot check (Kernel::verify_sealed_log) must fold
+        // in the configured mark, or a rolled-back-but-internally-consistent DB
+        // passes boot and the daemon launders the rollback by extending it.
+        let db = TempDb::new();
+        let hwm_path = std::env::temp_dir().join(format!("hwm_boot_{}.bin", suffix()));
+        let _ = std::fs::remove_file(&hwm_path);
+
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let db_key = derive_db_encryption_key(&sk);
+        let db_path = db.path().to_string_lossy().to_string();
+        let store =
+            crate::storage::SqliteSealedLogStore::open_with_key(&db_path, Some(db_key.as_str()))
+                .unwrap()
+                .with_high_water_mark(Some(hwm_path.clone()));
+        let cfg = KernelConfig {
+            db_path: db_path.clone(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: TEST_SEED.to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let mut kernel = Kernel::open_with_sealed_log(&cfg, Box::new(store)).expect("open kernel");
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+
+        // With the mark current, boot verify passes and checks the mark.
+        let ok = kernel
+            .verify_sealed_log_with_hwm_path(Some(&hwm_path))
+            .expect("verify runs");
+        assert!(ok.chain_valid, "{:?}", ok.error);
+        assert!(ok.high_water_mark_checked);
+
+        // Roll the newest event back on the kernel's own connection — the
+        // interior chain stays consistent, but it is now behind the mark.
+        kernel
+            .conn
+            .execute(
+                "DELETE FROM sealed_events WHERE id = (SELECT MAX(id) FROM sealed_events)",
+                [],
+            )
+            .unwrap();
+
+        let rolled = kernel
+            .verify_sealed_log_with_hwm_path(Some(&hwm_path))
+            .expect("verify runs");
+        assert!(
+            !rolled.chain_valid,
+            "boot verify must fail closed on a rollback when the mark is set"
+        );
+        assert_eq!(
+            rolled.failure.unwrap().kind,
+            verify::FailureKind::HighWaterRegression
+        );
 
         let _ = std::fs::remove_file(&hwm_path);
     }

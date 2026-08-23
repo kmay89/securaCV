@@ -2563,7 +2563,35 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// `chain_valid: false`, not an `Err`; `Err` is reserved for being unable
     /// to attempt verification at all.
     pub fn verify_sealed_log(&self) -> Result<crate::verify_runner::VerifyReport> {
-        crate::verify_runner::run_full_verify(&self.conn, None, None, SignatureMode::Compat, |_| {})
+        // If a signed high-water-mark is configured (`SECURACV_HWM_PATH`), fold
+        // it into the boot/tail check so a rolled-back-but-internally-consistent
+        // database fails closed HERE — before witnessd extends the chain and
+        // launders the rollback (ENTERPRISE_CUSTODY §2).
+        self.verify_sealed_log_with_hwm_path(high_water_mark_path_from_env().as_deref())
+    }
+
+    /// Boot/tail verification with an explicit high-water-mark path (the env
+    /// resolution split out so it is testable without a global env var). A
+    /// configured path with no file yet (fresh DB, or the mark not written) is
+    /// not a failure — the writer establishes it on the next append. A
+    /// present-but-corrupt mark propagates as an error → witnessd's safe mode,
+    /// the correct fail-closed response.
+    pub(crate) fn verify_sealed_log_with_hwm_path(
+        &self,
+        hwm_path: Option<&std::path::Path>,
+    ) -> Result<crate::verify_runner::VerifyReport> {
+        let hwm = match hwm_path {
+            Some(path) => crate::log::high_water_mark::load(path)?,
+            None => None,
+        };
+        crate::verify_runner::run_full_verify_with_high_water_mark(
+            &self.conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            hwm.as_ref(),
+            |_| {},
+        )
     }
 
     /// Read events from the sealed log for review or export.

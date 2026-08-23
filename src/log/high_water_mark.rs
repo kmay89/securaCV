@@ -358,14 +358,26 @@ pub fn load(path: &Path) -> Result<Option<HighWaterMark>> {
 /// `advance` is called only by our own writer, and sealed-event appends are
 /// serialized by the DB write lock — but the mark write runs *after* commit, so
 /// under two processes (witnessd plus a bridge) advances can finish out of
-/// order. A `seq` lower than the on-disk mark is therefore the benign case of a
-/// sibling writer having already advanced past us, **not** a rollback of the
-/// file — so it is a no-op, not an error (an attacker would not route through
-/// this function). This can transiently leave the mark trailing the true high
-/// by a few appends; it is self-healing (the next in-order append advances it)
-/// and can never cause a false verify failure, since verify only fails when the
-/// live log is *behind* the mark.
+/// order. The load→check→write is held under a cross-process advisory lock (an
+/// `flock` on a sibling `.hwm-lock` file) so two writers cannot each load the
+/// old mark and have the slower one rename its *lower* mark over the higher —
+/// which would silently regress the external evidence. Even so, a `seq` lower
+/// than the on-disk mark is treated as the benign case of a sibling having
+/// already advanced past us (a no-op, not an error): with the lock this only
+/// happens when our own append genuinely trailed, an attacker would not route
+/// through this function, and it can never cause a false verify failure (verify
+/// fails only when the live log is *behind* the mark).
 pub fn advance(
+    path: &Path,
+    keys: &SignatureKeys<'_>,
+    seq: u64,
+    head_hash: [u8; 32],
+) -> Result<HighWaterMark> {
+    let lock_path = path.with_extension("hwm-lock");
+    with_advisory_lock(&lock_path, || advance_locked(path, keys, seq, head_hash))
+}
+
+fn advance_locked(
     path: &Path,
     keys: &SignatureKeys<'_>,
     seq: u64,
@@ -395,6 +407,45 @@ pub fn advance(
     let mark = HighWaterMark::sign(seq, head_hash, signed_at_bucket, keys)?;
     write_atomic(path, &mark.encode())?;
     Ok(mark)
+}
+
+/// Run `f` while holding an exclusive advisory lock on `lock_path`, serializing
+/// mark advances across processes that share the same mark file. The lock is
+/// released when the file handle is dropped (close also releases it). On
+/// platforms without `flock` this is a no-op and the benign self-healing no-op
+/// in [`advance`] is the only guard — acceptable because a lost update there can
+/// only *lag* the mark, never regress verification's correctness.
+#[cfg(unix)]
+fn with_advisory_lock<T>(lock_path: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(lock_path)
+        .with_context(|| format!("opening high-water-mark lock {}", lock_path.display()))?;
+    // SAFETY: `file` owns the fd for the duration of the call; flock on a valid
+    // fd has no memory-safety hazard. LOCK_EX blocks until the lock is granted.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(anyhow!(
+            "flock(LOCK_EX) on {}: {}",
+            lock_path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    let result = f();
+    // Best-effort explicit unlock; dropping `file` below also releases it.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
+    result
+}
+
+#[cfg(not(unix))]
+fn with_advisory_lock<T>(_lock_path: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    f()
 }
 
 /// Atomic, owner-only write (temp file + fsync + rename). Mirrors the vault's
