@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [2.4.14] - 2026-08-23
+
+### First light on the AMOLED flagship
+
+- **The Canary Glance AMOLED actually lights up.** 2.4.13 drove the
+  Waveshare 2.41" panel with the stock RM690B0 init table — the LilyGO
+  T4-S3 personality, whose `0x5A`/`0x5B` SWIRE writes program a *different*
+  panel module's AMOLED power chip. The controller ACKed every command, the
+  serial monitor looked perfect, and the glass emitted nothing. The HAL now
+  plays the bench-tested init sequence for this exact panel (no foreign
+  power programming, and the page-0x13 vendor register set before
+  sleep-out, where the bench sets it). As a side effect the boot white-flash
+  risk is gone too: the new table parks brightness at zero instead of the
+  stock table's lit default.
+
 ## [0.7.0] - 2026-08-21
 
 ### One command installs everything, and the wizard it hands you actually works
