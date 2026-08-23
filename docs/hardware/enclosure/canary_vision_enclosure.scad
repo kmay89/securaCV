@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.2
+//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.3
 // @env cer=2 ip="~IP54" basis="weather preset"
 //  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (40 x 20)
 //         + a selectable HOST:
@@ -30,7 +30,20 @@
 //
 //  Orientation: model +Y = up on the wall, USB opening on the BOTTOM (-Y)
 //  wall, prongs on the TOP wall, +Z = toward the front face.
+//
+//  v0.3 (2026-08-23): canary_*_lib adoption (dedup, mesh-identical); both USB
+//  cuts gain the WAP's bridge-safe chamfered top (print fix, same w x h);
+//  opt_mark debosses the house mark on the front in place of label_text.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
+                             // foot_chamfer_ring — the catalog's shared helpers
+use <canary_mount_lib.scad>  // the stud/keyhole hanging standard; the pocket
+                             // is drawn natively per axis (no rotate)
+use <canary_snap_lib.scad>   // snap-fit doctrine — snap_strain() gates edgeclip
+use <canary_port_lib.scad>   // connector openings — the bridge-safe USB profile
+use <canary_board_lib.scad>  // board registry — the knob defaults below cite it
+use <canary_mark_lib.scad>   // THE BIRD — opt_mark's front deboss
 
 /* [What to render] */
 part   = "all";       // ["back","front","all","gasket","bracket","knob"]
@@ -60,20 +73,25 @@ e_seal   = _pre(opt_seal,   false, true);
 e_mount  = _pre(opt_mount,  true,  true);
 m_style  = _pre(mount_style, "hinge", "both");
 
-/* [Boards] — measure YOURS; these are nominal */
+/* [Boards] — measure YOURS; these are nominal, and the registry
+   (canary_board_lib) is where each number's evidence lives */
 host     = "xiao"; // ["xiao","devkit"]  stacked XIAO (recommended) or Grove-cabled DevKitM-1
-dk_l     = 39.0;   // ESP32-C3-DevKitM-1 length (Y, USB end down) — devkit host
-dk_w     = 25.4;   // DevKitM-1 width (X)
-vm_l     = 40.0;   // Grove Vision AI V2 long side (Y; USB edge down) — measured
+dk_l     = 39.0;   // ESP32-C3-DevKitM-1 length (Y, USB end down) — devkit host — brd_l("dk_c3")
+dk_w     = 25.4;   // DevKitM-1 width (X) — brd_w("dk_c3")
+vm_l     = 40.0;   // Grove Vision AI V2 long side (Y; USB edge down) — measured, brd_l("grove_v2")
 vm_w     = 20.0;   // Grove Vision AI V2 short side (X) — measured (was 25x25: the
-                   // module is the Grove 1x2 form, not a square — same fix as the doorbell)
-xiao_l   = 21.0;   // stacked XIAO (Y) — xiao host
-xiao_w   = 17.5;   // stacked XIAO (X)
-stack_sock_h = 11.5; // module underside -> XIAO underside when seated (socket + headers) — MEASURE
+                   // module is the Grove 1x2 form, not a square — same fix as the
+                   // doorbell; board_selfcheck() pins the old number dead)
+xiao_l   = 21.0;   // stacked XIAO (Y) — xiao host — brd_l("xiao")
+xiao_w   = 17.5;   // stacked XIAO (X) — spec; a real board mics 17.8 (brd_xiao_w_measured())
+stack_sock_h = 11.5; // module underside -> XIAO underside when seated (socket + headers):
+                     // measured 6.5 per canary_board_lib brd_stack_sock_measured();
+                     // 11.5 is unmeasured headroom — print-validated as a roomier
+                     // cavity, never confirmed as a stack height — MEASURE
 vm_front_h   = 5.0;  // module front-side component height (CSI connector etc.)
-cam_w    = 25.0;   // OV5647 carrier width (X)
-cam_h    = 24.0;   // OV5647 carrier height (Y)
-pcb_t    = 1.0;    // PCB thickness (clips hook over this)
+cam_w    = 25.0;   // OV5647 carrier width (X) — brd_w("ov5647")
+cam_h    = 24.0;   // OV5647 carrier height (Y) — brd_l("ov5647")
+pcb_t    = 1.0;    // PCB thickness (clips hook over this) — brd_t("grove_v2")
 board_clear = 0.6; // per-side clearance around each PCB
 stack_h  = 9.0;    // tallest top-side component over a PCB (Grove socket / USB boot) — devkit host
 
@@ -90,7 +108,7 @@ cam_disc_d = 14.0;  // clear-disc seat diameter (12-16 mm disc; 0 = bare apertur
 cam_disc_t = 1.0;   // clear-disc thickness (disc sits 0.2 recessed)
 
 /* [Shell] */
-wall_t   = 2.0;    // side wall thickness (auto-thickened in seal mode)
+wall_t   = 2.0;    // side wall thickness (auto-thickened in seal mode) — catalog default, core_wall()
 floor_t  = 2.0;    // back thickness
 lid_t    = 2.0;    // front face thickness
 lip_h    = 4.0;    // front lip insertion into the back shell
@@ -99,10 +117,12 @@ corner_r = 3.0;    // outside corner radius
 standoff_h = 3.0;  // PCBs sit this high off the back (RAISE if DevKit has soldered pin headers!)
 cav_extra  = 1.0;  // headroom above the tallest component
 
-/* [Print tolerances] — per-side clearances; tune once for your printer */
-tol_slide = 0.20;  // sliding fits: front lip, drip skirt, disc seat
-tol_press = 0.10;  // press fits: magnet, light pipe
-tol_hole  = 0.30;  // clearance holes: front screws, hinge bolt
+/* [Print tolerances] — per-side clearances; tune once for your printer
+   (defaults are the catalog trio — canary_core_lib core_tol_*(), dialed
+   on the fit coupon) */
+tol_slide = 0.20;  // sliding fits: front lip, drip skirt, disc seat — core_tol_slide()
+tol_press = 0.10;  // press fits: magnet, light pipe — core_tol_press()
+tol_hole  = 0.30;  // clearance holes: front screws, hinge bolt — core_tol_hole()
 
 /* [Engineering — durability/rigidity options (see README "Engineering & materials")] */
 screw_insert = false;   // M2 brass heat-set inserts in the corner posts (service-grade threads)
@@ -122,8 +142,9 @@ screw_head_h = 2.0;
 
 /* [USB-C ports] — on the BOTTOM (-Y) wall. devkit host: one opening (DevKit).
    xiao host: TWO stacked openings — module "model port" (upper) + XIAO
-   "firmware port" (lower); both face the same edge (device guide §2). */
-usb_w  = 10.5;
+   "firmware port" (lower); both face the same edge (device guide §2).
+   Both are cut with the WAP's bridge-safe profile (canary_port_lib). */
+usb_w  = 10.5;     // opening width (USB-C body ~8.9 — port_usbc_shell_w())
 usb_h  = 6.5;
 usb_z  = 0.0;          // extra lift relative to PCB-top centering
 usb_dx = 0.0;          // upper/main port offset along the wall — MEASURE your boards
@@ -148,13 +169,14 @@ br_t        = 4.0;   // plate thickness
 br_screw_d  = 4.2;   // countersunk wall screws (#8 / M4)
 bracket_tripod = true; // captive 1/4-20 nut pocket behind the center fin (tripod mount)
 
-/* [Keyholes] — blind pockets in a thickened back (seal-safe) */
+/* [Keyholes] — blind pockets in a thickened back (seal-safe); the catalog's
+   one hanging interface — canary_mount_lib owns the drawing and the numbers */
 kh_extra   = 3.0;
-kh_head_d  = 7.0;
-kh_shank_d = 4.2;
-kh_slot_l  = 8.0;
-kh_head_h  = 3.5;    // total pocket depth (face web + head cavity)
-kh_face    = 1.0;
+kh_head_d  = 7.0;    // catalog standard — mount_kh_head_d()
+kh_shank_d = 4.2;    // catalog standard — mount_kh_shank_d()
+kh_slot_l  = 8.0;    // catalog standard — mount_kh_slot_l()
+kh_head_h  = 3.5;    // total pocket depth (face web + head cavity) — mount_kh_head_h()
+kh_face    = 1.0;    // catalog standard — mount_kh_face()
 kh_inset   = 12.0;   // pocket centers at y = ±(inner_y/2 − kh_inset), on the X centerline
 
 /* [Weather sealing] */
@@ -186,7 +208,8 @@ mag_h  = 3.2;
 mag_dx = 8.0;
 mag_dy = 8.0;
 
-/* [Board snap clips] */
+/* [Board snap clips] — the WAP's print-proven numbers (the canary_snap_lib
+   snap_boardclip defaults); the strain gate in edgeclip() holds them honest */
 clip_w      = 6.0;
 clip_t      = 1.0;
 clip_hook   = 0.5;
@@ -203,6 +226,12 @@ label_dx    = 0.0;
 label_dy    = -14.0;
 label_rot   = 0;
 label_font  = "Liberation Sans:style=Bold";
+opt_mark    = false; // deboss the house mark (the canary_mark_lib bird) at the
+                     // label position instead — exclusive with label_text: the
+                     // front carries one identity, not two
+mark_h      = 16.0;  // bird height; the lib floors it at mark_min_h(mark_rib)
+                     // rather than let the mark print as mush
+mark_rib    = 0.7;   // mark stroke width
 
 /* [Quality] */
 // curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
@@ -281,21 +310,23 @@ assert(mount_extra == 0 || kh_head_d > kh_shank_d, "kh_head_d must be larger tha
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge must be 0, or between 0.01 and lid_t");
 assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
        "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
-assert(label_text == "" || (label_depth > 0 && label_depth < lid_t), "label_depth must be between 0 and lid_t");
+assert(!(opt_mark && label_text != ""),
+       "opt_mark and label_text are exclusive — the front carries the mark or a label, not both");
+assert((label_text == "" && !opt_mark) || (label_depth > 0 && label_depth < lid_t),
+       "label_depth must be between 0 and lid_t");
 assert(host == "devkit" || usb_zc - xiao_usb_drop - usb_h/2 >= floor_t + 1.0,
        "xiao_usb_drop too large — the XIAO port opening would breach the floor");
-echo(str("Canary Vision enclosure v0.2 — outer ", out_x, " x ", out_y, " x ",
+echo(str("Canary Vision enclosure v0.3 — outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r,
          " mm prongs)  (host=", host, ", preset=", preset, ", seal=", e_seal, ", mount=", m_style, ")"));
 if (e_seal && wall_eff > wall_t)
     echo(str("seal mode: walls auto-thickened ", wall_t, " -> ", wall_eff, " mm to host the gasket groove"));
 
 // ----------------------------------------------------------------------------
-//  Helpers (shared idiom with canary_wap_enclosure.scad)
+//  Helpers — the idiom once shared by copy with canary_wap_enclosure.scad now
+//  comes from the canary_*_lib set; what stays local is Vision-specific
+//  (rim ring, cradles, the hinge, the clip)
 // ----------------------------------------------------------------------------
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-module rrect(l, w, r, h) { linear_extrude(height = h) rrect2d(l, w, r); }
-
 module rim_ring2d(w) {
     difference() {
         offset(r =  w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
@@ -322,7 +353,24 @@ module ringped(cx, cy, l, w) {
 // pointing AWAY from the board); `soff` = board standoff (the rail/pedestal
 // height the PCB sits on). Same proven profile as the WAP enclosure:
 // flat retention seat over the board + 45° under-chamfer across the gap.
+// Kept LOCAL rather than routed through canary_snap_lib's snap_boardclip:
+// that module places clips by ±Y mirror only, and these stand on ±X board
+// edges at an arbitrary normal. The lib still does the engineering —
+// snap_strain() gates every instantiation. The xiao host's rail-top clips
+// ride a 14 mm beam (0.4 % — nothing). The devkit host runs the profile on
+// a 4.0 mm rise (standoff 3.0 + pcb_t 1.0; the WAP's 1.2 mm board makes its
+// beam 4.2) and evaluates to 4.7 % — a hair past the catalog's 4.5 % once
+// budget, far below the ~10 % that cracks vertical-print PETG. Released
+// geometry a dedup must not move, so the gate pins today's worst case
+// (+0.2 pp) and stops any edit that pushes past it; raising standoff_h to
+// 3.5 (beam 4.5 -> 3.7 %) clears the budget properly on a reprint.
 module edgeclip(px, py, ang, soff = standoff_h) {
+    eps = snap_strain(clip_t, clip_hook, soff + pcb_t);
+    assert(eps <= snap_budget_once() + 0.002,
+           str("edgeclip: insertion strain ", round(eps*1000)/10,
+               " % exceeds the grandfathered ",
+               round((snap_budget_once() + 0.002)*1000)/10,
+               " % ceiling — thin clip_t, shorten clip_hook, or raise the standoff"));
     bt = floor_t + soff + pcb_t;
     tp = bt + clip_hook_h;
     pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
@@ -331,36 +379,6 @@ module edgeclip(px, py, ang, soff = standoff_h) {
     translate([px, py, 0]) rotate([0, 0, ang - 90])
         translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
             linear_extrude(clip_w) polygon(pts);
-}
-
-module keyhole_pocket(yc) {           // blind pocket; slot runs toward +Y (up)
-    y0 = yc - kh_slot_l/2;            // screw-head pass hole (bottom end)
-    y1 = yc + kh_slot_l/2;
-    z0 = -mount_extra;
-    union() {
-        translate([0, 0, z0 - 0.1]) linear_extrude(kh_face + 0.1) {
-            translate([0, y0]) circle(d = kh_head_d);
-            hull() { translate([0, y0]) circle(d = kh_shank_d);
-                     translate([0, y1]) circle(d = kh_shank_d); }
-        }
-        translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
-            hull() { translate([0, y0]) circle(d = kh_head_d + 0.6);
-                     translate([0, y1]) circle(d = kh_head_d + 0.6); }
-    }
-}
-
-// peripheral wedge that 45°-chamfers the back's bottom edge (subtract from the
-// shell); bounded to the footprint, so the hinge-fin roots lose only a 0.5 mm nick
-module foot_chamfer_cut() {
-    z0 = -mount_extra;
-    difference() {
-        translate([0, 0, z0 - 0.01]) rrect(out_x + 0.04, out_y + 0.04, corner_r, foot_cham + 0.01);
-        hull() {
-            translate([0, 0, z0])
-                rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
-            translate([0, 0, z0 + foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
-        }
-    }
 }
 
 // 12-of-24 radial castellation: interlocks with an identical facing ring
@@ -374,17 +392,8 @@ module teeth2d() {
         }
 }
 
-// horizontal bore along +X with a 45° teardrop roof + small flat cap: the bore
-// top prints without sagging (a plain horizontal cylinder droops at its crown)
-module tearbore_x(x0, y, z, l, d) {
-    r = d/2; cy = min(r + 0.75, r*1.38);   // proportional clamp: cap stays valid at ANY bore size
-    translate([x0, y, z]) rotate([90, 0, 0]) rotate([0, 90, 0])
-        linear_extrude(l) union() {
-            circle(d = d);
-            polygon([[-r*0.7071, r*0.7071], [-(r*1.4142 - cy), cy],
-                     [ r*1.4142 - cy, cy], [ r*0.7071, r*0.7071]]);
-        }
-}
+// (the teardrop bore the hinge and bracket ride is canary_core_lib's
+// tearbore_x — this file's drawing, promoted verbatim)
 
 // one hinge fin on the case top wall, centered at x = xc (tombstone, flat on the bed)
 module case_fin(xc) {
@@ -435,13 +444,19 @@ module back() {
             }
             translate([0, 0, floor_t])
                 rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
-            // USB-C opening(s), bottom wall: DevKit port, or module "model port"
-            translate([usb_cx, -out_y/2, usb_zc])
-                cube([usb_w, wall_eff*3, usb_h], center = true);
+            // USB-C opening(s), bottom wall: DevKit port, or module "model port".
+            // The WAP's bridge-safe profile (canary_port_lib): 45°-chamfered top
+            // corners halve the unsupported span in this upright wall and keep
+            // any droop out of the plug envelope — through v0.2 both openings
+            // bridged the full usb_w flat. Profile +y = the wall's print-up = +Z.
+            translate([usb_cx, -out_y/2 + wall_eff*1.5, usb_zc])
+                rotate([90, 0, 0]) linear_extrude(wall_eff*3)
+                    port_bridge_profile2d(usb_w, usb_h);
             // xiao host: second opening below it for the XIAO "firmware port"
             if (!has_dk)
-                translate([vm_cx + xiao_usb_dx, -out_y/2, usb_zc - xiao_usb_drop])
-                    cube([usb_w, wall_eff*3, usb_h], center = true);
+                translate([vm_cx + xiao_usb_dx, -out_y/2 + wall_eff*1.5, usb_zc - xiao_usb_drop])
+                    rotate([90, 0, 0]) linear_extrude(wall_eff*3)
+                        port_bridge_profile2d(usb_w, usb_h);
             // gasket groove in the front rim (seal mode)
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
@@ -457,9 +472,16 @@ module back() {
                 translate([ux0, -out_y/2 - 1, uz0])
                     cube([ux1 - ux0, 1 + usb_cov_dep, uz1 - uz0]);
             }
-            // blind keyhole pockets (never reach the cavity — seal-safe)
+            // blind keyhole pockets (never reach the cavity — seal-safe); the
+            // vision hangs by its back with +Y up, so the slot runs native-Y —
+            // canary_mount_lib draws it without a rotate, and released meshes
+            // must not move under a dedup
             if (mount_extra > 0)
-                for (yc = kh_ys) keyhole_pocket(yc);
+                for (yc = kh_ys)
+                    mount_keyhole_pocket(yc, -mount_extra, "y",
+                                         head_d = kh_head_d, shank_d = kh_shank_d,
+                                         slot_l = kh_slot_l, head_h = kh_head_h,
+                                         face = kh_face);
             // anti-lift knockouts (0.6 mm web at the back face): after hanging, pierce
             // with #4/M3 screws into the wall so the case can't be lifted off the
             // keyholes. Placed in the empty top region, clear of pockets and cradles.
@@ -468,8 +490,11 @@ module back() {
                     translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
                     translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);  // head seat, inside
                 }
-            // 45° bottom-edge chamfer (elephant-foot + first-layer delamination guard)
-            if (foot_cham > 0) foot_chamfer_cut();
+            // 45° bottom-edge chamfer (elephant-foot + first-layer delamination
+            // guard) — bounded to the footprint, so the hinge-fin roots lose
+            // only a 0.5 mm nick
+            if (foot_cham > 0)
+                foot_chamfer_ring(out_x, out_y, corner_r, foot_cham, -mount_extra);
         }
 
         // corner screw posts, gusseted to both walls (same pattern as the WAP case)
@@ -542,30 +567,12 @@ module vent_cluster(x, y) {
     }
 }
 
-module front_plate() {
-    // one 45° stage, plus an optional steeper cap stage (~66°) that softens the
-    // edge toward a roundover — both print face-down without support
-    if (lid_edge > 0) union() {
-        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge - lid_edge2);
-        hull() {
-            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_x, plate_y, plate_r, 0.01);
-            translate([0, 0, lid_t - lid_edge2 - 0.01])
-                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-        }
-        if (lid_edge2 > 0) hull() {
-            translate([0, 0, lid_t - lid_edge2])
-                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-            translate([0, 0, lid_t - 0.01])
-                rrect(plate_x - 2*lid_edge - 0.9*lid_edge2, plate_y - 2*lid_edge - 0.9*lid_edge2,
-                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
-        }
-    } else rrect(plate_x, plate_y, plate_r, lid_t);
-}
-
 module front() {
     union() {
         difference() {
-            front_plate();
+            // the catalog's two-stage face-down soft edge (canary_core_lib) —
+            // this file's front_plate copy, retired into the library
+            soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
             // lens aperture + recessed clear-disc seat
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             if (cam_disc_t > 0 && cam_disc_d > 0)
@@ -576,7 +583,9 @@ module front() {
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
                 // flat counterbore: the BOM's PAN-head M2 screws seat flush
-                // (a cone this shallow left the head standing on the show face)
+                // (a cone this shallow left the head standing on the show face —
+                // the lesson canary_core_lib's cb_flat_cut now carries for the
+                // catalog; the cut stays inline so the released mesh stays put)
                 translate([p[0], p[1], lid_t - screw_head_h])
                     cylinder(d = screw_head_d + 2*tol_hole, h = screw_head_h + 0.1);
             }
@@ -585,6 +594,12 @@ module front() {
                     linear_extrude(label_depth + 1) rotate(label_rot)
                         text(label_text, size = label_size, font = label_font,
                              halign = "center", valign = "center");
+            // the house mark instead of a label (debossed, so it prints as
+            // crisp first-layer voids like everything else on this face)
+            if (opt_mark)
+                translate([label_dx, label_dy, lid_t - label_depth])
+                    linear_extrude(label_depth + 1) rotate(label_rot)
+                        mark_bird(mark_h, mark_rib);
         }
 
         // rain/glare hood: ~220° collar over the window, open at the bottom

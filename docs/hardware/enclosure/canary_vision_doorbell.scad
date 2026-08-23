@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.2
+//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.3
 // @env cer=2 ip="~IP54 (button ~IP65)"
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
@@ -23,7 +23,23 @@
 //  ⚠️ VERIFY BEFORE PRINTING. Measure your seated stack (stack_sock_h,
 //     usb heights) and your button's body diameter/depth before printing.
 //  Orientation: +Y up on the wall, +Z toward the face.
+//
+//  v0.3 (2026-08-23): canary_*_lib adoption (dedup, mesh-identical) — the
+//  shared helpers, the pocket/stud drawings and the board clip now come from
+//  the libraries; opt_mark debosses the house wordmark at the label spot.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring —
+                             // the catalog's shared helpers
+use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the plate's
+                             // T-studs and the body's blind pockets, one home
+use <canary_snap_lib.scad>   // snap-fit doctrine — snap_boardclip carries the
+                             // WAP clip and its strain gate
+use <canary_port_lib.scad>   // connector standards — the shell numbers the
+                             // cable exit is sized against
+use <canary_board_lib.scad>  // board registry — this file is the measured
+                             // source for the seated-stack height
+use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 
 /* [What to render] */
 part = "all";        // ["body","face","plate","gasket","all"]
@@ -40,15 +56,17 @@ opt_tamper = false;  // reed/Hall magnet pocket on the face underside
    committed vendor GLB (canary-local/boards/seeed_grove_vision_ai_v2.glb):
    the module PCB is 40 x 20 mm (Grove 1x2 form factor — NOT the 25 x 25 the
    v0.1 bay assumed), mounted VERTICALLY: 40 mm along Y, USB edge down. */
-vm_l     = 40.0;     // Grove Vision AI V2 long side (Y; USB edge down) — measured
-vm_w     = 20.0;     // module short side (X) — measured
-xiao_l   = 21.0;     // XIAO stacked on the module's socket, lower half, centered
-xiao_w   = 17.8;
-stack_sock_h = 6.5;  // module underside -> XIAO underside when seated (measured 6.2)
+vm_l     = 40.0;     // Grove Vision AI V2 long side (Y; USB edge down) — measured, brd_l("grove_v2")
+vm_w     = 20.0;     // module short side (X) — measured, brd_w("grove_v2")
+xiao_l   = 21.0;     // XIAO stacked on the module's socket, lower half, centered — brd_l("xiao")
+xiao_w   = 17.8;     // the measured board, not the 17.5 spec — brd_xiao_w_measured()
+stack_sock_h = 6.5;  // module underside -> XIAO underside when seated — THIS bench
+                     // measurement (6.2, carried with margin) is the source behind
+                     // brd_stack_sock_measured(); the registry serves it to the catalog
 vm_front_h   = 5.0;  // module front-side component height (measured)
-cam_w    = 25.0;     // OV5647 carrier (Pi-cam v1.3 form)
-cam_h    = 24.0;
-pcb_t    = 1.0;
+cam_w    = 25.0;     // OV5647 carrier (Pi-cam v1.3 form) — brd_w("ov5647")
+cam_h    = 24.0;     // carrier height (Y) — brd_l("ov5647")
+pcb_t    = 1.0;      // brd_t("grove_v2") — the camera carrier matches
 board_clear = 0.6;
 
 /* [Camera] — Pi-cam v1.3 posts on the face */
@@ -71,7 +89,7 @@ btn_body_l = 18.0;   // body + terminals depth behind the panel — checked agai
 
 /* [Doorbell shell] */
 db_r     = 12.0;     // outside corner radius (pill look; <= half the width)
-wall_t   = 2.0;      // auto-thickened in seal mode
+wall_t   = 2.0;      // auto-thickened in seal mode — catalog default, core_wall()
 floor_t  = 2.0;      // back thickness
 lid_t    = 2.2;      // face thickness (the visible surface)
 lip_h    = 4.0;
@@ -81,16 +99,19 @@ zone_top = 8.0;      // margin above the camera (top posts live here)
 zone_gap = 2.0;      // camera <-> module gap
 zone_well = 12.0;    // cable well between module and button (USB plugs live here)
 zone_btn = 21.0;     // button zone height
-usb_exit_w = 12.0;   // oval cable exit through the back (into the plate hole)
+usb_exit_w = 12.0;   // oval cable exit through the back (into the plate hole) — sized
+                     // for a molded right-angle USB-C plug HEAD, not the 8.94 mm
+                     // shell (port_usbc_shell_w()): molded heads run ~10-12 mm
 usb_exit_h = 7.0;
 usb_exit_dx = 5.0;   // exit offset from the centerline
 usb_exit_dy = 6.0;   // exit offset above the well center — clears the lower T-stud pocket
                      // (the oval's top reaches behind the module: harmless, it's a floor opening)
 
-/* [Print tolerances] */
-tol_slide = 0.20;
-tol_press = 0.10;
-tol_hole  = 0.30;
+/* [Print tolerances] — the catalog trio (canary_core_lib core_tol_*(),
+   dialed on the fit coupon) */
+tol_slide = 0.20;    // core_tol_slide()
+tol_press = 0.10;    // core_tol_press()
+tol_hole  = 0.30;    // core_tol_hole()
 
 /* [Engineering] (see README "Engineering & materials") */
 screw_insert = false;  // M2 brass heat-set inserts in the corner posts
@@ -114,16 +135,18 @@ gasket_proud  = 0.3;
 skirt_h       = 3.0;
 skirt_t       = 1.6;
 
-/* [Wall plate + T-stud hooks + security screw] */
+/* [Wall plate + T-stud hooks + security screw] — the stud/pocket pair is the
+   catalog's one hanging interface: canary_mount_lib owns the drawings and the
+   numbers, these knobs stay for per-printer dialing */
 plate_t     = 4.0;    // plate thickness at the THIN end
 plate_wedge = 0;      // vertical wedge: camera tilts down the approach  // [0:5:15]
 plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  // [-15:5:15]
 stud_y      = 34.0;   // T-stud/pocket centers at y = ±stud_y (clear of the cable exit)
-kh_head_d   = 7.0;    // pocket head pass (stud head 6.6)
-kh_shank_d  = 4.2;    // pocket slot (stud stem 4.0)
-kh_slot_l   = 8.0;
-kh_head_h   = 3.5;    // pocket depth (face web + head cavity)
-kh_face     = 1.0;
+kh_head_d   = 7.0;    // pocket head pass (stud head 6.6) — mount_kh_head_d()
+kh_shank_d  = 4.2;    // pocket slot (stud stem 4.0) — mount_kh_shank_d()
+kh_slot_l   = 8.0;    // catalog standard — mount_kh_slot_l()
+kh_head_h   = 3.5;    // pocket depth (face web + head cavity) — mount_kh_head_h()
+kh_face     = 1.0;    // catalog standard — mount_kh_face()
 kh_extra    = 3.0;    // body back thickening that hosts the pockets
 sec_screw_d = 2.2;    // security screw (M2 self-tap; use a Torx/security drive)
 plate_screw_d = 4.2;  // wall screws (#8 / M4 countersunk)
@@ -131,6 +154,11 @@ plate_screw_d = 4.2;  // wall screws (#8 / M4 countersunk)
 /* [Aesthetics] */
 lid_edge    = 1.0;    // face edge chamfer
 lid_edge2   = 0.8;    // second, steeper stage (~66°) — softens the face edge toward a roundover
+opt_mark    = false;  // deboss the house wordmark instead of a custom label — it sits
+                      // where label_text would (label_dx/dy/rot/size/depth place and
+                      // size it) and is gated by the mark library's measured type
+                      // metrics, so a size that would print as a smudge or run off
+                      // the face is refused before a print, not after
 label_text  = "";     // debossed face label ("" = off)
 label_size  = 4.5;
 label_depth = 0.5;
@@ -156,7 +184,8 @@ mag_h  = 3.2;
 mag_dx = 8.0;
 mag_dy = 8.0;
 
-/* [Board snap clips] */
+/* [Board snap clips] — the WAP's print-proven numbers (the canary_snap_lib
+   snap_boardclip defaults); the lib's strain gate holds them honest */
 clip_w      = 6.0;
 clip_t      = 1.0;
 clip_hook   = 0.5;
@@ -220,51 +249,45 @@ assert(abs(plate_wedge_x) <= 15 && plate_wedge <= 15, "keep wedge angles <= 15 d
 assert(well_cy + usb_exit_dy - usb_exit_h/2 >= -stud_y + kh_slot_l/2 + (kh_head_d + 0.6)/2 + 0.8,
        "cable exit overlaps the lower T-stud pocket — raise usb_exit_dy or stud_y");
 assert(abs(usb_exit_dx) + usb_exit_w/2 <= inner_x/2 - 1, "cable exit too wide/offset for the cavity");
-echo(str("Canary Vision DOORBELL v0.2 — body ", out_x, " x ", out_y, " x ", base_d + lid_t + kh_extra,
+assert(!(opt_mark && label_text != ""),
+       "opt_mark and label_text share the label spot — set one, not both");
+assert((label_text == "" && !opt_mark) || (label_depth > 0 && label_depth < lid_t),
+       "label_depth must be between 0 and lid_t");
+// the wordmark's two gates, from the mark library's measured type metrics —
+// the render looks perfect either side of them, which is why they are asserts
+assert(!opt_mark || label_size >= mark_word_min_h(),
+       str("opt_mark at label_size ", label_size, " mm is under the ",
+           mark_word_min_h(), " mm cap height where a 0.4 mm bead still ",
+           "reaches the letterforms — raise label_size"));
+assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
+       str("the wordmark draws ", mark_word_ink_w("securaCV", label_size),
+           " mm at label_size ", label_size, " on a ", plate_x,
+           " mm face (2 mm margin per side) — shrink label_size"));
+echo(str("Canary Vision DOORBELL v0.3 — body ", out_x, " x ", out_y, " x ", base_d + lid_t + kh_extra,
          " mm + plate ", plate_t, " mm (wedge ", plate_wedge, " deg, seal=", e_seal, ")"));
 
 // ----------------------------------------------------------------------------
-//  Helpers (shared idiom with the other Canary enclosures)
+//  Helpers — the idiom once shared by copy with the other Canary enclosures
+//  now comes from the canary_*_lib set; what stays local is doorbell-specific
+//  (the rim ring, the vent cluster, the wedge plate — and the T-stud, for the
+//  mesh-stability reason at its definition)
 // ----------------------------------------------------------------------------
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-module rrect(l, w, r, h) { linear_extrude(height = h) rrect2d(l, w, r); }
 module rim_ring2d(w) {
     difference() {
         offset(r =  w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, rr - wall_eff/2));
         offset(r = -w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, rr - wall_eff/2));
     }
 }
+// The WAP cantilever clip, routed through canary_snap_lib so the strain gate
+// runs on every render (the beam here rises 9 mm off the floor — 0.9 %,
+// nothing near the budget). The lib places clips across a Y edge line; these
+// stand on ±X board edges, so the wrapper keeps this file's original
+// rotate-into-place transform — identity ops only, the released mesh stays put.
 module edgeclip(px, py, ang, soff) {
-    bt = floor_t + soff + pcb_t;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
     translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
-}
-module stud_pocket(yc) {              // blind T-stud pocket; slot toward +Y (body drops on)
-    y0 = yc - kh_slot_l/2;  y1 = yc + kh_slot_l/2;  z0 = -kh_extra;
-    union() {
-        translate([0, 0, z0 - 0.1]) linear_extrude(kh_face + 0.1) {
-            translate([0, y0]) circle(d = kh_head_d);
-            hull() { translate([0, y0]) circle(d = kh_shank_d);
-                     translate([0, y1]) circle(d = kh_shank_d); }
-        }
-        translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
-            hull() { translate([0, y0]) circle(d = kh_head_d + 0.6);
-                     translate([0, y1]) circle(d = kh_head_d + 0.6); }
-    }
-}
-module foot_chamfer_cut() {
-    z0 = -kh_extra;
-    difference() {
-        translate([0, 0, z0 - 0.01]) rrect(out_x + 0.04, out_y + 0.04, rr, foot_cham + 0.01);
-        hull() {
-            translate([0, 0, z0]) rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, rr - foot_cham), 0.01);
-            translate([0, 0, z0 + foot_cham]) rrect(out_x, out_y, rr, 0.01);
-        }
-    }
+        snap_boardclip(0, 0, 1, floor_t, floor_t + soff + pcb_t,
+                       w = clip_w, t = clip_t, hook = clip_hook,
+                       hook_h = clip_hook_h, clear = clip_clear);
 }
 
 // ----------------------------------------------------------------------------
@@ -289,8 +312,15 @@ module body() {
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
-            for (yc = [-stud_y, stud_y]) stud_pocket(yc);
-            if (foot_cham > 0) foot_chamfer_cut();
+            // blind T-stud pockets, slot toward +Y (the body drops onto the
+            // plate's studs) — canary_mount_lib draws the pocket natively per
+            // axis, no rotate, so the released mesh stays put
+            for (yc = [-stud_y, stud_y])
+                mount_keyhole_pocket(yc, -kh_extra, "y",
+                                     head_d = kh_head_d, shank_d = kh_shank_d,
+                                     slot_l = kh_slot_l, head_h = kh_head_h,
+                                     face = kh_face);
+            if (foot_cham > 0) foot_chamfer_ring(out_x, out_y, rr, foot_cham, -kh_extra);
             // Ø1.5 weep at the cavity's lowest point (mounted button-down):
             // condensate drains into the unsealed body/plate interface. Too
             // small to matter for ingress; pressure path is the vent membrane.
@@ -355,29 +385,12 @@ module vent_cluster(x, y) {
             translate([vent_ring_d/2, 0, -1]) cylinder(d = vent_hole_d, h = lid_t + 2);
     }
 }
-module face_plate() {
-    // one 45° stage, plus an optional steeper cap stage (~66°) that softens the
-    // edge toward a roundover — both print face-down without support
-    if (lid_edge > 0) union() {
-        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge - lid_edge2);
-        hull() {
-            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_x, plate_y, plate_r, 0.01);
-            translate([0, 0, lid_t - lid_edge2 - 0.01])
-                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-        }
-        if (lid_edge2 > 0) hull() {
-            translate([0, 0, lid_t - lid_edge2])
-                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-            translate([0, 0, lid_t - 0.01])
-                rrect(plate_x - 2*lid_edge - 0.9*lid_edge2, plate_y - 2*lid_edge - 0.9*lid_edge2,
-                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
-        }
-    } else rrect(plate_x, plate_y, plate_r, lid_t);
-}
 module face() {
     union() {
         difference() {
-            face_plate();
+            // the catalog's two-stage face-down soft edge (canary_core_lib) —
+            // this file's face_plate copy, retired into the library
+            soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             if (cam_disc_t > 0 && cam_disc_d > 0) {
                 translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
@@ -399,6 +412,8 @@ module face() {
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
                 // flat counterbore — the BOM's PAN-head M2 screws seat flush
+                // (the lesson canary_core_lib's cb_flat_cut now carries for the
+                // catalog; the cut stays inline so the released mesh stays put)
                 translate([p[0], p[1], lid_t - screw_head_h])
                     cylinder(d = screw_head_d + 2*tol_hole, h = screw_head_h + 0.1);
             }
@@ -407,6 +422,13 @@ module face() {
                     linear_extrude(label_depth + 1) rotate(label_rot)
                         text(label_text, size = label_size, font = label_font,
                              halign = "center", valign = "center");
+            // the house wordmark (opt_mark), debossed where the label would sit
+            // and by the same first-layer machinery — canary_mark_lib owns the
+            // word and its face, this file only places it
+            if (opt_mark)
+                translate([label_dx, label_dy, lid_t - label_depth])
+                    linear_extrude(label_depth + 1) rotate(label_rot)
+                        mark_wordmark(label_size);
         }
         // perimeter rib ring (t³ stiffening), cleared around features and posts
         if (lid_ribs) {
@@ -478,6 +500,13 @@ module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket
 //  screws; cable pass; bottom L-foot with the security-screw hole.
 //  Modeled in print orientation (back on the bed).
 // ----------------------------------------------------------------------------
+// The catalog T-stud, kept as THIS FILE'S drawing rather than routed through
+// canary_mount_lib's mount_tstud(): the lib overlaps its stem 0.01 into the
+// cone (the catalog's CGAL hygiene rule), this drawing joins them on an exact
+// shared plane, and CGAL tessellates the two joints differently — same
+// envelope, different mesh, and the released plate STL must not move under a
+// dedup. The numbers ARE the standard (mount_stud_* in canary_mount_lib);
+// adopting the lib's overlap is a deliberate re-release, not a dedup.
 module tstud(yc, zbase) {
     translate([0, yc, zbase]) {
         cylinder(d = 4.0, h = kh_face + 0.4);                       // stem (rides the 4.2 slot)

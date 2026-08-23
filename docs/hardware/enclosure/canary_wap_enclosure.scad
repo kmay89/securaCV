@@ -18,7 +18,19 @@
 //                         -X  ............................  +X
 //
 //  Render a part:  set `part` then F6 (or use the CLI in the README).
+//
+//  2026-08-23: adopted the shared contract libraries (core/mount/snap/port/
+//              board/mark) — the local helper copies they replace drew the
+//              same geometry, so every committed mesh is unchanged; new
+//              opt_mark knob debosses the house wordmark (default off).
 // ============================================================================
+
+use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge lid, foot chamfer, screw seats
+use <canary_mount_lib.scad>   // the stud/keyhole hanging interface (this file cut the pattern)
+use <canary_snap_lib.scad>    // the cantilever board clip + its strain budget
+use <canary_port_lib.scad>    // bridge-safe USB opening (this file's polygon, promoted)
+use <canary_board_lib.scad>   // board registry — the XIAO numbers the knobs cite
+use <canary_mark_lib.scad>    // the house wordmark (opt_mark)
 
 /* [What to render] */
 part   = "all";       // ["base","lid","all","coupon","gasket","shield","tray"]   (coupon = clip-fit test; gasket = TPU seal ring; shield = solar radiation shield; tray = desiccant tray)
@@ -51,13 +63,15 @@ usb_cov_dep   = 1.0;  // recess depth into the outer wall face
 /* [Mounting — opt-in; case hangs with the USB end facing DOWN] */
 opt_mount   = false;  // wall-mount features (keyholes thicken the case back by `kh_extra`)
 mount_style = "keyhole"; // ["keyhole","tabs","both"]
-// keyholes — BLIND pockets in a thickened back; they never breach the cavity (seal-safe)
+// keyholes — BLIND pockets in a thickened back; they never breach the cavity (seal-safe).
+// Defaults are the catalog's stud/keyhole standard (canary_mount_lib) — deviations
+// earn their keep on the fit coupon, not in a quiet knob edit
 kh_extra    = 3.0;    // back thickening that hosts the keyhole pockets
-kh_head_d   = 7.0;    // screw-head pass hole (fits #6 / M3.5 pan head)
-kh_shank_d  = 4.2;    // shank slot width
-kh_slot_l   = 8.0;    // slot travel (slot runs toward +X = UP when the USB faces down)
-kh_head_h   = 3.5;    // total pocket depth (face web + head cavity)
-kh_face     = 1.0;    // face web thickness the screw head grips behind
+kh_head_d   = 7.0;    // screw-head pass hole (fits #6 / M3.5 pan head) — mount_kh_head_d()
+kh_shank_d  = 4.2;    // shank slot width — mount_kh_shank_d()
+kh_slot_l   = 8.0;    // slot travel (slot runs toward +X = UP when the USB faces down) — mount_kh_slot_l()
+kh_head_h   = 3.5;    // total pocket depth (face web + head cavity) — mount_kh_head_h()
+kh_face     = 1.0;    // face web thickness the screw head grips behind — mount_kh_face()
 kh_inset    = 10.0;   // keyhole centers at x = ±(inner_l/2 − kh_inset); auto-merges to one on small cases
 // external screw tabs — four ears on the ±Y walls, fully outside the seal envelope
 tab_l       = 10.0;   // ear length along the wall
@@ -70,6 +84,10 @@ tab_cb_h    = 1.0;    // counterbore depth
 /* [Aesthetics] */
 lid_edge    = 0.8;    // 45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]
 lid_edge2   = 0.0;    // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
+opt_mark    = false;  // deboss the house wordmark instead of a custom label — it sits where
+                      // label_text would (label_dx/dy/rot/size/depth place and size it) and is
+                      // gated by the mark library's measured type metrics, so a size that would
+                      // print as a smudge or run off the lid is refused before a print, not after
 label_text  = "";     // debossed lid label, e.g. "CANARY" ("" = off; needs the font installed)
 label_size  = 5.0;    // text height
 label_depth = 0.5;    // deboss depth (prints as crisp first-layer voids, lid prints face-down)
@@ -94,8 +112,10 @@ e_seal    = _pre(opt_seal,    false, false, true);
 e_mount   = _pre(opt_mount,   false, false, true);
 
 /* [Board] — Seeed XIAO ESP32-S3 official: PCB 21.0 x 17.5 mm, 2.54 mm pitch */
-board_l        = 21.0;  // PCB length (USB end to far end, along X)
-board_w        = 17.5;  // PCB width (along Y)
+board_l        = 21.0;  // PCB length (USB end to far end, along X) — brd_l("xiao") nominal spec, canary_board_lib
+board_w        = 17.5;  // PCB width (along Y) — brd_w("xiao") nominal spec; a real board mics
+                        // brd_xiao_w_measured() = 17.8 (canary_dock lesson) — here the board sits
+                        // in CLIPS, so clip_clear absorbs the difference and the spec default stays
 board_h        = 1.2;   // PCB thickness
 board_clear    = 0.6;   // per-side clearance around the PCB
 stack_camera   = 8.0;   // headroom above the PCB with the Sense camera
@@ -126,10 +146,11 @@ lip_h          = 4.0;   // how far the lid lip drops into the base
 lip_t          = 1.2;   // lid lip wall thickness
 corner_r       = 3.0;   // outside corner radius
 
-/* [Print tolerances] — per-side clearances; tune these once for your printer */
-tol_slide      = 0.20;  // sliding fits: lid lip <-> base, drip skirt, camera-disc seat
-tol_press      = 0.10;  // press fits: tamper magnet, LED light pipe
-tol_hole       = 0.30;  // clearance holes: lid screws
+/* [Print tolerances] — per-side clearances; tune these once for your printer
+   (defaults = the catalog trio, core_tol_*() in canary_core_lib, dialed on the fit coupon) */
+tol_slide      = 0.20;  // sliding fits: lid lip <-> base, drip skirt, camera-disc seat — core_tol_slide()
+tol_press      = 0.10;  // press fits: tamper magnet, LED light pipe — core_tol_press()
+tol_hole       = 0.30;  // clearance holes: lid screws — core_tol_hole()
 
 /* [Engineering — durability/rigidity options (see README "Engineering & materials")] */
 screw_insert = false;   // M2 brass heat-set inserts in the corner posts (service-grade threads;
@@ -207,7 +228,9 @@ mag_dy         = 5.0;
 board_clips    = true;  // cantilever tabs hook over the board's two long edges
 clip_w         = 6.0;   // tab width (along the board edge)
 clip_t         = 1.0;   // beam thickness — thinner = easier flex (tune to your material)
-                        // (1.0/0.5 keeps insertion strain ~4 % — vertical-print PETG cracks near 1.5/0.8)
+                        // (1.0/0.5 keeps insertion strain ~4 % — vertical-print PETG cracks near
+                        // 1.5/0.8; canary_snap_lib now runs that arithmetic as an assert, so the
+                        // cracking numbers refuse to render instead of relying on this comment)
 clip_hook      = 0.5;   // how far the lip overhangs the board top
 clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
 clip_clear     = 0.25;  // gap between tab inner face and the board edge (a fit — tune on the coupon)
@@ -289,8 +312,22 @@ assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t),
        "lid_edge must be 0, or between 0.01 and lid_t");
 assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
        "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
-assert(label_text == "" || (label_depth > 0 && label_depth < lid_t),
+assert((label_text == "" && !opt_mark) || (label_depth > 0 && label_depth < lid_t),
        "label_depth must be between 0 and lid_t");
+assert(!(opt_mark && label_text != ""),
+       "opt_mark and label_text share the label spot — set one, not both");
+// the wordmark's two gates, from the mark library's measured type metrics:
+// below mark_word_min_h() a 0.4 mm bead no longer reaches the letterforms and
+// the deboss prints as a smudge with the rhythm of type — the render looks
+// perfect either way, which is why this is an assert and not an eyeball
+assert(!opt_mark || label_size >= mark_word_min_h(),
+       str("opt_mark at label_size ", label_size, " mm is under the ",
+           mark_word_min_h(), " mm cap height where a 0.4 mm bead still ",
+           "reaches the letterforms — raise label_size"));
+assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_l - 4.0,
+       str("the wordmark draws ", mark_word_ink_w("securaCV", label_size),
+           " mm at label_size ", label_size, " on a ", plate_l,
+           " mm lid (2 mm margin per side) — shrink label_size"));
 assert(batt_wire_w >= 0, "batt_wire_w must be non-negative");
 assert(!e_tamper || cav_h - mag_h >= standoff_h + board_h + 2.2,
        "tamper pocket dips within 2.2 mm of the PCB — shorten mag_h or raise the stack");
@@ -300,16 +337,9 @@ if (e_seal && wall_eff > wall_t)
     echo(str("seal mode: walls auto-thickened ", wall_t, " -> ", wall_eff, " mm to host the gasket groove"));
 
 // ----------------------------------------------------------------------------
-//  Helpers
+//  Helpers — rrect2d/rrect come from canary_core_lib; only file-specific
+//  geometry stays local
 // ----------------------------------------------------------------------------
-module rrect2d(l, w, r) {                        // rounded rectangle (2D)
-    offset(r = r) offset(r = -r) square([l, w], center = true);
-}
-
-module rrect(l, w, r, h) {                       // rounded rectangular prism
-    linear_extrude(height = h) rrect2d(l, w, r);
-}
-
 // ring traced on the wall midline — shared by the gasket groove and the gasket part
 module rim_ring2d(w) {
     difference() {
@@ -347,60 +377,32 @@ module divrib(x) {
     }
 }
 
-// Cantilever snap clip on a board long edge: a beam from the floor with a lip that
-// hooks over the board top. The board cams the lip out on the 45° lead-in, then it
-// snaps back. `cx` = position along the edge; `sy` = +1/-1 selects the +y/-y edge.
-//   profile (u = outward from board edge, v = z): beam + inward hook + lead-in chamfer.
-//   The retention seat over the board MUST stay flat (a sloped seat loses grip);
-//   the underside is 45°-chamfered across the clearance gap for cleaner FDM bridging.
+// Cantilever snap clip on a board long edge — this file's clip is the one
+// canary_snap_lib promoted, so the drawing (and the strain arithmetic that
+// used to live only in the clip_t comment) now comes from the library: the
+// beam formula runs as an assert on every render instead of protecting one
+// file's comment readers. `cx` = position along the edge; `sy` = +1/-1
+// selects the +y/-y edge.
 module boardclip(cx, sy) {
-    bt = floor_t + standoff_h + board_h;   // board top surface (lip sits here)
-    tp = bt + clip_hook_h;                 // top of the clip
-    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
-    ey = board_cy + sy * board_w/2;        // the board edge this clip guards
-    translate([cx, ey, 0]) scale([1, sy, 1]) translate([-clip_w/2, 0, 0])
-        rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(height = clip_w) polygon(pts);
+    snap_boardclip(cx, board_cy + sy * board_w/2, sy,
+                   floor_t, floor_t + standoff_h + board_h,
+                   clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
 }
 
 // blind keyhole pocket cut into the thickened back (xc = feature center along X);
-// head circle at the -X end, slot toward +X = UP when the case hangs USB-down
+// head circle at the -X end, slot toward +X = UP when the case hangs USB-down.
+// This file's pocket is canary_mount_lib's pattern piece — the library draws
+// it natively along X, so the interface has one home and this mesh stays put
 module keyhole_pocket(xc) {
-    x0 = xc - kh_slot_l/2;                 // screw-head pass hole center
-    x1 = xc + kh_slot_l/2;                 // slot top end
-    z0 = -mount_extra;                     // outer back face
-    union() {
-        // face opening: head circle + shank slot
-        translate([0, 0, z0 - 0.1]) linear_extrude(kh_face + 0.1) {
-            translate([x0, 0]) circle(d = kh_head_d);
-            hull() {
-                translate([x0, 0]) circle(d = kh_shank_d);
-                translate([x1, 0]) circle(d = kh_shank_d);
-            }
-        }
-        // wider head cavity behind the face web (the screw head slides in here)
-        translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
-            hull() {
-                translate([x0, 0]) circle(d = kh_head_d + 0.6);
-                translate([x1, 0]) circle(d = kh_head_d + 0.6);
-            }
-    }
+    mount_keyhole_pocket(xc, -mount_extra, "x",
+                         kh_head_d, kh_shank_d, kh_slot_l, kh_head_h, kh_face);
 }
 
 // peripheral wedge that 45°-chamfers the bottom edge (subtract from the shell);
-// bounded to the footprint so external features (tabs) lose only a root nick
+// canary_core_lib owns the drawing — bounded to the footprint so external
+// features (tabs) lose only a root nick
 module foot_chamfer_cut() {
-    z0 = -mount_extra;
-    difference() {
-        translate([0, 0, z0 - 0.01]) rrect(out_l + 0.04, out_w + 0.04, corner_r, foot_cham + 0.01);
-        hull() {
-            translate([0, 0, z0])
-                rrect(out_l - 2*foot_cham, out_w - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
-            translate([0, 0, z0 + foot_cham]) rrect(out_l, out_w, corner_r, 0.01);
-        }
-    }
+    foot_chamfer_ring(out_l, out_w, corner_r, foot_cham, -mount_extra);
 }
 
 // four external screw ears on the ±Y walls (counterbored for an M3/#6 pan head)
@@ -444,12 +446,12 @@ module base() {
             translate([0, 0, floor_t])
                 rrect(inner_l, inner_w, max(0.1, corner_r - wall_eff), cav_h + 1);
             // USB opening: 45°-chamfered top corners halve the unsupported bridge in the
-            // upright-printed wall and keep any droop out of the plug envelope
+            // upright-printed wall and keep any droop out of the plug envelope — this
+            // file's print-validated profile, now served by canary_port_lib to the
+            // siblings that were still cutting flat-topped rectangles
             translate([-out_l/2 - wall_eff*1.5, board_cy, pcb_z + board_h + usb_h/2 + usb_z])
                 rotate([90, 0, 90]) linear_extrude(wall_eff*3)
-                    polygon([[-usb_w/2, -usb_h/2], [usb_w/2, -usb_h/2],
-                             [usb_w/2, usb_h/2 - 2.5], [usb_w/2 - 2.5, usb_h/2],
-                             [-usb_w/2 + 2.5, usb_h/2], [-usb_w/2, usb_h/2 - 2.5]]);
+                    port_bridge_profile2d(usb_w, usb_h);
             // external antenna bulkhead hole on the far (+X) wall
             if (e_antenna)
                 translate([out_l/2, board_cy, pcb_z + 2])
@@ -566,25 +568,11 @@ module vent_cluster(x, y) {
 }
 
 // lid plate with a 45° chamfered top edge (prints face-down: the chamfer is a
-// clean 45° outward slope off the bed — no supports)
+// clean 45° outward slope off the bed — no supports). This lid's two-stage
+// chamfer stack is the catalog's standard face-down edge treatment now, so
+// canary_core_lib draws it
 module lid_plate() {
-    // one 45° stage, plus an optional steeper cap stage (~66°) that softens the
-    // edge toward a roundover — both print face-down without support
-    if (lid_edge > 0) union() {
-        rrect(plate_l, plate_w, plate_r, lid_t - lid_edge - lid_edge2);
-        hull() {
-            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_l, plate_w, plate_r, 0.01);
-            translate([0, 0, lid_t - lid_edge2 - 0.01])
-                rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-        }
-        if (lid_edge2 > 0) hull() {
-            translate([0, 0, lid_t - lid_edge2])
-                rrect(plate_l - 2*lid_edge, plate_w - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-            translate([0, 0, lid_t - 0.01])
-                rrect(plate_l - 2*lid_edge - 0.9*lid_edge2, plate_w - 2*lid_edge - 0.9*lid_edge2,
-                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
-        }
-    } else rrect(plate_l, plate_w, plate_r, lid_t);
+    soft_edge_plate(plate_l, plate_w, plate_r, lid_t, lid_edge, lid_edge2);
 }
 
 module lid() {
@@ -609,14 +597,11 @@ module lid() {
             if (e_buzzer) vent_cluster(vnt[0], vnt[1]);                                                     // buzzer vent
             if (e_touch)  translate([tch[0], tch[1], -1]) cylinder(d = touch_d, h = lid_t - touch_wall + 1); // touch window (blind thinning)
 
-            // countersunk lid screws over the posts
-            for (p = post_xy()) {
-                translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
-                translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 2*tol_hole,
-                             d2 = screw_d + 2*tol_hole + 2*screw_head_h,   // true 90° seat for a flat head
-                             h = screw_head_h + 0.1);
-            }
+            // countersunk lid screws over the posts — canary_core_lib's 90° seat
+            // for FLAT heads (the pan-head flat counterbore is the other module,
+            // and the head in the bag decides, not taste)
+            for (p = post_xy())
+                cs_cone90_cut(p[0], p[1], lid_t, screw_d + 2*tol_hole, screw_head_h);
 
             // debossed label on the outer face (prints face-down -> crisp first-layer voids)
             if (label_text != "")
@@ -625,6 +610,15 @@ module lid() {
                         rotate(label_rot)
                             text(label_text, size = label_size, font = label_font,
                                  halign = "center", valign = "center");
+
+            // the house wordmark (opt_mark), debossed exactly where the label would
+            // sit and by the same first-layer machinery — canary_mark_lib owns the
+            // word and its face, this file only places it (label_dx/dy/rot/size/depth)
+            if (opt_mark)
+                translate([label_dx, label_dy, lid_t - label_depth])
+                    linear_extrude(label_depth + 1)
+                        rotate(label_rot)
+                            mark_wordmark(label_size);
         }
 
         // perimeter rib ring under the lid: raises the flat face's bending stiffness

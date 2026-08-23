@@ -24,7 +24,25 @@
 //     carrier, the seated stack height, and the antenna-zone position.
 //  Orientation: +Y up on the wall, USB opening on the BOTTOM (-Y) wall,
 //  prongs on the TOP wall, +Z = toward the radome face.
+//
+//  2026-08-23: adopted the shared contract libraries (core/mount/snap/port/
+//              board/mark) — the local helper copies they replace drew the
+//              same geometry. Three fixes ride along: PAN-head FLAT
+//              counterbores on the front (the Vision's print-validated
+//              lesson — the old shallow cone left the head standing on the
+//              show face), the bridge-safe chamfered USB opening
+//              (canary_port_lib), and the bracket's detent teeth cut FEMALE
+//              (male/male teeth cannot nest in the fin gap — the Vision
+//              bracket's fix, mirrored). New opt_mark knob debosses the
+//              house wordmark (default off).
 // ============================================================================
+
+use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge front, foot chamfer, screw seats, tearbore
+use <canary_mount_lib.scad>   // the stud/keyhole hanging interface — the blind pockets' one home
+use <canary_snap_lib.scad>    // the cantilever board clip + its strain budget
+use <canary_port_lib.scad>    // bridge-safe USB opening (the WAP's print-validated profile)
+use <canary_board_lib.scad>   // board registry — the MR60 carrier numbers the knobs cite
+use <canary_mark_lib.scad>    // the house wordmark (opt_mark)
 
 /* [What to render] */
 part   = "all";       // ["back","front","all","gasket","bracket","knob"]
@@ -50,11 +68,14 @@ m_style = mount_style;
 radar = "bha2";       // ["bha2","fda2"]
 
 /* [Boards] — Seeed MR60BHA2 kit carrier + stacked XIAO ESP32-C6. MEASURE YOURS */
-vm_l     = 44.0;   // carrier length (Y; XIAO/USB edge down)
-vm_w     = 36.0;   // carrier width (X)
-xiao_l   = 21.0;
-xiao_w   = 17.5;
-stack_sock_h = 11.5; // carrier underside -> XIAO underside when seated — MEASURE
+vm_l     = 44.0;   // carrier length (Y; XIAO/USB edge down) — brd_l("mr60"), canary_board_lib
+vm_w     = 36.0;   // carrier width (X) — brd_w("mr60")
+xiao_l   = 21.0;   // brd_l("xiao")
+xiao_w   = 17.5;   // brd_w("xiao") spec; clips absorb the measured 17.8 (brd_xiao_w_measured)
+stack_sock_h = 11.5; // carrier underside -> XIAO underside when seated — MEASURE.
+                     // brd_stack_sock_unmeasured() kept on purpose: the registry's
+                     // measured 6.5 (brd_stack_sock_measured — doorbell bench) would
+                     // shrink a cavity that has survived prints as-is
 vm_front_h   = 3.5;  // carrier front-side TALLEST part (connectors etc.) — MEASURE
 ant_h        = 1.2;  // antenna (AiP package) top above the PCB — MEASURE; sets the radome air gap
 pcb_t    = 1.0;
@@ -99,10 +120,10 @@ lip_t    = 1.2;
 corner_r = 3.0;
 cav_extra = 1.0;
 
-/* [Print tolerances] */
-tol_slide = 0.20;
-tol_press = 0.10;
-tol_hole  = 0.30;
+/* [Print tolerances] — defaults = the catalog trio (core_tol_*(), canary_core_lib), dialed on the fit coupon */
+tol_slide = 0.20;    // sliding fits: front lip, drip skirt — core_tol_slide()
+tol_press = 0.10;    // press fits: magnet, light pipe — core_tol_press()
+tol_hole  = 0.30;    // clearance holes: front screws — core_tol_hole()
 
 /* [Engineering] (see README "Engineering & materials") */
 screw_insert = false;
@@ -144,11 +165,11 @@ bracket_tripod = true;
 
 /* [Keyholes] — blind, seal-safe (flush ceiling/wall mount) */
 kh_extra   = 3.0;
-kh_head_d  = 7.0;
-kh_shank_d = 4.2;
-kh_slot_l  = 8.0;
-kh_head_h  = 3.5;
-kh_face    = 1.0;
+kh_head_d  = 7.0;    // screw-head pass hole (#6 / M3.5 pan head) — mount_kh_head_d()
+kh_shank_d = 4.2;    // shank slot width — mount_kh_shank_d()
+kh_slot_l  = 8.0;    // slot travel (toward +Y = UP on the wall) — mount_kh_slot_l()
+kh_head_h  = 3.5;    // total pocket depth (face web + head cavity) — mount_kh_head_h()
+kh_face    = 1.0;    // face web the screw head grips behind — mount_kh_face()
 kh_inset   = 12.0;
 
 /* [Weather sealing] */
@@ -164,6 +185,10 @@ usb_cov_dep   = 1.0;
 /* [Aesthetics] */
 lid_edge    = 0.8;
 lid_edge2   = 0.0;
+opt_mark    = false; // deboss the house wordmark instead of a custom label — sits where
+                     // label_text would (label_dx/dy/rot/size/depth place it), gated by the
+                     // mark library's measured type metrics; the radome rule binds it like
+                     // any label: keep it OUT of the window
 label_text  = "";    // debossed label — placed at label_dx/dy; keep it OUT of the radome window
 label_size  = 4.5;
 label_depth = 0.5;
@@ -173,11 +198,11 @@ label_rot   = 0;
 label_font  = "Liberation Sans:style=Bold";
 
 /* [Board snap clips] */
-clip_w      = 6.0;
-clip_t      = 1.0;
-clip_hook   = 0.5;
-clip_hook_h = 1.2;
-clip_clear  = 0.25;
+clip_w      = 6.0;   // tab width along the carrier edge — snap_boardclip defaults, canary_snap_lib
+clip_t      = 1.0;   // beam thickness — the library runs the strain budget as an assert
+clip_hook   = 0.5;   // lip overhang over the carrier top
+clip_hook_h = 1.2;   // lip + 45° lead-in height above the carrier top
+clip_clear  = 0.25;  // beam face to carrier edge (a fit — tune on the coupon)
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -241,6 +266,20 @@ assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge
        "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
 assert(2*fin_r <= base_d + 0.01, "fin_r too large — prongs must not exceed the shell depth");
 assert(radar == "bha2" || radar == "fda2", "radar must be \"bha2\" or \"fda2\"");
+assert(!(opt_mark && label_text != ""),
+       "opt_mark and label_text share the label spot — set one, not both");
+// the wordmark's two gates, from the mark library's measured type metrics:
+// below mark_word_min_h() a 0.4 mm bead no longer reaches the letterforms and
+// the deboss prints as a smudge with the rhythm of type — the render looks
+// perfect either way, which is why this is an assert and not an eyeball
+assert(!opt_mark || label_size >= mark_word_min_h(),
+       str("opt_mark at label_size ", label_size, " mm is under the ",
+           mark_word_min_h(), " mm cap height where a 0.4 mm bead still ",
+           "reaches the letterforms — raise label_size"));
+assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
+       str("the wordmark draws ", mark_word_ink_w("securaCV", label_size),
+           " mm at label_size ", label_size, " on a ", plate_x,
+           " mm face (2 mm margin per side) — shrink label_size"));
 echo(str("Canary Sense RADOME enclosure v0.1 — MR60", radar == "fda2" ? "FDA2" : "BHA2",
          ", outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r, " mm prongs)  (radome ",
@@ -250,46 +289,30 @@ if (radar == "fda2")
     echo("FDA2 fall-detection: CEILING mount 2.4-3.1 m facing straight down — verify rad_dx/dy against YOUR carrier");
 
 // ----------------------------------------------------------------------------
-//  Helpers (shared idiom with the other Canary enclosures)
+//  Helpers — the shared idiom (rrect, tearbore, clip, keyhole, foot chamfer)
+//  now comes from the contract libraries; what stays local is this file's own
 // ----------------------------------------------------------------------------
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-module rrect(l, w, r, h) { linear_extrude(height = h) rrect2d(l, w, r); }
 module rim_ring2d(w) {
     difference() {
         offset(r =  w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
         offset(r = -w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
     }
 }
+// Cantilever snap clip on a carrier edge — canary_snap_lib's beam (the WAP
+// pattern), so the insertion-strain arithmetic runs as an assert on every
+// render. This file's clips stand on the ±X edges, so the wrapper keeps the
+// axis rotation and hands the drawing to the library.
 module edgeclip(px, py, ang, soff) {
-    bt = floor_t + soff + pcb_t;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
     translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
+        snap_boardclip(0, 0, 1, floor_t, floor_t + soff + pcb_t,
+                       clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
 }
+// blind keyhole pocket (yc = center along Y; slot toward +Y = UP on the wall);
+// canary_mount_lib draws it natively along the axis — no rotate — so the
+// interface has one home and this mesh stays put
 module keyhole_pocket(yc) {
-    y0 = yc - kh_slot_l/2;  y1 = yc + kh_slot_l/2;  z0 = -mount_extra;
-    union() {
-        translate([0, 0, z0 - 0.1]) linear_extrude(kh_face + 0.1) {
-            translate([0, y0]) circle(d = kh_head_d);
-            hull() { translate([0, y0]) circle(d = kh_shank_d);
-                     translate([0, y1]) circle(d = kh_shank_d); }
-        }
-        translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
-            hull() { translate([0, y0]) circle(d = kh_head_d + 0.6);
-                     translate([0, y1]) circle(d = kh_head_d + 0.6); }
-    }
-}
-module tearbore_x(x0, y, z, l, d) {
-    r = d/2; cy = min(r + 0.75, r*1.38);
-    translate([x0, y, z]) rotate([90, 0, 0]) rotate([0, 90, 0])
-        linear_extrude(l) union() {
-            circle(d = d);
-            polygon([[-r*0.7071, r*0.7071], [-(r*1.4142 - cy), cy],
-                     [ r*1.4142 - cy, cy], [ r*0.7071, r*0.7071]]);
-        }
+    mount_keyhole_pocket(yc, -mount_extra, "y",
+                         kh_head_d, kh_shank_d, kh_slot_l, kh_head_h, kh_face);
 }
 module teeth2d() {
     step = 360 / teeth_n;
@@ -323,15 +346,11 @@ module case_hinge() {
         tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
     }
 }
+// peripheral wedge that 45°-chamfers the bottom edge (subtract from the shell);
+// canary_core_lib owns the drawing — bounded to the footprint so the hinge
+// prongs lose only a root nick
 module foot_chamfer_cut() {
-    z0 = -mount_extra;
-    difference() {
-        translate([0, 0, z0 - 0.01]) rrect(out_x + 0.04, out_y + 0.04, corner_r, foot_cham + 0.01);
-        hull() {
-            translate([0, 0, z0]) rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
-            translate([0, 0, z0 + foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
-        }
-    }
+    foot_chamfer_ring(out_x, out_y, corner_r, foot_cham, -mount_extra);
 }
 
 // ----------------------------------------------------------------------------
@@ -350,9 +369,13 @@ module back() {
                     case_hinge();
             }
             translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
-            // XIAO USB-C opening, bottom wall
-            translate([usb_cx, -out_y/2, usb_zc])
-                cube([usb_w, wall_eff*3, usb_h], center = true);
+            // XIAO USB-C opening, bottom wall: 45°-chamfered top corners halve
+            // the unsupported bridge in the upright-printed wall and keep any
+            // droop out of the plug envelope — canary_port_lib (the WAP's
+            // print-validated profile; this wall used to bridge a flat top)
+            translate([usb_cx, -out_y/2 + wall_eff*1.5, usb_zc])
+                rotate([90, 0, 0]) linear_extrude(wall_eff*3)
+                    port_bridge_profile2d(usb_w, usb_h);
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
@@ -415,27 +438,11 @@ module vent_cluster(x, y) {
             translate([vent_ring_d/2, 0, -1]) cylinder(d = vent_hole_d, h = lid_t + 2);
     }
 }
-module front_plate() {
-    if (lid_edge > 0) union() {
-        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge - lid_edge2);
-        hull() {
-            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_x, plate_y, plate_r, 0.01);
-            translate([0, 0, lid_t - lid_edge2 - 0.01])
-                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-        }
-        if (lid_edge2 > 0) hull() {
-            translate([0, 0, lid_t - lid_edge2])
-                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-            translate([0, 0, lid_t - 0.01])
-                rrect(plate_x - 2*lid_edge - 0.9*lid_edge2, plate_y - 2*lid_edge - 0.9*lid_edge2,
-                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
-        }
-    } else rrect(plate_x, plate_y, plate_r, lid_t);
-}
 module front() {
     union() {
         difference() {
-            front_plate();
+            // the plate with the catalog's two-stage soft edge — canary_core_lib
+            soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
             // RADOME window: blind thinning from the INSIDE, leaving a flat
             // uniform radome_t membrane. Rounded corners avoid stress risers.
             translate([rad_cx, rad_cy, -1])
@@ -444,16 +451,24 @@ module front() {
             if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
             if (opt_lux) translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
             if (opt_vent) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
-            for (p = post_xy()) {
-                translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
-                translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
-            }
+            // flat counterbores: the BOM's PAN-head screws seat flush — the
+            // canary_core_lib seat, per the Vision's print-validated lesson
+            // (a cone this shallow left the head standing on the show face)
+            for (p = post_xy())
+                cb_flat_cut(p[0], p[1], lid_t, screw_d + 2*tol_hole,
+                            screw_head_d + 2*tol_hole, screw_head_h);
             if (label_text != "")
                 translate([label_dx, label_dy, lid_t - label_depth])
                     linear_extrude(label_depth + 1) rotate(label_rot)
                         text(label_text, size = label_size, font = label_font,
                              halign = "center", valign = "center");
+            // the house wordmark (opt_mark), debossed exactly where the label
+            // would sit and by the same first-layer machinery — canary_mark_lib
+            // owns the word and its face, this file only places it
+            if (opt_mark)
+                translate([label_dx, label_dy, lid_t - label_depth])
+                    linear_extrude(label_depth + 1) rotate(label_rot)
+                        mark_wordmark(label_size);
         }
         // rib ring, auto-cleared around the RADOME window and every feature
         if (lid_ribs) {
@@ -530,13 +545,20 @@ module bracket() {
             rrect(br_x, br_y, 3, br_t);
             bracket_fin(0);  bracket_fin(-prong_pitch);  bracket_fin(prong_pitch);
             if (bracket_tripod) translate([0, 0, br_t - 0.1]) rrect(18, 18, 2, 2.6);
-            if (hinge_teeth) {
-                xi = prong_pitch - prong_t/2;
-                translate([ xi, 0, az]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
-                translate([-xi, 0, az]) rotate([0,  90, 0]) linear_extrude(teeth_h) teeth2d();
-            }
         }
         tearbore_x(-br_x/2, 0, az, br_x, hinge_hole);
+        // detent tooth POCKETS cut into the outer fins' inner faces — the case
+        // fins carry the male teeth. One side must be female: two protruding
+        // rings can't nest in the 0.175 mm fin gap, so male/male meshing would
+        // permanently spring the fins apart (creep -> detents loosen). The
+        // Vision bracket's fix, mirrored.
+        if (hinge_teeth) {
+            xi = prong_pitch - prong_t/2;   // outer fins' inner faces
+            translate([ xi - 0.05, 0, az]) rotate([0,  90, 0])
+                linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
+            translate([-xi + 0.05, 0, az]) rotate([0, -90, 0])
+                linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
+        }
         for (sx = [1, -1], sy = [1, -1]) {
             translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5), -0.1]) cylinder(d = br_screw_d, h = br_t + 0.2);
             translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5), br_t - 2])
