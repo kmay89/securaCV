@@ -628,10 +628,20 @@ def parse_colorways() -> list[dict]:
     src = COLOR_LIB.read_text(encoding="utf-8")
     start = src.index("CW_REGISTRY = [")
     end = src.index("];", start)
-    rows = _CW_ROW.findall(src[start:end])
-    if not rows:
-        sys.exit("canary_color_lib.scad: could not parse CW_REGISTRY — "
-                 "keep its rows in the literal [id, name, hex, hex, hex, note] shape")
+    region = src[start:end]
+    rows = _CW_ROW.findall(region)
+    # Every row must parse, not just some: findall() would silently drop a
+    # row that drifts from the literal shape (an id with a digit, an
+    # uppercase hex) and this generator would publish an INCOMPLETE palette
+    # while OpenSCAD kept the missing colorway — the worst kind of quiet
+    # fork. Row starts are counted independently of the row regex, so a
+    # malformed row is a build failure here, never a shorter palette.
+    row_starts = len(re.findall(r'\[\s*"', region))
+    if not rows or len(rows) != row_starts:
+        sys.exit(f"canary_color_lib.scad: parsed {len(rows)} of {row_starts} "
+                 "CW_REGISTRY rows — a row has drifted from the literal "
+                 '[id, name, hex, hex, hex, note] shape (lowercase id and '
+                 "hex; keep each row a plain literal)")
     return [{"id": r[0], "name": r[1], "body": r[2], "ink": r[3],
              "light": r[4], "note": re.sub(r"\s+", " ", r[5]).strip()}
             for r in rows]
