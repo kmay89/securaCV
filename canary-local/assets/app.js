@@ -334,6 +334,10 @@ async function buildDisplaySheet(ctx, side, stage) {
   const MASTER = 0.22;
   const tone = (f, gain) => {
     if (soundMuted) return;
+    // A hidden page holds the bird's beak shut: release any held note and take
+    // no new ones. The firmware keeps ticking; a background tab or window must
+    // never sing to an empty room.
+    if (document.hidden) { if (voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.004); } catch {} } return; }
     try {
       ensureVoice(); audioResume();
       const t = audio.currentTime;
@@ -350,6 +354,12 @@ async function buildDisplaySheet(ctx, side, stage) {
     try { localStorage.setItem("canary-sound", on ? "on" : "off"); } catch {}
     if (!on && voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.01); } catch {} }
   };
+  // The per-tick gate above only cuts a note at the NEXT firmware write; if
+  // ticks pause while hidden, a held note would ring on. This is the
+  // deterministic cut the moment the page leaves the screen.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.01); } catch {} }
+  });
   // A small, unobtrusive corner toggle — the chime is meaningful and infrequent
   // (boot, alerts, the touch you make), but the room is yours.
   (() => {
