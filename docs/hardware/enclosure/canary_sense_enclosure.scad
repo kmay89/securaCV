@@ -185,9 +185,10 @@ usb_cov_dep   = 1.0;
 /* [Aesthetics] */
 lid_edge    = 0.8;
 lid_edge2   = 0.0;
-opt_mark    = false; // deboss the house wordmark instead of a custom label — sits where
-                     // label_text would (label_dx/dy/rot/size/depth place it), gated by the
-                     // mark library's measured type metrics; the radome rule binds it like
+// The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
+// it), gated by the mark library's measured type metrics; the radome rule
+// binds it like
+opt_mark    = false; // deboss the house wordmark instead of a custom label (exclusive with label_text)
                      // any label: keep it OUT of the window
 label_text  = "";    // debossed label — placed at label_dx/dy; keep it OUT of the radome window
 label_size  = 4.5;

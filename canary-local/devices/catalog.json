@@ -394,7 +394,7 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house wordmark on the front (canary_mark_lib) — placed by",
+     "label": "deboss the house wordmark on the front (canary_mark_lib)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -858,7 +858,7 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house wordmark on the lid's INTERIOR face — a",
+     "label": "deboss the house wordmark on the lid's INTERIOR face (covert: never outside)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1009,7 +1009,7 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house wordmark on the lid (canary_mark_lib) — placed by",
+     "label": "deboss the house wordmark on the lid (canary_mark_lib)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -1814,7 +1814,7 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house wordmark instead of a custom label — sits where",
+     "label": "deboss the house wordmark instead of a custom label (exclusive with label_text)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2194,7 +2194,7 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house wordmark instead of a custom label — it sits",
+     "label": "deboss the house wordmark instead of a custom label (exclusive with label_text)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2474,7 +2474,7 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house mark (the canary_mark_lib bird) at the",
+     "label": "deboss the house mark (the canary_mark_lib bird) instead of a custom label",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2844,7 +2844,7 @@
     {
      "id": "opt_mark",
      "type": "bool",
-     "label": "deboss the house wordmark instead of a custom label — it sits where",
+     "label": "deboss the house wordmark instead of a custom label (exclusive with label_text)",
      "consequence": "",
      "audience": "user",
      "default": false

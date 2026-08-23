@@ -84,9 +84,10 @@ tab_cb_h    = 1.0;    // counterbore depth
 /* [Aesthetics] */
 lid_edge    = 0.8;    // 45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]
 lid_edge2   = 0.0;    // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
-opt_mark    = false;  // deboss the house wordmark instead of a custom label — it sits where
-                      // label_text would (label_dx/dy/rot/size/depth place and size it) and is
-                      // gated by the mark library's measured type metrics, so a size that would
+// The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
+// and size it) and is gated by the mark library's measured type metrics, so a
+// size that would
+opt_mark    = false;  // deboss the house wordmark instead of a custom label (exclusive with label_text)
                       // print as a smudge or run off the lid is refused before a print, not after
 label_text  = "";     // debossed lid label, e.g. "CANARY" ("" = off; needs the font installed)
 label_size  = 5.0;    // text height

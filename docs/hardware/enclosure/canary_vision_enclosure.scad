@@ -226,9 +226,9 @@ label_dx    = 0.0;
 label_dy    = -14.0;
 label_rot   = 0;
 label_font  = "Liberation Sans:style=Bold";
-opt_mark    = false; // deboss the house mark (the canary_mark_lib bird) at the
-                     // label position instead — exclusive with label_text: the
-                     // front carries one identity, not two
+// The bird lands at the label position; exclusive with label_text — the
+// front carries one identity, not two.
+opt_mark    = false; // deboss the house mark (the canary_mark_lib bird) instead of a custom label
 mark_h      = 16.0;  // bird height; the lib floors it at mark_min_h(mark_rib)
                      // rather than let the mark print as mush
 mark_rib    = 0.7;   // mark stroke width

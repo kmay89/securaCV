@@ -27,9 +27,9 @@ part = "all";        // ["body","lid","all"]
 /* [Options] */
 opt_camera = true;   // aperture hidden in the knockout ring (XIAO Sense)
 opt_led    = false;  // pinhole light pipe (covert: usually off)
-opt_mark   = false;  // deboss the house wordmark on the lid's INTERIOR face — a
-                     // covert box stays street-plain outside, so the mark sits
-                     // where only the installer sees it (default off)
+// A covert box stays street-plain outside, so the mark sits where only the
+// installer sees it.
+opt_mark   = false;  // deboss the house wordmark on the lid's INTERIOR face (covert: never outside)
 
 /* [Board] — XIAO ESP32-S3 (Sense) */
 board_l = 21.0;  board_w = 17.5;  board_h = 1.2;  board_clear = 0.6;

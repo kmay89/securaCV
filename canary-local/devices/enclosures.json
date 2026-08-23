@@ -891,7 +891,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house wordmark instead of a custom label — it sits where"
+       "comment": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
       },
       {
        "name": "label_text",
@@ -2215,7 +2215,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house mark (the canary_mark_lib bird) at the"
+       "comment": "deboss the house mark (the canary_mark_lib bird) instead of a custom label"
       },
       {
        "name": "mark_h",
@@ -2797,7 +2797,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house wordmark instead of a custom label — it sits"
+       "comment": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
       },
       {
        "name": "label_text",
@@ -3551,7 +3551,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house wordmark instead of a custom label — sits where"
+       "comment": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
       },
       {
        "name": "label_text",
@@ -4612,7 +4612,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house wordmark on the lid (canary_mark_lib) — placed by"
+       "comment": "deboss the house wordmark on the lid (canary_mark_lib)"
       },
       {
        "name": "mark_size",
@@ -4845,7 +4845,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house wordmark on the front (canary_mark_lib) — placed by"
+       "comment": "deboss the house wordmark on the front (canary_mark_lib)"
       },
       {
        "name": "mark_size",
@@ -5556,7 +5556,7 @@
       {
        "name": "opt_mark",
        "default": "false",
-       "comment": "deboss the house wordmark on the lid's INTERIOR face — a"
+       "comment": "deboss the house wordmark on the lid's INTERIOR face (covert: never outside)"
       }
      ]
     },

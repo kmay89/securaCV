@@ -164,7 +164,7 @@
     {
      "id": "opt_mark",
      "group": "Aesthetics",
-     "label": "deboss the house wordmark instead of a custom label — it sits where",
+     "label": "deboss the house wordmark instead of a custom label (exclusive with label_text)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -686,7 +686,7 @@
     {
      "id": "opt_mark",
      "group": "Aesthetics",
-     "label": "deboss the house wordmark instead of a custom label — sits where",
+     "label": "deboss the house wordmark instead of a custom label (exclusive with label_text)",
      "consequence": "",
      "audience": "user",
      "default": false

@@ -74,9 +74,9 @@ kh_extra = 3.0;  kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_
 opt_mount = true;    // blind keyholes in the back
 
 /* [Aesthetics] */
-opt_mark   = false;  // deboss the house wordmark on the front (canary_mark_lib) — placed by
-                     // mark_dx/dy/rot/size/depth, gated by the library's measured type metrics
-                     // so a size that would print as a smudge or run off the face is refused
+// Placed by mark_dx/dy/rot/size/depth, gated by the library's measured type
+// metrics so a size that would print as a smudge or run off the face is refused
+opt_mark   = false;  // deboss the house wordmark on the front (canary_mark_lib)
                      // before a print, not after. Keep it OUT of the radome window.
 mark_size  = 5.0;    // wordmark cap height
 mark_depth = 0.5;    // deboss depth (the front prints face-down -> crisp first-layer voids)

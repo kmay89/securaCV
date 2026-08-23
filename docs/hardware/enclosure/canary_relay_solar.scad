@@ -83,9 +83,9 @@ lid_edge = 0.8;  lid_edge2 = 0.0;
 foot_cham = 0.5;
 
 /* [Aesthetics] */
-opt_mark   = false;  // deboss the house wordmark on the lid (canary_mark_lib) — placed by
-                     // mark_dx/dy/rot/size/depth, gated by the library's measured type
-                     // metrics so an unprintable size is refused before a print, not after
+// Placed by mark_dx/dy/rot/size/depth, gated by the library's measured type
+// metrics so an unprintable size is refused before a print, not after.
+opt_mark   = false;  // deboss the house wordmark on the lid (canary_mark_lib)
 mark_size  = 5.0;    // wordmark cap height
 mark_depth = 0.5;    // deboss depth (the lid prints face-down -> crisp first-layer voids)
 mark_dx    = 0.0;    // mark center offset from the LID-plate center

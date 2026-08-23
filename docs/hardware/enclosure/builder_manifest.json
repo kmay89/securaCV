@@ -95,7 +95,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "fe6152aa4db61f6dc1855e43f6de89c5edbba8090ecec3f7935c94cc4b4a9091",
+      "sha256": "90866ce003942e3b7c2385ee89a8a6e111e89147fd2b01ea790ef184cbda50ce",
       "groups": [
         {
           "name": "What to render",
@@ -371,7 +371,7 @@
               "name": "opt_mark",
               "type": "bool",
               "default": false,
-              "desc": "deboss the house wordmark instead of a custom label — it sits where"
+              "desc": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
             },
             {
               "name": "label_text",
@@ -1030,7 +1030,7 @@
         }
       },
       "units": {},
-      "sha256": "e914d5447c41710433670f32563255e13c42474b5fea4ef93b9b06413469c3e5",
+      "sha256": "bb11f82523240099e5f606926e35770a40113ab4c58e7ccd221c1f6c2a7ee84b",
       "groups": [
         {
           "name": "What to render",
@@ -1838,7 +1838,7 @@
               "name": "opt_mark",
               "type": "bool",
               "default": false,
-              "desc": "deboss the house mark (the canary_mark_lib bird) at the"
+              "desc": "deboss the house mark (the canary_mark_lib bird) instead of a custom label"
             },
             {
               "name": "mark_h",
@@ -1942,7 +1942,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "f8e1beee6ba5bbc3d8794b5497e785b99fb8fcdee48eff2a0aca6b675107ab4c",
+      "sha256": "053b41dfc8ef592da5a30c31e9428044f3313a24e4857151adbf74c0fe163242",
       "groups": [
         {
           "name": "What to render",
@@ -2456,7 +2456,7 @@
               "name": "opt_mark",
               "type": "bool",
               "default": false,
-              "desc": "deboss the house wordmark instead of a custom label — it sits"
+              "desc": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
             },
             {
               "name": "label_text",
@@ -2712,7 +2712,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "42fc1ebd920bd6180dcd52eaae57beef5e4a295f38db2278298b04f166ded366",
+      "sha256": "f2b1f4d9a9d7032197c543a191e033ae237ba12aaa2ecc85219e90fac532b546",
       "groups": [
         {
           "name": "What to render",
@@ -3330,7 +3330,7 @@
               "name": "opt_mark",
               "type": "bool",
               "default": false,
-              "desc": "deboss the house wordmark instead of a custom label — sits where"
+              "desc": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
             },
             {
               "name": "label_text",

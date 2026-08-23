@@ -154,9 +154,9 @@ plate_screw_d = 4.2;  // wall screws (#8 / M4 countersunk)
 /* [Aesthetics] */
 lid_edge    = 1.0;    // face edge chamfer
 lid_edge2   = 0.8;    // second, steeper stage (~66°) — softens the face edge toward a roundover
-opt_mark    = false;  // deboss the house wordmark instead of a custom label — it sits
-                      // where label_text would (label_dx/dy/rot/size/depth place and
-                      // size it) and is gated by the mark library's measured type
+// The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
+// and size it) and is gated by the mark library's measured type
+opt_mark    = false;  // deboss the house wordmark instead of a custom label (exclusive with label_text)
                       // metrics, so a size that would print as a smudge or run off
                       // the face is refused before a print, not after
 label_text  = "";     // debossed face label ("" = off)
