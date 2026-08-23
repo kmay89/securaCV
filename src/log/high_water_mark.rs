@@ -20,18 +20,35 @@
 //! the current signing key cannot produce a matching-or-advanced mark, so
 //! verify fails closed.
 //!
-//! One residual: if the mark file is restored *together with* an old DB
-//! snapshot (both rolled back in lockstep), a same-directory file rolls back
-//! too. The operator points `SECURACV_HWM_PATH` at append-only or external
-//! media so the two cannot be rolled back as a unit; the transparency-witness
-//! end-state (an RFC 9162 log with witness cosigning, TSA-anchored) is
-//! specified in `spec/quorum_unseal_v2.md` §4. The mark's own writer also
-//! refuses to move backward, so a regression attempt on the file is itself a
-//! signal rather than a silent overwrite.
+//! Residuals, all bounded and honest:
+//! - **Lockstep rollback.** If the mark file is restored *together with* an old
+//!   DB snapshot, a same-directory file rolls back too. The operator points
+//!   `SECURACV_HWM_PATH` at append-only or external media so the two cannot be
+//!   rolled back as a unit; the transparency-witness end-state (an RFC 9162 log
+//!   with witness cosigning, TSA-anchored) is specified in
+//!   `spec/quorum_unseal_v2.md` §4.
+//! - **Best-effort writer ⇒ the mark can lag.** The write is best-effort (a
+//!   failed advance logs and never blocks a witnessing append), and under two
+//!   processes advances can finish out of order, so the on-disk mark may trail
+//!   the true high by a few appends. A lagging mark only *narrows* the window
+//!   it protects — a rollback/truncation to a point at or above the last mark
+//!   it recorded is not caught — but it can never cause a false failure. Keep
+//!   the mark medium reliable, and monitor the advance-failure warnings: a
+//!   *persistently* failing medium freezes the window at the last-written seq.
+//! - **Durability.** The mark is fsync'd (for atomicity), so it must not be
+//!   allowed to outrun the DB's own commit durability. Enable it with the
+//!   default `synchronous=full`; under `synchronous=normal` a power cut can
+//!   drop the newest committed event while the mark keeps it, which reads as a
+//!   (false) regression on that one event.
+//!
+//! The live high the verifier compares against is the newest **real signed
+//! row** (`MAX(id)`), reconciled with the signed checkpoint for the
+//! full-retention-prune case — never the writable `sqlite_sequence` counter, so
+//! an actor with DB access cannot inflate a truncated log past the mark.
 
 use anyhow::{anyhow, bail, Context, Result};
 use ed25519_dalek::VerifyingKey;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::Path;
@@ -280,40 +297,22 @@ fn read_bytes<'a>(bytes: &'a [u8], off: &mut usize, len: usize) -> Result<&'a [u
     Ok(slice)
 }
 
-/// The live high-water position of the sealed log: the newest event id ever
-/// assigned (`seq`) and the `entry_hash` of that newest row (`head`).
+/// The live tail of the sealed-events table: the newest live row's id and its
+/// `entry_hash`, or `(None, None)` when the table currently holds no rows.
 ///
-/// `seq` is read from `sqlite_sequence` when available (which retains the
-/// highest id even after every row is deleted, so a `DELETE FROM sealed_events`
-/// wipe still reports the pre-wipe high) *and* from `MAX(id)`, taking the
-/// larger. `head` is the `entry_hash` of the `MAX(id)` row, or `None` when the
-/// table currently holds no rows.
-pub fn read_live_marker(conn: &Connection) -> Result<(u64, Option<[u8; 32]>)> {
-    // sqlite_sequence only exists once an AUTOINCREMENT table has taken a row;
-    // its absence is not an error, just "no recorded sequence yet".
-    let has_seq_table: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'",
-            [],
-            |_| Ok(true),
-        )
-        .optional()?
-        .unwrap_or(false);
-    let seq_from_sequence: i64 = if has_seq_table {
-        conn.query_row(
-            "SELECT seq FROM sqlite_sequence WHERE name='sealed_events'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()?
-        .unwrap_or(0)
-    } else {
-        0
-    };
-
+/// This reads **only** `sealed_events` — never the writable `sqlite_sequence`
+/// counter. `sqlite_sequence` was an attractive "survives a wipe" signal, but
+/// it is an ordinary table an actor with DB write access can rewrite: inflating
+/// it lets a truncated log claim forward progress past the mark, which would
+/// slip through the verifier. So the live high is the newest *real signed row*
+/// (`MAX(id)`) — unforgeable without the signing key — and the verifier
+/// reconciles the empty-table (full-retention-prune) case against the signed,
+/// already-verified checkpoint head rather than a counter (see
+/// [`crate::verify_runner::run_full_verify_with_high_water_mark`]). A wipe now
+/// reads as `MAX(id)` collapsing below the mark, not as a retained counter.
+pub fn read_live_head(conn: &Connection) -> Result<(Option<i64>, Option<[u8; 32]>)> {
     let max_id: Option<i64> =
         conn.query_row("SELECT MAX(id) FROM sealed_events", [], |r| r.get(0))?;
-    let seq = seq_from_sequence.max(max_id.unwrap_or(0)).max(0) as u64;
 
     let head = match max_id {
         Some(id) => {
@@ -331,7 +330,7 @@ pub fn read_live_marker(conn: &Connection) -> Result<(u64, Option<[u8; 32]>)> {
         }
         None => None,
     };
-    Ok((seq, head))
+    Ok((max_id, head))
 }
 
 /// Load a mark from disk. A missing file is `Ok(None)` (the log has simply not
@@ -352,10 +351,20 @@ pub fn load(path: &Path) -> Result<Option<HighWaterMark>> {
 /// Advance the on-disk mark to `(seq, head)`, signing with the device key.
 ///
 /// **Monotone by construction:** if a mark already exists with a *higher* seq,
-/// this refuses (a regression is a signal, not something to overwrite); at an
-/// *equal* seq it verifies the head matches and is otherwise a no-op (no
-/// rewrite, so no needless fsync on the hot append path). Only a strictly
-/// higher seq writes a new signed container.
+/// this leaves it (see below); at an *equal* seq it verifies the head matches
+/// and is otherwise a no-op (no rewrite, so no needless fsync on the hot append
+/// path). Only a strictly higher seq writes a new signed container.
+///
+/// `advance` is called only by our own writer, and sealed-event appends are
+/// serialized by the DB write lock — but the mark write runs *after* commit, so
+/// under two processes (witnessd plus a bridge) advances can finish out of
+/// order. A `seq` lower than the on-disk mark is therefore the benign case of a
+/// sibling writer having already advanced past us, **not** a rollback of the
+/// file — so it is a no-op, not an error (an attacker would not route through
+/// this function). This can transiently leave the mark trailing the true high
+/// by a few appends; it is self-healing (the next in-order append advances it)
+/// and can never cause a false verify failure, since verify only fails when the
+/// live log is *behind* the mark.
 pub fn advance(
     path: &Path,
     keys: &SignatureKeys<'_>,
@@ -364,14 +373,14 @@ pub fn advance(
 ) -> Result<HighWaterMark> {
     if let Some(existing) = load(path)? {
         if seq < existing.seq {
-            bail!(
-                "refusing to regress sealed-log high-water-mark from seq {} to {}",
-                existing.seq,
-                seq
-            );
+            // A sibling writer already advanced past us — leave the higher mark.
+            return Ok(existing);
         }
         if seq == existing.seq {
             if head_hash != existing.head_hash {
+                // Same seq, different head: two different events claim one id.
+                // That cannot happen from legitimate concurrency (ids are handed
+                // out under the DB write lock), so it is real corruption.
                 bail!(
                     "sealed-log high-water-mark head fork at seq {}: stored {} vs new {}",
                     seq,
@@ -494,18 +503,24 @@ mod tests {
         let m2 = advance(&path, &k, 2, [2u8; 32]).unwrap();
         assert_eq!(m2.seq, 2);
 
-        // Regression is refused.
-        assert!(advance(&path, &k, 1, [1u8; 32]).is_err());
+        // A lower seq is the benign out-of-order sibling-writer case: a no-op
+        // that returns the existing (higher) mark, never a regression of the
+        // file. It must NOT error (that would raise false alarms on concurrent
+        // appends) and must leave the on-disk mark at the higher seq.
+        let stale = advance(&path, &k, 1, [1u8; 32]).unwrap();
+        assert_eq!(stale.seq, 2);
+        assert_eq!(stale.head_hash, [2u8; 32]);
 
         // Same seq + same head is an idempotent no-op.
         let again = advance(&path, &k, 2, [2u8; 32]).unwrap();
         assert_eq!(again.seq, 2);
         assert_eq!(again.head_hash, [2u8; 32]);
 
-        // Same seq + a *different* head is a fork error.
+        // Same seq + a *different* head is a real fork error (two events can't
+        // share one id under the DB write lock).
         assert!(advance(&path, &k, 2, [9u8; 32]).is_err());
 
-        // The persisted mark is the latest good one.
+        // The persisted mark is still the highest good one.
         let loaded = load(&path).unwrap().unwrap();
         assert_eq!(loaded.seq, 2);
         assert_eq!(loaded.head_hash, [2u8; 32]);
@@ -537,28 +552,37 @@ mod tests {
     }
 
     #[test]
-    fn read_live_marker_tracks_seq_and_head() {
+    fn read_live_head_tracks_real_rows_not_the_counter() {
         let conn = mem_db_with_events(3);
-        let (seq, head) = read_live_marker(&conn).unwrap();
-        assert_eq!(seq, 3);
+        let (id, head) = read_live_head(&conn).unwrap();
+        assert_eq!(id, Some(3));
         assert_eq!(head, Some([3u8; 32]));
 
-        // Delete the newest row (tail truncation): MAX(id) drops to 2, but
-        // sqlite_sequence retains 3, so seq stays at the high-water while the
-        // head moves back — exactly the mismatch verify keys on.
+        // Delete the newest row (tail truncation): MAX(id) drops to 2. The live
+        // high moves DOWN with the real rows — which is what lets verify catch
+        // the truncation (the old sqlite_sequence reading would have hidden it).
         conn.execute("DELETE FROM sealed_events WHERE id = 3", [])
             .unwrap();
-        let (seq, head) = read_live_marker(&conn).unwrap();
-        assert_eq!(
-            seq, 3,
-            "sqlite_sequence retains the high-water after a tail delete"
-        );
+        let (id, head) = read_live_head(&conn).unwrap();
+        assert_eq!(id, Some(2));
         assert_eq!(head, Some([2u8; 32]));
 
-        // Wipe everything: seq still reads the retained high-water, head is gone.
+        // Inflating the writable sqlite_sequence counter must NOT raise the
+        // reported high — the read ignores it entirely.
+        conn.execute(
+            "UPDATE sqlite_sequence SET seq = 999 WHERE name = 'sealed_events'",
+            [],
+        )
+        .unwrap();
+        let (id, _head) = read_live_head(&conn).unwrap();
+        assert_eq!(id, Some(2), "read_live_head must ignore sqlite_sequence");
+
+        // Wipe everything: no real rows, so (None, None) — verify then falls
+        // back to the signed checkpoint (a wipe with no checkpoint reads as a
+        // high of 0, i.e. a regression below any positive mark).
         conn.execute("DELETE FROM sealed_events", []).unwrap();
-        let (seq, head) = read_live_marker(&conn).unwrap();
-        assert_eq!(seq, 3);
+        let (id, head) = read_live_head(&conn).unwrap();
+        assert_eq!(id, None);
         assert_eq!(head, None);
     }
 

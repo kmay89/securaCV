@@ -233,24 +233,27 @@ verdict does not prove *whose* log it is.
 
 ### Signed external high-water-mark (`src/log/high_water_mark.rs`, new)
 - A device-signed, monotonic `(seq, head)` mark in an `SCVHWM01` container kept
-  **outside** the database. `seq` is the newest sealed-event id, read from
-  `sqlite_sequence` so it is monotone across retention pruning (which deletes the
-  oldest rows) and survives a `DELETE`-everything wipe. The signature is
-  domain-separated (`securacv:pwk:sealed-log-high-water:v1`) over every field,
-  magic and versions included, so no cross-context or downgrade replay.
+  **outside** the database. `seq` is the newest sealed-event id at write time.
+  The signature is domain-separated (`securacv:pwk:sealed-log-high-water:v1`)
+  over every field, magic and versions included, so no cross-context or
+  downgrade replay.
 - **Writer** (`SqliteSealedLogStore`): opt-in via `SECURACV_HWM_PATH`; the store
   advances the mark after each append, *after* the commit and best-effort (a
   failed mark write logs and never blocks a witnessing append — the mark only
-  moves forward, so a lag can never cause a false verify failure). Monotone by
-  construction: it refuses to regress `seq` and treats a same-`seq`/different-head
-  write as a fork error.
+  moves forward, so a lag can never cause a false verify failure). A lower `seq`
+  at advance time is the benign out-of-order sibling-writer case (a no-op, not
+  an alarm); a same-`seq`/different-head write is real corruption and errors.
 - **Verifier** (`run_full_verify_with_high_water_mark`, `log_verify
   --high-water-mark`): after the chain verifies, it checks the mark's signer is a
   genesis-anchored lineage key (same rule as the checkpoint signer), verifies the
   signature, and **fails closed** with `FailedLedger::HighWaterMark` /
-  `FailureKind::HighWaterRegression` when the live log's `seq` is behind the mark
-  or its head no longer matches at that `seq` — the tail-truncation, whole-file
-  rollback, and wiped-log cases.
+  `FailureKind::HighWaterRegression` when the live log is behind the mark. The
+  live high is the newest **real signed row** (`MAX(id)`), reconciled with the
+  signed, already-verified checkpoint when retention has emptied the live table
+  — never the writable `sqlite_sequence` counter, so a no-signing-key actor
+  cannot inflate a truncated log past the mark, and a legitimate full-retention
+  prune (empty table + checkpoint) is not mistaken for a wipe. Covers the
+  tail-truncation, whole-file rollback, and wiped-log cases.
 
 ### Honest verdict labeling (B3, `src/verify_runner.rs`)
 - `VerifyReport` now carries `identity_verified` and a `verdict` string. A run
@@ -278,10 +281,30 @@ checkpoint notes, fleet witness cosigning, TSA/OpenTimestamps aggregate), foldin
 anchor verification into `run_full_verify`, and cross-binding the receipt chain
 heads — all in `ENTERPRISE_CUSTODY.md` §2.
 
+## Adversarial review (folded in before merge)
+Two independent skeptical passes over the diff converged on the same defect from
+opposite sides, both now fixed and regression-tested:
+- **Trusting `sqlite_sequence` let a no-signing-key actor mask a truncation.**
+  An actor with the DB key could `DELETE` the newest rows and inflate the
+  `sqlite_sequence` counter above the mark, so the live "seq" read past the mark
+  and skipped the head anchor. Fixed by reading the live high from `MAX(id)` of
+  real signed rows only; a new test inflates the counter and confirms the
+  truncation is still caught.
+- **A legitimate full-retention prune false-failed as a wipe.** Pruning that
+  empties the live table (leaving a signed checkpoint) reported no head, which
+  the old gate read as a wipe. Fixed by reconciling the empty-table case against
+  the already-verified checkpoint head; a new test exercises a full prune and
+  confirms verify passes.
+Also hardened: the concurrent-writer mark advance no longer raises false
+"regression" alarms (benign out-of-order no-op), and the honest-scope docs now
+state the best-effort-lag, durability (`synchronous=full`), and lockstep-rollback
+residuals plainly.
+
 ## Verification (this pass)
-`cargo test --lib` (371 tests) passes, including new high-water-mark codec /
-monotonicity / live-marker tests and verify-runner tests for the pass,
-live-behind-mark, tail-truncation, untrusted-signer, honest-label, and
-end-to-end writer→verify paths; `cargo clippy --lib --bins` and `cargo fmt
---check` clean; spelling and docs-index lints pass; the kernel-status-grid
+`cargo test --lib` (373 tests) passes, including new high-water-mark codec /
+monotonicity / live-head tests and verify-runner tests for the pass,
+live-behind-mark, tail-truncation, full-retention-prune, inflated-counter,
+untrusted-signer, honest-label, and end-to-end writer→verify paths; `cargo
+clippy --lib --bins -- -D warnings` and `cargo fmt --check` clean (default and
+`pqc-signatures`); spelling and docs-index lints pass; the kernel-status-grid
 generator produces no diff.

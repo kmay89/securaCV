@@ -331,20 +331,37 @@ fn run_inner(
                 })
             })?;
 
-        let (live_seq, live_head) = crate::log::high_water_mark::read_live_marker(conn)?;
-        if live_seq < hwm.seq {
+        // The live high is the newest REAL signed row — never the writable
+        // sqlite_sequence counter, which an actor with DB access could inflate
+        // to fake progress past the mark. When retention pruning has emptied
+        // the live table, the authoritative head/high is the signed checkpoint
+        // (already signature- and lineage-verified above): the checkpoint is
+        // the pruning survivor and its head chains transitively from the mark's
+        // recorded head. Reconciling here is what tells a legitimate
+        // full-retention prune apart from a wipe.
+        let (newest_id, newest_head) = crate::log::high_water_mark::read_live_head(conn)?;
+        let (live_high, live_head): (i64, Option<[u8; 32]>) = match newest_id {
+            Some(id) => (id, newest_head),
+            None => (
+                checkpoint.cutoff_event_id.unwrap_or(0),
+                checkpoint.chain_head_hash,
+            ),
+        };
+        let live_high = live_high.max(0) as u64;
+
+        if live_high < hwm.seq {
             return Err(anyhow::Error::new(verify::VerifyFailure {
                 ledger: verify::FailedLedger::HighWaterMark,
                 entry_id: None,
                 kind: verify::FailureKind::HighWaterRegression,
                 detail: format!(
-                    "sealed-log high-water regression: live newest-id {live_seq} is behind the \
-                     signed high-water {} — tail truncation, whole-file rollback, or wipe",
+                    "sealed-log high-water regression: live high {live_high} is behind the signed \
+                     high-water {} — tail truncation, whole-file rollback, or wipe",
                     hwm.seq
                 ),
             }));
         }
-        if live_seq == hwm.seq && live_head != Some(hwm.head_hash) {
+        if live_high == hwm.seq && live_head != Some(hwm.head_hash) {
             return Err(anyhow::Error::new(verify::VerifyFailure {
                 ledger: verify::FailedLedger::HighWaterMark,
                 entry_id: None,
@@ -356,6 +373,13 @@ fn run_inner(
                 ),
             }));
         }
+        // live_high > hwm.seq is a legitimate forward advance: the live high now
+        // comes only from real signed rows (unforgeable without the signing key)
+        // and the verified checkpoint, so it cannot be inflated past the mark by
+        // a no-key actor. The interior chain verify above already tied every
+        // live row (and, post-prune, the checkpoint) back through the mark's
+        // recorded head, so the anchor is not abandoned. A mark that legitimately
+        // lagged the true high is the documented best-effort residual.
         report.high_water_mark_checked = true;
     }
 
@@ -627,9 +651,9 @@ mod tests {
 
         let conn = open_encrypted(db.path());
         let sk = signing_key_from_seed(TEST_SEED).unwrap();
-        let (seq, head) = crate::log::high_water_mark::read_live_marker(&conn).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
         let mark = crate::HighWaterMark::sign(
-            seq,
+            newest_id.expect("has events") as u64,
             head.expect("has events"),
             600,
             &device_signature_keys(&sk),
@@ -662,11 +686,16 @@ mod tests {
 
         let conn = open_encrypted(db.path());
         let sk = signing_key_from_seed(TEST_SEED).unwrap();
-        let (seq, _head) = crate::log::high_water_mark::read_live_marker(&conn).unwrap();
+        let (newest_id, _head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
         // A device-signed mark that records the log having reached far past
         // where it now sits — the mark that would exist before a rollback/wipe.
-        let mark = crate::HighWaterMark::sign(seq + 5, [7u8; 32], 600, &device_signature_keys(&sk))
-            .unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64 + 5,
+            [7u8; 32],
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
 
         let report = run_full_verify_with_high_water_mark(
             &conn,
@@ -695,13 +724,18 @@ mod tests {
 
         let conn = open_encrypted(db.path());
         let sk = signing_key_from_seed(TEST_SEED).unwrap();
-        let (seq, head) = crate::log::high_water_mark::read_live_marker(&conn).unwrap();
-        let mark = crate::HighWaterMark::sign(seq, head.unwrap(), 600, &device_signature_keys(&sk))
-            .unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64,
+            head.unwrap(),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
 
         // Lop off the newest event. The interior chain still verifies (shorter,
-        // internally consistent) but the head at the recorded high-water no
-        // longer matches the mark.
+        // internally consistent) but the live high now drops below the mark's
+        // recorded seq, so the regression is caught.
         conn.execute(
             "DELETE FROM sealed_events WHERE id = (SELECT MAX(id) FROM sealed_events)",
             [],
@@ -735,10 +769,14 @@ mod tests {
         let conn = open_encrypted(db.path());
         // A key the device never authorized.
         let rogue = ed25519_dalek::SigningKey::from_bytes(&[123u8; 32]);
-        let (seq, head) = crate::log::high_water_mark::read_live_marker(&conn).unwrap();
-        let mark =
-            crate::HighWaterMark::sign(seq, head.unwrap(), 600, &device_signature_keys(&rogue))
-                .unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64,
+            head.unwrap(),
+            600,
+            &device_signature_keys(&rogue),
+        )
+        .unwrap();
 
         let report = run_full_verify_with_high_water_mark(
             &conn,
@@ -754,6 +792,115 @@ mod tests {
         assert_eq!(
             report.failure.unwrap().kind,
             verify::FailureKind::UntrustedSigner
+        );
+    }
+
+    #[test]
+    fn full_verify_passes_after_full_retention_prune() {
+        // Regression guard: a legitimate full-retention prune empties
+        // sealed_events but leaves a signed checkpoint. The verifier must
+        // reconcile the empty table against the checkpoint head and NOT mistake
+        // the prune for a wipe.
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+
+        // The mark the writer would have signed at the current tip.
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&kernel.conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.expect("has events") as u64,
+            head.expect("has events"),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+
+        // Age every event into the past and prune them all — writes a signed
+        // checkpoint and empties the table (the case that used to false-fail).
+        kernel
+            .conn
+            .execute("UPDATE sealed_events SET created_at = 1", [])
+            .unwrap();
+        kernel
+            .enforce_retention_with_checkpoint(std::time::Duration::from_secs(1))
+            .unwrap();
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let (newest_after, _) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        assert!(
+            newest_after.is_none(),
+            "retention should have emptied the live table"
+        );
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(
+            report.chain_valid,
+            "a full retention prune must not false-fail the mark: {:?}",
+            report.error
+        );
+        assert!(report.high_water_mark_checked);
+    }
+
+    #[test]
+    fn high_water_mark_ignores_inflated_sqlite_sequence() {
+        // A no-signing-key actor truncates the newest rows and inflates the
+        // writable sqlite_sequence counter to fake forward progress past the
+        // mark. Because the verifier reads MAX(id) of real signed rows (not the
+        // counter), the truncation is still caught.
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64,
+            head.unwrap(),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+
+        // Truncate the newest rows, then inflate the counter well past the mark.
+        conn.execute("DELETE FROM sealed_events WHERE id > 1", [])
+            .unwrap();
+        conn.execute(
+            "UPDATE sqlite_sequence SET seq = 999 WHERE name = 'sealed_events'",
+            [],
+        )
+        .unwrap();
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(
+            !report.chain_valid,
+            "an inflated sqlite_sequence must not mask a real truncation"
+        );
+        assert_eq!(
+            report.failure.unwrap().kind,
+            verify::FailureKind::HighWaterRegression
         );
     }
 
@@ -791,8 +938,8 @@ mod tests {
             .unwrap()
             .expect("mark written by the store on append");
         let conn = open_encrypted(db.path());
-        let (seq, head) = crate::log::high_water_mark::read_live_marker(&conn).unwrap();
-        assert_eq!(mark.seq, seq);
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        assert_eq!(mark.seq, newest_id.unwrap() as u64);
         assert_eq!(Some(mark.head_hash), head);
 
         let report = run_full_verify_with_high_water_mark(

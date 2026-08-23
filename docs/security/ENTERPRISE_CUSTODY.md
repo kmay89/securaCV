@@ -87,12 +87,16 @@ default verifier also takes its identity anchor from the DB under audit, so a
 Set `SECURACV_HWM_PATH` and the kernel writes a **device-signed, monotonic
 `(seq, head)` mark** outside the database on every append (`master`-style
 `SCVHWM01` container in `src/log/high_water_mark.rs`), where `seq` is the newest
-sealed-event id — read from `sqlite_sequence`, so it is monotone across
-retention pruning *and* survives a `DELETE`-everything wipe. `run_full_verify`
-(via `run_full_verify_with_high_water_mark`, driven by `log_verify
---high-water-mark`) then **fails closed** when the live log is behind the mark:
-a lower `seq` (tail truncation, whole-file rollback, or wipe) or a head that no
-longer matches at the recorded `seq`. The mark's signer must be a
+sealed-event id at write time. `run_full_verify` (via
+`run_full_verify_with_high_water_mark`, driven by `log_verify
+--high-water-mark`) then **fails closed** when the live log is behind the mark.
+The live high it compares against is the newest **real signed row** (`MAX(id)`)
+— never the writable `sqlite_sequence` counter, which an actor with DB access
+could inflate to fake progress past the mark — reconciled with the signed,
+already-verified checkpoint for the full-retention-prune case (an empty table
+plus a checkpoint is a legitimate prune, not a wipe). A tail truncation,
+whole-file rollback, or wipe collapses that live high below the mark's `seq` (or
+leaves a non-matching head at an equal `seq`), and the mark's signer must be a
 genesis-anchored lineage key — the same rule the checkpoint signer obeys — so a
 swapped mark cannot introduce an untrusted signer. The verdict is now **labeled
 honestly** (B3): a run with no out-of-band key reports `"self-consistent;
