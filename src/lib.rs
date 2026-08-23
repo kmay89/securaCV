@@ -90,6 +90,7 @@ pub use ingest::{file::FileConfig, FileSource};
 pub use ingest::{rtsp::RtspConfig, RtspSource};
 #[cfg(feature = "ingest-v4l2")]
 pub use ingest::{v4l2::V4l2Config, V4l2Source};
+pub use log::high_water_mark::{self, HighWaterMark};
 pub use log::{hash_entry, sign_entry, verify_entry_signature};
 pub use module_runtime::{CapabilityBoundaryRuntime, ModuleCapability};
 pub use storage::{InMemorySealedLogStore, SealedLogStore, SqliteSealedLogStore};
@@ -162,6 +163,24 @@ pub fn resolve_db_encryption_key(
 pub fn db_key_seed_from_env() -> Option<Zeroizing<String>> {
     match std::env::var(DB_KEY_SEED_ENV) {
         Ok(s) if !s.trim().is_empty() => Some(Zeroizing::new(s)),
+        _ => None,
+    }
+}
+
+/// Env var selecting the path of the sealed-log signed high-water-mark
+/// (`docs/security/ENTERPRISE_CUSTODY.md` §2). Opt-in, like the vault
+/// passphrase: when set, the kernel maintains a device-signed monotonic
+/// `(seq, head)` mark at this path on every append, and `run_full_verify`
+/// fails closed if the live log ever falls behind it (tail truncation,
+/// whole-file rollback, or wipe). Point it at append-only or external media so
+/// the mark cannot be rolled back together with the database. Unset ⇒
+/// behavior is byte-identical to before (pure additive).
+pub const HWM_PATH_ENV: &str = "SECURACV_HWM_PATH";
+
+/// Read the high-water-mark path from the environment, if set and non-empty.
+pub fn high_water_mark_path_from_env() -> Option<std::path::PathBuf> {
+    match std::env::var(HWM_PATH_ENV) {
+        Ok(s) if !s.trim().is_empty() => Some(std::path::PathBuf::from(s)),
         _ => None,
     }
 }
@@ -1280,10 +1299,10 @@ impl Kernel {
             db_key_seed_from_env().as_ref().map(|s| s.as_str()),
         );
         let conn = open_db_connection_with_key(&db_path, Some(&db_key))?;
-        let sealed_log = Box::new(SqliteSealedLogStore::open_with_key(
-            &db_path,
-            Some(&db_key),
-        )?);
+        let sealed_log = Box::new(
+            SqliteSealedLogStore::open_with_key(&db_path, Some(&db_key))?
+                .with_high_water_mark(high_water_mark_path_from_env()),
+        );
         let zone_policy = cfg.zone_policy.normalized()?;
         let mut k = Self {
             conn,

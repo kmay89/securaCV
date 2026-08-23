@@ -6,6 +6,8 @@ use crate::crypto::signatures::{
     sign_with_domain, verify_with_domain, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
 };
 
+pub mod high_water_mark;
+
 /// Hashes a log entry payload with the previous chain hash.
 pub fn hash_entry(prev_hash: &[u8; 32], payload: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();

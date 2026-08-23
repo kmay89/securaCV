@@ -219,3 +219,69 @@ WYSIWYS approval, the audit-path quorum re-derivation and its
 fabricated-era rejection, and the per-envelope receipt binding;
 `tools/test_unseal_snapshot.py` and the PWK wizard pytest suite pass; `cargo
 clippy --all-targets` and `cargo doc` are clean.
+
+---
+
+# Sealed-log high-water-mark + honest verdict labeling (2026-08-23)
+
+Closes the two `ENTERPRISE_CUSTODY.md` §2 items the interior hash chain cannot
+reach on its own: it proves no event was edited, reordered, or deleted
+*mid-log*, but it does not bind the log's **length or head**, and a self-anchored
+verdict does not prove *whose* log it is.
+
+## Fixed in this pass
+
+### Signed external high-water-mark (`src/log/high_water_mark.rs`, new)
+- A device-signed, monotonic `(seq, head)` mark in an `SCVHWM01` container kept
+  **outside** the database. `seq` is the newest sealed-event id, read from
+  `sqlite_sequence` so it is monotone across retention pruning (which deletes the
+  oldest rows) and survives a `DELETE`-everything wipe. The signature is
+  domain-separated (`securacv:pwk:sealed-log-high-water:v1`) over every field,
+  magic and versions included, so no cross-context or downgrade replay.
+- **Writer** (`SqliteSealedLogStore`): opt-in via `SECURACV_HWM_PATH`; the store
+  advances the mark after each append, *after* the commit and best-effort (a
+  failed mark write logs and never blocks a witnessing append — the mark only
+  moves forward, so a lag can never cause a false verify failure). Monotone by
+  construction: it refuses to regress `seq` and treats a same-`seq`/different-head
+  write as a fork error.
+- **Verifier** (`run_full_verify_with_high_water_mark`, `log_verify
+  --high-water-mark`): after the chain verifies, it checks the mark's signer is a
+  genesis-anchored lineage key (same rule as the checkpoint signer), verifies the
+  signature, and **fails closed** with `FailedLedger::HighWaterMark` /
+  `FailureKind::HighWaterRegression` when the live log's `seq` is behind the mark
+  or its head no longer matches at that `seq` — the tail-truncation, whole-file
+  rollback, and wiped-log cases.
+
+### Honest verdict labeling (B3, `src/verify_runner.rs`)
+- `VerifyReport` now carries `identity_verified` and a `verdict` string. A run
+  with no out-of-band key is labeled `"self-consistent; identity unverified"`
+  (it proves internal consistency, not identity); an operator-supplied /
+  escrowed verifying key upgrades it to `"valid"`; a failed chain is
+  `"tampered"`. `log_verify`'s human summary states which, and points operators
+  at `--public-key` / `--device-key-seed` for an evidentiary verdict.
+- Additive only: `chain_valid` is unchanged and remains the machine-readable
+  pass/fail; existing report consumers see new keys, not changed ones. When
+  `SECURACV_HWM_PATH` is unset, the sealed-log write path is byte-identical to
+  before.
+
+## Honest scope
+The mark is device-signed, so a holder of the signing key forges both the log
+and the mark — the key/host-compromise case the threat model scopes out
+(`spec/threat_model.md` §2.6). It closes the *no-key* rollback/truncation/wipe.
+A rollback that restores the mark file together with an old DB still needs the
+mark on append-only/external media (or the TSA anchor) to defeat — the
+transparency-witness end-state tracked in `spec/quorum_unseal_v2.md` §4.
+
+## Tracked, not closed here
+The transparency-ecosystem witnessing end-state (RFC 9162 Merkle tree, C2SP
+checkpoint notes, fleet witness cosigning, TSA/OpenTimestamps aggregate), folding
+anchor verification into `run_full_verify`, and cross-binding the receipt chain
+heads — all in `ENTERPRISE_CUSTODY.md` §2.
+
+## Verification (this pass)
+`cargo test --lib` (371 tests) passes, including new high-water-mark codec /
+monotonicity / live-marker tests and verify-runner tests for the pass,
+live-behind-mark, tail-truncation, untrusted-signer, honest-label, and
+end-to-end writer→verify paths; `cargo clippy --lib --bins` and `cargo fmt
+--check` clean; spelling and docs-index lints pass; the kernel-status-grid
+generator produces no diff.

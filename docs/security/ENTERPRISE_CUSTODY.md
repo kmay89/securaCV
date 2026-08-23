@@ -83,19 +83,41 @@ or wiping the log entirely can still verify as internally consistent. The
 default verifier also takes its identity anchor from the DB under audit, so a
 "valid" verdict is only as strong as an out-of-band pin of the device key.
 
-**Design to close it:**
+**Shipped now — signed external high-water-mark + honest verdict labeling.**
+Set `SECURACV_HWM_PATH` and the kernel writes a **device-signed, monotonic
+`(seq, head)` mark** outside the database on every append (`master`-style
+`SCVHWM01` container in `src/log/high_water_mark.rs`), where `seq` is the newest
+sealed-event id — read from `sqlite_sequence`, so it is monotone across
+retention pruning *and* survives a `DELETE`-everything wipe. `run_full_verify`
+(via `run_full_verify_with_high_water_mark`, driven by `log_verify
+--high-water-mark`) then **fails closed** when the live log is behind the mark:
+a lower `seq` (tail truncation, whole-file rollback, or wipe) or a head that no
+longer matches at the recorded `seq`. The mark's signer must be a
+genesis-anchored lineage key — the same rule the checkpoint signer obeys — so a
+swapped mark cannot introduce an untrusted signer. The verdict is now **labeled
+honestly** (B3): a run with no out-of-band key reports `"self-consistent;
+identity unverified"` (it proves internal consistency, not identity), and only
+an operator-supplied / escrowed key upgrades it to `"valid"`.
 
-- **Signed external high-water-mark.** Persist a signed, monotonic
-  `(count, head_hash)` outside the DB (an append-only external log, or the
-  RFC-3161 TSA anchor), and have `run_full_verify` fail closed when the current
-  head/count is behind it. Closes tail-truncation, whole-file rollback, and the
-  wiped-log case.
-  *Design now specified:* `spec/quorum_unseal_v2.md` §4 — implement the
-  high-water-mark as transparency-ecosystem witnessing: an RFC 9162 Merkle
-  tree over the sealed hashes (receipt-chain heads as leaves = the
-  cross-binding item below), C2SP checkpoint notes, fleet-internal witness
-  cosigning as the default, and one fleet-level aggregate checkpoint anchored
-  outward (TSA + OpenTimestamps). See `PROVENANCE_INTEROP.md` §1.5.
+*Honest scope.* The mark is device-signed, so a holder of the signing key
+forges both the log and the mark — the key/host-compromise case the threat
+model scopes out (`spec/threat_model.md` §2.6). It closes the *no-key*
+rollback/truncation/wipe. A rollback that restores the mark file *together with*
+an old DB still needs the mark on append-only/external media (or the TSA anchor)
+to defeat — the transparency-witness end-state below. The writer is best-effort
+(a failed mark write logs and never blocks a witnessing append) because the
+mark only ever moves forward: a lag can weaken detection of the very newest
+truncation but can never cause a false verify failure.
+
+**Still tracked:**
+
+- **Transparency-ecosystem witnessing (the full high-water-mark end-state).**
+  Lift the single signed mark to an RFC 9162 Merkle tree over the sealed hashes
+  (receipt-chain heads as leaves = the cross-binding item below), C2SP
+  checkpoint notes, fleet-internal witness cosigning as the default, and one
+  fleet-level aggregate checkpoint anchored outward (TSA + OpenTimestamps).
+  *Design specified:* `spec/quorum_unseal_v2.md` §4; standards research
+  `PROVENANCE_INTEROP.md` §1.5.
 - **Fold anchor verification into `run_full_verify`** and require the CMS
   countersignature to be checked in-boundary (see §4). `log_anchor verify` no
   longer prints "OK" for a cryptographically unverified anchor — it prints
@@ -104,9 +126,6 @@ default verifier also takes its identity anchor from the DB under audit, so a
 - **Cross-bind the receipt chains.** Anchor the break-glass and export receipt
   chain heads into the sealed-event chain (or a signed manifest of all three
   heads) so the Invariant-V/IV audit trail cannot be truncated independently.
-- **Out-of-band verify key.** Require published/escrowed device-key material for
-  any *evidentiary* verdict; label a self-anchored result "self-consistent,
-  identity unverified" rather than "valid".
 
 ---
 

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::crypto::signatures::{SignatureKeys, DOMAIN_CHECKPOINT, DOMAIN_SEALED_LOG_ENTRY};
@@ -32,21 +33,39 @@ pub trait SealedLogStore {
 
 pub struct SqliteSealedLogStore {
     conn: Connection,
+    /// When set, the store maintains a device-signed monotonic high-water-mark
+    /// `(seq, head)` at this path on every append (`crate::log::high_water_mark`,
+    /// `docs/security/ENTERPRISE_CUSTODY.md` §2). `None` ⇒ no mark is written and
+    /// behavior is byte-identical to before this feature.
+    high_water_mark_path: Option<PathBuf>,
 }
 
 impl SqliteSealedLogStore {
     pub fn open(db_path: &str) -> Result<Self> {
         let conn = open_db_connection(db_path)?;
-        let mut store = Self { conn };
+        let mut store = Self {
+            conn,
+            high_water_mark_path: None,
+        };
         store.ensure_schema()?;
         Ok(store)
     }
 
     pub fn open_with_key(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         let conn = open_db_connection_with_key(db_path, encryption_key)?;
-        let mut store = Self { conn };
+        let mut store = Self {
+            conn,
+            high_water_mark_path: None,
+        };
         store.ensure_schema()?;
         Ok(store)
+    }
+
+    /// Enable (or disable, with `None`) the signed external high-water-mark.
+    /// Chainable on any of the `open*` constructors.
+    pub fn with_high_water_mark(mut self, path: Option<PathBuf>) -> Self {
+        self.high_water_mark_path = path;
+        self
     }
 
     /// Run `f` inside a `BEGIN IMMEDIATE` transaction. The sealed log is a
@@ -268,7 +287,7 @@ impl SealedLogStore for SqliteSealedLogStore {
             .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let payload_json = serde_json::to_string(record)?;
 
-        self.in_immediate_write_tx(|store| {
+        let (rowid, entry_hash) = self.in_immediate_write_tx(|store| {
             let prev_hash = store.last_event_hash_or_checkpoint_head()?;
             let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
             let signature_set = sign_entry(signature_keys, &entry_hash, DOMAIN_SEALED_LOG_ENTRY)?;
@@ -305,8 +324,30 @@ impl SealedLogStore for SqliteSealedLogStore {
                 ],
             )?;
 
-            Ok(())
-        })
+            Ok((store.conn.last_insert_rowid(), entry_hash))
+        })?;
+
+        // Advance the signed external high-water-mark past the row just sealed.
+        // The event is already committed; this runs *after* the transaction so a
+        // mark on separate/append-only media never blocks the DB write. It is
+        // best-effort by design: the mark only ever moves forward, so a failed
+        // advance leaves the mark lagging — which weakens detection of the very
+        // newest truncation but can never cause a false verify failure (verify
+        // only fails when the live log is *behind* a recorded mark). We surface
+        // the failure loudly rather than fail the append, since refusing here
+        // would turn a flaky mark mount into a witnessing outage.
+        if let Some(path) = &self.high_water_mark_path {
+            if let Err(e) =
+                crate::log::high_water_mark::advance(path, signature_keys, rowid as u64, entry_hash)
+            {
+                eprintln!(
+                    "warning: sealed-log high-water-mark advance to seq {} failed: {:#}",
+                    rowid, e
+                );
+            }
+        }
+
+        Ok(())
     }
 
     fn enforce_retention_with_checkpoint(
