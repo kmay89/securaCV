@@ -56,6 +56,8 @@ BRD_REGISTRY = [
      "Waveshare ESP32-S3-Touch-LCD-1.69 PCB (glass slab is larger — brd_ws169_glass_*)"],
     ["round_disp", 43.0,  43.0, 1.0, "measured",
      "Seeed Round Display disc, Ø43.0 measured (the watch station's bore)"],
+    ["heltec_v3",  51.0,  26.0, 1.2, "spec",
+     "Heltec WiFi LoRa 32 V3 — the solar relay pod's radio board"],
 ];
 
 // ---------------------------------------------------------------------------

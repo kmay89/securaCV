@@ -92,6 +92,8 @@
 // ============================================================================
 
 use <canary_mark_lib.scad>  // the house mark: bird + wordmark lockup
+use <canary_port_lib.scad>  // the series-A standards + the insertion-length gate
+use <canary_board_lib.scad> // the ws147 board record the knob defaults cite
 
 /* [What to render] */
 part = "all";   // ["bezel","back","light","all","exploded","palette","fil_body","fil_accent","fil_light","fit_section"]
@@ -99,9 +101,11 @@ part = "all";   // ["bezel","back","light","all","exploded","palette","fil_body"
 headers = "none";   // ["none","male"]
 
 /* [Board] — ESP32-S3-LCD-1.47, from the Waveshare drawing (mm) */
-board_l = 36.37;   // PCB long axis (Y), EXCLUDING the USB-A plug
-board_w = 20.32;   // PCB short axis (X)
-pcb_t   = 1.6;     // MEASURE (drawing does not call it out; 1.6 is the usual)
+board_l = 36.37;   // PCB long axis (Y), EXCLUDING the USB-A plug —
+                   // brd_l("ws147"), canary_board_lib: the family outline's home
+board_w = 20.32;   // PCB short axis (X) — brd_w("ws147"), canary_board_lib
+pcb_t   = 1.6;     // MEASURE (drawing does not call it out; 1.6 is the usual —
+                   // brd_t("ws147") carries the same reading, same caveat)
 
 // The LCD module: same 1.47" panel as the C6 sibling, so the same numbers.
 lcd_rise = 3.65;   // glass front above the PCB front face (5.10 stack - 1.45)
@@ -148,8 +152,8 @@ hdr_pin_w = 1.2;   // width the solder fillet + pin occupies across the row
 // USB-A series-A plug shell, per the USB 2.0 mechanical drawing. These are
 // NOT guesses and should not be "adjusted to fit" — if the plug does not pass
 // the opening, the opening is wrong, not the standard.
-usb_w = 12.00;     // shell width
-usb_h = 4.50;      // shell height
+usb_w = 12.00;     // shell width — port_usba_shell_w(), canary_port_lib
+usb_h = 4.50;      // shell height — port_usba_shell_h(), canary_port_lib
 usb_insert = 12.0; // shell length that must enter a receptacle
 // How far the shell overhangs the PCB's plug-end edge. MEASURE THIS FIRST —
 // it is the number the whole plug end is built on, and the assert below is
@@ -424,8 +428,10 @@ lip_w = (lcm_w - aa_w)/2;
 
 // ── THE INSERTION-LENGTH ASSERTION ─────────────────────────────────────────
 // What is left of the plug once the case's plug-end wall has taken its cut.
-// USB-A needs ~12 mm; below 11 the plug will not seat in a deep receptacle
-// and the whole device is useless, so this is an assert and not a comment.
+// USB-A needs ~12 mm; below the catalog's 11.0 floor — port_insertion_min()
+// in canary_port_lib, where this file's retyped copy went to live — the plug
+// will not seat in a deep receptacle and the whole device is useless, so
+// this is an assert and not a comment.
 // ── THE HEADERED BUILD'S GATES ─────────────────────────────────────────────
 // A "male" build that is no deeper than the bare one is a define that did
 // nothing, and it would render clean and print a case the pins hold open.
@@ -452,10 +458,7 @@ assert(stack_eff - preload <= 9.0 * rib_w,
            rib_w, " mm section — too slender to load. Widen rib_w."));
 
 usb_free = usb_proud - usb_wall;
-assert(usb_free >= 11.0,
-       str("USB-A insertion length is only ", usb_free,
-           " mm — the plug will not seat. Reduce usb_wall, or MEASURE ",
-           "usb_proud (the shell's real overhang past the PCB edge)."));
+port_assert_insertion(usb_free, "the hallway case's series-A plug");
 
 // The plug opening, with its outer relief chamfer, has to stay INSIDE the end
 // wall. If it does not, the case is open along an edge — and because the
@@ -593,6 +596,11 @@ assert(mark_w <= plate_x - 2.0,
 //  PRIMITIVES
 // ===========================================================================
 
+// The 2D rounded rect, deliberately still LOCAL: canary_core_lib owns this
+// shape as rrect2d, but under the name `rrect` that library draws the 3D
+// prism — a `use` here would leave every call one shadowed name away from a
+// silent 2D/3D mix-up. This file keeps its own copy (identical geometry) and
+// stays off the core lib until a redraw renames the call sites to rrect2d.
 module rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
 
 // The USB-A plug's cross-section: a RECTANGLE, 12.00 x 4.50, with barely

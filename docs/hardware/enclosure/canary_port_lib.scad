@@ -85,11 +85,13 @@ module port_bridge_profile2d(w, h, cham = port_bridge_cham()) {
 //  this with what its wall arithmetic leaves of the shell's overhang.
 // ---------------------------------------------------------------------------
 module port_assert_insertion(remaining, what = "the USB-A plug") {
+    // the floor is spelled out in the text (str(11.0) would print "11",
+    // and a spec number reads like one with its decimal on)
     assert(remaining >= port_insertion_min(),
            str("port: ", remaining, " mm of insertion length survives for ",
-               what, " — the floor is ", port_insertion_min(),
-               " mm or a recessed receptacle no longer latches. Thin the ",
-               "end wall or relieve its outer face; never shorten the shell."));
+               what, " — the floor is 11.0 mm or a recessed receptacle no ",
+               "longer latches. Thin the end wall or relieve its outer ",
+               "face; never shorten the shell."));
 }
 
 // ---------------------------------------------------------------------------

@@ -10,13 +10,19 @@
 //
 //  IMPORTANT: print at 100% / "actual size" — the 20 mm calibration square
 //  in the corner must measure exactly 20 mm.
+//
+//  2026-08-23: the studs-mode drill number now reads mount_kh_shank_d() from
+//  canary_mount_lib — same 4.2, but the paper can no longer drift from the
+//  keyhole pockets it templates.
 // ============================================================================
+
+use <canary_mount_lib.scad>  // the stud/keyhole standard the studs template drills for
 
 /* [What to render] */
 mode = "studs";      // ["studs","bracket","doorbell"]
 
 /* [Generic studs] */
-stud_gap = 30.0;
+stud_gap = 30.0;     // set per case (the fit coupon's POCKET pair prints at 30)
 
 /* [Bracket] — mirror canary_vision_enclosure bracket defaults */
 br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.2;
@@ -40,17 +46,22 @@ module outline2d(l, w, r) {
 }
 
 module studs2d() {
-    for (s = [1, -1]) translate([0, s*stud_gap/2]) { ring(4.2); cross(9); }
+    // the drill ring IS the mount interface: a wall screw whose shank must
+    // ride the keyhole slot — mount_kh_shank_d() (4.2), so this paper and
+    // the pockets can only ever change together
+    for (s = [1, -1]) translate([0, s*stud_gap/2]) { ring(mount_kh_shank_d()); cross(9); }
     translate([0, 0]) cross(6);
     translate([26, stud_gap/2 + 14]) cal();
-    translate([0, -stud_gap/2 - 12]) text(str("stud gap ", stud_gap, " — drill 4.2 + anchors"),
+    translate([0, -stud_gap/2 - 12]) text(str("stud gap ", stud_gap, " — drill ",
+                                              mount_kh_shank_d(), " + anchors"),
                                           size = 4, halign = "center");
 }
 
 module bracket2d() {
     outline2d(br_x, br_y, 3);
     for (sx = [1, -1], sy = [1, -1]) translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5)]) { ring(br_screw_d); cross(8); }
-    for (sx = [1, -1]) translate([sx*14, -3]) ring(7.5);
+    for (sx = [1, -1]) translate([sx*14, -3]) ring(7.5);   // the bracket's own through-plate keyhole
+                                                           // (7.5) — not the blind-pocket standard
     translate([0, 0]) cross(6);
     translate([br_x/2 + 18, br_y/2 + 6]) cal();
     translate([0, -br_y/2 - 8]) text("Vision/Sense bracket — 4x #8 screws", size = 4, halign = "center");

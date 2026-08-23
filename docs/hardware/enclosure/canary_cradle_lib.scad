@@ -24,10 +24,12 @@
 //    TOP PAIR — RIGID T-STUDS. The case's weight hangs here, on geometry
 //      that never flexes, so the load path has no fatigue site in it. And
 //      these are not a new invention: the Ø4 shaft / Ø6.6 head T-stud is
-//      already the catalog's mounting standard (canary_mount_adapters.scad
-//      — corner wedge, magnet plate, pole plate all wear it), mating with
-//      the blind keyhole pockets cases already print. The cradle moves that
-//      interface onto the wall plate rather than inventing a third system.
+//      the catalog's mounting standard — canary_mount_lib is its one home,
+//      and the cr_stud_* numbers below CITE it rather than restating it —
+//      already worn by canary_mount_adapters.scad's corner wedge, magnet
+//      plate and pole plate, mating with the blind keyhole pockets cases
+//      already print. The cradle moves that interface onto the wall plate
+//      rather than inventing a third system.
 //    BOTTOM PAIR — SPRUNG CLIPS. These carry no weight. Their only job is
 //      to stop the case swinging out at the bottom, so they can be tuned
 //      soft enough to release under a firm pull.
@@ -88,25 +90,43 @@
 //  and the plate outline are the adopter's business.
 // ============================================================================
 
-// ── THE INTERFACE CONSTANTS — these are the contract, change them here ──────
+use <canary_mount_lib.scad>  // the catalog stud standard — the cr_stud_*
+                             // numbers below are CITATIONS of it, not copies
+use <canary_core_lib.scad>   // rrect2d — the catalog's shared 2D helpers
+
+// ── THE INTERFACE CONSTANTS — these are the contract ────────────────────────
 // A case printed against one set of these numbers and a plate printed
 // against another do not dock. They are functions, not variables, for the
 // same reason egg_tip() is in canary_vent_lib.scad: an adopter that wants a
 // local name derives it instead of typing a copy that silently goes stale.
+// The stud numbers go one notch further: they are read from canary_mount_lib
+// rather than restated, because the dock stud IS the catalog stud — change
+// it THERE and the wall plate, the keyhole adapters and every pocket move
+// together, which is the only way "the same stud" stays true.
+// cradle_selfcheck() asserts the citation, so a re-typed literal here cannot
+// quietly fork the two. Everything cradle-specific still changes here.
 function cr_plate_t()  = 3.0;   // wall plate thickness (also the clip arm's Z)
 function cr_pad_h()    = 6.0;   // case-side pad height = the shadow gap the
                                 // case floats off the wall. Must clear the
                                 // plate (cr_plate_t) plus the screw heads
                                 // sitting in it — asserted below.
-function cr_stud_d()   = 4.0;   // T-stud shaft Ø — the catalog standard
-function cr_stud_head()= 6.6;   // T-stud head Ø — ditto
-function cr_stud_h()   = 3.4;   // stud total height above the plate face
+function cr_stud_d()   = mount_stud_d();    // T-stud shaft Ø — the catalog
+                                            // standard, canary_mount_lib
+function cr_stud_head()= mount_stud_head(); // T-stud head Ø — ditto
+function cr_stud_h()   = mount_stud_h();    // stud total height above the
+                                            // plate face — ditto
 function cr_drop()     = 6.0;   // how far the case drops to capture the studs
-function cr_lip_t()    = 1.4;   // the keyhole lip the trapped stud head pulls
-                                // against. Thin sounds alarming until you do
-                                // the sum: two studs share ~160 g, so each
-                                // lip sees well under a newton in shear. It
-                                // is sized against PULL-OFF, not weight.
+function cr_lip_t()    = mount_stud_stem();
+                                // the keyhole lip the trapped stud head pulls
+                                // against — exactly the stud's STEM height
+                                // (canary_mount_lib), so the head channel
+                                // starts where the head starts and a seated
+                                // head carries no axial play; the slide room
+                                // lives in cr_fit, not here. Thin sounds
+                                // alarming until you do the sum: two studs
+                                // share ~160 g, so each lip sees well under a
+                                // newton in shear. It is sized against
+                                // PULL-OFF, not weight.
 function cr_eng()      = 1.0;   // clip barb engagement (undercut depth)
 function cr_fit()      = 0.3;   // per-face clearance on every docking face
 
@@ -160,6 +180,11 @@ function cr_strain() =
 // so these fire wherever the interface is actually consumed. Returns true or
 // never returns at all.
 function cradle_selfcheck() =
+    // First, the lib this lib leans on — with canary_mount_lib missing every
+    // cr_stud_* below is undef, and the FIRST failing assert would otherwise
+    // be a geometric one whose message points at the wrong culprit.
+    assert(is_num(mount_stud_d()),
+           "canary_mount_lib.scad is MISSING — the dock stud numbers are cited from it. Keep it beside canary_cradle_lib.scad.")
     assert(cr_strain() < 0.02,
            str("cradle: clip strain ", cr_strain()*100, " % exceeds the 2 % ",
                "repeated-flex budget for PETG — lengthen cr_arm_l or thin cr_arm_w"))
@@ -173,6 +198,23 @@ function cradle_selfcheck() =
            "cradle: the insertion chamfer eats past the barb's own base — check the ramp angle convention")
     assert(cr_pad_h() > cr_barb_h() + 0.6,
            "cradle: the barb stands taller than the pad that has to swallow it")
+    // The citations above, asserted — a re-typed literal would fork the dock
+    // off the catalog stud exactly the way the local stud copies once forked
+    // the keyholes (see canary_mount_lib's header). Tolerance compares: the
+    // lib's stem+cone+cap sum is not bit-equal to 3.4 in floats.
+    assert(abs(cr_stud_d()    - mount_stud_d())    < 1e-9,
+           "cradle: dock stud shaft has forked off the catalog standard — cite canary_mount_lib, do not restate it")
+    assert(abs(cr_stud_head() - mount_stud_head()) < 1e-9,
+           "cradle: dock stud head has forked off the catalog standard — cite canary_mount_lib, do not restate it")
+    assert(abs(cr_stud_h()    - mount_stud_h())    < 1e-6,
+           "cradle: dock stud height has forked off the catalog standard — cite canary_mount_lib, do not restate it")
+    assert(abs(cr_lip_t()     - mount_stud_stem()) < 1e-9,
+           "cradle: the keyhole lip must fill exactly the stud's stem, or a seated head gains axial play")
+    // ...and _cr_tstud's own layer stack: the '-2.0' in its stem is the lib's
+    // cone + cap, so the local drawing and mount_tstud() stay the same stud
+    // in every layer even though they tessellate differently (see _cr_tstud)
+    assert(abs((cr_stud_h() - 2.0) - mount_stud_stem()) < 1e-6,
+           "cradle: _cr_tstud's stem no longer equals the catalog stud's stem — its -2.0 must be mount cone + cap")
     true;
 
 // Minimum sane span. The clip arms run INBOARD ALONG X from the bottom
@@ -218,7 +260,8 @@ function cradle_keepouts(dx, dy) =
            [for (p = cradle_case_clips(dx, dy))
                 [p[0], p[1], cr_barb_w()/2 + 4.5, cr_barb_w()/2 + 4.5]]);
 
-module _cr_rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// (The rounded rectangle here is the catalog's own rrect2d — canary_core_lib.
+// This file drew a private copy once; a copy is a fork, see that lib's header.)
 
 // Places a clip's local frame at a bottom corner. The clip is DRAWN with its
 // arm along +y and its barb protruding +x; this lays it down so the arm runs
@@ -249,12 +292,12 @@ module cradle_plate(dx, dy, w, h, rail = 0) {
             // the ring itself
             linear_extrude(cr_plate_t())
                 difference() {
-                    _cr_rrect(w, h, 6);
-                    _cr_rrect(w - 2*r, h - 2*r, 4);
+                    rrect2d(w, h, 6);
+                    rrect2d(w - 2*r, h - 2*r, 4);
                 }
             // ...with a spine across the middle, so the two screws sit on
             // solid material and the ring cannot lozenge under a knock
-            linear_extrude(cr_plate_t()) _cr_rrect(r, h - 2*r + 0.02, 0);
+            linear_extrude(cr_plate_t()) rrect2d(r, h - 2*r + 0.02, 0);
             // rigid T-studs, top pair
             for (p = cradle_studs(dx, dy)) translate([p[0], p[1], cr_plate_t()])
                 _cr_tstud();
@@ -276,8 +319,15 @@ module cradle_plate(dx, dy, w, h, rail = 0) {
     }
 }
 
-// T-stud — the catalog's standard mushroom (Ø4 shaft, Ø6.6 head). The head's
-// 1.3 mm overhang is a bridge, not a cliff: it prints off the cone below it.
+// T-stud — the catalog's standard mushroom (Ø4 shaft, Ø6.6 head), drawn from
+// the CITED canary_mount_lib numbers. The DRAWING stays local on purpose:
+// mount_tstud()'s stem carries a +0.01 union overlap into its cone where this
+// one butts them at the same diameter — the same solid, but it tessellates
+// differently, and a released plate must not move under a dedup (verified:
+// swapping the call in moves the mesh hash). cradle_selfcheck() pins this
+// drawing's layer stack to the lib's, so the two can only ever differ in
+// facets, never in shape. The head's 1.3 mm overhang is a bridge, not a
+// cliff: it prints off the cone below it.
 module _cr_tstud() {
     cylinder(d = cr_stud_d(), h = cr_stud_h() - 2.0);
     translate([0, 0, cr_stud_h() - 2.0])
@@ -405,13 +455,13 @@ module cradle_pads(dx, dy, z0) {
     for (p = cradle_studs(dx, dy))
         translate([p[0], p[1] + cr_drop()/2, z0 - cr_sink()])
             linear_extrude(cr_pad_h() + cr_sink())
-                _cr_rrect(cr_stud_head() + 9, cr_drop() + cr_stud_head() + 9, 4);
+                rrect2d(cr_stud_head() + 9, cr_drop() + cr_stud_head() + 9, 4);
     // the clip pads are elongated along X, because that is the way the barb
     // protrudes and springs once the arm is laid inboard along the width
     for (p = cradle_case_clips(dx, dy))
         translate([p[0], p[1], z0 - cr_sink()])
             linear_extrude(cr_pad_h() + cr_sink())
-                _cr_rrect(cr_barb_w() + 9, cr_barb_w() + cr_eng() + 11, 4);
+                rrect2d(cr_barb_w() + 9, cr_barb_w() + cr_eng() + 11, 4);
 }
 
 // ...and the pockets in them. All BLIND — nothing here reaches the case's

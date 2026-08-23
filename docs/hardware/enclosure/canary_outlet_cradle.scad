@@ -10,6 +10,9 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
+use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
+use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries around
+
 /* [What to render] */
 part = "cradle";     // ["cradle"]
 
@@ -25,7 +28,7 @@ grip_lip = 1.2;      // inward LOCATING lip at the collar front (clearance-sized
 
 /* [T-studs] — match the standard Canary keyhole pockets */
 stud_gap   = 30.0;   // stud spacing (vertical) — must fit the target case's kh_ys spread
-kh_face    = 1.0;
+kh_face    = 1.0;    // target pocket's face web — canary_mount_lib mount_kh_face()
 
 /* [Print tolerances] */
 tol_slide = 0.20;
@@ -39,14 +42,11 @@ assert(collar_d > grip_lip + 4, "collar too shallow");
 echo(str("Canary outlet cradle v0.1-dev — wart ", wart_w, "x", wart_h, "x", wart_d,
          " mm, studs at ", stud_gap, " mm  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-
+// T-stud from the mount library; this file's placement signature survives as
+// a wrapper. The stem tracks the kh_face knob (stem = face web + 0.4 slide
+// room) so a nonstandard pocket still gets a matching stud.
 module tstud(yc, zbase) {
-    translate([0, yc, zbase]) {
-        cylinder(d = 4.0, h = kh_face + 0.4);
-        translate([0, 0, kh_face + 0.4]) cylinder(d1 = 4.0, d2 = 6.6, h = 1.2);
-        translate([0, 0, kh_face + 1.6]) cylinder(d = 6.6, h = 0.8);
-    }
+    translate([0, yc, zbase]) mount_tstud(stem = kh_face + 0.4);
 }
 
 module cradle() {

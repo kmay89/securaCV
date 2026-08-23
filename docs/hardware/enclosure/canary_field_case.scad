@@ -30,13 +30,33 @@
 //  bonded; 1x adhesive ePTFE vent patch (Ø10+); closed-cell foam pad.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print- or dunk-validated.
+//
+//  v0.1-dev (2026-08-23): canary_*_lib adoption — and one deliberate geometry
+//  change. The board clips shipped clip_t/clip_hook = 1.5/0.8 on a 4.2 mm
+//  beam (standoff_h + board_h): ~10 % insertion strain, the exact pair the
+//  WAP warns cracks vertical-print PETG. A case that is dropped BY DESIGN was
+//  carrying the catalog's worst clips. Re-engineered through snap_boardclip's
+//  strain gate: 1.0/0.5 (~4.3 % against the 4.5 % once-budget, the WAP's
+//  print-proven pair) on this file's 8.0 mm tabs — the catalog's widest, and
+//  the honest place to buy retention, since holding force scales with tab
+//  width while strain does not. The lanyard bore roof is now the library
+//  teardrop (flat 45° crown, not the pointed local cap). All other meshes
+//  are unchanged.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect2d, tearbore_x, flat pan-head counterbore
+use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
+use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the blind pocket's one home
+use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
+// (no canary_port_lib: ZERO external connectors is this case's whole seal story)
 
 /* [What to render] */
 part = "all";        // ["body","lid","boot","gasket","bezel","all"]
 
 /* [Board] — XIAO ESP32-S3 Sense, camera stack up, USB toward +X wall */
-board_l = 21.0;  board_w = 17.5;  board_h = 1.2;
+board_l = 21.0;  board_w = 17.5;  board_h = 1.2;   // the xiao registry record — canary_board_lib;
+                     // the board rides in CLIPS, so clip_clear absorbs the measured
+                     // 17.8 width (brd_xiao_w_measured) and the spec 17.5 stays
 stack_h = 6.5;       // Sense expansion + camera height above the base PCB
 cam_dx = 0.0;        // lens center offset from board center
 cam_dy = 0.0;
@@ -47,7 +67,7 @@ foam_t = 2.0;        // closed-cell foam bed under + over the pack
 batt_pad = 1.0;
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
+tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog defaults — core_tol_* (canary_core_lib)
 
 /* [Shell] — 4 mm everywhere is the field-grade floor, not a suggestion.
    floor_t is 4.5 so the keyhole pockets reach the ecosystem-standard 3.5 mm
@@ -82,8 +102,12 @@ vent_x = -15.0;  vent_y = 6.0;
 
 /* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
-kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // Ø8 passes a #8 pan head too, not just the T-stud
-kh_head_h = 3.5;  kh_face = 1.0;    // 3.5 = catalog standard; fits the 3.4 mm T-stud
+kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // head Ø8.0 is a STATED deviation from
+                     // mount_kh_head_d() = 7.0: a field case gets hung on found hardware, and Ø8
+                     // passes a #8 pan head too, not just the T-stud. Shank/slot are the
+                     // canary_mount_lib standard.
+kh_head_h = 3.5;  kh_face = 1.0;    // catalog standard — mount_kh_head_h()/mount_kh_face();
+                     // fits the 3.4 mm T-stud (mount_stud_h) with 0.1 ceiling clearance
 
 /* [Lanyard] — paracord bore through the two -X lobes */
 lan_d = 4.5;  lan_z = 5.0;
@@ -105,9 +129,15 @@ boot_floor = 2.5;
 boot_fit  = 0.2;     // stretch interference
 grip_grooves = 3;
 
-/* [Board cradle] */
+/* [Board cradle] — clips are strain-gated by canary_snap_lib on every render.
+   The beam is standoff_h + board_h = 4.2 mm; the 1.5/0.8 this file used to
+   carry strains ~10 % there — the pair that cracks vertical-print PETG, on
+   the one case that is dropped by design. 1.0/0.5 is the WAP's print-proven
+   pair (~4.3 % against the 4.5 % once-budget, engagement 0.5 >= the 0.4
+   floor); retention comes from the catalog's widest tabs — holding force
+   scales with clip_w, insertion strain does not. */
 standoff_h = 3.0;
-clip_w = 8.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 8.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 
 /* [Divider] */
 rib_t = 2.0;  rib_h = 8.0;  notch_w = 6.0;  notch_d = 4.0;
@@ -172,7 +202,7 @@ if (wall_t < 4.0 || floor_t < 4.0 || lid_t < 4.0)
     echo("NOTE: shell thinner than 4.0 mm — CER-4 submersion intent assumes 4.0 mm");
 
 // ---- shared 2D ------------------------------------------------------------
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// rrect2d comes from canary_core_lib — the local copy is gone
 module cav2d() { rrect2d(inner_l, inner_w, r_in); }
 module outline2d() {
     rrect2d(out_l, out_w, r_out);
@@ -191,37 +221,29 @@ module grv_ring2d() {
     }
 }
 
-module teardrop2d(r) {
-    circle(r = r);
-    polygon([[-r*cos(45), r*sin(45)], [0, min(r + 0.75, r*1.38)], [r*cos(45), r*sin(45)]]);
-}
-module tearbore_y(px, pz, d, len) {   // horizontal bore along Y, teardrop up
-    translate([px, len/2, pz]) rotate([90, 0, 0]) linear_extrude(len) teardrop2d(d/2);
-}
-
 // ---- interior furniture ----------------------------------------------------
+// The WAP cantilever clip, routed through canary_snap_lib so the strain gate
+// runs on every render — boards go in once, so the ONCE budget applies. The
+// lib places clips across a Y edge line; this file's clips stand on the
+// board's ±Y edges via the original rotate-into-place transform (identity
+// ops around the lib's own drawing, so nothing but the clip numbers moved).
 module edgeclip(px, py, ang) {
-    bt = floor_t + standoff_h + board_h;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
     translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
+        snap_boardclip(0, 0, 1, floor_t, floor_t + standoff_h + board_h,
+                       clip_w, clip_t, clip_hook, clip_hook_h, clip_clear,
+                       snap_budget_once());
 }
 
-module keyhole_pocket(xc) {            // opens on the bottom face, blind
-    x0 = -kh_slot_l/2;  x1 = kh_slot_l/2;
-    translate([xc, 0, 0]) {
-        translate([0, 0, -0.1]) linear_extrude(kh_face + 0.1) {
-            translate([x0, 0]) circle(d = kh_head_d);
-            hull() { translate([x0, 0]) circle(d = kh_shank_d);
-                     translate([x1, 0]) circle(d = kh_shank_d); }
-        }
-        translate([0, 0, kh_face]) linear_extrude(kh_head_h - kh_face)
-            hull() { translate([x0, 0]) circle(d = kh_head_d + 0.6);
-                     translate([x1, 0]) circle(d = kh_head_d + 0.6); }
-    }
+// blind keyhole pocket, opening on the bottom face (z0 = 0); slot slides
+// toward +X so the case drops on and gravity latches. The drawing is
+// canary_mount_lib's, natively along X — this file passes its own Ø8.0 head
+// (the stated deviation at the knob), the rest is the standard. Drawn at
+// c = 0 and translated into place, matching how the local copy composed it
+// (the pocket tessellates in the same local frame, so the mesh stays put).
+module keyhole_pocket(xc) {
+    translate([xc, 0, 0])
+        mount_keyhole_pocket(0, 0, "x",
+                             kh_head_d, kh_shank_d, kh_slot_l, kh_head_h, kh_face);
 }
 
 // ---- parts ------------------------------------------------------------------
@@ -238,8 +260,12 @@ module body() {
         // blind keyhole pockets (bottom face; slot slides toward +X)
         keyhole_pocket(kh_x);
         keyhole_pocket(-kh_x);
-        // lanyard bore through both -X lobes (clears the pressure wall)
-        tearbore_y(-(inner_l/2 + lob_off), lan_z, lan_d, 2*end_lob_y + lob_d + 5);
+        // lanyard bore through both -X lobes (clears the pressure wall) —
+        // the library teardrop, swung onto Y (rotate about Z keeps the
+        // teardrop crown up); its flat 45° roof replaces the pointed local cap
+        translate([-(inner_l/2 + lob_off), 0, lan_z]) rotate([0, 0, 90])
+            tearbore_x(-(2*end_lob_y + lob_d + 5)/2, 0, 0,
+                       2*end_lob_y + lob_d + 5, lan_d);
     }
     // interior furniture — union AFTER the cuts so nothing erases it
     for (s = [1, -1])
@@ -270,11 +296,12 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
                 offset(r = -tol_slide - lip_w) cav2d();
             }
         }
-        // screw holes + pan-head counterbores
-        for (p = lobes()) translate([p[0], p[1], 0]) {
-            translate([0, 0, -0.1]) cylinder(d = cb_d, h = cb_h + 0.1);
-            translate([0, 0, -0.1]) cylinder(d = screw_c_d, h = lid_t + 0.2);
-        }
+        // screw holes + FLAT pan-head counterbores — canary_core_lib's seat
+        // (a shallow cone under a pan head bears only on its lip). The lib
+        // cuts down toward z = t; this lid's show face is z = 0, so mirror —
+        // the cut volumes land exactly where the local cylinders did.
+        for (p = lobes()) translate([p[0], p[1], lid_t]) mirror([0, 0, 1])
+            cb_flat_cut(0, 0, lid_t, screw_c_d, cb_d, cb_h);
         // lens: disc pocket (disc lands 0.2 sub-flush) + aperture
         translate([lens_x, lens_y, -0.1]) cylinder(d = disc_d + 2*tol_slide, h = disc_t + 0.3);
         translate([lens_x, lens_y, -0.1]) cylinder(d = ap_d, h = lid_t + 0.2);

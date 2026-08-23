@@ -74,7 +74,11 @@ module mount_tstud(d = mount_stud_d(), head = mount_stud_head(),
 //  adopters assert it). Drawn NATIVELY along the chosen axis — no rotate —
 //  so an adopting case renders vertex-for-vertex what its local copy drew:
 //  a rotated circle tessellates differently, and released STLs must not
-//  move under a dedup.
+//  move under a dedup. Composition matters for that identity too: a local
+//  copy that took its center via an outer translate([c,0,0]) must call
+//  mount_keyhole_pocket(0, ...) inside that same translate — passing c here
+//  as well would double the offset, and circles translated by a different
+//  path can land on different vertices.
 //
 //    c    — pocket center along the slot axis
 //    z0   — the outer back face (pocket cuts up/in from here)

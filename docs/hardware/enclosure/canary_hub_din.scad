@@ -6,9 +6,16 @@
 //  with all port faces open, chimney venting over the SoC, and an M.2/SSD
 //  HAT height budget.
 //
+//  2026-08-23: rrect/rrect2d now come from canary_core_lib (same geometry,
+//  one home), and the DIN leaf spring's ~0.8 % strain claim is now a
+//  canary_snap_lib assert instead of prose — checked on every tray render.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. The DIN
 //     clip is a printed spring — PETG minimum, verify engagement on your rail.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
+use <canary_snap_lib.scad>   // beam-strain arithmetic — the DIN leaf is a snap fit
 
 /* [What to render] */
 part = "all";        // ["tray","cover","all"]
@@ -25,9 +32,9 @@ standoff_h = 6.0;    // clearance under the board (PoE HAT pins / SD access)
 hat_h = 22.0;        // headroom above the PCB (HAT/M.2 + fan)
 
 /* [Shell] */
-wall_t = 2.0;  floor_t = 2.5;  lid_t = 2.0;  corner_r = 3.0;
+wall_t = 2.0;  floor_t = 2.5;  lid_t = 2.0;  corner_r = 3.0;   // wall_t: catalog default shell — core_wall(), canary_core_lib
 board_clear = 1.0;
-tol_slide = 0.20;  tol_hole = 0.30;
+tol_slide = 0.20;  tol_hole = 0.30;   // catalog defaults — core_tol_*(), canary_core_lib
 screw_d = 2.2;       // M2.5 self-tap into the standoffs
 screw_head_d = 5.0;
 lid_screw_d = 2.6;   // M3 self-tap into corner posts
@@ -57,9 +64,6 @@ total_h = floor_t + standoff_h + pcb_t + hat_h + lid_t;
 echo(str("Canary hub (Pi 5, DIN) v0.1-dev — ", out_l, " x ", out_w, " x ", total_h,
          " mm  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-module rrect(l, w, r, h) { linear_extrude(h) rrect2d(l, w, r); }
-
 function holes() = [
     [-pi_l/2 + hole_off_x,           -pi_w/2 + hole_off_y],
     [-pi_l/2 + hole_off_x + hole_dx, -pi_w/2 + hole_off_y],
@@ -79,6 +83,17 @@ module din_clip() {
     cw  = 42;                                   // clip block width along the rail
     gap = 1.6;                                  // land face -> lip top: clears 1.3 mm flange metal
     hz  = -6 - gap - 1.6;                       // hook plates' bottom z
+    // The leaf is a printed spring, so the snap doctrine applies: beam
+    // arithmetic from canary_snap_lib, CYCLE budget (a rail latch is worked
+    // on every install/remove). Real numbers: 1.8 mm arm flexing 1.0 mm of
+    // ride-over across a free length of root -> hook (cw*0.55 - 5 = 18.1).
+    // That is the "~0.8 % PETG strain" the comment above claims — now
+    // checked on every tray render instead of trusted.
+    arm_free = cw*0.55 - 5;
+    assert(snap_strain(1.8, 1.0, arm_free) <= snap_budget_cycle(),
+           str("din_clip: leaf strain ", round(snap_strain(1.8, 1.0, arm_free)*1000)/10,
+               " % exceeds the ", round(snap_budget_cycle()*1000)/10,
+               " % cycle budget — lengthen or thin the arm; do not deepen the hook"));
     translate([-cw/2, 0, 0]) {
         // riser lands OUTSIDE the rail span — the rail seats between them
         translate([0,  din_w/2 + din_t, -6]) cube([cw, 9, 6.01]);

@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.2-dev)
 //  Companion to docs/hardware/bench_bringup.md ("start here"): instead of a
 //  desk of loose alligator clips, a labeled plate holds every bring-up part
 //  in its station while you wire and test:
@@ -15,14 +15,34 @@
 //  slots dress the leads. Print flat, no supports.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
+//
+//  v0.2-dev (2026-08-23): canary_*_lib adoption, and the clips re-engineered
+//  by it. This file carried clip_t 1.5 / clip_hook 0.8 — the very numbers the
+//  WAP's comment warns crack vertical-print PETG (~10 % insertion strain) —
+//  on a jig whose whole point is swapping boards over and over, which is the
+//  REPEATED-flex duty class (snap_budget_cycle, 2 %). Now: the WAP's proven
+//  1.0/0.5 beam on a 6 mm standoff — the taller root lengthens the beam to
+//  7.2 mm, landing insertion strain at 1.45 % under the cycle budget, with
+//  the full 0.5 mm hook engagement kept. The lift also clears lead-routing
+//  room under the XIAO, which a wiring jig wanted anyway. snap_boardclip's
+//  assert holds the numbers honest on every render.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
+use <canary_snap_lib.scad>   // the cantilever board clip + the CYCLE strain budget
+use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
 
 /* [What to render] */
 part = "all";        // ["plate","slider","all"]
 
 /* [Board] — XIAO ESP32-S3 */
-board_l = 21.0;  board_w = 17.5;  board_h = 1.2;
-standoff_h = 3.0;
+board_l = 21.0;  board_w = 17.5;  board_h = 1.2;   // 21 x 17.5 x 1.2 spec —
+                     // brd_l/brd_w/brd_t("xiao"); the clips' clip_clear absorbs
+                     // the measured 17.8 (brd_xiao_w_measured())
+standoff_h = 6.0;    // clip-beam root height: 6.0 puts the beam at 7.2 mm and the
+                     // repeated-insertion strain at 1.45 % (< snap_budget_cycle);
+                     // it also leaves lead room under the board (was 3.0 — that
+                     // root made even the WAP's 1.0/0.5 clip fail the cycle budget)
 
 /* [Stations] — MEASURE your parts */
 bz_d   = 12.5;       // buzzer body diameter (CPT-9019 ~ 9 x 9; ring fits to 12.5)
@@ -45,25 +65,29 @@ label_depth = 0.5;
 label_font = "Liberation Sans:style=Bold";
 
 /* [Clips / tolerances] */
-clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
+                     // 1.0/0.5 — catalog standard, canary_snap_lib (this file shipped
+                     // the 1.5/0.8 that cracks; the lib's assert now forbids it)
 tol_slide = 0.20;  tol_press = 0.10;
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-echo(str("Canary bench fixture v0.1-dev — ", fx_w, "x", fx_h, "  (IN DEVELOPMENT)"));
+echo(str("Canary bench fixture v0.2-dev — ", fx_w, "x", fx_h, "  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// (rrect2d comes from canary_core_lib — the local copy is gone)
 module lbl(x, y, s) { translate([x, y, fx_t - label_depth]) linear_extrude(label_depth + 0.1)
     text(s, size = 3.6, font = label_font, halign = "center", valign = "center"); }
+// Cantilever snap clip at edge point (px,py); `ang` = outward normal. The
+// drawing is canary_snap_lib's beam, and the budget is the CYCLE one: a jig's
+// clips flex on every board swap, not a handful of times over a case's life,
+// so they get the 2 % allowance — the assert that would have refused this
+// file's original 1.5/0.8 numbers before they ever met PETG.
 module edgeclip(px, py, ang) {
-    bt = fx_t + standoff_h + board_h;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, fx_t], [clip_clear + clip_t, fx_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
     translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
+        snap_boardclip(0, 0, 1, fx_t, fx_t + standoff_h + board_h,
+                       clip_w, clip_t, clip_hook, clip_hook_h, clip_clear,
+                       snap_budget_cycle());
 }
 
 // station centers

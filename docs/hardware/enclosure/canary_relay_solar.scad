@@ -21,7 +21,24 @@
 //     CER-3 only after a verified W-2 pass. Antenna: keep the panel's lower
 //     edge >= 2 cm above the SMA and prefer a whip whose radiating half
 //     clears the roof plane — a panel 17 mm off the feedpoint detunes it.
+//
+//  2026-08-23: adopted the shared contract libraries (core/snap/port/board/
+//              mark) — the local helper copies they replace drew the same
+//              geometry. Two fixes ride along: the bridge-safe chamfered
+//              service-USB opening (canary_port_lib — this wall bridged a
+//              flat top) and PAN-head FLAT counterbores on the lid (the
+//              Vision's print-validated lesson — the old shallow cone left
+//              the head standing on the show face). New opt_mark knob
+//              debosses the house wordmark (default off).
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge lid, screw seats — the shared idiom
+use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
+use <canary_port_lib.scad>   // bridge-safe USB opening (the WAP's print-validated profile)
+use <canary_board_lib.scad>  // board registry — the LoRa knob defaults cite
+                             // brd_l/brd_w/brd_t("heltec_v3") (spec rung; the
+                             // MEASURE-yours duty stays until calipers upgrade it)
+use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 
 /* [What to render] */
 part = "all";        // ["body","lid","roof","gasket","all"]
@@ -56,14 +73,24 @@ strap_t = 2.0;       // channel depth
 
 /* [Shell / tolerances / fasteners] */
 wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_r = 3.0;
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
+tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // the catalog trio — core_tol_*(), canary_core_lib
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
 usb_w = 10.5;  usb_h = 6.5;   // service USB opening, bottom wall (plug when deployed)
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;   // snap_boardclip defaults — canary_snap_lib runs the strain budget as an assert
 standoff_h = 3.0;
 lid_edge = 0.8;  lid_edge2 = 0.0;
 foot_cham = 0.5;
+
+/* [Aesthetics] */
+opt_mark   = false;  // deboss the house wordmark on the lid (canary_mark_lib) — placed by
+                     // mark_dx/dy/rot/size/depth, gated by the library's measured type
+                     // metrics so an unprintable size is refused before a print, not after
+mark_size  = 5.0;    // wordmark cap height
+mark_depth = 0.5;    // deboss depth (the lid prints face-down -> crisp first-layer voids)
+mark_dx    = 0.0;    // mark center offset from the LID-plate center
+mark_dy    = 0.0;    // default sits centered, clear of the gland hole and the vent spot-face
+mark_rot   = 0;      // rotation (degrees)
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -103,25 +130,40 @@ function post_xy() = [
     [-inner_x/2 + pd/2 + 0.2, -inner_y/2 + pd/2 + 0.2],
 ];
 assert(lip_h < cav_d, "lip_h vs cavity");
+assert(!opt_mark || (mark_depth > 0 && mark_depth < lid_t),
+       "mark_depth must be between 0 and lid_t");
+// the wordmark's two gates, from the mark library's measured type metrics:
+// below mark_word_min_h() a 0.4 mm bead no longer reaches the letterforms and
+// the deboss prints as a smudge with the rhythm of type — the render looks
+// perfect either way, which is why this is an assert and not an eyeball
+assert(!opt_mark || mark_size >= mark_word_min_h(),
+       str("opt_mark at mark_size ", mark_size, " mm is under the ",
+           mark_word_min_h(), " mm cap height where a 0.4 mm bead still ",
+           "reaches the letterforms — raise mark_size"));
+assert(!opt_mark || mark_word_ink_w("securaCV", mark_size) <= plate_x - 4.0,
+       str("the wordmark draws ", mark_word_ink_w("securaCV", mark_size),
+           " mm at mark_size ", mark_size, " on a ", plate_x,
+           " mm lid (2 mm margin per side) — shrink mark_size"));
 echo(str("Canary solar relay pod v0.1-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t,
          " mm, panel ", pan_w, "x", pan_l, " @ ", roof_ang, " deg  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-module rrect(l, w, r, h) { linear_extrude(h) rrect2d(l, w, r); }
+// rrect2d/rrect come from canary_core_lib; only file-specific geometry stays local
 module rim_ring2d(w) {
     difference() {
         offset(r =  w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
         offset(r = -w/2) rrect2d(inner_x + wall_eff, inner_y + wall_eff, max(0.1, corner_r - wall_eff/2));
     }
 }
+// Cantilever snap clip on the LoRa board's edge — canary_snap_lib's beam
+// (the WAP pattern), so the insertion-strain arithmetic runs as an assert on
+// every render: this board sits at standoff_h 3.0, which is exactly the
+// short-beam regime where 1.5/0.8-class numbers crack vertical-print PETG.
+// The clips stand on the ±X edges, so the wrapper keeps the axis rotation
+// and hands the drawing to the library.
 module edgeclip(px, py, ang, soff) {
-    bt = floor_t + soff + pcb_t;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
     translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
+        snap_boardclip(0, 0, 1, floor_t, floor_t + soff + pcb_t,
+                       clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
 }
 
 module body() {
@@ -144,8 +186,14 @@ module body() {
                         circle(d = sma_d);
                         translate([-sma_d/2, -sma_d/2]) square([sma_d - 0.6, sma_d]);
                     }
-            // service USB, bottom wall (silicone plug when deployed)
-            translate([lb_cx, -out_y/2, usb_zc]) cube([usb_w, wall_eff*3, usb_h], center = true);
+            // service USB, bottom wall (silicone plug when deployed):
+            // 45°-chamfered top corners halve the unsupported bridge in the
+            // upright-printed wall and keep any droop out of the plug envelope
+            // — canary_port_lib (the WAP's print-validated profile; this wall
+            // used to bridge a flat top)
+            translate([lb_cx, -out_y/2 + wall_eff*1.5, usb_zc])
+                rotate([90, 0, 0]) linear_extrude(wall_eff*3)
+                    port_bridge_profile2d(usb_w, usb_h);
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
@@ -195,19 +243,15 @@ module body() {
 module lid() {
     union() {
         difference() {
-            union() {
-                rrect(plate_x, plate_y, plate_r, lid_t - lid_edge);
-                hull() {
-                    translate([0, 0, lid_t - lid_edge]) rrect(plate_x, plate_y, plate_r, 0.01);
-                    translate([0, 0, lid_t - 0.01])
-                        rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
-                }
-            }
-            for (p = post_xy()) {
-                translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
-                translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
-            }
+            // the plate with the catalog's two-stage soft edge — canary_core_lib
+            // (this also wires up the previously inert lid_edge2 knob)
+            soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
+            // flat counterbores: the BOM's PAN-head screws seat flush — the
+            // canary_core_lib seat, per the Vision's print-validated lesson
+            // (a cone this shallow left the head standing on the show face)
+            for (p = post_xy())
+                cb_flat_cut(p[0], p[1], lid_t, screw_d + 2*tol_hole,
+                            screw_head_d + 2*tol_hole, screw_head_h);
             // panel-lead gland hole (fit an M8 cable gland or silicone-seal)
             translate([bh_cx, inner_y/2 - 8, -1]) cylinder(d = 8.2, h = lid_t + 2);
             // pressure vent: Ø3 hole + inner spot-face for an adhesive ePTFE
@@ -216,6 +260,13 @@ module lid() {
             // without a membrane (field_ratings.md rule). Roof-shaded face.
             translate([lb_cx, -inner_y/4, -1]) cylinder(d = 3.0, h = lid_t + 2);
             translate([lb_cx, -inner_y/4, lid_t - 0.9]) cylinder(d = 5.4, h = 1.0);
+            // the house wordmark (opt_mark), debossed on the show face by the
+            // first-layer machinery — canary_mark_lib owns the word and its
+            // metrics, this file only places it (mark_dx/dy/rot/size/depth)
+            if (opt_mark)
+                translate([mark_dx, mark_dy, lid_t - mark_depth])
+                    linear_extrude(mark_depth + 1) rotate(mark_rot)
+                        mark_wordmark(mark_size);
         }
         difference() {   // lip
             translate([0, 0, -lip_h]) difference() {

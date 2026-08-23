@@ -26,7 +26,7 @@ btn_d = 12.0;        // button body diameter
 ring_t = 0.8;
 
 /* [Print tolerances] */
-tol_slide = 0.20;
+tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

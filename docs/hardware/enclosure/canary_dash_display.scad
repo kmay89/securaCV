@@ -21,12 +21,15 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
-use <canary_cradle_lib.scad>   // the click-on wall dock — shared with the 7"
+use <canary_core_lib.scad>     // rrect2d + the catalog tolerance trio the knobs cite
+use <canary_cradle_lib.scad>   // the click-on wall dock — this case is so far
+                               // its only adopter (the 7" hangs on two screws
+                               // through plain keyholes, no dock)
 // Downloaded this file alone? The back's dock pads and their pockets come
 // from that library. A missing one would render a back plate with four blind
 // bumps and no way to hang it, with only a console warning. Hard stop:
 assert(is_num(cr_pad_h()),
-       "canary_cradle_lib.scad is MISSING — this case docks on it. Download canary_cradle_lib.scad from the same folder and keep the two files side by side.");
+       "canary_cradle_lib.scad is MISSING — this case docks on it. Download canary_cradle_lib.scad (and the canary_mount_lib / canary_core_lib files it and this case lean on) from the same folder and keep them side by side.");
 
 /* [What to render] */
 part = "all";        // ["frame","back","stand","cradle","all"]
@@ -45,7 +48,7 @@ term_open = false;   // also open the CAN/RS485 terminal zone
 term_dx  = -30.0;  term_w = 24.0;  term_h = 8.0;
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
+tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog trio — canary_core_lib core_tol_*()
 
 /* [Shell] */
 frame_w = 3.5;       // side wall thickness
@@ -125,7 +128,7 @@ assert(cb_h + 1.0 <= back_t, "counterbore through the back plate");
 echo(str("Canary dash display v0.1-dev — ", out_l, " x ", out_w, " x ", total_t,
          " (view ", view_l, " x ", view_w, ")  (IN DEVELOPMENT — MEASURE YOUR PANEL)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// (rrect2d comes from canary_core_lib — this file's private copy is gone)
 function bosses() = [for (sx = [1, -1], sy = [1, -1])
     [sx*(inner_l/2 + lob_o), sy*(inner_w/2 + lob_o)]];
 module outline2d() {                    // shell + corner screw lobes

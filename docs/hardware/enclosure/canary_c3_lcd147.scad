@@ -233,6 +233,9 @@
 
 use <canary_mark_lib.scad>   // the house mark; this part wears the wordmark
 use <canary_vent_lib.scad>   // the house egg — here it is the hanger, not a vent
+use <canary_core_lib.scad>   // rrect2d — the shared 2D helpers; the local copy is gone
+use <canary_port_lib.scad>   // the series-A standards + the insertion-length gate
+use <canary_board_lib.scad>  // the ws147 board record the knob defaults cite
 
 /* [What to render] */
 part  = "all";      // ["bezel","lid","light","mark","shell","coupon","all","exploded","palette"]
@@ -242,9 +245,11 @@ headers = "pillars";   // ["pillars","none","male"]
 port = "usb_c";   // ["usb_c","usb_a"]
 
 /* [Board] — ESP32-C3-LCD-1.47, from the Waveshare drawing (mm) */
-board_l = 36.37;   // PCB long axis (Y, portrait height)
-board_w = 20.32;   // PCB short axis (X)
-pcb_t   = 1.6;     // PCB thickness — MEASURE (drawing does not call it out)
+board_l = 36.37;   // PCB long axis (Y, portrait height) — brd_l("ws147"),
+                   // canary_board_lib: the 1.47 family outline's one home
+board_w = 20.32;   // PCB short axis (X) — brd_w("ws147"), canary_board_lib
+pcb_t   = 1.6;     // PCB thickness — brd_t("ws147"); MEASURE (the drawing
+                   // does not call it out — the registry says so too)
 lcd_rise   = 3.65; // glass front above the PCB front face (same 1.47" module as the C6)
 back_stack = 4.8;  // back clearance below the PCB, stripped board: the BACK-
                    // mounted USB shell (≈3.3) is the tallest thing (the TF
@@ -264,6 +269,9 @@ brass_h   = 3.0;   // factory pillar height above the PCB back — MEASURED
                    // the PCB back — so the pillars stand 3.0, not the 5.0
                    // this file guessed. The 2.0 mm error is why print 2's
                    // board floated: the 0.8 mm bosses stopped far short.
+                   // The measurement's home is now brd_ws147_brass_c3() in
+                   // canary_board_lib — beside the C6's unmeasured 5.0, so
+                   // the two claims can never be mistaken for each other.
 stand_gap = 2.8;   // lid inner face → pillar top — MEASURED (kmay89, print
                    // 2), and load-bearing twice: it is the press-boss
                    // height (the stub reaches the pillar and just lightly
@@ -318,8 +326,9 @@ usb_proud  = 1.9;  // shell overhang past the PCB edge — MEASURE
 
    The shell dimensions are the USB 2.0 mechanical standard and are NOT to be
    "adjusted to fit": if the plug will not pass, the opening is wrong. */
-usb_a_w = 12.00;    // series-A shell width — the standard
-usb_a_h = 4.50;     // series-A shell height — the standard
+usb_a_w = 12.00;    // series-A shell width — port_usba_shell_w(), the
+                    // standard's home in canary_port_lib
+usb_a_h = 4.50;     // series-A shell height — port_usba_shell_h(), same home
 usb_a_proud = 14.0; // shell overhang past the PCB edge — MEASURE. This is the
                     // number the whole plug end is built on. A series-A shell
                     // is ~14 mm long overall and solders overlapping the
@@ -1330,11 +1339,10 @@ assert(!is_a || headers != "pillars",
            "really does ship with pillars, MEASURE them and delete this."));
 // THE INSERTION LENGTH, and it is an assert because the failure is total: a
 // plug that will not seat makes the whole device useless, and it is invisible
-// until someone tries to plug it in.
-assert(!is_a || usb_free >= 11.0,
-       str("USB-A insertion length is only ", usb_free, " mm (plug stands ",
-           usb_a_proud, " past the PCB edge, wall takes ", wall,
-           ") — the plug will not seat. MEASURE usb_a_proud."));
+// until someone tries to plug it in. The 11.0 floor is not this file's any
+// more — it is port_insertion_min() in canary_port_lib, the one home for a
+// number this file and the hallway case each used to retype.
+if (is_a) port_assert_insertion(usb_free, "the pocket case's series-A plug");
 // The collar reaches INWARD, so it must fit in the depth above the PCB back
 // face — below that plane is the board. A collar taller than the room it has
 // simply gets clipped to nothing by its own intersection, silently.
@@ -1517,7 +1525,7 @@ module kh_ring_white2d() {
     difference() { offset(r = egg_ring_w) kh_egg2d(); kh_egg2d(); }
 }
 
-module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
+// (rrect2d used to live here — it is canary_core_lib's now, same geometry.)
 // stadium: full-round ends, the USB-C shell's own profile
 module stadium2d(w, h) { rrect2d(w, h, h/2 - 0.05); }
 

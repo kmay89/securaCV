@@ -38,8 +38,8 @@ cg_panel  = 2.0;     // panel thickness
 cg_flange = 14.0;
 
 /* [Print tolerances] */
-tol_slide = 0.20;
-tol_press = 0.10;
+tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib
+tol_press = 0.10;    // catalog default — core_tol_press(), canary_core_lib
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
