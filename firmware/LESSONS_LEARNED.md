@@ -7,6 +7,35 @@
 
 ---
 
+## A driver library's init table is a PANEL personality, not a chip default
+
+### The stock RM690B0 table lit the T4-S3 and darkened the Waveshare 2.41 (2026-08)
+- **What happened:** The AMOLED 2.41's first hardware boot showed a
+  perfectly healthy serial log — QSPI up, FT6336 answering, "RM690B0
+  AMOLED portrait up" — and a completely dark glass. The HAL used
+  `Arduino_RM690B0::begin()`, whose built-in init table is the LilyGO
+  T4-S3's: its `0x5A`/`0x5B` writes ("SWIRE FOR BV6804") program *that
+  module's* AMOLED power chip through the controller. On the Waveshare
+  panel those values misprogram a power stage the bench-tested init
+  (CircuitPython's, this pin map's provenance) never touches. A wrongly
+  powered emissive panel still ACKs every bus command — nothing in
+  software can see the failure.
+- **Also wrong, more quietly:** our one-register "vendor delta"
+  (page-0x13 `0xEB=0x0E`) was replayed *after* `begin()` — the bench sets
+  it before sleep-out. Patching a foreign personality after the fact is
+  not the same init sequence.
+- **The fix:** subclass and override `tftInit()` so `begin()` plays the
+  full bench-tested sequence for this exact panel, in bench order
+  (`display_amoled241.cpp`).
+- **Guidance:** a display class named after the *controller* ships an init
+  table tuned for one *panel module* — power programming (SWIRE/gamma/bias)
+  travels with the module, not the silicon. Bringing up a new glass, diff
+  the library's table against a bench-proven init for that exact product
+  before trusting `begin()`; on emissive panels, assume "serial fine, zero
+  photons" means panel power until proven otherwise.
+
+---
+
 ## A diagnostic named after a thing must test that thing
 
 ### chain_ok never looked at the chain — on two products at once (2026-08, PR #1540)
