@@ -46,26 +46,37 @@
 //  and the geometry below are the same bird by construction. Edit the paths
 //  in the library and re-run the generator; never hand-edit the SVG.
 //
+//  2026-08-23: the coupon now exercises the SHARED LIBRARIES' geometry —
+//  pockets/click/studs from canary_mount_lib, the clip from canary_snap_lib,
+//  the port profile from canary_port_lib — and runs all five lib self-checks
+//  on every render. A coupon that calibrates the catalog must print the
+//  catalog's actual modules, not private copies of them.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
 use <canary_mark_lib.scad>   // THE BIRD — one mark for the whole
                              // catalog; see that file's header for why
                              // it is authored rather than traced
+use <canary_core_lib.scad>   // rrect2d + the tolerance trio this coupon tunes
+use <canary_mount_lib.scad>  // the stud/keyhole standard — the POCKET/MATE pair
+use <canary_snap_lib.scad>   // the WAP clip + its strain budget — the CLIP station
+use <canary_port_lib.scad>   // the bridge-safe opening — the PORT station
+use <canary_board_lib.scad>  // the board registry — its self-check runs here
 
 /* [What to render] */
 part = "all";        // ["base","mate","strip","all"]
 
 /* [Print tolerances under test — same trio as every case] */
-tol_slide = 0.20;
-tol_press = 0.10;
-tol_hole  = 0.30;
+tol_slide = 0.20;   // catalog default — core_tol_slide(), canary_core_lib
+tol_press = 0.10;   // catalog default — core_tol_press(), canary_core_lib
+tol_hole  = 0.30;   // catalog default — core_tol_hole(), canary_core_lib
 
 /* [Interface dims — mirror the case defaults] */
-stud_gap = 30.0;
-kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_h = 3.5;  kh_face = 1.0;
-kh_click = 0.25;  // detent bump proud of the head-channel ceiling (0 = no click)
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
+stud_gap = 30.0;  // the coupon's print-tested gap (canary_mount_lib's header cites it)
+kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_h = 3.5;  kh_face = 1.0;  // catalog standard — mount_kh_*(), canary_mount_lib
+kh_click = 0.25;  // detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;  // the WAP clip — snap_boardclip defaults, canary_snap_lib
 clip_bw = 17.5;   // the WAP's board width — the CLIP station is its coupon verbatim
 pcb_t = 1.2;  standoff_h = 3.0;  standoff_d = 4.0;
 screw_d = 1.6;  screw_head_d = 4.0;
@@ -74,7 +85,7 @@ insert_d = 3.5;  insert_h = 4.0;
 mag_d = 6.0;  lp_d = 3.0;
 lip_t = 1.2;  lip_h = 4.0;
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;   // matches the catalog gasket recipe (20 % squeeze, ~86 % fill)
-usb_w = 12.0;  usb_h = 6.5;   // the WAP case's USB-C opening (clears rugged cable boots)
+usb_w = 12.0;  usb_h = 6.5;   // the WAP case's USB-C opening (clears rugged cable boots); cut via port_bridge_profile2d, canary_port_lib
 port_wall = 2.0;              // case-typical wall the PORT opening is cut through
 
 /* [Coupon] */
@@ -181,7 +192,6 @@ if (glyph_show) {
 // function because OpenSCAD's use<> does not carry variables.)
 // ---------------------------------------------------------------------------
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
 module lbl(x, y, s, size = 4.5) { translate([x, y, base_t - label_depth]) linear_extrude(label_depth + 0.1)
     text(s, size = size, font = label_font, halign = "center", valign = "center"); }
 module emb(x, y, s, size = 7) { translate([x, y, base_t - 0.05]) linear_extrude(emboss_h + 0.05)
@@ -197,33 +207,21 @@ module emblem_emb(px, py, h) {
         mark_emboss(h, emboss_h + 0.05, emblem_rib, emblem_crown);
 }
 module keyhole_pocket(px, py) {         // blind, from the back (z=0 face)
-    translate([px, py, 0]) union() {
-        translate([0, -kh_slot_l/2, -0.1]) linear_extrude(kh_face + 0.1) {
-            circle(d = kh_head_d);
-            hull() { circle(d = kh_shank_d); translate([0, kh_slot_l]) circle(d = kh_shank_d); }
-        }
-        translate([0, -kh_slot_l/2, kh_face]) linear_extrude(kh_head_h - kh_face)
-            hull() { circle(d = kh_head_d + 0.6); translate([0, kh_slot_l]) circle(d = kh_head_d + 0.6); }
-    }
+    translate([px, py, 0])              // the catalog pocket, native y-axis slot
+        mount_keyhole_pocket(0, 0, axis = "y", head_d = kh_head_d,
+                             shank_d = kh_shank_d, slot_l = kh_slot_l,
+                             head_h = kh_head_h, face = kh_face);
 }
-// The WAP's boardclip profile verbatim, rooted on the coupon face: beam +
-// inward hook + 45° lead-in. sy = +1/-1 picks which long edge of the CLIP
-// station's board channel the clip guards — one on EACH side, like the case.
+// The WAP's boardclip, rooted on the coupon face — snap_boardclip itself, so
+// the station tests the very module the cases print, and its strain gate runs
+// on every coupon render too. sy = +1/-1 picks which long edge of the CLIP
+// station's board channel the clip guards — one on EACH side, like the case;
+// this wrapper only turns the channel center into the lib's board-edge line.
 module stationclip(cx, cy, sy) {
-    bt = base_t + standoff_h + pcb_t;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, base_t], [clip_clear + clip_t, base_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
-    translate([cx, cy + sy*clip_bw/2, 0]) scale([1, sy, 1])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
-}
-// POCKET click detent: a shallow dome on the head-channel ceiling at slot
-// mid-travel — cleared during stud insertion, cammed over on the slide, and
-// the head parks BEHIND it (kh_click 0.25 against the head's 0.1 ceiling
-// clearance = 0.15 squeeze). Slide on, CLICK, stays until a firm pull back.
-module keyhole_click(px, py) {
-    translate([px, py, kh_head_h]) scale([0.9, 0.9, kh_click]) sphere(1);
+    snap_boardclip(cx, cy + sy*clip_bw/2, sy,
+                   z_floor = base_t, z_board = base_t + standoff_h + pcb_t,
+                   w = clip_w, t = clip_t, hook = clip_hook,
+                   hook_h = clip_hook_h, clear = clip_clear);
 }
 
 // Station anchors — one grid, every label gets clear air.
@@ -245,14 +243,13 @@ module base() {
                 rrect2d(30 + 2*tol_slide, lip_t + 2*tol_slide, 0.3);
             // PORT station: the WAP's USB-C opening through a case-typical wall —
             // counterbored from the back so the web is port_wall thick, like a case.
-            // The through profile is the WAP's port VERBATIM (square lower corners,
-            // 45°-chamfered top corners) so a boot that passes here passes the case.
+            // The through profile is port_bridge_profile2d — the WAP's bridge-safe
+            // polygon itself (square lower corners, 45°-chamfered top corners) —
+            // so a boot that passes here passes the case.
             translate([2, 16, -0.1]) linear_extrude(base_t - port_wall + 0.1)
                 rrect2d(usb_w + 6, usb_h + 5, 2);
             translate([2, 16, -0.1]) linear_extrude(base_t + 0.2)
-                polygon([[-usb_w/2, -usb_h/2], [usb_w/2, -usb_h/2],
-                         [usb_w/2, usb_h/2 - 2.5], [usb_w/2 - 2.5, usb_h/2],
-                         [-usb_w/2 + 2.5, usb_h/2], [-usb_w/2, usb_h/2 - 2.5]]);
+                port_bridge_profile2d(usb_w, usb_h);
             // PRESS station: magnet pocket + light-pipe hole
             translate([26, 16, base_t - 2.2]) cylinder(d = mag_d + 2*tol_press, h = 2.3);   // matches mag_h 2.2
             translate([35, 16, -0.1]) cylinder(d = lp_d + 2*tol_press, h = base_t + 0.2);
@@ -306,8 +303,12 @@ module base() {
                 cube([12, standoff_d, standoff_h + 0.01]);
             stationclip(-31, -16.5, sy);
         }
-        // POCKET station: the click detents, one per keyhole
-        if (kh_click > 0) for (s = [1, -1]) keyhole_click(pocket_cx + s*stud_gap/2, -14);
+        // POCKET station: the click detents, one per keyhole — the lib's dome
+        // on the head-channel ceiling (kh_click 0.25 against the head's 0.1
+        // ceiling clearance = 0.15 squeeze: slide on, CLICK, stays until a
+        // firm pull back)
+        if (kh_click > 0) for (s = [1, -1])
+            mount_keyhole_click(pocket_cx + s*stud_gap/2, -14, kh_head_h, kh_click);
         // SCREW station: M2 self-tap post
         translate([14, 1, base_t - 0.01]) difference() {
             cylinder(d = 5, h = 8);
@@ -328,12 +329,11 @@ module mate() {
             translate([0, -6.5, 3 - label_depth]) linear_extrude(label_depth + 0.1)
                 text("CANARY MATE", size = 3.2, font = label_font, halign = "center", valign = "center");
         }
-        // T-studs at stud_gap (hang on the base's pockets, slide down)
-        for (s = [1, -1]) translate([s*stud_gap/2, 0, 3 - 0.01]) {
-            cylinder(d = 4.0, h = kh_face + 0.4);
-            translate([0, 0, kh_face + 0.4]) cylinder(d1 = 4.0, d2 = 6.6, h = 1.2);
-            translate([0, 0, kh_face + 1.6]) cylinder(d = 6.6, h = 0.8);
-        }
+        // T-studs at stud_gap (hang on the base's pockets, slide down) — the
+        // catalog stud itself, its stem tracking kh_face per the mount
+        // contract (stem = pocket face web + 0.4 slide room)
+        for (s = [1, -1]) translate([s*stud_gap/2, 0, 3 - 0.01])
+            mount_tstud(stem = kh_face + 0.4);
         // slide tongue — bottom-flush on the +y EDGE, in the plate's plane, so
         // the stud face stays dead flat and the hang test seats fully (the v0.2
         // face rib propped the mate 3 mm off the base). Hold the mate on edge
@@ -346,6 +346,15 @@ module mate() {
 module strip() {   // TPU gasket bar for the GROOVE station
     linear_extrude(gasket_groove + gasket_proud) rrect2d(29.4, gasket_w - 0.5, 0.3);   // strip 0.5 narrower, like the case gaskets
 }
+
+// The libraries' load-time gates: use<> does not run top-level statements,
+// so the coupon — the catalog's calibration authority — runs every lib's
+// self-check on every render of every part. Five OK echoes, or no STL.
+core_selfcheck();
+mount_selfcheck();
+snap_selfcheck();
+port_selfcheck();
+board_selfcheck();
 
 if      (part == "base")  base();
 else if (part == "mate")  mate();

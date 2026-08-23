@@ -11,7 +11,15 @@
 //  is required.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
+//
+//  v0.1-dev (2026-08-23): canary_*_lib adoption (dedup, mesh-identical);
+//  opt_mark knob added — the mark rides the lid's INTERIOR face, default off.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
+use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
+use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
+use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 
 /* [What to render] */
 part = "all";        // ["body","lid","all"]
@@ -19,9 +27,15 @@ part = "all";        // ["body","lid","all"]
 /* [Options] */
 opt_camera = true;   // aperture hidden in the knockout ring (XIAO Sense)
 opt_led    = false;  // pinhole light pipe (covert: usually off)
+// A covert box stays street-plain outside, so the mark sits where only the
+// installer sees it.
+opt_mark   = false;  // deboss the house wordmark on the lid's INTERIOR face (covert: never outside)
 
 /* [Board] — XIAO ESP32-S3 (Sense) */
 board_l = 21.0;  board_w = 17.5;  board_h = 1.2;  board_clear = 0.6;
+                     // 21 x 17.5 spec — brd_l/brd_w("xiao"), canary_board_lib; a
+                     // real board mics 17.8 (brd_xiao_w_measured()) and the clips'
+                     // clip_clear absorbs the difference, so the spec default stands
 stack_h = 8.0;   standoff_h = 3.0;
 
 /* [Shell] */
@@ -61,23 +75,27 @@ base_h = floor_t + cav_h;
 pd = post_d;
 echo(str("Canary covert j-box v0.1-dev — ", out_l, " x ", out_w, " x ", base_h + lid_t,
          " mm  (IN DEVELOPMENT)"));
+// the mark library's measured type metrics gate the interior wordmark the same
+// way they gate an exterior one — a smudge inside the box is still a smudge
+assert(!opt_mark || mark_word_ink_w("securaCV", 4.0) <= inner_l - 6,
+       str("opt_mark: the wordmark draws ", mark_word_ink_w("securaCV", 4.0),
+           " mm wide — more than the lid interior offers; shrink the cap height"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-module rrect(l, w, r, h) { linear_extrude(h) rrect2d(l, w, r); }
+// (rrect2d/rrect come from canary_core_lib — the local copies are gone)
 function post_xy() = [
     [ inner_l/2 - pd/2 - 0.2,  inner_w/2 - pd/2 - 0.2],
     [-inner_l/2 + pd/2 + 0.2,  inner_w/2 - pd/2 - 0.2],
     [ inner_l/2 - pd/2 - 0.2, -inner_w/2 + pd/2 + 0.2],
     [-inner_l/2 + pd/2 + 0.2, -inner_w/2 + pd/2 + 0.2],
 ];
-module edgeclip(px, py, ang) {
-    bt = floor_t + standoff_h + board_h;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
-    translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
+// Cantilever snap clip on a board long edge — the compact-WAP idiom, so the
+// drawing now comes from canary_snap_lib like the WAP's own: the insertion-
+// strain arithmetic runs as an assert on every render instead of trusting a
+// copied number. `cx` = position along the edge; `sy` = +1/-1 picks the edge.
+module boardclip(cx, sy) {
+    snap_boardclip(cx, sy * board_w/2, sy,
+                   floor_t, floor_t + standoff_h + board_h,
+                   clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
 }
 
 module body() {
@@ -111,7 +129,7 @@ module body() {
         for (s = [1, -1])
             translate([s*(board_l/2 - 1.5) - 1.5, -(board_w - 1)/2, floor_t - 0.01])
                 cube([3, board_w - 1, standoff_h + 0.01]);
-        for (s = [1, -1]) for (cx = [-board_l/4, board_l/4]) edgeclip(cx, s*board_w/2, s > 0 ? 90 : 270);
+        for (s = [1, -1]) for (cx = [-board_l/4, board_l/4]) boardclip(cx, s);
     }
 }
 
@@ -126,6 +144,13 @@ module lid() {
             }
             if (opt_camera) translate([cam_dx, cam_dy, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             if (opt_led) translate([out_l/4, 0, -1]) cylinder(d = 1.8, h = lid_t + 2);
+            // the house wordmark (opt_mark), debossed into the INTERIOR face (z=0):
+            // the disguise forbids exterior branding, but a marked interior still
+            // identifies the device to whoever opens it. 0.5 deep at cap 4.0 —
+            // above mark_word_min_h(), clear of the aperture (y), the post
+            // counterbores (y) and the lip ring (which lives below z=0).
+            if (opt_mark) translate([0, -9, -0.1])
+                linear_extrude(0.6) mark_wordmark(4.0);
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
                 translate([p[0], p[1], lid_t - screw_head_h])

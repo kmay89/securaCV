@@ -10,8 +10,13 @@
 //  (~25 mm discs); cover with the ballast lid (glue or tape). Stick-on
 //  rubber feet recommended.
 //
+//  2026-08-23: the teardrop bore now comes from canary_core_lib — same
+//  geometry (the local copy was verbatim), one home.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
+
+use <canary_core_lib.scad>   // tearbore_x — the teardrop bore the hinge bolt rides
 
 /* [What to render] */
 part = "all";        // ["base","ballast_lid","all"]
@@ -40,8 +45,8 @@ teeth_n     = 24;
 teeth_h     = 0.6;
 
 /* [Print tolerances] */
-tol_slide = 0.20;
-tol_hole  = 0.30;
+tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib
+tol_hole  = 0.30;    // catalog default — core_tol_hole(), canary_core_lib
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -57,15 +62,6 @@ module teeth2d() {
         intersection() {
             difference() { circle(r = fin_r - 0.5); circle(r = 3.5); }
             polygon([[0, 0], [2*fin_r, 0], [2*fin_r*cos(step), 2*fin_r*sin(step)]]);
-        }
-}
-module tearbore_x(x0, y, z, l, d) {
-    r = d/2; cy = min(r + 0.75, r*1.38);
-    translate([x0, y, z]) rotate([90, 0, 0]) rotate([0, 90, 0])
-        linear_extrude(l) union() {
-            circle(d = d);
-            polygon([[-r*0.7071, r*0.7071], [-(r*1.4142 - cy), cy],
-                     [ r*1.4142 - cy, cy], [ r*0.7071, r*0.7071]]);
         }
 }
 // three-prong head: fins ⊥ X rise from a base plate at local z=0 (which embeds

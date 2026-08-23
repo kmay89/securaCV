@@ -8,9 +8,17 @@
 //  zero visual footprint. Power: in-box USB (Class-2 low voltage rules apply;
 //  do NOT share a box with mains conductors — check local code).
 //
+//  2026-08-23: rrect2d and the board clip now come from the shared libraries
+//  (canary_core_lib / canary_snap_lib) — same mesh, one home; the clip's
+//  insertion strain is now gated on every render instead of trusted.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. Measure
 //     your box, carrier, and stack; radome rules as in canary_sense_enclosure.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
+use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
+use <canary_board_lib.scad>  // board registry — the MR60 numbers the knobs cite
 
 /* [What to render] */
 part = "plate";      // ["plate"]
@@ -24,9 +32,9 @@ dev_screw_d = 3.7;   // 6-32 clearance
 lid_edge = 1.0;      // face edge chamfer
 
 /* [Boards] — MR60BHA2 carrier + stacked XIAO ESP32-C6. MEASURE */
-vm_l     = 44.0;
-vm_w     = 36.0;
-stack_sock_h = 11.5;
+vm_l     = 44.0;      // brd_l("mr60") — canary_board_lib
+vm_w     = 36.0;      // brd_w("mr60") — canary_board_lib
+stack_sock_h = 11.5;  // brd_stack_sock_unmeasured() — the doorbell bench measured 6.5 (canary_board_lib)
 vm_front_h   = 3.5;   // carrier front-side TALLEST part (connectors etc.) — MEASURE
 pcb_t    = 1.0;
 board_clear = 0.6;
@@ -44,10 +52,10 @@ lp_d   = 3.0;  lp_dx  = 13.0;  lp_dy  = -14.0;   // WS2812 light pipe
 lux_d  = 3.5;  lux_dx = -13.0; lux_dy = -14.0;   // BH1750 aperture
 
 /* [Board snap clips] */
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;  // the WAP's proven 1.0/0.5 — canary_snap_lib gates the strain
 
 /* [Print tolerances] */
-tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
+tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;  // catalog trio — core_tol_*(), canary_core_lib
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -59,17 +67,6 @@ assert(radome_t >= 0.6 && radome_t < plate_t, "radome_t must be printable and th
 assert(vm_w + 2*(clip_clear + clip_t) + 2 < plate_w, "carrier too wide for the plate");
 echo(str("Canary Sense single-gang plate v0.1-dev — ", plate_w, " x ", plate_h,
          " mm, radome ", radome_t, " mm  (IN DEVELOPMENT)"));
-
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-module edgeclip(px, py, ang) {        // clip rises from the plate BACK (z=0 = back face plane)
-    bt = rail_h + pcb_t;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, 0], [clip_clear + clip_t, 0],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
-    translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
-}
 
 module plate() {
     union() {
@@ -107,7 +104,14 @@ module plate() {
                 translate([s*(vm_w/2 - 1.5), 0, -rail_h/2])
                     cube([5, clip_w + 2, rail_h + 1], center = true);
             }
-            translate([0, 0, 0]) mirror([0, 0, 1]) edgeclip(s*vm_w/2, 0, s > 0 ? 0 : 180);
+            // the clip is canary_snap_lib's WAP cantilever, strain-gated on
+            // every render; turned 90° so the beam stands on this plate's
+            // left/right edges (90° turns are exact in OpenSCAD's degree
+            // trig, so the mesh cannot move), then mirrored into the box
+            mirror([0, 0, 1]) rotate([0, 0, -s*90])
+                snap_boardclip(0, vm_w/2, 1, 0, rail_h + pcb_t,
+                               w = clip_w, t = clip_t, hook = clip_hook,
+                               hook_h = clip_hook_h, clear = clip_clear);
         }
     }
 }

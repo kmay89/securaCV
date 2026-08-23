@@ -16,12 +16,17 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print- or wear-validated.
 // ============================================================================
 
+use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
+use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries around
+use <canary_snap_lib.scad>   // beam-strain arithmetic for the belt leaf spring
+
 /* [What to render] */
 part = "all";        // ["clip","molle","all"]
 
 /* [Stud interface] — match the target case's keyholes (36 = field case) */
 stud_gap  = 36.0;
-// ecosystem-standard T-stud: stem 1.4 + cone 1.2 + head 0.8 = 3.4 total
+// ecosystem-standard T-stud (canary_mount_lib): stem 1.4 + cone 1.2 + head
+// 0.8 = 3.4 total — mount_stud_d/head/cap/stem() are the knob defaults
 stud_d    = 4.0;  stud_head = 6.6;  stud_head_t = 0.8;
 stud_stem_h = 1.4;
 
@@ -45,15 +50,21 @@ echo(str("Canary wear clip v0.1-dev — stud_gap ", stud_gap, "  (IN DEVELOPMENT
 assert(belt_gap >= 3.0, "belt_gap < 3 mm won't take a belt");
 assert(stud_gap + stud_head + 4 <= plate_l, "studs don't fit the clip plate — grow plate_l");
 assert(stud_gap + stud_head + 4 <= mp_l, "studs don't fit the MOLLE plate");
+// The belt leaf is a designed spring on repeated duty (every clip-on cams the
+// grip nub over the belt), so it documents itself against the cycle budget.
+// Printed on its side the flex stays in-plane with the layers — roughly twice
+// the cross-layer strength the budget assumes — so a pass here carries that
+// whole factor as margin.
+assert(snap_strain(leaf_t, nub_h, leaf_l) <= snap_budget_cycle(),
+       str("belt leaf strain ", round(snap_strain(leaf_t, nub_h, leaf_l)*1000)/10,
+           " % exceeds the cycle budget — thin the leaf, shrink the nub, ",
+           "or lengthen the leaf"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-
-module tstud() {                        // +Z axis; base at z0 (catalog standard)
-    cylinder(d = stud_d, h = stud_stem_h + 0.01);
-    translate([0, 0, stud_stem_h]) {
-        cylinder(d1 = stud_d, d2 = stud_head, h = 1.2);
-        translate([0, 0, 1.2]) cylinder(d = stud_head, h = stud_head_t);
-    }
+// T-stud from the mount library, fed this file's knobs (+Z axis, base at the
+// origin — the catalog standard); the cone stays the lib's print-support 1.2
+module tstud() {
+    mount_tstud(d = stud_d, head = stud_head,
+                stem = stud_stem_h, cap = stud_head_t);
 }
 
 // ---- belt clip (extruded profile in XZ; prints on its side) ------------------

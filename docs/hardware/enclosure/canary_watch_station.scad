@@ -27,16 +27,29 @@
 //      and an open under-base channel routing the cable out the back.
 //  All parts print flat, no supports.
 //
+//  2026-08-23: adopted the shared contract libraries (core/mount/board).
+//    One deliberate fix rides along, so the DRUM is NOT mesh-neutral: the
+//    keyhole had drifted (kh_slot_l 7.0, kh_head_h 3.0) — a slide the
+//    standard stud's head never finishes and a pocket it bottoms out in
+//    0.4 early. Now the catalog standard 8.0 / 3.5, cut through
+//    mount_keyhole_pocket on its native axis; back_t + kh_extra = 5.0
+//    keeps the pocket blind at exactly head_h + 1.5. Bezel and stand
+//    geometry unchanged.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. Measure
 //     your display disc (disc_d) and XIAO USB position before printing.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect + the catalog tolerance trio the knobs cite
+use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the drum's blind pocket
+use <canary_board_lib.scad>  // board registry — the measured round_disp record disc_d cites
 
 /* [What to render] */
 part = "all";        // ["drum","bezel","stand","all"]
 
 /* [Display stack] — Round Display for XIAO + XIAO in its back socket.
    Defaults measured from the committed vendor GLB (mm). */
-disc_d    = 43.0;    // display PCB disc diameter (measured Ø43.0)
+disc_d    = 43.0;    // display PCB disc diameter — brd_l("round_disp"), measured (canary_board_lib)
 disc_t    = 5.0;     // disc pack: PCB back face → front trim ring (measured)
 disp_back = 5.0;     // back-side stack: sockets / SD / RTC below the PCB (measured)
 xiao_t    = 4.4;     // XIAO seated proud of the socket: PCB + USB shell (measured)
@@ -59,8 +72,8 @@ flush    = 0.4;      // disc front ring sits this far below the drum rim
 tilt     = 25;       // stand recline from vertical  // [15:5:35]
 
 /* [Print tolerances] */
-tol_slide = 0.20;
-tol_press = 0.10;
+tol_slide = 0.20;    // catalog default — core_tol_slide() (canary_core_lib)
+tol_press = 0.10;    // catalog default — core_tol_press() (canary_core_lib)
 
 /* [Snap bezel] */
 snap_n       = 4;     // nubs / wall slots
@@ -72,12 +85,12 @@ snap_proud   = 0.4;   // nub stand-proud of the skirt (with the relief slits thi
 skirt_dep    = 4.0;   // bezel skirt reach into the bore
 
 /* [Mounting] */
-kh_head_d  = 7.0;    // blind keyhole pocket in the drum back (wall mount)
-kh_shank_d = 4.2;
-kh_slot_l  = 7.0;
-kh_head_h  = 3.0;
-kh_face    = 1.0;
-kh_extra   = 2.5;    // drum back thickening hosting the pocket
+kh_head_d  = 7.0;    // blind keyhole pocket in the drum back (wall mount) — catalog standard, canary_mount_lib
+kh_shank_d = 4.2;    // catalog standard — mount_kh_shank_d()
+kh_slot_l  = 8.0;    // catalog standard — mount_kh_slot_l() (a drifted 7.0 lived here: the head never finished its slide)
+kh_head_h  = 3.5;    // catalog standard — mount_kh_head_h() (a drifted 3.0 lived here: the stud bottomed out 0.4 early)
+kh_face    = 1.0;    // catalog standard — mount_kh_face()
+kh_extra   = 2.5;    // drum back thickening hosting the pocket; back_t + kh_extra covers head_h + the 1.5 blind web
 
 /* [Stand cradle] */
 pocket_dep  = 11.0;  // how deep the drum sinks into the divot (buries the USB slot)
@@ -113,7 +126,7 @@ puck_len = drum_h + bez_t;                   // full seated length, back cap →
 
 assert(bez_ap_d < disc_d - 3, "aperture must land on the display's trim ring");
 assert(bez_ap_d < skirt_od - 3, "skirt wall too thin — shrink bez_ap_d");
-assert(kh_head_h + 1.2 <= back_t + kh_extra, "keyhole pocket too deep — raise kh_extra");
+assert(kh_head_h + 1.5 <= back_t + kh_extra, "keyhole pocket must stay blind (head_h + 1.5 web, canary_mount_lib) — raise kh_extra");
 assert(usb_cz - usb_h/2 > 1.0, "USB slot digs into the drum back — raise xiao_gap");
 assert(usb_cz + usb_h/2 < z_pcb, "USB slot reaches the display PCB — check stack");
 assert(!opt_batt || sqrt(pow(batt_l/2,2) + pow(batt_w/2 + 2,2)) < bore_d/2, "battery too large for the bore");
@@ -124,16 +137,6 @@ echo(str("Canary Watch station v0.2-dev — drum Ø", drum_d, " x ", puck_len,
 //  DRUM — straight cup, prints open-face-up; keyhole pocket in the back;
 //  snap slots near the rim; USB slot at the XIAO's measured level
 // ----------------------------------------------------------------------------
-module keyhole_pocket_r(ang) {                // radial blind pocket, slot toward drum top
-    rotate([0, 0, ang]) translate([0, 6, 0]) union() {
-        translate([0, -kh_slot_l/2, -0.1]) linear_extrude(kh_face + 0.1) {
-            circle(d = kh_head_d);
-            hull() { circle(d = kh_shank_d); translate([0, kh_slot_l]) circle(d = kh_shank_d); }
-        }
-        translate([0, -kh_slot_l/2, kh_face]) linear_extrude(kh_head_h - kh_face)
-            hull() { circle(d = kh_head_d + 0.6); translate([0, kh_slot_l]) circle(d = kh_head_d + 0.6); }
-    }
-}
 // the four snap windows, mid-wall between the USB slot (270°) and keyhole (90°)
 function snap_angs() = [45, 135, 225, 315];
 module drum() {
@@ -149,8 +152,12 @@ module drum() {
         for (a = snap_angs()) rotate([0, 0, a])
             translate([drum_d/2 - wall_t/2, 0, drum_h - snap_depth])
                 cube([wall_t*3, snap_w, snap_h], center = true);
-        // blind keyhole pocket (single, centered) for stand-less wall mount
-        keyhole_pocket_r(0);
+        // blind keyhole pocket (single, center 6 up from the drum axis, slot
+        // toward drum top so the puck slides DOWN to seat) for stand-less
+        // wall mount — the catalog pocket, on its native axis
+        mount_keyhole_pocket(6, 0, axis = "y",
+            head_d = kh_head_d, shank_d = kh_shank_d,
+            slot_l = kh_slot_l, head_h = kh_head_h, face = kh_face);
         // bottom-edge chamfer
         difference() {
             translate([0, 0, -0.01]) cylinder(d = drum_d + 0.1, h = 0.5);
@@ -238,12 +245,10 @@ echo(str("Stand cradle — pocket Ø", pkt_d, " x ", pocket_dep,
          " deep; DRUM SEAT pos [", P0[0], ", ", P0[1], ", ", P0[2],
          "] rot [", slope, ", 0, 0] (drum +z along the pocket axis)"));
 
-module rbox(l, w, h, r) { linear_extrude(h) offset(r = r) offset(r = -r) square([l, w], center = true); }
-
 module stand_body() {
     hull() {
-        translate([0, (sd_b - sd_f)/2, 0]) rbox(sw, sd_f + sd_b, 5, 8);   // base slab
-        translate([0, sd_b - 11, 0]) rbox(sw, 20, sh, 8);                 // rear column
+        translate([0, (sd_b - sd_f)/2, 0]) rrect(sw, sd_f + sd_b, 8, 5);   // base slab
+        translate([0, sd_b - 11, 0]) rrect(sw, 20, 8, sh);                 // rear column
     }
 }
 module stand() {

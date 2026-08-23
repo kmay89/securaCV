@@ -6,7 +6,13 @@
 //  (bay number ↔ device identity in your notes). Parametric bay count.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
+//
+//  v0.1-dev (2026-08-23): canary_*_lib adoption (dedup, mesh-identical). The
+//  17.8 lesson this file taught now lives in the board registry, cited below.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
+use <canary_board_lib.scad>  // board registry — where this file's 17.8 lesson lives now
 
 /* [What to render] */
 part = "dock";       // ["dock"]
@@ -20,8 +26,10 @@ recline = 15;        // bay recline angle (degrees)
    bare thickness 4.4 incl the USB shell; a Sense with its camera folded flat
    stacks to 13.7 — pick the variant to size the pocket. */
 variant = "bare";    // ["bare","sense"]
-board_l = 21.0;      // board length (USB edge at the TOP of the bay)
-board_w = 17.8;      // measured (was 17.5 — pockets pinched the real board)
+board_l = 21.0;      // board length (USB edge at the TOP of the bay) — brd_l("xiao")
+board_w = 17.8;      // measured — brd_xiao_w_measured(), canary_board_lib (was 17.5:
+                     // spec-sized pockets pinched the real board; this file is where
+                     // that lesson was learned, and the registry is where it lives)
 pocket_bare  = 7.0;  // pocket depth: bare XIAO (4.4 measured + finger room)
 pocket_sense = 14.5; // pocket depth: Sense w/ camera folded on top (13.7 measured)
 thumb_d = 12.0;      // thumb cutout for extraction
@@ -41,7 +49,7 @@ bw = n_bays * bay_pitch + 10;
 bh = board_l * cos(recline) + 14;
 echo(str("Canary provisioning dock v0.1-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// (rrect2d comes from canary_core_lib — the local copy is gone)
 
 module dock() {
     difference() {

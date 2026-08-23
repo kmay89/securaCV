@@ -815,27 +815,27 @@
       {
        "name": "kh_head_d",
        "default": "7.0",
-       "comment": "screw-head pass hole (fits #6 / M3.5 pan head)"
+       "comment": "screw-head pass hole (fits #6 / M3.5 pan head) — mount_kh_head_d()"
       },
       {
        "name": "kh_shank_d",
        "default": "4.2",
-       "comment": "shank slot width"
+       "comment": "shank slot width — mount_kh_shank_d()"
       },
       {
        "name": "kh_slot_l",
        "default": "8.0",
-       "comment": "slot travel (slot runs toward +X = UP when the USB faces down)"
+       "comment": "slot travel (slot runs toward +X = UP when the USB faces down) — mount_kh_slot_l()"
       },
       {
        "name": "kh_head_h",
        "default": "3.5",
-       "comment": "total pocket depth (face web + head cavity)"
+       "comment": "total pocket depth (face web + head cavity) — mount_kh_head_h()"
       },
       {
        "name": "kh_face",
        "default": "1.0",
-       "comment": "face web thickness the screw head grips behind"
+       "comment": "face web thickness the screw head grips behind — mount_kh_face()"
       },
       {
        "name": "kh_inset",
@@ -887,6 +887,11 @@
        "name": "lid_edge2",
        "default": "0.0",
        "comment": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]"
+      },
+      {
+       "name": "opt_mark",
+       "default": "false",
+       "comment": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
       },
       {
        "name": "label_text",
@@ -970,12 +975,12 @@
       {
        "name": "board_l",
        "default": "21.0",
-       "comment": "PCB length (USB end to far end, along X)"
+       "comment": "PCB length (USB end to far end, along X) — brd_l(\"xiao\") nominal spec, canary_board_lib"
       },
       {
        "name": "board_w",
        "default": "17.5",
-       "comment": "PCB width (along Y)"
+       "comment": "PCB width (along Y) — brd_w(\"xiao\") nominal spec; a real board mics"
       },
       {
        "name": "board_h",
@@ -1098,27 +1103,21 @@
        "name": "corner_r",
        "default": "3.0",
        "comment": "outside corner radius"
-      }
-     ]
-    },
-    {
-     "name": "Print tolerances",
-     "note": "per-side clearances; tune these once for your printer",
-     "params": [
+      },
       {
        "name": "tol_slide",
        "default": "0.20",
-       "comment": "sliding fits: lid lip <-> base, drip skirt, camera-disc seat"
+       "comment": "sliding fits: lid lip <-> base, drip skirt, camera-disc seat — core_tol_slide()"
       },
       {
        "name": "tol_press",
        "default": "0.10",
-       "comment": "press fits: tamper magnet, LED light pipe"
+       "comment": "press fits: tamper magnet, LED light pipe — core_tol_press()"
       },
       {
        "name": "tol_hole",
        "default": "0.30",
-       "comment": "clearance holes: lid screws"
+       "comment": "clearance holes: lid screws — core_tol_hole()"
       }
      ]
     },
@@ -1526,7 +1525,7 @@
    ]
   },
   "canary_vision_enclosure.scad": {
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.2",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.3",
    "groups": [
     {
      "name": "What to render",
@@ -1640,13 +1639,7 @@
       {
        "name": "m_style",
        "default": "_pre(mount_style, \"hinge\", \"both\")"
-      }
-     ]
-    },
-    {
-     "name": "Boards",
-     "note": "measure YOURS; these are nominal",
-     "params": [
+      },
       {
        "name": "host",
        "default": "xiao",
@@ -1659,17 +1652,17 @@
       {
        "name": "dk_l",
        "default": "39.0",
-       "comment": "ESP32-C3-DevKitM-1 length (Y, USB end down) — devkit host"
+       "comment": "ESP32-C3-DevKitM-1 length (Y, USB end down) — devkit host — brd_l(\"dk_c3\")"
       },
       {
        "name": "dk_w",
        "default": "25.4",
-       "comment": "DevKitM-1 width (X)"
+       "comment": "DevKitM-1 width (X) — brd_w(\"dk_c3\")"
       },
       {
        "name": "vm_l",
        "default": "40.0",
-       "comment": "Grove Vision AI V2 long side (Y; USB edge down) — measured"
+       "comment": "Grove Vision AI V2 long side (Y; USB edge down) — measured, brd_l(\"grove_v2\")"
       },
       {
        "name": "vm_w",
@@ -1679,17 +1672,17 @@
       {
        "name": "xiao_l",
        "default": "21.0",
-       "comment": "stacked XIAO (Y) — xiao host"
+       "comment": "stacked XIAO (Y) — xiao host — brd_l(\"xiao\")"
       },
       {
        "name": "xiao_w",
        "default": "17.5",
-       "comment": "stacked XIAO (X)"
+       "comment": "stacked XIAO (X) — spec; a real board mics 17.8 (brd_xiao_w_measured())"
       },
       {
        "name": "stack_sock_h",
        "default": "11.5",
-       "comment": "module underside -> XIAO underside when seated (socket + headers) — MEASURE"
+       "comment": "module underside -> XIAO underside when seated (socket + headers):"
       },
       {
        "name": "vm_front_h",
@@ -1699,17 +1692,17 @@
       {
        "name": "cam_w",
        "default": "25.0",
-       "comment": "OV5647 carrier width (X)"
+       "comment": "OV5647 carrier width (X) — brd_w(\"ov5647\")"
       },
       {
        "name": "cam_h",
        "default": "24.0",
-       "comment": "OV5647 carrier height (Y)"
+       "comment": "OV5647 carrier height (Y) — brd_l(\"ov5647\")"
       },
       {
        "name": "pcb_t",
        "default": "1.0",
-       "comment": "PCB thickness (clips hook over this)"
+       "comment": "PCB thickness (clips hook over this) — brd_t(\"grove_v2\")"
       },
       {
        "name": "board_clear",
@@ -1786,7 +1779,7 @@
       {
        "name": "wall_t",
        "default": "2.0",
-       "comment": "side wall thickness (auto-thickened in seal mode)"
+       "comment": "side wall thickness (auto-thickened in seal mode) — catalog default, core_wall()"
       },
       {
        "name": "floor_t",
@@ -1822,27 +1815,21 @@
        "name": "cav_extra",
        "default": "1.0",
        "comment": "headroom above the tallest component"
-      }
-     ]
-    },
-    {
-     "name": "Print tolerances",
-     "note": "per-side clearances; tune once for your printer",
-     "params": [
+      },
       {
        "name": "tol_slide",
        "default": "0.20",
-       "comment": "sliding fits: front lip, drip skirt, disc seat"
+       "comment": "sliding fits: front lip, drip skirt, disc seat — core_tol_slide()"
       },
       {
        "name": "tol_press",
        "default": "0.10",
-       "comment": "press fits: magnet, light pipe"
+       "comment": "press fits: magnet, light pipe — core_tol_press()"
       },
       {
        "name": "tol_hole",
        "default": "0.30",
-       "comment": "clearance holes: front screws, hinge bolt"
+       "comment": "clearance holes: front screws, hinge bolt — core_tol_hole()"
       }
      ]
     },
@@ -1915,7 +1902,8 @@
       },
       {
        "name": "usb_w",
-       "default": "10.5"
+       "default": "10.5",
+       "comment": "opening width (USB-C body ~8.9 — port_usbc_shell_w())"
       },
       {
        "name": "usb_h",
@@ -2017,37 +2005,35 @@
        "name": "bracket_tripod",
        "default": "true",
        "comment": "captive 1/4-20 nut pocket behind the center fin (tripod mount)"
-      }
-     ]
-    },
-    {
-     "name": "Keyholes",
-     "note": "blind pockets in a thickened back (seal-safe)",
-     "params": [
+      },
       {
        "name": "kh_extra",
        "default": "3.0"
       },
       {
        "name": "kh_head_d",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "catalog standard — mount_kh_head_d()"
       },
       {
        "name": "kh_shank_d",
-       "default": "4.2"
+       "default": "4.2",
+       "comment": "catalog standard — mount_kh_shank_d()"
       },
       {
        "name": "kh_slot_l",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "catalog standard — mount_kh_slot_l()"
       },
       {
        "name": "kh_head_h",
        "default": "3.5",
-       "comment": "total pocket depth (face web + head cavity)"
+       "comment": "total pocket depth (face web + head cavity) — mount_kh_head_h()"
       },
       {
        "name": "kh_face",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "catalog standard — mount_kh_face()"
       },
       {
        "name": "kh_inset",
@@ -2160,13 +2146,7 @@
       {
        "name": "mag_dy",
        "default": "8.0"
-      }
-     ]
-    },
-    {
-     "name": "Board snap clips",
-     "note": "",
-     "params": [
+      },
       {
        "name": "clip_w",
        "default": "6.0"
@@ -2231,6 +2211,21 @@
       {
        "name": "label_font",
        "default": "Liberation Sans:style=Bold"
+      },
+      {
+       "name": "opt_mark",
+       "default": "false",
+       "comment": "deboss the house mark (the canary_mark_lib bird) instead of a custom label"
+      },
+      {
+       "name": "mark_h",
+       "default": "16.0",
+       "comment": "bird height; the lib floors it at mark_min_h(mark_rib)"
+      },
+      {
+       "name": "mark_rib",
+       "default": "0.7",
+       "comment": "mark stroke width"
       }
      ]
     },
@@ -2379,7 +2374,7 @@
    ]
   },
   "canary_vision_doorbell.scad": {
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.2",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.3",
    "groups": [
     {
      "name": "What to render",
@@ -2425,26 +2420,27 @@
       {
        "name": "vm_l",
        "default": "40.0",
-       "comment": "Grove Vision AI V2 long side (Y; USB edge down) — measured"
+       "comment": "Grove Vision AI V2 long side (Y; USB edge down) — measured, brd_l(\"grove_v2\")"
       },
       {
        "name": "vm_w",
        "default": "20.0",
-       "comment": "module short side (X) — measured"
+       "comment": "module short side (X) — measured, brd_w(\"grove_v2\")"
       },
       {
        "name": "xiao_l",
        "default": "21.0",
-       "comment": "XIAO stacked on the module's socket, lower half, centered"
+       "comment": "XIAO stacked on the module's socket, lower half, centered — brd_l(\"xiao\")"
       },
       {
        "name": "xiao_w",
-       "default": "17.8"
+       "default": "17.8",
+       "comment": "the measured board, not the 17.5 spec — brd_xiao_w_measured()"
       },
       {
        "name": "stack_sock_h",
        "default": "6.5",
-       "comment": "module underside -> XIAO underside when seated (measured 6.2)"
+       "comment": "module underside -> XIAO underside when seated — THIS bench"
       },
       {
        "name": "vm_front_h",
@@ -2454,15 +2450,17 @@
       {
        "name": "cam_w",
        "default": "25.0",
-       "comment": "OV5647 carrier (Pi-cam v1.3 form)"
+       "comment": "OV5647 carrier (Pi-cam v1.3 form) — brd_w(\"ov5647\")"
       },
       {
        "name": "cam_h",
-       "default": "24.0"
+       "default": "24.0",
+       "comment": "carrier height (Y) — brd_l(\"ov5647\")"
       },
       {
        "name": "pcb_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "brd_t(\"grove_v2\") — the camera carrier matches"
       },
       {
        "name": "board_clear",
@@ -2556,7 +2554,7 @@
       {
        "name": "wall_t",
        "default": "2.0",
-       "comment": "auto-thickened in seal mode"
+       "comment": "auto-thickened in seal mode — catalog default, core_wall()"
       },
       {
        "name": "floor_t",
@@ -2604,7 +2602,7 @@
       {
        "name": "usb_exit_w",
        "default": "12.0",
-       "comment": "oval cable exit through the back (into the plate hole)"
+       "comment": "oval cable exit through the back (into the plate hole) — sized"
       },
       {
        "name": "usb_exit_h",
@@ -2619,24 +2617,21 @@
        "name": "usb_exit_dy",
        "default": "6.0",
        "comment": "exit offset above the well center — clears the lower T-stud pocket"
-      }
-     ]
-    },
-    {
-     "name": "Print tolerances",
-     "note": "",
-     "params": [
+      },
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "core_tol_slide()"
       },
       {
        "name": "tol_press",
-       "default": "0.10"
+       "default": "0.10",
+       "comment": "core_tol_press()"
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "core_tol_hole()"
       }
      ]
     },
@@ -2722,13 +2717,7 @@
       {
        "name": "skirt_t",
        "default": "1.6"
-      }
-     ]
-    },
-    {
-     "name": "Wall plate + T-stud hooks + security screw",
-     "note": "",
-     "params": [
+      },
       {
        "name": "plate_t",
        "default": "4.0",
@@ -2752,25 +2741,27 @@
       {
        "name": "kh_head_d",
        "default": "7.0",
-       "comment": "pocket head pass (stud head 6.6)"
+       "comment": "pocket head pass (stud head 6.6) — mount_kh_head_d()"
       },
       {
        "name": "kh_shank_d",
        "default": "4.2",
-       "comment": "pocket slot (stud stem 4.0)"
+       "comment": "pocket slot (stud stem 4.0) — mount_kh_shank_d()"
       },
       {
        "name": "kh_slot_l",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "catalog standard — mount_kh_slot_l()"
       },
       {
        "name": "kh_head_h",
        "default": "3.5",
-       "comment": "pocket depth (face web + head cavity)"
+       "comment": "pocket depth (face web + head cavity) — mount_kh_head_h()"
       },
       {
        "name": "kh_face",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "catalog standard — mount_kh_face()"
       },
       {
        "name": "kh_extra",
@@ -2802,6 +2793,11 @@
        "name": "lid_edge2",
        "default": "0.8",
        "comment": "second, steeper stage (~66°) — softens the face edge toward a roundover"
+      },
+      {
+       "name": "opt_mark",
+       "default": "false",
+       "comment": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
       },
       {
        "name": "label_text",
@@ -2895,13 +2891,7 @@
       {
        "name": "mag_dy",
        "default": "8.0"
-      }
-     ]
-    },
-    {
-     "name": "Board snap clips",
-     "note": "",
-     "params": [
+      },
       {
        "name": "clip_w",
        "default": "6.0"
@@ -3112,25 +3102,27 @@
       {
        "name": "vm_l",
        "default": "44.0",
-       "comment": "carrier length (Y; XIAO/USB edge down)"
+       "comment": "carrier length (Y; XIAO/USB edge down) — brd_l(\"mr60\"), canary_board_lib"
       },
       {
        "name": "vm_w",
        "default": "36.0",
-       "comment": "carrier width (X)"
+       "comment": "carrier width (X) — brd_w(\"mr60\")"
       },
       {
        "name": "xiao_l",
-       "default": "21.0"
+       "default": "21.0",
+       "comment": "brd_l(\"xiao\")"
       },
       {
        "name": "xiao_w",
-       "default": "17.5"
+       "default": "17.5",
+       "comment": "brd_w(\"xiao\") spec; clips absorb the measured 17.8 (brd_xiao_w_measured)"
       },
       {
        "name": "stack_sock_h",
        "default": "11.5",
-       "comment": "carrier underside -> XIAO underside when seated — MEASURE"
+       "comment": "carrier underside -> XIAO underside when seated — MEASURE."
       },
       {
        "name": "vm_front_h",
@@ -3305,19 +3297,22 @@
     },
     {
      "name": "Print tolerances",
-     "note": "",
+     "note": "defaults = the catalog trio (core_tol_*(), canary_core_lib), dialed on the fit coupon",
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "sliding fits: front lip, drip skirt — core_tol_slide()"
       },
       {
        "name": "tol_press",
-       "default": "0.10"
+       "default": "0.10",
+       "comment": "press fits: magnet, light pipe — core_tol_press()"
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "clearance holes: front screws — core_tol_hole()"
       }
      ]
     },
@@ -3474,23 +3469,28 @@
       },
       {
        "name": "kh_head_d",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "screw-head pass hole (#6 / M3.5 pan head) — mount_kh_head_d()"
       },
       {
        "name": "kh_shank_d",
-       "default": "4.2"
+       "default": "4.2",
+       "comment": "shank slot width — mount_kh_shank_d()"
       },
       {
        "name": "kh_slot_l",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "slot travel (toward +Y = UP on the wall) — mount_kh_slot_l()"
       },
       {
        "name": "kh_head_h",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "total pocket depth (face web + head cavity) — mount_kh_head_h()"
       },
       {
        "name": "kh_face",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "face web the screw head grips behind — mount_kh_face()"
       },
       {
        "name": "kh_inset",
@@ -3549,6 +3549,11 @@
        "default": "0.0"
       },
       {
+       "name": "opt_mark",
+       "default": "false",
+       "comment": "deboss the house wordmark instead of a custom label (exclusive with label_text)"
+      },
+      {
        "name": "label_text",
        "default": "",
        "comment": "debossed label — placed at label_dx/dy; keep it OUT of the radome window"
@@ -3585,23 +3590,28 @@
      "params": [
       {
        "name": "clip_w",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "tab width along the carrier edge — snap_boardclip defaults, canary_snap_lib"
       },
       {
        "name": "clip_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "beam thickness — the library runs the strain budget as an assert"
       },
       {
        "name": "clip_hook",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "lip overhang over the carrier top"
       },
       {
        "name": "clip_hook_h",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "lip + 45° lead-in height above the carrier top"
       },
       {
        "name": "clip_clear",
-       "default": "0.25"
+       "default": "0.25",
+       "comment": "beam face to carrier edge (a fit — tune on the coupon)"
       }
      ]
     },
@@ -3743,7 +3753,7 @@
       {
        "name": "disc_d",
        "default": "43.0",
-       "comment": "display PCB disc diameter (measured Ø43.0)"
+       "comment": "display PCB disc diameter — brd_l(\"round_disp\"), measured (canary_board_lib)"
       },
       {
        "name": "disc_t",
@@ -3838,11 +3848,13 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide() (canary_core_lib)"
       },
       {
        "name": "tol_press",
-       "default": "0.10"
+       "default": "0.10",
+       "comment": "catalog default — core_tol_press() (canary_core_lib)"
       }
      ]
     },
@@ -3889,28 +3901,32 @@
       {
        "name": "kh_head_d",
        "default": "7.0",
-       "comment": "blind keyhole pocket in the drum back (wall mount)"
+       "comment": "blind keyhole pocket in the drum back (wall mount) — catalog standard, canary_mount_lib"
       },
       {
        "name": "kh_shank_d",
-       "default": "4.2"
+       "default": "4.2",
+       "comment": "catalog standard — mount_kh_shank_d()"
       },
       {
        "name": "kh_slot_l",
-       "default": "7.0"
+       "default": "8.0",
+       "comment": "catalog standard — mount_kh_slot_l() (a drifted 7.0 lived here: the head never finished its slide)"
       },
       {
        "name": "kh_head_h",
-       "default": "3.0"
+       "default": "3.5",
+       "comment": "catalog standard — mount_kh_head_h() (a drifted 3.0 lived here: the stud bottomed out 0.4 early)"
       },
       {
        "name": "kh_face",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "catalog standard — mount_kh_face()"
       },
       {
        "name": "kh_extra",
        "default": "2.5",
-       "comment": "drum back thickening hosting the pocket"
+       "comment": "drum back thickening hosting the pocket; back_t + kh_extra covers head_h + the 1.5 blind web"
       }
      ]
     },
@@ -4195,11 +4211,13 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide(), canary_core_lib"
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "catalog default — core_tol_hole(), canary_core_lib"
       }
      ]
     },
@@ -4277,15 +4295,18 @@
      "params": [
       {
        "name": "vm_l",
-       "default": "44.0"
+       "default": "44.0",
+       "comment": "brd_l(\"mr60\") — canary_board_lib"
       },
       {
        "name": "vm_w",
-       "default": "36.0"
+       "default": "36.0",
+       "comment": "brd_w(\"mr60\") — canary_board_lib"
       },
       {
        "name": "stack_sock_h",
-       "default": "11.5"
+       "default": "11.5",
+       "comment": "brd_stack_sock_unmeasured() — the doorbell bench measured 6.5 (canary_board_lib)"
       },
       {
        "name": "vm_front_h",
@@ -4410,7 +4431,8 @@
       },
       {
        "name": "kh_face",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "target pocket's face web — canary_mount_lib mount_kh_face()"
       }
      ]
     },
@@ -4584,6 +4606,42 @@
      ]
     },
     {
+     "name": "Aesthetics",
+     "note": "",
+     "params": [
+      {
+       "name": "opt_mark",
+       "default": "false",
+       "comment": "deboss the house wordmark on the lid (canary_mark_lib)"
+      },
+      {
+       "name": "mark_size",
+       "default": "5.0",
+       "comment": "wordmark cap height"
+      },
+      {
+       "name": "mark_depth",
+       "default": "0.5",
+       "comment": "deboss depth (the lid prints face-down -> crisp first-layer voids)"
+      },
+      {
+       "name": "mark_dx",
+       "default": "0.0",
+       "comment": "mark center offset from the LID-plate center"
+      },
+      {
+       "name": "mark_dy",
+       "default": "0.0",
+       "comment": "default sits centered, clear of the gland hole and the vent spot-face"
+      },
+      {
+       "name": "mark_rot",
+       "default": "0",
+       "comment": "rotation (degrees)"
+      }
+     ]
+    },
+    {
      "name": "Quality",
      "note": "",
      "params": [
@@ -4726,7 +4784,8 @@
      "params": [
       {
        "name": "v_stack_sock",
-       "default": "11.5"
+       "default": "11.5",
+       "comment": "brd_stack_sock_unmeasured(), canary_board_lib — the roomier legacy"
       },
       {
        "name": "v_front_h",
@@ -4745,7 +4804,8 @@
      "params": [
       {
        "name": "s_stack_sock",
-       "default": "11.5"
+       "default": "11.5",
+       "comment": "brd_stack_sock_unmeasured() — same decision as v_stack_sock"
       },
       {
        "name": "s_front_h",
@@ -4775,6 +4835,42 @@
        "name": "opt_mount",
        "default": "true",
        "comment": "blind keyholes in the back"
+      }
+     ]
+    },
+    {
+     "name": "Aesthetics",
+     "note": "",
+     "params": [
+      {
+       "name": "opt_mark",
+       "default": "false",
+       "comment": "deboss the house wordmark on the front (canary_mark_lib)"
+      },
+      {
+       "name": "mark_size",
+       "default": "5.0",
+       "comment": "wordmark cap height"
+      },
+      {
+       "name": "mark_depth",
+       "default": "0.5",
+       "comment": "deboss depth (the front prints face-down -> crisp first-layer voids)"
+      },
+      {
+       "name": "mark_dx",
+       "default": "0.0",
+       "comment": "mark center offset from the FRONT-plate center"
+      },
+      {
+       "name": "mark_dy",
+       "default": "-31.5",
+       "comment": "default rides the bottom margin, clear of the lux/light-pipe holes"
+      },
+      {
+       "name": "mark_rot",
+       "default": "0",
+       "comment": "rotation (degrees)"
       }
      ]
     },
@@ -5056,7 +5152,7 @@
    ]
   },
   "canary_hammond_chassis.scad": {
-   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -5119,13 +5215,24 @@
      "note": "nominal; MEASURE (same meanings as the device enclosures)",
      "params": [
       {
+       "name": "vm_l",
+       "default": "brd_l(\"grove_v2\")",
+       "comment": "Grove Vision AI V2, measured 40"
+      },
+      {
+       "name": "vm_w",
+       "default": "brd_w(\"grove_v2\")",
+       "comment": "... x 20 (the 1x2 form, not a square)"
+      },
+      {
        "name": "stack_sock_h",
        "default": "11.5",
-       "comment": "seated-XIAO stack height"
+       "comment": "seated-XIAO stack height (module underside"
       },
       {
        "name": "pcb_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "brd_t(\"grove_v2\") / brd_t(\"mr60\")"
       },
       {
        "name": "standoff_h",
@@ -5202,7 +5309,8 @@
       },
       {
        "name": "kh_face",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "target pocket's face web — canary_mount_lib mount_kh_face()"
       }
      ]
     },
@@ -5401,11 +5509,13 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide(), canary_core_lib"
       },
       {
        "name": "tol_press",
-       "default": "0.10"
+       "default": "0.10",
+       "comment": "catalog default — core_tol_press(), canary_core_lib"
       }
      ]
     }
@@ -5442,6 +5552,11 @@
        "name": "opt_led",
        "default": "false",
        "comment": "pinhole light pipe (covert: usually off)"
+      },
+      {
+       "name": "opt_mark",
+       "default": "false",
+       "comment": "deboss the house wordmark on the lid's INTERIOR face (covert: never outside)"
       }
      ]
     },
@@ -5836,13 +5951,7 @@
       {
        "name": "grip_grooves",
        "default": "3"
-      }
-     ]
-    },
-    {
-     "name": "Board cradle",
-     "note": "",
-     "params": [
+      },
       {
        "name": "standoff_h",
        "default": "3.0"
@@ -6151,17 +6260,17 @@
       {
        "name": "board_l",
        "default": "36.37",
-       "comment": "PCB long axis (Y), EXCLUDING the USB-A plug"
+       "comment": "PCB long axis (Y), EXCLUDING the USB-A plug —"
       },
       {
        "name": "board_w",
        "default": "20.32",
-       "comment": "PCB short axis (X)"
+       "comment": "PCB short axis (X) — brd_w(\"ws147\"), canary_board_lib"
       },
       {
        "name": "pcb_t",
        "default": "1.6",
-       "comment": "MEASURE (drawing does not call it out; 1.6 is the usual)"
+       "comment": "MEASURE (drawing does not call it out; 1.6 is the usual —"
       },
       {
        "name": "lcd_rise",
@@ -6228,12 +6337,12 @@
       {
        "name": "usb_w",
        "default": "12.00",
-       "comment": "shell width"
+       "comment": "shell width — port_usba_shell_w(), canary_port_lib"
       },
       {
        "name": "usb_h",
        "default": "4.50",
-       "comment": "shell height"
+       "comment": "shell height — port_usba_shell_h(), canary_port_lib"
       },
       {
        "name": "usb_insert",
@@ -6816,7 +6925,7 @@
    ]
   },
   "canary_c6_display.scad": {
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -6847,13 +6956,7 @@
         "none",
         "male"
        ]
-      }
-     ]
-    },
-    {
-     "name": "Board",
-     "note": "ESP32-C6-LCD-1.47. From the Waveshare drawing (mm).",
-     "params": [
+      },
       {
        "name": "board_l",
        "default": "(model == \"1.69\") ? 36.0  : 36.37",
@@ -6865,12 +6968,13 @@
       },
       {
        "name": "pcb_t",
-       "default": "1.45"
+       "default": "1.6",
+       "comment": "brd_t(\"ws147\") — the drawing-backed family thickness;"
       },
       {
        "name": "lcd_rise",
        "default": "3.65",
-       "comment": "LCD glass front above the PCB front face (5.10 stack − 1.45 PCB)"
+       "comment": "LCD glass front above the PCB front face — the drawing's"
       },
       {
        "name": "back_stack",
@@ -6890,7 +6994,7 @@
       {
        "name": "brass_h",
        "default": "5.0",
-       "comment": "factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE"
+       "comment": "factory corner pillar height above the PCB back (0 ="
       }
      ]
     },
@@ -6917,6 +7021,16 @@
        "name": "lcm_w",
        "default": "(model == \"1.69\") ? 28.0   : 19.39",
        "comment": "LCD module outline short"
+      },
+      {
+       "name": "glass_relief",
+       "default": "0.25",
+       "comment": "face stand-off over the innermost lip band"
+      },
+      {
+       "name": "glass_relief_w",
+       "default": "0.5",
+       "comment": "width of that relieved band, from the window edge out"
       },
       {
        "name": "usb_w",
@@ -7042,6 +7156,16 @@
        "name": "ear_skin",
        "default": "1.2",
        "comment": "wall skin left outside a button/USB clearance channel"
+      },
+      {
+       "name": "nub_w",
+       "default": "3.1",
+       "comment": "the ridge's drawn width in Y — exactly what the old"
+      },
+      {
+       "name": "snap_play",
+       "default": "0.15",
+       "comment": "window clearance per side — the catalog default"
       }
      ]
     },
@@ -7142,12 +7266,24 @@
        "comment": "short-side lip (X)"
       },
       {
+       "name": "land_w_x",
+       "default": "lip_w - glass_relief_w"
+      },
+      {
+       "name": "land_w_y",
+       "default": "lip_l - glass_relief_w"
+      },
+      {
        "name": "skirt_wall",
        "default": "(headers == \"male\") ? 1.0 : 1.6"
       },
       {
        "name": "skirt_dep",
        "default": "snap_depth + snap_h/2 + 0.4"
+      },
+      {
+       "name": "snap_w",
+       "default": "snap_window(nub_w, snap_play)"
       },
       {
        "name": "stand_ix",
@@ -7167,6 +7303,27 @@
       {
        "name": "stand_len",
        "default": "stack_eff - ((headers == \"male\") ? brass_h : 0)"
+      },
+      {
+       "name": "kh_host",
+       "default": "kh_head_h + 1.5"
+      },
+      {
+       "name": "kh_pad_h",
+       "default": "max(0, kh_host - back_t)"
+      },
+      {
+       "name": "kh_pad_x",
+       "default": "kh_head_d + 0.6 + 2*core_min_wall()"
+      },
+      {
+       "name": "kh_pad_y",
+       "default": "kh_slot_l + kh_head_d + 0.6 + 2*core_min_wall()"
+      },
+      {
+       "name": "grille_x",
+       "default": "opt_keyhole ? kh_pad_x/2 + 1.4 : 4.2",
+       "comment": "0.4 clear + half the 2.0 slot"
       },
       {
        "name": "nub_y0",
@@ -7237,17 +7394,17 @@
       {
        "name": "board_l",
        "default": "36.37",
-       "comment": "PCB long axis (Y, portrait height)"
+       "comment": "PCB long axis (Y, portrait height) — brd_l(\"ws147\"),"
       },
       {
        "name": "board_w",
        "default": "20.32",
-       "comment": "PCB short axis (X)"
+       "comment": "PCB short axis (X) — brd_w(\"ws147\"), canary_board_lib"
       },
       {
        "name": "pcb_t",
        "default": "1.6",
-       "comment": "PCB thickness — MEASURE (drawing does not call it out)"
+       "comment": "PCB thickness — brd_t(\"ws147\"); MEASURE (the drawing"
       },
       {
        "name": "lcd_rise",
@@ -7349,12 +7506,12 @@
       {
        "name": "usb_a_w",
        "default": "12.00",
-       "comment": "series-A shell width — the standard"
+       "comment": "series-A shell width — port_usba_shell_w(), the"
       },
       {
        "name": "usb_a_h",
        "default": "4.50",
-       "comment": "series-A shell height — the standard"
+       "comment": "series-A shell height — port_usba_shell_h(), same home"
       },
       {
        "name": "usb_a_proud",
@@ -9890,7 +10047,7 @@
    ]
   },
   "canary_s3_touch169.scad": {
-   "title": "Canary — ESP32-S3-Touch-LCD-1.69 WATCH-DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-S3-Touch-LCD-1.69 WATCH-DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -9905,22 +10062,16 @@
         "stand",
         "all"
        ]
-      }
-     ]
-    },
-    {
-     "name": "Glass slab",
-     "note": "bonded touch panel, from the Waveshare \"Dimensions\" drawing (mm)",
-     "params": [
+      },
       {
        "name": "glass_w",
        "default": "41.13",
-       "comment": "rounded-square glass width  (X)"
+       "comment": "rounded-square glass width  (X) — brd_ws169_glass_h()"
       },
       {
        "name": "glass_h",
        "default": "33.13",
-       "comment": "rounded-square glass height (Y)"
+       "comment": "rounded-square glass height (Y) — brd_ws169_glass_w()"
       },
       {
        "name": "glass_t",
@@ -9941,26 +10092,31 @@
        "name": "aa_h",
        "default": "27.972",
        "comment": "active area height (240 px)"
-      }
-     ]
-    },
-    {
-     "name": "PCB behind the glass",
-     "note": "smaller than the glass, no mounting holes",
-     "params": [
+      },
+      {
+       "name": "glass_relief",
+       "default": "0.25",
+       "comment": "face stand-off over the innermost lip band, so the"
+      },
+      {
+       "name": "glass_relief_w",
+       "default": "0.5",
+       "comment": "width of that relieved band, from the window edge out"
+      },
       {
        "name": "pcb_w",
        "default": "37.12",
-       "comment": "PCB outline width  (X)"
+       "comment": "PCB outline width  (X) — brd_w(\"ws169\")"
       },
       {
        "name": "pcb_h",
        "default": "29.83",
-       "comment": "PCB outline height (Y)"
+       "comment": "PCB outline height (Y) — brd_l(\"ws169\"), the along-USB axis"
       },
       {
        "name": "pcb_t",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "brd_t(\"ws169\")"
       },
       {
        "name": "panel_gap",
@@ -10011,17 +10167,36 @@
       {
        "name": "opt_side",
        "default": "true"
-      }
-     ]
-    },
-    {
-     "name": "Mount",
-     "note": "",
-     "params": [
+      },
       {
        "name": "opt_keyhole",
        "default": "true",
-       "comment": "one blind keyhole in the back (wall hang)"
+       "comment": "one BLIND keyhole in the back (wall hang) — the pocket"
+      },
+      {
+       "name": "kh_head_d",
+       "default": "7.0",
+       "comment": "screw-head pass hole (#6 / M3.5 pan) — mount_kh_head_d()"
+      },
+      {
+       "name": "kh_shank_d",
+       "default": "4.2",
+       "comment": "shank slot width — mount_kh_shank_d()"
+      },
+      {
+       "name": "kh_slot_l",
+       "default": "8.0",
+       "comment": "slot travel — mount_kh_slot_l() (7.0 was a drifted"
+      },
+      {
+       "name": "kh_head_h",
+       "default": "3.5",
+       "comment": "total pocket depth, face web included — mount_kh_head_h()"
+      },
+      {
+       "name": "kh_face",
+       "default": "1.0",
+       "comment": "face web the screw head grips behind — mount_kh_face()"
       }
      ]
     },
@@ -10052,6 +10227,21 @@
        "name": "grille_n",
        "default": "7",
        "comment": "back-grille slots"
+      },
+      {
+       "name": "tol_slide",
+       "default": "0.20",
+       "comment": "sliding fits: glass drop-in, skirt — core_tol_slide()"
+      },
+      {
+       "name": "tol_press",
+       "default": "0.10",
+       "comment": "press fits: the skirt's snug seat — core_tol_press()"
+      },
+      {
+       "name": "tol_hole",
+       "default": "0.30",
+       "comment": "clearance holes — core_tol_hole()"
       }
      ]
     },
@@ -10078,6 +10268,16 @@
        "name": "r_out",
        "default": "r_glass + wall",
        "comment": "outer corner radius follows the glass"
+      },
+      {
+       "name": "nub_w",
+       "default": "3.1",
+       "comment": "the ridge's DRAWN width in Y — exactly what the old"
+      },
+      {
+       "name": "snap_play",
+       "default": "0.15",
+       "comment": "window clearance per side — the catalog default (a"
       }
      ]
     },
@@ -10124,6 +10324,37 @@
        "name": "z_usb",
        "default": "face_t + lcd_rise + pcb_t/2",
        "comment": "USB-C center (mid-PCB)"
+      },
+      {
+       "name": "kh_pad_wall",
+       "default": "core_min_wall()",
+       "comment": "lateral skin around the head cavity"
+      },
+      {
+       "name": "kh_pad_x",
+       "default": "kh_head_d + 0.6 + 2*kh_pad_wall",
+       "comment": "+ 0.6 = the pocket's head-cavity growth"
+      },
+      {
+       "name": "kh_pad_y",
+       "default": "kh_slot_l + kh_head_d + 0.6 + 2*kh_pad_wall"
+      },
+      {
+       "name": "kh_pad_h",
+       "default": "kh_head_h + 1.5 - back_t",
+       "comment": "pad height above the plate inner face"
+      },
+      {
+       "name": "grille_x1",
+       "default": "pcb_w/2 - 8"
+      },
+      {
+       "name": "grille_x0",
+       "default": "kh_pad_x/2 + vent_w/2 + 0.4"
+      },
+      {
+       "name": "snap_w",
+       "default": "snap_window(nub_w, snap_play)"
       }
      ]
     }
@@ -10159,20 +10390,22 @@
       {
        "name": "stud_d",
        "default": "4.0",
-       "comment": "stem"
+       "comment": "stem — canary_mount_lib mount_stud_d()"
       },
       {
        "name": "stud_head",
        "default": "6.6",
-       "comment": "head disc"
+       "comment": "head disc — canary_mount_lib mount_stud_head()"
       },
       {
        "name": "stud_head_t",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "head thickness — canary_mount_lib mount_stud_cap()"
       },
       {
        "name": "stud_stem_h",
-       "default": "1.4"
+       "default": "1.4",
+       "comment": "stem height — canary_mount_lib mount_stud_stem()"
       }
      ]
     },
@@ -10386,33 +10619,33 @@
      ]
     },
     {
-     "name": "T-stud keyhole interface — matches canary_wap_enclosure.scad exactly",
+     "name": "T-stud keyhole interface — matches canary_mount_lib exactly",
      "note": "",
      "params": [
       {
        "name": "kh_head_d",
        "default": "7.0",
-       "comment": "screw-head pass hole (fits the catalog's Ø6.6 stud head)"
+       "comment": "head pass hole (Ø6.6 stud head) — mount_kh_head_d()"
       },
       {
        "name": "kh_shank_d",
        "default": "4.2",
-       "comment": "slot width (fits the catalog's Ø4 stud stem)"
+       "comment": "slot width (Ø4 stud stem) — mount_kh_shank_d()"
       },
       {
        "name": "kh_slot_l",
        "default": "8.0",
-       "comment": "slot travel"
+       "comment": "slot travel — mount_kh_slot_l()"
       },
       {
        "name": "kh_head_h",
        "default": "3.5",
-       "comment": "total pocket depth (face web + head cavity)"
+       "comment": "total pocket depth (face web included) — mount_kh_head_h()"
       },
       {
        "name": "kh_face",
        "default": "1.0",
-       "comment": "face web thickness the stud head grips behind"
+       "comment": "face web the stud head grips behind — mount_kh_face()"
       },
       {
        "name": "kh_x",
@@ -10453,15 +10686,18 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide(), canary_core_lib"
       },
       {
        "name": "tol_press",
-       "default": "0.10"
+       "default": "0.10",
+       "comment": "catalog default — core_tol_press(), canary_core_lib"
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "catalog default — core_tol_hole(), canary_core_lib"
       }
      ]
     },
@@ -10471,12 +10707,13 @@
      "params": [
       {
        "name": "stud_gap",
-       "default": "30.0"
+       "default": "30.0",
+       "comment": "the coupon's print-tested gap (canary_mount_lib's header cites it)"
       },
       {
        "name": "kh_click",
        "default": "0.25",
-       "comment": "detent bump proud of the head-channel ceiling (0 = no click)"
+       "comment": "detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib"
       },
       {
        "name": "clip_bw",
@@ -10604,7 +10841,7 @@
    ]
   },
   "canary_bench_fixture.scad": {
-   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -10627,7 +10864,8 @@
      "params": [
       {
        "name": "standoff_h",
-       "default": "3.0"
+       "default": "6.0",
+       "comment": "clip-beam root height: 6.0 puts the beam at 7.2 mm and the"
       }
      ]
     },
@@ -10756,12 +10994,12 @@
       {
        "name": "board_l",
        "default": "21.0",
-       "comment": "board length (USB edge at the TOP of the bay)"
+       "comment": "board length (USB edge at the TOP of the bay) — brd_l(\"xiao\")"
       },
       {
        "name": "board_w",
        "default": "17.8",
-       "comment": "measured (was 17.5 — pockets pinched the real board)"
+       "comment": "measured — brd_xiao_w_measured(), canary_board_lib (was 17.5:"
       },
       {
        "name": "pocket_bare",
@@ -10890,7 +11128,8 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide(), canary_core_lib"
       }
      ]
     }
@@ -10920,7 +11159,8 @@
      "params": [
       {
        "name": "stud_gap",
-       "default": "30.0"
+       "default": "30.0",
+       "comment": "set per case (the fit coupon's POCKET pair prints at 30)"
       }
      ]
     },

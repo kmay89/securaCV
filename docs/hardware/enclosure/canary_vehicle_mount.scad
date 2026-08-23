@@ -20,18 +20,21 @@
 //  — fine at 04 stems, but deburr the head undersides.
 // ============================================================================
 
+use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
+use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries around
+
 /* [What to render] */
 part = "all";        // ["dash","vent","all"]
 
 /* [Stud interface] — match the target case's keyholes */
 stud_gap  = 36.0;    // center-to-center of the two T-studs
-// ecosystem-standard T-stud (same as canary_mount_adapters.scad): stem 1.4
-// (= kh_face 1.0 + 0.4 slide) + cone 1.2 + head 0.8 = 3.4 total, fitting the
-// catalog's 3.5 mm-deep blind keyhole pockets
-stud_d    = 4.0;     // stem
-stud_head = 6.6;     // head disc
-stud_head_t = 0.8;
-stud_stem_h = 1.4;
+// ecosystem-standard T-stud (canary_mount_lib, the interface's one home):
+// stem 1.4 (= kh_face 1.0 + 0.4 slide) + cone 1.2 + head 0.8 = 3.4 total,
+// fitting the catalog's 3.5 mm-deep blind keyhole pockets
+stud_d    = 4.0;     // stem — canary_mount_lib mount_stud_d()
+stud_head = 6.6;     // head disc — canary_mount_lib mount_stud_head()
+stud_head_t = 0.8;   // head thickness — canary_mount_lib mount_stud_cap()
+stud_stem_h = 1.4;   // stem height — canary_mount_lib mount_stud_stem()
 
 /* [Print tolerances] */
 tol_slide = 0.20;  tol_press = 0.10;
@@ -58,14 +61,11 @@ echo(str("Canary vehicle mount v0.1-dev — stud_gap ", stud_gap,
 assert(stud_gap >= stud_head + 4, "studs overlap — raise stud_gap");
 assert(louver_gap >= 1.5, "louver_gap < 1.5 mm — measure your vent blade");
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-
-module tstud() {                        // +Z axis; base at z0 (catalog standard)
-    cylinder(d = stud_d, h = stud_stem_h + 0.01);
-    translate([0, 0, stud_stem_h]) {
-        cylinder(d1 = stud_d, d2 = stud_head, h = 1.2);
-        translate([0, 0, 1.2]) cylinder(d = stud_head, h = stud_head_t);
-    }
+// T-stud from the mount library, fed this file's knobs (+Z axis, base at the
+// origin — the catalog standard); the cone stays the lib's print-support 1.2
+module tstud() {
+    mount_tstud(d = stud_d, head = stud_head,
+                stem = stud_stem_h, cap = stud_head_t);
 }
 
 // ---- dash plate (prints flat, studs up on the wedge face) --------------------

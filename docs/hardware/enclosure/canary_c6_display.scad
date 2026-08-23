@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)
+//  Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)
 //  A pocket portrait-display witness for the Waveshare ESP32-C6-LCD boards —
 //  our newest firmware-display target. Two board variants, one file:
 //    headers="none" — stripped board: header pins NOT soldered and the four
@@ -64,7 +64,17 @@
 //     headers build. The tightened windows are cut to photo measurements,
 //     not calipers — MEASURE your board (btn_up, btn_proud, btn_body_p,
 //     usb_dz, hdr_drop, brass_h) before committing to a long print.
+//     2026-08-23 v0.5: adopt the shared libs (core/mount/snap/board) — the
+//     keyhole becomes the catalog's BLIND pocket on an inside pad (the back
+//     grille steps outboard of it), pcb_t takes the ws147 drawing's 1.6, the
+//     snap windows derive from nub_w, and the window rim gets the C3
+//     sibling's glass-relief band.
 // ============================================================================
+
+use <canary_core_lib.scad>    // rrect2d + the catalog's process floors
+use <canary_mount_lib.scad>   // the stud/keyhole standard — the blind pocket
+use <canary_snap_lib.scad>    // snap arithmetic — the derived-window rule
+use <canary_board_lib.scad>   // the board registry — ws147 family numbers
 
 /* [What to render] */
 part  = "all";      // ["bezel","back","all"]
@@ -72,12 +82,18 @@ model = "1.47";     // ["1.47","1.69"]  board preset
 // board variant: "none" = stripped (no headers, corner pillars removed), "male" = as shipped (down-facing headers + brass corner pillars)
 headers = "none";   // ["none","male"]
 
-/* [Board] — ESP32-C6-LCD-1.47. From the Waveshare drawing (mm). */
+/* [Board] — ESP32-C6-LCD-1.47. From the Waveshare drawing (mm); the 1.47
+   outline is the ws147 family record in canary_board_lib. */
 // long axis (portrait height, Y), short axis (X), PCB thickness
 board_l = (model == "1.69") ? 36.0  : 36.37;   // 1.69 = MEASURE (placeholder)
 board_w = (model == "1.69") ? 25.0  : 20.32;
-pcb_t   = 1.45;
-lcd_rise   = 3.65;   // LCD glass front above the PCB front face (5.10 stack − 1.45 PCB)
+pcb_t   = 1.6;       // brd_t("ws147") — the drawing-backed family thickness;
+                     // the drawing does not call it out, so MEASURE stays
+lcd_rise   = 3.65;   // LCD glass front above the PCB front face — the drawing's
+                     // 5.10 overall stack minus the 1.45 this file used to guess
+                     // for the PCB. The C3 sibling prints fine carrying the same
+                     // 3.65 beside a 1.6 board, so the 0.15 disagreement rides
+                     // as cavity headroom until calipers settle it — MEASURE
 back_stack = 4.8;    // back-side clearance below the PCB, stripped board: the
                      // BACK-mounted USB shell (≈3.3) is the tallest thing, plus
                      // a printable bridge over the port opening — MEASURE
@@ -89,13 +105,25 @@ hdr_drop = 8.8;      // cavity depth below the PCB back that swallows base + pin
                      // (fit-tested: 8.8 closes fine — the earlier "pins foul the
                      // lid" was the boss Ø, fixed by the slimmer Ø4.6 bosses) — MEASURE
 hdr_inset = 1.6;     // PCB edge → header row centerline — MEASURE
-brass_h = 5.0;       // factory corner pillar height above the PCB back (0 = pillars removed) — MEASURE
+brass_h = 5.0;       // factory corner pillar height above the PCB back (0 =
+                     // pillars removed) — brd_ws147_brass_c6() carries this
+                     // same guess; the C3 sibling's pillars measured 3.0,
+                     // ours never met calipers — MEASURE
 
 /* [Screen] — active area = the window; the LCD module border sits under the lip */
 aa_l  = (model == "1.69") ? 27.972 : 32.35;    // active-area long (Y) — 1.69 = MEASURE
 aa_w  = (model == "1.69") ? 27.972 : 17.39;    // active-area short (X)
 lcm_l = (model == "1.69") ? 32.0   : 36.28;    // LCD module outline long
 lcm_w = (model == "1.69") ? 28.0   : 19.39;    // LCD module outline short
+
+/* [Glass protection] — the panel's front face IS glass, and glass fails from
+   stress at its edges. The bezel face touches the panel only on a LAND over
+   the module's outer border: the innermost glass_relief_w of the lip is
+   relieved glass_relief deep, so the window's rim never puts a contact line
+   on the glass edge — a contact line at a cut edge is exactly the stress
+   raiser this panel must not see (the C3 sibling's "locate, don't clamp"). */
+glass_relief   = 0.25;  // face stand-off over the innermost lip band
+glass_relief_w = 0.5;   // width of that relieved band, from the window edge out
 
 /* [USB-C] — on the BOTTOM (−Y) short wall, mounted on the BACK of the PCB
    (photo-verified): the shell rests on the PCB back face, so the opening
@@ -125,7 +153,10 @@ btn_body_p = 0.4;              // metal body overhang past the PCB edge — MEAS
 
 /* [Mount] */
 opt_keyhole = true;            // one blind keyhole in the back (wall hang)
-kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 7.0; kh_head_h = 3.0; kh_face = 1.0;
+// catalog standard — canary_mount_lib. This file had drifted to slot 7.0 /
+// depth 3.0: a slide the standard stud's head never finishes and a pocket it
+// bottoms out in 0.4 early. The knobs stay tunable; the lib is the default.
+kh_head_d = 7.0; kh_shank_d = 4.2; kh_slot_l = 8.0; kh_head_h = 3.5; kh_face = 1.0;
 
 /* [Ventilation] — let the backlight/regulator heat convect out (side slots +
    a back grille). Even this small board runs warm on full brightness. */
@@ -134,7 +165,8 @@ vent_n = 5;          // slots per side wall
 vent_pitch = 5.0;    // slot spacing
 vent_w = 1.4;        // slot width
 
-/* [Print tolerances] — tune with canary_fit_coupon.scad */
+/* [Print tolerances] — the catalog defaults (core_tol_* in canary_core_lib);
+   tune with canary_fit_coupon.scad */
 tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
 
 /* [Shell] */
@@ -164,7 +196,18 @@ ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
    headers variant to stay outboard of the pin rows. The nub sits at
    back_t + snap_depth so it lands on the skirt AND lines up with the bezel
    window; keep snap_depth + snap_h/2 ≤ skirt_dep. */
-snap_n = 4; snap_w = 5.0; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
+snap_n = 4; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
+// THE WINDOW IS DERIVED FROM THE RIDGE (canary_snap_lib's rule; the C3
+// sibling's lid-slide print taught it). One knob — snap_w — used to place the
+// ridge's end plates AND size the window, but the end plates draw 1.0 in from
+// it per side: a snap_w of 5.0 drew a 3.1 ridge in a 5.0 window, ±0.95 of
+// free travel for the lid to rattle across. The ridge's DRAWN width is the
+// parameter now; the window follows it through snap_window().
+nub_w = 3.1;         // the ridge's drawn width in Y — exactly what the old
+                     // arithmetic drew, so the click feel is unchanged
+snap_play = 0.15;    // window clearance per side — the catalog default
+                     // (canary_snap_lib); a printed window comes out a hair
+                     // small and the lid still has to enter
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -202,14 +245,20 @@ ear_w  = btn_ch_w + 4;                   // ear bulge width along the wall
 chin_w = usb_w + 4;                      // chin bulge width along the wall
 
 // active-area window vs module: the face overlaps the module border by
-// (module − AA)/2 per side; that overlap retains the glass
+// (module − AA)/2 per side; that overlap retains the glass. The LAND is what
+// is left of the lip outside the relieved band — that ring is the panel's
+// only contact.
 lip_l = (lcm_l - aa_l)/2;   // long-side lip (Y)
 lip_w = (lcm_w - aa_w)/2;   // short-side lip (X)
+land_w_x = lip_w - glass_relief_w;
+land_w_y = lip_l - glass_relief_w;
 
 // snap skirt: shallow in both variants, thin in headers mode (see [Snap fit])
 skirt_wall = (headers == "male") ? 1.0 : 1.6;
 skirt_dep  = snap_depth + snap_h/2 + 0.4;
 skirt_x = xc - 2*tol_press;   skirt_y = yc - 2*tol_press;
+// the snap WINDOW, derived from the ridge that has to sit in it — never typed
+snap_w = snap_window(nub_w, snap_play);
 
 // press bosses sit over the M2 corner pillar positions in both variants: on
 // the assembled board they land on the flat brass pillar TOPS (boss length
@@ -220,6 +269,19 @@ stand_iy = 2.6;                                  // inset from ±Y edge (M2 patt
 stand_d  = (headers == "male") ? 4.6 : 4.2;      // boss Ø — covers the pillar top but stays
                                                  // clear of the last header pin of each row
 stand_len = stack_eff - ((headers == "male") ? brass_h : 0);
+
+// keyhole host arithmetic — canary_mount_lib's blind rule: the pocket is
+// kh_head_h deep and wants 1.5 of web behind it so it never breaches the
+// cavity. The 2.0 plate alone cannot give that; kh_pad_h is what the inside
+// pad makes up. The pad's footprint wraps the pocket's widest feature (the
+// head channel, head_d + 0.6) in a structural wall per side.
+kh_host  = kh_head_h + 1.5;
+kh_pad_h = max(0, kh_host - back_t);
+kh_pad_x = kh_head_d + 0.6 + 2*core_min_wall();
+kh_pad_y = kh_slot_l + kh_head_d + 0.6 + 2*core_min_wall();
+// back-grille columns step outboard of the pad — a through slot into a blind
+// pocket would un-blind it (and vent nothing: it would dead-end in the pad)
+grille_x = opt_keyhole ? kh_pad_x/2 + 1.4 : 4.2;   // 0.4 clear + half the 2.0 slot
 
 // snap windows / nubs live on the two long (±X) side walls, at ±nub_y0 —
 // SYMMETRIC about the center, so the lid also clicks on rotated 180° and the
@@ -238,6 +300,10 @@ vent_dy = opt_btn ? (btn_y + ear_w/2) + (vent_n-1)*vent_pitch/2 + vent_w/2 + 1.2
 
 assert(aa_l < lcm_l && aa_w < lcm_w, "active area must be inside the module outline");
 assert(lip_w >= 0.8, "short-side lip < 0.8 mm won't retain the glass — check aa_w/lcm_w");
+assert(land_w_x >= 0.4 && land_w_y >= 0.4,
+       str("glass land is ", land_w_x, " / ", land_w_y, " mm — too narrow to ",
+           "carry the panel. Shrink glass_relief_w; the relief must never eat ",
+           "the land that locates the glass."));
 assert(lcm_l <= yc && lcm_w <= xc, "LCD module larger than the board cavity — check dims");
 assert(z_usb - usb_h/2 >= face_t - 0.01, "USB opening cuts into the bezel face — check usb_h/usb_dz");
 assert(z_usb + usb_h/2 <= face_t + cav_d - 0.8,
@@ -257,15 +323,27 @@ assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= tol_press + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
 assert(board_w/2 - stand_ix - stand_d/2 > 0, "press bosses collide at the board center — check stand_ix/stand_d");
-echo(str("Canary C6 display (", model, ", headers=", headers, ") v0.4-dev — outer ",
+// the keyhole pad stands in the cavity, so everything around it gets a gate
+assert(!opt_keyhole || stack_eff - kh_pad_h >= 1.5,
+       str("the keyhole pad tops out only ", stack_eff - kh_pad_h,
+           " mm short of the PCB back — the board's center-back parts live ",
+           "under that footprint (the 3.3 USB shell is at the edge; the SoC ",
+           "and friends are not). MEASURE before trusting less than 1.5."));
+assert(!opt_keyhole || (kh_pad_x/2 <= skirt_x/2 - skirt_wall - 0.3
+                     && kh_pad_y/2 <= skirt_y/2 - skirt_wall - 0.3),
+       "the keyhole pad runs into the snap skirt — shrink kh_head_d/kh_slot_l");
+assert(!opt_keyhole || headers != "male" || kh_pad_x/2 <= board_w/2 - hdr_inset - 1.5,
+       "the keyhole pad reaches into the descending header-pin rows — shrink kh_head_d");
+assert(!opt_vent || grille_x + 1.0 <= skirt_x/2 - skirt_wall - 0.3,
+       "the back grille runs into the skirt ring — the keyhole pad has pushed it too far out");
+echo(str("Canary C6 display (", model, ", headers=", headers, ") v0.5-dev — outer ",
          xo, " x ", yo, " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_l,
-         " (lip X ", lip_w, " / Y ", lip_l, "), cavity depth ", cav_d,
+         " (lip X ", lip_w, " / Y ", lip_l, ", land ", land_w_x, " / ", land_w_y,
+         "), cavity depth ", cav_d,
          "  (IN DEVELOPMENT — MEASURE)"));
 
-module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
-
 // stadium: a rounded slot with full-round ends (radius = half the height) —
-// the same profile as a USB-C shell
+// the same profile as a USB-C shell (rrect2d is canary_core_lib's)
 module stadium2d(w, h) { rrect2d(w, h, h/2 - 0.05); }
 
 // bezel outline: body + the ear / chin bulges. The BACK PLATE deliberately
@@ -310,6 +388,10 @@ module bezel() {
         // (no foot relief on the face — see [Shell]. Flat and full-size on
         //  the plate; the slicer's elephant-foot compensation is the only
         //  relief this part gets or needs.)
+        // glass relief: stand the face off the innermost lip band, so the
+        // window's rim never touches the panel (see [Glass protection])
+        translate([0, 0, face_t - glass_relief]) linear_extrude(glass_relief + 0.02)
+            rrect2d(aa_w + 2*glass_relief_w, aa_l + 2*glass_relief_w, 1.5 + glass_relief_w);
         // board cavity (with overhang channels) behind the glass ledge
         translate([0, 0, face_t]) linear_extrude(cav_d + 0.2) cavity2d();
         // USB-C stadium opening through the bottom (−Y) wall + chin
@@ -362,32 +444,50 @@ module back() {
             for (sx = [1, -1], sy = [1, -1])
                 translate([sx*(board_w/2 - stand_ix), sy*(board_l/2 - stand_iy), back_t - 0.01])
                     cylinder(d = stand_d, h = stand_len + 0.01);
-            // snap nubs on the short-wall (±X) skirt faces, chamfered both ways
+            // the keyhole's host: a kh_head_h-deep blind pocket wants
+            // kh_host of stock (the mount lib's web rule) and the plate is
+            // back_t — the difference is a pad on the plate's INSIDE face,
+            // the ear/chin local-thickening move aimed inward (outward would
+            // cost the flat outer face this part prints on). The pad is
+            // CENTERED, so the lid interface stays 180°-symmetric; only the
+            // pocket inside it points one way, and flipping the lid is what
+            // re-aims the slot.
+            if (opt_keyhole)
+                translate([0, 0, back_t - 0.01])
+                    linear_extrude(kh_pad_h + 0.01) rrect2d(kh_pad_x, kh_pad_y, 2.0);
+            // snap nubs on the short-wall (±X) skirt faces, chamfered both
+            // ways (symmetric — the C3's ramp-and-catch nub would break the
+            // flippable lid). The end plates span nub_w — the SAME number the
+            // window is sized from, so the two cannot drift apart again.
             for (sx = [1, -1], yc0 = nub_ys())
                 translate([sx*(skirt_x/2 - 0.3), yc0, back_t + snap_depth]) hull() {
-                    for (dy = [-snap_w/2 + 1.0, snap_w/2 - 1.0])
+                    for (dy = [-nub_w/2 + 0.05, nub_w/2 - 0.05])
                         translate([0, dy, 0]) cube([0.6, 0.1, snap_h - 0.4], center = true);
                     translate([sx*(snap_proud + 0.3), 0, 0]) cube([0.1, 0.1, 0.6], center = true);
                 }
         }
         // heat-escape grille in the back plate, over the component zone —
-        // CENTERD in both axes (it reads as the lid's face), skipping any
-        // slot pair that would undermine a press-boss foot (symmetric skip,
-        // so the grille stays centered)
+        // CENTERED in both axes (it reads as the lid's face), columns stepped
+        // outboard of the keyhole pad (a through slot into a blind pocket
+        // would un-blind it), skipping any slot pair that would undermine a
+        // press-boss foot (symmetric skip, so the grille stays centered)
         if (opt_vent) for (i = [0:vent_n-1], sx = [1, -1])
             let (gy = -(vent_n-1)*vent_pitch/2 + i*vent_pitch)
             if (abs(gy) + vent_w/2 <= board_l/2 - stand_iy - stand_d/2 - 0.2)
-                translate([sx*4.2, gy, back_t/2])
+                translate([sx*grille_x, gy, back_t/2])
                     cube([2.0, vent_w, back_t + 0.4], center = true);
-        // through keyhole in the back plate (wall hang; slot toward +Y/up):
-        // head hole passes the screw head, slot captures the shank as it slides
-        if (opt_keyhole) translate([0, 0, -0.1]) linear_extrude(back_t + 0.2) {
-            translate([0, -kh_slot_l/2]) circle(d = kh_head_d);
-            hull() {
-                translate([0, -kh_slot_l/2]) circle(d = kh_shank_d);
-                translate([0,  kh_slot_l/2]) circle(d = kh_shank_d);
-            }
-        }
+        // BLIND keyhole (wall hang; slot toward +Y/up) — the catalog pocket
+        // from canary_mount_lib, drawn natively along Y: the head circle
+        // passes the screw head behind a kh_face web and the shank rides to
+        // the slot's far end as the case drops on. Blind means blind: it
+        // never breaches the cavity, so nothing shows through the back. (It
+        // cut clean through the 2.0 plate before the pad existed — hung on a
+        // wall, the screw head sat INSIDE the case against the board.)
+        if (opt_keyhole)
+            mount_keyhole_pocket(0, 0, axis = "y",
+                                 head_d = kh_head_d, shank_d = kh_shank_d,
+                                 slot_l = kh_slot_l, head_h = kh_head_h,
+                                 face = kh_face);
     }
 }
 

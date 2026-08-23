@@ -14,12 +14,15 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
 
+use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
+use <canary_mount_lib.scad>  // the stud/keyhole standard this file carries around
+
 /* [What to render] */
 part = "corner";     // ["corner","magnet","pole","template"]
 
 /* [T-stud interface] */
 stud_gap = 30.0;     // stud spacing — match the target case's keyhole pockets
-kh_face  = 1.0;
+kh_face  = 1.0;      // target pocket's face web — canary_mount_lib mount_kh_face()
 
 /* [Plate] */
 ap_w = 36.0;         // adapter plate width
@@ -50,13 +53,11 @@ $fa = 3; $fs = 0.4;
 ap_l = stud_gap + 26;
 echo(str("Canary mount adapters v0.1-dev — ", part, ", stud_gap ", stud_gap, "  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// T-stud from the mount library; this file's placement signature survives as
+// a wrapper. The stem tracks the kh_face knob (stem = face web + 0.4 slide
+// room) so a nonstandard pocket still gets a matching stud.
 module tstud(yc, zbase) {
-    translate([0, yc, zbase]) {
-        cylinder(d = 4.0, h = kh_face + 0.4);
-        translate([0, 0, kh_face + 0.4]) cylinder(d1 = 4.0, d2 = 6.6, h = 1.2);
-        translate([0, 0, kh_face + 1.6]) cylinder(d = 6.6, h = 0.8);
-    }
+    translate([0, yc, zbase]) mount_tstud(stem = kh_face + 0.4);
 }
 module cb_screw(x, y, t) {           // through-hole + pan-head counterbore from the front
     translate([x, y, -0.1]) cylinder(d = screw_d, h = t + 3);

@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.2-dev)
 // @env ip="IP66/67/68 (from the bought Hammond box)" note="the rating is the purchased box's, earned only if the gland + vent are installed correctly — not our printed plate's"
 //  The build plan's harsh-outdoor path (ENC1) is a Hammond 1554/1555
 //  polycarbonate box — which arrives EMPTY. This plate screws to the box's
@@ -14,7 +14,15 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 //     MEASURE your box's boss spacing (Hammond publishes drawings per size;
 //     defaults below are placeholders for a 1554F-class box) and your boards.
+//
+//  v0.2-dev (2026-08-23): canary_*_lib adoption; the Grove Vision AI V2 plate
+//  arithmetic now reads the registry's measured 40 x 20 — this file still
+//  carried the wrong 25 x 25 that three siblings had already corrected.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
+use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
+use <canary_board_lib.scad>  // board registry — vm_l/vm_w read it; the knobs cite it
 
 /* [What to render] */
 part  = "plate";     // ["plate"]
@@ -29,11 +37,23 @@ plate_w = 88.0;
 plate_t = 2.4;
 
 /* [Boards] — nominal; MEASURE (same meanings as the device enclosures) */
-wap_l = 21.0;  wap_w = 17.5;  wap_pcb = 1.2;
-vm_l  = 25.0;  vm_w  = 25.0;                 // Grove Vision AI V2
-sm_l  = 44.0;  sm_w  = 36.0;                 // MR60BHA2 carrier
-stack_sock_h = 11.5;                          // seated-XIAO stack height
-pcb_t = 1.0;
+wap_l = 21.0;  wap_w = 17.5;  wap_pcb = 1.2;  // XIAO spec — brd_l/brd_w/brd_t("xiao");
+                                              // the clips' clip_clear absorbs the
+                                              // measured 17.8 (brd_xiao_w_measured())
+// The Grove module is what it is — a fixed arithmetic input, not a knob — so
+// its size comes from the registry instead of a retype. This file carried the
+// wrong 25 x 25 long after three siblings measured 40 x 20; the registry (and
+// its board_selfcheck()) is why that cannot happen a fourth time.
+vm_l  = brd_l("grove_v2");                   // Grove Vision AI V2, measured 40
+vm_w  = brd_w("grove_v2");                   // ... x 20 (the 1x2 form, not a square)
+sm_l  = 44.0;  sm_w  = 36.0;                 // MR60BHA2 carrier — brd_l/brd_w("mr60")
+stack_sock_h = 11.5;                          // seated-XIAO stack height (module underside
+                                              // -> XIAO underside): measured 6.5 per
+                                              // canary_board_lib brd_stack_sock_measured();
+                                              // 11.5 is unmeasured headroom — print-
+                                              // validated as a roomier cavity, never
+                                              // confirmed as a stack height — MEASURE
+pcb_t = 1.0;                                  // brd_t("grove_v2") / brd_t("mr60")
 standoff_h = 3.0;
 
 /* [Board snap clips] */
@@ -54,18 +74,19 @@ soff = (stack == "wap") ? standoff_h : stack_sock_h + 1.5;
 assert(b_w + 6 < plate_w && b_l + 6 < plate_l, "board exceeds the plate — grow plate_l/w");
 assert(boss_dx/2 + 1 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_l/2 && boss_dy/2 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_w/2,
        "boss slots too close to the plate edge (need >= 2 mm web) — grow plate_l/plate_w");
-echo(str("Canary Hammond chassis v0.1-dev — plate ", plate_l, "x", plate_w,
+echo(str("Canary Hammond chassis v0.2-dev — plate ", plate_l, "x", plate_w,
          ", stack=", stack, " on ", soff, " mm rails  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// (rrect2d comes from canary_core_lib — the local copy is gone)
+// Cantilever snap clip at edge point (px,py); `ang` = outward normal. The
+// drawing is canary_snap_lib's beam (the WAP pattern), so the insertion-strain
+// arithmetic runs as an assert on every render. This file's clips stand on the
+// ±X board edges, so the wrapper keeps the axis rotation and hands the drawing
+// to the library — same route the Sense case takes.
 module edgeclip(px, py, ang) {
-    bt = plate_t + soff + b_t;  tp = bt + clip_hook_h;
-    pts = [ [clip_clear, plate_t], [clip_clear + clip_t, plate_t],
-            [clip_clear + clip_t, tp], [clip_clear, tp],
-            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
     translate([px, py, 0]) rotate([0, 0, ang - 90])
-        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
-            linear_extrude(clip_w) polygon(pts);
+        snap_boardclip(0, 0, 1, plate_t, plate_t + soff + b_t,
+                       clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
 }
 
 module plate() {

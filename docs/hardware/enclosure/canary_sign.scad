@@ -5,8 +5,14 @@
 //  debossed text prints crisply face-down, or pause at the text layer for a
 //  contrast filament swap.
 //
+//  2026-08-23: rrect2d now comes from canary_core_lib — same geometry, one
+//  home. The corner seats stay local: they are the 82° US flat-head cone,
+//  not the lib's 90° cs_cone90_cut.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only. Check your local signage rules.
 // ============================================================================
+
+use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
 
 /* [What to render] */
 part = "sign";       // ["sign"]
@@ -33,8 +39,6 @@ $fa = 3; $fs = 0.4;
 
 echo(str("Canary witness sign v0.1-dev — ", sign_w, " x ", sign_h, " mm  (IN DEVELOPMENT)"));
 
-module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
-
 module sign() {
     difference() {
         union() {
@@ -59,7 +63,9 @@ module sign() {
         if (screws) for (sx = [1, -1], sy = [1, -1]) {
             translate([sx*(sign_w/2 - 7), sy*(sign_h/2 - 7), -0.1]) cylinder(d = screw_d, h = sign_t + 0.2);
             translate([sx*(sign_w/2 - 7), sy*(sign_h/2 - 7), sign_t - 1.6])
-                cylinder(d1 = screw_d, d2 = screw_d + 4.2, h = 1.7);   // #8 flat head (Ø8.2) seats flush
+                cylinder(d1 = screw_d, d2 = screw_d + 4.2, h = 1.7);   // #8 flat head (Ø8.2) seats flush —
+                                                                       // the 82° US seat, deliberately NOT
+                                                                       // cs_cone90_cut's metric 90°
         }
     }
 }
