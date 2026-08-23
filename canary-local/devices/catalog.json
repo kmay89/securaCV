@@ -53,7 +53,7 @@
   {
    "id": "bench_fixture",
    "scad": "canary_bench_fixture.scad",
-   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -235,7 +235,7 @@
   {
    "id": "c6_display",
    "scad": "canary_c6_display.scad",
-   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
+   "title": "Canary — ESP32-C6-LCD DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.5-dev)",
    "family": "canary-display-watch",
    "device_compat": [
     "canary-display-watch"
@@ -305,7 +305,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 61,
+   "engineering_param_count": 73,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -390,16 +390,24 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "opt_mark",
+     "type": "bool",
+     "label": "deboss the house wordmark on the front (canary_mark_lib) — placed by",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
-   "engineering_param_count": 32,
+   "engineering_param_count": 37,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 4,
-    "user_options": 4,
+    "options": 5,
+    "user_options": 5,
     "variant_axes": 0
    }
   },
@@ -650,7 +658,7 @@
   {
    "id": "hammond_chassis",
    "scad": "canary_hammond_chassis.scad",
-   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -699,7 +707,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 14,
+   "engineering_param_count": 16,
    "alternatives": [
     "field_case",
     "relay_solar"
@@ -846,6 +854,14 @@
      "consequence": "",
      "audience": "user",
      "default": false
+    },
+    {
+     "id": "opt_mark",
+     "type": "bool",
+     "label": "deboss the house wordmark on the lid's INTERIOR face — a",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
    "engineering_param_count": 17,
@@ -854,8 +870,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 2,
-    "user_options": 2,
+    "options": 3,
+    "user_options": 3,
     "variant_axes": 0
    }
   },
@@ -989,9 +1005,17 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "opt_mark",
+     "type": "bool",
+     "label": "deboss the house wordmark on the lid (canary_mark_lib) — placed by",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
-   "engineering_param_count": 39,
+   "engineering_param_count": 44,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1000,8 +1024,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 1,
-    "user_options": 1,
+    "options": 2,
+    "user_options": 2,
     "variant_axes": 0
    }
   },
@@ -1510,7 +1534,7 @@
   {
    "id": "s3_touch169",
    "scad": "canary_s3_touch169.scad",
-   "title": "Canary — ESP32-S3-Touch-LCD-1.69 WATCH-DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — ESP32-S3-Touch-LCD-1.69 WATCH-DISPLAY CASE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "canary-display-watch",
    "device_compat": [
     "canary-display-watch"
@@ -1563,7 +1587,7 @@
     {
      "id": "opt_keyhole",
      "type": "bool",
-     "label": "one blind keyhole in the back (wall hang)",
+     "label": "one BLIND keyhole in the back (wall hang) — the pocket",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1585,7 +1609,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 27,
+   "engineering_param_count": 46,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -1786,6 +1810,14 @@
      "consequence": "",
      "audience": "engineering",
      "default": true
+    },
+    {
+     "id": "opt_mark",
+     "type": "bool",
+     "label": "deboss the house wordmark instead of a custom label — sits where",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
    "engineering_param_count": 123,
@@ -1794,8 +1826,8 @@
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 13,
-    "user_options": 7,
+    "options": 14,
+    "user_options": 8,
     "variant_axes": 1
    }
   },
@@ -2058,7 +2090,7 @@
   {
    "id": "vision_doorbell",
    "scad": "canary_vision_doorbell.scad",
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.2",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.3",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2158,6 +2190,14 @@
      "consequence": "",
      "audience": "engineering",
      "default": true
+    },
+    {
+     "id": "opt_mark",
+     "type": "bool",
+     "label": "deboss the house wordmark instead of a custom label — it sits",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
    "engineering_param_count": 116,
@@ -2166,15 +2206,15 @@
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 6,
-    "user_options": 4,
+    "options": 7,
+    "user_options": 5,
     "variant_axes": 0
    }
   },
   {
    "id": "vision_enclosure",
    "scad": "canary_vision_enclosure.scad",
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.2",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.3",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2430,16 +2470,24 @@
      "consequence": "",
      "audience": "engineering",
      "default": true
+    },
+    {
+     "id": "opt_mark",
+     "type": "bool",
+     "label": "deboss the house mark (the canary_mark_lib bird) at the",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
-   "engineering_param_count": 144,
+   "engineering_param_count": 146,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 4,
     "released": 4,
-    "options": 14,
-    "user_options": 8,
+    "options": 15,
+    "user_options": 9,
     "variant_axes": 2
    }
   },
@@ -2794,6 +2842,14 @@
      "default": "keyhole"
     },
     {
+     "id": "opt_mark",
+     "type": "bool",
+     "label": "deboss the house wordmark instead of a custom label — it sits where",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "screw_insert",
      "type": "bool",
      "label": "M2 brass heat-set inserts in the corner posts (service-grade threads;",
@@ -2832,8 +2888,8 @@
    "counts": {
     "variants": 5,
     "released": 5,
-    "options": 16,
-    "user_options": 11,
+    "options": 17,
+    "user_options": 12,
     "variant_axes": 1
    }
   },

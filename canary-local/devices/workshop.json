@@ -160,6 +160,14 @@
       "tabs",
       "both"
      ]
+    },
+    {
+     "id": "opt_mark",
+     "group": "Aesthetics",
+     "label": "deboss the house wordmark instead of a custom label — it sits where",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
    "packages": [
@@ -674,6 +682,14 @@
       "keyhole",
       "both"
      ]
+    },
+    {
+     "id": "opt_mark",
+     "group": "Aesthetics",
+     "label": "deboss the house wordmark instead of a custom label — sits where",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
    "packages": [
