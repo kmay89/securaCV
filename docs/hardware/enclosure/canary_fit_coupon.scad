@@ -63,6 +63,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole standard — the POCKET/MATE pa
 use <canary_snap_lib.scad>   // the WAP clip + its strain budget — the CLIP station
 use <canary_port_lib.scad>   // the bridge-safe opening — the PORT station
 use <canary_board_lib.scad>  // the board registry — its self-check runs here
+use <canary_color_lib.scad>  // the colorway registry — its self-check runs here
 
 /* [What to render] */
 part = "all";        // ["base","mate","strip","all"]
@@ -355,6 +356,7 @@ mount_selfcheck();
 snap_selfcheck();
 port_selfcheck();
 board_selfcheck();
+color_selfcheck();
 
 if      (part == "base")  base();
 else if (part == "mate")  mate();

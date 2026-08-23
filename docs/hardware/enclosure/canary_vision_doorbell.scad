@@ -40,6 +40,7 @@ use <canary_port_lib.scad>   // connector standards — the shell numbers the
 use <canary_board_lib.scad>  // board registry — this file is the measured
                              // source for the seated-stack height
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
+use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
 part = "all";        // ["body","face","plate","gasket","all"]
@@ -152,6 +153,7 @@ sec_screw_d = 2.2;    // security screw (M2 self-tap; use a Torx/security drive)
 plate_screw_d = 4.2;  // wall screws (#8 / M4 countersunk)
 
 /* [Aesthetics] */
+colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
 lid_edge    = 1.0;    // face edge chamfer
 lid_edge2   = 0.8;    // second, steeper stage (~66°) — softens the face edge toward a roundover
 // The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
@@ -570,8 +572,10 @@ else if (part == "face")   translate([0, 0, lid_t]) rotate([180, 0, 0]) face();
 else if (part == "gasket") { assert(e_seal, "gasket needs opt_seal=true"); gasket(); }
 else if (part == "plate")  plate();
 else {
-    body();
-    translate([0, 0, 0]) translate([out_x/2 + plate_x/2 + 10, 0, lid_t]) rotate([180, 0, 0]) face();
-    translate([-(out_x + 14), 0, 0]) plate();
-    if (e_seal) translate([0, out_y + 12, 0]) gasket();
+    // assembled preview wears the chosen colorway (canary_color_lib);
+    // color() is preview-only — single-part exports are byte-identical
+    color(cw_body(colorway)) body();
+    color(cw_body(colorway)) translate([0, 0, 0]) translate([out_x/2 + plate_x/2 + 10, 0, lid_t]) rotate([180, 0, 0]) face();
+    color(cw_body(colorway)) translate([-(out_x + 14), 0, 0]) plate();
+    if (e_seal) color(cw_light(colorway)) translate([0, out_y + 12, 0]) gasket();
 }

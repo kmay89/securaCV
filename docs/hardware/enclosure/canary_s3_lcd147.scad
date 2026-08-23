@@ -94,6 +94,7 @@
 use <canary_mark_lib.scad>  // the house mark: bird + wordmark lockup
 use <canary_port_lib.scad>  // the series-A standards + the insertion-length gate
 use <canary_board_lib.scad> // the ws147 board record the knob defaults cite
+use <canary_color_lib.scad> // the colorway registry — preview spool colors
 
 /* [What to render] */
 part = "all";   // ["bezel","back","light","all","exploded","palette","fil_body","fil_accent","fil_light","fit_section"]
@@ -387,6 +388,9 @@ rib_w = 1.2;         // rib thickness across the board — the crushing face
 tol_slide = 0.20;    // board into its cavity
 tol_press = 0.10;    // skirt into the bezel
 tol_hole = 0.30;
+
+/* [Colorway] — preview spools only; per-part exports carry no color */
+colorway = "midnight"; // ["graphite","canary","snow","forest","midnight"] this stick's print-validated set is midnight: near-black body, canary ink, white band (canary_color_lib)
 
 /* [Quality] */
 $fa = 3; $fs = 0.35;
@@ -1092,7 +1096,7 @@ module light_plug() {
 //  RENDER
 // ===========================================================================
 
-module back_assembly() { color("#1a1a1a") back_body(); color("#f5c518") back_accent(); }
+module back_assembly() { color(cw_body(colorway)) back_body(); color(cw_ink(colorway)) back_accent(); }
 
 // The bezel as it looks assembled: black body, white light band.
 //
@@ -1102,18 +1106,18 @@ module back_assembly() { color("#1a1a1a") back_body(); color("#f5c518") back_acc
 // the LAST color — it renders the entire bezel white. The same caveat is on
 // the 7" frame's frame_color and in README §"Preview renders". These views are
 // good for silhouette and for fit; use part="palette" to see the colors.
-module bezel_assembly() { color("#1a1a1a") bezel(); if (band_on) color("#f2f2f2") light_band(); }
+module bezel_assembly() { color(cw_body(colorway)) bezel(); if (band_on) color(cw_light(colorway)) light_band(); }
 
 // The three filaments, spread far enough apart that no two solids overlap —
 // which is the whole point, because non-overlapping groups are the ONE case
 // OpenCSG colors reliably. This is the view that answers "what does it look
 // like in black, white and yellow", and it cannot lie the way an assembly can.
 module palette_row() {
-    color("#1a1a1a") bezel();
-    if (band_on) translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
+    color(cw_body(colorway)) bezel();
+    if (band_on) translate([xo + 8, 0, 0]) color(cw_light(colorway)) light_band();
     translate([2*(xo + 8), 0, 0]) {
-        color("#1a1a1a") back_body();
-        color("#f5c518") back_accent();
+        color(cw_body(colorway)) back_body();
+        color(cw_ink(colorway)) back_accent();
     }
 }
 
