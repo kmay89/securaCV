@@ -145,6 +145,29 @@ declare it, and let the app render what the device says it has.
 
 ## Entries
 
+### 2026-08-23 — The dev channel quietly had no AMOLED: two workflows, one product list, no gate comparing them
+
+- **Symptom:** the Canary Glance AMOLED read "no published release yet" on
+  the dev channel while every sibling board was there. Nothing was red:
+  the Flasher Factory Images runs were green.
+- **Cause:** `firmware-release.yml` and `flasher-release.yml` each carry
+  their OWN copy of the display PlatformIO env list, and when amoled241
+  was added only the firmware release's list gained it. The factory-image
+  path's display builds are non-blocking by design (a per-variant
+  `::warning::`, then the product just isn't in the manifest), so the drop
+  was silent — the same failure shape as 2026-07-28 (i), reached through a
+  different door. `build_flash_manifest.py` knew the product all along;
+  the env simply was never built on that path.
+- **Fix:** add `canary-display-amoled241` to `flasher-release.yml`'s
+  display env loop (this entry's commit).
+- **Applies to:** every place a product list is duplicated across
+  workflows. When a board/env/product is added, `grep -rn` its env name
+  across `.github/workflows/` and expect a hit in BOTH release paths
+  (firmware release AND factory images) — one green run proves only the
+  list it ran from. The release path's product-drop gate catches a product
+  that vanishes between two firmware releases; nothing yet compares the
+  two workflows' lists to each other, so the grep is the gate.
+
 ### 2026-08-22 — The upload succeeded, the tag was cut, and TestFlight showed nothing: the tvOS plist never declared export compliance
 
 - **Symptom:** tvos-v0.2.2 uploaded to App Store Connect with "No errors
