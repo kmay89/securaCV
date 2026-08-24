@@ -24,6 +24,13 @@ on:
   pull_request:
     paths:
       - "ios/**"
+      # The timeline parity fixture is asserted by TimelineScrubTests against
+      # ios/Shared/TimelineScrub.swift. It is GENERATED from the JavaScript
+      # implementation, so a fixture-only regeneration changes what Swift is
+      # held to while touching nothing under ios/ — without this path, that
+      # change would sail through with only the Ubuntu (JavaScript) side run,
+      # which is exactly the drift the fixture exists to prevent.
+      - "tests/fixtures/timeline/**"
       - ".github/workflows/ios-selfheal.yml"
   schedule:
     # 08:41 UTC nightly — off the :00 fleet stampede, distinct from bom-pricing.

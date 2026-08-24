@@ -270,6 +270,58 @@ final class TimelineScrubTests: XCTestCase {
         XCTAssertEqual(TimelineScrub.sorted(recs).map(\.label), recs.map(\.label))
     }
 
+    func testDaysGroupByTheSuppliedCalendarNotAlwaysUTC() throws {
+        // The phone's ribbon must agree with the Alerts list under it, which
+        // groups with Calendar.current. Grouping by UTC put a Sunday-evening
+        // Pacific alert under a "Monday" heading above the Sunday rows.
+        var pacific = Calendar(identifier: .gregorian)
+        pacific.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+
+        // 2025-06-30 01:00 UTC == 2025-06-29 18:00 Pacific — a Sunday evening
+        // that UTC calls Monday.
+        let sundayEveningPacific = 1_751_245_200
+        let record = TimelineRecord(t0: sundayEveningPacific, kind: .event,
+                                    label: "Contact state change", family: .touch)
+
+        let utcDays = TimelineScrub.days(for: [record])
+        XCTAssertEqual(utcDays.count, 1)
+        XCTAssertTrue(utcDays[0].label.hasPrefix("Monday"), "UTC default unchanged: \(utcDays[0].label)")
+
+        let localDays = TimelineScrub.days(for: [record], calendar: pacific)
+        XCTAssertEqual(localDays.count, 1)
+        XCTAssertTrue(localDays[0].label.hasPrefix("Sunday"),
+                      "the phone must group by the user's day, got \(localDays[0].label)")
+
+        // The day starts at LOCAL midnight, and the record sits inside it.
+        let dayT0 = localDays[0].dayT0
+        XCTAssertEqual(dayT0, Int(pacific.startOfDay(
+            for: Date(timeIntervalSince1970: TimeInterval(sundayEveningPacific))).timeIntervalSince1970))
+        XCTAssertGreaterThanOrEqual(record.t0, dayT0)
+        XCTAssertLessThan(record.t0, dayT0 + TimelineScrub.daySeconds)
+        // …and its cell lands in the evening, not at the head of the strip.
+        let cell = try XCTUnwrap(localDays[0].cells.first)
+        XCTAssertEqual(cell.index, (record.t0 - dayT0) / TimelineScrub.defaultBucketSeconds)
+        XCTAssertGreaterThan(cell.index, localDays[0].cellsPerDay / 2, "18:00 is in the back half of the day")
+    }
+
+    func testTheRibbonAndTheAlertsListAgreeOnWhichDayARecordBelongsTo() {
+        // The two groupings are written in different places, so pin that they
+        // answer the same question: same calendar in, same day boundary out.
+        let calendar = Calendar.current
+        let now = Date()
+        let alerts = (0..<12).map { i in
+            AlertRecord(id: "a\(i)", witnessID: "w", name: "Canary",
+                        severity: .notice, headline: "Something crossed the boundary",
+                        at: now.addingTimeInterval(Double(i) * -7200))
+        }
+        let model = TimelineScrub.model(for: TimelineScrub.records(from: alerts), calendar: calendar)
+        let sectionDays = Set(AlertHistory.daySections(alerts, calendar: calendar)
+            .map { Int($0.day.timeIntervalSince1970) })
+        let ribbonDays = Set(model.days.map(\.dayT0))
+        XCTAssertEqual(ribbonDays, sectionDays,
+                       "the ribbon's days and the list's sections must be the same days")
+    }
+
     func testHeartbeatsNeverLightADensityCell() {
         let base = 1_750_809_600
         let recs = [

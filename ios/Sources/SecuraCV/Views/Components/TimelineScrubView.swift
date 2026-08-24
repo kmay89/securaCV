@@ -245,8 +245,14 @@ struct TimelineScrubSection: View {
 
     @State private var scrubbedBucket: Date?
 
+    /// `Calendar.current`, deliberately: the Alerts list below groups its
+    /// sections with the user's own calendar (`AlertHistory.daySections`), and
+    /// a ribbon grouped by UTC would put a Sunday-evening alert under a
+    /// "Monday" heading sitting directly above the Sunday rows it scrolls to.
+    /// The evidence viewer keeps the UTC default — there the record's own
+    /// frame is the honest one, and the page says so.
     private var model: TimelineModel {
-        TimelineScrub.model(for: TimelineScrub.records(from: records))
+        TimelineScrub.model(for: TimelineScrub.records(from: records), calendar: .current)
     }
 
     var body: some View {

@@ -3510,7 +3510,19 @@ const TAMPER_ICON = '<svg class="tl-shield" viewBox="0 0 24 24" fill="none" stro
 
 function scrubTimeline(src, opts) {
   if (!src.records.length) {
-    return `<div class="panel"><h2>${esc(opts.title)}</h2><div class="hint">${esc(opts.emptyMsg)}</div></div>`;
+    // "Nothing was recorded" and "nothing here could be read" are different
+    // claims, and only one of them is ours to make. Envelope verification
+    // authenticates the payload BYTES without requiring each payload to
+    // parse, so a fully unreadable ledger reaches a passing report — and
+    // saying it was empty would turn a gap in our reading into a statement
+    // about the device's day.
+    const n = src.unparsed || 0;
+    const body = n
+      ? `This bundle's sealed ledger holds ${n} entr${n === 1 ? 'y' : 'ies'} that could not be read, and
+         nothing this viewer can display. That is not the same as an empty record: the entries are
+         signed and chained, but their contents are not in a shape this viewer understands.`
+      : esc(opts.emptyMsg);
+    return `<div class="panel"><h2>${esc(opts.title)}</h2><div class="hint">${body}</div></div>`;
   }
   const model = T.buildTimelineModel(src, { coverageT0: opts.coverageT0, coverageT1: opts.coverageT1 });
   TL = { model };

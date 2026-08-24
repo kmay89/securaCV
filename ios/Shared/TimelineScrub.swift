@@ -385,15 +385,33 @@ extension TimelineScrub {
         return lines
     }
 
-    /// Group into UTC days, each with the density strip that makes a day
-    /// readable without reading. Reserved statuses win a cell outright (gap,
-    /// then tamper) so trouble is never averaged away by a busy hour.
+    /// Group into days, each with the density strip that makes a day readable
+    /// without reading. Reserved statuses win a cell outright (gap, then
+    /// tamper) so trouble is never averaged away by a busy hour.
+    ///
+    /// `calendar` decides where a day STARTS, and the two callers genuinely
+    /// want different answers. The evidence viewer works in UTC — the record's
+    /// own frame, captioned as such, because a court reads the log and not the
+    /// reader's location — and that is the parity-tested default. The phone
+    /// must pass `.current`: the Alerts list groups its sections with
+    /// `Calendar.current`, so a UTC-grouped ribbon put a Sunday 17:00 Pacific
+    /// alert under a "Monday" heading directly above the Sunday rows it
+    /// scrolls to.
+    ///
+    /// A 23- or 25-hour day (a DST transition) still measures its coverage
+    /// fractions against a 24-hour span, so the strip's shading is off by an
+    /// hour's width on exactly those two days a year. Grouping and labels stay
+    /// correct, which is the part that could actually mislead.
     static func days(for records: [TimelineRecord],
                             bucketSeconds: Int = defaultBucketSeconds,
                             coverageT0: Int? = nil,
-                            coverageT1: Int? = nil) -> [TimelineDay] {
+                            coverageT1: Int? = nil,
+                            calendar: Calendar = utcCalendar) -> [TimelineDay] {
         let perDay = max(1, Int((Double(daySeconds) / Double(bucketSeconds)).rounded()))
         let visible = records.filter { $0.kind != .heartbeat }
+        func startOfDay(_ t: Int) -> Int {
+            Int(calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(t))).timeIntervalSince1970)
+        }
 
         struct Bucket {
             var count = 0
@@ -413,7 +431,7 @@ extension TimelineScrub {
         var days: [Int: Day] = [:]
         var order: [Int] = []
         for (index, r) in visible.enumerated() {
-            let dayT0 = Int((Double(r.t0) / Double(daySeconds)).rounded(.down)) * daySeconds
+            let dayT0 = startOfDay(r.t0)
             if days[dayT0] == nil {
                 days[dayT0] = Day(firstIndex: index)
                 order.append(dayT0)
@@ -455,7 +473,7 @@ extension TimelineScrub {
             }
             return TimelineDay(
                 dayT0: dayT0,
-                label: dayLabel(dayT0),
+                label: dayLabel(dayT0, calendar: calendar),
                 count: d.count,
                 gapCount: d.gapCount,
                 tamperCount: d.tamperCount,
@@ -525,7 +543,8 @@ extension TimelineScrub {
                              unparsed: Int = 0,
                              coverageT0: Int? = nil,
                              coverageT1: Int? = nil,
-                             bucketSeconds: Int? = nil) -> TimelineModel {
+                             bucketSeconds: Int? = nil,
+                             calendar: Calendar = utcCalendar) -> TimelineModel {
         let records = sorted(input)
         let bucket = bucketSeconds ?? mostCommonSize(records) ?? defaultBucketSeconds
         var m = TimelineModel()
@@ -533,7 +552,8 @@ extension TimelineScrub {
         m.bucketSeconds = bucket
         m.unparsed = unparsed
         m.segments = segments(for: records, coverageT0: coverageT0, coverageT1: coverageT1)
-        m.days = days(for: records, bucketSeconds: bucket, coverageT0: coverageT0, coverageT1: coverageT1)
+        m.days = days(for: records, bucketSeconds: bucket,
+                      coverageT0: coverageT0, coverageT1: coverageT1, calendar: calendar)
         m.items = items(records: records, segments: m.segments, days: m.days)
         var zones: [String] = []
         for r in records where r.kind == .event && !r.zone.isEmpty && !zones.contains(r.zone) {
@@ -618,15 +638,22 @@ extension TimelineScrub {
     /// own; these are the parity-checked canonical forms.)
     static let utc = TimeZone(secondsFromGMT: 0)!
 
+    /// The parity default. The evidence viewer reads the log in the record's
+    /// own frame, so day boundaries are UTC there; the phone passes
+    /// `Calendar.current` instead (see `days(for:…:calendar:)`).
+    static let utcCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = utc
+        return cal
+    }()
+
     static let monthNames = ["January", "February", "March", "April", "May", "June", "July",
                              "August", "September", "October", "November", "December"]
     static let weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
-    static func utcComponents(_ epochSeconds: Int) -> DateComponents {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = utc
-        return cal.dateComponents([.year, .month, .day, .hour, .minute, .weekday],
-                                  from: Date(timeIntervalSince1970: TimeInterval(epochSeconds)))
+    static func utcComponents(_ epochSeconds: Int, calendar: Calendar = utcCalendar) -> DateComponents {
+        calendar.dateComponents([.year, .month, .day, .hour, .minute, .weekday],
+                                from: Date(timeIntervalSince1970: TimeInterval(epochSeconds)))
     }
 
     static func hourMinute(_ epochSeconds: Int) -> String {
@@ -639,8 +666,10 @@ extension TimelineScrub {
         hourMinute(t0) + " – " + hourMinute(t0 + size)
     }
 
-    static func dayLabel(_ dayT0: Int) -> String {
-        let c = utcComponents(dayT0)
+    /// Formatted in the SAME calendar the day was grouped by, or the header
+    /// would name a different day than the rows beneath it.
+    static func dayLabel(_ dayT0: Int, calendar: Calendar = utcCalendar) -> String {
+        let c = utcComponents(dayT0, calendar: calendar)
         let weekday = weekdayNames[max(0, (c.weekday ?? 1) - 1)]
         let month = monthNames[max(0, (c.month ?? 1) - 1)]
         return "\(weekday), \(month) \(c.day ?? 1), \(c.year ?? 1970)"
