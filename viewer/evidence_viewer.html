@@ -1321,6 +1321,11 @@ function normalizeEnvelope(envelope) {
   for (const e of entries) {
     let rec;
     try { rec = JSON.parse(e.payload_json); } catch { unparsed += 1; continue; }
+    // A payload of `null`, a bare number, or an array all parse fine and then
+    // throw on the first property read — which took down the whole timeline,
+    // not just the bad row. The viewer's entire job is reading files from
+    // people it does not trust, so a malformed entry is counted, never fatal.
+    if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) { unparsed += 1; continue; }
     let r = null;
     if (rec.record_type === 'failure' || (rec.record_type === undefined && rec.failure_type !== undefined)) {
       r = recordFromFailure(rec);

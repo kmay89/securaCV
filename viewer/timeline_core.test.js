@@ -118,6 +118,33 @@ describe('record normalization', () => {
     assert.equal(records[4].label, 'Lifecycle');
   });
 
+  it('survives payloads that parse but are not records', () => {
+    // `null`, a bare number, an array and a string all survive JSON.parse and
+    // then throw on the first property read — one bad entry used to take the
+    // whole timeline down rather than just itself.
+    const env = { ledgers: { sealed_events: { entries: [
+      { payload_json: 'null' },
+      { payload_json: '5' },
+      { payload_json: '[]' },
+      { payload_json: '"a string"' },
+      { payload_json: 'true' },
+      { payload_json: JSON.stringify({ record_type: 'event', event_type: 'ContactStateChange', time_bucket: { start_epoch_s: 600, size_s: 600 } }) },
+    ] } } };
+    const { records, unparsed } = T.normalizeEnvelope(env);
+    assert.equal(records.length, 1, 'the one good record still renders');
+    assert.equal(unparsed, 5);
+  });
+
+  it('counts a record with no usable time bucket as unparseable', () => {
+    const env = { ledgers: { sealed_events: { entries: [
+      { payload_json: JSON.stringify({ record_type: 'event', event_type: 'ContactStateChange' }) },
+      { payload_json: JSON.stringify({ record_type: 'event', event_type: 'ContactStateChange', time_bucket: { size_s: 600 } }) },
+    ] } } };
+    const { records, unparsed } = T.normalizeEnvelope(env);
+    assert.equal(records.length, 0);
+    assert.equal(unparsed, 2);
+  });
+
   it('counts unparseable payloads instead of silently dropping them', () => {
     const env = { ledgers: { sealed_events: { entries: [
       { payload_json: 'not json' },
