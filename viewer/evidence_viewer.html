@@ -210,7 +210,9 @@
   .tl-day { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px;
             background:var(--panel); border-bottom:1px solid var(--line); padding:8px 12px; }
   .tl-date { font-size:13px; font-weight:650; white-space:nowrap; }
-  .tl-strip { position:relative; flex:1; height:10px; min-width:60px; cursor:pointer; }
+  .tl-strip { position:relative; flex:1; height:10px; min-width:60px; cursor:pointer;
+              border-radius:5px; outline-offset:3px; }
+  .tl-strip:focus-visible { outline:2px solid var(--accent); }
   .tl-covtrack { position:absolute; top:0; bottom:0; background:var(--bg); border-radius:5px;
                  box-shadow:inset 0 0 0 1px var(--line); }
   .tl-cell { position:absolute; top:1px; bottom:1px; border-radius:2px; background:var(--fam); }
@@ -3554,9 +3556,14 @@ function tlRow(item) {
     const meta = `${d.count} record${d.count === 1 ? '' : 's'}`
       + (d.tamperCount ? `<b class="tl-tam"> · ${d.tamperCount} tamper</b>` : '')
       + (d.gapCount ? `<b class="tl-gapn"> · ${d.gapCount} gap${d.gapCount === 1 ? '' : 's'}</b>` : '');
+    // The strip is operable, so it is a real control, not an image: focusable
+    // in the tab order, with arrow keys scrubbing the day by the hour and
+    // Home/End jumping to its ends. A click target reachable only by mouse
+    // would put the day's shape out of reach of a keyboard entirely.
     return `<div class="tl-day" data-t0="${d.dayT0}"><span class="tl-date">${esc(d.label)}</span>
-      <span class="tl-strip" data-day="${d.dayT0}" role="img"
-        aria-label="Activity shape for ${esc(d.label)} — ${d.count} records across the covered window; hours outside the export's coverage are blank, not quiet">
+      <span class="tl-strip" data-day="${d.dayT0}" tabindex="0" role="slider"
+        aria-valuemin="0" aria-valuemax="1439" aria-valuenow="0" aria-valuetext="00:00 UTC"
+        aria-label="Scrub ${esc(d.label)} — ${d.count} record${d.count === 1 ? '' : 's'} across the covered window; hours outside the export's coverage are blank, not quiet">
         <i class="tl-covtrack" style="left:${covL.toFixed(3)}%;width:${covW.toFixed(3)}%"></i>${cells}</span>
       <span class="tl-daymeta">${meta}</span></div>`;
   }
@@ -3802,10 +3809,31 @@ function initTimeline() {
   }
 
   for (const strip of panel.querySelectorAll('.tl-strip')) {
+    const dayT0 = +strip.dataset.day;
+    // Snap to the bucket grid here too — the strip may not offer a position
+    // the record cannot justify.
+    const goTo = (minuteOfDay, smooth) => {
+      const clamped = Math.min(Math.max(minuteOfDay, 0), 1439);
+      const t = dayT0 + Math.floor((clamped * 60) / model.bucketS) * model.bucketS;
+      strip.setAttribute('aria-valuenow', String(clamped));
+      strip.setAttribute('aria-valuetext', T.fmtHM(t) + ' UTC');
+      scrollToTime(t, smooth);
+    };
     strip.addEventListener('click', (e) => {
       const r = strip.getBoundingClientRect();
       const frac = Math.min(Math.max((e.clientX - r.left) / Math.max(r.width, 1), 0), 1);
-      scrollToTime(+strip.dataset.day + frac * T.DAY_S, true);
+      goTo(Math.round(frac * 1439), true);
+    });
+    strip.addEventListener('keydown', (e) => {
+      const now = +(strip.getAttribute('aria-valuenow') || 0);
+      const step = e.shiftKey ? 180 : 60; // an hour, or three with Shift
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') goTo(now + step, true);
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') goTo(now - step, true);
+      else if (e.key === 'Home') goTo(0, true);
+      else if (e.key === 'End') goTo(1439, true);
+      else if (e.key === 'Enter' || e.key === ' ') goTo(now, true);
+      else return;
+      e.preventDefault();
     });
   }
 
