@@ -266,17 +266,15 @@ struct TimelineScrubSection: View {
 /// single expression (the house style, and it keeps the ViewBuilder happy).
 private enum TimelineScrubPreviewData {
     static var records: [AlertRecord] {
-        let base = AlertRecord.bucket(for: Date().addingTimeInterval(-9 * 3600))
-        let severities: [UInt8] = [0, 1, 1, 2, 1, 4]
+        let start = Date().addingTimeInterval(-9 * 3600)
+        let severities: [Severity] = [.ok, .notice, .notice, .warn, .notice, .tamper]
         return (0..<16).map { i in
-            let at = base.addingTimeInterval(Double(i) * 1800)
             var record = AlertRecord(id: "sample-\(i)",
                                      witnessID: "canary-1",
                                      name: "Canary 1",
-                                     severityRaw: severities[i % severities.count],
+                                     severity: severities[i % severities.count],
                                      headline: "Something crossed the boundary",
-                                     bucket: at,
-                                     lastBucket: at)
+                                     at: start.addingTimeInterval(Double(i) * 1800))
             record.count = i % 4 == 0 ? 3 : 1
             return record
         }
