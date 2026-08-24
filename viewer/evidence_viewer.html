@@ -1455,13 +1455,19 @@ function yOfTime(layout, t) {
 }
 
 // Pixel -> time, the inverse of yOfTime (same clamping).
+//
+// Returns a WHOLE second, floored. Two reasons, and both matter: the Swift
+// port returns an Int, so a fractional result here would make the two
+// implementations disagree on every probe in the parity fixture; and a
+// sub-second scrub position is a precision the record does not have. Callers
+// snap to the bucket anyway — this just refuses to invent the digits.
 function timeOfY(layout, y) {
   if (!layout.length) return 0;
   if (y <= layout[0].y0) return layout[0].t0;
   for (const s of layout) {
     if (y <= s.y1) {
       const f = (y - s.y0) / Math.max(s.y1 - s.y0, 1e-9);
-      return s.t0 + f * (s.t1 - s.t0);
+      return s.t0 + Math.floor((s.t1 - s.t0) * f);
     }
   }
   return layout[layout.length - 1].t1;
@@ -1470,6 +1476,11 @@ function timeOfY(layout, y) {
 // Ruler lines for the minimap: the smallest interval whose lines stay at
 // least minGapPx apart inside every span. Day boundaries are marked major.
 const GRID_STEPS_S = [600, 1800, 3600, 3 * 3600, 6 * 3600, 12 * 3600, 86400];
+// A ruler denser than this is not a ruler. Without the cap, a multi-year
+// export falls past every candidate step (none can satisfy the minimum gap at
+// that scale), lands on the largest, and emits one line per day — thousands of
+// DOM nodes for a drawing 84 pixels wide.
+const MAX_GRID_LINES = 240;
 
 function gridLines(layout, minGapPx) {
   const spans = layout.filter((s) => s.kind === 'span');
@@ -1482,6 +1493,10 @@ function gridLines(layout, minGapPx) {
     });
     if (ok) { step = cand; break; }
   }
+  // Past the largest candidate the only way to stay readable is a coarser
+  // step, so keep doubling until the whole ruler fits under the cap.
+  const spanTotal = spans.reduce((d, s) => d + (s.t1 - s.t0), 0);
+  while (step > 0 && spanTotal / step > MAX_GRID_LINES) step *= 2;
   const lines = [];
   for (const s of spans) {
     for (let t = Math.ceil(s.t0 / step) * step; t <= s.t1; t += step) {
@@ -1556,12 +1571,19 @@ function buildDays(records, opts) {
   }));
 }
 
+// The order ties resolve in. Iterating the object's own keys would resolve a
+// tie by insertion order, which is the order the families happened to appear
+// in that bucket — the Swift port iterates its `allCases` instead, so the two
+// would silently disagree on any bucket with two equally-common families.
+const FAMILY_ORDER = ['move', 'touch', 'sound', 'tamper', 'gap', 'other'];
+
 function dominantFamily(cell) {
   if (cell.hasGap) return 'gap';
   if (cell.families.tamper) return 'tamper';
   let best = 'other', n = 0;
-  for (const fam of Object.keys(cell.families)) {
-    if (cell.families[fam] > n) { n = cell.families[fam]; best = fam; }
+  for (const fam of FAMILY_ORDER) {
+    const c = cell.families[fam];
+    if (c !== undefined && c > n) { n = c; best = fam; }
   }
   return best;
 }
@@ -1626,11 +1648,16 @@ function buildTimelineModel(input, opts) {
   return { records, segments, days, items, zones, counts, heartbeats, bucketS, unparsed: input.unparsed || 0 };
 }
 
+// Ascending size order, so a tie resolves to the smaller bucket in both
+// languages rather than to whichever the Map happened to see first.
 function mostCommonSize(records) {
   const freq = new Map();
   for (const r of records) freq.set(r.size, (freq.get(r.size) || 0) + 1);
   let best = 0, n = 0;
-  for (const [size, count] of freq) { if (count > n) { n = count; best = size; } }
+  for (const size of Array.from(freq.keys()).sort((a, b) => a - b)) {
+    const count = freq.get(size);
+    if (count > n) { n = count; best = size; }
+  }
   return best;
 }
 

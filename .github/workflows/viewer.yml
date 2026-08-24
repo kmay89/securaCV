@@ -15,6 +15,10 @@ on:
       # so a fixture-only edit must also trip the drift gate.
       - 'tests/fixtures/envelope/**'
       - 'tests/fixtures/export_bundle/**'
+      # The timeline parity fixture is asserted by the JS tests here and by
+      # the Swift tests on the Apple runners — an edit to it alone must still
+      # be checked, or the two implementations can drift through the fixture.
+      - 'tests/fixtures/timeline/**'
       - '.github/workflows/viewer.yml'
   pull_request:
     branches: [ "main" ]
@@ -27,6 +31,10 @@ on:
       # so a fixture-only edit must also trip the drift gate.
       - 'tests/fixtures/envelope/**'
       - 'tests/fixtures/export_bundle/**'
+      # The timeline parity fixture is asserted by the JS tests here and by
+      # the Swift tests on the Apple runners — an edit to it alone must still
+      # be checked, or the two implementations can drift through the fixture.
+      - 'tests/fixtures/timeline/**'
       - '.github/workflows/viewer.yml'
 
 permissions:
@@ -49,6 +57,8 @@ jobs:
       run: node --test viewer/verify_core.test.js
     - name: Timeline scrub-view model tests
       run: node --test viewer/timeline_core.test.js
+    - name: Timeline cross-language parity fixture is up to date
+      run: node viewer/tools/gen_timeline_parity.mjs --check
     - name: Offline viewer is up to date (no drift from its inlined sources)
       run: node viewer/build.mjs --check
     - name: HA timeline card helper tests

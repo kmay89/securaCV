@@ -197,9 +197,26 @@ describe('layout mapping', () => {
     }
   });
 
+  it('returns whole seconds, so the Swift port can agree and no sub-second precision is invented', () => {
+    for (let i = 0; i <= 20; i++) {
+      const t = T.timeOfY(layout, (480 * i) / 20);
+      assert.equal(t, Math.trunc(t), 'timeOfY must return an integer second');
+    }
+  });
+
   it('clamps outside the domain', () => {
     assert.equal(T.yOfTime(layout, -1e9), layout[0].y0);
     assert.equal(T.yOfTime(layout, 1e12), layout[layout.length - 1].y1);
+  });
+
+  it('caps the ruler on a huge span instead of drawing one line per day', () => {
+    // A multi-year export: no candidate step can satisfy the minimum gap at
+    // that scale, so without the cap this emitted thousands of DOM nodes.
+    const year = 365 * 86400;
+    const wide = T.layoutSegments(T.buildSegments([ev(0), ev(6 * year)]), 480);
+    const lines = T.gridLines(wide, 22);
+    assert.ok(lines.length <= 240, 'got ' + lines.length + ' grid lines');
+    assert.ok(lines.length > 0, 'a ruler should still be drawn');
   });
 
   it('chooses a grid step that keeps lines apart', () => {
@@ -317,7 +334,10 @@ describe('cross-language parity fixture', () => {
       const layout = T.layoutSegments(model.segments, fx.layout_height);
       const e = sc.expected;
 
-      assert.equal(model.bucketSeconds, e.bucket_seconds);
+      // Assert the field is PRESENT, not merely equal: reading a misspelled
+      // property gave undefined on both sides and passed silently.
+      assert.equal(typeof e.bucket_seconds, 'number', 'fixture must carry bucket_seconds');
+      assert.equal(model.bucketS, e.bucket_seconds);
       assert.deepEqual(model.counts, e.counts);
       assert.equal(model.heartbeats, e.heartbeats);
       assert.deepEqual(model.zones, e.zones);

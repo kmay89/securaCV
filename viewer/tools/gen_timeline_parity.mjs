@@ -100,6 +100,28 @@ const SCENARIOS = [
     records: [ev(BASE + 12 * H, 'Acoustic impulse in zone', 'sound', 'zone:garden', 0.5)],
   },
   {
+    name: 'tie-breaking',
+    why: 'Ties must resolve identically in both languages: one bucket with two equally-common '
+      + 'families, and a mixed set of bucket sizes with an equal count.',
+    records: [
+      // Same bucket, one 'touch' and one 'sound' — a 1:1 family tie.
+      ev(BASE + 5 * H, 'Contact state change', 'touch', 'zone:porch', 0.9),
+      ev(BASE + 5 * H, 'Acoustic impulse in zone', 'sound', 'zone:garden', 0.7),
+      // Two 300 s buckets and two 600 s buckets — a tie on the modal size.
+      { t0: BASE + 5 * H + 600, size: 300, kind: 'event', type: 'Small object crossed boundary',
+        label: 'Small object crossed boundary', family: 'move', zone: 'zone:garden', conf: 0.5, details: '' },
+      { t0: BASE + 5 * H + 900, size: 300, kind: 'event', type: 'Small object crossed boundary',
+        label: 'Small object crossed boundary', family: 'move', zone: 'zone:garden', conf: 0.5, details: '' },
+      ev(BASE + 5 * H + 1200, 'Vehicle arrival/departure', 'move', 'zone:driveway', 0.8),
+    ],
+  },
+  {
+    name: 'wide-span-ruler',
+    why: 'A years-wide export must still produce a readable ruler, not one line per day.',
+    records: [ev(BASE, 'Contact state change', 'touch', 'zone:porch', 1.0),
+              ev(BASE + 6 * 365 * DAY, 'Tamper detected', 'tamper', 'zone:gate', 0.99)],
+  },
+  {
     name: 'single-record',
     why: 'One record must still produce a valid, non-degenerate layout.',
     records: [ev(BASE + 8 * H, 'Contact state change', 'touch', 'zone:porch', 1.0)],
@@ -134,7 +156,7 @@ function expectedFor(scenario) {
   }
 
   return {
-    bucket_seconds: model.bucketSeconds,
+    bucket_seconds: model.bucketS,
     counts: model.counts,
     heartbeats: model.heartbeats,
     zones: model.zones,

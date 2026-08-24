@@ -224,6 +224,7 @@
         }
       ],
       "expected": {
+        "bucket_seconds": 600,
         "counts": {
           "move": 4,
           "touch": 1,
@@ -522,31 +523,31 @@
           },
           {
             "y": 60,
-            "t": 1750834421.9178083
+            "t": 1750834421
           },
           {
             "y": 120,
-            "t": 1750835243.8356164
+            "t": 1750835243
           },
           {
             "y": 180,
-            "t": 1750836065.7534246
+            "t": 1750836065
           },
           {
             "y": 240,
-            "t": 1750843240.3587444
+            "t": 1750843240
           },
           {
             "y": 300,
-            "t": 1750844047.5336323
+            "t": 1750844047
           },
           {
             "y": 360,
-            "t": 1750844854.7085202
+            "t": 1750844854
           },
           {
             "y": 420,
-            "t": 1750849010.5263157
+            "t": 1750849010
           },
           {
             "y": 480,
@@ -596,6 +597,7 @@
         }
       ],
       "expected": {
+        "bucket_seconds": 600,
         "counts": {
           "touch": 1,
           "gap": 1,
@@ -845,15 +847,15 @@
           },
           {
             "y": 60,
-            "t": 1750813763.7583892
+            "t": 1750813763
           },
           {
             "y": 120,
-            "t": 1750814327.5167785
+            "t": 1750814327
           },
           {
             "y": 180,
-            "t": 1750841727.2727273
+            "t": 1750841727
           },
           {
             "y": 240,
@@ -861,15 +863,15 @@
           },
           {
             "y": 300,
-            "t": 1750842872.7272727
+            "t": 1750842872
           },
           {
             "y": 360,
-            "t": 1750881072.4832215
+            "t": 1750881072
           },
           {
             "y": 420,
-            "t": 1750881636.2416108
+            "t": 1750881636
           },
           {
             "y": 480,
@@ -952,6 +954,7 @@
         }
       ],
       "expected": {
+        "bucket_seconds": 600,
         "counts": {
           "touch": 1,
           "move": 1
@@ -1153,15 +1156,15 @@
           },
           {
             "y": 60,
-            "t": 1750874711.6883116
+            "t": 1750874711
           },
           {
             "y": 120,
-            "t": 1750875023.3766234
+            "t": 1750875023
           },
           {
             "y": 180,
-            "t": 1750875335.064935
+            "t": 1750875335
           },
           {
             "y": 240,
@@ -1169,15 +1172,15 @@
           },
           {
             "y": 300,
-            "t": 1750917264.935065
+            "t": 1750917264
           },
           {
             "y": 360,
-            "t": 1750917576.6233766
+            "t": 1750917576
           },
           {
             "y": 420,
-            "t": 1750917888.3116884
+            "t": 1750917888
           },
           {
             "y": 480,
@@ -1227,6 +1230,7 @@
         }
       ],
       "expected": {
+        "bucket_seconds": 600,
         "counts": {
           "move": 1,
           "tamper": 1,
@@ -1421,6 +1425,7 @@
         }
       ],
       "expected": {
+        "bucket_seconds": 600,
         "counts": {
           "sound": 1
         },
@@ -1585,15 +1590,15 @@
           },
           {
             "y": 60,
-            "t": 1750852370.2702703
+            "t": 1750852370
           },
           {
             "y": 120,
-            "t": 1750852613.5135136
+            "t": 1750852613
           },
           {
             "y": 180,
-            "t": 1750852856.7567568
+            "t": 1750852856
           },
           {
             "y": 240,
@@ -1601,19 +1606,549 @@
           },
           {
             "y": 300,
-            "t": 1750853343.2432432
+            "t": 1750853343
           },
           {
             "y": 360,
-            "t": 1750853586.4864864
+            "t": 1750853586
           },
           {
             "y": 420,
-            "t": 1750853829.7297297
+            "t": 1750853829
           },
           {
             "y": 480,
             "t": 1750896000
+          }
+        ]
+      }
+    },
+    {
+      "name": "tie-breaking",
+      "why": "Ties must resolve identically in both languages: one bucket with two equally-common families, and a mixed set of bucket sizes with an equal count.",
+      "coverage_t0": null,
+      "coverage_t1": null,
+      "records": [
+        {
+          "t0": 1750827600,
+          "size": 600,
+          "kind": "event",
+          "type": "Contact state change",
+          "label": "Contact state change",
+          "family": "touch",
+          "zone": "zone:porch",
+          "conf": 0.9,
+          "details": ""
+        },
+        {
+          "t0": 1750827600,
+          "size": 600,
+          "kind": "event",
+          "type": "Acoustic impulse in zone",
+          "label": "Acoustic impulse in zone",
+          "family": "sound",
+          "zone": "zone:garden",
+          "conf": 0.7,
+          "details": ""
+        },
+        {
+          "t0": 1750828200,
+          "size": 300,
+          "kind": "event",
+          "type": "Small object crossed boundary",
+          "label": "Small object crossed boundary",
+          "family": "move",
+          "zone": "zone:garden",
+          "conf": 0.5,
+          "details": ""
+        },
+        {
+          "t0": 1750828500,
+          "size": 300,
+          "kind": "event",
+          "type": "Small object crossed boundary",
+          "label": "Small object crossed boundary",
+          "family": "move",
+          "zone": "zone:garden",
+          "conf": 0.5,
+          "details": ""
+        },
+        {
+          "t0": 1750828800,
+          "size": 600,
+          "kind": "event",
+          "type": "Vehicle arrival/departure",
+          "label": "Vehicle arrival/departure",
+          "family": "move",
+          "zone": "zone:driveway",
+          "conf": 0.8,
+          "details": ""
+        }
+      ],
+      "expected": {
+        "bucket_seconds": 600,
+        "counts": {
+          "touch": 1,
+          "sound": 1,
+          "move": 3
+        },
+        "heartbeats": 0,
+        "zones": [
+          "zone:porch",
+          "zone:garden",
+          "zone:driveway"
+        ],
+        "segments": [
+          {
+            "kind": "span",
+            "t0": 1750827600,
+            "t1": 1750829400,
+            "heartbeats": 0
+          }
+        ],
+        "layout": [
+          {
+            "kind": "span",
+            "t0": 1750827600,
+            "t1": 1750829400,
+            "y0": 0,
+            "y1": 480
+          }
+        ],
+        "grid_lines": [
+          {
+            "t": 1750827600,
+            "y": 0,
+            "major": false
+          },
+          {
+            "t": 1750828200,
+            "y": 160,
+            "major": false
+          },
+          {
+            "t": 1750828800,
+            "y": 320,
+            "major": false
+          },
+          {
+            "t": 1750829400,
+            "y": 480,
+            "major": false
+          }
+        ],
+        "days": [
+          {
+            "day_t0": 1750809600,
+            "label": "Wednesday, June 25, 2025",
+            "count": 5,
+            "gap_count": 0,
+            "tamper_count": 0,
+            "cells_per_day": 144,
+            "first_index": 0,
+            "worst_severity": null,
+            "coverage_from": 0.208,
+            "coverage_to": 0.229,
+            "cells": [
+              {
+                "i": 30,
+                "count": 2,
+                "family": "touch",
+                "has_gap": false,
+                "worst_severity": null
+              },
+              {
+                "i": 31,
+                "count": 2,
+                "family": "move",
+                "has_gap": false,
+                "worst_severity": null
+              },
+              {
+                "i": 32,
+                "count": 1,
+                "family": "move",
+                "has_gap": false,
+                "worst_severity": null
+              }
+            ]
+          }
+        ],
+        "items": [
+          {
+            "kind": "day",
+            "day_t0": 1750809600
+          },
+          {
+            "kind": "event",
+            "index": 0,
+            "t0": 1750827600,
+            "label": "Contact state change"
+          },
+          {
+            "kind": "event",
+            "index": 1,
+            "t0": 1750827600,
+            "label": "Acoustic impulse in zone"
+          },
+          {
+            "kind": "event",
+            "index": 2,
+            "t0": 1750828200,
+            "label": "Small object crossed boundary"
+          },
+          {
+            "kind": "event",
+            "index": 3,
+            "t0": 1750828500,
+            "label": "Small object crossed boundary"
+          },
+          {
+            "kind": "event",
+            "index": 4,
+            "t0": 1750828800,
+            "label": "Vehicle arrival/departure"
+          }
+        ],
+        "time_probes": [
+          {
+            "t": 1750827600,
+            "y": 0
+          },
+          {
+            "t": 1750827825,
+            "y": 60
+          },
+          {
+            "t": 1750828050,
+            "y": 120
+          },
+          {
+            "t": 1750828275,
+            "y": 180
+          },
+          {
+            "t": 1750828500,
+            "y": 240
+          },
+          {
+            "t": 1750828725,
+            "y": 300
+          },
+          {
+            "t": 1750828950,
+            "y": 360
+          },
+          {
+            "t": 1750829175,
+            "y": 420
+          },
+          {
+            "t": 1750829400,
+            "y": 480
+          }
+        ],
+        "offset_probes": [
+          {
+            "y": 0,
+            "t": 1750827600
+          },
+          {
+            "y": 60,
+            "t": 1750827825
+          },
+          {
+            "y": 120,
+            "t": 1750828050
+          },
+          {
+            "y": 180,
+            "t": 1750828275
+          },
+          {
+            "y": 240,
+            "t": 1750828500
+          },
+          {
+            "y": 300,
+            "t": 1750828725
+          },
+          {
+            "y": 360,
+            "t": 1750828950
+          },
+          {
+            "y": 420,
+            "t": 1750829175
+          },
+          {
+            "y": 480,
+            "t": 1750829400
+          }
+        ]
+      }
+    },
+    {
+      "name": "wide-span-ruler",
+      "why": "A years-wide export must still produce a readable ruler, not one line per day.",
+      "coverage_t0": null,
+      "coverage_t1": null,
+      "records": [
+        {
+          "t0": 1750809600,
+          "size": 600,
+          "kind": "event",
+          "type": "Contact state change",
+          "label": "Contact state change",
+          "family": "touch",
+          "zone": "zone:porch",
+          "conf": 1,
+          "details": ""
+        },
+        {
+          "t0": 1940025600,
+          "size": 600,
+          "kind": "event",
+          "type": "Tamper detected",
+          "label": "Tamper detected",
+          "family": "tamper",
+          "zone": "zone:gate",
+          "conf": 0.99,
+          "details": ""
+        }
+      ],
+      "expected": {
+        "bucket_seconds": 600,
+        "counts": {
+          "touch": 1,
+          "tamper": 1
+        },
+        "heartbeats": 0,
+        "zones": [
+          "zone:porch",
+          "zone:gate"
+        ],
+        "segments": [
+          {
+            "kind": "span",
+            "t0": 1750809600,
+            "t1": 1750810800,
+            "heartbeats": 0
+          },
+          {
+            "kind": "fold",
+            "t0": 1750810800,
+            "t1": 1940025000,
+            "heartbeats": 0
+          },
+          {
+            "kind": "span",
+            "t0": 1940025000,
+            "t1": 1940026200,
+            "heartbeats": 0
+          }
+        ],
+        "layout": [
+          {
+            "kind": "span",
+            "t0": 1750809600,
+            "t1": 1750810800,
+            "y0": 0,
+            "y1": 231
+          },
+          {
+            "kind": "fold",
+            "t0": 1750810800,
+            "t1": 1940025000,
+            "y0": 231,
+            "y1": 249
+          },
+          {
+            "kind": "span",
+            "t0": 1940025000,
+            "t1": 1940026200,
+            "y0": 249,
+            "y1": 480
+          }
+        ],
+        "grid_lines": [
+          {
+            "t": 1750809600,
+            "y": 0,
+            "major": true
+          },
+          {
+            "t": 1750810200,
+            "y": 115.5,
+            "major": false
+          },
+          {
+            "t": 1750810800,
+            "y": 231,
+            "major": false
+          },
+          {
+            "t": 1940025000,
+            "y": 249,
+            "major": false
+          },
+          {
+            "t": 1940025600,
+            "y": 364.5,
+            "major": true
+          },
+          {
+            "t": 1940026200,
+            "y": 480,
+            "major": false
+          }
+        ],
+        "days": [
+          {
+            "day_t0": 1750809600,
+            "label": "Wednesday, June 25, 2025",
+            "count": 1,
+            "gap_count": 0,
+            "tamper_count": 0,
+            "cells_per_day": 144,
+            "first_index": 0,
+            "worst_severity": null,
+            "coverage_from": 0,
+            "coverage_to": 1,
+            "cells": [
+              {
+                "i": 0,
+                "count": 1,
+                "family": "touch",
+                "has_gap": false,
+                "worst_severity": null
+              }
+            ]
+          },
+          {
+            "day_t0": 1940025600,
+            "label": "Tuesday, June 24, 2031",
+            "count": 1,
+            "gap_count": 0,
+            "tamper_count": 1,
+            "cells_per_day": 144,
+            "first_index": 1,
+            "worst_severity": null,
+            "coverage_from": 0,
+            "coverage_to": 0.007,
+            "cells": [
+              {
+                "i": 0,
+                "count": 1,
+                "family": "tamper",
+                "has_gap": false,
+                "worst_severity": null
+              }
+            ]
+          }
+        ],
+        "items": [
+          {
+            "kind": "day",
+            "day_t0": 1750809600
+          },
+          {
+            "kind": "event",
+            "index": 0,
+            "t0": 1750809600,
+            "label": "Contact state change"
+          },
+          {
+            "kind": "fold",
+            "t0": 1750810800,
+            "t1": 1940025000,
+            "heartbeats": 0
+          },
+          {
+            "kind": "day",
+            "day_t0": 1940025600
+          },
+          {
+            "kind": "event",
+            "index": 1,
+            "t0": 1940025600,
+            "label": "Tamper detected"
+          }
+        ],
+        "time_probes": [
+          {
+            "t": 1750809600,
+            "y": 0
+          },
+          {
+            "t": 1774461675,
+            "y": 233.25
+          },
+          {
+            "t": 1798113750,
+            "y": 235.5
+          },
+          {
+            "t": 1821765825,
+            "y": 237.75
+          },
+          {
+            "t": 1845417900,
+            "y": 240
+          },
+          {
+            "t": 1869069975,
+            "y": 242.25
+          },
+          {
+            "t": 1892722050,
+            "y": 244.5
+          },
+          {
+            "t": 1916374125,
+            "y": 246.75
+          },
+          {
+            "t": 1940026200,
+            "y": 480
+          }
+        ],
+        "offset_probes": [
+          {
+            "y": 0,
+            "t": 1750809600
+          },
+          {
+            "y": 60,
+            "t": 1750809911
+          },
+          {
+            "y": 120,
+            "t": 1750810223
+          },
+          {
+            "y": 180,
+            "t": 1750810535
+          },
+          {
+            "y": 240,
+            "t": 1845417900
+          },
+          {
+            "y": 300,
+            "t": 1940025264
+          },
+          {
+            "y": 360,
+            "t": 1940025576
+          },
+          {
+            "y": 420,
+            "t": 1940025888
+          },
+          {
+            "y": 480,
+            "t": 1940026200
           }
         ]
       }
@@ -1637,6 +2172,7 @@
         }
       ],
       "expected": {
+        "bucket_seconds": 600,
         "counts": {
           "touch": 1
         },

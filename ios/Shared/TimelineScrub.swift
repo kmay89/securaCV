@@ -346,6 +346,9 @@ extension TimelineScrub {
     }
 
     static let gridStepsSeconds = [600, 1800, 3600, 3 * 3600, 6 * 3600, 12 * 3600, 86_400]
+    /// A ruler denser than this is not a ruler. Without the cap, a multi-year
+    /// export falls past every candidate step and emits one line per day.
+    static let maxGridLines = 240
 
     /// Ruler lines: the smallest interval whose lines stay `minGap` apart
     /// inside every span. Day boundaries are drawn major.
@@ -360,6 +363,10 @@ extension TimelineScrub {
             }
             if ok { step = candidate; break }
         }
+        // Past the largest candidate the only way to stay readable is a
+        // coarser step, so keep doubling until the ruler fits under the cap.
+        let spanTotal = spans.reduce(0) { $0 + $1.t1 - $1.t0 }
+        while step > 0 && spanTotal / step > maxGridLines { step *= 2 }
         var lines: [TimelineGridLine] = []
         for s in spans {
             var t = Int((Double(s.t0) / Double(step)).rounded(.up)) * step
