@@ -951,6 +951,9 @@ function renderTimeline(envelope) {
 // timeline_core.js (unit-tested); this section only paints and wires it.
 
 let TL = null; // model handoff from render to wire(), consumed by initTimeline()
+// Teardown for the live timeline's resize watcher, so a re-render (or
+// "Verify another bundle") does not leave the previous one holding its model.
+let tlWatcher = null;
 
 function famDot(fam) { return `<span class="tl-dot fam-${fam}"></span>`; }
 
@@ -1070,22 +1073,38 @@ function initTimeline() {
     for (const s of layout) {
       if (s.kind === 'fold') html += `<i class="tl-pleat" style="top:${s.y0.toFixed(1)}px;height:${(s.y1 - s.y0).toFixed(1)}px"></i>`;
     }
+    // How many drawable strokes each bucket holds, counted BEFORE drawing so
+    // the "there is more here" bar is only drawn when something is actually
+    // hidden — `n === 4` alone marked the fifth stroke even in a bucket of
+    // exactly five, claiming a truncation that never happened.
+    const bucketKey = (r) => Math.floor(r.t0 / model.bucketS);
+    const bucketTotal = new Map();
+    for (const r of visible) {
+      if (r.kind === 'gap') continue; // gaps are never subject to the cap
+      const k = bucketKey(r);
+      bucketTotal.set(k, (bucketTotal.get(k) || 0) + 1);
+    }
     const perBucket = new Map();
     let tickIdx = 0;
     for (const r of visible) {
-      const key = Math.floor(r.t0 / model.bucketS);
-      const n = perBucket.get(key) || 0;
-      perBucket.set(key, n + 1);
-      if (n >= 5) continue; // a crowded bucket keeps its five densest strokes
       const delay = Math.min(tickIdx * 8, 400);
-      tickIdx += 1;
+      // A declared gap is ALWAYS drawn. It is exempt from the density cap and
+      // from the per-bucket stacking: the whole design promises a blind spot
+      // can never be folded or crowded out of the picture, and the cap used
+      // to discard it on exactly the same terms as an ordinary event.
       if (r.kind === 'gap') {
+        tickIdx += 1;
         const h = Math.max(3, T.yOfTime(layout, r.t0 + r.size) - T.yOfTime(layout, r.t0));
         html += `<i class="tl-tick tl-tickgap fam-gap" style="top:${T.yOfTime(layout, r.t0).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${delay}ms"></i>`;
         continue;
       }
+      const key = bucketKey(r);
+      const n = perBucket.get(key) || 0;
+      perBucket.set(key, n + 1);
+      if (n >= 5) continue; // a crowded bucket keeps its five densest strokes
+      tickIdx += 1;
       const y = T.yOfTime(layout, r.t0) + n * 3;
-      const over = n === 4;
+      const over = n === 4 && (bucketTotal.get(key) || 0) > 5;
       const w = over ? 46 : T.greekWidth(r.label);
       const x = 8 + T.zoneIndent(model.zones, r.zone);
       html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
@@ -1184,7 +1203,13 @@ function initTimeline() {
   // Wheel and trackpad scroll the reading pane from over the minimap, so the
   // two panes never disagree about which gesture does what.
   map.addEventListener('wheel', (e) => {
-    list.scrollTop += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    // All three delta modes: pixels (0), lines (1), and pages (2). A system
+    // set to "scroll one screen at a time" reports ±1 in page mode, which as
+    // raw pixels moved the pane one pixel per notch and read as frozen.
+    const px = e.deltaMode === 1 ? e.deltaY * 16
+      : e.deltaMode === 2 ? e.deltaY * list.clientHeight
+      : e.deltaY;
+    list.scrollTop += px;
     e.preventDefault();
   }, { passive: false });
 
@@ -1242,11 +1267,21 @@ function initTimeline() {
     if (!raf) raf = requestAnimationFrame(() => { raf = 0; syncView(); });
   });
 
+  // Tear down the PREVIOUS timeline's watcher before wiring this one. Each
+  // observer closure retains that run's whole record set and its detached
+  // rows, so verifying a dozen bundles in one sitting used to keep every one
+  // of them alive — and on engines without ResizeObserver, left a live
+  // window listener behind for each.
+  if (tlWatcher) { tlWatcher(); tlWatcher = null; }
   let rto = 0;
+  const onResize = () => { clearTimeout(rto); rto = setTimeout(buildMap, 120); };
   if (typeof ResizeObserver === 'function') {
-    new ResizeObserver(() => { clearTimeout(rto); rto = setTimeout(buildMap, 120); }).observe(map);
+    const ro = new ResizeObserver(onResize);
+    ro.observe(map);
+    tlWatcher = () => { clearTimeout(rto); ro.disconnect(); };
   } else {
-    window.addEventListener('resize', () => { clearTimeout(rto); rto = setTimeout(buildMap, 120); });
+    window.addEventListener('resize', onResize);
+    tlWatcher = () => { clearTimeout(rto); window.removeEventListener('resize', onResize); };
   }
 
   buildMap();
@@ -1264,7 +1299,11 @@ function renderBad(msg, detail) {
 function wire() {
   initTimeline();
   const again = $('again');
-  if (again) again.addEventListener('click', () => { out.innerHTML = ''; window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  if (again) again.addEventListener('click', () => {
+    if (tlWatcher) { tlWatcher(); tlWatcher = null; }
+    out.innerHTML = '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
   const printBtn = $('print');
   if (printBtn) printBtn.addEventListener('click', () => window.print());
   const copy = $('copyfp');

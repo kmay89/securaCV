@@ -100,6 +100,26 @@ const SCENARIOS = [
     records: [ev(BASE + 12 * H, 'Acoustic impulse in zone', 'sound', 'zone:garden', 0.5)],
   },
   {
+    name: 'trailing-heartbeats',
+    why: 'The domain spans heartbeats recorded after the last anchor; only folding excludes them.',
+    records: [
+      ev(BASE + 6 * H, 'Contact state change', 'touch', 'zone:porch', 0.9),
+      beat(BASE + 10 * H), beat(BASE + 14 * H), beat(BASE + 18 * H),
+    ],
+  },
+  {
+    name: 'jittered-outside-window',
+    why: 'A jittered event outside the receipt window widens the coverage track to the bucket grid, '
+      + 'so no lit cell is ever drawn over a region the same strip calls uncovered.',
+    coverageT0: BASE + 6 * H,
+    coverageT1: BASE + 18 * H,
+    records: [
+      ev(BASE + 6 * H - 120, 'Contact state change', 'touch', 'zone:porch', 0.9),
+      ev(BASE + 12 * H, 'Vehicle arrival/departure', 'move', 'zone:driveway', 0.8),
+      ev(BASE + 18 * H + 90, 'Small object crossed boundary', 'move', 'zone:garden', 0.6),
+    ],
+  },
+  {
     name: 'tie-breaking',
     why: 'Ties must resolve identically in both languages: one bucket with two equally-common '
       + 'families, and a mixed set of bucket sizes with an equal count.',

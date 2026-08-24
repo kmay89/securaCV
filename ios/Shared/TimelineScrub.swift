@@ -265,8 +265,12 @@ extension TimelineScrub {
         let base = anchors.isEmpty ? beats : anchors
         guard let first = base.first else { return [] }
 
-        let lastEnd = base.reduce(0) { max($0, $1.endsAt) }
-        let cov0 = min(coverageT0 ?? first.t0, first.t0)
+        // The DOMAIN spans every record; only the FOLD anchors exclude
+        // heartbeats. Deriving the domain from anchors alone put heartbeats
+        // recorded after the last event outside the timeline entirely.
+        let firstT0 = min(records.first?.t0 ?? first.t0, first.t0)
+        let lastEnd = records.reduce(0) { max($0, $1.endsAt) }
+        let cov0 = min(coverageT0 ?? firstT0, firstT0)
         let cov1 = max(coverageT1 ?? lastEnd, lastEnd)
 
         var out: [TimelineSegment] = []
@@ -368,10 +372,13 @@ extension TimelineScrub {
         let spanTotal = spans.reduce(0) { $0 + $1.t1 - $1.t0 }
         while step > 0 && spanTotal / step > maxGridLines { step *= 2 }
         var lines: [TimelineGridLine] = []
+        guard step > 0 else { return lines }
         for s in spans {
             var t = Int((Double(s.t0) / Double(step)).rounded(.up)) * step
             while t <= s.t1 {
                 lines.append(TimelineGridLine(t: t, y: y(of: t, in: layout), isMajor: t % daySeconds == 0))
+                // Belt, matching the JS side: never unbounded, whatever the span.
+                if lines.count >= maxGridLines { return lines }
                 t += step
             }
         }
@@ -426,9 +433,16 @@ extension TimelineScrub {
             days[dayT0]!.buckets[i] = cell
         }
 
+        // Clamp to the BUCKET GRID the cells are drawn on, so the covered
+        // region always contains every cell the strip actually lights — a
+        // cell spans its whole bucket, so clamping to the record's own
+        // instant would still leave the cell's leading edge outside.
         let firstT0 = visible.first?.t0 ?? 0
-        let cov0 = coverageT0 ?? firstT0
-        let cov1 = coverageT1 ?? visible.reduce(cov0) { max($0, $1.endsAt) }
+        let lastEnd = visible.reduce(firstT0) { max($0, $1.endsAt) }
+        let gridFloor = Int((Double(firstT0) / Double(bucketSeconds)).rounded(.down)) * bucketSeconds
+        let gridCeil = Int((Double(lastEnd) / Double(bucketSeconds)).rounded(.up)) * bucketSeconds
+        let cov0 = min(coverageT0 ?? gridFloor, gridFloor)
+        let cov1 = max(coverageT1 ?? gridCeil, gridCeil)
 
         return order.sorted().map { dayT0 in
             let d = days[dayT0]!

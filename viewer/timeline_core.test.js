@@ -135,6 +135,28 @@ describe('record normalization', () => {
     assert.equal(unparsed, 5);
   });
 
+  it('rejects a non-finite time instead of hanging on it', () => {
+    // JSON.parse turns 1e400 into Infinity. A non-finite time used to reach
+    // the grid-line loop, where `t += step` never advances past Infinity and
+    // the tab froze on a bundle that had otherwise verified.
+    const env = { ledgers: { sealed_events: { entries: [
+      { payload_json: '{"record_type":"event","event_type":"ContactStateChange","time_bucket":{"start_epoch_s":1e400,"size_s":600}}' },
+      { payload_json: '{"record_type":"event","event_type":"ContactStateChange","time_bucket":{"start_epoch_s":-1e400,"size_s":600}}' },
+      { payload_json: JSON.stringify({ record_type: 'event', event_type: 'ContactStateChange', time_bucket: { start_epoch_s: 600, size_s: 1e400 } }) },
+      { payload_json: JSON.stringify({ record_type: 'event', event_type: 'ContactStateChange', time_bucket: { start_epoch_s: 1200, size_s: 600 } }) },
+    ] } } };
+    const { records, unparsed } = T.normalizeEnvelope(env);
+    assert.equal(unparsed, 2, 'the two non-finite start times are rejected');
+    assert.equal(records.length, 2);
+    // A non-finite SIZE falls back to the default bucket rather than poisoning it.
+    assert.equal(records[0].size, 600);
+    for (const r of records) assert.ok(Number.isFinite(r.t0) && Number.isFinite(r.size));
+
+    // And the whole pipeline still terminates and stays bounded.
+    const layout = T.layoutSegments(T.buildSegments(records), 480);
+    assert.ok(T.gridLines(layout, 22).length <= 240);
+  });
+
   it('counts a record with no usable time bucket as unparseable', () => {
     const env = { ledgers: { sealed_events: { entries: [
       { payload_json: JSON.stringify({ record_type: 'event', event_type: 'ContactStateChange' }) },
@@ -186,6 +208,20 @@ describe('fold segmentation', () => {
     const folds = segs.filter((s) => s.kind === 'fold');
     assert.equal(folds.length, 1);
     assert.equal(folds[0].heartbeats, 2);
+  });
+
+  it('spans the domain over heartbeats past the last anchor', () => {
+    // Only FOLDING excludes heartbeats; the domain must still cover them, or
+    // every heartbeat after the last event collapses onto the final pixel and
+    // the viewport indicator stops tracking.
+    const records = [ev(600), beat(600 + 4 * 3600), beat(600 + 8 * 3600)];
+    const segs = T.buildSegments(records);
+    const end = segs[segs.length - 1].t1;
+    assert.ok(end >= 600 + 8 * 3600 + 600, 'domain must reach the last heartbeat, got ' + end);
+    const folded = segs.filter((s) => s.kind === 'fold');
+    assert.ok(folded.length >= 1, 'the trailing quiet should fold');
+    assert.equal(folded.reduce((n, f) => n + f.heartbeats, 0), 2,
+      'and report the heartbeats inside it');
   });
 
   it('folds leading and trailing quiet against a wider coverage window', () => {
@@ -286,6 +322,20 @@ describe('day grouping', () => {
     assert.equal(days.length, 1);
     assert.ok(Math.abs(days[0].covFrom - 4 / 24) < 1e-9);
     assert.ok(Math.abs(days[0].covTo - 10 / 24) < 1e-9);
+  });
+
+  it('widens a too-narrow coverage window to contain every drawn record', () => {
+    // Export jitter can place an event just outside the receipt's stated
+    // window; the strip must not draw a lit cell in a region it also draws as
+    // uncovered — the picture would contradict its own legend.
+    const days = T.buildDays([ev(6 * 3600 - 120)], {
+      bucketS: 600, coverageT0: 6 * 3600, coverageT1: 18 * 3600,
+    });
+    assert.equal(days.length, 1);
+    const cell = days[0].cells[0];
+    const cellStart = (cell.i * 600) / 86400;
+    assert.ok(days[0].covFrom <= cellStart + 1e-9,
+      `lit cell at ${cellStart} sits before coverage start ${days[0].covFrom}`);
   });
 
   it('does not light cells for heartbeats', () => {

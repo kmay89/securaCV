@@ -75,12 +75,17 @@ function humanizeWords(t) {
 // t0/size come from the privacy-coarsened time bucket (typically 600 s) —
 // the model never invents precision the log does not carry.
 
+// `Number.isFinite`, not `typeof === 'number'`: JSON.parse turns an
+// out-of-range literal like 1e400 into Infinity, and a non-finite time
+// poisons every downstream calculation — the grid-line loop in particular
+// never terminates, hanging the tab on a bundle that otherwise verifies.
+// A record whose time cannot be believed is counted as unparseable.
 function bucketOf(rec) {
   const tb = rec && rec.time_bucket;
-  if (!tb || typeof tb.start_epoch_s !== 'number') return null;
+  if (!tb || !Number.isFinite(tb.start_epoch_s)) return null;
   return {
     t0: tb.start_epoch_s,
-    size: typeof tb.size_s === 'number' && tb.size_s > 0 ? tb.size_s : 600,
+    size: Number.isFinite(tb.size_s) && tb.size_s > 0 ? tb.size_s : 600,
   };
 }
 
@@ -198,11 +203,16 @@ function buildSegments(records, opts) {
   const beats = records.filter((r) => r.kind === 'heartbeat');
   if (!anchors.length && !beats.length) return [];
   const base = anchors.length ? anchors : beats; // heartbeat-only ledgers still render
-  let cov0 = typeof o.coverageT0 === 'number' ? o.coverageT0 : base[0].t0;
-  let cov1 = typeof o.coverageT1 === 'number' ? o.coverageT1
-    : base.reduce((m, r) => Math.max(m, r.t0 + r.size), 0);
-  cov0 = Math.min(cov0, base[0].t0);
-  cov1 = Math.max(cov1, base.reduce((m, r) => Math.max(m, r.t0 + r.size), 0));
+  // The DOMAIN spans every record; only the FOLD anchors exclude heartbeats.
+  // Deriving the domain from anchors alone put heartbeats recorded after the
+  // last event outside the timeline entirely — they piled onto the last pixel
+  // and the viewport indicator stopped tracking them.
+  const firstT0 = Math.min(records[0].t0, base[0].t0);
+  const lastEnd = records.reduce((m, r) => Math.max(m, r.t0 + r.size), 0);
+  let cov0 = typeof o.coverageT0 === 'number' ? o.coverageT0 : firstT0;
+  let cov1 = typeof o.coverageT1 === 'number' ? o.coverageT1 : lastEnd;
+  cov0 = Math.min(cov0, firstT0);
+  cov1 = Math.max(cov1, lastEnd);
 
   // Quiet boundaries: walk anchor bucket ends against next anchor starts,
   // including the coverage edges (a week of leading quiet folds too).
@@ -314,9 +324,12 @@ function gridLines(layout, minGapPx) {
   const spanTotal = spans.reduce((d, s) => d + (s.t1 - s.t0), 0);
   while (step > 0 && spanTotal / step > MAX_GRID_LINES) step *= 2;
   const lines = [];
+  if (!Number.isFinite(step) || step <= 0) return lines;
   for (const s of spans) {
+    if (!Number.isFinite(s.t0) || !Number.isFinite(s.t1)) continue;
     for (let t = Math.ceil(s.t0 / step) * step; t <= s.t1; t += step) {
       lines.push({ t, y: yOfTime(layout, t), major: t % 86400 === 0 });
+      if (lines.length >= MAX_GRID_LINES) return lines; // belt: never unbounded
     }
   }
   return lines;
@@ -365,9 +378,18 @@ function buildDays(records, opts) {
       cell.worstSeverity = Math.max(cell.worstSeverity === null ? -1 : cell.worstSeverity, r.severity);
     }
   });
-  const cov0 = typeof o.coverageT0 === 'number' ? o.coverageT0 : (visible.length ? visible[0].t0 : 0);
-  const cov1 = typeof o.coverageT1 === 'number' ? o.coverageT1
-    : visible.reduce((m, r) => Math.max(m, r.t0 + r.size), cov0);
+  // Clamp to the BUCKET GRID the cells are drawn on, not to the raw record
+  // times. Taking the caller's window verbatim let a jittered event light a
+  // cell that the very same strip drew as uncovered — the picture
+  // contradicting its own legend — and clamping to the record's own instant
+  // still left the cell's leading edge outside the track, because a cell
+  // spans the whole bucket that contains it.
+  const firstT0 = visible.length ? visible[0].t0 : 0;
+  const lastEnd = visible.reduce((m, r) => Math.max(m, r.t0 + r.size), firstT0);
+  const gridFloor = Math.floor(firstT0 / bucketS) * bucketS;
+  const gridCeil = Math.ceil(lastEnd / bucketS) * bucketS;
+  const cov0 = Math.min(typeof o.coverageT0 === 'number' ? o.coverageT0 : gridFloor, gridFloor);
+  const cov1 = Math.max(typeof o.coverageT1 === 'number' ? o.coverageT1 : gridCeil, gridCeil);
   return Array.from(days.values()).sort((a, b) => a.dayT0 - b.dayT0).map((day) => ({
     dayT0: day.dayT0,
     label: fmtDayLabel(day.dayT0),
