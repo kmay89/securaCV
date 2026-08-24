@@ -294,7 +294,9 @@ if (tv && stage) {
   let alertsOn = false, severity = 'gentle', alertTimer = null, alertHideT = null, audioCtx = null;
   function warmAudio() { try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) { /* no audio */ } }
   function chime() {
-    if (severity === 'gentle' || !audioCtx) return;
+    // never chime from a hidden page — the alert loop keeps running, but only
+    // a TV someone can actually see gets to make a sound
+    if (severity === 'gentle' || !audioCtx || document.hidden) return;
     try { const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime; o.type = 'sine'; o.frequency.setValueAtTime(severity === 'assertive' ? 880 : 620, t); o.frequency.exponentialRampToValueAtTime(severity === 'assertive' ? 1175 : 784, t + 0.08); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(severity === 'assertive' ? 0.09 : 0.05, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + 0.55); } catch (e) { /* no audio */ }
   }
   function fireAlert(kind) {

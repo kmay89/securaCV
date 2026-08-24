@@ -334,6 +334,10 @@ async function buildDisplaySheet(ctx, side, stage) {
   const MASTER = 0.22;
   const tone = (f, gain) => {
     if (soundMuted) return;
+    // A hidden page holds the bird's beak shut: release any held note and take
+    // no new ones. The firmware keeps ticking; a background tab or window must
+    // never sing to an empty room.
+    if (document.hidden) { if (voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.004); } catch {} } return; }
     try {
       ensureVoice(); audioResume();
       const t = audio.currentTime;
@@ -350,6 +354,24 @@ async function buildDisplaySheet(ctx, side, stage) {
     try { localStorage.setItem("canary-sound", on ? "on" : "off"); } catch {}
     if (!on && voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.01); } catch {} }
   };
+  // The per-tick gate above only cuts a note at the NEXT firmware write; if
+  // ticks pause while hidden, a held note would ring on. This is the
+  // deterministic cut the moment the page leaves the screen. Named and
+  // removed on dispose — each sheet builds its own audio closure, so a
+  // listener left behind would stack up (and pin that closure) on every
+  // open/close cycle.
+  const onHidden = () => {
+    if (document.hidden && voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.01); } catch {} }
+  };
+  document.addEventListener("visibilitychange", onHidden);
+  ctx.dispose.push(() => {
+    document.removeEventListener("visibilitychange", onHidden);
+    // and full quiet on close: this sheet's context is unreachable after
+    // teardown, so a note held mid-close would otherwise ring forever
+    try { if (voiceGain) voiceGain.gain.value = 0; } catch {}
+    try { if (voiceOsc) voiceOsc.stop(); } catch {}
+    try { if (audio) audio.close(); } catch {}
+  });
   // A small, unobtrusive corner toggle — the chime is meaningful and infrequent
   // (boot, alerts, the touch you make), but the room is yours.
   (() => {

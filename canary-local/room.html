@@ -641,20 +641,29 @@
 
   // ── a tiny synth sound kit (Web Audio, no files) ──────────
   var SFX=(function(){
-    var ctx=null,muted=false;
-    function ac(){ try{ if(!ctx) ctx=new (window.AudioContext||window.webkitAudioContext)(); if(ctx.state==='suspended') ctx.resume(); }catch(e){ ctx=null; } return ctx; }
-    function tone(freq,dur,type,vol,when){ var c=ac(); if(!c||muted) return; var t=when||c.currentTime; var o=c.createOscillator(),g=c.createGain(); o.type=type||'sine'; o.frequency.setValueAtTime(freq,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol||0.12,t+0.012); g.gain.exponentialRampToValueAtTime(0.0001,t+dur); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t+dur+0.03); }
+    var ctx=null,muted=false,master=null;
+    // every voice routes through one master gain, so hiding the page can cut
+    // ALL sound at once — including tones already scheduled ahead
+    function ac(){ try{ if(!ctx){ ctx=new (window.AudioContext||window.webkitAudioContext)(); master=ctx.createGain(); master.gain.value=document.hidden?0:1; master.connect(ctx.destination); } if(ctx.state==='suspended') ctx.resume(); }catch(e){ ctx=null; } return ctx; }
+    // The creation-time document.hidden guards below can't catch a tone that
+    // was already scheduled (the five-note done() fanfare runs ~0.7s ahead, a
+    // whoosh half a second) — this mutes the master the instant the page
+    // hides, and restores it on return.
+    document.addEventListener('visibilitychange',function(){ if(!ctx||!master) return; try{ master.gain.setTargetAtTime(document.hidden?0:1,ctx.currentTime,0.02); }catch(e){} });
+    // document.hidden gates every oscillator: a page that isn't on screen
+    // never makes a sound, no matter who asks. (Interaction sounds can't fire
+    // unfocused anyway; this is the backstop for anything timer-driven.)
+    function tone(freq,dur,type,vol,when){ var c=ac(); if(!c||muted||document.hidden) return; var t=when||c.currentTime; var o=c.createOscillator(),g=c.createGain(); o.type=type||'sine'; o.frequency.setValueAtTime(freq,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol||0.12,t+0.012); g.gain.exponentialRampToValueAtTime(0.0001,t+dur); o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+0.03); }
     return {
       resume:function(){ ac(); },
       setMuted:function(m){ muted=m; if(!m) ac(); },
       isMuted:function(){ return muted; },
       hover:function(){ tone(760,0.05,'sine',0.03); },
-      twinkle:function(){ var c=ac(); if(!c||muted) return; var t=c.currentTime; tone(1568,0.13,'sine',0.045,t); tone(2093,0.16,'sine',0.035,t+0.02); },
       pick:function(){ tone(480,0.07,'triangle',0.10); tone(720,0.07,'sine',0.05); },
       woof:function(){ var c=ac(); if(!c||muted) return; var t=c.currentTime; tone(250,0.13,'sine',0.08,t); tone(178,0.18,'sine',0.06,t+0.1); },
       chirp:function(){ var c=ac(); if(!c||muted) return; var t=c.currentTime; tone(1260,0.07,'sine',0.08,t); tone(1720,0.08,'sine',0.06,t+0.06); },
       build:function(){ var c=ac(); if(!c||muted) return; var t=c.currentTime; [523,659,784].forEach(function(f,i){ tone(f,0.17,'triangle',0.09,t+i*0.05); }); },
-      whoosh:function(){ var c=ac(); if(!c||muted) return; var t=c.currentTime; var o=c.createOscillator(),g=c.createGain(); o.type='sine'; o.frequency.setValueAtTime(520,t); o.frequency.exponentialRampToValueAtTime(150,t+0.4); g.gain.setValueAtTime(0.06,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.45); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t+0.5); },
+      whoosh:function(){ var c=ac(); if(!c||muted||document.hidden) return; var t=c.currentTime; var o=c.createOscillator(),g=c.createGain(); o.type='sine'; o.frequency.setValueAtTime(520,t); o.frequency.exponentialRampToValueAtTime(150,t+0.4); g.gain.setValueAtTime(0.06,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.45); o.connect(g); g.connect(master); o.start(t); o.stop(t+0.5); },
       down:function(){ var c=ac(); if(!c||muted) return; var t=c.currentTime; [659,523,392].forEach(function(f,i){ tone(f,0.12,'sine',0.07,t+i*0.05); }); },
       done:function(){ var c=ac(); if(!c||muted) return; var t=c.currentTime; [523,659,784,1046,1319].forEach(function(f,i){ tone(f,0.34,'triangle',0.10,t+i*0.085); }); }
     };
@@ -832,13 +841,16 @@
     [[5.3,8.7],[12.4,8.7]].forEach(function(q,k){ setTimeout(function(){ var pt=P(q[0],q[1],0); chirp(pt[0],pt[1]-24,true); },220+k*260); });
   }
   function shootingStar(){
-    if(REDUCE||!NIGHT||!savedVB) return; var vb=savedVB.split(' ').map(Number);
+    // Visual only, deliberately: this runs on a timer, and a timer that makes
+    // noise chimes at people who are working in another window. The night sky
+    // stays alive; the room stays quiet unless it is touched.
+    if(REDUCE||!NIGHT||!savedVB||document.hidden) return; var vb=savedVB.split(' ').map(Number);
     var g=el("g"), sx=vb[0]+vb[2]*0.42+Math.random()*vb[2]*0.36, sy=vb[1]+8+Math.random()*46;
     g.setAttribute("transform","translate("+sx.toFixed(1)+","+sy.toFixed(1)+")");
     var inner=el("g",{},"shoot");
     inner.appendChild(el("line",{x1:0,y1:0,x2:-30,y2:-11,stroke:"#fff5cf","stroke-width":2,"stroke-linecap":"round","stroke-opacity":.85}));
     inner.appendChild(el("circle",{cx:0,cy:0,r:2.4,fill:"#fff"}));
-    g.appendChild(inner); ovl().appendChild(g); SFX.twinkle();
+    g.appendChild(inner); ovl().appendChild(g);
     setTimeout(function(){ if(g.parentNode) g.parentNode.removeChild(g); },1500);
   }
   var _wasNight=null;
@@ -1119,13 +1131,14 @@
       if(e.target.closest&&(e.target.closest('.pad')||e.target.closest('button')||e.target.closest('.infopane')||e.target.closest('.panel'))) return;
       var sc=clientToScene(e.clientX,e.clientY); if(!sc) return;
       for(var i=0;i<5;i++) sparkleAt(sc[0]+(Math.random()*18-9),sc[1]+(Math.random()*14-7),PAL6[i]);
-      SFX.twinkle();
     });
   }
-  // idle life — the Canaries chatter to themselves; stars fall at night
-  setInterval(function(){ if(REDUCE) return; if(Math.random()<0.6){ var ps=[[5.3,8.7],[12.4,8.7]]; var q=ps[Math.floor(Math.random()*ps.length)]; var pt=P(q[0],q[1],0); chirp(pt[0],pt[1]-24,true); } },5500);
+  // idle life — the Canaries chatter to themselves (silently); stars fall at
+  // night. All of it holds still while the page is hidden: an unattended tab
+  // or window must never make a sound or burn cycles animating for nobody.
+  setInterval(function(){ if(REDUCE||document.hidden) return; if(Math.random()<0.6){ var ps=[[5.3,8.7],[12.4,8.7]]; var q=ps[Math.floor(Math.random()*ps.length)]; var pt=P(q[0],q[1],0); chirp(pt[0],pt[1]-24,true); } },5500);
   setInterval(shootingStar,7000);
-  setInterval(function(){ if(!REDUCE && PAL_POSES.length>1) cyclePose(false); },26000); // the pals gently resettle
+  setInterval(function(){ if(!REDUCE && !document.hidden && PAL_POSES.length>1) cyclePose(false); },26000); // the pals gently resettle
 
   // sound toggle + wake the audio on the first real gesture
   var soundBtn=document.getElementById('sound');
