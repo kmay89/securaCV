@@ -2,7 +2,7 @@
 //
 // The Swift half of the timeline's cross-language parity proof.
 //
-// tests/fixtures/timeline/scrub_parity.json is generated from the JavaScript
+// viewer/fixtures/timeline/scrub_parity.json is generated from the JavaScript
 // implementation (viewer/timeline_core.js) by viewer/tools/gen_timeline_parity.mjs
 // and asserted by BOTH sides — viewer/timeline_core.test.js and this file. The
 // point is not coverage for its own sake: the same window of the same log has
@@ -31,7 +31,7 @@ final class TimelineScrubTests: XCTestCase {
             .deletingLastPathComponent()   // Tests
             .deletingLastPathComponent()   // ios
             .deletingLastPathComponent()   // repo root
-        let url = repoRoot.appendingPathComponent("tests/fixtures/timeline/scrub_parity.json")
+        let url = repoRoot.appendingPathComponent("viewer/fixtures/timeline/scrub_parity.json")
         try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path),
                           "repo checkout not visible from the test host; " +
                           "viewer/timeline_core.test.js remains the primary parity gate")
@@ -127,9 +127,13 @@ final class TimelineScrubTests: XCTestCase {
                 XCTAssertEqual(got.tamperCount, want["tamper_count"] as? Int, "\(name): day \(i) tamper")
                 XCTAssertEqual(got.cellsPerDay, want["cells_per_day"] as? Int, "\(name): day \(i) cells/day")
                 XCTAssertEqual(got.firstIndex, want["first_index"] as? Int, "\(name): day \(i) firstIndex")
-                XCTAssertEqual(round3(got.coverageFrom), want["coverage_from"] as? Double,
+                // nil means the bundle declares no window at all, which JSON
+                // carries as null and an NSNumber cast rejects.
+                XCTAssertEqual(got.coverageFrom.map(round3),
+                               (want["coverage_from"] as? NSNumber)?.doubleValue,
                                "\(name): day \(i) coverage from")
-                XCTAssertEqual(round3(got.coverageTo), want["coverage_to"] as? Double,
+                XCTAssertEqual(got.coverageTo.map(round3),
+                               (want["coverage_to"] as? NSNumber)?.doubleValue,
                                "\(name): day \(i) coverage to")
                 // JSON null decodes to NSNull, which fails the NSNumber cast —
                 // so an absent severity compares equal to Swift's nil.
@@ -320,6 +324,26 @@ final class TimelineScrubTests: XCTestCase {
         let ribbonDays = Set(model.days.map(\.dayT0))
         XCTAssertEqual(ribbonDays, sectionDays,
                        "the ribbon's days and the list's sections must be the same days")
+    }
+
+    func testCoverageIsDeclaredNeverInferred() {
+        // The strip's blank regions mean "nothing here claims the device was
+        // watching". Defaulting the window to the records' own span turned
+        // that into "watched, and quiet" — a claim the alert ledger, which
+        // declares no window at all, cannot support.
+        let base = 1_750_809_600
+        let records = [
+            TimelineRecord(t0: base + 3600, kind: .event, label: "Contact state change", family: .touch),
+            TimelineRecord(t0: base + 7200, kind: .event, label: "Vehicle arrival/departure", family: .move),
+        ]
+        let undeclared = TimelineScrub.days(for: records)
+        XCTAssertEqual(undeclared.count, 1)
+        XCTAssertNil(undeclared[0].coverageFrom, "no window declared, so no track may be drawn")
+        XCTAssertNil(undeclared[0].coverageTo)
+
+        let declared = TimelineScrub.days(for: records, coverageT0: base, coverageT1: base + 86_400)
+        XCTAssertEqual(declared[0].coverageFrom, 0)
+        XCTAssertEqual(declared[0].coverageTo, 1)
     }
 
     func testHeartbeatsNeverLightADensityCell() {

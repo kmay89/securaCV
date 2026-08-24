@@ -383,8 +383,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0.278,
-            "coverage_to": 0.465,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 40,
@@ -739,8 +739,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0.042,
-            "coverage_to": 0.84,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 6,
@@ -1049,8 +1049,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0.75,
-            "coverage_to": 1,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 108,
@@ -1070,8 +1070,8 @@
             "cells_per_day": 144,
             "first_index": 1,
             "worst_severity": null,
-            "coverage_from": 0,
-            "coverage_to": 0.257,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 36,
@@ -1284,8 +1284,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0.5,
-            "coverage_to": 0.514,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 72,
@@ -1740,8 +1740,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0.25,
-            "coverage_to": 0.257,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 36,
@@ -2287,8 +2287,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0.208,
-            "coverage_to": 0.229,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 30,
@@ -2553,8 +2553,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0,
-            "coverage_to": 1,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 0,
@@ -2574,8 +2574,8 @@
             "cells_per_day": 144,
             "first_index": 1,
             "worst_severity": null,
-            "coverage_from": 0,
-            "coverage_to": 0.007,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 0,
@@ -2759,8 +2759,8 @@
             "cells_per_day": 144,
             "first_index": 0,
             "worst_severity": null,
-            "coverage_from": 0.333,
-            "coverage_to": 0.34,
+            "coverage_from": null,
+            "coverage_to": null,
             "cells": [
               {
                 "i": 48,

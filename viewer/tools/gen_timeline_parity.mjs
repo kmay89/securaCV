@@ -25,7 +25,12 @@ const repo = join(here, '..', '..');
 const require = createRequire(import.meta.url);
 const T = require(join(here, '..', 'timeline_core.js'));
 
-const OUT = join(repo, 'tests', 'fixtures', 'timeline', 'scrub_parity.json');
+// Beside its only consumers, NOT under tests/: `rust.yml` and
+// `detect-eval.yml` both filter on `tests/**`, so a regeneration of this
+// JavaScript-derived UI fixture dispatched the entire Rust matrix — an
+// hour of runner time and two more checks to read, for a file no cargo
+// target opens.
+const OUT = join(repo, 'viewer', 'fixtures', 'timeline', 'scrub_parity.json');
 
 // ---- the scenarios ------------------------------------------------------
 // Each is a hand-built day with a property worth pinning. Times are UTC epoch
@@ -191,7 +196,10 @@ function expectedFor(scenario) {
       day_t0: d.dayT0, label: d.label, count: d.count, gap_count: d.gapCount,
       tamper_count: d.tamperCount, cells_per_day: d.cellsPerDay, first_index: d.firstIndex,
       worst_severity: d.worstSeverity === undefined ? null : d.worstSeverity,
-      coverage_from: round(d.covFrom), coverage_to: round(d.covTo),
+      // null means "this bundle declares no coverage window" — a different
+      // statement from "covered from 0", and `round(null)` is 0.
+      coverage_from: d.covFrom === null ? null : round(d.covFrom),
+      coverage_to: d.covTo === null ? null : round(d.covTo),
       cells: d.cells.map((c) => ({
         i: c.i, count: c.count, family: c.family, has_gap: c.hasGap,
         worst_severity: c.worstSeverity === undefined ? null : c.worstSeverity,
@@ -255,7 +263,7 @@ if (process.argv.includes('--check')) {
   let current = '';
   try { current = readFileSync(OUT, 'utf8'); } catch { /* missing */ }
   if (current !== text) {
-    console.error('tests/fixtures/timeline/scrub_parity.json is out of date — '
+    console.error('viewer/fixtures/timeline/scrub_parity.json is out of date — '
       + 'run `node viewer/tools/gen_timeline_parity.mjs` and commit.');
     process.exit(1);
   }

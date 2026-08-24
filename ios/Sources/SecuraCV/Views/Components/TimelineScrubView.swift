@@ -24,7 +24,7 @@
 //
 // The arithmetic lives in Shared/TimelineScrub.swift (pure, host-tested, and
 // pinned against the JavaScript implementation by
-// tests/fixtures/timeline/scrub_parity.json). This file is the thin shell:
+// viewer/fixtures/timeline/scrub_parity.json). This file is the thin shell:
 // it draws and it handles input, and it decides nothing about what a day was.
 
 import SwiftUI
@@ -149,12 +149,14 @@ struct TimelineDayShapeView: View {
         let colWidth = size.width / CGFloat(columns)
         let barWidth = max(colWidth - 0.5, 0.75)
 
-        // The covered window: the ONLY region allowed to read as "quiet".
-        // Everything outside it is left bare, because the export says nothing
-        // about those hours and neither may we.
-        let coverX0 = size.width * CGFloat(day.coverageFrom)
-        let coverX1 = size.width * CGFloat(day.coverageTo)
-        if coverX1 > coverX0 {
+        // The covered window: the ONLY region allowed to read as "quiet",
+        // and only when the source actually declares one. The alert ledger
+        // declares nothing, so no track is drawn there — inferring coverage
+        // from where the records happen to fall would claim the device was
+        // watching on exactly the evidence that cannot show it.
+        let coverX0 = size.width * CGFloat(day.coverageFrom ?? 0)
+        let coverX1 = size.width * CGFloat(day.coverageTo ?? 0)
+        if day.coverageFrom != nil, day.coverageTo != nil, coverX1 > coverX0 {
             context.fill(
                 Path(roundedRect: CGRect(x: coverX0, y: size.height - 3,
                                          width: coverX1 - coverX0, height: 3),
@@ -229,10 +231,14 @@ struct TimelineDayShapeView: View {
         onScrub(date)
     }
 
-    /// Local wall clock for a bucket — the phone shows the user's own time,
-    /// while the parity-checked UTC forms stay in the model for the record.
+    /// A bucket is a RANGE, and saying "12:20" for it would narrow a
+    /// ten-minute window the log deliberately left wide (Invariant III). The
+    /// phone shows the user's own wall clock; the parity-checked UTC forms
+    /// stay in the model for the record itself.
     private static func clock(_ date: Date) -> String {
-        date.formatted(.dateTime.hour().minute())
+        let end = date.addingTimeInterval(TimeInterval(TimelineScrub.defaultBucketSeconds))
+        return date.formatted(.dateTime.hour().minute())
+            + " – " + end.formatted(.dateTime.hour().minute())
     }
 }
 

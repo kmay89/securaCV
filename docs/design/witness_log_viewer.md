@@ -120,7 +120,7 @@ a restyle:
 `viewer/timeline_core.js` (DOM-free, `node --test`-able, inlined into the
 built viewer) and is ported to `ios/Shared/TimelineScrub.swift`
 (Foundation-only). Both are asserted against
-`tests/fixtures/timeline/scrub_parity.json`, generated from the JavaScript by
+`viewer/fixtures/timeline/scrub_parity.json`, generated from the JavaScript by
 `viewer/tools/gen_timeline_parity.mjs` and checked in CI on both sides. This
 is the §4 "one timeline model" rule made mechanical: two surfaces that fold
 quiet differently disagree about what a day *was*, and then the record stops

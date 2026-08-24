@@ -378,18 +378,27 @@ function buildDays(records, opts) {
       cell.worstSeverity = Math.max(cell.worstSeverity === null ? -1 : cell.worstSeverity, r.severity);
     }
   });
-  // Clamp to the BUCKET GRID the cells are drawn on, not to the raw record
-  // times. Taking the caller's window verbatim let a jittered event light a
-  // cell that the very same strip drew as uncovered — the picture
-  // contradicting its own legend — and clamping to the record's own instant
-  // still left the cell's leading edge outside the track, because a cell
-  // spans the whole bucket that contains it.
-  const firstT0 = visible.length ? visible[0].t0 : 0;
-  const lastEnd = visible.reduce((m, r) => Math.max(m, r.t0 + r.size), firstT0);
-  const gridFloor = Math.floor(firstT0 / bucketS) * bucketS;
-  const gridCeil = Math.ceil(lastEnd / bucketS) * bucketS;
-  const cov0 = Math.min(typeof o.coverageT0 === 'number' ? o.coverageT0 : gridFloor, gridFloor);
-  const cov1 = Math.max(typeof o.coverageT1 === 'number' ? o.coverageT1 : gridCeil, gridCeil);
+  // COVERAGE IS DECLARED, NEVER INFERRED. An export receipt states its
+  // window; a sealed envelope states nothing. Defaulting the window to the
+  // span of the records themselves invented the one fact this strip exists
+  // to be careful about — it drew "covered, and therefore quiet" across
+  // hours nothing in the bundle claims the device was watching. With no
+  // declared window both bounds are null and the strip omits its track.
+  //
+  // When a window IS declared, clamp it to the BUCKET GRID the cells are
+  // drawn on: a jittered event could otherwise light a cell the same strip
+  // drew as uncovered, and clamping to the record's own instant still leaves
+  // the cell's leading edge outside, because a cell spans its whole bucket.
+  const declared = typeof o.coverageT0 === 'number' || typeof o.coverageT1 === 'number';
+  let cov0 = null, cov1 = null;
+  if (declared) {
+    const firstT0 = visible.length ? visible[0].t0 : 0;
+    const lastEnd = visible.reduce((m, r) => Math.max(m, r.t0 + r.size), firstT0);
+    const gridFloor = Math.floor(firstT0 / bucketS) * bucketS;
+    const gridCeil = Math.ceil(lastEnd / bucketS) * bucketS;
+    cov0 = Math.min(typeof o.coverageT0 === 'number' ? o.coverageT0 : gridFloor, gridFloor);
+    cov1 = Math.max(typeof o.coverageT1 === 'number' ? o.coverageT1 : gridCeil, gridCeil);
+  }
   return Array.from(days.values()).sort((a, b) => a.dayT0 - b.dayT0).map((day) => ({
     dayT0: day.dayT0,
     label: fmtDayLabel(day.dayT0),
@@ -399,9 +408,10 @@ function buildDays(records, opts) {
     worstSeverity: day.worstSeverity,
     cellsPerDay: perDay,
     firstIndex: day.firstIndex,
-    // The covered part of this day, as cell fractions 0..1 of the strip.
-    covFrom: Math.min(Math.max((cov0 - day.dayT0) / DAY_S, 0), 1),
-    covTo: Math.min(Math.max((cov1 - day.dayT0) / DAY_S, 0), 1),
+    // The declared covered part of this day, as fractions 0..1 of the strip,
+    // or null when the bundle declares no window at all.
+    covFrom: cov0 === null ? null : Math.min(Math.max((cov0 - day.dayT0) / DAY_S, 0), 1),
+    covTo: cov1 === null ? null : Math.min(Math.max((cov1 - day.dayT0) / DAY_S, 0), 1),
     cells: Array.from(day.cellMap.values()).sort((a, b) => a.i - b.i).map((c) => ({
       i: c.i, count: c.count, family: dominantFamily(c), hasGap: c.hasGap,
       worstSeverity: c.worstSeverity,

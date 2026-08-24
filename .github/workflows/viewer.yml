@@ -18,7 +18,7 @@ on:
       # The timeline parity fixture is asserted by the JS tests here and by
       # the Swift tests on the Apple runners — an edit to it alone must still
       # be checked, or the two implementations can drift through the fixture.
-      - 'tests/fixtures/timeline/**'
+      - 'viewer/fixtures/timeline/**'
       - '.github/workflows/viewer.yml'
   pull_request:
     branches: [ "main" ]
@@ -34,7 +34,7 @@ on:
       # The timeline parity fixture is asserted by the JS tests here and by
       # the Swift tests on the Apple runners — an edit to it alone must still
       # be checked, or the two implementations can drift through the fixture.
-      - 'tests/fixtures/timeline/**'
+      - 'viewer/fixtures/timeline/**'
       - '.github/workflows/viewer.yml'
 
 permissions:

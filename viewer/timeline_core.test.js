@@ -324,6 +324,21 @@ describe('day grouping', () => {
     assert.ok(Math.abs(days[0].covTo - 10 / 24) < 1e-9);
   });
 
+  it('declares no coverage when the bundle declares none', () => {
+    // A sealed envelope states no window. Defaulting it to the records' own
+    // span drew "covered, and therefore quiet" across hours nothing in the
+    // bundle claims the device was watching — the one thing the strip's blank
+    // regions exist to distinguish.
+    const days = T.buildDays([ev(6 * 3600), ev(20 * 3600)], { bucketS: 600 });
+    assert.equal(days.length, 1);
+    assert.equal(days[0].covFrom, null, 'no window declared, so no track');
+    assert.equal(days[0].covTo, null);
+
+    const withWindow = T.buildDays([ev(6 * 3600)], { bucketS: 600, coverageT0: 0, coverageT1: 86400 });
+    assert.equal(withWindow[0].covFrom, 0);
+    assert.equal(withWindow[0].covTo, 1);
+  });
+
   it('widens a too-narrow coverage window to contain every drawn record', () => {
     // Export jitter can place an event just outside the receipt's stated
     // window; the strip must not draw a lit cell in a region it also draws as
@@ -391,7 +406,7 @@ describe('model summary', () => {
 // regenerated — which is exactly when the Swift port would silently diverge.
 // The Swift side asserts the same file in TimelineScrubTests.swift.
 describe('cross-language parity fixture', () => {
-  const fx = load('tests/fixtures/timeline/scrub_parity.json');
+  const fx = load('viewer/fixtures/timeline/scrub_parity.json');
   const round = (n) => Math.round(n * 1000) / 1000;
 
   it('has scenarios with the properties worth pinning', () => {
@@ -402,7 +417,7 @@ describe('cross-language parity fixture', () => {
     }
   });
 
-  for (const sc of load('tests/fixtures/timeline/scrub_parity.json').scenarios) {
+  for (const sc of load('viewer/fixtures/timeline/scrub_parity.json').scenarios) {
     it('reproduces the fixture for ' + sc.name, () => {
       const model = T.buildTimelineModel({ records: sc.records, unparsed: 0 }, {
         coverageT0: sc.coverage_t0 === null ? undefined : sc.coverage_t0,
@@ -431,7 +446,8 @@ describe('cross-language parity fixture', () => {
         day_t0: d.dayT0, label: d.label, count: d.count, gap_count: d.gapCount,
         tamper_count: d.tamperCount, cells_per_day: d.cellsPerDay, first_index: d.firstIndex,
         worst_severity: d.worstSeverity === undefined ? null : d.worstSeverity,
-        coverage_from: round(d.covFrom), coverage_to: round(d.covTo),
+        coverage_from: d.covFrom === null ? null : round(d.covFrom),
+        coverage_to: d.covTo === null ? null : round(d.covTo),
         cells: d.cells.map((c) => ({
           i: c.i, count: c.count, family: c.family, has_gap: c.hasGap,
           worst_severity: c.worstSeverity === undefined ? null : c.worstSeverity,
