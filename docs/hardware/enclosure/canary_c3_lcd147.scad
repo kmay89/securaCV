@@ -236,6 +236,7 @@ use <canary_vent_lib.scad>   // the house egg — here it is the hanger, not a v
 use <canary_core_lib.scad>   // rrect2d — the shared 2D helpers; the local copy is gone
 use <canary_port_lib.scad>   // the series-A standards + the insertion-length gate
 use <canary_board_lib.scad>  // the ws147 board record the knob defaults cite
+use <canary_color_lib.scad>  // the colorway registry — preview spool colors
 
 /* [What to render] */
 part  = "all";      // ["bezel","lid","light","mark","shell","coupon","all","exploded","palette"]
@@ -885,6 +886,9 @@ nub_y0 = 3.6;    // nub pair centers (±Y) on the ±X walls — the same
                  // flanks rise right behind the wall at
                  // y ±(board_l/2 − hole_iy_usb). The asserts below hold
                  // all three sides.
+
+/* [Colorway] — preview spools only; per-part exports carry no color */
+colorway = "canary"; // ["graphite","canary","snow","forest","midnight"] this case's print-validated set is canary: body yellow, ink black, light white (canary_color_lib)
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -2000,20 +2004,20 @@ module lid_assembled() {
 // and fit only; part="palette" is the view that answers "what do the three
 // spools look like".
 module bezel_assembly() {
-    color("#f5c518") bezel();
-    if (light_seam) color("#f2f2f2") light_band();
+    color(cw_body(colorway)) bezel();
+    if (light_seam) color(cw_light(colorway)) light_band();
 }
 
 // the lid as it reads: yellow plate, black letters sitting in their deboss
 module lid_branded() {
-    color("#f5c518") lid();
-    color("#1a1a1a") lid_mark();
-    color("#f2f2f2") lid_egg_white();
+    color(cw_body(colorway)) lid();
+    color(cw_ink(colorway)) lid_mark();
+    color(cw_light(colorway)) lid_egg_white();
 }
 
 module palette_row() {
-    color("#f5c518") bezel();
-    translate([xo + 8, 0, 0]) color("#f2f2f2") light_band();
+    color(cw_body(colorway)) bezel();
+    translate([xo + 8, 0, 0]) color(cw_light(colorway)) light_band();
     translate([2*(xo + 8), 0, 0]) lid_branded();
 }
 
@@ -2026,7 +2030,7 @@ else if (part == "coupon") fit_coupon();
 else if (part == "palette") palette_row();
 else if (part == "exploded") {
     bezel_assembly();
-    translate([0, 0, 16]) color("#f5c518") lid_assembled();
+    translate([0, 0, 16]) color(cw_body(colorway)) lid_assembled();
     // The wordmark floats ABOVE its deboss rather than sitting in it, and
     // that is what makes this preview readable. Committed previews render
     // through CGAL, which merges and repaints composited products — so an
@@ -2035,11 +2039,11 @@ else if (part == "exploded") {
     // geometry and the empty deboss reads under them, in a single-color
     // render, exactly like every other preview in this catalog. An inlay
     // shown apart from its recess is what "exploded" means anyway.
-    translate([0, 0, 22]) color("#1a1a1a")
+    translate([0, 0, 22]) color(cw_ink(colorway))
         translate([0, 0, bez_h + back_t]) rotate([180, 0, 0]) lid_mark();
     // the egg's white shell, lifted to its own level for the same reason —
     // it is the innermost ring, so it reads under the black one
-    translate([0, 0, 20]) color("#f2f2f2")
+    translate([0, 0, 20]) color(cw_light(colorway))
         translate([0, 0, bez_h + back_t]) rotate([180, 0, 0]) lid_egg_white();
 }
 else {  // "all": both prints side by side, as they come off the plate

@@ -879,6 +879,18 @@
      "note": "",
      "params": [
       {
+       "name": "colorway",
+       "default": "graphite",
+       "enum": [
+        "graphite",
+        "canary",
+        "snow",
+        "forest",
+        "midnight"
+       ],
+       "comment": "assembled-preview spool set (canary_color_lib; single-part exports carry no color)"
+      },
+      {
        "name": "lid_edge",
        "default": "0.8",
        "comment": "45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]"
@@ -2174,6 +2186,18 @@
      "note": "",
      "params": [
       {
+       "name": "colorway",
+       "default": "graphite",
+       "enum": [
+        "graphite",
+        "canary",
+        "snow",
+        "forest",
+        "midnight"
+       ],
+       "comment": "assembled-preview spool set (canary_color_lib; single-part exports carry no color)"
+      },
+      {
        "name": "lid_edge",
        "default": "0.8",
        "comment": "45° chamfer around the front's top edge  // [0:0.1:1.5]"
@@ -2784,6 +2808,18 @@
      "name": "Aesthetics",
      "note": "",
      "params": [
+      {
+       "name": "colorway",
+       "default": "graphite",
+       "enum": [
+        "graphite",
+        "canary",
+        "snow",
+        "forest",
+        "midnight"
+       ],
+       "comment": "assembled-preview spool set (canary_color_lib; single-part exports carry no color)"
+      },
       {
        "name": "lid_edge",
        "default": "1.0",
@@ -3540,6 +3576,18 @@
      "name": "Aesthetics",
      "note": "",
      "params": [
+      {
+       "name": "colorway",
+       "default": "graphite",
+       "enum": [
+        "graphite",
+        "canary",
+        "snow",
+        "forest",
+        "midnight"
+       ],
+       "comment": "assembled-preview spool set (canary_color_lib; single-part exports carry no color)"
+      },
       {
        "name": "lid_edge",
        "default": "0.8"
@@ -6709,6 +6757,24 @@
      ]
     },
     {
+     "name": "Colorway",
+     "note": "preview spools only; per-part exports carry no color",
+     "params": [
+      {
+       "name": "colorway",
+       "default": "midnight",
+       "enum": [
+        "graphite",
+        "canary",
+        "snow",
+        "forest",
+        "midnight"
+       ],
+       "comment": "this stick's print-validated set is midnight: near-black body, canary ink, white band (canary_color_lib)"
+      }
+     ]
+    },
+    {
      "name": "Quality",
      "note": "",
      "params": [
@@ -7905,6 +7971,24 @@
        "name": "nub_y0",
        "default": "3.6",
        "comment": "nub pair centers (±Y) on the ±X walls — the same"
+      }
+     ]
+    },
+    {
+     "name": "Colorway",
+     "note": "preview spools only; per-part exports carry no color",
+     "params": [
+      {
+       "name": "colorway",
+       "default": "canary",
+       "enum": [
+        "graphite",
+        "canary",
+        "snow",
+        "forest",
+        "midnight"
+       ],
+       "comment": "this case's print-validated set is canary: body yellow, ink black, light white (canary_color_lib)"
       }
      ]
     },

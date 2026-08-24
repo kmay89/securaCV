@@ -31,6 +31,7 @@ use <canary_snap_lib.scad>    // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>    // bridge-safe USB opening (this file's polygon, promoted)
 use <canary_board_lib.scad>   // board registry — the XIAO numbers the knobs cite
 use <canary_mark_lib.scad>    // the house wordmark (opt_mark)
+use <canary_color_lib.scad>   // the colorway registry — assembled-preview spools
 
 /* [What to render] */
 part   = "all";       // ["base","lid","all","coupon","gasket","shield","tray"]   (coupon = clip-fit test; gasket = TPU seal ring; shield = solar radiation shield; tray = desiccant tray)
@@ -82,6 +83,7 @@ tab_cb_d    = 7.0;    // pan-head counterbore diameter
 tab_cb_h    = 1.0;    // counterbore depth
 
 /* [Aesthetics] */
+colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
 lid_edge    = 0.8;    // 45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]
 lid_edge2   = 0.0;    // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
 // The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
@@ -776,7 +778,10 @@ else if (part == "gasket") {
 else if (part == "base")   base();
 else if (part == "lid")    translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();   // printable orientation
 else {
-    base();
-    translate([0, out_w/2 + plate_w/2 + 8, 0]) translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();
-    if (e_seal) translate([0, -(out_w + 8), 0]) gasket();
+    // the assembled preview wears the chosen colorway (registry: canary_color_lib);
+    // color() is preview-only — a single-part STL export is byte-identical
+    color(cw_body(colorway)) base();
+    color(cw_body(colorway))
+        translate([0, out_w/2 + plate_w/2 + 8, 0]) translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();
+    if (e_seal) color(cw_light(colorway)) translate([0, -(out_w + 8), 0]) gasket();
 }

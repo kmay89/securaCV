@@ -80,6 +80,8 @@ NON_PRODUCT_SCADS = {
                                       # length gate — cuts other parts make
     "canary_board_lib.scad",          # the BOARD REGISTRY — measured module
                                       # dimensions cases are built AROUND
+    "canary_color_lib.scad",          # the COLORWAY registry — spool palettes,
+                                      # not a part
 }
 
 # Preview meshes rendered for in-development designs the device sheets

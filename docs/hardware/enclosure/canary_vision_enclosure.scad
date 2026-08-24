@@ -44,6 +44,7 @@ use <canary_snap_lib.scad>   // snap-fit doctrine — snap_strain() gates edgecl
 use <canary_port_lib.scad>   // connector openings — the bridge-safe USB profile
 use <canary_board_lib.scad>  // board registry — the knob defaults below cite it
 use <canary_mark_lib.scad>   // THE BIRD — opt_mark's front deboss
+use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
 part   = "all";       // ["back","front","all","gasket","bracket","knob"]
@@ -217,6 +218,7 @@ clip_hook_h = 1.2;
 clip_clear  = 0.25;
 
 /* [Aesthetics] */
+colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
 lid_edge    = 0.8;   // 45° chamfer around the front's top edge  // [0:0.1:1.5]
 lid_edge2   = 0.0;   // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
 label_text  = "";    // debossed front label ("" = off; needs the font installed)
@@ -782,10 +784,12 @@ else if (part == "gasket") {
 else if (part == "bracket") bracket();
 else if (part == "knob")    knob();
 else {
-    back();
-    translate([0, -(out_y/2 + plate_y/2 + hinge_off + fin_r + 10), 0])
+    // assembled preview wears the chosen colorway (canary_color_lib);
+    // color() is preview-only — single-part exports are byte-identical
+    color(cw_body(colorway)) back();
+    color(cw_body(colorway)) translate([0, -(out_y/2 + plate_y/2 + hinge_off + fin_r + 10), 0])
         translate([0, 0, lid_t]) rotate([180, 0, 0]) front();
-    translate([out_x/2 + br_x/2 + 14, 0, 0]) bracket();
-    translate([out_x/2 + br_x/2 + 14, br_y/2 + 22, 0]) knob();
-    if (e_seal) translate([-(out_x/2 + br_x/2 + 16), 0, 0]) gasket();
+    color(cw_body(colorway)) translate([out_x/2 + br_x/2 + 14, 0, 0]) bracket();
+    color(cw_ink(colorway))  translate([out_x/2 + br_x/2 + 14, br_y/2 + 22, 0]) knob();
+    if (e_seal) color(cw_light(colorway)) translate([-(out_x/2 + br_x/2 + 16), 0, 0]) gasket();
 }
