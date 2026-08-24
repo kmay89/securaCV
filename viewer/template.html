@@ -21,12 +21,20 @@
     --ok:#1a7f37; --ok-bg:#dafbe1; --warn:#9a6700; --warn-bg:#fff8c5; --bad:#cf222e; --bad-bg:#ffebe9;
     --accent:#0969da; --accent-bg:#ddf4ff; --shadow:0 1px 3px rgba(31,35,40,.08),0 1px 2px rgba(31,35,40,.06);
     --radius:12px;
+    /* Timeline family hues — three categorical colors (validated for
+       color-vision-deficiency separation against this surface), plus the
+       page's own status colors for tamper and gaps. Tamper and gap marks
+       always carry a glyph or texture and a text label — never color alone. */
+    --fam-move:#2a78d6; --fam-touch:#e87ba4; --fam-sound:#1baf7a;
+    --fam-tamper:#cf222e; --fam-gap:#9a6700; --fam-other:#636c76;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --muted:#9198a1; --line:#30363d;
       --ok:#3fb950; --ok-bg:#12261e; --warn:#d29922; --warn-bg:#272115; --bad:#f85149; --bad-bg:#291415;
       --accent:#4493f8; --accent-bg:#121d2f; --shadow:none;
+      --fam-move:#3987e5; --fam-touch:#d55181; --fam-sound:#0f7a55;
+      --fam-tamper:#f85149; --fam-gap:#d29922; --fam-other:#9198a1;
     }
   }
   * { box-sizing:border-box; }
@@ -145,6 +153,169 @@
     * { animation-duration:.01ms !important; animation-delay:0ms !important; transition-duration:.01ms !important; }
   }
 
+  /* ---- timeline scrub view ("the day has a shape") ----------------------
+     A Sublime-Text-style minimap of the sealed record: every alert is drawn
+     as a tiny greeked line of text, so a day reads as a page — shape first,
+     words on approach. The minimap scrubs the reading pane; quiet hours fold
+     into pleats; declared gaps stay hatched and unfoldable. */
+  .fam-move { --fam:var(--fam-move); } .fam-touch { --fam:var(--fam-touch); }
+  .fam-sound { --fam:var(--fam-sound); } .fam-tamper { --fam:var(--fam-tamper); }
+  .fam-gap { --fam:var(--fam-gap); } .fam-other { --fam:var(--fam-other); }
+
+  .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden;
+             clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0; }
+  .tl-legend { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
+  .tl-chip { font:inherit; font-size:12px; font-weight:600; color:var(--muted); background:var(--bg);
+             border:1px solid var(--line); border-radius:999px; padding:4px 11px; cursor:pointer;
+             display:inline-flex; align-items:center; gap:7px; }
+  .tl-chip:hover { color:var(--fg); border-color:var(--accent); }
+  .tl-chip[aria-pressed="true"] { border-color:var(--accent); color:var(--fg); box-shadow:0 0 0 1px var(--accent); }
+  .tl-dot { width:8px; height:8px; border-radius:50%; background:var(--fam); flex:0 0 auto; }
+  .tl-dot.fam-tamper { border-radius:1px; clip-path:polygon(50% 0, 100% 100%, 0 100%); }
+  .tl-dot.fam-gap { border-radius:2px;
+    background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 4px);
+    box-shadow:inset 0 0 0 1px var(--fam); }
+  .tl-n { color:var(--fg); }
+  .tl-utc { margin-left:auto; font-size:11.5px; color:var(--muted); }
+
+  /* One height token drives the map and the reading pane, so they stay locked
+     together on every display — a laptop, a phone in landscape, a 10-foot TV
+     browser, or a short HMI panel. */
+  .tl-wrap { display:flex; gap:12px; position:relative; --tl-h:clamp(300px, 54vh, 640px); }
+  .tl-map { position:relative; width:84px; flex:0 0 auto; height:var(--tl-h); overflow:hidden;
+            border:1px solid var(--line); border-radius:8px; background:var(--bg);
+            cursor:crosshair; touch-action:none; user-select:none; -webkit-user-select:none; }
+  .tl-map:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .tl-gline { position:absolute; left:0; right:0; height:1px; background:var(--line); opacity:.45; pointer-events:none; }
+  .tl-gline.major { opacity:1; }
+  .tl-tick { position:absolute; height:2px; border-radius:1px; background:var(--fam); opacity:.92;
+             pointer-events:none; animation:tlreveal .4s ease both; }
+  .tl-tick.tl-more { height:3px; opacity:1; }
+  .tl-tickgap { left:4px; right:4px; border-radius:2px;
+    background:repeating-linear-gradient(45deg, var(--fam) 0 3px, transparent 3px 6px);
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fam) 55%, transparent); }
+  /* A fold is a pleat in the paper, not a mark on it: it must read as absence
+     so the greeked strokes stay the only ink that means something. */
+  .tl-pleat { position:absolute; left:0; right:0; pointer-events:none; opacity:.55;
+    border-top:1px dashed var(--line); border-bottom:1px dashed var(--line);
+    background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 14%, transparent) 0 4px, transparent 4px 8px); }
+  .tl-view { position:absolute; left:0; right:0; min-height:16px; border-radius:4px;
+             background:color-mix(in srgb, var(--accent) 13%, transparent);
+             border:1px solid var(--accent); pointer-events:none; }
+  @keyframes tlreveal { from { opacity:0; transform:translateX(-4px); } to { transform:none; } }
+
+  .tl-list { flex:1; min-width:0; height:var(--tl-h); overflow-y:auto; position:relative;
+             border:1px solid var(--line); border-radius:8px; scrollbar-width:thin;
+             overscroll-behavior:contain; -webkit-overflow-scrolling:touch; }
+  .tl-day { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px;
+            background:var(--panel); border-bottom:1px solid var(--line); padding:8px 12px; }
+  .tl-date { font-size:13px; font-weight:650; white-space:nowrap; }
+  .tl-strip { position:relative; flex:1; height:10px; min-width:60px; cursor:pointer; }
+  .tl-covtrack { position:absolute; top:0; bottom:0; background:var(--bg); border-radius:5px;
+                 box-shadow:inset 0 0 0 1px var(--line); }
+  .tl-cell { position:absolute; top:1px; bottom:1px; border-radius:2px; background:var(--fam); }
+  .tl-cellgap { background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 3px); }
+  .tl-daymeta { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .tl-daymeta b { font-weight:650; }
+  .tl-daymeta .tl-tam { color:var(--bad); }
+  .tl-daymeta .tl-gapn { color:var(--warn); }
+
+  .tl-row { display:flex; align-items:center; gap:10px; padding:7px 12px 7px 0; font-size:13.5px;
+            border-bottom:1px solid color-mix(in srgb, var(--line) 45%, transparent); }
+  .tl-row:last-child { border-bottom:none; }
+  .tl-rail { flex:0 0 26px; align-self:stretch; position:relative; min-height:20px; }
+  .tl-rail::before { content:""; position:absolute; left:12px; top:-8px; bottom:-8px; width:2px;
+                     background:color-mix(in srgb, var(--line) 80%, transparent); }
+  .tl-node { position:absolute; left:8.5px; top:50%; margin-top:-4.5px; width:9px; height:9px;
+             border-radius:50%; background:var(--fam); box-shadow:0 0 0 2px var(--panel); }
+  .tl-nodegap { border-radius:2px;
+    background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 4px);
+    box-shadow:0 0 0 2px var(--panel), inset 0 0 0 1px var(--fam); }
+  .tl-nodesys { width:7px; height:7px; margin-top:-3.5px; left:9.5px; background:transparent;
+                border:2px solid var(--fam); box-sizing:border-box; box-shadow:0 0 0 2px var(--panel); }
+  .tl-time { flex:0 0 100px; font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+             font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .tl-body { flex:1; min-width:0; overflow-wrap:break-word; }
+  .tl-body b { font-weight:650; }
+  .tl-shield { width:13px; height:13px; color:var(--fam-tamper); vertical-align:-2px; margin-right:5px; }
+  .tl-det { color:var(--muted); font-size:12.5px; }
+  .tl-zone { flex:0 0 auto; font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+             font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px;
+             padding:1px 8px; max-width:14ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tl-conf { flex:0 0 78px; display:flex; align-items:center; gap:6px; }
+  .tl-meter { width:36px; height:3px; border-radius:2px; background:var(--line); overflow:hidden; }
+  .tl-meter > i { display:block; height:100%; background:var(--fam); }
+  .tl-conf b { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+               font-size:11px; font-weight:400; color:var(--muted); }
+  .tl-sys { font-size:12.5px; }
+  .tl-sys .tl-time { color:color-mix(in srgb, var(--muted) 70%, transparent); }
+  .tl-fold { display:flex; align-items:center; gap:10px; padding:6px 12px 6px 0;
+             color:var(--muted); font-size:12px; }
+  .tl-pleatchip { width:26px; height:8px; border-radius:2px; flex:0 0 auto;
+    background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 30%, transparent) 0 3px, transparent 3px 6px);
+    border:1px dashed var(--line); }
+  .tl-flash { animation:tlflash 1.2s ease; }
+  @keyframes tlflash { 0% { background:var(--accent-bg); } 100% { background:transparent; } }
+
+  /* Spotlight: a legend chip dims everything that isn't its family —
+     emphasis only; nothing is ever hidden. */
+  .tl-panel[data-spot="move"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-move),
+  .tl-panel[data-spot="touch"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-touch),
+  .tl-panel[data-spot="sound"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-sound),
+  .tl-panel[data-spot="tamper"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-tamper),
+  .tl-panel[data-spot="gap"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-gap),
+  .tl-panel[data-spot="other"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-other) { opacity:.25; }
+
+  .tl-lens { position:absolute; z-index:5; left:92px; max-width:300px; pointer-events:none;
+             background:var(--panel); border:1px solid var(--line); border-radius:8px;
+             padding:8px 11px; font-size:12.5px; box-shadow:0 4px 14px rgba(0,0,0,.22); }
+  .tl-lens .lh { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+                 font-size:11.5px; color:var(--muted); }
+  .tl-lens .lr { display:flex; align-items:center; gap:6px; margin-top:4px; }
+
+  /* Phone and narrow-panel layout: the fixed time/zone/confidence columns
+     would crush the label to one character per line, so the row folds — rail
+     and time on top, the alert's own words on a full-width line under it. */
+  @media (max-width: 620px) {
+    .tl-map { width:56px; }
+    .tl-lens { left:62px; max-width:min(300px, calc(100vw - 96px)); }
+    .tl-row, .tl-fold { position:relative; flex-wrap:wrap; row-gap:3px; padding:8px 12px 9px 32px; }
+    .tl-rail { position:absolute; left:0; top:0; bottom:0; width:26px; flex:none; }
+    .tl-time { flex:0 0 auto; }
+    .tl-conf { flex:0 0 auto; margin-left:auto; }
+    .tl-zone { max-width:22ch; }
+    .tl-body { flex:1 0 100%; }
+    .tl-day { flex-wrap:wrap; row-gap:6px; }
+    .tl-date { flex:1 1 auto; }
+    .tl-strip { flex:1 0 100%; order:3; }
+  }
+  /* Touch, pen, and TV-remote pointers: legend chips and day strips grow to a
+     44px target, and the minimap widens so a thumb can scrub it. */
+  @media (pointer: coarse) {
+    .tl-chip { padding:9px 14px; }
+    .tl-strip { height:16px; padding:6px 0; background-clip:content-box; }
+    .tl-map { width:96px; }
+    .tl-lens { left:104px; }
+  }
+  /* Windows High Contrast / forced-colors flattens background paint, which
+     would erase every tick and cell. Redraw them as bordered marks in system
+     colors, and keep the status families distinguishable by shape. */
+  @media (forced-colors: active) {
+    .tl-tick, .tl-cell { forced-color-adjust:none; background:CanvasText; }
+    .tl-tickgap, .tl-cellgap { background:Canvas; border:1px solid CanvasText; }
+    .tl-view { border:2px solid Highlight; background:transparent; }
+    .tl-node { forced-color-adjust:none; background:CanvasText; }
+    .tl-nodegap, .tl-nodesys { background:Canvas; border:2px solid CanvasText; }
+    .tl-pleat { border-color:GrayText; }
+    .tl-chip[aria-pressed="true"] { outline:2px solid Highlight; }
+  }
+  @media (prefers-contrast: more) {
+    .tl-tick { opacity:1; }
+    .tl-cell { opacity:1 !important; }
+    .tl-row { border-bottom-color:var(--line); }
+    .tl-map, .tl-list { border-color:var(--fg); }
+  }
+
   table { width:100%; border-collapse:collapse; font-size:13.5px; }
   th,td { text-align:left; padding:8px 9px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
@@ -160,6 +331,13 @@
     #drop, .actions, .trust, .offline-badge, footer, button.btn.toggle { display:none; }
     .panel { box-shadow:none; }
     .c-tech { display:block; } /* the printed record carries the full technical claims */
+    /* The printed timeline is the full reading pane — every row, no scroll,
+       no scrub chrome; marks keep their ink so the paper record stays legible. */
+    .tl-map, .tl-lens, .tl-utc { display:none; }
+    .tl-list { height:auto; overflow:visible; border:none; }
+    .tl-day { position:static; }
+    .tl-cell, .tl-covtrack, .tl-tick, .tl-node, .tl-meter, .tl-meter > i, .tl-dot, .tl-pleatchip {
+      print-color-adjust:exact; -webkit-print-color-adjust:exact; }
   }
 </style>
 </head>
@@ -231,10 +409,15 @@
 </script>
 
 <script>
+/*__TIMELINE_CORE__*/
+</script>
+
+<script>
 'use strict';
 const SAMPLE_ENVELOPE = /*__SAMPLE_ENVELOPE__*/ null;
 const SAMPLE_BUNDLE = /*__SAMPLE_BUNDLE__*/ null;
 const V = globalThis.SecuraCVVerify;
+const T = globalThis.SecuraCVTimeline;
 const $ = (id) => document.getElementById(id);
 const out = $('out'), drop = $('drop'), fileInput = $('file');
 
@@ -513,28 +696,15 @@ function bundleWarningHint(w) {
 }
 
 function renderBundleTimeline(bundle) {
-  const rows = [];
-  for (const batch of bundle.artifact.batches || []) {
-    for (const bucket of batch.buckets || []) {
-      for (const e of bucket.events || []) {
-        rows.push(`<tr><td>${fmtBucket(e.time_bucket)}</td>
-          <td><span class="tag">${esc(typeof e.event_type === 'string' ? e.event_type : JSON.stringify(e.event_type))}</span></td>
-          <td>${esc(e.zone_id || '—')}</td><td>${typeof e.confidence === 'number' ? e.confidence.toFixed(2) : '—'}</td></tr>`);
-      }
-      for (const f of bucket.failures || []) {
-        rows.push(`<tr><td>${fmtBucket(f.time_bucket)}</td>
-          <td><span class="tag fail">${esc(typeof f.failure_type === 'string' ? f.failure_type : JSON.stringify(f.failure_type))}</span></td>
-          <td colspan="2">${esc(f.details || 'recorded gap')}</td></tr>`);
-      }
-    }
-  }
-  if (!rows.length) return `<div class="panel"><h2>Timeline</h2><div class="hint">No events in this export's window.</div></div>`;
-  return `<div class="panel"><h2>Timeline — verified events</h2>
-    <table><thead><tr><th>Time bucket (UTC)</th><th>Event</th><th>Zone</th><th>Conf.</th></tr></thead>
-    <tbody>${rows.join('')}</tbody></table>
-    <div class="hint">Rendered from the artifact that was just cryptographically bound to the signed
-      receipt — not from any unverified summary. Gaps (times the device could not observe) are shown
-      inline, never hidden.</div></div>`;
+  const w = bundle.receipt_entry && bundle.receipt_entry.receipt && bundle.receipt_entry.receipt.window;
+  return scrubTimeline(T.normalizeBundle(bundle), {
+    title: 'Timeline — verified events',
+    emptyMsg: "No events in this export's window.",
+    coverageT0: w && typeof w.start_epoch_s === 'number' ? w.start_epoch_s : undefined,
+    coverageT1: w && typeof w.end_epoch_s === 'number' ? w.end_epoch_s : undefined,
+    hint: 'Rendered from the artifact that was just cryptographically bound to the signed receipt — '
+      + 'not from any unverified summary. Gaps (times the device could not observe) are shown inline, never hidden.',
+  });
 }
 
 // Reveal the verifier's real, already-computed results one check at a time,
@@ -766,22 +936,320 @@ function renderInconclusive(report, sourceLabel) {
 }
 
 function renderTimeline(envelope) {
-  const entries = (envelope.ledgers && envelope.ledgers.sealed_events && envelope.ledgers.sealed_events.entries) || [];
-  const rows = [];
-  for (const e of entries) {
-    let rec; try { rec = JSON.parse(e.payload_json); } catch { continue; }
-    const isFailure = rec.record_type === 'failure' || rec.failure_type !== undefined;
-    const type = rec.event_type || rec.failure_type || 'unknown';
-    const conf = (!isFailure && typeof rec.confidence === 'number') ? rec.confidence.toFixed(2) : '—';
-    rows.push(`<tr><td>${fmtBucket(rec.time_bucket)}</td>
-      <td><span class="tag ${isFailure ? 'fail' : ''}">${esc(typeof type === 'string' ? type : JSON.stringify(type))}</span></td>
-      <td>${esc(rec.zone_id || '—')}</td><td>${conf}</td></tr>`);
+  return scrubTimeline(T.normalizeEnvelope(envelope), {
+    title: 'Timeline — verified sealed events',
+    emptyMsg: 'No sealed events in this bundle.',
+    hint: 'Rendered from the cryptographically verified, signed event ledger — not from any unverified summary.',
+  });
+}
+
+// ---- timeline scrub view -------------------------------------------------
+// "The day has a shape." Every text alert becomes a tiny greeked line in a
+// Sublime-Text-style minimap; the reading pane holds the real words; quiet
+// folds into pleats; each day opens with its density strip — a picture of
+// the day you can read without reading. All data shaping lives in
+// timeline_core.js (unit-tested); this section only paints and wires it.
+
+let TL = null; // model handoff from render to wire(), consumed by initTimeline()
+
+function famDot(fam) { return `<span class="tl-dot fam-${fam}"></span>`; }
+
+const TAMPER_ICON = '<svg class="tl-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5.5V11c0 4.5 3.4 8.7 8 10 4.6-1.3 8-5.5 8-10V5.5L12 2Z"/><path d="M12 8v4"/><circle cx="12" cy="15.5" r=".6" fill="currentColor"/></svg>';
+
+function scrubTimeline(src, opts) {
+  if (!src.records.length) {
+    return `<div class="panel"><h2>${esc(opts.title)}</h2><div class="hint">${esc(opts.emptyMsg)}</div></div>`;
   }
-  if (!rows.length) return `<div class="panel"><h2>Timeline</h2><div class="hint">No sealed events in this bundle.</div></div>`;
-  return `<div class="panel"><h2>Timeline — verified sealed events</h2>
-    <table><thead><tr><th>Time bucket (UTC)</th><th>Event</th><th>Zone</th><th>Conf.</th></tr></thead>
-    <tbody>${rows.join('')}</tbody></table>
-    <div class="hint">Rendered from the cryptographically verified, signed event ledger — not from any unverified summary.</div></div>`;
+  const model = T.buildTimelineModel(src, { coverageT0: opts.coverageT0, coverageT1: opts.coverageT1 });
+  TL = { model };
+  const famOrder = ['move', 'touch', 'sound', 'tamper', 'gap', 'other'];
+  const chips = famOrder.filter((f) => model.counts[f]).map((f) =>
+    `<button class="tl-chip" type="button" data-fam="${f}" aria-pressed="false" title="Highlight only these">`
+    + `${famDot(f)}${esc(T.FAMILY_LABELS[f])} <span class="tl-n">${model.counts[f]}</span></button>`).join('');
+  const bucketMin = Math.max(1, Math.round(model.bucketS / 60));
+  let rows = '';
+  for (const item of model.items) rows += tlRow(item);
+  let hint = esc(opts.hint) + ` Times are UTC, in ${bucketMin}-minute buckets — the scrubber snaps to`
+    + ' buckets because finer timing was never recorded.';
+  if (model.heartbeats) {
+    hint += ` ${model.heartbeats} sealed heartbeat record${model.heartbeats === 1 ? '' : 's'} prove the device stayed alive through quiet stretches.`;
+  }
+  if (model.unparsed) {
+    hint += ` ${model.unparsed} ledger entr${model.unparsed === 1 ? 'y' : 'ies'} could not be parsed and ${model.unparsed === 1 ? 'is' : 'are'} not shown.`;
+  }
+  return `<div class="panel tl-panel" id="tlpanel">
+    <h2>${esc(opts.title)}</h2>
+    <div class="tl-legend" role="group" aria-label="Highlight one kind of record">${chips}<span class="tl-utc">UTC · ${bucketMin}-min buckets</span></div>
+    <div class="tl-wrap" id="tlwrap">
+      <div class="tl-map" id="tlmap" tabindex="0" role="scrollbar" aria-controls="tllist" aria-orientation="vertical"
+        aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+        aria-label="Timeline minimap — the shape of the record. Drag to scrub; Up and Down arrows step between records."></div>
+      <div class="tl-list" id="tllist" tabindex="0" aria-label="Verified records, oldest first">${rows}</div>
+      <div class="tl-lens" id="tllens" hidden></div>
+    </div>
+    <p class="sr-only" id="tlsay" role="status" aria-live="polite"></p>
+    <div class="hint">${hint}</div>
+  </div>`;
+}
+
+function tlRow(item) {
+  if (item.kind === 'day') {
+    const d = item.day;
+    const cellW = 100 / d.cellsPerDay;
+    const covL = d.covFrom * 100, covW = Math.max((d.covTo - d.covFrom) * 100, 0);
+    const cells = d.cells.map((c) => {
+      const op = c.count >= 4 ? 1 : c.count >= 2 ? 0.75 : 0.5;
+      return `<i class="tl-cell fam-${c.family}${c.hasGap ? ' tl-cellgap' : ''}" style="left:${(c.i * cellW).toFixed(3)}%;width:${Math.max(cellW, 0.35).toFixed(3)}%;opacity:${op}"></i>`;
+    }).join('');
+    const meta = `${d.count} record${d.count === 1 ? '' : 's'}`
+      + (d.tamperCount ? `<b class="tl-tam"> · ${d.tamperCount} tamper</b>` : '')
+      + (d.gapCount ? `<b class="tl-gapn"> · ${d.gapCount} gap${d.gapCount === 1 ? '' : 's'}</b>` : '');
+    return `<div class="tl-day" data-t0="${d.dayT0}"><span class="tl-date">${esc(d.label)}</span>
+      <span class="tl-strip" data-day="${d.dayT0}" role="img"
+        aria-label="Activity shape for ${esc(d.label)} — ${d.count} records across the covered window; hours outside the export's coverage are blank, not quiet">
+        <i class="tl-covtrack" style="left:${covL.toFixed(3)}%;width:${covW.toFixed(3)}%"></i>${cells}</span>
+      <span class="tl-daymeta">${meta}</span></div>`;
+  }
+  if (item.kind === 'fold') {
+    const beats = item.heartbeats ? ` · ${item.heartbeats} heartbeat${item.heartbeats === 1 ? '' : 's'} sealed` : '';
+    return `<div class="tl-fold" data-t0="${item.t0}" data-t1="${item.t1}"><span class="tl-rail"></span>
+      <span class="tl-pleatchip" aria-hidden="true"></span>
+      <span>Quiet · ${esc(T.fmtDuration(item.quietS))} — no events, no declared gaps${beats}</span></div>`;
+  }
+  const r = item.record;
+  const time = T.fmtBucketRange(r.t0, r.size);
+  if (item.kind === 'gap') {
+    return `<div class="tl-row tl-gap fam-gap" data-t0="${r.t0}">
+      <span class="tl-rail"><i class="tl-node tl-nodegap"></i></span>
+      <span class="tl-time">${time}</span>
+      <span class="tl-body"><b>Gap — ${esc(r.label)}</b> <span class="tl-det">${esc(r.details || 'the device could not observe')}</span></span>
+    </div>`;
+  }
+  if (item.kind === 'system' || item.kind === 'heartbeat') {
+    return `<div class="tl-row tl-sys fam-other" data-t0="${r.t0}">
+      <span class="tl-rail"><i class="tl-node tl-nodesys"></i></span>
+      <span class="tl-time">${time}</span>
+      <span class="tl-body tl-det">${esc(r.label)}</span></div>`;
+  }
+  const conf = typeof r.conf === 'number'
+    ? `<span class="tl-conf" title="Confidence ${r.conf.toFixed(2)} — the kernel's rule-match assessment, not a real-world probability">`
+      + `<span class="tl-meter"><i style="width:${Math.round(Math.min(Math.max(r.conf, 0), 1) * 100)}%"></i></span><b>${r.conf.toFixed(2)}</b></span>`
+    : '';
+  return `<div class="tl-row tl-ev fam-${r.family}" data-t0="${r.t0}">
+    <span class="tl-rail"><i class="tl-node"></i></span>
+    <span class="tl-time">${time}</span>
+    <span class="tl-body">${r.family === 'tamper' ? TAMPER_ICON : ''}${esc(r.label)}</span>
+    ${r.zone ? `<span class="tl-zone">${esc(r.zone)}</span>` : ''}
+    ${conf}</div>`;
+}
+
+// Wires the freshly rendered scrub timeline: paints the minimap, then keeps
+// minimap, viewport pane, lens, and reading pane in two-way sync.
+function initTimeline() {
+  const map = $('tlmap');
+  if (!map || !TL) return;
+  const model = TL.model;
+  TL = null;
+  const list = $('tllist'), lens = $('tllens'), wrap = $('tlwrap'), panel = $('tlpanel');
+  const visible = model.records.filter((r) => r.kind !== 'heartbeat');
+  const rows = Array.from(list.querySelectorAll('[data-t0]'));
+  // Time anchors for viewport math: records and fold pleats, never the
+  // sticky day headers (see syncView).
+  const anchors = rows.filter((el) => !el.classList.contains('tl-day'));
+  const nav = rows.filter((el) => el.classList.contains('tl-row'));
+  let layout = [];
+
+  function buildMap() {
+    const H = map.clientHeight;
+    if (!H) return;
+    layout = T.layoutSegments(model.segments, H);
+    let html = '';
+    for (const line of T.gridLines(layout, 22)) {
+      html += `<i class="tl-gline${line.major ? ' major' : ''}" style="top:${line.y.toFixed(1)}px"></i>`;
+    }
+    for (const s of layout) {
+      if (s.kind === 'fold') html += `<i class="tl-pleat" style="top:${s.y0.toFixed(1)}px;height:${(s.y1 - s.y0).toFixed(1)}px"></i>`;
+    }
+    const perBucket = new Map();
+    let tickIdx = 0;
+    for (const r of visible) {
+      const key = Math.floor(r.t0 / model.bucketS);
+      const n = perBucket.get(key) || 0;
+      perBucket.set(key, n + 1);
+      if (n >= 5) continue; // a crowded bucket keeps its five densest strokes
+      const delay = Math.min(tickIdx * 8, 400);
+      tickIdx += 1;
+      if (r.kind === 'gap') {
+        const h = Math.max(3, T.yOfTime(layout, r.t0 + r.size) - T.yOfTime(layout, r.t0));
+        html += `<i class="tl-tick tl-tickgap fam-gap" style="top:${T.yOfTime(layout, r.t0).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${delay}ms"></i>`;
+        continue;
+      }
+      const y = T.yOfTime(layout, r.t0) + n * 3;
+      const over = n === 4;
+      const w = over ? 46 : T.greekWidth(r.label);
+      const x = 8 + T.zoneIndent(model.zones, r.zone);
+      html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
+    }
+    html += '<i class="tl-view" id="tlview"></i>';
+    map.innerHTML = html;
+    syncView();
+  }
+
+  function syncView() {
+    const view = $('tlview');
+    if (!view || !layout.length) return;
+    // Measure against live rects, not offsetTop: a stuck `position:sticky`
+    // day header reports its PINNED offset, which silently stretched the
+    // viewport pane to the full minimap. Day headers are also excluded as
+    // time anchors — a header's t0 is midnight, which can sit outside the
+    // covered domain and clamp the pane to the top.
+    const lr = list.getBoundingClientRect();
+    let tA = null, tB = null;
+    for (const el of anchors) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > lr.top && tA === null) tA = +el.dataset.t0;
+      if (r.top < lr.bottom) tB = +(el.dataset.t1 || el.dataset.t0);
+    }
+    if (tA === null || tB === null) return;
+    const y0 = T.yOfTime(layout, tA);
+    const y1 = Math.max(T.yOfTime(layout, tB + model.bucketS), y0 + 16);
+    view.style.top = y0.toFixed(1) + 'px';
+    view.style.height = (y1 - y0).toFixed(1) + 'px';
+    const denom = Math.max(list.scrollHeight - list.clientHeight, 1);
+    map.setAttribute('aria-valuenow', String(Math.round(Math.min(Math.max(list.scrollTop / denom, 0), 1) * 100)));
+    map.setAttribute('aria-valuetext', T.fmtHM(tA) + ' to ' + T.fmtHM(tB) + ' UTC');
+  }
+
+  // Scroll offset that centers an element, measured from live rects so a
+  // stuck sticky header can never skew it.
+  function centerTop(el) {
+    const r = el.getBoundingClientRect(), lr = list.getBoundingClientRect();
+    return Math.max(list.scrollTop + (r.top - lr.top) - list.clientHeight / 2 + r.height / 2, 0);
+  }
+
+  function scrollToTime(t, smooth) {
+    let target = anchors[anchors.length - 1];
+    for (const el of anchors) { if (+el.dataset.t0 >= t) { target = el; break; } }
+    if (!target) return;
+    list.scrollTo({ top: centerTop(target), behavior: smooth && !REDUCED ? 'smooth' : 'auto' });
+  }
+
+  function yIn(e) {
+    const r = map.getBoundingClientRect();
+    return Math.min(Math.max(e.clientY - r.top, 0), r.height);
+  }
+
+  function showLens(e) {
+    const y = yIn(e);
+    const t = T.timeOfY(layout, y);
+    const seg = layout.find((s) => t >= s.t0 && t <= s.t1);
+    let html = '';
+    if (seg && seg.kind === 'fold') {
+      const beats = seg.heartbeats ? ` · ${seg.heartbeats} heartbeat${seg.heartbeats === 1 ? '' : 's'} sealed` : '';
+      html = `<div class="lh">${T.fmtHM(seg.t0)} → ${T.fmtHM(seg.t1)} UTC</div>`
+        + `<div>Quiet · ${esc(T.fmtDuration(seg.t1 - seg.t0))} — no events, no declared gaps${beats}</div>`;
+    } else {
+      const b0 = Math.floor(t / model.bucketS) * model.bucketS;
+      const recs = visible.filter((r) => r.t0 >= b0 && r.t0 < b0 + model.bucketS);
+      html = `<div class="lh">${esc(T.fmtBucketRange(b0, model.bucketS))} UTC</div>`;
+      if (!recs.length) html += `<div class="tl-det">Quiet bucket</div>`;
+      for (const r of recs.slice(0, 3)) {
+        html += `<div class="lr">${famDot(r.family)}<span>${esc(r.label)}</span>${r.zone ? `<span class="tl-det">${esc(r.zone)}</span>` : ''}</div>`;
+      }
+      if (recs.length > 3) html += `<div class="tl-det">+${recs.length - 3} more</div>`;
+    }
+    lens.innerHTML = html;
+    lens.hidden = false;
+    const wr = wrap.getBoundingClientRect(), mr = map.getBoundingClientRect();
+    lens.style.top = Math.min(Math.max(mr.top - wr.top + y - 14, 0), Math.max(wr.height - 64, 0)) + 'px';
+  }
+
+  let dragging = false;
+  map.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    dragging = true;
+    try { map.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+    scrollToTime(T.timeOfY(layout, yIn(e)), false);
+    showLens(e);
+    e.preventDefault();
+  });
+  map.addEventListener('pointermove', (e) => {
+    if (dragging) scrollToTime(T.timeOfY(layout, yIn(e)), false);
+    showLens(e);
+  });
+  map.addEventListener('pointerup', () => { dragging = false; });
+  map.addEventListener('pointercancel', () => { dragging = false; });
+  map.addEventListener('pointerleave', () => { if (!dragging) lens.hidden = true; });
+
+  // Wheel and trackpad scroll the reading pane from over the minimap, so the
+  // two panes never disagree about which gesture does what.
+  map.addEventListener('wheel', (e) => {
+    list.scrollTop += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
+
+  const say = $('tlsay');
+  let cur = -1;
+  function goto(i) {
+    if (!nav.length) return;
+    cur = Math.min(Math.max(i, 0), nav.length - 1);
+    const el = nav[cur];
+    list.scrollTo({ top: centerTop(el), behavior: REDUCED ? 'auto' : 'smooth' });
+    el.classList.remove('tl-flash');
+    void el.offsetWidth;
+    el.classList.add('tl-flash');
+    // Keyboard and remote users get the row read out; the minimap itself is
+    // a picture, so without this the caret would move in silence.
+    if (say) say.textContent = (el.textContent || '').replace(/\s+/g, ' ').trim()
+      + ' · record ' + (cur + 1) + ' of ' + nav.length;
+  }
+  map.addEventListener('keydown', (e) => {
+    const k = e.key;
+    if (k === 'ArrowDown' || k === 'ArrowRight') goto(cur + 1);
+    else if (k === 'ArrowUp' || k === 'ArrowLeft') goto(cur - 1);
+    else if (k === 'Home') goto(0);
+    else if (k === 'End') goto(nav.length - 1);
+    else if (k === 'PageDown' || k === 'PageUp') {
+      const at = cur >= 0 ? +nav[cur].dataset.t0 : +nav[0].dataset.t0;
+      const want = k === 'PageDown' ? at + 3600 : at - 3600;
+      let best = k === 'PageDown' ? nav.length - 1 : 0;
+      for (let i = 0; i < nav.length; i++) { if (+nav[i].dataset.t0 >= want) { best = i; break; } }
+      goto(best);
+    } else return;
+    e.preventDefault();
+  });
+
+  for (const chip of panel.querySelectorAll('.tl-chip')) {
+    chip.addEventListener('click', () => {
+      const fam = chip.dataset.fam;
+      const wasOn = panel.dataset.spot === fam;
+      panel.querySelectorAll('.tl-chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+      if (wasOn) delete panel.dataset.spot;
+      else { panel.dataset.spot = fam; chip.setAttribute('aria-pressed', 'true'); }
+    });
+  }
+
+  for (const strip of panel.querySelectorAll('.tl-strip')) {
+    strip.addEventListener('click', (e) => {
+      const r = strip.getBoundingClientRect();
+      const frac = Math.min(Math.max((e.clientX - r.left) / Math.max(r.width, 1), 0), 1);
+      scrollToTime(+strip.dataset.day + frac * T.DAY_S, true);
+    });
+  }
+
+  let raf = 0;
+  list.addEventListener('scroll', () => {
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; syncView(); });
+  });
+
+  let rto = 0;
+  if (typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => { clearTimeout(rto); rto = setTimeout(buildMap, 120); }).observe(map);
+  } else {
+    window.addEventListener('resize', () => { clearTimeout(rto); rto = setTimeout(buildMap, 120); });
+  }
+
+  buildMap();
 }
 
 function renderBad(msg, detail) {
@@ -794,6 +1262,7 @@ function renderBad(msg, detail) {
 
 // Wire up buttons that live inside freshly-rendered results.
 function wire() {
+  initTimeline();
   const again = $('again');
   if (again) again.addEventListener('click', () => { out.innerHTML = ''; window.scrollTo({ top: 0, behavior: 'smooth' }); });
   const printBtn = $('print');

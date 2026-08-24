@@ -47,7 +47,9 @@ jobs:
         node-version: '22'
     - name: Cross-language verifier parity tests
       run: node --test viewer/verify_core.test.js
-    - name: Offline viewer is up to date (no drift from verify_core.js)
+    - name: Timeline scrub-view model tests
+      run: node --test viewer/timeline_core.test.js
+    - name: Offline viewer is up to date (no drift from its inlined sources)
       run: node viewer/build.mjs --check
     - name: HA timeline card helper tests
       run: node --test custom_components/securacv/www/securacv-timeline-card.test.js

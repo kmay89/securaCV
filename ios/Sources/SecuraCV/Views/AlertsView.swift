@@ -37,6 +37,22 @@ struct AlertsView: View {
         AlertHistory.daySections(store.alertLog.records.filter { !$0.needsYou })
     }
 
+    /// The row a scrubbed bucket should bring into view: the newest record at
+    /// or before that bucket. Scrubbing into a quiet stretch therefore lands
+    /// on the last thing that actually happened rather than doing nothing —
+    /// the ledger is sparse, and a scrubber that only answers on exact hits
+    /// feels broken.
+    private func anchorID(for bucket: Date) -> String? {
+        let target = bucket.timeIntervalSince1970
+        // The ledger is newest-first, so the first row at or before the target
+        // is the closest one behind it.
+        let records = store.alertLog.records
+        if let hit = records.first(where: { $0.lastBucket.timeIntervalSince1970 <= target }) {
+            return hit.id
+        }
+        return records.last?.id
+    }
+
     private static func dayTitle(_ day: Date) -> String {
         let cal = Calendar.current
         if cal.isDateInToday(day) { return "Earlier today" }
@@ -51,6 +67,7 @@ struct AlertsView: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { scroller in
             List {
                 if let awayLine {
                     Section {
@@ -84,18 +101,35 @@ struct AlertsView: View {
                 if !urgent.isEmpty {
                     Section("Needs you") {
                         ForEach(urgent) { record in
-                            AlertRecordRow(record: record)
+                            AlertRecordRow(record: record).id(record.id)
                         }
+                    }
+                }
+
+                // The shape of the day, above the day itself. A list answers
+                // "what happened" one row at a time; this answers "what KIND
+                // of day was it" before you read a single row, and scrubbing
+                // it walks the list underneath.
+                if !store.alertLog.isQuiet {
+                    Section {
+                        TimelineScrubSection(records: store.alertLog.records) { bucket in
+                            if let id = anchorID(for: bucket) {
+                                scroller.scrollTo(id, anchor: .top)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                     }
                 }
 
                 ForEach(history) { section in
                     Section(Self.dayTitle(section.day)) {
                         ForEach(section.records) { record in
-                            AlertRecordRow(record: record)
+                            AlertRecordRow(record: record).id(record.id)
                         }
                     }
                 }
+            }
             }
             .navigationTitle("Alerts")
             .toolbar {
