@@ -1177,7 +1177,11 @@ function initTimeline() {
     view.style.height = (y1 - y0).toFixed(1) + 'px';
     const denom = Math.max(list.scrollHeight - list.clientHeight, 1);
     map.setAttribute('aria-valuenow', String(Math.round(Math.min(Math.max(list.scrollTop / denom, 0), 1) * 100)));
-    map.setAttribute('aria-valuetext', T.fmtHM(tA) + ' to ' + T.fmtHM(tB) + ' UTC');
+    // Name the day when the visible span crosses midnight — "12:20 to 06:10"
+    // reads as backwards to someone who only hears it.
+    const sameDay = Math.floor(tA / T.DAY_S) === Math.floor(tB / T.DAY_S);
+    const stamp = (t) => sameDay ? T.fmtHM(t) : T.fmtHM(t) + ' on ' + T.fmtDayLabel(Math.floor(t / T.DAY_S) * T.DAY_S);
+    map.setAttribute('aria-valuetext', stamp(tA) + ' to ' + stamp(tB) + ' UTC');
   }
 
   // Scroll offset that centers an element, measured from live rects so a
@@ -1269,16 +1273,44 @@ function initTimeline() {
     if (say) say.textContent = (el.textContent || '').replace(/\s+/g, ' ').trim()
       + ' · record ' + (cur + 1) + ' of ' + nav.length;
   }
+  // The caret is only moved by goto(), so every OTHER way of moving —
+  // dragging the minimap, the wheel, a day strip, scrolling the pane itself —
+  // left it pointing wherever it last was. The first arrow press then threw
+  // the reader back to record 1 of a thirty-day log, and the live region
+  // announced that wrong position out loud. So before acting on a key, if the
+  // caret is no longer on screen, re-seat it at the edge of what IS on screen,
+  // in the direction of travel.
+  function caretOnScreen() {
+    if (cur < 0 || !nav[cur]) return false;
+    const r = nav[cur].getBoundingClientRect(), lr = list.getBoundingClientRect();
+    return r.bottom > lr.top && r.top < lr.bottom;
+  }
+  function reseatCaret(direction) {
+    if (caretOnScreen()) return;
+    const lr = list.getBoundingClientRect();
+    let first = -1, last = -1;
+    for (let i = 0; i < nav.length; i++) {
+      const r = nav[i].getBoundingClientRect();
+      if (r.bottom > lr.top && r.top < lr.bottom) { if (first < 0) first = i; last = i; }
+    }
+    // One step short of the visible edge, so the press itself lands on the
+    // first row the reader can actually see.
+    if (first >= 0) cur = direction > 0 ? first - 1 : last + 1;
+  }
+
   map.addEventListener('keydown', (e) => {
     const k = e.key;
-    if (k === 'ArrowDown' || k === 'ArrowRight') goto(cur + 1);
-    else if (k === 'ArrowUp' || k === 'ArrowLeft') goto(cur - 1);
+    if (!nav.length) return;
+    if (k === 'ArrowDown' || k === 'ArrowRight') { reseatCaret(1); goto(cur + 1); }
+    else if (k === 'ArrowUp' || k === 'ArrowLeft') { reseatCaret(-1); goto(cur - 1); }
     else if (k === 'Home') goto(0);
     else if (k === 'End') goto(nav.length - 1);
     else if (k === 'PageDown' || k === 'PageUp') {
-      const at = cur >= 0 ? +nav[cur].dataset.t0 : +nav[0].dataset.t0;
-      const want = k === 'PageDown' ? at + 3600 : at - 3600;
-      let best = k === 'PageDown' ? nav.length - 1 : 0;
+      const down = k === 'PageDown';
+      reseatCaret(down ? 1 : -1);
+      const at = +nav[Math.min(Math.max(cur, 0), nav.length - 1)].dataset.t0;
+      const want = down ? at + 3600 : at - 3600;
+      let best = down ? nav.length - 1 : 0;
       for (let i = 0; i < nav.length; i++) { if (+nav[i].dataset.t0 >= want) { best = i; break; } }
       goto(best);
     } else return;

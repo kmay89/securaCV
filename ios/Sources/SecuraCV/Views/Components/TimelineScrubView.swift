@@ -29,14 +29,30 @@
 
 import SwiftUI
 
+/// Which day is being scrubbed, and where. Scoped to a day on purpose: one
+/// shared `Date` made every OTHER ribbon print and announce a time that was
+/// not its own — VoiceOver read "Sunday … at 2:30 PM" off a bucket the user
+/// had picked on Monday.
+struct TimelineScrubPosition: Equatable {
+    var dayT0: Int
+    var bucket: Date
+}
+
 /// One day drawn as a draggable ribbon of 10-minute columns.
 struct TimelineDayShapeView: View {
     let day: TimelineDay
-    /// Where the scrubber currently sits, as a bucket start. Nil = not scrubbing.
-    @Binding var scrubbedBucket: Date?
-    /// Fired as the drag moves, already snapped to a bucket, so the caller can
-    /// bring the matching row into view.
+    /// The active scrub across ALL ribbons; this one reads it only when it
+    /// names this day (see `myBucket`).
+    @Binding var position: TimelineScrubPosition?
+    /// Fired when the drag ENDS, already snapped to a bucket, so the caller
+    /// can bring the matching row into view.
     var onScrub: (Date) -> Void
+
+    /// The scrub position if it belongs to this day, otherwise nil.
+    private var myBucket: Date? {
+        guard let p = position, p.dayT0 == day.dayT0 else { return nil }
+        return p.bucket
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -65,7 +81,7 @@ struct TimelineDayShapeView: View {
                     }
                     .accessibilityHidden(true)
 
-                    if let bucket = scrubbedBucket, let x = caretX(for: bucket, width: width) {
+                    if let bucket = myBucket, let x = caretX(for: bucket, width: width) {
                         Rectangle()
                             .fill(Theme.color(.info))
                             .frame(width: 2)
@@ -76,9 +92,28 @@ struct TimelineDayShapeView: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in scrub(toX: value.location.x, width: width) }
-                        .onEnded { _ in scrubbedBucket = nil }
+                    // `minimumDistance: 0` claimed the touch on touch-DOWN, so
+                    // three 44pt bands of the Alerts list stopped scrolling:
+                    // a flick that began on a ribbon scrubbed instead. Require
+                    // real movement, and only take the gesture once it is
+                    // mostly sideways — a vertical flick belongs to the list
+                    // this ribbon is a row of.
+                    DragGesture(minimumDistance: 8)
+                        .onChanged { value in
+                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                            preview(atX: value.location.x, width: width)
+                        }
+                        .onEnded { value in
+                            // Scrolling DURING the drag moved the ribbon out
+                            // from under the finger — it is a row of the very
+                            // list it scrolls. So the drag only previews, and
+                            // the list is moved once, on release.
+                            if abs(value.translation.width) > abs(value.translation.height),
+                               let bucket = myBucket {
+                                onScrub(bucket)
+                            }
+                            position = nil
+                        }
                 )
             }
             .frame(height: ribbonHeight)
@@ -100,7 +135,7 @@ struct TimelineDayShapeView: View {
             Text(day.label)
                 .font(.subheadline.weight(.semibold))
             Spacer(minLength: Theme.xs)
-            if let bucket = scrubbedBucket {
+            if let bucket = myBucket {
                 Text(Self.clock(bucket))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(Theme.color(.info))
@@ -138,7 +173,7 @@ struct TimelineDayShapeView: View {
             parts.append("worst: " + Severity(tolerant: Int(raw)).label)
         }
         if day.gapCount > 0 { parts.append("\(day.gapCount) declared gap\(day.gapCount == 1 ? "" : "s")") }
-        if let bucket = scrubbedBucket { parts.append("at " + Self.clock(bucket)) }
+        if let bucket = myBucket { parts.append("at " + Self.clock(bucket)) }
         return parts.joined(separator: ", ")
     }
 
@@ -207,28 +242,31 @@ struct TimelineDayShapeView: View {
         return width * CGFloat(offset / TimeInterval(TimelineScrub.daySeconds))
     }
 
-    private func scrub(toX x: CGFloat, width: CGFloat) {
+    /// Moves the caret and the header clock only — the list is left alone
+    /// until the drag ends.
+    private func preview(atX x: CGFloat, width: CGFloat) {
         let fraction = min(max(x / width, 0), 1)
-        let seconds = Double(TimelineScrub.daySeconds) * Double(fraction)
-        commit(secondsIntoDay: seconds)
+        seat(secondsIntoDay: Double(TimelineScrub.daySeconds) * Double(fraction))
     }
 
+    /// VoiceOver's adjustable action. Not a drag, so it moves the list
+    /// immediately — that is the whole point of the gesture.
     private func adjust(by delta: TimeInterval) {
-        let current = scrubbedBucket?.timeIntervalSince1970
+        let current = myBucket?.timeIntervalSince1970
             ?? TimeInterval(day.dayT0) + Double(TimelineScrub.daySeconds) / 2
-        commit(secondsIntoDay: current - TimeInterval(day.dayT0) + delta)
+        seat(secondsIntoDay: current - TimeInterval(day.dayT0) + delta)
+        if let bucket = myBucket { onScrub(bucket) }
     }
 
     /// Snap to a bucket start and report it. Snapping is the point, not a
     /// rounding convenience: the log holds buckets, so the scrubber may not
     /// offer a position the record cannot justify.
-    private func commit(secondsIntoDay: Double) {
+    private func seat(secondsIntoDay: Double) {
         let clamped = min(max(secondsIntoDay, 0), Double(TimelineScrub.daySeconds - 1))
         let bucketSize = Double(TimelineScrub.defaultBucketSeconds)
         let snapped = (clamped / bucketSize).rounded(.down) * bucketSize
         let date = Date(timeIntervalSince1970: TimeInterval(day.dayT0) + snapped)
-        scrubbedBucket = date
-        onScrub(date)
+        position = TimelineScrubPosition(dayT0: day.dayT0, bucket: date)
     }
 
     /// A bucket is a RANGE, and saying "12:20" for it would narrow a
@@ -249,7 +287,7 @@ struct TimelineScrubSection: View {
     /// Called with the bucket the user scrubbed to, so the host can scroll.
     var onScrub: (Date) -> Void
 
-    @State private var scrubbedBucket: Date?
+    @State private var position: TimelineScrubPosition?
 
     /// `Calendar.current`, deliberately: the Alerts list below groups its
     /// sections with the user's own calendar (`AlertHistory.daySections`), and
@@ -266,7 +304,7 @@ struct TimelineScrubSection: View {
         if !days.isEmpty {
             VStack(alignment: .leading, spacing: Theme.m) {
                 ForEach(Array(days.prefix(3))) { day in
-                    TimelineDayShapeView(day: day, scrubbedBucket: $scrubbedBucket, onScrub: onScrub)
+                    TimelineDayShapeView(day: day, position: $position, onScrub: onScrub)
                 }
             }
             .padding(.vertical, Theme.xs)
