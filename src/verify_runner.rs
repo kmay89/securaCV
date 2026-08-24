@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::crypto::signatures::{PqPublicKey, SignatureMode};
-use crate::{verify, verify_helpers, TimeBucket};
+use crate::{verify, verify_helpers, HighWaterMark, TimeBucket};
 
 /// One verified entry, surfaced to the caller's progress callback
 /// (the CLI prints these under `--verbose`; the API ignores them).
@@ -29,6 +29,24 @@ pub enum VerifiedItem {
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifyReport {
     pub chain_valid: bool,
+    /// Honest verdict label (B3 / `ENTERPRISE_CUSTODY.md` §2): a chain is only
+    /// as strong as the key it is checked against. `"valid"` when an
+    /// out-of-band verifying key was supplied; `"self-consistent; identity
+    /// unverified"` when the anchor was taken from the database under audit
+    /// (a self-anchored verdict proves internal consistency, not identity);
+    /// `"verification failed"` when the chain did not verify — which does not by
+    /// itself prove manipulation (it can be a wrong key or a stale DB); the
+    /// precise cause is in `failure`/`error`. Additive — `chain_valid` is
+    /// unchanged and remains the machine-readable pass/fail.
+    pub verdict: String,
+    /// Whether the identity anchor came from *outside* the audited database
+    /// (an operator-supplied / escrowed key). `false` ⇒ self-anchored, and the
+    /// verdict is labeled accordingly.
+    pub identity_verified: bool,
+    /// Whether a signed external high-water-mark was supplied and checked
+    /// (`ENTERPRISE_CUSTODY.md` §2 anti-truncation/rollback/wipe). When `true`
+    /// and `chain_valid` is `true`, the live log is at or ahead of the mark.
+    pub high_water_mark_checked: bool,
     pub events_verified: u64,
     pub break_glass_receipts_verified: u64,
     pub break_glass_granted: u64,
@@ -61,6 +79,9 @@ impl VerifyReport {
     fn at_now(bucket: TimeBucket) -> Self {
         Self {
             chain_valid: false,
+            verdict: String::new(),
+            identity_verified: false,
+            high_water_mark_checked: false,
             events_verified: 0,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
@@ -89,16 +110,64 @@ pub fn run_full_verify(
     public_key_hex: Option<&str>,
     pq_public_key_hex: Option<&str>,
     signature_mode: SignatureMode,
+    on_item: impl FnMut(VerifiedItem),
+) -> Result<VerifyReport> {
+    run_full_verify_impl(
+        conn,
+        public_key_hex,
+        pq_public_key_hex,
+        signature_mode,
+        None,
+        on_item,
+    )
+}
+
+/// Like [`run_full_verify`], but also checks a signed external high-water-mark
+/// (`docs/security/ENTERPRISE_CUSTODY.md` §2). When `high_water_mark` is
+/// `Some`, verification additionally fails closed if the mark's signature is
+/// bad or off-lineage, or if the live log is *behind* the mark — the
+/// tail-truncation, whole-file rollback, and wiped-log cases the interior hash
+/// chain cannot see on its own.
+pub fn run_full_verify_with_high_water_mark(
+    conn: &Connection,
+    public_key_hex: Option<&str>,
+    pq_public_key_hex: Option<&str>,
+    signature_mode: SignatureMode,
+    high_water_mark: Option<&HighWaterMark>,
+    on_item: impl FnMut(VerifiedItem),
+) -> Result<VerifyReport> {
+    run_full_verify_impl(
+        conn,
+        public_key_hex,
+        pq_public_key_hex,
+        signature_mode,
+        high_water_mark,
+        on_item,
+    )
+}
+
+fn run_full_verify_impl(
+    conn: &Connection,
+    public_key_hex: Option<&str>,
+    pq_public_key_hex: Option<&str>,
+    signature_mode: SignatureMode,
+    high_water_mark: Option<&HighWaterMark>,
     mut on_item: impl FnMut(VerifiedItem),
 ) -> Result<VerifyReport> {
     let bucket = TimeBucket::now_10min()?;
     let mut report = VerifyReport::at_now(bucket);
+    // B3 honesty: a verdict is only as strong as the key it is checked
+    // against. An out-of-band key means we verified identity; a self-anchored
+    // key (taken from the DB under audit) means we verified internal
+    // consistency only. Record it before the walk so it labels a failure too.
+    report.identity_verified = public_key_hex.is_some();
 
     match run_inner(
         conn,
         public_key_hex,
         pq_public_key_hex,
         signature_mode,
+        high_water_mark,
         &mut report,
         &mut on_item,
     ) {
@@ -118,6 +187,21 @@ pub fn run_full_verify(
             report.failure = err.downcast_ref::<verify::VerifyFailure>().cloned();
         }
     }
+    report.verdict = if report.chain_valid {
+        if report.identity_verified {
+            "valid".to_string()
+        } else {
+            "self-consistent; identity unverified".to_string()
+        }
+    } else {
+        // A failed chain does not, by itself, prove data was manipulated: it can
+        // equally be a wrong out-of-band key, a mismatched genesis anchor, or a
+        // stale/partial database. So the verdict says "did not verify" without
+        // asserting a cause — the precise cause lives in `failure.kind` and
+        // `error` (an entry/prev-hash mismatch there does prove tampering; a
+        // signature/lineage mismatch may just be a key/provenance error).
+        "verification failed".to_string()
+    };
     Ok(report)
 }
 
@@ -126,6 +210,7 @@ fn run_inner(
     public_key_hex: Option<&str>,
     pq_public_key_hex: Option<&str>,
     signature_mode: SignatureMode,
+    high_water_mark: Option<&HighWaterMark>,
     report: &mut VerifyReport,
     on_item: &mut impl FnMut(VerifiedItem),
 ) -> Result<()> {
@@ -221,6 +306,90 @@ fn run_inner(
         pq_verifying_key.as_ref(),
         |id, entry_hash| on_item(VerifiedItem::ExportReceipt { id, entry_hash }),
     )?;
+
+    // Signed external high-water-mark (ENTERPRISE_CUSTODY §2): the interior
+    // hash chain, now proven above, cannot bind its own length or head. If a
+    // mark was supplied, it does. Runs last so a mark failure reports on top of
+    // an otherwise-consistent chain.
+    if let Some(hwm) = high_water_mark {
+        // The mark's signer must be a genesis-anchored lineage key — the same
+        // rule the checkpoint signer obeys — so a tampered mark file cannot
+        // introduce an untrusted signer.
+        if !lineage
+            .iter()
+            .any(|e| e.public_key == hwm.signer_public_key)
+        {
+            return Err(anyhow::Error::new(verify::VerifyFailure {
+                ledger: verify::FailedLedger::HighWaterMark,
+                entry_id: None,
+                kind: verify::FailureKind::UntrustedSigner,
+                detail: "high-water-mark signer key is not part of the genesis-anchored \
+                         device key lineage; refusing to trust it"
+                    .to_string(),
+            }));
+        }
+        let signer = verifying_key_from_bytes(&hwm.signer_public_key)?;
+        hwm.verify_signature(&signer, signature_mode, pq_verifying_key.as_ref())
+            .map_err(|e| {
+                anyhow::Error::new(verify::VerifyFailure {
+                    ledger: verify::FailedLedger::HighWaterMark,
+                    entry_id: None,
+                    kind: verify::FailureKind::SignatureMismatch,
+                    detail: format!("high-water-mark signature invalid: {e:#}"),
+                })
+            })?;
+
+        // The live high is the newest REAL signed row — never the writable
+        // sqlite_sequence counter, which an actor with DB access could inflate
+        // to fake progress past the mark. When retention pruning has emptied
+        // the live table, the authoritative head/high is the signed checkpoint
+        // (already signature- and lineage-verified above): the checkpoint is
+        // the pruning survivor and its head chains transitively from the mark's
+        // recorded head. Reconciling here is what tells a legitimate
+        // full-retention prune apart from a wipe.
+        let (newest_id, newest_head) = crate::log::high_water_mark::read_live_head(conn)?;
+        let (live_high, live_head): (i64, Option<[u8; 32]>) = match newest_id {
+            Some(id) => (id, newest_head),
+            None => (
+                checkpoint.cutoff_event_id.unwrap_or(0),
+                checkpoint.chain_head_hash,
+            ),
+        };
+        let live_high = live_high.max(0) as u64;
+
+        if live_high < hwm.seq {
+            return Err(anyhow::Error::new(verify::VerifyFailure {
+                ledger: verify::FailedLedger::HighWaterMark,
+                entry_id: None,
+                kind: verify::FailureKind::HighWaterRegression,
+                detail: format!(
+                    "sealed-log high-water regression: live high {live_high} is behind the signed \
+                     high-water {} — tail truncation, whole-file rollback, or wipe",
+                    hwm.seq
+                ),
+            }));
+        }
+        if live_high == hwm.seq && live_head != Some(hwm.head_hash) {
+            return Err(anyhow::Error::new(verify::VerifyFailure {
+                ledger: verify::FailedLedger::HighWaterMark,
+                entry_id: None,
+                kind: verify::FailureKind::HighWaterRegression,
+                detail: format!(
+                    "sealed-log head fork at high-water seq {}: live head does not match the \
+                     signed mark",
+                    hwm.seq
+                ),
+            }));
+        }
+        // live_high > hwm.seq is a legitimate forward advance: the live high now
+        // comes only from real signed rows (unforgeable without the signing key)
+        // and the verified checkpoint, so it cannot be inflated past the mark by
+        // a no-key actor. The interior chain verify above already tied every
+        // live row (and, post-prune, the checkpoint) back through the mark's
+        // recorded head, so the anchor is not abandoned. A mark that legitimately
+        // lagged the true high is the documented best-effort residual.
+        report.high_water_mark_checked = true;
+    }
 
     Ok(())
 }
@@ -444,6 +613,9 @@ mod tests {
     fn report_serializes_to_json() {
         let report = VerifyReport {
             chain_valid: true,
+            verdict: "valid".to_string(),
+            identity_verified: true,
+            high_water_mark_checked: false,
             events_verified: 3,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
@@ -466,5 +638,416 @@ mod tests {
         assert!(!json.contains("error"));
         // Empty warnings are omitted entirely (additive-field compat).
         assert!(!json.contains("warnings"));
+        // B3 labeling fields are always present.
+        assert!(json.contains("\"verdict\":\"valid\""));
+        assert!(json.contains("\"identity_verified\":true"));
+    }
+
+    fn device_signature_keys(
+        sk: &ed25519_dalek::SigningKey,
+    ) -> crate::crypto::signatures::SignatureKeys<'_> {
+        crate::crypto::signatures::SignatureKeys::new(sk)
+    }
+
+    #[test]
+    fn full_verify_passes_with_valid_high_water_mark() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.expect("has events") as u64,
+            head.expect("has events"),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert!(report.high_water_mark_checked);
+        // Self-anchored (no out-of-band key) → honest label.
+        assert!(!report.identity_verified);
+        assert_eq!(report.verdict, "self-consistent; identity unverified");
+    }
+
+    #[test]
+    fn full_verify_fails_closed_when_live_log_is_behind_mark() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, _head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        // A device-signed mark that records the log having reached far past
+        // where it now sits — the mark that would exist before a rollback/wipe.
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64 + 5,
+            [7u8; 32],
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+
+        assert!(!report.chain_valid);
+        let failure = report.failure.expect("structured failure");
+        assert_eq!(failure.ledger, verify::FailedLedger::HighWaterMark);
+        assert_eq!(failure.kind, verify::FailureKind::HighWaterRegression);
+        assert_eq!(report.verdict, "verification failed");
+    }
+
+    #[test]
+    fn full_verify_fails_closed_on_tail_truncation() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64,
+            head.unwrap(),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+
+        // Lop off the newest event. The interior chain still verifies (shorter,
+        // internally consistent) but the live high now drops below the mark's
+        // recorded seq, so the regression is caught.
+        conn.execute(
+            "DELETE FROM sealed_events WHERE id = (SELECT MAX(id) FROM sealed_events)",
+            [],
+        )
+        .unwrap();
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+
+        assert!(!report.chain_valid);
+        assert_eq!(
+            report.failure.unwrap().kind,
+            verify::FailureKind::HighWaterRegression
+        );
+    }
+
+    #[test]
+    fn full_verify_rejects_high_water_mark_signed_by_untrusted_key() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        // A key the device never authorized.
+        let rogue = ed25519_dalek::SigningKey::from_bytes(&[123u8; 32]);
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64,
+            head.unwrap(),
+            600,
+            &device_signature_keys(&rogue),
+        )
+        .unwrap();
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+
+        assert!(!report.chain_valid);
+        assert_eq!(
+            report.failure.unwrap().kind,
+            verify::FailureKind::UntrustedSigner
+        );
+    }
+
+    #[test]
+    fn full_verify_passes_after_full_retention_prune() {
+        // Regression guard: a legitimate full-retention prune empties
+        // sealed_events but leaves a signed checkpoint. The verifier must
+        // reconcile the empty table against the checkpoint head and NOT mistake
+        // the prune for a wipe.
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+
+        // The mark the writer would have signed at the current tip.
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&kernel.conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.expect("has events") as u64,
+            head.expect("has events"),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+
+        // Age every event into the past and prune them all — writes a signed
+        // checkpoint and empties the table (the case that used to false-fail).
+        kernel
+            .conn
+            .execute("UPDATE sealed_events SET created_at = 1", [])
+            .unwrap();
+        kernel
+            .enforce_retention_with_checkpoint(std::time::Duration::from_secs(1))
+            .unwrap();
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let (newest_after, _) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        assert!(
+            newest_after.is_none(),
+            "retention should have emptied the live table"
+        );
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(
+            report.chain_valid,
+            "a full retention prune must not false-fail the mark: {:?}",
+            report.error
+        );
+        assert!(report.high_water_mark_checked);
+    }
+
+    #[test]
+    fn high_water_mark_ignores_inflated_sqlite_sequence() {
+        // A no-signing-key actor truncates the newest rows and inflates the
+        // writable sqlite_sequence counter to fake forward progress past the
+        // mark. Because the verifier reads MAX(id) of real signed rows (not the
+        // counter), the truncation is still caught.
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.unwrap() as u64,
+            head.unwrap(),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+
+        // Truncate the newest rows, then inflate the counter well past the mark.
+        conn.execute("DELETE FROM sealed_events WHERE id > 1", [])
+            .unwrap();
+        conn.execute(
+            "UPDATE sqlite_sequence SET seq = 999 WHERE name = 'sealed_events'",
+            [],
+        )
+        .unwrap();
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(
+            !report.chain_valid,
+            "an inflated sqlite_sequence must not mask a real truncation"
+        );
+        assert_eq!(
+            report.failure.unwrap().kind,
+            verify::FailureKind::HighWaterRegression
+        );
+    }
+
+    #[test]
+    fn store_advances_high_water_mark_on_append_then_verify_passes() {
+        // End-to-end: a store opened with a mark path advances the mark on
+        // every append, and the resulting mark verifies against the live log.
+        let db = TempDb::new();
+        let hwm_path = std::env::temp_dir().join(format!("hwm_e2e_{}.bin", suffix()));
+        let _ = std::fs::remove_file(&hwm_path);
+
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let db_key = derive_db_encryption_key(&sk);
+        let db_path = db.path().to_string_lossy().to_string();
+        let store =
+            crate::storage::SqliteSealedLogStore::open_with_key(&db_path, Some(db_key.as_str()))
+                .unwrap()
+                .with_high_water_mark(Some(hwm_path.clone()));
+        let cfg = KernelConfig {
+            db_path: db_path.clone(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: TEST_SEED.to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let mut kernel = Kernel::open_with_sealed_log(&cfg, Box::new(store)).expect("open kernel");
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        // The mark was written and points at the newest event.
+        let mark = crate::log::high_water_mark::load(&hwm_path)
+            .unwrap()
+            .expect("mark written by the store on append");
+        let conn = open_encrypted(db.path());
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&conn).unwrap();
+        assert_eq!(mark.seq, newest_id.unwrap() as u64);
+        assert_eq!(Some(mark.head_hash), head);
+
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert!(report.high_water_mark_checked);
+
+        let _ = std::fs::remove_file(&hwm_path);
+    }
+
+    #[test]
+    fn boot_verify_fails_closed_on_rollback_when_mark_configured() {
+        // Codex P1: witnessd's boot check (Kernel::verify_sealed_log) must fold
+        // in the configured mark, or a rolled-back-but-internally-consistent DB
+        // passes boot and the daemon launders the rollback by extending it.
+        let db = TempDb::new();
+        let hwm_path = std::env::temp_dir().join(format!("hwm_boot_{}.bin", suffix()));
+        let _ = std::fs::remove_file(&hwm_path);
+
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let db_key = derive_db_encryption_key(&sk);
+        let db_path = db.path().to_string_lossy().to_string();
+        let store =
+            crate::storage::SqliteSealedLogStore::open_with_key(&db_path, Some(db_key.as_str()))
+                .unwrap()
+                .with_high_water_mark(Some(hwm_path.clone()));
+        let cfg = KernelConfig {
+            db_path: db_path.clone(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: TEST_SEED.to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let mut kernel = Kernel::open_with_sealed_log(&cfg, Box::new(store)).expect("open kernel");
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+
+        // With the mark current, boot verify passes and checks the mark.
+        let ok = kernel
+            .verify_sealed_log_with_hwm_path(Some(&hwm_path))
+            .expect("verify runs");
+        assert!(ok.chain_valid, "{:?}", ok.error);
+        assert!(ok.high_water_mark_checked);
+
+        // Roll the newest event back on the kernel's own connection — the
+        // interior chain stays consistent, but it is now behind the mark.
+        kernel
+            .conn
+            .execute(
+                "DELETE FROM sealed_events WHERE id = (SELECT MAX(id) FROM sealed_events)",
+                [],
+            )
+            .unwrap();
+
+        let rolled = kernel
+            .verify_sealed_log_with_hwm_path(Some(&hwm_path))
+            .expect("verify runs");
+        assert!(
+            !rolled.chain_valid,
+            "boot verify must fail closed on a rollback when the mark is set"
+        );
+        assert_eq!(
+            rolled.failure.unwrap().kind,
+            verify::FailureKind::HighWaterRegression
+        );
+
+        let _ = std::fs::remove_file(&hwm_path);
+    }
+
+    fn suffix() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
+    }
+
+    #[test]
+    fn full_verify_labels_identity_verified_with_out_of_band_key() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        drop(kernel);
+
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let pubhex = hex::encode(sk.verifying_key().to_bytes());
+        let conn = open_encrypted(db.path());
+        let report = run_full_verify(&conn, Some(&pubhex), None, SignatureMode::Compat, |_| {})
+            .expect("runner runs");
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert!(report.identity_verified);
+        assert_eq!(report.verdict, "valid");
     }
 }

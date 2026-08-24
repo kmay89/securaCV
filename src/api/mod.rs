@@ -1,6 +1,5 @@
-use crate::crypto::signatures::SignatureMode;
 use crate::storage_health::SharedStorageHealth;
-use crate::verify_runner::{run_full_verify, VerifyReport};
+use crate::verify_runner::VerifyReport;
 use crate::{ExportArtifact, ExportOptions, Kernel, KernelConfig, TimeBucket};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -625,7 +624,10 @@ fn handle_connection(
         // Synchronous and read-only against the kernel's open connection.
         // The log holds coarse, deduplicated events, so a full pass is
         // cheap — but it does block this single-threaded API briefly.
-        let report = run_full_verify(&kernel.conn, None, None, SignatureMode::Compat, |_| {})?;
+        // Route through the kernel so a configured high-water-mark is checked
+        // here too (mirrors witnessd's boot verify) — a rolled-back log fails
+        // closed rather than reporting valid.
+        let report = kernel.verify_sealed_log()?;
         *last_verify = Some(report.clone());
         let payload = serde_json::to_vec(&report)?;
         write_response(&mut stream, 200, "application/json", &payload)?;

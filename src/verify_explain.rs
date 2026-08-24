@@ -15,6 +15,7 @@ pub fn ledger_name(ledger: FailedLedger) -> &'static str {
         FailedLedger::ExportReceipts => "export receipt chain",
         FailedLedger::Checkpoint => "retention checkpoint",
         FailedLedger::KeyLineage => "device key lineage",
+        FailedLedger::HighWaterMark => "signed external high-water-mark",
     }
 }
 
@@ -99,6 +100,23 @@ pub fn explain_failure(kind: FailureKind) -> FailureExplanation {
             next_steps: "do not trust the checkpoint or the pruned history behind it. \
                    Verify the key lineage from genesis and check where this database \
                    file came from.",
+        },
+        FailureKind::HighWaterRegression => FailureExplanation {
+            what: "the live sealed log is behind the signed external high-water-mark: \
+                   the newest event id (or the head at that id) is lower than the \
+                   furthest point the device recorded reaching. The interior chain \
+                   still verified — this is loss of the tail, not corruption of the \
+                   middle.",
+            likely_causes: "the newest events were truncated; an older whole-database \
+                   snapshot was restored; the log was wiped. Because the mark is \
+                   device-signed and kept outside the database, a rollback that did \
+                   not also hold the current signing key cannot move it forward to \
+                   match.",
+            next_steps: "treat the database as rolled back or truncated — the \
+                   authoritative record is whatever holds events up to the mark's \
+                   sequence. Recover the newer database (or the append-only/external \
+                   copy of the mark), and check where this database file came from. \
+                   Do NOT re-sign a shorter chain to clear the error.",
         },
     }
 }

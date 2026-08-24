@@ -22,6 +22,8 @@ pub enum FailedLedger {
     ExportReceipts,
     Checkpoint,
     KeyLineage,
+    /// The signed external high-water-mark (`ENTERPRISE_CUSTODY.md` §2).
+    HighWaterMark,
 }
 
 /// What kind of check failed. Drives the plain-language diagnosis the CLIs
@@ -37,6 +39,9 @@ pub enum FailureKind {
     ApprovalsCommitmentMismatch,
     PolicyViolation,
     UntrustedSigner,
+    /// The live sealed log is behind the signed external high-water-mark:
+    /// tail truncation, whole-file rollback, or a wipe.
+    HighWaterRegression,
 }
 
 /// Structured verification failure. `Display` reproduces the exact legacy

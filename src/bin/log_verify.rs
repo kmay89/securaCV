@@ -16,7 +16,7 @@ use rusqlite::Connection;
 use std::io::IsTerminal;
 
 use witness_kernel::crypto::signatures::SignatureMode;
-use witness_kernel::verify_runner::{run_full_verify, VerifiedItem};
+use witness_kernel::verify_runner::{run_full_verify_with_high_water_mark, VerifiedItem};
 use witness_kernel::{verify, verify_explain, verify_helpers};
 
 #[path = "../ui.rs"]
@@ -76,6 +76,16 @@ struct Args {
     /// SQLCipher database encryption key (hex-encoded, 32 bytes)
     #[arg(long, value_name = "HEX", env = "SECURACV_DB_KEY")]
     db_key: Option<String>,
+
+    /// Path to the signed external high-water-mark
+    /// (docs/security/ENTERPRISE_CUSTODY.md §2). When given, verification also
+    /// fails closed if the live log is behind the mark — tail truncation,
+    /// whole-file rollback, or wipe — which the interior hash chain cannot
+    /// detect on its own. The kernel writes this mark when SECURACV_HWM_PATH is
+    /// set; point --high-water-mark at the same file (ideally on append-only or
+    /// external media).
+    #[arg(long, value_name = "PATH", env = "SECURACV_HWM_PATH")]
+    high_water_mark: Option<String>,
 
     /// Device key seed (as used by the kernel/bridges). Convenience for
     /// operators: derives the SQLCipher key (when --db-key is not given)
@@ -179,13 +189,31 @@ fn main() -> Result<()> {
         println!();
     }
 
+    // Load the signed external high-water-mark when requested. An explicit
+    // request against a missing file is a hard error, not a silent skip: the
+    // operator asked to fail closed on truncation, and a missing mark cannot.
+    let high_water_mark = match &args.high_water_mark {
+        Some(path) => match witness_kernel::high_water_mark::load(std::path::Path::new(path))? {
+            Some(mark) => Some(mark),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "high-water-mark file not found: {} — cannot fail closed on truncation \
+                     without it (the kernel writes it when SECURACV_HWM_PATH is set)",
+                    path
+                ));
+            }
+        },
+        None => None,
+    };
+
     let report = {
         let _stage = ui.stage("Verify sealed log");
-        run_full_verify(
+        run_full_verify_with_high_water_mark(
             &conn,
             public_key_hex.as_deref(),
             pq_public_key_hex.as_deref(),
             signature_mode,
+            high_water_mark.as_ref(),
             |item| {
                 if args.verbose {
                     match item {
@@ -243,6 +271,11 @@ fn main() -> Result<()> {
         }
     }
     println!("verified {} event entries", report.events_verified);
+    if report.high_water_mark_checked {
+        println!("high-water-mark: OK (live log is at or ahead of the signed mark)");
+    } else if args.high_water_mark.is_some() {
+        println!("high-water-mark: not checked");
+    }
     println!();
 
     println!("=== Break-Glass Receipts ===");
@@ -290,7 +323,19 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("OK: all chains verified.");
+    // B3 honesty: state what the verdict actually rests on. A self-anchored
+    // run proves the log is internally consistent but not *whose* log it is;
+    // only an out-of-band key upgrades that to an identity-bound "valid".
+    if report.identity_verified {
+        println!("OK: all chains verified — VALID (identity anchored out-of-band).");
+    } else {
+        println!(
+            "OK: all chains verified — SELF-CONSISTENT, IDENTITY UNVERIFIED. The verifying key \
+             was taken from the database under audit, so this proves internal consistency, not \
+             identity. Supply --public-key / --public-key-file / --device-key-seed from an \
+             out-of-band source for an evidentiary verdict."
+        );
+    }
     Ok(())
 }
 
