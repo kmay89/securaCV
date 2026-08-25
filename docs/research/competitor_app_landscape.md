@@ -258,32 +258,59 @@ change)** landed with the change that added this document.
   competitor had and we lacked: the device detail screen now carries the
   day-shape ribbon and recent records for that one Canary, from the same
   ledger (nothing new is recorded).
-- **A3. Light up the radar/wellbeing story.** `radarPresent`,
-  `radarOccupants`, `breathingLock`, `tempC`, `humidityPct` are modeled on
-  `Witness` and fed only by the demo fleet today. Rendering plus a live
-  transport (the HA hub proxy already retains the state topic) makes the
-  Sense product visible in the app that sells it.
-- **A5. CSI/wellbeing event vocabulary.** `presence_changed`,
-  `breathing_confirmed/lost`, `unusual_motion`, `unusual_breathing`,
-  `daily_summary` (docs/csi_modules.md) currently render as prettified
-  unknowns; Ring sells the anomaly-baseline version of this at its top tier.
+- **A3 (partly landed — the rendering half). Light up the radar/wellbeing
+  story.** `radarPresent`, `radarOccupants`, `breathingLock`, `tempC`,
+  `humidityPct` were modeled on `Witness` and invisible; the device screen
+  now renders them as a Wellbeing section (presence, an honest 2+-capped
+  occupant count, breathing rhythm sensed/not, locale-aware temperature).
+  The transport half stays open, stated precisely: canary-sense runs no
+  HTTP listener — its readings ride retained MQTT only, which the phone
+  deliberately doesn't speak — so the honest path is extending the shared
+  `/api/fleet` self-report with optional coarse presence/occupants/
+  breathing keys and letting the display (which already parses the radar
+  MQTT state and serves `/api/fleet`) aggregate peer rows. Temperature and
+  humidity have **no producer anywhere in the repo** yet and stay demo-only
+  even after that — wiring them now would invent data.
+- **A5 (landed — the vocabulary half). CSI/wellbeing event vocabulary.**
+  `presence_changed`, `breathing_confirmed/lost`, `unusual_motion`,
+  `unusual_breathing`, `daily_summary`, and the ribbon tick now land at
+  chosen severities and honest sentences (anomalies against the device's
+  own learned baseline warn; everything else stays everyday; "breathing no
+  longer sensed" is worded as a sensing fact, never a medical claim), with
+  a firmware-parity test reading every chokepoint module's `type_name`
+  table off disk. The honest caveat, which applies to the acoustic dialect
+  too: the chokepoint's event types reach the WAP's LAN-only
+  `/api/csi/stream` and `/api/events/today` today, which the phone does not
+  yet call — the vocabulary is the anti-rot half; the transport slice
+  (polling those endpoints, or the witness-log payload surfacing them) is
+  its own follow-up. Ring sells the anomaly-baseline version of this at its
+  top tier.
 - **A6. Per-type tamper narration.** Ten tamper kinds exist in the HA
   vocabulary (`custom_components/securacv/const.py`); no iOS transport
   populates `tamperKind` yet. When one does, map kinds to glyphs and
   sentences ("Power was cut", "SD card removed") — tamper already pierces
   every mute.
-- **A7. Modality glyphs + attestation chips.** The dictionary defines five
-  modalities and three attestation tiers with zero iOS consumers; rendering
-  provenance on every row turns "verifiable" from a settings fact into UI.
+- **A7 (landed, deliberately narrowed). Modality as a device fact.** The
+  scout found no payload the phone reads carries a per-event modality or
+  attestation field (the witness record's signed preimage is frozen at
+  seven fields), so per-row chips would have been a guess — and a per-row
+  "device-attested" chip a constant, which is decoration. What shipped is
+  the honest slice: a "Senses" row on the device screen (camera / 60 GHz
+  radar / Wi-Fi sensing / contact) derived from the type the device
+  publishes, pinned against `DEVICE_TYPE_MODALITY` in the HA integration's
+  `const.py` — the map's wire-contract home — by a test that reads it off
+  disk. Unmapped types get no row, never a guess. Per-event provenance
+  waits on a versioned chain formula that could sign the field.
 - **A8. HomeKit `low_battery` + class-scoped motion.** The bridge mirrors
   ten dictionary signals but derives four; battery and the beacon class are
   already in the model. "Person at the door turns on the porch light, app
   closed, no cloud" is one signal away.
 - **C-tier follow-ups:** deep links from notification to the exact row; a
-  tvOS Top Shelf extension; vault `frame_sealed` events in the timeline
-  ("a frame was sealed — unreadable without quorum" as a live fact, the
-  inverse of eufy's secret thumbnail); Chirp advert scanning beside the
-  presence beacon.
+  tvOS Top Shelf extension; Chirp advert scanning beside the presence
+  beacon. The vault's `frame_sealed` receipt **landed** with the wave-2
+  vocabulary: "a frame was sealed" as a calm timeline fact (the acoustic
+  trigger that caused it alerts on its own row) — capture that announces
+  itself, the inverse of eufy's secret thumbnail.
 
 ### Tier B — ecosystem legibility ("from the Flasher to the Lab")
 

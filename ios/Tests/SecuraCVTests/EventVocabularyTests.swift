@@ -119,37 +119,90 @@ final class EventVocabularyTests: XCTestCase {
                        "Kitchen mic muted")
     }
 
-    func testAcousticDialectMirrorsTheFirmwareTypeNamesOnDisk() throws {
+    func testChokepointDialectsMirrorTheFirmwareTypeNamesOnDisk() throws {
         // The wire names are the firmware's own `type_name` strings in the
-        // acoustic events module — read them off disk so a renamed or added
-        // sound is a failing test here, not a silent fall to the unknown-
-        // event fallback. Same belt-over-the-repo pattern as the dictionary
-        // mirror test above.
+        // csi_event chokepoint modules — read them off disk so a renamed or
+        // added event is a failing test here, not a silent fall to the
+        // unknown-event fallback. Same belt-over-the-repo pattern as the
+        // dictionary mirror test above. The sketch-tree copies are pinned
+        // (they are byte-identical to firmware/common/csi/src, CI-enforced
+        // by firmware/scripts/check_csi_sync.sh).
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // SecuraCVTests
             .deletingLastPathComponent()   // Tests
             .deletingLastPathComponent()   // ios
             .deletingLastPathComponent()   // repo root
-        let module = repoRoot.appendingPathComponent(
-            "firmware/projects/canary-wap/arduino/canary_wap/acoustic_events_module.cpp")
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: module.path),
-                          "repo checkout not visible from the test host")
+        let sketch = repoRoot.appendingPathComponent(
+            "firmware/projects/canary-wap/arduino/canary_wap")
+        let modules = [
+            "acoustic_events_module.cpp",   // smoke/CO/knock/doorbell/glass + mic audit
+            "vault_events_module.cpp",      // frame_sealed
+            "core_presence.cpp",            // presence_changed
+            "core_breathing.cpp",           // breathing_confirmed / breathing_lost
+            "anomaly_baseline.cpp",         // unusual_motion / unusual_breathing
+            "meta_daily_summary.cpp",       // daily_summary
+            "core_activity_ribbon.cpp",     // ribbon_bucket_advanced
+        ]
+        try XCTSkipUnless(
+            FileManager.default.fileExists(atPath: sketch.appendingPathComponent(modules[0]).path),
+            "repo checkout not visible from the test host")
 
-        let source = try String(contentsOf: module, encoding: .utf8)
         let pattern = #"/\* type_name \*/\s*"([a-z0-9_]+)""#
         let regex = try NSRegularExpression(pattern: pattern)
-        let range = NSRange(source.startIndex..., in: source)
-        let firmwareNames = Set(regex.matches(in: source, range: range).compactMap {
-            Range($0.range(at: 1), in: source).map { String(source[$0]) }
-        })
-        XCTAssertFalse(firmwareNames.isEmpty, "the type_name table moved — update the regex")
-
         let known = Set(DeviceEvent.allCases.map(\.rawValue))
-        for name in firmwareNames {
-            XCTAssertTrue(known.contains(name),
-                          "firmware acoustic event \(name) has no DeviceEvent case — " +
-                          "it would render at the unknown-event fallback")
+
+        for file in modules {
+            let module = sketch.appendingPathComponent(file)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: module.path),
+                          "\(file) moved — update this table")
+            guard FileManager.default.fileExists(atPath: module.path) else { continue }
+            let source = try String(contentsOf: module, encoding: .utf8)
+            let range = NSRange(source.startIndex..., in: source)
+            let firmwareNames = Set(regex.matches(in: source, range: range).compactMap {
+                Range($0.range(at: 1), in: source).map { String(source[$0]) }
+            })
+            XCTAssertFalse(firmwareNames.isEmpty,
+                           "\(file)'s type_name table moved — update the regex")
+            for name in firmwareNames {
+                XCTAssertTrue(known.contains(name),
+                              "firmware event \(name) (\(file)) has no DeviceEvent case — " +
+                              "it would render at the unknown-event fallback")
+            }
         }
+    }
+
+    // MARK: - the wellbeing dialect (CSI/radar events, calm by doctrine)
+
+    func testWellbeingEventsStayCalmExceptLearnedAnomalies() {
+        // Everyday rhythm stays everyday…
+        XCTAssertEqual(EventVocabulary.severity(forWire: "presence_changed"), .notice)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "breathing_confirmed"), .notice)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "breathing_lost"), .notice)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "daily_summary"), .notice)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "ribbon_bucket_advanced"), .notice)
+        // …and only a break from the device's own learned baseline asks for
+        // a look — the after-hours-presence rung, never a siren.
+        XCTAssertEqual(EventVocabulary.severity(forWire: "unusual_motion"), .warn)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "unusual_breathing"), .warn)
+        // The vault's receipt is calm: the acoustic trigger that caused it
+        // already alerted on its own row.
+        XCTAssertEqual(EventVocabulary.severity(forWire: "frame_sealed"), .notice)
+    }
+
+    func testBreathingLostNeverReadsAsAMedicalClaim() {
+        // A lost radar/CSI lock is a sensing fact (someone left the bed,
+        // rolled over, walked out) — the sentence must say "no longer
+        // sensed", never "stopped".
+        let line = EventVocabulary.headline(forWire: "breathing_lost",
+                                            zone: "nursery", deviceName: "Nursery")
+        XCTAssertEqual(line, "Breathing no longer sensed at nursery")
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("stopped"))
+    }
+
+    func testFrameSealedReadsAsAReceipt() {
+        XCTAssertEqual(EventVocabulary.headline(forWire: "frame_sealed",
+                                                zone: "hallway", deviceName: "Hall"),
+                       "A frame was sealed at hallway")
     }
 
     // MARK: - headlines

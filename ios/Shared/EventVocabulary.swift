@@ -122,6 +122,22 @@ enum DeviceEvent: String, CaseIterable, Codable, Sendable {
     // timeline answer — the same question the witness chain records.
     case micMuted = "mic_muted"
     case micUnmuted = "mic_unmuted"
+    // The CSI wellbeing dialect (firmware/common/csi/src/, byte-identical
+    // sketch copies CI-synced by check_csi_sync.sh): the presence FSM,
+    // breathing lock, learned-baseline anomalies, the daily digest, and the
+    // activity ribbon's bookkeeping tick. Ring sells the anomaly-baseline
+    // idea at its top tier; here it is a $10 device's own arithmetic.
+    case presenceChanged = "presence_changed"
+    case breathingConfirmed = "breathing_confirmed"
+    case breathingLost = "breathing_lost"
+    case unusualMotion = "unusual_motion"
+    case unusualBreathing = "unusual_breathing"
+    case dailySummary = "daily_summary"
+    case ribbonBucketAdvanced = "ribbon_bucket_advanced"
+    // The vault's receipt (vault_events_module.cpp): a camera frame was
+    // sealed on a life-safety trigger — encrypted, openable only by quorum.
+    // Capture that announces itself, the exact inverse of a secret upload.
+    case frameSealed = "frame_sealed"
 
     var sfSymbol: String {
         switch self {
@@ -139,6 +155,14 @@ enum DeviceEvent: String, CaseIterable, Codable, Sendable {
         case .glassBreakHeard: return "burst.fill"
         case .micMuted: return "mic.slash.fill"
         case .micUnmuted: return "mic.fill"
+        case .presenceChanged: return "figure.walk"
+        case .breathingConfirmed: return "lungs.fill"
+        case .breathingLost: return "lungs"
+        case .unusualMotion: return "waveform.path"
+        case .unusualBreathing: return "waveform.path.ecg"
+        case .dailySummary: return "doc.plaintext"
+        case .ribbonBucketAdvanced: return "chart.bar.fill"
+        case .frameSealed: return "lock.shield.fill"
         }
     }
 
@@ -154,6 +178,9 @@ enum DeviceEvent: String, CaseIterable, Codable, Sendable {
         case .chainBreak, .verifyFailed, .witnessLost: return .alert
         case .smokeAlarmHeard, .coAlarmHeard: return .alert
         case .glassBreakHeard: return .warn
+        // An anomaly against the device's OWN learned baseline is "needs a
+        // look" — the same rung as after-hours presence, never a siren.
+        case .unusualMotion, .unusualBreathing: return .warn
         default: return .notice
         }
     }
@@ -179,6 +206,19 @@ enum DeviceEvent: String, CaseIterable, Codable, Sendable {
         case .glassBreakHeard: return "Glass break heard at \(place)"
         case .micMuted: return "\(deviceName) mic muted"
         case .micUnmuted: return "\(deviceName) mic listening again"
+        case .presenceChanged: return "Presence changed at \(place)"
+        case .breathingConfirmed: return "Breathing rhythm sensed at \(place)"
+        // "No longer sensed", never "stopped": a lost radar/CSI lock is a
+        // sensing fact — someone left the bed, rolled over, walked out —
+        // and the sentence must not dress it as a medical claim.
+        case .breathingLost: return "Breathing no longer sensed at \(place)"
+        case .unusualMotion: return "Unusual motion at \(place)"
+        case .unusualBreathing: return "Unusual breathing pattern at \(place)"
+        case .dailySummary: return "Daily summary from \(deviceName)"
+        case .ribbonBucketAdvanced: return "\(deviceName) activity ribbon updated"
+        // The vault's receipt, worded as exactly what it is: existence and
+        // integrity of a sealed frame — the image itself never left the SD.
+        case .frameSealed: return "A frame was sealed at \(place)"
         }
     }
 }

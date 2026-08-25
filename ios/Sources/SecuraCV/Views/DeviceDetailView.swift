@@ -106,6 +106,17 @@ struct DeviceDetailView: View {
 
             Section("Health") {
                 LabeledContent("Liveness", value: witness.link.label)
+                // HOW this one senses — a device-level fact derived from the
+                // type it publishes (SenseModality), because no per-event
+                // wire carries a modality claim. Radar presence and a camera
+                // person-detection deserve different mental models even when
+                // they land as the same coarse event. Unmapped types get no
+                // row, never a guess.
+                if let modality = SenseModality(publishedType: liveWitness.publishedType) {
+                    LabeledContent("Senses") {
+                        Label(modality.label, systemImage: modality.sfSymbol)
+                    }
+                }
                 // What its own pipeline reports seeing right now, off the
                 // BLE v2 beacon — present tense only: the row exists while
                 // the claim is fresh (Witness.seeingNow's aging rule) and
@@ -121,6 +132,43 @@ struct DeviceDetailView: View {
                 if let r = witness.rssiDBM { LabeledContent("Wi-Fi", value: "\(r) dBm") }
                 if let b = witness.batteryPct, b >= 0 { LabeledContent("Battery", value: "\(b)%") }
                 if !witness.firmware.isEmpty { LabeledContent("Firmware", value: witness.firmware) }
+            }
+
+            // The Sense wellbeing surface — the radar's coarse readings,
+            // rendered at last (they were modeled and invisible; the
+            // competitive audit called the Sense product "invisible in the
+            // app that sells it"). Shown only when the row carries any of
+            // them: today that is the demo fleet — no live wire exists yet
+            // (canary-sense publishes on retained MQTT only, which the
+            // phone deliberately doesn't speak; the roadmap's transport
+            // slice is extending /api/fleet). The section lights up for
+            // real data the moment a transport fills the fields.
+            if liveWitness.hasWellbeingData {
+                Section {
+                    if let present = liveWitness.radarPresent {
+                        LabeledContent("Presence", value: present ? "Present" : "Clear")
+                    }
+                    if let occupants = liveWitness.radarOccupants {
+                        LabeledContent("Occupants", value: Witness.occupantsLabel(occupants))
+                    }
+                    if let locked = liveWitness.breathingLock {
+                        // "Sensed", never a vital-signs claim: the lock is a
+                        // rhythm the radar can currently hold, nothing more.
+                        LabeledContent("Breathing rhythm", value: locked ? "Sensed" : "Not sensed")
+                    }
+                    if let t = liveWitness.tempC {
+                        LabeledContent("Temperature",
+                                       value: Measurement(value: t, unit: UnitTemperature.celsius)
+                                           .formatted())
+                    }
+                    if let h = liveWitness.humidityPct {
+                        LabeledContent("Humidity", value: "\(h)%")
+                    }
+                } header: {
+                    Text("Wellbeing")
+                } footer: {
+                    Text("As the radar reports it — coarse by design: presence, a count that tops out at 2+, a breathing rhythm yes/no. No camera, no identity, and vitals never enter the sealed log.")
+                }
             }
 
             // "Where IS it?" — the hot/cold search over this Canary's own
