@@ -91,6 +91,17 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
     var tempC: Double? = nil
     var humidityPct: Int? = nil
 
+    // What its own pipeline reports seeing RIGHT NOW, from the BLE v2
+    // presence beacon (detect_class / detect_score). A claim about the
+    // present, so it carries its own timestamp and readers go through
+    // `seeingNow(asOf:)` — a beacon that stopped arriving must read as
+    // silence, never as a stale "Seeing person". nil = never claimed
+    // (every v1-only sender). All three optional, so a cached Witness
+    // written before these fields decodes unchanged.
+    var seeingClass: SeenClass? = nil
+    var seeingScore: Int? = nil          // 0–100; nil when the wire didn't score it
+    var seeingAt: Date? = nil
+
     // Per-witness mute: caps nagging at Notice but stays visible; tamper and a
     // failed chain verify still punch through (a hidden bypass is how alarms
     // get missed — this one can't hide).
@@ -133,6 +144,64 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
         if !name.isEmpty { return name }
         if !room.isEmpty { return room }
         return id
+    }
+}
+
+/// The coarse class a witness's optical pipeline reports currently seeing,
+/// as broadcast in the BLE v2 presence beacon. The vocabulary is the
+/// ObjectClass enum and nothing beyond it — a face or a plate class here is
+/// a rejected PR, not a config flag (Invariant II).
+enum SeenClass: String, Codable, Hashable, Sendable {
+    case person, vehicle, animal, package
+
+    /// From the beacon's wire token (`FleetBeacon.detect*`). Returns nil
+    /// for the none token and for any token this build has never heard of —
+    /// a future class renders as nothing rather than as a guess.
+    init?(beaconClass: UInt8) {
+        switch beaconClass {
+        case FleetBeacon.detectPerson: self = .person
+        case FleetBeacon.detectVehicle: self = .vehicle
+        case FleetBeacon.detectAnimal: self = .animal
+        case FleetBeacon.detectPackage: self = .package
+        default: return nil
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .person: return "Person"
+        case .vehicle: return "Vehicle"
+        case .animal: return "Animal"
+        case .package: return "Package"
+        }
+    }
+
+    /// Same glyphs the event vocabulary uses for the matching detections —
+    /// one visual language for "what kind of thing", everywhere.
+    var sfSymbol: String {
+        switch self {
+        case .person: return "figure.stand"
+        case .vehicle: return "car.fill"
+        case .animal: return "pawprint.fill"
+        case .package: return "shippingbox.fill"
+        }
+    }
+}
+
+extension Witness {
+    /// How long a beacon-borne "seeing" claim stays presentable: a couple of
+    /// advertisement intervals of slack. Past this, the honest render is
+    /// nothing at all — the sender may be gone, and "was seeing a person two
+    /// hours ago" dressed as the present tense is a lie of tense.
+    static let seeingFreshness: TimeInterval = 120
+
+    /// The live detection claim, aged honestly: non-nil only while the last
+    /// beacon that carried it is fresh. Pure so the staleness rule is
+    /// host-testable — the view renders exactly what this returns.
+    func seeingNow(asOf now: Date = Date()) -> (kind: SeenClass, score: Int?)? {
+        guard let seeingClass, let seeingAt,
+              now.timeIntervalSince(seeingAt) < Self.seeingFreshness else { return nil }
+        return (seeingClass, seeingScore)
     }
 }
 

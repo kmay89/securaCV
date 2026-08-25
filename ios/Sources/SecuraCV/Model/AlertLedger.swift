@@ -163,6 +163,21 @@ final class AlertLedger: ObservableObject {
         if touched { save() }
     }
 
+    /// The device-detail variant: the user read ONE Canary's history on its
+    /// own screen, so only that Canary's rows are now "seen". The rest of
+    /// the fleet's unseen dots — and their share of the badge — survive,
+    /// because those rows were never on screen and "seen" may not claim
+    /// more than the eyes did.
+    func markSeen(witnessID: String, now: Date = Date()) {
+        var touched = false
+        for i in records.indices where records[i].witnessID == witnessID
+            && records[i].seenBucket == nil {
+            records[i].seenBucket = AlertRecord.bucket(for: now)
+            touched = true
+        }
+        if touched { save() }
+    }
+
     /// One row, gone — the user's swipe. Removal is theirs to do; the sweep
     /// below only ever takes what they have already seen and settled.
     func remove(id: String) {

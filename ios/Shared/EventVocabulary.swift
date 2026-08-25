@@ -92,8 +92,10 @@ enum WitnessEvent: String, CaseIterable, Codable, Sendable {
 }
 
 /// The dialect a Canary's own /api/v1/witness serves today (see
-/// canary-vision/docs/api.md and const.py's coarse mapping). Not dictionary-
-/// governed; kept as an explicit list so its meanings are chosen, not guessed.
+/// canary-vision/docs/api.md and const.py's coarse mapping), plus the
+/// acoustic dialect the mic-bearing devices emit through the event
+/// chokepoint. Not dictionary-governed; kept as an explicit list so its
+/// meanings are chosen, not guessed.
 enum DeviceEvent: String, CaseIterable, Codable, Sendable {
     case personDetected = "person_detected"
     case vehicleDetected = "vehicle_detected"
@@ -104,6 +106,22 @@ enum DeviceEvent: String, CaseIterable, Codable, Sendable {
     case chainBreak = "chain_break"
     case verifyFailed = "verify_failed"
     case witnessLost = "witness_lost"
+    // Acoustic detections (securacv_audio.h, emitted through the event
+    // chokepoint in acoustic_events_module.cpp — cadence classifications,
+    // never audio content; the raw values are the firmware's `type_name`
+    // strings). The T3/T4 cases are the NFPA 72 / UL 2034 alarm cadences:
+    // another alarm in the home, heard. Listed explicitly so a heard smoke
+    // alarm can never land at the calm unknown-event fallback.
+    case smokeAlarmHeard = "smoke_alarm_t3"
+    case coAlarmHeard = "co_alarm_t4"
+    case knockHeard = "knock"
+    case doorbellHeard = "doorbell"
+    case glassBreakHeard = "glass_break"
+    // The mic's own audit trail: when the device stopped and resumed
+    // listening. Surfaced so "was it muted before, or in response?" has a
+    // timeline answer — the same question the witness chain records.
+    case micMuted = "mic_muted"
+    case micUnmuted = "mic_unmuted"
 
     var sfSymbol: String {
         switch self {
@@ -114,15 +132,28 @@ enum DeviceEvent: String, CaseIterable, Codable, Sendable {
         case .tamper, .panic: return "hand.raised.slash.fill"
         case .chainBreak, .verifyFailed: return "xmark.shield.fill"
         case .witnessLost: return "moon.zzz.fill"
+        case .smokeAlarmHeard: return "smoke.fill"
+        case .coAlarmHeard: return "carbon.monoxide.cloud.fill"
+        case .knockHeard: return "hand.tap"
+        case .doorbellHeard: return "bell.fill"
+        case .glassBreakHeard: return "burst.fill"
+        case .micMuted: return "mic.slash.fill"
+        case .micUnmuted: return "mic.fill"
         }
     }
 
     /// Mirrors the coarse mapping the app has always used (const.py parity):
     /// tamper is tamper, integrity failures alert, everything else notices.
+    /// The acoustic ladder matches the glass (a heard smoke/CO cadence
+    /// renders as Alert on the display): another alarm sounding in the home
+    /// alerts, a glass-break pattern warns, the doorstep sounds and the mic
+    /// audit stay everyday.
     var defaultSeverity: Severity {
         switch self {
         case .tamper, .panic: return .tamper
         case .chainBreak, .verifyFailed, .witnessLost: return .alert
+        case .smokeAlarmHeard, .coAlarmHeard: return .alert
+        case .glassBreakHeard: return .warn
         default: return .notice
         }
     }
@@ -138,6 +169,16 @@ enum DeviceEvent: String, CaseIterable, Codable, Sendable {
         case .tamper, .panic: return "Tamper at \(deviceName)"
         case .chainBreak, .verifyFailed: return "Chain check failed at \(deviceName)"
         case .witnessLost: return "\(deviceName) went quiet"
+        // "Heard", every time: the device classified a sound's cadence. It
+        // did not verify a detector, and the copy must not claim more than
+        // the ears did (non-negotiable #4).
+        case .smokeAlarmHeard: return "Smoke alarm heard at \(place)"
+        case .coAlarmHeard: return "CO alarm heard at \(place)"
+        case .knockHeard: return "Knock heard at \(place)"
+        case .doorbellHeard: return "Doorbell at \(place)"
+        case .glassBreakHeard: return "Glass break heard at \(place)"
+        case .micMuted: return "\(deviceName) mic muted"
+        case .micUnmuted: return "\(deviceName) mic listening again"
         }
     }
 }

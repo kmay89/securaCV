@@ -1,6 +1,9 @@
 # SecuraCV Flasher (desktop)
 
-The [SecuraCV Lab](https://securacv.com/lab) as a small native app. It detects
+The [SecuraCV Lab](https://securacv.com/lab)'s flashing bench as a small
+native app. (In-window it brands itself **Flasher** — the sibling
+[`desktop-lab/`](../desktop-lab) app owns the name "SecuraCV Lab", and one
+name per surface is the rule.) It detects
 your ESP32 Canary over USB-C, downloads the official factory image from the
 project's GitHub release, verifies its size and SHA-256 (and its Ed25519
 signature when a non-placeholder release key is pinned), provisions the board,

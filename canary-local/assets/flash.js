@@ -633,15 +633,28 @@ function renderUnsupported() {
     row.append(copy);
     box.append(row);
     box.append(el("p", "fineprint",
-      "No Chrome on that computer yet? It’s a free download at google.com/chrome — " +
-      "or use Edge or Brave, already on most machines."));
+      "On that computer, the free SecuraCV Flasher app (securacv.com/download, " +
+      "Mac & Linux) skips the browser entirely — or use Chrome, Edge, or " +
+      "Brave, already on most machines."));
   } else {
-    const get = el("a", "primary", "Get Chrome (free) →");
+    // Our own tool first: the project ships a native Flasher app for
+    // exactly this no-Web-Serial moment — leading with Chrome here was
+    // marketing somebody else's browser at our own front door. Chrome
+    // stays as the in-browser path for whoever prefers it.
+    const flasher = el("a", "primary", "Get the SecuraCV Flasher app (free) →");
+    flasher.href = "https://securacv.com/download";
+    flasher.target = "_blank";
+    flasher.rel = "noopener";
+    const get = el("a", "ghost", "or get Chrome (free)");
     get.href = "https://www.google.com/chrome/";
     get.target = "_blank";
     get.rel = "noopener";
-    row.append(get, copy);
+    row.append(flasher, get, copy);
     box.append(row);
+    box.append(el("p", "fineprint",
+      "The Flasher is this bench as a native Mac/Linux app — no browser " +
+      "involved, and it can't brick the board. Chrome (or Edge / Brave) " +
+      "keeps the in-browser path."));
   }
 
   // What the working setup looks like: board — cable — computer with Chrome.

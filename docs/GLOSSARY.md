@@ -270,6 +270,13 @@ to the other. → [browser flasher](browser_flasher.md)
 **The Lab desktop app** — [`desktop-lab/`](../desktop-lab) — a Tauri shell
 around the browser Lab for Mac/Linux. A different app from the Flasher.
 
+**The companion app (iPhone / iPad / Apple Watch)** — [`ios/`](../ios) — the
+living-with-it witness console: smoke-alarm-grade alerts with honest delivery
+states, the fleet on the wrist and the Lock Screen, Siri/Shortcuts/Focus, and
+Ed25519 chain verification on the phone itself. Not a flasher, not a camera
+app (there are no pixels to show). Built and CI-tested; App Store
+availability pending. → [`ios/README.md`](../ios/README.md)
+
 **The Hub** — Home Assistant on a Raspberry Pi, running the kernel as an app
 ([`privacy_witness_kernel/`](../privacy_witness_kernel)) plus the integration
 ([`custom_components/securacv/`](../custom_components)). Headless by default —
