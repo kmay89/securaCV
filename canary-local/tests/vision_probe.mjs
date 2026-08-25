@@ -5,7 +5,7 @@
 // two-port picker answers right and wrong, the SenseCraft stage walks
 // Connect → port → Person Detection → upload → live preview with bounding
 // boxes on canvas, the host console boots to [DISC], the MQTT retained
-// surfaces + all 19 HA discovery entities land, and staged SSCMA boxes flow
+// surfaces + all 20 HA discovery entities land, and staged SSCMA boxes flow
 // through the compiled production detection/config/voxel/FSM core before a
 // witness event and Aim payload appear — all with zero page errors.
 //
@@ -124,7 +124,7 @@ try {
   await page.waitForFunction(() => document.querySelectorAll(".vis-mqtt-row").length >= 5, null, { timeout: 8000 })
     .catch(() => fail("MQTT retained topics never filled"));
   const ents = await page.$$eval(".vis-entity", (e) => e.length);
-  if (ents !== 19) fail("expected 19 HA discovery entities, got " + ents);
+  if (ents !== 20) fail("expected 20 HA discovery entities, got " + ents);
 
   // ── sandbox: walk someone through → a witness event publishes ──
   const cards = await page.$$(".wap-sand-card");
