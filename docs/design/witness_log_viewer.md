@@ -71,10 +71,11 @@ nothing to install. Scope:
   tool"**, never a fake green. Full in-browser C2PA is a P3 decision
   (§6).
 - **Read** — the new half. Three views over the decoded bundle:
-  - **Timeline**: events grouped by 10-minute bucket → zone → event type,
-    with confidence; failures/gaps rendered inline, not hidden. (The
-    privacy coarsening is a *feature* to display: "times shown are
-    10-minute buckets with deliberate jitter" as a first-class caption.)
+  - **Timeline** — ✅ **shipped** (see "The timeline scrub view" below):
+    events grouped by 10-minute bucket → zone → event type, with
+    confidence; failures/gaps rendered inline, not hidden. (The privacy
+    coarsening is a *feature* to display: "times shown are 10-minute
+    buckets with deliberate jitter" as a first-class caption.)
   - **Disclosures**: the export-receipt trail — when, under which
     authorization (`self_export` vs `break_glass`), window, artifact hash —
     the "who has seen what" audit.
@@ -84,6 +85,59 @@ nothing to install. Scope:
 - **Ship it**: stays a committed, built single file (`build.mjs` template
   pipeline + parity tests as today), distributed via the Lab and linked
   from every export ("view this file at …" printed by `export_events`).
+
+### The timeline scrub view (shipped) — "the day has a shape"
+
+The first piece of Surface A's reading half. A flat table gave every row the
+same weight, so the only way to learn what kind of day it was, was to read
+all of it. The scrub view borrows Sublime Text's minimap instead: every alert
+is drawn as one greeked stroke — width from its label, indent from its zone —
+so a day of alerts has the silhouette of a page, and the words are read only
+where the shape asks for them.
+
+| Part | What it does |
+|---|---|
+| Minimap | Drag to scrub; the reading pane follows and a lens reports the bucket under the cursor. Recurring zones line up into columns. |
+| Fold pleats | An hour or more of quiet collapses to a fixed pleat (Sublime's code folding), reporting the heartbeats sealed inside it — "quiet, with proof of watching". |
+| Day header | A density strip, one cell per bucket, **worst status winning outright** so a busy hour never averages away the one thing in it that mattered. |
+| Reading pane | The rows themselves — event, declared gap, or system-trace record — with the bucket range, zone, and confidence. |
+
+Four properties are load-bearing, and a change that breaks one is a bug, not
+a restyle:
+
+1. **A declared gap can never be folded.** Quiet folds; a sealed failure
+   record is an anchor. The one thing a witness log must not do is hide the
+   times it could not see.
+2. **The scrubber snaps to buckets**, and says so on screen. Finer timing was
+   never recorded (Invariant III), so offering a position the record cannot
+   justify would be a privacy regression wearing a UI hat.
+3. **Uncovered is not quiet.** Hours outside the export's window render as
+   absent, never as a flat "nothing happened".
+4. **Unparseable entries are counted, not dropped.** The caption says how
+   many, so the picture never quietly omits part of the ledger.
+
+**One model, two languages, one fixture.** The arithmetic lives in
+`viewer/timeline_core.js` (DOM-free, `node --test`-able, inlined into the
+built viewer) and is ported to `ios/Shared/TimelineScrub.swift`
+(Foundation-only). Both are asserted against
+`viewer/fixtures/timeline/scrub_parity.json`, generated from the JavaScript by
+`viewer/tools/gen_timeline_parity.mjs` and checked in CI on both sides. This
+is the §4 "one timeline model" rule made mechanical: two surfaces that fold
+quiet differently disagree about what a day *was*, and then the record stops
+being a record. **Changing a folding or layout rule is a three-part commit:
+both implementations plus a regenerated fixture.**
+
+On the phone the same model drives a horizontal day-shape ribbon in the
+Alerts tab (`ios/Sources/SecuraCV/Views/Components/TimelineScrubView.swift`),
+colored by the app's existing `Severity` → `Theme.Role` vocabulary rather
+than a second color language, and scrubbing the list beneath it.
+
+`ios/Shared/TimelineScrub.swift` deliberately carries **no**
+`SecuraCV-Parity` marker: the tvOS Wall has no time-bearing event data to
+draw (sealed entries carry no timestamp, and no kernel serves
+`/api/sealed-log` yet), so shipping it there would mean inventing a clock the
+record does not have. When that data exists, the marker plus a
+`tvos/WitnessWall/project.yml` entry is the whole port.
 
 ### Surface B (P2): live viewer on the hub — feed the same UI from `witness_api`
 

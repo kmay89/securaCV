@@ -334,6 +334,13 @@ def main() -> int:
     compare("timeline-card.js EVENT_TYPE_METADATA keys vs dictionary",
             ev_ids, brace_object_keys(card_js, r"EVENT_TYPE_METADATA\s*=\s*\{", "timeline-card.js", "EVENT_TYPE_METADATA"))
 
+    # --- Offline viewer's scrub-timeline mirror (viewer/timeline_core.js) ---
+    # Keys must match the dictionary ids; the labels are pinned to the
+    # dictionary by viewer/timeline_core.test.js, which runs in viewer.yml.
+    viewer_tl_js = read("viewer/timeline_core.js")
+    compare("timeline_core.js EVENT_TYPE_META keys vs dictionary",
+            ev_ids, brace_object_keys(viewer_tl_js, r"EVENT_TYPE_META\s*=\s*\{", "timeline_core.js", "EVENT_TYPE_META"))
+
     # Attestation wire strings present on the HA side (all three, incl. device).
     att_wires = [a["wire"] for a in att]
     py_att = re.findall(r'ATTESTATION_[A-Z_]+\s*=\s*"([^"]+)"', const_py)

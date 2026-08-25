@@ -21,12 +21,20 @@
     --ok:#1a7f37; --ok-bg:#dafbe1; --warn:#9a6700; --warn-bg:#fff8c5; --bad:#cf222e; --bad-bg:#ffebe9;
     --accent:#0969da; --accent-bg:#ddf4ff; --shadow:0 1px 3px rgba(31,35,40,.08),0 1px 2px rgba(31,35,40,.06);
     --radius:12px;
+    /* Timeline family hues — three categorical colors (validated for
+       color-vision-deficiency separation against this surface), plus the
+       page's own status colors for tamper and gaps. Tamper and gap marks
+       always carry a glyph or texture and a text label — never color alone. */
+    --fam-move:#2a78d6; --fam-touch:#e87ba4; --fam-sound:#1baf7a;
+    --fam-tamper:#cf222e; --fam-gap:#9a6700; --fam-other:#636c76;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --muted:#9198a1; --line:#30363d;
       --ok:#3fb950; --ok-bg:#12261e; --warn:#d29922; --warn-bg:#272115; --bad:#f85149; --bad-bg:#291415;
       --accent:#4493f8; --accent-bg:#121d2f; --shadow:none;
+      --fam-move:#3987e5; --fam-touch:#d55181; --fam-sound:#0f7a55;
+      --fam-tamper:#f85149; --fam-gap:#d29922; --fam-other:#9198a1;
     }
   }
   * { box-sizing:border-box; }
@@ -145,6 +153,171 @@
     * { animation-duration:.01ms !important; animation-delay:0ms !important; transition-duration:.01ms !important; }
   }
 
+  /* ---- timeline scrub view ("the day has a shape") ----------------------
+     A Sublime-Text-style minimap of the sealed record: every alert is drawn
+     as a tiny greeked line of text, so a day reads as a page — shape first,
+     words on approach. The minimap scrubs the reading pane; quiet hours fold
+     into pleats; declared gaps stay hatched and unfoldable. */
+  .fam-move { --fam:var(--fam-move); } .fam-touch { --fam:var(--fam-touch); }
+  .fam-sound { --fam:var(--fam-sound); } .fam-tamper { --fam:var(--fam-tamper); }
+  .fam-gap { --fam:var(--fam-gap); } .fam-other { --fam:var(--fam-other); }
+
+  .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden;
+             clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0; }
+  .tl-legend { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
+  .tl-chip { font:inherit; font-size:12px; font-weight:600; color:var(--muted); background:var(--bg);
+             border:1px solid var(--line); border-radius:999px; padding:4px 11px; cursor:pointer;
+             display:inline-flex; align-items:center; gap:7px; }
+  .tl-chip:hover { color:var(--fg); border-color:var(--accent); }
+  .tl-chip[aria-pressed="true"] { border-color:var(--accent); color:var(--fg); box-shadow:0 0 0 1px var(--accent); }
+  .tl-dot { width:8px; height:8px; border-radius:50%; background:var(--fam); flex:0 0 auto; }
+  .tl-dot.fam-tamper { border-radius:1px; clip-path:polygon(50% 0, 100% 100%, 0 100%); }
+  .tl-dot.fam-gap { border-radius:2px;
+    background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 4px);
+    box-shadow:inset 0 0 0 1px var(--fam); }
+  .tl-n { color:var(--fg); }
+  .tl-utc { margin-left:auto; font-size:11.5px; color:var(--muted); }
+
+  /* One height token drives the map and the reading pane, so they stay locked
+     together on every display — a laptop, a phone in landscape, a 10-foot TV
+     browser, or a short HMI panel. */
+  .tl-wrap { display:flex; gap:12px; position:relative; --tl-h:clamp(300px, 54vh, 640px); }
+  .tl-map { position:relative; width:84px; flex:0 0 auto; height:var(--tl-h); overflow:hidden;
+            border:1px solid var(--line); border-radius:8px; background:var(--bg);
+            cursor:crosshair; touch-action:none; user-select:none; -webkit-user-select:none; }
+  .tl-map:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .tl-gline { position:absolute; left:0; right:0; height:1px; background:var(--line); opacity:.45; pointer-events:none; }
+  .tl-gline.major { opacity:1; }
+  .tl-tick { position:absolute; height:2px; border-radius:1px; background:var(--fam); opacity:.92;
+             pointer-events:none; animation:tlreveal .4s ease both; }
+  .tl-tick.tl-more { height:3px; opacity:1; }
+  .tl-tickgap { left:4px; right:4px; border-radius:2px;
+    background:repeating-linear-gradient(45deg, var(--fam) 0 3px, transparent 3px 6px);
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fam) 55%, transparent); }
+  /* A fold is a pleat in the paper, not a mark on it: it must read as absence
+     so the greeked strokes stay the only ink that means something. */
+  .tl-pleat { position:absolute; left:0; right:0; pointer-events:none; opacity:.55;
+    border-top:1px dashed var(--line); border-bottom:1px dashed var(--line);
+    background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 14%, transparent) 0 4px, transparent 4px 8px); }
+  .tl-view { position:absolute; left:0; right:0; min-height:16px; border-radius:4px;
+             background:color-mix(in srgb, var(--accent) 13%, transparent);
+             border:1px solid var(--accent); pointer-events:none; }
+  @keyframes tlreveal { from { opacity:0; transform:translateX(-4px); } to { transform:none; } }
+
+  .tl-list { flex:1; min-width:0; height:var(--tl-h); overflow-y:auto; position:relative;
+             border:1px solid var(--line); border-radius:8px; scrollbar-width:thin;
+             overscroll-behavior:contain; -webkit-overflow-scrolling:touch; }
+  .tl-day { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px;
+            background:var(--panel); border-bottom:1px solid var(--line); padding:8px 12px; }
+  .tl-date { font-size:13px; font-weight:650; white-space:nowrap; }
+  .tl-strip { position:relative; flex:1; height:10px; min-width:60px; cursor:pointer;
+              border-radius:5px; outline-offset:3px; }
+  .tl-strip:focus-visible { outline:2px solid var(--accent); }
+  .tl-covtrack { position:absolute; top:0; bottom:0; background:var(--bg); border-radius:5px;
+                 box-shadow:inset 0 0 0 1px var(--line); }
+  .tl-cell { position:absolute; top:1px; bottom:1px; border-radius:2px; background:var(--fam); }
+  .tl-cellgap { background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 3px); }
+  .tl-daymeta { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .tl-daymeta b { font-weight:650; }
+  .tl-daymeta .tl-tam { color:var(--bad); }
+  .tl-daymeta .tl-gapn { color:var(--warn); }
+
+  .tl-row { display:flex; align-items:center; gap:10px; padding:7px 12px 7px 0; font-size:13.5px;
+            border-bottom:1px solid color-mix(in srgb, var(--line) 45%, transparent); }
+  .tl-row:last-child { border-bottom:none; }
+  .tl-rail { flex:0 0 26px; align-self:stretch; position:relative; min-height:20px; }
+  .tl-rail::before { content:""; position:absolute; left:12px; top:-8px; bottom:-8px; width:2px;
+                     background:color-mix(in srgb, var(--line) 80%, transparent); }
+  .tl-node { position:absolute; left:8.5px; top:50%; margin-top:-4.5px; width:9px; height:9px;
+             border-radius:50%; background:var(--fam); box-shadow:0 0 0 2px var(--panel); }
+  .tl-nodegap { border-radius:2px;
+    background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 4px);
+    box-shadow:0 0 0 2px var(--panel), inset 0 0 0 1px var(--fam); }
+  .tl-nodesys { width:7px; height:7px; margin-top:-3.5px; left:9.5px; background:transparent;
+                border:2px solid var(--fam); box-sizing:border-box; box-shadow:0 0 0 2px var(--panel); }
+  .tl-time { flex:0 0 100px; font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+             font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .tl-body { flex:1; min-width:0; overflow-wrap:break-word; }
+  .tl-body b { font-weight:650; }
+  .tl-shield { width:13px; height:13px; color:var(--fam-tamper); vertical-align:-2px; margin-right:5px; }
+  .tl-det { color:var(--muted); font-size:12.5px; }
+  .tl-zone { flex:0 0 auto; font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+             font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px;
+             padding:1px 8px; max-width:14ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tl-conf { flex:0 0 78px; display:flex; align-items:center; gap:6px; }
+  .tl-meter { width:36px; height:3px; border-radius:2px; background:var(--line); overflow:hidden; }
+  .tl-meter > i { display:block; height:100%; background:var(--fam); }
+  .tl-conf b { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+               font-size:11px; font-weight:400; color:var(--muted); }
+  .tl-sys { font-size:12.5px; }
+  .tl-sys .tl-time { color:color-mix(in srgb, var(--muted) 70%, transparent); }
+  .tl-fold { display:flex; align-items:center; gap:10px; padding:6px 12px 6px 0;
+             color:var(--muted); font-size:12px; }
+  .tl-pleatchip { width:26px; height:8px; border-radius:2px; flex:0 0 auto;
+    background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 30%, transparent) 0 3px, transparent 3px 6px);
+    border:1px dashed var(--line); }
+  .tl-flash { animation:tlflash 1.2s ease; }
+  @keyframes tlflash { 0% { background:var(--accent-bg); } 100% { background:transparent; } }
+
+  /* Spotlight: a legend chip dims everything that isn't its family —
+     emphasis only; nothing is ever hidden. */
+  .tl-panel[data-spot="move"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-move),
+  .tl-panel[data-spot="touch"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-touch),
+  .tl-panel[data-spot="sound"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-sound),
+  .tl-panel[data-spot="tamper"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-tamper),
+  .tl-panel[data-spot="gap"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-gap),
+  .tl-panel[data-spot="other"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-other) { opacity:.25; }
+
+  .tl-lens { position:absolute; z-index:5; left:92px; max-width:300px; pointer-events:none;
+             background:var(--panel); border:1px solid var(--line); border-radius:8px;
+             padding:8px 11px; font-size:12.5px; box-shadow:0 4px 14px rgba(0,0,0,.22); }
+  .tl-lens .lh { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+                 font-size:11.5px; color:var(--muted); }
+  .tl-lens .lr { display:flex; align-items:center; gap:6px; margin-top:4px; }
+
+  /* Phone and narrow-panel layout: the fixed time/zone/confidence columns
+     would crush the label to one character per line, so the row folds — rail
+     and time on top, the alert's own words on a full-width line under it. */
+  @media (max-width: 620px) {
+    .tl-map { width:56px; }
+    .tl-lens { left:62px; max-width:min(300px, calc(100vw - 96px)); }
+    .tl-row, .tl-fold { position:relative; flex-wrap:wrap; row-gap:3px; padding:8px 12px 9px 32px; }
+    .tl-rail { position:absolute; left:0; top:0; bottom:0; width:26px; flex:none; }
+    .tl-time { flex:0 0 auto; }
+    .tl-conf { flex:0 0 auto; margin-left:auto; }
+    .tl-zone { max-width:22ch; }
+    .tl-body { flex:1 0 100%; }
+    .tl-day { flex-wrap:wrap; row-gap:6px; }
+    .tl-date { flex:1 1 auto; }
+    .tl-strip { flex:1 0 100%; order:3; }
+  }
+  /* Touch, pen, and TV-remote pointers: legend chips and day strips grow to a
+     44px target, and the minimap widens so a thumb can scrub it. */
+  @media (pointer: coarse) {
+    .tl-chip { padding:9px 14px; }
+    .tl-strip { height:16px; padding:6px 0; background-clip:content-box; }
+    .tl-map { width:96px; }
+    .tl-lens { left:104px; }
+  }
+  /* Windows High Contrast / forced-colors flattens background paint, which
+     would erase every tick and cell. Redraw them as bordered marks in system
+     colors, and keep the status families distinguishable by shape. */
+  @media (forced-colors: active) {
+    .tl-tick, .tl-cell { forced-color-adjust:none; background:CanvasText; }
+    .tl-tickgap, .tl-cellgap { background:Canvas; border:1px solid CanvasText; }
+    .tl-view { border:2px solid Highlight; background:transparent; }
+    .tl-node { forced-color-adjust:none; background:CanvasText; }
+    .tl-nodegap, .tl-nodesys { background:Canvas; border:2px solid CanvasText; }
+    .tl-pleat { border-color:GrayText; }
+    .tl-chip[aria-pressed="true"] { outline:2px solid Highlight; }
+  }
+  @media (prefers-contrast: more) {
+    .tl-tick { opacity:1; }
+    .tl-cell { opacity:1 !important; }
+    .tl-row { border-bottom-color:var(--line); }
+    .tl-map, .tl-list { border-color:var(--fg); }
+  }
+
   table { width:100%; border-collapse:collapse; font-size:13.5px; }
   th,td { text-align:left; padding:8px 9px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
@@ -160,6 +333,13 @@
     #drop, .actions, .trust, .offline-badge, footer, button.btn.toggle { display:none; }
     .panel { box-shadow:none; }
     .c-tech { display:block; } /* the printed record carries the full technical claims */
+    /* The printed timeline is the full reading pane — every row, no scroll,
+       no scrub chrome; marks keep their ink so the paper record stays legible. */
+    .tl-map, .tl-lens, .tl-utc { display:none; }
+    .tl-list { height:auto; overflow:visible; border:none; }
+    .tl-day { position:static; }
+    .tl-cell, .tl-covtrack, .tl-tick, .tl-node, .tl-meter, .tl-meter > i, .tl-dot, .tl-pleatchip {
+      print-color-adjust:exact; -webkit-print-color-adjust:exact; }
   }
 </style>
 </head>
@@ -1005,6 +1185,606 @@ const api = {
 
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 if (typeof globalThis !== 'undefined') globalThis.SecuraCVVerify = api;
+
+</script>
+
+<script>
+'use strict';
+
+// Timeline scrub-view model — the pure data-shaping half of the viewer's
+// "day shape" timeline (the Sublime-Text-minimap-inspired scrub view in
+// template.html). No DOM here: everything is plain data in, plain data out,
+// so it runs under `node --test` (timeline_core.test.js) and in the browser
+// alike — the same dual-use convention as verify_core.js.
+//
+// Vocabulary note: EVENT_TYPE_META below is a display mirror of
+// spec/witness_dictionary.json event_types (keys are the canonical snake_case
+// ids; labels are the canonical presentation labels). It is held in sync by
+// scripts/lint_dictionary_sync.py — edit the dictionary first, then this map.
+// The `family` field is presentation-only grouping for the timeline's color
+// system (three categorical hues + the page's reserved status roles for
+// tamper and gaps), not vocabulary.
+
+// ---- vocabulary presentation -------------------------------------------
+
+const EVENT_TYPE_META = {
+  boundary_crossing_object_large: { label: 'Large object crossed boundary', family: 'move' },
+  boundary_crossing_object_small: { label: 'Small object crossed boundary', family: 'move' },
+  acoustic_impulse_in_zone: { label: 'Acoustic impulse in zone', family: 'sound' },
+  presence_in_restricted_zone: { label: 'Presence in restricted zone', family: 'touch' },
+  vehicle_presence_after_hours: { label: 'Vehicle presence after hours', family: 'touch' },
+  contact_state_change: { label: 'Contact state change', family: 'touch' },
+  object_removed_from_zone: { label: 'Object removed from zone', family: 'touch' },
+  tamper_detected: { label: 'Tamper detected', family: 'tamper' },
+  vehicle_arrival_departure: { label: 'Vehicle arrival/departure', family: 'move' },
+};
+
+// Human names for the color families (the timeline legend). Tamper and gaps
+// ride the page's existing status colors and always carry a glyph + label —
+// never color alone.
+const FAMILY_LABELS = {
+  move: 'Crossings & movement',
+  touch: 'Presence & touch',
+  sound: 'Sound',
+  tamper: 'Tamper',
+  gap: 'Gaps',
+  other: 'System records',
+};
+
+// Kernel wire strings are the Rust enum's PascalCase variant names; the
+// dictionary ids are snake_case. Accept either spelling (same normalization
+// stance as the Home Assistant timeline card).
+function normalizeTypeId(t) {
+  if (typeof t !== 'string' || !t) return '';
+  return t.trim().replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+}
+
+function typeMeta(t) {
+  const id = normalizeTypeId(t);
+  const known = Object.prototype.hasOwnProperty.call(EVENT_TYPE_META, id) ? EVENT_TYPE_META[id] : null;
+  if (known) return { id, label: known.label, family: known.family };
+  // Unknown/future types stay honest: a readable generic label, neutral color.
+  return { id, label: humanizeWords(t), family: 'other' };
+}
+
+// "StorageFull" / "storage_full" -> "Storage full". Generic — failure types
+// carry no display metadata in the dictionary, so nothing here can drift.
+function humanizeWords(t) {
+  if (typeof t !== 'string' || !t) return 'Unknown';
+  const words = normalizeTypeId(t).split('_').filter(Boolean);
+  if (!words.length) return 'Unknown';
+  const s = words.join(' ');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ---- record normalization ----------------------------------------------
+
+// Both bundle shapes reduce to one record shape:
+//   { t0, size, kind, type, label, family, zone, conf, details }
+// kind: 'event' | 'gap' (a sealed failure record — a declared blind spot)
+//     | 'system' (key rotation / lifecycle) | 'heartbeat'.
+// t0/size come from the privacy-coarsened time bucket (typically 600 s) —
+// the model never invents precision the log does not carry.
+
+// `Number.isFinite`, not `typeof === 'number'`: JSON.parse turns an
+// out-of-range literal like 1e400 into Infinity, and a non-finite time
+// poisons every downstream calculation — the grid-line loop in particular
+// never terminates, hanging the tab on a bundle that otherwise verifies.
+// A record whose time cannot be believed is counted as unparseable.
+function bucketOf(rec) {
+  const tb = rec && rec.time_bucket;
+  if (!tb || !Number.isFinite(tb.start_epoch_s)) return null;
+  return {
+    t0: tb.start_epoch_s,
+    size: Number.isFinite(tb.size_s) && tb.size_s > 0 ? tb.size_s : 600,
+  };
+}
+
+function recordFromEvent(e) {
+  const b = bucketOf(e);
+  if (!b) return null;
+  const meta = typeMeta(typeof e.event_type === 'string' ? e.event_type : String(e.event_type));
+  return {
+    t0: b.t0, size: b.size, kind: 'event',
+    type: e.event_type, label: meta.label, family: meta.family,
+    zone: typeof e.zone_id === 'string' ? e.zone_id : '',
+    conf: typeof e.confidence === 'number' ? e.confidence : null,
+    details: '',
+  };
+}
+
+function recordFromFailure(f) {
+  const b = bucketOf(f);
+  if (!b) return null;
+  const t = typeof f.failure_type === 'string' ? f.failure_type : String(f.failure_type);
+  return {
+    t0: b.t0, size: b.size, kind: 'gap',
+    type: f.failure_type, label: humanizeWords(t), family: 'gap',
+    zone: '', conf: null,
+    details: typeof f.details === 'string' ? f.details : '',
+  };
+}
+
+function recordFromSystem(rec, recordType) {
+  const b = bucketOf(rec);
+  if (!b) return null;
+  const kind = recordType === 'heartbeat' ? 'heartbeat' : 'system';
+  return {
+    t0: b.t0, size: b.size, kind,
+    type: recordType, label: humanizeWords(recordType), family: 'other',
+    zone: '', conf: null, details: '',
+  };
+}
+
+// Sealed-event ledger entries (full evidence envelope). Every parseable
+// record is represented — events, declared gaps, and the system-trace
+// records (key rotation, heartbeat, lifecycle) the ledger also carries.
+// Unparseable payloads are counted, never silently vanished.
+function normalizeEnvelope(envelope) {
+  const entries = (envelope && envelope.ledgers && envelope.ledgers.sealed_events
+    && envelope.ledgers.sealed_events.entries) || [];
+  const records = [];
+  let unparsed = 0;
+  for (const e of entries) {
+    let rec;
+    try { rec = JSON.parse(e.payload_json); } catch { unparsed += 1; continue; }
+    // A payload of `null`, a bare number, or an array all parse fine and then
+    // throw on the first property read — which took down the whole timeline,
+    // not just the bad row. The viewer's entire job is reading files from
+    // people it does not trust, so a malformed entry is counted, never fatal.
+    if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) { unparsed += 1; continue; }
+    let r = null;
+    if (rec.record_type === 'failure' || (rec.record_type === undefined && rec.failure_type !== undefined)) {
+      r = recordFromFailure(rec);
+    } else if (rec.record_type === 'event' || (rec.record_type === undefined && rec.event_type !== undefined)) {
+      r = recordFromEvent(rec);
+    } else if (typeof rec.record_type === 'string') {
+      r = recordFromSystem(rec, rec.record_type);
+    }
+    if (r) records.push(r); else unparsed += 1;
+  }
+  return { records: sortRecords(records), unparsed };
+}
+
+// Event-export artifact (ExportBundle from `export_events`) — events and
+// declared gaps only; system-trace records are excluded from exports.
+function normalizeBundle(bundle) {
+  const records = [];
+  let unparsed = 0;
+  const batches = (bundle && bundle.artifact && bundle.artifact.batches) || [];
+  for (const batch of batches) {
+    for (const bucket of batch.buckets || []) {
+      for (const e of bucket.events || []) {
+        const r = recordFromEvent(e);
+        if (r) records.push(r); else unparsed += 1;
+      }
+      for (const f of bucket.failures || []) {
+        const r = recordFromFailure(f);
+        if (r) records.push(r); else unparsed += 1;
+      }
+    }
+  }
+  return { records: sortRecords(records), unparsed };
+}
+
+// Stable time sort: buckets can repeat, and within a bucket the sealed order
+// is preserved (Array.prototype.sort is stable per spec).
+function sortRecords(records) {
+  return records.slice().sort((a, b) => a.t0 - b.t0);
+}
+
+// ---- fold segmentation (Sublime's code folding, for quiet time) ---------
+
+const DEFAULT_BUCKET_S = 600;
+const FOLD_MIN_QUIET_S = 3600; // fold only when at least an hour has nothing to say
+const FOLD_PAD_S = 600;        // one bucket of breathing room beside real records
+
+// Split the covered window into segments: 'span' (drawn proportional to
+// time) and 'fold' (a fixed-height pleat standing in for quiet). Anchors are
+// the records that must stay at readable scale — events, gaps, and system
+// records. Heartbeats deliberately do NOT anchor: a night of hourly
+// heartbeats still folds, and the fold reports how many were sealed inside
+// it ("quiet, with proof of watching"). A gap (failure record) is an anchor,
+// so a declared blind spot can never be folded out of sight.
+function buildSegments(records, opts) {
+  const o = opts || {};
+  const minQuiet = o.foldMinQuietS || FOLD_MIN_QUIET_S;
+  const pad = o.foldPadS !== undefined ? o.foldPadS : FOLD_PAD_S;
+  const anchors = records.filter((r) => r.kind !== 'heartbeat');
+  const beats = records.filter((r) => r.kind === 'heartbeat');
+  if (!anchors.length && !beats.length) return [];
+  const base = anchors.length ? anchors : beats; // heartbeat-only ledgers still render
+  // The DOMAIN spans every record; only the FOLD anchors exclude heartbeats.
+  // Deriving the domain from anchors alone put heartbeats recorded after the
+  // last event outside the timeline entirely — they piled onto the last pixel
+  // and the viewport indicator stopped tracking them.
+  const firstT0 = Math.min(records[0].t0, base[0].t0);
+  const lastEnd = records.reduce((m, r) => Math.max(m, r.t0 + r.size), 0);
+  let cov0 = typeof o.coverageT0 === 'number' ? o.coverageT0 : firstT0;
+  let cov1 = typeof o.coverageT1 === 'number' ? o.coverageT1 : lastEnd;
+  cov0 = Math.min(cov0, firstT0);
+  cov1 = Math.max(cov1, lastEnd);
+
+  // Quiet boundaries: walk anchor bucket ends against next anchor starts,
+  // including the coverage edges (a week of leading quiet folds too).
+  const segments = [];
+  let cursor = cov0;
+  let prevEnd = cov0;
+  const anchorList = anchors.length ? anchors : beats;
+  for (let i = 0; i <= anchorList.length; i++) {
+    const nextStart = i < anchorList.length ? anchorList[i].t0 : cov1;
+    const leadingEdge = prevEnd === cov0 && cursor === cov0;
+    const trailingEdge = i === anchorList.length;
+    const padL = leadingEdge ? 0 : pad;   // no breathing room needed against a window edge
+    const padR = trailingEdge ? 0 : pad;
+    const quiet = nextStart - prevEnd;
+    if (quiet >= minQuiet + padL + padR) {
+      if (prevEnd + padL > cursor) segments.push({ kind: 'span', t0: cursor, t1: prevEnd + padL });
+      segments.push({ kind: 'fold', t0: prevEnd + padL, t1: nextStart - padR });
+      cursor = nextStart - padR;
+    }
+    if (i < anchorList.length) prevEnd = Math.max(prevEnd, anchorList[i].t0 + anchorList[i].size);
+  }
+  if (cursor < cov1 || !segments.length) segments.push({ kind: 'span', t0: cursor, t1: Math.max(cov1, cursor + 1) });
+
+  // Count the heartbeats each fold quietly contains.
+  for (const s of segments) {
+    if (s.kind === 'fold') s.heartbeats = beats.filter((b) => b.t0 >= s.t0 && b.t0 < s.t1).length;
+  }
+  return segments;
+}
+
+// ---- vertical layout ----------------------------------------------------
+
+const FOLD_PX = 18;      // fixed pleat height
+const MIN_SPAN_PX = 6;   // a span never collapses to invisibility
+
+// Distribute heightPx over the segments: folds get a fixed pleat, spans share
+// the rest proportionally to their duration. Returns segments with y0/y1.
+function layoutSegments(segments, heightPx, opts) {
+  const o = opts || {};
+  const foldPx = o.foldPx || FOLD_PX;
+  const minSpanPx = o.minSpanPx || MIN_SPAN_PX;
+  const folds = segments.filter((s) => s.kind === 'fold').length;
+  const spans = segments.filter((s) => s.kind === 'span');
+  const spanDur = spans.reduce((d, s) => d + (s.t1 - s.t0), 0) || 1;
+  const avail = Math.max(heightPx - folds * foldPx - spans.length * minSpanPx, 0);
+  let y = 0;
+  return segments.map((s) => {
+    const h = s.kind === 'fold' ? foldPx : minSpanPx + ((s.t1 - s.t0) / spanDur) * avail;
+    const out = { kind: s.kind, t0: s.t0, t1: s.t1, y0: y, y1: y + h, heartbeats: s.heartbeats || 0 };
+    y += h;
+    return out;
+  });
+}
+
+// Time -> pixel through the folded coordinate space. Clamps to the domain.
+function yOfTime(layout, t) {
+  if (!layout.length) return 0;
+  if (t <= layout[0].t0) return layout[0].y0;
+  for (const s of layout) {
+    if (t <= s.t1) {
+      const f = (t - s.t0) / Math.max(s.t1 - s.t0, 1);
+      return s.y0 + f * (s.y1 - s.y0);
+    }
+  }
+  return layout[layout.length - 1].y1;
+}
+
+// Pixel -> time, the inverse of yOfTime (same clamping).
+//
+// Returns a WHOLE second, floored. Two reasons, and both matter: the Swift
+// port returns an Int, so a fractional result here would make the two
+// implementations disagree on every probe in the parity fixture; and a
+// sub-second scrub position is a precision the record does not have. Callers
+// snap to the bucket anyway — this just refuses to invent the digits.
+function timeOfY(layout, y) {
+  if (!layout.length) return 0;
+  if (y <= layout[0].y0) return layout[0].t0;
+  for (const s of layout) {
+    if (y <= s.y1) {
+      const f = (y - s.y0) / Math.max(s.y1 - s.y0, 1e-9);
+      return s.t0 + Math.floor((s.t1 - s.t0) * f);
+    }
+  }
+  return layout[layout.length - 1].t1;
+}
+
+// Ruler lines for the minimap: the smallest interval whose lines stay at
+// least minGapPx apart inside every span. Day boundaries are marked major.
+const GRID_STEPS_S = [600, 1800, 3600, 3 * 3600, 6 * 3600, 12 * 3600, 86400];
+// A ruler denser than this is not a ruler. Without the cap, a multi-year
+// export falls past every candidate step (none can satisfy the minimum gap at
+// that scale), lands on the largest, and emits one line per day — thousands of
+// DOM nodes for a drawing 84 pixels wide.
+const MAX_GRID_LINES = 240;
+
+function gridLines(layout, minGapPx) {
+  const spans = layout.filter((s) => s.kind === 'span');
+  if (!spans.length) return [];
+  let step = GRID_STEPS_S[GRID_STEPS_S.length - 1];
+  for (const cand of GRID_STEPS_S) {
+    const ok = spans.every((s) => {
+      const pxPerS = (s.y1 - s.y0) / Math.max(s.t1 - s.t0, 1);
+      return cand * pxPerS >= minGapPx || s.t1 - s.t0 < cand;
+    });
+    if (ok) { step = cand; break; }
+  }
+  // Past the largest candidate the only way to stay readable is a coarser
+  // step, so keep doubling until the whole ruler fits under the cap.
+  const spanTotal = spans.reduce((d, s) => d + (s.t1 - s.t0), 0);
+  while (step > 0 && spanTotal / step > MAX_GRID_LINES) step *= 2;
+  const lines = [];
+  if (!Number.isFinite(step) || step <= 0) return lines;
+  for (const s of spans) {
+    if (!Number.isFinite(s.t0) || !Number.isFinite(s.t1)) continue;
+    for (let t = Math.ceil(s.t0 / step) * step; t <= s.t1; t += step) {
+      lines.push({ t, y: yOfTime(layout, t), major: t % 86400 === 0 });
+      if (lines.length >= MAX_GRID_LINES) return lines; // belt: never unbounded
+    }
+  }
+  return lines;
+}
+
+// ---- day grouping (the sticky headers and their density strips) ---------
+
+const DAY_S = 86400;
+
+// One entry per UTC day that has visible records. `cells` holds only lit
+// buckets: { i (bucket index in the day), count, family, hasGap } — family
+// is the bucket's dominant family, with the reserved statuses (gap, then
+// tamper) always winning, so trouble is never averaged away. Heartbeats do
+// not light cells (routine proof-of-life is not activity). `cov0`/`cov1`
+// clip each day's strip to the covered window: hours the export does not
+// cover render as absent, never as "quiet" (no guessed history).
+function buildDays(records, opts) {
+  const o = opts || {};
+  const bucketS = o.bucketS || DEFAULT_BUCKET_S;
+  const perDay = Math.max(1, Math.round(DAY_S / bucketS));
+  const days = new Map();
+  const visible = records.filter((r) => r.kind !== 'heartbeat');
+  visible.forEach((r, index) => {
+    const dayT0 = Math.floor(r.t0 / DAY_S) * DAY_S;
+    let day = days.get(dayT0);
+    if (!day) {
+      day = { dayT0, count: 0, gapCount: 0, tamperCount: 0, worstSeverity: null, cellMap: new Map(), firstIndex: index };
+      days.set(dayT0, day);
+    }
+    day.count += 1;
+    if (r.kind === 'gap') day.gapCount += 1;
+    if (r.family === 'tamper') day.tamperCount += 1;
+    if (typeof r.severity === 'number') {
+      day.worstSeverity = Math.max(day.worstSeverity === null ? -1 : day.worstSeverity, r.severity);
+    }
+    const i = Math.min(Math.floor((r.t0 - dayT0) / bucketS), perDay - 1);
+    let cell = day.cellMap.get(i);
+    if (!cell) { cell = { i, count: 0, families: {}, hasGap: false, worstSeverity: null }; day.cellMap.set(i, cell); }
+    cell.count += 1;
+    cell.families[r.family] = (cell.families[r.family] || 0) + 1;
+    if (r.kind === 'gap') cell.hasGap = true;
+    // Worst-first: a cell reports the most serious thing in it, never an
+    // average. Null on surfaces whose records carry no severity at all (the
+    // evidence viewer's sealed events have no severity field).
+    if (typeof r.severity === 'number') {
+      cell.worstSeverity = Math.max(cell.worstSeverity === null ? -1 : cell.worstSeverity, r.severity);
+    }
+  });
+  // COVERAGE IS DECLARED, NEVER INFERRED. An export receipt states its
+  // window; a sealed envelope states nothing. Defaulting the window to the
+  // span of the records themselves invented the one fact this strip exists
+  // to be careful about — it drew "covered, and therefore quiet" across
+  // hours nothing in the bundle claims the device was watching. With no
+  // declared window both bounds are null and the strip omits its track.
+  //
+  // When a window IS declared, clamp it to the BUCKET GRID the cells are
+  // drawn on: a jittered event could otherwise light a cell the same strip
+  // drew as uncovered, and clamping to the record's own instant still leaves
+  // the cell's leading edge outside, because a cell spans its whole bucket.
+  const declared = typeof o.coverageT0 === 'number' || typeof o.coverageT1 === 'number';
+  let cov0 = null, cov1 = null;
+  if (declared) {
+    const firstT0 = visible.length ? visible[0].t0 : 0;
+    const lastEnd = visible.reduce((m, r) => Math.max(m, r.t0 + r.size), firstT0);
+    const gridFloor = Math.floor(firstT0 / bucketS) * bucketS;
+    const gridCeil = Math.ceil(lastEnd / bucketS) * bucketS;
+    cov0 = Math.min(typeof o.coverageT0 === 'number' ? o.coverageT0 : gridFloor, gridFloor);
+    cov1 = Math.max(typeof o.coverageT1 === 'number' ? o.coverageT1 : gridCeil, gridCeil);
+  }
+  return Array.from(days.values()).sort((a, b) => a.dayT0 - b.dayT0).map((day) => ({
+    dayT0: day.dayT0,
+    label: fmtDayLabel(day.dayT0),
+    count: day.count,
+    gapCount: day.gapCount,
+    tamperCount: day.tamperCount,
+    worstSeverity: day.worstSeverity,
+    cellsPerDay: perDay,
+    firstIndex: day.firstIndex,
+    // The declared covered part of this day, as fractions 0..1 of the strip,
+    // or null when the bundle declares no window at all.
+    covFrom: cov0 === null ? null : Math.min(Math.max((cov0 - day.dayT0) / DAY_S, 0), 1),
+    covTo: cov1 === null ? null : Math.min(Math.max((cov1 - day.dayT0) / DAY_S, 0), 1),
+    cells: Array.from(day.cellMap.values()).sort((a, b) => a.i - b.i).map((c) => ({
+      i: c.i, count: c.count, family: dominantFamily(c), hasGap: c.hasGap,
+      worstSeverity: c.worstSeverity,
+    })),
+  }));
+}
+
+// The order ties resolve in. Iterating the object's own keys would resolve a
+// tie by insertion order, which is the order the families happened to appear
+// in that bucket — the Swift port iterates its `allCases` instead, so the two
+// would silently disagree on any bucket with two equally-common families.
+const FAMILY_ORDER = ['move', 'touch', 'sound', 'tamper', 'gap', 'other'];
+
+function dominantFamily(cell) {
+  if (cell.hasGap) return 'gap';
+  if (cell.families.tamper) return 'tamper';
+  let best = 'other', n = 0;
+  for (const fam of FAMILY_ORDER) {
+    const c = cell.families[fam];
+    if (c !== undefined && c > n) { n = c; best = fam; }
+  }
+  return best;
+}
+
+// ---- the reading-pane item stream ---------------------------------------
+
+// Interleaves day headers and fold rows with the records, in reading order.
+// A fold that crosses midnight is emitted before the new day's header, so an
+// overnight quiet reads: …last event · fold pleat · new day · first event.
+// Heartbeats that fall inside a fold are summarized by the fold, not listed.
+function buildItems(records, segments, days) {
+  const items = [];
+  const dayByT0 = new Map(days.map((d) => [d.dayT0, d]));
+  const folds = segments.filter((s) => s.kind === 'fold');
+  const inFold = (t) => folds.some((f) => t >= f.t0 && t < f.t1);
+  let foldIdx = 0;
+  let curDay = null;
+  records.forEach((r, index) => {
+    if (r.kind === 'heartbeat' && inFold(r.t0)) return; // counted by the fold row
+    while (foldIdx < folds.length && folds[foldIdx].t0 <= r.t0) {
+      const f = folds[foldIdx++];
+      items.push({ kind: 'fold', t0: f.t0, t1: f.t1, quietS: f.t1 - f.t0, heartbeats: f.heartbeats || 0 });
+    }
+    const dayT0 = Math.floor(r.t0 / DAY_S) * DAY_S;
+    if (dayT0 !== curDay) {
+      const day = dayByT0.get(dayT0);
+      // Only advance the day cursor when a header is actually emitted — a
+      // heartbeat-only stretch must not swallow the header of the visible
+      // record that follows it on the same day.
+      if (day) { items.push({ kind: 'day', day }); curDay = dayT0; }
+    }
+    items.push({ kind: r.kind, record: r, index });
+  });
+  // Trailing quiet (a fold that ends the covered window).
+  while (foldIdx < folds.length) {
+    const f = folds[foldIdx++];
+    items.push({ kind: 'fold', t0: f.t0, t1: f.t1, quietS: f.t1 - f.t0, heartbeats: f.heartbeats || 0 });
+  }
+  return items;
+}
+
+// ---- one call for the whole model ---------------------------------------
+
+function buildTimelineModel(input, opts) {
+  const o = opts || {};
+  const records = input.records || [];
+  const bucketS = o.bucketS || mostCommonSize(records) || DEFAULT_BUCKET_S;
+  const segOpts = { coverageT0: o.coverageT0, coverageT1: o.coverageT1, foldMinQuietS: o.foldMinQuietS, foldPadS: o.foldPadS };
+  const segments = buildSegments(records, segOpts);
+  const days = buildDays(records, { bucketS, coverageT0: o.coverageT0, coverageT1: o.coverageT1 });
+  const items = buildItems(records, segments, days);
+  const zones = [];
+  for (const r of records) {
+    if (r.kind === 'event' && r.zone && !zones.includes(r.zone)) zones.push(r.zone);
+  }
+  const counts = {};
+  for (const r of records) {
+    if (r.kind === 'heartbeat') continue;
+    counts[r.family] = (counts[r.family] || 0) + 1;
+  }
+  const heartbeats = records.filter((r) => r.kind === 'heartbeat').length;
+  return { records, segments, days, items, zones, counts, heartbeats, bucketS, unparsed: input.unparsed || 0 };
+}
+
+// Ascending size order, so a tie resolves to the smaller bucket in both
+// languages rather than to whichever the Map happened to see first.
+function mostCommonSize(records) {
+  const freq = new Map();
+  for (const r of records) freq.set(r.size, (freq.get(r.size) || 0) + 1);
+  let best = 0, n = 0;
+  for (const size of Array.from(freq.keys()).sort((a, b) => a - b)) {
+    const count = freq.get(size);
+    if (count > n) { n = count; best = size; }
+  }
+  return best;
+}
+
+// ---- greeked text (the Sublime minimap trick) ---------------------------
+
+// A tick's width comes from its label's length — the alert is drawn as an
+// unreadable-but-recognizable line of "text", so a day of alerts has the
+// shape of a page. Clamped so the minimap column stays composed.
+function greekWidth(label) {
+  const len = typeof label === 'string' ? label.length : 0;
+  return Math.max(12, Math.min(46, Math.round(10 + len * 1.3)));
+}
+
+// Same zone -> same indent, in order of first appearance: recurring places
+// line up into columns, the way indentation shapes code in a minimap.
+function zoneIndent(zones, zone) {
+  const i = zones.indexOf(zone);
+  return i < 0 ? 0 : Math.min(i, 4) * 6;
+}
+
+// ---- deterministic UTC formatting (locale-independent, testable) --------
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December'];
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function pad2(n) { return n < 10 ? '0' + n : String(n); }
+
+function fmtHM(epochS) {
+  const d = new Date(epochS * 1000);
+  return pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes());
+}
+
+// "06:40 – 06:50" for a bucket — the honest range, never a fake instant.
+function fmtBucketRange(t0, sizeS) {
+  return fmtHM(t0) + ' – ' + fmtHM(t0 + (sizeS || DEFAULT_BUCKET_S));
+}
+
+function fmtDayLabel(dayT0) {
+  const d = new Date(dayT0 * 1000);
+  return WEEKDAYS[d.getUTCDay()] + ', ' + MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate() + ', ' + d.getUTCFullYear();
+}
+
+function fmtDuration(s) {
+  if (s >= DAY_S) {
+    const days = Math.floor(s / DAY_S), h = Math.round((s % DAY_S) / 3600);
+    return h ? days + ' d ' + h + ' h' : days + ' d';
+  }
+  if (s >= 3600) {
+    const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+    return m ? h + ' h ' + m + ' m' : h + ' h';
+  }
+  return Math.max(1, Math.round(s / 60)) + ' m';
+}
+
+// ---- exports ------------------------------------------------------------
+
+// NOTE: the built viewer inlines this file and verify_core.js into the SAME
+// global script scope, so every top-level binding here must be unique across
+// both (viewer/build.mjs fails the build if two inlined cores collide).
+const timelineApi = {
+  EVENT_TYPE_META,
+  FAMILY_LABELS,
+  normalizeTypeId,
+  typeMeta,
+  humanizeWords,
+  normalizeEnvelope,
+  normalizeBundle,
+  buildSegments,
+  layoutSegments,
+  yOfTime,
+  timeOfY,
+  gridLines,
+  buildDays,
+  buildItems,
+  buildTimelineModel,
+  greekWidth,
+  zoneIndent,
+  fmtHM,
+  fmtBucketRange,
+  fmtDayLabel,
+  fmtDuration,
+  DAY_S,
+  DEFAULT_BUCKET_S,
+};
+
+if (typeof module !== 'undefined' && module.exports) module.exports = timelineApi;
+if (typeof globalThis !== 'undefined') globalThis.SecuraCVTimeline = timelineApi;
 
 </script>
 
@@ -2196,6 +2976,7 @@ const SAMPLE_BUNDLE = {
   ]
 };
 const V = globalThis.SecuraCVVerify;
+const T = globalThis.SecuraCVTimeline;
 const $ = (id) => document.getElementById(id);
 const out = $('out'), drop = $('drop'), fileInput = $('file');
 
@@ -2474,28 +3255,15 @@ function bundleWarningHint(w) {
 }
 
 function renderBundleTimeline(bundle) {
-  const rows = [];
-  for (const batch of bundle.artifact.batches || []) {
-    for (const bucket of batch.buckets || []) {
-      for (const e of bucket.events || []) {
-        rows.push(`<tr><td>${fmtBucket(e.time_bucket)}</td>
-          <td><span class="tag">${esc(typeof e.event_type === 'string' ? e.event_type : JSON.stringify(e.event_type))}</span></td>
-          <td>${esc(e.zone_id || '—')}</td><td>${typeof e.confidence === 'number' ? e.confidence.toFixed(2) : '—'}</td></tr>`);
-      }
-      for (const f of bucket.failures || []) {
-        rows.push(`<tr><td>${fmtBucket(f.time_bucket)}</td>
-          <td><span class="tag fail">${esc(typeof f.failure_type === 'string' ? f.failure_type : JSON.stringify(f.failure_type))}</span></td>
-          <td colspan="2">${esc(f.details || 'recorded gap')}</td></tr>`);
-      }
-    }
-  }
-  if (!rows.length) return `<div class="panel"><h2>Timeline</h2><div class="hint">No events in this export's window.</div></div>`;
-  return `<div class="panel"><h2>Timeline — verified events</h2>
-    <table><thead><tr><th>Time bucket (UTC)</th><th>Event</th><th>Zone</th><th>Conf.</th></tr></thead>
-    <tbody>${rows.join('')}</tbody></table>
-    <div class="hint">Rendered from the artifact that was just cryptographically bound to the signed
-      receipt — not from any unverified summary. Gaps (times the device could not observe) are shown
-      inline, never hidden.</div></div>`;
+  const w = bundle.receipt_entry && bundle.receipt_entry.receipt && bundle.receipt_entry.receipt.window;
+  return scrubTimeline(T.normalizeBundle(bundle), {
+    title: 'Timeline — verified events',
+    emptyMsg: "No events in this export's window.",
+    coverageT0: w && typeof w.start_epoch_s === 'number' ? w.start_epoch_s : undefined,
+    coverageT1: w && typeof w.end_epoch_s === 'number' ? w.end_epoch_s : undefined,
+    hint: 'Rendered from the artifact that was just cryptographically bound to the signed receipt — '
+      + 'not from any unverified summary. Gaps (times the device could not observe) are shown inline, never hidden.',
+  });
 }
 
 // Reveal the verifier's real, already-computed results one check at a time,
@@ -2727,22 +3495,450 @@ function renderInconclusive(report, sourceLabel) {
 }
 
 function renderTimeline(envelope) {
-  const entries = (envelope.ledgers && envelope.ledgers.sealed_events && envelope.ledgers.sealed_events.entries) || [];
-  const rows = [];
-  for (const e of entries) {
-    let rec; try { rec = JSON.parse(e.payload_json); } catch { continue; }
-    const isFailure = rec.record_type === 'failure' || rec.failure_type !== undefined;
-    const type = rec.event_type || rec.failure_type || 'unknown';
-    const conf = (!isFailure && typeof rec.confidence === 'number') ? rec.confidence.toFixed(2) : '—';
-    rows.push(`<tr><td>${fmtBucket(rec.time_bucket)}</td>
-      <td><span class="tag ${isFailure ? 'fail' : ''}">${esc(typeof type === 'string' ? type : JSON.stringify(type))}</span></td>
-      <td>${esc(rec.zone_id || '—')}</td><td>${conf}</td></tr>`);
+  return scrubTimeline(T.normalizeEnvelope(envelope), {
+    title: 'Timeline — verified sealed events',
+    emptyMsg: 'No sealed events in this bundle.',
+    hint: 'Rendered from the cryptographically verified, signed event ledger — not from any unverified summary.',
+  });
+}
+
+// ---- timeline scrub view -------------------------------------------------
+// "The day has a shape." Every text alert becomes a tiny greeked line in a
+// Sublime-Text-style minimap; the reading pane holds the real words; quiet
+// folds into pleats; each day opens with its density strip — a picture of
+// the day you can read without reading. All data shaping lives in
+// timeline_core.js (unit-tested); this section only paints and wires it.
+
+let TL = null; // model handoff from render to wire(), consumed by initTimeline()
+// Teardown for the live timeline's resize watcher, so a re-render (or
+// "Verify another bundle") does not leave the previous one holding its model.
+let tlWatcher = null;
+
+function famDot(fam) { return `<span class="tl-dot fam-${fam}"></span>`; }
+
+// Said in full wherever confidence appears — as a tooltip AND as the
+// accessible name. Hover-only left every touch user reading a nine-tenths
+// full bar as "90% chance this happened", the exact misreading
+// spec/event_contract.md forbids.
+const CONF_SAYS = "the kernel's assessment that its rule was satisfied, not a probability that this really happened";
+
+const TAMPER_ICON = '<svg class="tl-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5.5V11c0 4.5 3.4 8.7 8 10 4.6-1.3 8-5.5 8-10V5.5L12 2Z"/><path d="M12 8v4"/><circle cx="12" cy="15.5" r=".6" fill="currentColor"/></svg>';
+
+function scrubTimeline(src, opts) {
+  if (!src.records.length) {
+    // "Nothing was recorded" and "nothing here could be read" are different
+    // claims, and only one of them is ours to make. Envelope verification
+    // authenticates the payload BYTES without requiring each payload to
+    // parse, so a fully unreadable ledger reaches a passing report — and
+    // saying it was empty would turn a gap in our reading into a statement
+    // about the device's day.
+    const n = src.unparsed || 0;
+    const body = n
+      ? `This bundle's sealed ledger holds ${n} entr${n === 1 ? 'y' : 'ies'} that could not be read, and
+         nothing this viewer can display. That is not the same as an empty record: the entries are
+         signed and chained, but their contents are not in a shape this viewer understands.`
+      : esc(opts.emptyMsg);
+    return `<div class="panel"><h2>${esc(opts.title)}</h2><div class="hint">${body}</div></div>`;
   }
-  if (!rows.length) return `<div class="panel"><h2>Timeline</h2><div class="hint">No sealed events in this bundle.</div></div>`;
-  return `<div class="panel"><h2>Timeline — verified sealed events</h2>
-    <table><thead><tr><th>Time bucket (UTC)</th><th>Event</th><th>Zone</th><th>Conf.</th></tr></thead>
-    <tbody>${rows.join('')}</tbody></table>
-    <div class="hint">Rendered from the cryptographically verified, signed event ledger — not from any unverified summary.</div></div>`;
+  const model = T.buildTimelineModel(src, { coverageT0: opts.coverageT0, coverageT1: opts.coverageT1 });
+  TL = { model };
+  const famOrder = ['move', 'touch', 'sound', 'tamper', 'gap', 'other'];
+  const chips = famOrder.filter((f) => model.counts[f]).map((f) =>
+    `<button class="tl-chip" type="button" data-fam="${f}" aria-pressed="false"`
+    + ` title="Dim everything else — nothing is hidden or filtered out">`
+    + `${famDot(f)}${esc(T.FAMILY_LABELS[f])} <span class="tl-n">${model.counts[f]}</span></button>`).join('');
+  const bucketMin = Math.max(1, Math.round(model.bucketS / 60));
+  let rows = '';
+  for (const item of model.items) rows += tlRow(item);
+  let hint = esc(opts.hint) + ` Times are UTC, in ${bucketMin}-minute buckets — the scrubber snaps to`
+    + ' buckets because finer timing was never recorded.';
+  if (model.heartbeats) {
+    // NOT "prove the device stayed alive". This viewer counts heartbeats; it
+    // never audits their cadence, so two of them four hours apart would have
+    // carried the same sentence as one every minute. Say what the count
+    // supports, and name the check that is missing.
+    hint += ` ${model.heartbeats} heartbeat record${model.heartbeats === 1 ? ' was' : 's were'} sealed across this window.`
+      + ' This viewer counts them; it does not check that they arrived on schedule, so they show the device was'
+      + ' writing at those moments rather than proving unbroken coverage between them.';
+  }
+  if (model.unparsed) {
+    hint += ` ${model.unparsed} ledger entr${model.unparsed === 1 ? 'y' : 'ies'} could not be parsed and ${model.unparsed === 1 ? 'is' : 'are'} not shown.`;
+  }
+  return `<div class="panel tl-panel" id="tlpanel">
+    <h2>${esc(opts.title)}</h2>
+    <div class="tl-legend" role="group" aria-label="Highlight one kind of record">${chips}<span class="tl-utc">UTC · ${bucketMin}-min buckets</span></div>
+    <div class="tl-wrap" id="tlwrap">
+      <div class="tl-map" id="tlmap" tabindex="0" role="scrollbar" aria-controls="tllist" aria-orientation="vertical"
+        aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+        aria-label="Timeline minimap — the shape of the record. Drag to scrub; Up and Down arrows step between records."></div>
+      <div class="tl-list" id="tllist" tabindex="0" aria-label="Verified records, oldest first">${rows}</div>
+      <div class="tl-lens" id="tllens" hidden></div>
+    </div>
+    <p class="sr-only" id="tlsay" role="status" aria-live="polite"></p>
+    <div class="hint">${hint}</div>
+  </div>`;
+}
+
+function tlRow(item) {
+  if (item.kind === 'day') {
+    const d = item.day;
+    const cellW = 100 / d.cellsPerDay;
+    const hasCoverage = d.covFrom !== null && d.covTo !== null;
+    const covL = hasCoverage ? d.covFrom * 100 : 0;
+    const covW = hasCoverage ? Math.max((d.covTo - d.covFrom) * 100, 0) : 0;
+    const cells = d.cells.map((c) => {
+      const op = c.count >= 4 ? 1 : c.count >= 2 ? 0.75 : 0.5;
+      return `<i class="tl-cell fam-${c.family}${c.hasGap ? ' tl-cellgap' : ''}" style="left:${(c.i * cellW).toFixed(3)}%;width:${Math.max(cellW, 0.35).toFixed(3)}%;opacity:${op}"></i>`;
+    }).join('');
+    const meta = `${d.count} record${d.count === 1 ? '' : 's'}`
+      + (d.tamperCount ? `<b class="tl-tam"> · ${d.tamperCount} tamper</b>` : '')
+      + (d.gapCount ? `<b class="tl-gapn"> · ${d.gapCount} gap${d.gapCount === 1 ? '' : 's'}</b>` : '');
+    // The strip is operable, so it is a real control, not an image: focusable
+    // in the tab order, with arrow keys scrubbing the day by the hour and
+    // Home/End jumping to its ends. A click target reachable only by mouse
+    // would put the day's shape out of reach of a keyboard entirely.
+    return `<div class="tl-day" data-t0="${d.dayT0}"><span class="tl-date">${esc(d.label)}</span>
+      <span class="tl-strip" data-day="${d.dayT0}" tabindex="0" role="slider"
+        aria-valuemin="0" aria-valuemax="1439" aria-valuenow="0" aria-valuetext="00:00 UTC"
+        aria-label="Scrub ${esc(d.label)} — ${d.count} record${d.count === 1 ? '' : 's'}. ${hasCoverage
+          ? 'The bar marks the window this export declares it covers; hours outside it are blank, not quiet.'
+          : 'This bundle declares no coverage window, so no span of this day is claimed as watched.'}">
+        ${hasCoverage ? `<i class="tl-covtrack" style="left:${covL.toFixed(3)}%;width:${covW.toFixed(3)}%"></i>` : ''}${cells}</span>
+      <span class="tl-daymeta">${meta}</span></div>`;
+  }
+  if (item.kind === 'fold') {
+    const beats = item.heartbeats ? ` · ${item.heartbeats} heartbeat${item.heartbeats === 1 ? '' : 's'} sealed` : '';
+    return `<div class="tl-fold" data-t0="${item.t0}" data-t1="${item.t1}"><span class="tl-rail"></span>
+      <span class="tl-pleatchip" aria-hidden="true"></span>
+      <span>Quiet · ${esc(T.fmtDuration(item.quietS))} — no events, no declared gaps${beats}</span></div>`;
+  }
+  const r = item.record;
+  const time = T.fmtBucketRange(r.t0, r.size);
+  if (item.kind === 'gap') {
+    return `<div class="tl-row tl-gap fam-gap" data-t0="${r.t0}">
+      <span class="tl-rail"><i class="tl-node tl-nodegap"></i></span>
+      <span class="tl-time">${time}</span>
+      <span class="tl-body"><b>Gap — ${esc(r.label)}</b> <span class="tl-det">${esc(r.details || 'the device could not observe')}</span></span>
+    </div>`;
+  }
+  if (item.kind === 'system' || item.kind === 'heartbeat') {
+    return `<div class="tl-row tl-sys fam-other" data-t0="${r.t0}">
+      <span class="tl-rail"><i class="tl-node tl-nodesys"></i></span>
+      <span class="tl-time">${time}</span>
+      <span class="tl-body tl-det">${esc(r.label)}</span></div>`;
+  }
+  const conf = typeof r.conf === 'number'
+    ? `<span class="tl-conf" title="Confidence ${r.conf.toFixed(2)} — ${CONF_SAYS}"`
+      + ` aria-label="Confidence ${r.conf.toFixed(2)}: ${CONF_SAYS}">`
+      + `<span class="tl-meter"><i style="width:${Math.round(Math.min(Math.max(r.conf, 0), 1) * 100)}%"></i></span><b>${r.conf.toFixed(2)}</b></span>`
+    : '';
+  return `<div class="tl-row tl-ev fam-${r.family}" data-t0="${r.t0}">
+    <span class="tl-rail"><i class="tl-node"></i></span>
+    <span class="tl-time">${time}</span>
+    <span class="tl-body">${r.family === 'tamper' ? TAMPER_ICON : ''}${esc(r.label)}</span>
+    ${r.zone ? `<span class="tl-zone">${esc(r.zone)}</span>` : ''}
+    ${conf}</div>`;
+}
+
+// Wires the freshly rendered scrub timeline: paints the minimap, then keeps
+// minimap, viewport pane, lens, and reading pane in two-way sync.
+function initTimeline() {
+  const map = $('tlmap');
+  if (!map || !TL) return;
+  const model = TL.model;
+  TL = null;
+  const list = $('tllist'), lens = $('tllens'), wrap = $('tlwrap'), panel = $('tlpanel');
+  const visible = model.records.filter((r) => r.kind !== 'heartbeat');
+  const rows = Array.from(list.querySelectorAll('[data-t0]'));
+  // Time anchors for viewport math: records and fold pleats, never the
+  // sticky day headers (see syncView).
+  const anchors = rows.filter((el) => !el.classList.contains('tl-day'));
+  const nav = rows.filter((el) => el.classList.contains('tl-row'));
+  let layout = [];
+
+  function buildMap() {
+    const H = map.clientHeight;
+    if (!H) return;
+    layout = T.layoutSegments(model.segments, H);
+    let html = '';
+    for (const line of T.gridLines(layout, 22)) {
+      html += `<i class="tl-gline${line.major ? ' major' : ''}" style="top:${line.y.toFixed(1)}px"></i>`;
+    }
+    for (const s of layout) {
+      if (s.kind === 'fold') html += `<i class="tl-pleat" style="top:${s.y0.toFixed(1)}px;height:${(s.y1 - s.y0).toFixed(1)}px"></i>`;
+    }
+    // How many drawable strokes each bucket holds, counted BEFORE drawing so
+    // the "there is more here" bar is only drawn when something is actually
+    // hidden — `n === 4` alone marked the fifth stroke even in a bucket of
+    // exactly five, claiming a truncation that never happened.
+    const bucketKey = (r) => Math.floor(r.t0 / model.bucketS);
+    const bucketTotal = new Map();
+    for (const r of visible) {
+      if (r.kind === 'gap') continue; // gaps are never subject to the cap
+      const k = bucketKey(r);
+      bucketTotal.set(k, (bucketTotal.get(k) || 0) + 1);
+    }
+    const perBucket = new Map();
+    let tickIdx = 0;
+    for (const r of visible) {
+      const delay = Math.min(tickIdx * 8, 400);
+      // A declared gap is ALWAYS drawn. It is exempt from the density cap and
+      // from the per-bucket stacking: the whole design promises a blind spot
+      // can never be folded or crowded out of the picture, and the cap used
+      // to discard it on exactly the same terms as an ordinary event.
+      if (r.kind === 'gap') {
+        tickIdx += 1;
+        const h = Math.max(3, T.yOfTime(layout, r.t0 + r.size) - T.yOfTime(layout, r.t0));
+        html += `<i class="tl-tick tl-tickgap fam-gap" style="top:${T.yOfTime(layout, r.t0).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${delay}ms"></i>`;
+        continue;
+      }
+      const key = bucketKey(r);
+      const n = perBucket.get(key) || 0;
+      perBucket.set(key, n + 1);
+      if (n >= 5) continue; // a crowded bucket keeps its five densest strokes
+      tickIdx += 1;
+      // Same bucket, same y. The minimap's vertical axis IS time, so nudging
+      // a stacked stroke downward drew it at a time the record does not
+      // claim — at a typical scale a 3px stagger spans more than the bucket
+      // itself. Stack sideways instead, where the axis means nothing.
+      const y = T.yOfTime(layout, r.t0);
+      const over = n === 4 && (bucketTotal.get(key) || 0) > 5;
+      const w = over ? 46 : T.greekWidth(r.label);
+      const x = 8 + T.zoneIndent(model.zones, r.zone) + n * 2;
+      html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
+    }
+    html += '<i class="tl-view" id="tlview"></i>';
+    map.innerHTML = html;
+    syncView();
+  }
+
+  function syncView() {
+    const view = $('tlview');
+    if (!view || !layout.length) return;
+    // Measure against live rects, not offsetTop: a stuck `position:sticky`
+    // day header reports its PINNED offset, which silently stretched the
+    // viewport pane to the full minimap. Day headers are also excluded as
+    // time anchors — a header's t0 is midnight, which can sit outside the
+    // covered domain and clamp the pane to the top.
+    const lr = list.getBoundingClientRect();
+    let tA = null, tB = null;
+    for (const el of anchors) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > lr.top && tA === null) tA = +el.dataset.t0;
+      if (r.top < lr.bottom) tB = +(el.dataset.t1 || el.dataset.t0);
+    }
+    if (tA === null || tB === null) return;
+    const y0 = T.yOfTime(layout, tA);
+    const y1 = Math.max(T.yOfTime(layout, tB + model.bucketS), y0 + 16);
+    view.style.top = y0.toFixed(1) + 'px';
+    view.style.height = (y1 - y0).toFixed(1) + 'px';
+    const denom = Math.max(list.scrollHeight - list.clientHeight, 1);
+    map.setAttribute('aria-valuenow', String(Math.round(Math.min(Math.max(list.scrollTop / denom, 0), 1) * 100)));
+    // Name the day when the visible span crosses midnight — "12:20 to 06:10"
+    // reads as backwards to someone who only hears it.
+    const sameDay = Math.floor(tA / T.DAY_S) === Math.floor(tB / T.DAY_S);
+    const stamp = (t) => sameDay ? T.fmtHM(t) : T.fmtHM(t) + ' on ' + T.fmtDayLabel(Math.floor(t / T.DAY_S) * T.DAY_S);
+    map.setAttribute('aria-valuetext', stamp(tA) + ' to ' + stamp(tB) + ' UTC');
+  }
+
+  // Scroll offset that centers an element, measured from live rects so a
+  // stuck sticky header can never skew it.
+  function centerTop(el) {
+    const r = el.getBoundingClientRect(), lr = list.getBoundingClientRect();
+    return Math.max(list.scrollTop + (r.top - lr.top) - list.clientHeight / 2 + r.height / 2, 0);
+  }
+
+  function scrollToTime(t, smooth) {
+    let target = anchors[anchors.length - 1];
+    for (const el of anchors) { if (+el.dataset.t0 >= t) { target = el; break; } }
+    if (!target) return;
+    list.scrollTo({ top: centerTop(target), behavior: smooth && !REDUCED ? 'smooth' : 'auto' });
+  }
+
+  function yIn(e) {
+    const r = map.getBoundingClientRect();
+    return Math.min(Math.max(e.clientY - r.top, 0), r.height);
+  }
+
+  function showLens(e) {
+    const y = yIn(e);
+    const t = T.timeOfY(layout, y);
+    const seg = layout.find((s) => t >= s.t0 && t <= s.t1);
+    let html = '';
+    if (seg && seg.kind === 'fold') {
+      const beats = seg.heartbeats ? ` · ${seg.heartbeats} heartbeat${seg.heartbeats === 1 ? '' : 's'} sealed` : '';
+      html = `<div class="lh">${T.fmtHM(seg.t0)} → ${T.fmtHM(seg.t1)} UTC</div>`
+        + `<div>Quiet · ${esc(T.fmtDuration(seg.t1 - seg.t0))} — no events, no declared gaps${beats}</div>`;
+    } else {
+      const b0 = Math.floor(t / model.bucketS) * model.bucketS;
+      const recs = visible.filter((r) => r.t0 >= b0 && r.t0 < b0 + model.bucketS);
+      html = `<div class="lh">${esc(T.fmtBucketRange(b0, model.bucketS))} UTC</div>`;
+      if (!recs.length) html += `<div class="tl-det">Quiet bucket</div>`;
+      for (const r of recs.slice(0, 3)) {
+        html += `<div class="lr">${famDot(r.family)}<span>${esc(r.label)}</span>${r.zone ? `<span class="tl-det">${esc(r.zone)}</span>` : ''}</div>`;
+      }
+      if (recs.length > 3) html += `<div class="tl-det">+${recs.length - 3} more</div>`;
+    }
+    lens.innerHTML = html;
+    lens.hidden = false;
+    const wr = wrap.getBoundingClientRect(), mr = map.getBoundingClientRect();
+    lens.style.top = Math.min(Math.max(mr.top - wr.top + y - 14, 0), Math.max(wr.height - 64, 0)) + 'px';
+  }
+
+  let dragging = false;
+  map.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    dragging = true;
+    try { map.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+    scrollToTime(T.timeOfY(layout, yIn(e)), false);
+    showLens(e);
+    e.preventDefault();
+  });
+  map.addEventListener('pointermove', (e) => {
+    if (dragging) scrollToTime(T.timeOfY(layout, yIn(e)), false);
+    showLens(e);
+  });
+  map.addEventListener('pointerup', () => { dragging = false; });
+  map.addEventListener('pointercancel', () => { dragging = false; });
+  map.addEventListener('pointerleave', () => { if (!dragging) lens.hidden = true; });
+
+  // Wheel and trackpad scroll the reading pane from over the minimap, so the
+  // two panes never disagree about which gesture does what.
+  map.addEventListener('wheel', (e) => {
+    // All three delta modes: pixels (0), lines (1), and pages (2). A system
+    // set to "scroll one screen at a time" reports ±1 in page mode, which as
+    // raw pixels moved the pane one pixel per notch and read as frozen.
+    const px = e.deltaMode === 1 ? e.deltaY * 16
+      : e.deltaMode === 2 ? e.deltaY * list.clientHeight
+      : e.deltaY;
+    list.scrollTop += px;
+    e.preventDefault();
+  }, { passive: false });
+
+  const say = $('tlsay');
+  let cur = -1;
+  function goto(i) {
+    if (!nav.length) return;
+    cur = Math.min(Math.max(i, 0), nav.length - 1);
+    const el = nav[cur];
+    list.scrollTo({ top: centerTop(el), behavior: REDUCED ? 'auto' : 'smooth' });
+    el.classList.remove('tl-flash');
+    void el.offsetWidth;
+    el.classList.add('tl-flash');
+    // Keyboard and remote users get the row read out; the minimap itself is
+    // a picture, so without this the caret would move in silence.
+    if (say) say.textContent = (el.textContent || '').replace(/\s+/g, ' ').trim()
+      + ' · record ' + (cur + 1) + ' of ' + nav.length;
+  }
+  // The caret is only moved by goto(), so every OTHER way of moving —
+  // dragging the minimap, the wheel, a day strip, scrolling the pane itself —
+  // left it pointing wherever it last was. The first arrow press then threw
+  // the reader back to record 1 of a thirty-day log, and the live region
+  // announced that wrong position out loud. So before acting on a key, if the
+  // caret is no longer on screen, re-seat it at the edge of what IS on screen,
+  // in the direction of travel.
+  function caretOnScreen() {
+    if (cur < 0 || !nav[cur]) return false;
+    const r = nav[cur].getBoundingClientRect(), lr = list.getBoundingClientRect();
+    return r.bottom > lr.top && r.top < lr.bottom;
+  }
+  function reseatCaret(direction) {
+    if (caretOnScreen()) return;
+    const lr = list.getBoundingClientRect();
+    let first = -1, last = -1;
+    for (let i = 0; i < nav.length; i++) {
+      const r = nav[i].getBoundingClientRect();
+      if (r.bottom > lr.top && r.top < lr.bottom) { if (first < 0) first = i; last = i; }
+    }
+    // One step short of the visible edge, so the press itself lands on the
+    // first row the reader can actually see.
+    if (first >= 0) cur = direction > 0 ? first - 1 : last + 1;
+  }
+
+  map.addEventListener('keydown', (e) => {
+    const k = e.key;
+    if (!nav.length) return;
+    if (k === 'ArrowDown' || k === 'ArrowRight') { reseatCaret(1); goto(cur + 1); }
+    else if (k === 'ArrowUp' || k === 'ArrowLeft') { reseatCaret(-1); goto(cur - 1); }
+    else if (k === 'Home') goto(0);
+    else if (k === 'End') goto(nav.length - 1);
+    else if (k === 'PageDown' || k === 'PageUp') {
+      const down = k === 'PageDown';
+      reseatCaret(down ? 1 : -1);
+      const at = +nav[Math.min(Math.max(cur, 0), nav.length - 1)].dataset.t0;
+      const want = down ? at + 3600 : at - 3600;
+      let best = down ? nav.length - 1 : 0;
+      for (let i = 0; i < nav.length; i++) { if (+nav[i].dataset.t0 >= want) { best = i; break; } }
+      goto(best);
+    } else return;
+    e.preventDefault();
+  });
+
+  for (const chip of panel.querySelectorAll('.tl-chip')) {
+    chip.addEventListener('click', () => {
+      const fam = chip.dataset.fam;
+      const wasOn = panel.dataset.spot === fam;
+      panel.querySelectorAll('.tl-chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+      if (wasOn) delete panel.dataset.spot;
+      else { panel.dataset.spot = fam; chip.setAttribute('aria-pressed', 'true'); }
+    });
+  }
+
+  for (const strip of panel.querySelectorAll('.tl-strip')) {
+    const dayT0 = +strip.dataset.day;
+    // Snap to the bucket grid here too — the strip may not offer a position
+    // the record cannot justify.
+    const goTo = (minuteOfDay, smooth) => {
+      const clamped = Math.min(Math.max(minuteOfDay, 0), 1439);
+      const t = dayT0 + Math.floor((clamped * 60) / model.bucketS) * model.bucketS;
+      // Expose the SNAPPED minute, not the raw one: a slider whose value
+      // says 14:49 while its text says 14:40 lies to whichever of the two an
+      // assistive tool happens to read.
+      strip.setAttribute('aria-valuenow', String(Math.floor((t - dayT0) / 60)));
+      strip.setAttribute('aria-valuetext', T.fmtHM(t) + ' UTC');
+      scrollToTime(t, smooth);
+    };
+    strip.addEventListener('click', (e) => {
+      const r = strip.getBoundingClientRect();
+      const frac = Math.min(Math.max((e.clientX - r.left) / Math.max(r.width, 1), 0), 1);
+      goTo(Math.round(frac * 1439), true);
+    });
+    strip.addEventListener('keydown', (e) => {
+      const now = +(strip.getAttribute('aria-valuenow') || 0);
+      const step = e.shiftKey ? 180 : 60; // an hour, or three with Shift
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') goTo(now + step, true);
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') goTo(now - step, true);
+      else if (e.key === 'Home') goTo(0, true);
+      else if (e.key === 'End') goTo(1439, true);
+      else if (e.key === 'Enter' || e.key === ' ') goTo(now, true);
+      else return;
+      e.preventDefault();
+    });
+  }
+
+  let raf = 0;
+  list.addEventListener('scroll', () => {
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; syncView(); });
+  });
+
+  // Tear down the PREVIOUS timeline's watcher before wiring this one. Each
+  // observer closure retains that run's whole record set and its detached
+  // rows, so verifying a dozen bundles in one sitting used to keep every one
+  // of them alive — and on engines without ResizeObserver, left a live
+  // window listener behind for each.
+  if (tlWatcher) { tlWatcher(); tlWatcher = null; }
+  let rto = 0;
+  const onResize = () => { clearTimeout(rto); rto = setTimeout(buildMap, 120); };
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(onResize);
+    ro.observe(map);
+    tlWatcher = () => { clearTimeout(rto); ro.disconnect(); };
+  } else {
+    window.addEventListener('resize', onResize);
+    tlWatcher = () => { clearTimeout(rto); window.removeEventListener('resize', onResize); };
+  }
+
+  buildMap();
 }
 
 function renderBad(msg, detail) {
@@ -2755,8 +3951,13 @@ function renderBad(msg, detail) {
 
 // Wire up buttons that live inside freshly-rendered results.
 function wire() {
+  initTimeline();
   const again = $('again');
-  if (again) again.addEventListener('click', () => { out.innerHTML = ''; window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  if (again) again.addEventListener('click', () => {
+    if (tlWatcher) { tlWatcher(); tlWatcher = null; }
+    out.innerHTML = '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
   const printBtn = $('print');
   if (printBtn) printBtn.addEventListener('click', () => window.print());
   const copy = $('copyfp');
