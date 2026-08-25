@@ -93,9 +93,19 @@ enum WitnessEvent: String, CaseIterable, Codable, Sendable {
 
 /// The dialect a Canary's own /api/v1/witness serves today (see
 /// canary-vision/docs/api.md and const.py's coarse mapping), plus the
-/// acoustic dialect the mic-bearing devices emit through the event
-/// chokepoint. Not dictionary-governed; kept as an explicit list so its
-/// meanings are chosen, not guessed.
+/// acoustic, wellbeing, and vault dialects the devices emit through the
+/// event chokepoint. Not dictionary-governed, DELIBERATELY: the witness
+/// dictionary's event_types enumerate the KERNEL's semantic vocabulary —
+/// its own $comment names the Rust `EventType` enum (src/lib.rs) as the
+/// source of truth — and none of these device wire names (person_detected
+/// included, since the beginning) belong to that vocabulary. Registering
+/// them there would claim kernel variants that don't exist and break every
+/// mirror lint_dictionary_sync.py pins. The device dialect's own sync gate
+/// is the on-disk firmware parity test
+/// (testChokepointDialectsMirrorTheFirmwareTypeNamesOnDisk), which reads
+/// each chokepoint module's type_name table so a renamed or added event
+/// fails a test instead of falling to the unknown-event fallback. Kept as
+/// an explicit list so its meanings are chosen, not guessed.
 enum DeviceEvent: String, CaseIterable, Codable, Sendable {
     case personDetected = "person_detected"
     case vehicleDetected = "vehicle_detected"

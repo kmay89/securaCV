@@ -20,6 +20,12 @@ final class SenseModalityTests: XCTestCase {
         XCTAssertEqual(SenseModality(publishedType: "canary-sense"), .radar)
         XCTAssertEqual(SenseModality(publishedType: "canary-wap"), .wifiCSI)
         XCTAssertEqual(SenseModality(publishedType: "canary-contact"), .contact)
+        // Both spellings have shipped in firmware configs — the same reason
+        // const.py grew canonical_device_type(). An underscore, case, or
+        // stray whitespace must never cost a device its Senses row.
+        XCTAssertEqual(SenseModality(publishedType: "canary_sense"), .radar)
+        XCTAssertEqual(SenseModality(publishedType: " Canary-Vision "), .camera)
+        XCTAssertEqual(SenseModality(publishedType: "CANARY_WAP"), .wifiCSI)
         // No glyph, never a guess — the const.py precedent. Displays watch
         // the fleet; they don't sense, and the row must not invent a sense.
         XCTAssertNil(SenseModality(publishedType: "canary-display"))

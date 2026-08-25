@@ -32,11 +32,20 @@ enum SenseModality: String, Codable, Hashable, Sendable {
     case contact = "contact"
 
     /// From the type string a device publishes about itself (`/api/fleet`
-    /// "product", mDNS TXT `dt` — `Witness.publishedType`). Returns nil
-    /// for anything unmapped: a device whose senses we can't name gets no
-    /// glyph, never a guess (the const.py precedent).
+    /// "product", mDNS TXT `dt` — `Witness.publishedType`). Firmware
+    /// configs have shipped BOTH "canary-sense" and "canary_sense"
+    /// spellings, so the match runs on the same canonical form const.py's
+    /// `canonical_device_type()` uses: trimmed, lowercased, underscores to
+    /// hyphens — a Sense that spells itself with an underscore must not
+    /// lose its senses to a dash. Returns nil for anything unmapped: a
+    /// device whose senses we can't name gets no glyph, never a guess
+    /// (the const.py precedent).
     init?(publishedType: String?) {
-        switch publishedType {
+        guard let raw = publishedType else { return nil }
+        let canonical = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        switch canonical {
         case "canary-vision": self = .camera
         case "canary-sense": self = .radar
         case "canary-wap": self = .wifiCSI
