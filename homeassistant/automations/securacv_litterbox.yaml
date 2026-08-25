@@ -112,6 +112,14 @@
         {% set lt = state_attr('automation.securacv_litter_box_visit_completed',
                                'last_triggered') %}
         {{ lt is not none and (now() - lt).total_seconds() > 24 * 3600 }}
+    # Latch: the hourly trigger stays true for as long as the absence lasts,
+    # so without this the alert would page every hour. Fire once per overdue
+    # episode, then at most once every 24 h while it persists ("this" is
+    # this automation — its own last_triggered is the latch).
+    - condition: template
+      value_template: >
+        {% set mine = this.attributes.last_triggered %}
+        {{ mine is none or (now() - mine).total_seconds() > 24 * 3600 }}
 
   action:
     - service: notify.mobile_app_your_phone

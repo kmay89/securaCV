@@ -59,9 +59,21 @@ void load() {
       DETECT_DWELL_MS_LO, DETECT_DWELL_MS_HI);
   // An id from a newer firmware's larger table degrades to the default
   // profile rather than indexing past WATCH_PROFILES (watch_profile() also
-  // guards every read).
+  // guards every read). Degrade COHERENTLY: the NVS tuning values belong to
+  // the unknown profile, so keep them and the device would report
+  // room_presence (and advertise the person beacon class) while still tuned
+  // for — and detecting — some other subject. Fall back to the default
+  // profile's full preset instead; RAM-only, so an OTA back to the newer
+  // firmware finds its own values untouched in NVS.
   g_det.profile = prefs.getUChar("det_profile", g_det.profile);
-  if (g_det.profile >= WATCH_PROFILE_COUNT) g_det.profile = 0;
+  if (g_det.profile >= WATCH_PROFILE_COUNT) {
+    g_det.profile = 0;
+    const WatchProfilePreset& p = watch_profile(0);
+    g_det.person_target   = p.target;
+    g_det.score_min       = p.score_min;
+    g_det.lost_timeout_ms = p.lost_timeout_ms;
+    g_det.dwell_start_ms  = p.dwell_start_ms;
+  }
 
   prefs.end();
   g_det_loaded = true;
