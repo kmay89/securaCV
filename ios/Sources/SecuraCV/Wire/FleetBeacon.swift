@@ -94,7 +94,9 @@ struct FleetBeacon: Hashable, Sendable {
     /// with no optical pipeline never claims a detection.
     var detectClass: UInt8 = 0x00
     /// Detection confidence 0..100 (v2 byte [12]); nil when the wire carried
-    /// the 0xFF unknown sentinel, or on a v1 beacon.
+    /// the 0xFF unknown sentinel, ANY out-of-range byte (the contract is
+    /// 0..100 — a malformed or spoofed advert must not become "Person ·
+    /// 254%" on a screen), or on a v1 beacon.
     var detectScore: Int? = nil
 
     var tamper: Bool     { flags & Self.flagTamper    != 0 }
@@ -148,7 +150,10 @@ struct FleetBeacon: Hashable, Sendable {
             fpB0: b[9],
             fpB1: b[10],
             detectClass: isV2 ? b[11] : detectNone,
-            detectScore: isV2 && b[12] != scoreUnknown ? Int(b[12]) : nil
+            // 0..100 or nothing: 0xFF is the declared unknown sentinel, and
+            // 101..254 is a malformed advert — both read as "unscored"
+            // rather than letting an impossible percentage reach a screen.
+            detectScore: isV2 && b[12] <= 100 ? Int(b[12]) : nil
         )
     }
 

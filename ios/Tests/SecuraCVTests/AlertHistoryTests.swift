@@ -266,6 +266,29 @@ final class AlertHistoryTests: XCTestCase {
                        "glancing at a live alarm does not acknowledge it")
     }
 
+    /// The device-detail door: reading one Canary's history on its own
+    /// screen stamps only that Canary's rows. "Seen" may not claim more
+    /// than the eyes did — the rest of the fleet's dots and badge share
+    /// must survive.
+    func testDeviceDetailSeenIsScopedToOneWitness() throws {
+        let (ledger, defaults, suite) = try freshLedger()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        ledger.note(id: "canary-a|3|Gone dark", witnessID: "canary-a",
+                    name: "Porch", severity: .alert, headline: "Gone dark")
+        ledger.note(id: "canary-b|3|Gone dark", witnessID: "canary-b",
+                    name: "Shed", severity: .alert, headline: "Gone dark")
+        XCTAssertEqual(ledger.unseenCount, 2)
+
+        ledger.markSeen(witnessID: "canary-a")
+        XCTAssertEqual(ledger.unseenCount, 1,
+                       "one Canary's screen clears one Canary's dots")
+        XCTAssertEqual(ledger.records.first { $0.witnessID == "canary-b" }?.isUnseen, true,
+                       "the other Canary's missed row keeps its dot")
+        XCTAssertEqual(ledger.records.first { $0.witnessID == "canary-a" }?.handling, .new,
+                       "scoped seen is still seen-not-handled")
+    }
+
     func testTheSweepTakesOnlySeenAndSettledHistory() throws {
         let (ledger, defaults, suite) = try freshLedger()
         defer { defaults.removePersistentDomain(forName: suite) }

@@ -263,6 +263,11 @@ struct DeviceDetailView: View {
         }
         .navigationTitle(witness.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        // Leaving the screen is "I've looked" for THIS Canary's rows — the
+        // same on-the-way-out stamp the Alerts tab uses, scoped: reading
+        // history here must clear this Canary's unseen dots and its share
+        // of the app badge, and nobody else's.
+        .onDisappear { store.markAlertsSeen(for: witness.id) }
         }
     }
 

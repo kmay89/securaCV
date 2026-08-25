@@ -76,7 +76,7 @@ enum EcosystemMap {
             id: "witness-wall",
             name: "The Witness Wall",
             sfSymbol: "tv",
-            job: "Your fleet's verified record on the TV — a calm status wall, never a wall of video. An Apple TV that stands watch can also post away wakes while you're out.",
+            job: "Your fleet's record on the TV — a calm status wall, never a wall of video. An Apple TV that stands watch can also post away wakes while you're out.",
             availability: "Built and tested; App Store availability pending. Try it in the Lab today.",
             url: URL(string: repo + "/blob/main/tvos/RUN_ON_APPLE_TV.md")!),
         EcosystemSurface(

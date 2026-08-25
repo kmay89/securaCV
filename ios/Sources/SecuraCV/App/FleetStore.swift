@@ -899,6 +899,15 @@ final class FleetStore: ObservableObject {
         syncBadge()
     }
 
+    /// The device-detail door: reading one Canary's history on its own
+    /// screen clears that Canary's dots and its share of the badge — and
+    /// nobody else's, because only its rows were on screen. Same
+    /// seen-not-handled semantics as the tab.
+    func markAlertsSeen(for witnessID: String) {
+        alertLog.markSeen(witnessID: witnessID)
+        syncBadge()
+    }
+
     /// "Clear history" — settled rows only (the ledger keeps anything that
     /// still needs a human), and the badge is retold the truth immediately.
     func clearAlertHistory() {

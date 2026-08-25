@@ -70,15 +70,20 @@ enum FleetMerge {
         // Fill gaps; never replace a value a stronger tier already established.
         if w.batteryPct == nil { w.batteryPct = b.batteryPct }
 
-        // What the sender's pipeline sees RIGHT NOW (v2 beacons only). Live
-        // state, not a gap-fill: the beacon is the only transport that
-        // carries it, so a fresher sighting replaces an older claim. Only
-        // positive claims fold — a "none" is indistinguishable from a v1
-        // beacon on the wire, so clearing is time's job: readers age the
-        // claim out through `Witness.seeingNow` rather than trusting
-        // silence. No trust is involved (rule 1 untouched): this is a
-        // present-tense observation, never a badge.
-        if let seen = SeenClass(beaconClass: b.detectClass) {
+        // What the sender's pipeline sees RIGHT NOW (v2 beacons only) —
+        // folded ONLY into the beacon's own row. A two-byte fingerprint
+        // suffix may decorate a paired Canary with coarse liveness (the
+        // attach() contract below), but it is a hint, never an identity:
+        // attributing a semantic claim ("seeing a person") to a named,
+        // trusted device on two spoofable bytes would let any nearby sender
+        // put words in a paired Canary's mouth. So the claim stays on the
+        // row that IS the beacon. It is live state, not a gap-fill: a
+        // fresher sighting replaces an older claim. And only positive
+        // claims fold — a "none" is indistinguishable from a v1 beacon on
+        // the wire, so clearing is time's job: readers age the claim out
+        // through `Witness.seeingNow` rather than trusting silence.
+        if w.id == sighting.provisionalID,
+           let seen = SeenClass(beaconClass: b.detectClass) {
             w.seeingClass = seen
             w.seeingScore = b.detectScore
             w.seeingAt = sighting.lastHeard

@@ -139,43 +139,65 @@ final class FleetMergeTests: XCTestCase {
                               peripheralID: id, localName: nil)
     }
 
-    func testV2DetectionFoldsAsLiveSeeingState() {
+    func testV2DetectionFoldsAsLiveSeeingStateOnTheBeaconsOwnRow() {
         let heard = Date()
-        var w = Witness(id: "a")
-        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectPerson, score: 87, at: heard),
-                        into: &w)
+        let id = UUID()
+        let first = v2Sighting(detectClass: FleetBeacon.detectPerson, score: 87, at: heard, id: id)
+        var w = Witness(id: first.provisionalID)
+        FleetMerge.fold(first, into: &w)
         XCTAssertEqual(w.seeingClass, .person)
         XCTAssertEqual(w.seeingScore, 87)
         XCTAssertEqual(w.seeingAt, heard)
 
         // A fresher claim replaces an older one — this is live state, the
         // sender is the only authority, not a fill-the-gap field.
-        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectVehicle, score: nil), into: &w)
+        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectVehicle, score: nil, id: id),
+                        into: &w)
         XCTAssertEqual(w.seeingClass, .vehicle)
         XCTAssertNil(w.seeingScore, "an unscored claim must not inherit the old score")
+    }
+
+    /// The two-byte suffix that lets a beacon decorate a paired Canary with
+    /// liveness must NOT let it put a detection claim in that Canary's
+    /// mouth — the suffix is observable and spoofable, and "your own device
+    /// says it is seeing a person" is a semantic claim, not a heartbeat.
+    func testSeeingClaimNeverAttachesToAPairedCanaryBySuffix() {
+        var fleet = [Witness(id: "canary-a3f7")]
+        fleet[0].fingerprint = "0011223344556677889900aabbccabcd"
+        FleetMerge.attach([v2Sighting(detectClass: FleetBeacon.detectPerson, score: 91)],
+                          to: &fleet)
+
+        XCTAssertEqual(fleet.count, 1, "the suffix match still decorates, not duplicates")
+        XCTAssertTrue(fleet[0].seenViaBLE, "coarse liveness still folds — that contract stands")
+        XCTAssertNil(fleet[0].seeingClass,
+                     "a semantic claim must stay off a row matched by two spoofable bytes")
     }
 
     func testSilenceNeverClearsSeeingStateOnFold() {
         // A v1 beacon (and a v2 "none") carry no claim — neither may clear
         // one. Clearing is time's job, through Witness.seeingNow.
-        var w = Witness(id: "a")
-        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectPackage, score: 60), into: &w)
-        FleetMerge.fold(sighting(), into: &w)                                   // v1
-        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectNone, score: nil), into: &w)
+        let id = UUID()
+        let first = v2Sighting(detectClass: FleetBeacon.detectPackage, score: 60, id: id)
+        var w = Witness(id: first.provisionalID)
+        FleetMerge.fold(first, into: &w)
+        FleetMerge.fold(sighting(id: id), into: &w)                             // v1
+        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectNone, score: nil, id: id),
+                        into: &w)
         XCTAssertEqual(w.seeingClass, .package, "silence on the wire is not evidence the seeing ended")
     }
 
     func testUnknownFutureDetectionClassFoldsNothing() {
-        var w = Witness(id: "a")
-        FleetMerge.fold(v2Sighting(detectClass: 0x7F, score: 50), into: &w)
+        let s = v2Sighting(detectClass: 0x7F, score: 50)
+        var w = Witness(id: s.provisionalID)
+        FleetMerge.fold(s, into: &w)
         XCTAssertNil(w.seeingClass, "a class this build has never heard of renders as nothing, not a guess")
     }
 
     func testSeeingNowAgesOutInsteadOfGoingStale() {
         let heard = Date()
-        var w = Witness(id: "a")
-        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectAnimal, score: 42, at: heard),
-                        into: &w)
+        let s = v2Sighting(detectClass: FleetBeacon.detectAnimal, score: 42, at: heard)
+        var w = Witness(id: s.provisionalID)
+        FleetMerge.fold(s, into: &w)
 
         let fresh = w.seeingNow(asOf: heard.addingTimeInterval(Witness.seeingFreshness - 1))
         XCTAssertEqual(fresh?.kind, .animal)
@@ -183,6 +205,20 @@ final class FleetMergeTests: XCTestCase {
 
         XCTAssertNil(w.seeingNow(asOf: heard.addingTimeInterval(Witness.seeingFreshness + 1)),
                      #"a quiet beacon must read as silence, never a stale "Seeing animal""#)
+    }
+
+    /// The wire contract says 0..100; a malformed or spoofed advert must not
+    /// become "Person · 254%" on a screen. Out-of-range reads as unscored.
+    func testMalformedDetectionScoreReadsAsUnscored() {
+        var bytes = [UInt8](FleetBeacon.encodeV2(
+            flags: 0, batteryPct: nil, healthPct: nil, chainHeight: 0,
+            fpB0: 0xAB, fpB1: 0xCD,
+            detectClass: FleetBeacon.detectPerson, detectScore: 50))
+        bytes[12] = 254                                    // out of contract, not the 0xFF sentinel
+        let beacon = FleetBeacon.parse(manufacturerData: Data(bytes))
+        XCTAssertNotNil(beacon, "an out-of-range score is a bad field, not a bad beacon")
+        XCTAssertEqual(beacon?.detectClass, FleetBeacon.detectPerson)
+        XCTAssertNil(beacon?.detectScore, "101..254 must read as unscored")
     }
 
     // ── attach(): matching heard beacons to known Canaries ──
