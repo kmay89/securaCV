@@ -31,6 +31,7 @@ void load() {
   g_det.score_min       = (uint8_t)SCORE_MIN;
   g_det.lost_timeout_ms = LOST_TIMEOUT_MS;
   g_det.dwell_start_ms  = DWELL_START_MS;
+  g_det.profile         = 0;  // WATCH_PROFILES[0] = room_presence
 
   // Read-only open avoids write-locking on the hot boot path — but it
   // fails on a factory-fresh unit where the namespace doesn't exist yet
@@ -56,6 +57,11 @@ void load() {
   g_det.dwell_start_ms = clamp_val<uint32_t>(
       prefs.getULong("det_dwell", g_det.dwell_start_ms),
       DETECT_DWELL_MS_LO, DETECT_DWELL_MS_HI);
+  // An id from a newer firmware's larger table degrades to the default
+  // profile rather than indexing past WATCH_PROFILES (watch_profile() also
+  // guards every read).
+  g_det.profile = prefs.getUChar("det_profile", g_det.profile);
+  if (g_det.profile >= WATCH_PROFILE_COUNT) g_det.profile = 0;
 
   prefs.end();
   g_det_loaded = true;
@@ -119,6 +125,29 @@ bool detect_set_dwell_start_ms(uint32_t v) {
   g_det.dwell_start_ms = v;
   persist_ulong("det_dwell", v);
   return true;
+}
+
+bool detect_set_profile(uint8_t v) {
+  load();
+  // Reject unknown ids untouched — junk on the wire must never reset tuning.
+  if (v >= WATCH_PROFILE_COUNT) return false;
+
+  bool changed = false;
+  if (g_det.profile != v) {
+    g_det.profile = v;
+    persist_uchar("det_profile", v);
+    changed = true;
+  }
+
+  // Applying (or re-applying) a profile is the one-step preset: the four
+  // settings jump to the profile's recommended values, each persisting via
+  // its own setter so a later individual tweak works exactly as before.
+  const WatchProfilePreset& p = watch_profile(v);
+  changed |= detect_set_person_target(p.target);
+  changed |= detect_set_score_min(p.score_min);
+  changed |= detect_set_lost_timeout_ms(p.lost_timeout_ms);
+  changed |= detect_set_dwell_start_ms(p.dwell_start_ms);
+  return changed;
 }
 
 } // namespace canary::cfg

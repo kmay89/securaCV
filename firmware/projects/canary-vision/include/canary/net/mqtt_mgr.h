@@ -65,5 +65,6 @@ namespace canary::net {
   long take_pending_cfg_score();   // -1 none; else 0..100
   long take_pending_cfg_lost();    // -1 none; else ms
   long take_pending_cfg_dwell();   // -1 none; else ms
+  long take_pending_cfg_profile(); // -1 none; else watch profile id
 
 } // namespace

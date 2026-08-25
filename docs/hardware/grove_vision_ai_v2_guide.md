@@ -157,7 +157,10 @@ and host reflashes** — you do not repeat this when you update canary-vision.
 4. Click **Connect** (top left) and pick the module's serial port
    (shows as **USB Single Serial** / CH343).
 5. Click **Select Model** and pick the model. For canary-vision use
-   **Person Detection**.
+   **Person Detection** (the room-presence default). For a litter-box
+   witness pick a **cat / animal detection** model instead — the host
+   firmware adapts at runtime via the litter_box watch profile (§9), no
+   rebuild.
 6. Wait 1–2 minutes for the upload. **Stay on the tab** — backgrounding it
    can abort the transfer.
 7. Verify in the live **Preview** pane that detections appear, and note two
@@ -166,8 +169,10 @@ and host reflashes** — you do not repeat this when you update canary-vision.
      applies its own threshold too (`SCORE_MIN` in `config.h`, default 70).
    - **IoU** — box-overlap threshold for de-duplication.
 8. Check the model's **class list** in the workspace. canary-vision assumes
-   "person" is **class 0** (`PERSON_TARGET` in `config.h`). If you load a
-   different model, update that constant to the matching class index.
+   the subject is **class 0** (`PERSON_TARGET` in `config.h` seeds the first
+   boot). If your model numbers its classes differently, set the **class
+   index** at runtime — the device's "Person class index" number entity in
+   Home Assistant (or `securacv/<id>/cfg/target/set`) — no rebuild needed.
 9. Disconnect. Done — the module now runs this model autonomously on boot.
 
 > **Heads-up:** while a computer is connected to the module's USB port doing
@@ -300,7 +305,65 @@ our events go through the host firmware's local MQTT instead).
 
 ---
 
-## 9. Vendor resources
+## 9. Watch profiles (room presence · litter box)
+
+One firmware, several jobs. The host firmware ships **watch profiles** —
+per-use-case tuning presets selected at runtime from Home Assistant (the
+device's **Watch profile** select) or over MQTT
+(`securacv/<id>/cfg/profile/set`, key or label):
+
+| Profile | Model to load (§4) | Preset (score / lost / dwell) | Beacon class |
+|---|---|---|---|
+| `room_presence` (default) | Person Detection | 70 % / 1500 ms / 10000 ms | person |
+| `litter_box` | a cat / animal detection model | 60 % / 4000 ms / 8000 ms | animal |
+
+Selecting a profile applies its preset to the four runtime detection
+settings in one step; each stays individually tunable afterward, and
+re-selecting the profile restores the preset. The presets live in
+`firmware/projects/canary-vision/include/canary/detect_profiles.h`, with a
+host test pinning them inside the tunable bounds.
+
+**What a profile does NOT change:** the event vocabulary
+(`presence_started` / `dwell_started` / `dwell_ended` / `presence_ended` /
+`interaction_likely`), the signed witness envelope, and the privacy posture
+are identical across profiles — a litter-box visit is the same
+presence→dwell→leave shape a room walk-through is, read against a
+different subject. No new claim types (Invariant VI), no pixels on the
+wire either way.
+
+### Litter box setup, end to end
+
+1. Load a cat/animal detection model on the module (§4 — the module's own
+   USB-C port, one time).
+2. Flash/keep the normal canary-vision host firmware (§6) and let it join
+   your broker.
+3. In HA, set **Watch profile → Litter box**, then set the class index to
+   the model's cat class (single-class models are usually `0`).
+4. Placement: litter boxes live in already-lit spaces, so no low-light
+   heroics are needed — mount with the whole box in frame from 0.5–2 m,
+   aim **across** the box rather than into a lamp or window, and use the
+   Aim card to verify the box fills a known voxel cell.
+5. Install the litter recipes:
+   [`homeassistant/automations/securacv_litterbox.yaml`](../../homeassistant/automations/securacv_litterbox.yaml)
+   (visit-completed notification + a no-visit-in-24h wellness alert) and
+   [`homeassistant/lovelace/securacv-litterbox-dashboard.yaml`](../../homeassistant/lovelace/securacv-litterbox-dashboard.yaml).
+
+How the events read for a litter box: `presence_started` = cat arrived,
+`dwell_started` = a real visit (stayed past 8 s, not a walk-by sniff),
+`interaction_likely` (reason `dwell_then_left` or
+`zone_interaction_then_left`) = **visit completed**, `presence_ended` =
+cat gone. The lost timeout is deliberately long because a digging cat
+drops detection frames constantly — a short timeout fragments one visit
+into five.
+
+For a room-presence witness nothing changes: the default profile is the
+firmware you already know, and the existing
+`securacv_vision_presence.yaml` automations now skip events published by a
+litter_box-profile device so both can share a broker without cross-firing.
+
+---
+
+## 10. Vendor resources
 
 - [Product wiki](https://wiki.seeedstudio.com/grove_vision_ai_v2/) ·
   [XIAO demo projects](https://wiki.seeedstudio.com/grove_vision_ai_v2_demo/) ·

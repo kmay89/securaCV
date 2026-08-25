@@ -166,6 +166,16 @@ VISION_PIPE_HDR = $(VISION_INC)/canary/vision/detection_pipeline.h \
                   $(VISION_INC)/canary/types.h
 VISION_PIPE_BIN = $(BUILD_DIR)/test_vision_detection_pipeline
 
+# Canary Vision watch profiles (detect_profiles.h): the per-use-case preset
+# table behind HA's "Watch profile" select — room presence vs litter box.
+# Pins preset-within-bounds, key/label uniqueness, exact-text lookup, the
+# out-of-range fallback, and that each profile's fleet-beacon class token is
+# a defined ObjectClass value (cross-checked against fleet_beacon.h).
+VISPROF_HDR = $(VISION_INC)/canary/detect_profiles.h \
+              $(VISION_INC)/canary/detect_config.h \
+              ../common/fleet_link/fleet_beacon.h
+VISPROF_BIN = $(BUILD_DIR)/test_vision_profiles
+
 # Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
 # board-agnostic evidence-fusion engine compiled by projects/canary-sentinel on
 # device and here on the host. Pins the anti-evasion scoring (independence
@@ -315,6 +325,9 @@ $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 $(VISION_PIPE_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_detection_pipeline.cpp -o $@
 
+$(VISPROF_BIN): test_vision_profiles.cpp $(VISPROF_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) -I ../common/fleet_link test_vision_profiles.cpp -o $@
+
 $(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@
 
@@ -345,7 +358,7 @@ $(CALMATH_BIN): test_calendar_math.cpp $(CALMATH_HDR) Makefile | $(BUILD_DIR)
 $(WXCORE_BIN): test_wx_core.cpp $(WXCORE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../projects/canary-display/include test_wx_core.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -364,6 +377,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(BIRTHDAY_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
+	./$(VISPROF_BIN)
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)

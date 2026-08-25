@@ -252,6 +252,7 @@ static void publish_event_json(
       "{"
         "\"device_id\":\"%s\","
         "\"device_type\":\"%s\","
+        "\"profile\":\"%s\","
         "\"event\":\"%s\","
         "\"reason\":\"%s\","
         "\"seq\":%lu,"
@@ -263,6 +264,7 @@ static void publish_event_json(
         "\"ts_ms\":%lu,"
         "\"presence_ms\":%lu,"
         "\"dwell_ms\":%lu,"
+        "\"visit_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
@@ -273,6 +275,7 @@ static void publish_event_json(
         "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
+      canary::cfg::watch_profile(canary::cfg::detect().profile).key,
       event_name, reason,
       (unsigned long)seq,
       (unsigned long)bucket_uptime_s,
@@ -281,6 +284,7 @@ static void publish_event_json(
       (unsigned long)now_ms,
       (unsigned long)snap.presence_ms,
       (unsigned long)snap.dwell_ms,
+      (unsigned long)snap.visit_ms,
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
@@ -295,6 +299,7 @@ static void publish_event_json(
       "{"
         "\"device_id\":\"%s\","
         "\"device_type\":\"%s\","
+        "\"profile\":\"%s\","
         "\"event\":\"%s\","
         "\"seq\":%lu,"
         "\"bucket_uptime_s\":%lu,"
@@ -305,6 +310,7 @@ static void publish_event_json(
         "\"ts_ms\":%lu,"
         "\"presence_ms\":%lu,"
         "\"dwell_ms\":%lu,"
+        "\"visit_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
@@ -315,6 +321,7 @@ static void publish_event_json(
         "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
+      canary::cfg::watch_profile(canary::cfg::detect().profile).key,
       event_name,
       (unsigned long)seq,
       (unsigned long)bucket_uptime_s,
@@ -323,6 +330,7 @@ static void publish_event_json(
       (unsigned long)now_ms,
       (unsigned long)snap.presence_ms,
       (unsigned long)snap.dwell_ms,
+      (unsigned long)snap.visit_ms,
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
@@ -451,6 +459,12 @@ static void drain_detect_cfg_commands() {
   bool any_cmd = false;
   long v;
 
+  // Profile first: selecting one applies its preset to the four settings
+  // below, so a same-loop individual tweak still wins over the preset.
+  if ((v = canary::net::take_pending_cfg_profile()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::detect_set_profile((uint8_t)v);
+  }
   if ((v = canary::net::take_pending_cfg_target()) >= 0) {
     any_cmd = true;
     changed |= canary::cfg::detect_set_person_target((uint8_t)v);
@@ -472,7 +486,8 @@ static void drain_detect_cfg_commands() {
     const auto& det = canary::cfg::detect();
     canary::log_header("CFG");
     canary::dbg_serial().printf(
-        "Detection settings: target=%u score>=%u lost=%lums dwell=%lums\n",
+        "Detection settings: profile=%s target=%u score>=%u lost=%lums dwell=%lums\n",
+        canary::cfg::watch_profile(det.profile).key,
         (unsigned)det.person_target, (unsigned)det.score_min,
         (unsigned long)det.lost_timeout_ms, (unsigned long)det.dwell_start_ms);
   }
@@ -525,9 +540,11 @@ void setup() {
   // NVS-backed runtime settings (adjustable from HA; compiled values seed
   // the first boot only — see canary/detect_config.h).
   const auto& det = canary::cfg::detect();
-  boot_kvf("Target",  "class %u  (person detection)", (unsigned)det.person_target);
+  const auto& prof = canary::cfg::watch_profile(det.profile);
+  boot_kvf("Profile", "%s  (watching for a %s)", prof.key, prof.subject);
+  boot_kvf("Target",  "class %u  (the model's %s class)", (unsigned)det.person_target, prof.subject);
   boot_kvf("Score",   ">= %u%%  (confidence threshold)", (unsigned)det.score_min);
-  boot_kvf("Lost",    "%lu ms  (timeout before 'person left')", (unsigned long)det.lost_timeout_ms);
+  boot_kvf("Lost",    "%lu ms  (timeout before '%s left')", (unsigned long)det.lost_timeout_ms, prof.subject);
   boot_kvf("Dwell",   "%lu ms  (lingering detection)", (unsigned long)det.dwell_start_ms);
   boot_kvf("Voxel",   "%ux%u grid (%dx%d frame)", VOXEL_COLS, VOXEL_ROWS, FRAME_W, FRAME_H);
   boot_kvf("Rate",    "every %lu ms", (unsigned long)INVOKE_PERIOD_MS);
@@ -712,9 +729,9 @@ static bool vision_tick(uint32_t now_ms) {
   // Mirror the FSM's debounced presence onto the fleet beacon (v2: ALERT flag
   // + class + confidence) so a canary-display alerts DIRECTLY — no broker, no
   // hub. Debounced presence, not the raw per-frame hit, so the beacon doesn't
-  // flap on a single dropped frame. The WE2 pipeline is person-only today
-  // (detect_config person_target); the class token widens with the pipeline,
-  // never past the ObjectClass vocabulary.
+  // flap on a single dropped frame. The class token comes from the active
+  // watch profile (person for room_presence, animal for litter_box) — always
+  // within the ObjectClass vocabulary, never past it.
   //
   // Ungated on purpose: this sets what the beacon SAYS, and every carrier
   // reads it. Gating it on any one band would mean turning off BLE for flash
@@ -723,7 +740,9 @@ static bool vision_tick(uint32_t now_ms) {
     const auto snap = fsm.snapshot(now_ms, last_event_name);
     const uint32_t gen_before = canary::net::fleet_beacon_payload_generation();
     canary::net::fleet_beacon_note_detection(
-        snap.presence, FLEET_BEACON_DETECT_PERSON, snap.confidence, now_ms);
+        snap.presence,
+        canary::cfg::watch_profile(canary::cfg::detect().profile).beacon_class,
+        snap.confidence, now_ms);
     if (canary::net::fleet_beacon_payload_generation() != gen_before) {
       // A beacon-visible edge: make the trigger timing observable on the
       // bench. The LED pulse is the camera-side cue the pair demo's glass

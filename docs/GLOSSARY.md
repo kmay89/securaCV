@@ -331,6 +331,14 @@ what needs it)"**. → [`docs/RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)
 Spec-only, and the reader is told to check before treating any document as a
 contract. → [`spec/README.md`](../spec/README.md)
 
+**Watch profile** — A Canary Vision runtime preset that tunes one firmware
+for a specific job: `room_presence` (the default person witness) or
+`litter_box` (a cat-detection model watching the box — visit and wellness
+alerting). Selected from HA's "Watch profile" select; applies recommended
+tuning in one step and retargets the fleet beacon's detect class, while the
+event vocabulary and signed witness record stay identical across profiles.
+→ [`docs/hardware/grove_vision_ai_v2_guide.md`](hardware/grove_vision_ai_v2_guide.md) §9
+
 ---
 
 ## Words we deliberately do not use

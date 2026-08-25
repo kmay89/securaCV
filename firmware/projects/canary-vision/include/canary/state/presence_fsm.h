@@ -21,6 +21,7 @@ private:
   uint32_t last_seen_ms_=0;
   uint32_t dwell_start_ms_=0;
   uint32_t last_leave_ms_=0;
+  uint32_t last_visit_ms_=0;  // duration of the last completed stay
 
   bool interaction_candidate_=false;
 

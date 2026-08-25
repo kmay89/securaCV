@@ -2,8 +2,11 @@
 
 **Status:** adopted roadmap — Phase 0 shipped (#786), runtime detection
 config from Phase 1 shipped (#788), HA dashboard + alert automations from
-Phase 2 shipped; remaining: provisioning + health logging (Phase 1), SPA
-fleet card + logging parity (Phase 2), model lifecycle (Phase 3)
+Phase 2 shipped, watch profiles (room presence / litter box: runtime
+presets + profile-driven beacon class + litter alerting recipes) from
+Phase 3's use-case track shipped; remaining: provisioning + health logging
+(Phase 1), SPA fleet card + logging parity (Phase 2), model lifecycle
+(Phase 3)
 **Owner:** firmware maintainers + dashboard maintainers
 **Companions:**
 [`docs/hardware/grove_vision_ai_v2_guide.md`](../hardware/grove_vision_ai_v2_guide.md) (device guide) ·
@@ -133,6 +136,19 @@ day-2 operations: same dashboards, same verification CLI, same alerting.
   signal, animal-vs-person disambiguation, zone occupancy from voxels.
   Each new claim needs a spec PR first (Invariant VI: no silent vocabulary
   growth).
+  - **Shipped without a spec PR — deliberately:** the **watch profiles**
+    (`detect_profiles.h`: `room_presence` default, `litter_box`) route
+    around the vocabulary question. A profile changes *tuning*, the fleet
+    beacon's ObjectClass token (person → animal, both already in the
+    vocabulary), and how dashboards read the events — it adds **zero**
+    claim types; a litter-box visit is the existing
+    presence→dwell→`interaction_likely` shape. HA gets a "Watch profile"
+    select; the litter alerting recipes live in
+    `homeassistant/automations/securacv_litterbox.yaml` +
+    `securacv-litterbox-dashboard.yaml`; presets are host-unit-tested
+    (`tests_host/test_vision_profiles.cpp`). A claim that *names* the
+    subject (`animal_presence` vs the neutral presence claims) remains a
+    spec-first change.
 - Bench benchmarks in `docs/hardware/bench_bringup.md` style: invoke
   latency, end-to-end event latency, power draw per host, WiFi coexistence.
 - Evaluate UART transport for hosts whose I2C bus is taken (mesh nodes).
