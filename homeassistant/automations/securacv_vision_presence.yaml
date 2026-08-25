@@ -36,12 +36,17 @@
   condition:
     # Guard against non-JSON / malformed payloads on the topic: anything
     # without a parsed JSON body and an event field is silently skipped.
+    # The profile check keeps a litter_box-profile witness from paging you
+    # about a "lingering" cat — its visits belong to the litter automations
+    # (securacv_litterbox.yaml); firmware without the profile key passes as
+    # room presence.
     - condition: template
       value_template: >
         {{ trigger.payload_json is defined
            and trigger.payload_json is mapping
            and 'event' in trigger.payload_json
-           and trigger.payload_json.event in ['dwell_started', 'interaction_likely'] }}
+           and trigger.payload_json.event in ['dwell_started', 'interaction_likely']
+           and trigger.payload_json.get('profile', 'room_presence') != 'litter_box' }}
 
   action:
     - service: notify.mobile_app_your_phone

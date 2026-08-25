@@ -23,6 +23,7 @@ struct Topics {
   char cfg_score_cmd[96];
   char cfg_lost_cmd[96];
   char cfg_dwell_cmd[96];
+  char cfg_profile_cmd[96];
   // Aim assist (bench/aiming): boxes-only live channel — non-retained,
   // off by default, auto-off. HA switch writes aim/set; aim/state is the
   // retained switch state; aim carries the per-frame box payload.
@@ -58,6 +59,7 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.cfg_score_cmd,  sizeof(t.cfg_score_cmd),  "securacv/%s/cfg/score/set",  device_id);
   snprintf(t.cfg_lost_cmd,   sizeof(t.cfg_lost_cmd),   "securacv/%s/cfg/lost/set",   device_id);
   snprintf(t.cfg_dwell_cmd,  sizeof(t.cfg_dwell_cmd),  "securacv/%s/cfg/dwell/set",  device_id);
+  snprintf(t.cfg_profile_cmd, sizeof(t.cfg_profile_cmd), "securacv/%s/cfg/profile/set", device_id);
   snprintf(t.identify_cmd,  sizeof(t.identify_cmd),  "securacv/%s/identify/set", device_id);
   snprintf(t.identify_echo, sizeof(t.identify_echo), "securacv/%s/identify",     device_id);
   return t;

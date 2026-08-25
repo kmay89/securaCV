@@ -57,13 +57,13 @@ test("vision.json has every section the page requires", () => {
 });
 
 test("counts are not thin (a broken parse would fail here)", () => {
-  assert.strictEqual(data.mqtt.discovery.entities.length, 19);
+  assert.strictEqual(data.mqtt.discovery.entities.length, 20);
   assert.ok(data.mqtt.topics.length >= 15, "too few MQTT topics");
   assert.ok(data.serial.boot.length >= 20, "boot log too short");
   assert.ok(data.sandbox.length >= 5, "too few sandbox scenes");
   assert.ok(data.placement.use_cases.length >= 4, "too few placement presets");
   assert.ok(data.troubleshooting.length >= 6, "too few symptom rows");
-  assert.strictEqual(data.tuning.length, 4);
+  assert.strictEqual(data.tuning.length, 5);
   assert.strictEqual(data.device.hosts.length, 3);
 });
 
@@ -117,6 +117,20 @@ test("event vocabulary is exactly the FSM's emit set", () => {
 });
 
 // ── 4. MQTT topics + HA entities trace to the firmware ─────────────────────
+test("watch profiles trace to detect_profiles.h", () => {
+  const profH = read(join(FW, "include/canary/detect_profiles.h"));
+  assert.ok(Array.isArray(data.detect.profiles), "detect.profiles missing");
+  assert.ok(data.detect.profiles.length >= 2, "watch profile table thin");
+  assert.strictEqual(data.detect.profiles[0].key, "room_presence",
+    "profile 0 must stay the room_presence default");
+  assert.ok(data.detect.profiles.some((p) => p.key === "litter_box"),
+    "litter_box watch profile missing");
+  for (const p of data.detect.profiles) {
+    assert.ok(profH.includes(`"${p.key}"`), "profile key not in firmware: " + p.key);
+    assert.ok(profH.includes(`"${p.label}"`), "profile label not in firmware: " + p.label);
+  }
+});
+
 test("every topic suffix is a real template in topics.h", () => {
   const suffixes = [...topicsH.matchAll(/"securacv\/%s\/([a-z_/]+)"/g)].map((m) => m[1]);
   assert.deepStrictEqual(data.mqtt.topics.map((t) => t.suffix), suffixes,

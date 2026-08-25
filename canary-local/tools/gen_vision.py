@@ -51,6 +51,7 @@ FW = REPO / "firmware/projects/canary-vision"
 CONFIG_H = FW / "include/canary/config.h"
 VERSION_H = FW / "include/canary/version.h"
 DETECT_CFG_H = FW / "include/canary/detect_config.h"
+DETECT_PROFILES_H = FW / "include/canary/detect_profiles.h"
 TOPICS_H = FW / "include/canary/topics.h"
 MAIN_CPP = FW / "src/main.cpp"
 VISION_MGR_CPP = FW / "src/vision/vision_mgr.cpp"
@@ -396,6 +397,32 @@ EVENTS = re.findall(r'emit\(out_event,\s*"([a-z_]+)"', read(PRESENCE_FSM_CPP))
 if len(set(EVENTS)) < 5:
     die(f"presence FSM event vocabulary parsed thin: {EVENTS}")
 
+# Watch profiles — the per-use-case preset table behind HA's "Watch profile"
+# select (room presence vs litter box). Parsed straight from the firmware
+# table so the page can never promise a preset the firmware doesn't ship.
+PROFILE_ROWS = re.findall(
+    r'\{"([a-z_]+)",\s*"([^"]+)",\s*"([^"]+)",\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*'
+    r'/\*beacon_class=\*/0x0([0-9a-fA-F])\}',
+    read(DETECT_PROFILES_H), re.S)
+if len(PROFILE_ROWS) < 2:
+    die(f"watch profile table parsed thin: {PROFILE_ROWS}")
+BEACON_CLASS_NAMES = {"1": "person", "2": "vehicle", "3": "animal", "4": "package"}
+PROFILES = []
+for key, label, subject, target, score, lost, dwell, bclass in PROFILE_ROWS:
+    if bclass not in BEACON_CLASS_NAMES:
+        die(f"profile {key} advertises unknown beacon class 0x0{bclass}")
+    PROFILES.append({
+        "key": key, "label": label, "subject": subject,
+        "target": int(target), "score": int(score),
+        "lost_ms": int(lost), "dwell_ms": int(dwell),
+        "beacon_class": BEACON_CLASS_NAMES[bclass],
+    })
+if PROFILES[0]["key"] != "room_presence":
+    die("profile 0 must stay room_presence — the NVS default and HA fallback")
+LITTER = next((p for p in PROFILES if p["key"] == "litter_box"), None)
+if not LITTER:
+    die("litter_box watch profile missing from detect_profiles.h")
+
 DETECT = {
     "person_target": PERSON_TARGET,
     "score_min": SCORE_MIN,
@@ -415,6 +442,12 @@ DETECT = {
                   "that cell is the coarsest useful \"where\", and the only \"where\" that "
                   "ever leaves the device.",
     "events": sorted(set(EVENTS)),
+    "profiles": PROFILES,
+    "profiles_note": "Watch profiles are one-step per-use-case presets (HA's Watch profile "
+                     "select): picking one applies its recommended tuning to the four "
+                     "settings and retargets the fleet beacon's detect class. The event "
+                     "vocabulary and the signed witness record are identical across "
+                     "profiles — no new claim types (Invariant VI).",
     "seeds_note": "The compiled constants seed the first boot only; live values are NVS-backed, "
                   "adjustable from Home Assistant, and persist across reboots and OTA installs.",
 }
@@ -429,6 +462,7 @@ must(BOOT_BANNER_CPP, "(o.o) ?       Checking the hardware...", "banner: hardwar
 must(MAIN_CPP, '(^.^)         What can I see?', "vision scene")
 must(MAIN_CPP, '(o.o)  ))     Connecting to MQTT...', "mqtt scene")
 must(MAIN_CPP, 'boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)")', "sensor kv")
+must(MAIN_CPP, 'boot_kvf("Profile", "%s  (watching for a %s)"', "profile kv")
 must(VISION_MGR_CPP, 'Grove Vision AI ID=%d', "i2c id line")
 must(VISION_MGR_CPP, "ERROR: Grove Vision AI V2 not responding", "i2c error line")
 must(WIFI_MGR_CPP, "Connecting to the provisioned WiFi network ...", "wifi connecting line")
@@ -462,7 +496,8 @@ SERIAL = {
         {"tag": "", "text": "              ,_,"},
         {"tag": "", "text": "             (^.^)         What can I see?"},
         {"tag": "[OK]", "text": "Sensor Grove Vision AI V2 (SSCMA)"},
-        {"tag": "[--]", "text": f"Target class {PERSON_TARGET}  (person detection)"},
+        {"tag": "[--]", "text": "Profile room_presence  (watching for a person)"},
+        {"tag": "[--]", "text": f"Target class {PERSON_TARGET}  (the model's person class)"},
         {"tag": "[--]", "text": f"Score  >= {SCORE_MIN}%  (confidence threshold)"},
         {"tag": "[--]", "text": f"Lost   {LOST_TIMEOUT_MS} ms  (timeout before 'person left')"},
         {"tag": "[--]", "text": f"Dwell  {DWELL_START_MS} ms  (lingering detection)"},
@@ -509,11 +544,12 @@ TOPIC_DESCS = {
     "update/cmd": {"retain": False, "desc": "HA writes \"install\""},
     "update/auto": {"retain": True, "desc": "auto-update switch state"},
     "update/auto/cmd": {"retain": False, "desc": "auto-update switch command"},
-    "cfg/state": {"retain": True, "desc": "retained runtime detection settings: {\"target\",\"score\",\"lost_ms\",\"dwell_ms\"}"},
-    "cfg/target/set": {"retain": False, "desc": "set the person class index (0–255)"},
+    "cfg/state": {"retain": True, "desc": "retained runtime detection settings: {\"target\",\"score\",\"lost_ms\",\"dwell_ms\",\"profile\",\"profile_label\"}"},
+    "cfg/target/set": {"retain": False, "desc": "set the subject class index (0–255)"},
     "cfg/score/set": {"retain": False, "desc": "set the score threshold (0–100)"},
     "cfg/lost/set": {"retain": False, "desc": "set the lost timeout (ms)"},
     "cfg/dwell/set": {"retain": False, "desc": "set the dwell start (ms)"},
+    "cfg/profile/set": {"retain": False, "desc": "select the watch profile (room_presence / litter_box) — applies that profile's tuning preset"},
     "aim": {"retain": False, "desc": "the boxes-only aim stream — coordinates and scores at ~5 Hz, never pixels"},
     "aim/state": {"retain": True, "desc": "aim switch state (off by default; auto-off)"},
     "aim/set": {"retain": False, "desc": "HA's Aim assist switch writes ON/OFF"},
@@ -548,7 +584,8 @@ ENTITY_META = {
     "WiFi RSSI": ("sensor", "diagnostic — link strength"),
     "Free heap": ("sensor", "diagnostic — working memory"),
     "Firmware": ("update", "signed pull-OTA with an Install button"),
-    "Person class index": ("number", "which class the loaded model calls \"person\""),
+    "Watch profile": ("select", "one-step per-use-case preset — room presence or litter box"),
+    "Person class index": ("number", "which class the loaded model calls the subject"),
     "Score threshold": ("number", "confidence floor, live-tunable"),
     "Lost timeout": ("number", "silence before \"person left\""),
     "Dwell start": ("number", "sustained presence before \"dwelling\""),
@@ -580,7 +617,8 @@ MQTT = {
                           "Discovery configs the moment the broker link is up, and the device "
                           "simply appears in Home Assistant."},
     "cfg_state_example": {"target": PERSON_TARGET, "score": SCORE_MIN,
-                          "lost_ms": LOST_TIMEOUT_MS, "dwell_ms": DWELL_START_MS},
+                          "lost_ms": LOST_TIMEOUT_MS, "dwell_ms": DWELL_START_MS,
+                          "profile": PROFILES[0]["key"]},
     "event_example": {
         "device_id": DEVICE_ID, "device_type": DEVICE_TYPE,
         "event": "presence_started", "seq": 42, "presence": "present",
@@ -711,9 +749,11 @@ PLACEMENT = {
          "do the work: screen-people flicker, real people persist."},
         {"k": "Depth", "v": f"Best detection from 1–4 m. Beyond ~6 m a standing person is "
          f"under 40 px tall in the {FRAME_W}×{FRAME_H} frame and scores fall off fast."},
-        {"k": "Pets", "v": "A cat or dog is not person-class — the class filter drops it "
-         "before the score threshold even looks. The rare crawling-dog false positive "
-         "sits at low score; the default threshold already eats it."},
+        {"k": "Pets", "v": "Under the default room_presence profile a cat or dog is not "
+         "the subject class — the class filter drops it before the score threshold even "
+         "looks. The rare crawling-dog false positive sits at low score; the default "
+         "threshold already eats it. (The litter_box watch profile inverts this on "
+         "purpose: load an animal model and the cat IS the subject.)"},
         {"k": "Mounting", "v": "The witness never pans: pick the one view whose voxel grid "
          "answers your question — the door cell, the safe cell, the hallway lane — and "
          "let the Aim card prove it before you drill."},
@@ -739,6 +779,14 @@ PLACEMENT = {
          "blurb": "A monitor is in frame by definition — raise the threshold, trust dwell. "
                   "Screen-people flicker below it; you at the desk persist above it.",
          "preset": preset(85, 5000, 15000)},
+        {"id": "litter", "icon": "🐈", "title": "Litter box (watch profile)",
+         "blurb": "Load a cat-detection model in SenseCraft, pick the litter_box watch "
+                  "profile, done: lower score floor (a mid-dig cat is a strange shape), "
+                  "long lost timeout so digging doesn't fragment one visit into five, "
+                  "short dwell so a real visit latches. interaction_likely = visit "
+                  "completed. The space is already lit — aim across the box, not into "
+                  "the lamp.",
+         "preset": preset(LITTER["score"], LITTER["lost_ms"], LITTER["dwell_ms"])},
     ],
     "no_outdoor": "Indoor witness. The module and camera are unsealed boards; weather, IR "
                   "floodlights and headlights are out of scope — the fence line belongs to "
@@ -752,8 +800,10 @@ PLACEMENT = {
 tune_rows = md_table(readme, "| Setting | JSON key | Range |", "tuning table", 4)
 TUNING = [{"setting": strip_md(r[0]), "key": strip_md(r[1]), "range": strip_md(r[2]),
            "why": strip_md(r[3])} for r in tune_rows[1:]]
-if len(TUNING) != 4:
-    die("expected exactly 4 runtime tuning settings")
+if len(TUNING) != 5:
+    die("expected exactly 5 runtime tuning settings (watch profile + 4 numbers)")
+if TUNING[0]["key"] != "profile":
+    die("tuning table must lead with the watch profile row")
 must(GETTING_STARTED, "False positives → raise; missed detections → lower", "score tuning advice")
 
 # --------------------------------------------------------------------------- #
@@ -775,8 +825,10 @@ SANDBOX = [
               "presence_ended closes the visit.",
      "event": "presence_ended"},
     {"id": "cat", "label": "Send the cat through", "icon": "🐈",
-     "blurb": "The model may box it — but it isn't person-class, so the class filter drops "
-              "it before the score check even runs. Nothing publishes.",
+     "blurb": "The model may box it — but it isn't the subject class, so the class filter "
+              "drops it before the score check even runs. Nothing publishes. (Flip the "
+              "litter_box watch profile with an animal model loaded and the cat becomes "
+              "the subject instead.)",
      "event": None},
     {"id": "two", "label": "Two people at once", "icon": "🧑‍🤝‍🧑",
      "blurb": "Both get boxes on-module; the firmware keeps the best-scoring person box. "

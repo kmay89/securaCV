@@ -295,6 +295,29 @@
       "presence_ended",
       "presence_started"
     ],
+    "profiles": [
+      {
+        "key": "room_presence",
+        "label": "Room presence",
+        "subject": "person",
+        "target": 0,
+        "score": 70,
+        "lost_ms": 1500,
+        "dwell_ms": 10000,
+        "beacon_class": "person"
+      },
+      {
+        "key": "litter_box",
+        "label": "Litter box",
+        "subject": "cat",
+        "target": 0,
+        "score": 60,
+        "lost_ms": 4000,
+        "dwell_ms": 8000,
+        "beacon_class": "animal"
+      }
+    ],
+    "profiles_note": "Watch profiles are one-step per-use-case presets (HA's Watch profile select): picking one applies its recommended tuning to the four settings and retargets the fleet beacon's detect class. The event vocabulary and the signed witness record are identical across profiles \u2014 no new claim types (Invariant VI).",
     "seeds_note": "The compiled constants seed the first boot only; live values are NVS-backed, adjustable from Home Assistant, and persist across reboots and OTA installs."
   },
   "serial": {
@@ -344,7 +367,11 @@
       },
       {
         "tag": "[--]",
-        "text": "Target class 0  (person detection)"
+        "text": "Profile room_presence  (watching for a person)"
+      },
+      {
+        "tag": "[--]",
+        "text": "Target class 0  (the model's person class)"
       },
       {
         "tag": "[--]",
@@ -486,12 +513,12 @@
       {
         "suffix": "cfg/state",
         "retain": true,
-        "desc": "retained runtime detection settings: {\"target\",\"score\",\"lost_ms\",\"dwell_ms\"}"
+        "desc": "retained runtime detection settings: {\"target\",\"score\",\"lost_ms\",\"dwell_ms\",\"profile\",\"profile_label\"}"
       },
       {
         "suffix": "cfg/target/set",
         "retain": false,
-        "desc": "set the person class index (0\u2013255)"
+        "desc": "set the subject class index (0\u2013255)"
       },
       {
         "suffix": "cfg/score/set",
@@ -507,6 +534,11 @@
         "suffix": "cfg/dwell/set",
         "retain": false,
         "desc": "set the dwell start (ms)"
+      },
+      {
+        "suffix": "cfg/profile/set",
+        "retain": false,
+        "desc": "select the watch profile (room_presence / litter_box) \u2014 applies that profile's tuning preset"
       },
       {
         "suffix": "identify/set",
@@ -582,6 +614,11 @@
           "desc": "signed pull-OTA with an Install button"
         },
         {
+          "name": "Watch profile",
+          "component": "select",
+          "desc": "one-step per-use-case preset \u2014 room presence or litter box"
+        },
+        {
           "name": "Aim assist",
           "component": "switch",
           "desc": "the boxes-only live aim stream (auto-off 10 min)"
@@ -599,7 +636,7 @@
         {
           "name": "Person class index",
           "component": "number",
-          "desc": "which class the loaded model calls \"person\""
+          "desc": "which class the loaded model calls the subject"
         },
         {
           "name": "Score threshold",
@@ -623,7 +660,8 @@
       "target": 0,
       "score": 70,
       "lost_ms": 1500,
-      "dwell_ms": 10000
+      "dwell_ms": 10000,
+      "profile": "room_presence"
     },
     "event_example": {
       "device_id": "canary_vision_001",
@@ -753,7 +791,7 @@
       },
       {
         "k": "Pets",
-        "v": "A cat or dog is not person-class \u2014 the class filter drops it before the score threshold even looks. The rare crawling-dog false positive sits at low score; the default threshold already eats it."
+        "v": "Under the default room_presence profile a cat or dog is not the subject class \u2014 the class filter drops it before the score threshold even looks. The rare crawling-dog false positive sits at low score; the default threshold already eats it. (The litter_box watch profile inverts this on purpose: load an animal model and the cat IS the subject.)"
       },
       {
         "k": "Mounting",
@@ -815,16 +853,33 @@
           "lost_ms": 5000,
           "dwell_ms": 15000
         }
+      },
+      {
+        "id": "litter",
+        "icon": "\ud83d\udc08",
+        "title": "Litter box (watch profile)",
+        "blurb": "Load a cat-detection model in SenseCraft, pick the litter_box watch profile, done: lower score floor (a mid-dig cat is a strange shape), long lost timeout so digging doesn't fragment one visit into five, short dwell so a real visit latches. interaction_likely = visit completed. The space is already lit \u2014 aim across the box, not into the lamp.",
+        "preset": {
+          "score": 60,
+          "lost_ms": 4000,
+          "dwell_ms": 8000
+        }
       }
     ],
     "no_outdoor": "Indoor witness. The module and camera are unsealed boards; weather, IR floodlights and headlights are out of scope \u2014 the fence line belongs to Canary Fence Guard."
   },
   "tuning": [
     {
+      "setting": "Watch profile",
+      "key": "profile",
+      "range": "room_presence / litter_box",
+      "why": "One-step per-use-case preset \u2014 applies the profile's recommended tuning below and retargets the fleet beacon's detect class (person / animal)"
+    },
+    {
       "setting": "Person class index",
       "key": "target",
       "range": "0\u2013255",
-      "why": "The loaded SSCMA model decides which class is \"person\" \u2014 set this after swapping models in SenseCraft"
+      "why": "The loaded SSCMA model decides which class is the subject \u2014 set this after swapping models in SenseCraft"
     },
     {
       "setting": "Score threshold",
@@ -836,7 +891,7 @@
       "setting": "Lost timeout",
       "key": "lost_ms",
       "range": "250\u201360000 ms",
-      "why": "How long silence means \"person left\""
+      "why": "How long silence means \"subject left\""
     },
     {
       "setting": "Dwell start",
@@ -871,7 +926,7 @@
       "id": "cat",
       "label": "Send the cat through",
       "icon": "\ud83d\udc08",
-      "blurb": "The model may box it \u2014 but it isn't person-class, so the class filter drops it before the score check even runs. Nothing publishes.",
+      "blurb": "The model may box it \u2014 but it isn't the subject class, so the class filter drops it before the score check even runs. Nothing publishes. (Flip the litter_box watch profile with an animal model loaded and the cat becomes the subject instead.)",
       "event": null
     },
     {

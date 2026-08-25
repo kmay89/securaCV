@@ -1,0 +1,137 @@
+# SecuraCV — Canary Vision Litter Box Automations
+#
+# For a Canary Vision (ESP32 host + Grove Vision AI V2, running
+# firmware/projects/canary-vision) set to the **litter_box watch profile**
+# (the device's "Watch profile" select in Home Assistant), with a
+# cat-detection model loaded on the module via SenseCraft.
+#
+# How a visit reads on the wire — the same event vocabulary every Canary
+# Vision speaks, no litter-specific claims (Invariant VI):
+#   presence_started    → cat arrived at the box
+#   dwell_started       → cat has stayed past the dwell threshold (a real
+#                         visit, not a walk-by sniff — default 8 s on the
+#                         litter_box profile)
+#   interaction_likely  → cat left after a qualified stay = VISIT COMPLETED
+#   presence_ended      → cat gone
+#
+# Included:
+#   A) Visit completed — log/notify when interaction_likely fires
+#   B) Wellness check — no completed visit in N hours (a cat avoiding the
+#      box is a health signal worth a vet's attention)
+#
+# For the offline alert (witness stopped reporting), use automation B from
+# securacv_vision_presence.yaml — it is profile-agnostic and works unchanged
+# for a litter-box witness.
+#
+# Setup:
+#   1. Copy this file to /config/automations/
+#   2. Replace DEVICE_ID with your device id (default: canary_vision_001)
+#   3. Replace notify.mobile_app_your_phone with your notify service
+#   4. Reload automations (Developer Tools → YAML → Automations)
+#
+# Optional extras (build on these if you want more):
+#   - Visits-per-day counter: create a counter helper and increment it in
+#     automation A's action list; unusually FREQUENT visits are also a
+#     health signal (e.g. urinary issues) — alert when the daily count
+#     doubles your cat's baseline.
+#   - The events carry "profile":"litter_box" (firmware ≥ the watch-profile
+#     release), so one broker can host litter and room witnesses without
+#     the automations cross-firing — automation A checks it below.
+
+# ---------------------------------------------------------------------------
+# A) Visit completed — the leave-after-qualified-stay heuristic fired
+# ---------------------------------------------------------------------------
+- id: securacv_litterbox_visit_logged
+  alias: "SecuraCV Litter Box — Visit completed"
+  description: >
+    The cat finished a real visit: it stayed past the dwell threshold (or
+    interacted with the box zone) and then left. Fires on the firmware's
+    interaction_likely event. This automation's own last_triggered is the
+    "last visit" timestamp the wellness check below reads.
+  mode: queued
+  max_exceeded: silent
+
+  trigger:
+    - platform: mqtt
+      topic: "securacv/DEVICE_ID/events"
+
+  condition:
+    # Guard against non-JSON / malformed payloads, and only accept the
+    # visit-completed event. The profile check keeps a room-presence witness
+    # on the same broker from logging "visits": older firmware without the
+    # profile key defaults to litter_box=false only when another profile is
+    # explicitly named — absent key passes, so this file keeps working if
+    # you point it at a pre-profile device on purpose.
+    - condition: template
+      value_template: >
+        {{ trigger.payload_json is defined
+           and trigger.payload_json is mapping
+           and trigger.payload_json.get('event') == 'interaction_likely'
+           and trigger.payload_json.get('profile', 'litter_box') == 'litter_box' }}
+
+  action:
+    - service: notify.mobile_app_your_phone
+      data:
+        title: "🐈 Litter box visit"
+        message: >-
+          Visit completed
+          ({{ trigger.payload_json.reason | default('dwell_then_left') }}) —
+          in the box about
+          {{ ((trigger.payload_json.visit_ms | default(0)) / 1000) | round(0) }}s,
+          confidence {{ trigger.payload_json.confidence | default(0) }}%.
+        data:
+          tag: "securacv-litterbox-DEVICE_ID"
+          group: "SecuraCV"
+
+# ---------------------------------------------------------------------------
+# B) Wellness check — no completed visit in N hours
+#
+# A healthy cat uses the box multiple times a day; a long silence means the
+# cat is avoiding it (stress, blockage, pain) or the witness view is wrong
+# (box moved, camera nudged). Both deserve a look. The threshold below is
+# 24 hours — tighten it if your cat is regular, and remember an empty house
+# (cat at the vet, on vacation with you) will fire this too.
+# ---------------------------------------------------------------------------
+- id: securacv_litterbox_wellness_alert
+  alias: "SecuraCV Litter Box — No visit in 24h"
+  description: >
+    The visit-completed automation has not fired in over 24 hours. Reads
+    that automation's last_triggered, so it needs no helper entities.
+  mode: single
+  max_exceeded: silent
+
+  trigger:
+    - platform: time_pattern
+      hours: "/1"
+
+  condition:
+    # last_triggered survives HA restarts; "none" (fresh install, never
+    # fired) is skipped so a new setup doesn't alarm before its first visit.
+    - condition: template
+      value_template: >
+        {% set lt = state_attr('automation.securacv_litter_box_visit_completed',
+                               'last_triggered') %}
+        {{ lt is not none and (now() - lt).total_seconds() > 24 * 3600 }}
+    # Latch: the hourly trigger stays true for as long as the absence lasts,
+    # so without this the alert would page every hour. Fire once per overdue
+    # episode, then at most once every 24 h while it persists ("this" is
+    # this automation — its own last_triggered is the latch).
+    - condition: template
+      value_template: >
+        {% set mine = this.attributes.last_triggered %}
+        {{ mine is none or (now() - mine).total_seconds() > 24 * 3600 }}
+
+  action:
+    - service: notify.mobile_app_your_phone
+      data:
+        title: "🩺 Litter box: no visits in 24h"
+        message: >-
+          No completed litter box visit has been witnessed in over 24 hours.
+          Check the cat first, then the box placement and the camera's view
+          (the dashboard's history and the device's presence sensor tell you
+          whether the witness is seeing anything at all).
+        data:
+          tag: "securacv-litterbox-wellness-DEVICE_ID"
+          group: "SecuraCV"
+          push:
+            interruption-level: time-sensitive

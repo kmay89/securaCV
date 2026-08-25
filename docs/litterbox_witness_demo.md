@@ -1,5 +1,16 @@
 # Cat Litter Box Witness Demo (XIAO ESP32C3 + Grove Vision AI V2)
 
+> **Looking for the supported product path?** The production `canary-vision`
+> firmware now does litter-box duty natively: load a cat-detection model on
+> the module (SenseCraft or the Lab flasher) and pick the **litter_box watch
+> profile** in Home Assistant — signed events, OTA, dashboards and the
+> visit/wellness alert automations included. See
+> [`docs/hardware/grove_vision_ai_v2_guide.md`](hardware/grove_vision_ai_v2_guide.md)
+> §9 and [`homeassistant/automations/securacv_litterbox.yaml`](../homeassistant/automations/securacv_litterbox.yaml).
+> This page remains the minimal **PWK serial-ingest demo** — two Arduino
+> sketches feeding `grove_vision2_ingest` — useful for studying the sealed-log
+> contract end to end, not the recommended home deployment.
+
 This demo shows a **privacy-preserving cat litter box witness** that stays inside the
 Privacy Witness Kernel (PWK) contract. The device emits **event-only** claims and
 never exports raw frames. Evidence capture, if needed, is handled by the local PWK

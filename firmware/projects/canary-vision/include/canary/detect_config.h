@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
 
+#include "canary/detect_profiles.h"
+
 // Runtime detection configuration — NVS-backed with compiled-in defaults.
 //
 // Why this exists: the loaded SSCMA model decides what class index means
@@ -17,10 +19,11 @@
 namespace canary::cfg {
 
 struct DetectConfig {
-  uint8_t  person_target;    // SSCMA class index reported as "person"
+  uint8_t  person_target;    // SSCMA class index reported as the subject
   uint8_t  score_min;        // 0–100 confidence threshold
-  uint32_t lost_timeout_ms;  // silence before "person left"
+  uint32_t lost_timeout_ms;  // silence before "subject left"
   uint32_t dwell_start_ms;   // sustained presence before "dwelling"
+  uint8_t  profile;          // watch profile id (index into WATCH_PROFILES)
 };
 
 // Bounds (shared by the setters and the HA number entities)
@@ -41,5 +44,13 @@ bool detect_set_person_target(uint8_t v);
 bool detect_set_score_min(uint8_t v);
 bool detect_set_lost_timeout_ms(uint32_t v);
 bool detect_set_dwell_start_ms(uint32_t v);
+
+// Select a watch profile (detect_profiles.h). Persists the profile id AND
+// applies the profile's preset to the four settings above — selecting (or
+// re-selecting) a profile is the one-step "tune this box for that job"
+// action; each setting stays individually adjustable afterward. An unknown
+// id is rejected untouched (returns false) so junk on the wire can never
+// reset tuning. Returns true if the profile id or any setting changed.
+bool detect_set_profile(uint8_t v);
 
 } // namespace canary::cfg

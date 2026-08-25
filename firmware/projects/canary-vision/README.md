@@ -29,18 +29,35 @@ Pins come from `firmware/boards/<board-id>/pins/pins.h` and are passed to `Wire.
 ## Runtime detection settings (no rebuild for model swaps)
 
 The detection semantics are NVS-backed and adjustable from Home Assistant —
-four `number` entities appear in the device's Configuration section:
+a `select` entity plus four `number` entities appear in the device's
+Configuration section:
 
 | Setting | JSON key | Range | Why you'd change it |
 |---|---|---|---|
-| Person class index | `target` | 0–255 | The loaded SSCMA model decides which class is "person" — set this after swapping models in SenseCraft |
+| Watch profile | `profile` | room_presence / litter_box | One-step per-use-case preset — applies the profile's recommended tuning below and retargets the fleet beacon's detect class (person / animal) |
+| Person class index | `target` | 0–255 | The loaded SSCMA model decides which class is the subject — set this after swapping models in SenseCraft |
 | Score threshold | `score` | 0–100 % | Per-model confidence calibration / false-positive tuning |
-| Lost timeout | `lost_ms` | 250–60000 ms | How long silence means "person left" |
+| Lost timeout | `lost_ms` | 250–60000 ms | How long silence means "subject left" |
 | Dwell start | `dwell_ms` | 1000–600000 ms | Sustained presence before "dwelling" |
 
 The compiled constants in `include/canary/config.h` seed the first boot
 only; live values persist across reboots and OTA installs (see
 `include/canary/detect_config.h`).
+
+**Watch profiles** (`include/canary/detect_profiles.h`) make one firmware
+serve different jobs without a rebuild: `room_presence` (the default —
+person detection, the classic optical witness) and `litter_box` (a
+cat-detection model watching the box in an already-lit space: lower score
+floor, longer lost timeout so digging doesn't fragment a visit, shorter
+dwell so a real visit latches). Selecting a profile applies its preset to
+the four numbers — each stays individually tunable afterward, and
+re-selecting the profile restores its preset. The event vocabulary and the
+signed witness record are **identical across profiles** (Invariant VI —
+no new claim types); what changes is tuning, the beacon's detect class,
+and how the dashboards read the same events. Litter-box alerting recipes:
+[`homeassistant/automations/securacv_litterbox.yaml`](../../../homeassistant/automations/securacv_litterbox.yaml)
+and
+[`homeassistant/lovelace/securacv-litterbox-dashboard.yaml`](../../../homeassistant/lovelace/securacv-litterbox-dashboard.yaml).
 
 Bench test from any MQTT client (no HA needed):
 
@@ -50,6 +67,8 @@ mosquitto_pub -h <broker> -t 'securacv/<device_id>/cfg/score/set' -m '85'
 # expect the retained cfg/state to echo {"target":0,"score":85,...}
 # junk is rejected without effect:
 mosquitto_pub -h <broker> -t 'securacv/<device_id>/cfg/score/set' -m 'nan'
+# switch the whole box to litter-box duty in one message (key or HA label):
+mosquitto_pub -h <broker> -t 'securacv/<device_id>/cfg/profile/set' -m 'litter_box'
 ```
 
 A ready-made dashboard for these entities ships at
@@ -117,8 +136,8 @@ Base:
 - `securacv/<device_id>/events` (non-retained)
 - `securacv/<device_id>/state`  (retained)
 - `securacv/<device_id>/status` (retained; availability: online/offline)
-- `securacv/<device_id>/cfg/state` (retained; live detection settings)
-- `securacv/<device_id>/cfg/{target,score,lost,dwell}/set` (commands)
+- `securacv/<device_id>/cfg/state` (retained; live detection settings + watch profile)
+- `securacv/<device_id>/cfg/{target,score,lost,dwell,profile}/set` (commands)
 
 Discovery (retained):
 - `homeassistant/binary_sensor/<device_id>/presence/config`

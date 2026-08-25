@@ -106,6 +106,10 @@
         "name": "dashboard"
       },
       {
+        "file": "homeassistant/lovelace/securacv-litterbox-dashboard.yaml",
+        "name": "litterbox dashboard"
+      },
+      {
         "file": "homeassistant/lovelace/securacv-vision-dashboard.yaml",
         "name": "vision dashboard"
       }
@@ -122,6 +126,10 @@
       {
         "file": "homeassistant/automations/securacv_integrity_failure.yaml",
         "name": "integrity failure"
+      },
+      {
+        "file": "homeassistant/automations/securacv_litterbox.yaml",
+        "name": "litterbox"
       },
       {
         "file": "homeassistant/automations/securacv_pattern_break.yaml",

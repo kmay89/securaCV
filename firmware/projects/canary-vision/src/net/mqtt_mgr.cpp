@@ -11,6 +11,7 @@
 #include "canary/log.h"
 #include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
 #include "canary/detect_config.h"   // NVS-backed runtime detection settings
+#include "canary/detect_profiles.h" // watch profile keys/labels (cfg select)
 #include "canary/vision/optical_features.h"  // coarse posture/proximity/occupancy names
 #include "canary/diagnostics.h"     // heap health for the status heartbeat
 #include "canary/net/wifi_mgr.h"    // RSSI + link state
@@ -63,6 +64,7 @@ static volatile long s_pending_cfg_target = -1;
 static volatile long s_pending_cfg_score = -1;
 static volatile long s_pending_cfg_lost = -1;
 static volatile long s_pending_cfg_dwell = -1;
+static volatile long s_pending_cfg_profile = -1;
 
 static bool token_at(const char* p, int n, const char* tok, int tok_len) {
   auto boundary = [](char c) {
@@ -96,9 +98,33 @@ static long parse_cfg_number(const uint8_t* payload, unsigned int len, long max_
   return (long)(d + 0.5);
 }
 
+// Parse an inbound watch-profile payload (HA's select sends the option
+// label; scripts send the machine key). Trims the same whitespace/quote
+// noise as parse_cfg_number; an unmatched string returns -1 so junk can
+// never latch a profile change.
+static long parse_cfg_profile(const uint8_t* payload, unsigned int len) {
+  if (payload == nullptr || len == 0 || len > 48) return -1;
+  char buf[49];
+  memcpy(buf, payload, len);
+  buf[len] = '\0';
+
+  char* start = buf;
+  while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n' || *start == '"') start++;
+  char* end = start + strlen(start);
+  while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' ||
+                         end[-1] == '\n' || end[-1] == '"')) {
+    *--end = '\0';
+  }
+  return (long)canary::cfg::watch_profile_from_text(start);
+}
+
 static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
   if (!topic || !payload) return;
 
+  if (strcmp(topic, g_topics.cfg_profile_cmd) == 0) {
+    s_pending_cfg_profile = parse_cfg_profile(payload, len);
+    return;
+  }
   if (strcmp(topic, g_topics.cfg_target_cmd) == 0) {
     s_pending_cfg_target = parse_cfg_number(payload, len, 255);
     return;
@@ -184,10 +210,11 @@ static long take_pending(volatile long& slot) {
   return v;
 }
 
-long take_pending_cfg_target() { return take_pending(s_pending_cfg_target); }
-long take_pending_cfg_score()  { return take_pending(s_pending_cfg_score); }
-long take_pending_cfg_lost()   { return take_pending(s_pending_cfg_lost); }
-long take_pending_cfg_dwell()  { return take_pending(s_pending_cfg_dwell); }
+long take_pending_cfg_target()  { return take_pending(s_pending_cfg_target); }
+long take_pending_cfg_score()   { return take_pending(s_pending_cfg_score); }
+long take_pending_cfg_lost()    { return take_pending(s_pending_cfg_lost); }
+long take_pending_cfg_dwell()   { return take_pending(s_pending_cfg_dwell); }
+long take_pending_cfg_profile() { return take_pending(s_pending_cfg_profile); }
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
   const bool ok = mqtt.publish(topic, payload, retain);
@@ -273,6 +300,7 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            "{"
            "\"device_id\":\"%s\","
            "\"device_type\":\"%s\","
+           "\"profile\":\"%s\","
            "\"presence\":%s,"
            "\"dwelling\":%s,"
            "\"presence_ms\":%lu,"
@@ -289,6 +317,7 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            "\"ts_ms\":%lu"
            "}",
            canary::cfg::get().device_id, DEVICE_TYPE,
+           canary::cfg::watch_profile(canary::cfg::detect().profile).key,
            s.presence ? "true" : "false",
            s.dwelling ? "true" : "false",
            (unsigned long)s.presence_ms,
@@ -481,6 +510,7 @@ bool mqtt_connect_attempt() {
   mqtt.subscribe(g_topics.cfg_score_cmd, 1);
   mqtt.subscribe(g_topics.cfg_lost_cmd, 1);
   mqtt.subscribe(g_topics.cfg_dwell_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_profile_cmd, 1);
   publish_detect_cfg_retained(g_topics);
   return true;
 }
@@ -488,18 +518,22 @@ bool mqtt_connect_attempt() {
 bool publish_detect_cfg_retained(const Topics& topics) {
   if (!mqtt.connected()) return false;
   const auto& d = canary::cfg::detect();
-  char msg[192];
+  const auto& prof = canary::cfg::watch_profile(d.profile);
+  char msg[256];
   snprintf(msg, sizeof(msg),
            "{"
            "\"target\":%u,"
            "\"score\":%u,"
            "\"lost_ms\":%lu,"
-           "\"dwell_ms\":%lu"
+           "\"dwell_ms\":%lu,"
+           "\"profile\":\"%s\","
+           "\"profile_label\":\"%s\""
            "}",
            (unsigned)d.person_target,
            (unsigned)d.score_min,
            (unsigned long)d.lost_timeout_ms,
-           (unsigned long)d.dwell_start_ms);
+           (unsigned long)d.dwell_start_ms,
+           prof.key, prof.label);
   return publish_checked("CFG", topics.cfg_state, msg, true);
 }
 

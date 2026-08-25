@@ -9,6 +9,7 @@
 #include "canary/log.h"
 #include "canary/runtime_config.h"  // NVS-backed device id (OTA-safe)
 #include "canary/detect_config.h"   // bounds for the settings number entities
+#include "canary/detect_profiles.h" // watch profile options for the select
 
 namespace canary::ha {
 
@@ -330,6 +331,48 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
       continue;
     }
     publish_cfg(mqtt, t, p);
+  }
+
+  // Watch profile select (detect_profiles.h): one-step per-use-case preset —
+  // room presence vs litter box. Picking an option applies that profile's
+  // recommended tuning to the four numbers above (each stays individually
+  // adjustable afterward) and retargets the fleet beacon's detect class.
+  {
+    char options[192] = "";
+    size_t off = 0;
+    for (uint8_t i = 0; i < canary::cfg::WATCH_PROFILE_COUNT; ++i) {
+      const int w = snprintf(options + off, sizeof(options) - off, "%s\"%s\"",
+                             i ? "," : "", canary::cfg::WATCH_PROFILES[i].label);
+      if (w < 0 || (size_t)w >= sizeof(options) - off) {
+        log_line("DISC", "watch profile options truncated — select skipped");
+        options[0] = '\0';
+        break;
+      }
+      off += (size_t)w;
+    }
+    if (options[0] != '\0') {
+      char t[192], p[1280];
+      topic_for("select", "watch_profile", t, sizeof(t));
+      const int written = snprintf(p, sizeof(p),
+               "{"
+               "\"name\":\"Watch profile\","
+               "\"unique_id\":\"%s_watch_profile\","
+               "\"state_topic\":\"%s\","
+               "\"value_template\":\"{{ value_json.profile_label | default('Room presence') }}\","
+               "\"command_topic\":\"%s\","
+               "\"options\":[%s],"
+               "\"icon\":\"mdi:eye-settings-outline\","
+               "\"entity_category\":\"config\","
+               "%s,%s"
+               "}",
+               DEVICE_ID, topics.cfg_state, topics.cfg_profile_cmd, options,
+               availObj, devObj);
+      if (written < 0 || written >= (int)sizeof(p)) {
+        log_line("DISC", "watch profile select payload truncated — skipped");
+      } else {
+        publish_cfg(mqtt, t, p);
+      }
+    }
   }
 
   // Aim assist switch (bench/aiming): streams a boxes-only live channel

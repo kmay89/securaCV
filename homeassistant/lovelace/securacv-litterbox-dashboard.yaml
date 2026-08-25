@@ -1,0 +1,169 @@
+# SecuraCV Canary Vision — Litter Box Dashboard
+#
+# For a Canary Vision (ESP32 host + Grove Vision AI V2) running
+# firmware/projects/canary-vision with the **litter_box watch profile**
+# selected and a cat-detection model loaded on the module (SenseCraft).
+# The firmware self-registers every entity below via MQTT Discovery.
+#
+# How to add this to Home Assistant:
+#   Settings → Dashboards → Add Dashboard → From YAML
+#   Or paste into an existing dashboard's raw YAML editor.
+#
+# Entity IDs:
+#   Replace DEVICE_ID below with your device id (default: canary_vision_001).
+#   The discovery device is named "SecuraCV Canary Vision <device_id>", so HA
+#   generates entity ids like:
+#     binary_sensor.securacv_canary_vision_DEVICE_ID_presence
+#   Confirm yours under Settings → Devices & Services → MQTT → the device.
+#
+# Companion alert automations (visit completed + no-visit-in-24h wellness):
+#   homeassistant/automations/securacv_litterbox.yaml
+
+title: "Litter Box"
+views:
+
+  # ===========================================================================
+  # Box view — is the cat in the box, when was the last visit
+  # ===========================================================================
+  - title: "Box"
+    icon: "mdi:paw"
+    path: litterbox
+    badges: []
+    cards:
+
+      # -----------------------------------------------------------------------
+      # The box at a glance. Presence = cat in the box right now; Dwelling =
+      # this stay already counts as a real visit (past the dwell threshold);
+      # Last event names the most recent FSM transition.
+      # -----------------------------------------------------------------------
+      - type: glance
+        title: "Right now"
+        show_state: true
+        entities:
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_presence
+            name: "Cat in box"
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_dwelling
+            name: "Real visit"
+          - entity: sensor.securacv_canary_vision_DEVICE_ID_last_event
+            name: "Last event"
+
+      # -----------------------------------------------------------------------
+      # Last completed visit — read from the visit automation's own
+      # last_triggered (no helper entities needed). Requires the companion
+      # automations file to be installed.
+      # -----------------------------------------------------------------------
+      - type: markdown
+        title: "Last visit"
+        content: >
+          {% set lt = state_attr('automation.securacv_litter_box_visit_completed',
+                                 'last_triggered') %}
+          {% if lt is none %}
+          _No visit witnessed yet (or the litter box automations aren't
+          installed — see `securacv_litterbox.yaml`)._
+          {% else %}
+          **{{ relative_time(lt) }} ago** ({{ lt.strftime('%H:%M') }})
+
+          A healthy cat visits several times a day. The wellness automation
+          alerts after 24 h of silence.
+          {% endif %}
+
+      # -----------------------------------------------------------------------
+      # Visits over time — presence flips chart every stay; dwelling marks the
+      # stays that counted as real visits.
+      # -----------------------------------------------------------------------
+      - type: history-graph
+        title: "Last 24 hours"
+        hours_to_show: 24
+        entities:
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_presence
+            name: "In box"
+          - entity: binary_sensor.securacv_canary_vision_DEVICE_ID_dwelling
+            name: "Real visit"
+
+      # -----------------------------------------------------------------------
+      # Detection confidence — the litter_box profile's floor is 60 by
+      # default (animal models calibrate lower than person models).
+      # -----------------------------------------------------------------------
+      - type: gauge
+        title: "Detection confidence"
+        entity: sensor.securacv_canary_vision_DEVICE_ID_confidence
+        min: 0
+        max: 100
+        severity:
+          green: 60
+          yellow: 40
+          red: 0
+
+  # ===========================================================================
+  # Tuning — the watch profile + runtime detection settings
+  # ===========================================================================
+  - title: "Tuning"
+    icon: "mdi:tune"
+    path: litterbox-tuning
+    cards:
+
+      - type: markdown
+        content: >
+          ## Litter box tuning
+
+          Pick **Watch profile → Litter box** once: it applies the litter
+          preset (score floor 60, lost timeout 4000 ms so digging doesn't
+          fragment a visit, dwell 8000 ms so a real visit latches) and the
+          numbers below stay individually adjustable. Re-selecting the
+          profile restores its preset.
+
+          After loading a cat model in SenseCraft, set **Subject class
+          index** to the model's cat class (single-class models are usually
+          `0`). The space should already be lit — aim across the box, not
+          into a lamp, and use the Aim card on the vision dashboard to
+          check the view. See `docs/hardware/grove_vision_ai_v2_guide.md`.
+
+      - type: entities
+        title: "Watch profile & detection settings"
+        icon: "mdi:tune-variant"
+        show_header_toggle: false
+        entities:
+          - entity: select.securacv_canary_vision_DEVICE_ID_watch_profile
+            name: "Watch profile"
+          - entity: number.securacv_canary_vision_DEVICE_ID_person_class_index
+            name: "Subject class index"
+          - entity: number.securacv_canary_vision_DEVICE_ID_score_threshold
+            name: "Score threshold (%)"
+          - entity: number.securacv_canary_vision_DEVICE_ID_lost_timeout
+            name: "Lost timeout (ms)"
+          - entity: number.securacv_canary_vision_DEVICE_ID_dwell_start
+            name: "Dwell start (ms)"
+
+  # ===========================================================================
+  # Device — firmware, updates, uptime
+  # ===========================================================================
+  - title: "Device"
+    icon: "mdi:chip"
+    path: litterbox-device
+    cards:
+
+      - type: entities
+        title: "Firmware & health"
+        icon: "mdi:heart-pulse"
+        show_header_toggle: false
+        entities:
+          - entity: update.securacv_canary_vision_DEVICE_ID_firmware
+            name: "Firmware"
+          - entity: switch.securacv_canary_vision_DEVICE_ID_auto_update
+            name: "Auto update"
+          - entity: sensor.securacv_canary_vision_DEVICE_ID_uptime
+            name: "Uptime"
+
+      - type: markdown
+        content: >
+          ## Notes
+
+          - **Model loading** (person → cat) happens over the **module's own
+            USB-C port** via SenseCraft — never through HA. The watch
+            profile and class index then adapt the host firmware with no
+            rebuild.
+          - **Privacy is unchanged by the profile**: inference stays inside
+            the HX6538, no pixels cross the wire, and the signed witness
+            events are the same vocabulary every Canary Vision speaks.
+          - Full port disambiguation and troubleshooting:
+            `docs/hardware/grove_vision_ai_v2_guide.md`.

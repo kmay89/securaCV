@@ -11,6 +11,7 @@ void PresenceFSM::reset() {
   last_seen_ms_=0;
   dwell_start_ms_=0;
   last_leave_ms_=0;
+  last_visit_ms_=0;
 
   interaction_candidate_=false;
 
@@ -90,6 +91,10 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
 
     presence_ = false;
     last_leave_ms_ = now_ms;
+    // The stay is over — latch its duration so the leave-side events
+    // (presence_ended now, interaction_likely shortly after) can still
+    // report how long the visit was after presence_ms resets to 0.
+    last_visit_ms_ = now_ms - presence_start_ms_;
     return emit(out_event, "presence_ended");
   }
 
@@ -123,6 +128,7 @@ StateSnapshot PresenceFSM::snapshot(uint32_t now_ms, const char* last_event) con
   s.dwelling = dwelling_;
   s.presence_ms = presence_ ? (now_ms - presence_start_ms_) : 0;
   s.dwell_ms    = dwelling_ ? (now_ms - dwell_start_ms_) : 0;
+  s.visit_ms    = last_visit_ms_;
 
   s.confidence = confidence_;
   s.voxel = voxel_tracker_.stable();

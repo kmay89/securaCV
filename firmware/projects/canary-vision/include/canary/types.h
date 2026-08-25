@@ -56,6 +56,11 @@ struct StateSnapshot {
 
   uint32_t presence_ms=0;
   uint32_t dwell_ms=0;
+  // Duration of the last COMPLETED stay (presence start → leave). The
+  // presence_ended / interaction_likely events fire after presence_ms has
+  // reset to 0, so this is the number "the visit lasted 45 s" reads —
+  // live/telemetry tier only, never part of the signed record.
+  uint32_t visit_ms=0;
 
   int confidence=0; // percent
   Voxel voxel;
