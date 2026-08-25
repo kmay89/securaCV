@@ -484,6 +484,17 @@
               "lost_ms": 5000,
               "dwell_ms": 15000
             }
+          },
+          {
+            "id": "litter",
+            "icon": "🐈",
+            "title": "Litter box (watch profile)",
+            "blurb": "Load a cat-detection model in SenseCraft, pick the litter_box watch profile, done: lower score floor (a mid-dig cat is a strange shape), long lost timeout so digging doesn't fragment one visit into five, short dwell so a real visit latches. interaction_likely = visit completed. The space is already lit — aim across the box, not into the lamp.",
+            "values": {
+              "score": 60,
+              "lost_ms": 4000,
+              "dwell_ms": 8000
+            }
           }
         ]
       },
@@ -644,6 +655,17 @@
               "lost_ms": 5000,
               "dwell_ms": 15000
             }
+          },
+          {
+            "id": "litter",
+            "icon": "🐈",
+            "title": "Litter box (watch profile)",
+            "blurb": "Load a cat-detection model in SenseCraft, pick the litter_box watch profile, done: lower score floor (a mid-dig cat is a strange shape), long lost timeout so digging doesn't fragment one visit into five, short dwell so a real visit latches. interaction_likely = visit completed. The space is already lit — aim across the box, not into the lamp.",
+            "values": {
+              "score": 60,
+              "lost_ms": 4000,
+              "dwell_ms": 8000
+            }
           }
         ]
       }
@@ -796,6 +818,17 @@
               "score": 85,
               "lost_ms": 5000,
               "dwell_ms": 15000
+            }
+          },
+          {
+            "id": "litter",
+            "icon": "🐈",
+            "title": "Litter box (watch profile)",
+            "blurb": "Load a cat-detection model in SenseCraft, pick the litter_box watch profile, done: lower score floor (a mid-dig cat is a strange shape), long lost timeout so digging doesn't fragment one visit into five, short dwell so a real visit latches. interaction_likely = visit completed. The space is already lit — aim across the box, not into the lamp.",
+            "values": {
+              "score": 60,
+              "lost_ms": 4000,
+              "dwell_ms": 8000
             }
           }
         ]
@@ -957,6 +990,17 @@
               "score": 85,
               "lost_ms": 5000,
               "dwell_ms": 15000
+            }
+          },
+          {
+            "id": "litter",
+            "icon": "🐈",
+            "title": "Litter box (watch profile)",
+            "blurb": "Load a cat-detection model in SenseCraft, pick the litter_box watch profile, done: lower score floor (a mid-dig cat is a strange shape), long lost timeout so digging doesn't fragment one visit into five, short dwell so a real visit latches. interaction_likely = visit completed. The space is already lit — aim across the box, not into the lamp.",
+            "values": {
+              "score": 60,
+              "lost_ms": 4000,
+              "dwell_ms": 8000
             }
           }
         ]
