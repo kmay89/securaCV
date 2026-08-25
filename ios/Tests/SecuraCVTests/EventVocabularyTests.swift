@@ -85,6 +85,73 @@ final class EventVocabularyTests: XCTestCase {
         XCTAssertEqual(EventVocabulary.severity(forWire: "contact_state_change"), .notice)
     }
 
+    // MARK: - the acoustic dialect (life-safety sounds land at honest severities)
+
+    func testAcousticEventsLandAtHonestSeverities() {
+        // Another alarm sounding in the home is an Alert — the same rung the
+        // glass gives it. Before these cases existed, a heard smoke alarm
+        // fell to the calm unknown-event fallback, which is exactly the
+        // wrong place for it.
+        XCTAssertEqual(EventVocabulary.severity(forWire: "smoke_alarm_t3"), .alert)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "co_alarm_t4"), .alert)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "glass_break"), .warn)
+        // Doorstep sounds and the mic audit stay everyday.
+        XCTAssertEqual(EventVocabulary.severity(forWire: "knock"), .notice)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "doorbell"), .notice)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "mic_muted"), .notice)
+        XCTAssertEqual(EventVocabulary.severity(forWire: "mic_unmuted"), .notice)
+    }
+
+    func testAcousticHeadlinesSayHeardNeverVerified() {
+        // "Heard": the device classified a cadence; it did not verify a
+        // detector, and the sentence must not claim more than the ears did.
+        XCTAssertEqual(EventVocabulary.headline(forWire: "smoke_alarm_t3",
+                                                zone: "hallway", deviceName: "Hall"),
+                       "Smoke alarm heard at hallway")
+        XCTAssertEqual(EventVocabulary.headline(forWire: "co_alarm_t4",
+                                                zone: "", deviceName: "Utility"),
+                       "CO alarm heard at Utility")
+        XCTAssertEqual(EventVocabulary.headline(forWire: "doorbell",
+                                                zone: "", deviceName: "Entry"),
+                       "Doorbell at Entry")
+        XCTAssertEqual(EventVocabulary.headline(forWire: "mic_muted",
+                                                zone: "kitchen", deviceName: "Kitchen"),
+                       "Kitchen mic muted")
+    }
+
+    func testAcousticDialectMirrorsTheFirmwareTypeNamesOnDisk() throws {
+        // The wire names are the firmware's own `type_name` strings in the
+        // acoustic events module — read them off disk so a renamed or added
+        // sound is a failing test here, not a silent fall to the unknown-
+        // event fallback. Same belt-over-the-repo pattern as the dictionary
+        // mirror test above.
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // SecuraCVTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // ios
+            .deletingLastPathComponent()   // repo root
+        let module = repoRoot.appendingPathComponent(
+            "firmware/projects/canary-wap/arduino/canary_wap/acoustic_events_module.cpp")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: module.path),
+                          "repo checkout not visible from the test host")
+
+        let source = try String(contentsOf: module, encoding: .utf8)
+        let pattern = #"/\* type_name \*/\s*"([a-z0-9_]+)""#
+        let regex = try NSRegularExpression(pattern: pattern)
+        let range = NSRange(source.startIndex..., in: source)
+        let firmwareNames = Set(regex.matches(in: source, range: range).compactMap {
+            Range($0.range(at: 1), in: source).map { String(source[$0]) }
+        })
+        XCTAssertFalse(firmwareNames.isEmpty, "the type_name table moved — update the regex")
+
+        let known = Set(DeviceEvent.allCases.map(\.rawValue))
+        for name in firmwareNames {
+            XCTAssertTrue(known.contains(name),
+                          "firmware acoustic event \(name) has no DeviceEvent case — " +
+                          "it would render at the unknown-event fallback")
+        }
+    }
+
     // MARK: - headlines
 
     func testDeviceDialectKeepsItsFriendlyPhrasing() {

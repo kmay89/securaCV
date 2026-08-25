@@ -5,6 +5,15 @@
 > without ever learning who you are. This guide gets one going in five
 > minutes.
 
+**The journey, by surface** (each is optional; every one is free): rehearse
+in [the Lab](https://kmay89.github.io/securaCV/canary-local/) — the real
+firmware, compiled to WebAssembly, in your browser — then flash a real board
+in [the browser flasher](browser_flasher.md) or the desktop
+**SecuraCV Flasher** app, then live with the fleet in
+[Home Assistant](homeassistant_setup.md), the iPhone / Apple Watch
+[companion app](../ios/README.md), or the Apple TV
+[Witness Wall](tvos/README.md).
+
 ---
 
 ## What's in the box

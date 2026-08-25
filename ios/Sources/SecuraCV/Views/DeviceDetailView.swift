@@ -61,6 +61,7 @@ struct DeviceDetailView: View {
     }
 
     var body: some View {
+        ScrollViewReader { scroller in
         List {
             // The device itself, before any numbers about it: the turntable
             // hero (or the honest no-picture card) — see DeviceFigureCard.
@@ -105,6 +106,18 @@ struct DeviceDetailView: View {
 
             Section("Health") {
                 LabeledContent("Liveness", value: witness.link.label)
+                // What its own pipeline reports seeing right now, off the
+                // BLE v2 beacon — present tense only: the row exists while
+                // the claim is fresh (Witness.seeingNow's aging rule) and
+                // simply isn't drawn once the beacon goes quiet. The class
+                // vocabulary is Person/Vehicle/Animal/Package, nothing
+                // finer, by construction (Invariant II).
+                if let seeing = liveWitness.seeingNow() {
+                    LabeledContent("Seeing now") {
+                        Label(Self.seeingLine(seeing), systemImage: seeing.kind.sfSymbol)
+                            .foregroundStyle(Theme.color(.info))
+                    }
+                }
                 if let r = witness.rssiDBM { LabeledContent("Wi-Fi", value: "\(r) dBm") }
                 if let b = witness.batteryPct, b >= 0 { LabeledContent("Battery", value: "\(b)%") }
                 if !witness.firmware.isEmpty { LabeledContent("Firmware", value: witness.firmware) }
@@ -222,9 +235,60 @@ struct DeviceDetailView: View {
             } footer: {
                 Text(mutedFooter)
             }
+
+            // This Canary's own history — the per-device answer every
+            // camera app has and the Alerts tab (fleet-wide by design)
+            // deliberately doesn't. Purely a filter over the same ledger:
+            // nothing new is recorded, and the collapse/lifecycle/reach
+            // rules arrive intact. The day-shape ribbon above the rows is
+            // the same scrub the Alerts tab mounts, walking this list.
+            if !ownRecords.isEmpty {
+                Section {
+                    TimelineScrubSection(records: ownRecords) { bucket in
+                        if let id = anchorID(for: bucket) {
+                            scroller.scrollTo(id, anchor: .top)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    ForEach(ownRecords) { record in
+                        AlertRecordRow(record: record).id(record.id)
+                    }
+                } header: {
+                    Text("History")
+                } footer: {
+                    Text("This phone's notebook, narrowed to this Canary — the same rows as the Alerts tab. The sealed witness chain on the device itself is the full record.")
+                }
+            }
         }
         .navigationTitle(witness.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    /// This Canary's slice of the alert ledger, newest first (the ledger's
+    /// own order — the same assumption the Alerts tab makes).
+    private var ownRecords: [AlertRecord] {
+        store.alertLog.records.filter { $0.witnessID == witness.id }
+    }
+
+    /// The row a scrubbed bucket should bring into view — same rule as the
+    /// Alerts tab: the newest record at or before the bucket, so scrubbing
+    /// into a quiet stretch lands on the last thing that actually happened.
+    private func anchorID(for bucket: Date) -> String? {
+        let target = bucket.timeIntervalSince1970
+        let records = ownRecords
+        if let hit = records.first(where: { $0.lastBucket.timeIntervalSince1970 <= target }) {
+            return hit.id
+        }
+        return records.last?.id
+    }
+
+    /// "Person · 87%" — the confidence rides along only when the wire
+    /// scored the claim; a sender may honestly not score it.
+    private static func seeingLine(_ seeing: (kind: SeenClass, score: Int?)) -> String {
+        if let score = seeing.score { return "\(seeing.kind.label) · \(score)%" }
+        return seeing.kind.label
     }
 
     /// When this phone paired it. Nil for a Canary we can see but have not

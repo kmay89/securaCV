@@ -70,6 +70,20 @@ enum FleetMerge {
         // Fill gaps; never replace a value a stronger tier already established.
         if w.batteryPct == nil { w.batteryPct = b.batteryPct }
 
+        // What the sender's pipeline sees RIGHT NOW (v2 beacons only). Live
+        // state, not a gap-fill: the beacon is the only transport that
+        // carries it, so a fresher sighting replaces an older claim. Only
+        // positive claims fold — a "none" is indistinguishable from a v1
+        // beacon on the wire, so clearing is time's job: readers age the
+        // claim out through `Witness.seeingNow` rather than trusting
+        // silence. No trust is involved (rule 1 untouched): this is a
+        // present-tense observation, never a badge.
+        if let seen = SeenClass(beaconClass: b.detectClass) {
+            w.seeingClass = seen
+            w.seeingScore = b.detectScore
+            w.seeingAt = sighting.lastHeard
+        }
+
         // The wire carries only the LOW 16 BITS of the chain height. Writing
         // that over a full height read from /api/v1/witness would silently
         // truncate it, so it is used only when we have nothing at all.

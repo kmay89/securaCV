@@ -3,14 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SecuraCV Lab</title>
+  <!-- "Flasher", not "Lab": a separate app named SecuraCV Lab ships from
+       this repo (desktop-lab/), and this window calling itself the Lab made
+       "open the Lab" mean three different things. One honest name per
+       surface — the ecosystem audit's cheapest fix. -->
+  <title>SecuraCV Flasher</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body data-view="canary">
 
   <!-- ── Splash: a branded cold-start moment showing the build it's running
        and whether it's up to date. Fades out on its own (or on click). ── -->
-  <div id="splash" class="splash" role="status" aria-label="Starting SecuraCV Lab">
+  <div id="splash" class="splash" role="status" aria-label="Starting SecuraCV Flasher">
     <div class="s-mark" aria-hidden="true">
       <svg viewBox="0 0 64 64" width="76" height="76">
         <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
@@ -21,7 +25,7 @@
         <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
       </svg>
     </div>
-    <div class="s-word"><b>SecuraCV</b><span>The Lab</span></div>
+    <div class="s-word"><b>SecuraCV</b><span>Flasher</span></div>
     <div class="s-bar"><i></i></div>
     <div class="s-meta" id="splash-meta">Warming up…</div>
   </div>
@@ -41,7 +45,7 @@
             <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
           </svg>
         </span>
-        <span class="word"><b>SecuraCV</b><span>The Lab</span></span>
+        <span class="word"><b>SecuraCV</b><span>Flasher</span></span>
       </div>
 
       <nav class="rail-nav" role="tablist" aria-label="Sections">

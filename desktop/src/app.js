@@ -1,4 +1,6 @@
-// SecuraCV Lab — front-end glue.
+// SecuraCV Flasher — front-end glue. (The app used to brand itself "the
+// Lab" in-window; a separate SecuraCV Lab app exists, so this one now says
+// what it is.)
 //
 // Plain JS on purpose: no framework, no build step. It talks to the Rust
 // backend through Tauri's global bridge (withGlobalTauri) and never touches
@@ -2080,7 +2082,7 @@ function renderBuildChrome() {
   $("health-build").textContent = buildLabel();
   $("health-fw").textContent = i.fw_train || "—";
   const meta = [];
-  meta.push(`SecuraCV Lab · ${buildLabel()}`);
+  meta.push(`SecuraCV Flasher · ${buildLabel()}`);
   if (i.build_epoch) meta.push(`built ${fmtDate(i.build_epoch * 1000)}`);
   $("splash-meta").innerHTML = meta.map(esc).join("<br>") + `<br><b id="splash-upd">checking for updates…</b>`;
 }
@@ -4622,6 +4624,17 @@ const ATLAS_LINKS = [
     ["Maker", "Roll your own from parts.", SITE + "/maker"],
     ["Factory", "Batch-provision a whole run.", SITE + "/factory"],
   ]],
+  // The rest of the family, named from the flashing bench — the moment of
+  // maximum investment used to end at a dead end: this app derives birth
+  // certificates "to match the one the iPhone will show" and never told
+  // anyone an iPhone app exists. Availability copy stays honest
+  // (non-negotiable #4): a built-and-tested app that isn't in a store yet
+  // says so instead of implying a download.
+  ["The other windows onto your fleet", [
+    ["iPhone & Apple Watch app", "The living-with-it companion: honest alerts, the fleet on your wrist. Built and tested; App Store availability pending.", REPO + "/tree/main/ios"],
+    ["SecuraCV Lab (desktop)", "This app's sibling: the whole Lab as a native app — same benches, offline.", SITE + "/download"],
+    ["The Witness Wall (Apple TV)", "The verified record on the TV — try it on the Your Fleet tab; the native app's runbook lives here.", REPO + "/blob/main/tvos/RUN_ON_APPLE_TV.md"],
+  ]],
   ["The project", [
     ["Source on GitHub", "Every line, open. Read it, fork it.", REPO],
     ["Changelog", "What changed, release by release.", REPO + "/blob/main/CHANGELOG.md"],
@@ -4730,8 +4743,8 @@ function renderAbout() {
         <svg viewBox="0 0 64 64" width="44" height="44"><circle cx="32" cy="36" r="17" fill="#FFD44F"/><circle cx="41" cy="24" r="10" fill="#FFD44F"/><circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/><path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/><ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/></svg>
       </span>
       <div>
-        <h2>SecuraCV&nbsp;Lab</h2>
-        <p>The Lab as a native app — by <span class="bb-lab">Errer Labs</span>. No browser, no terminal, and you can't brick the board.</p>
+        <h2>SecuraCV&nbsp;Flasher</h2>
+        <p>The flashing bench as a native app — by <span class="bb-lab">Errer Labs</span>. No browser, no terminal, and you can't brick the board. Its sibling, the <b>SecuraCV Lab</b> app, carries the whole Lab.</p>
       </div>
     </div>
 

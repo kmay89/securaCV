@@ -50,7 +50,7 @@
     },
     "category": "DeveloperTool",
     "shortDescription": "Flash a SecuraCV Canary — no browser, no terminal.",
-    "longDescription": "The SecuraCV Lab as a native desktop app. Detects your ESP32 Canary over USB-C, downloads the signed factory image from the project's GitHub release, and flashes it with the bundled espflash engine — no Chrome, no Web Serial, no PlatformIO. Backs up nothing you can lose (the ESP32 bootloader is mask ROM, so it can't be bricked) and self-updates from the web.",
+    "longDescription": "The SecuraCV flashing bench as a native desktop app. Detects your ESP32 Canary over USB-C, downloads the signed factory image from the project's GitHub release, and flashes it with the bundled espflash engine — no Chrome, no Web Serial, no PlatformIO. Backs up nothing you can lose (the ESP32 bootloader is mask ROM, so it can't be bricked) and self-updates from the web.",
     "macOS": {
       "minimumSystemVersion": "10.15",
       "dmg": {

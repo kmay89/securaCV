@@ -108,6 +108,14 @@ enum DemoFleet {
         driveway.chainLength = 447
         driveway.firmware = "2.4.0"
         driveway.rssiDBM = -61
+        // What its optical pipeline reports seeing right now — the claim a
+        // real vision Canary broadcasts in its v2 presence beacon. Seeded
+        // fresh so the detail screen demos the "Seeing now" row; the same
+        // aging rule that governs a real beacon (Witness.seeingNow) applies
+        // to the demo too.
+        driveway.seeingClass = .vehicle
+        driveway.seeingScore = 84
+        driveway.seeingAt = now
 
         // The nightstand display — the fleet's across-the-room face, whose
         // behind-glass beacon boots canary yellow since the 2.3.2 train.

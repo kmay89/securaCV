@@ -189,6 +189,13 @@ struct FleetView: View {
                         Button("Try the demo fleet") { store.setDemoMode(true) }
                             .buttonStyle(.borderedProminent)
                     }
+                    // Where a Canary comes from, said here instead of a dead
+                    // end: meet one in the Lab (real firmware in the
+                    // browser), hatch one with the free Flasher. Routing,
+                    // never a funnel — no account behind either link.
+                    Link("Where do Canaries come from?",
+                         destination: EcosystemMap.labURL)
+                        .font(.footnote)
                 }
             }
         }

@@ -127,6 +127,64 @@ final class FleetMergeTests: XCTestCase {
         XCTAssertEqual(reached.link, .online, "a stale self-report must not un-see a live poll")
     }
 
+    // ── Rule: "seeing" is present tense — folded live, aged out by time ──
+
+    private func v2Sighting(detectClass: UInt8, score: Int?, at date: Date = Date(),
+                            id: UUID = UUID()) -> BeaconSighting {
+        let beacon = FleetBeacon.parse(manufacturerData:
+            FleetBeacon.encodeV2(flags: 0, batteryPct: nil, healthPct: nil,
+                                 chainHeight: 0, fpB0: 0xAB, fpB1: 0xCD,
+                                 detectClass: detectClass, detectScore: score))!
+        return BeaconSighting(beacon: beacon, rssiDBM: -55, lastHeard: date,
+                              peripheralID: id, localName: nil)
+    }
+
+    func testV2DetectionFoldsAsLiveSeeingState() {
+        let heard = Date()
+        var w = Witness(id: "a")
+        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectPerson, score: 87, at: heard),
+                        into: &w)
+        XCTAssertEqual(w.seeingClass, .person)
+        XCTAssertEqual(w.seeingScore, 87)
+        XCTAssertEqual(w.seeingAt, heard)
+
+        // A fresher claim replaces an older one — this is live state, the
+        // sender is the only authority, not a fill-the-gap field.
+        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectVehicle, score: nil), into: &w)
+        XCTAssertEqual(w.seeingClass, .vehicle)
+        XCTAssertNil(w.seeingScore, "an unscored claim must not inherit the old score")
+    }
+
+    func testSilenceNeverClearsSeeingStateOnFold() {
+        // A v1 beacon (and a v2 "none") carry no claim — neither may clear
+        // one. Clearing is time's job, through Witness.seeingNow.
+        var w = Witness(id: "a")
+        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectPackage, score: 60), into: &w)
+        FleetMerge.fold(sighting(), into: &w)                                   // v1
+        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectNone, score: nil), into: &w)
+        XCTAssertEqual(w.seeingClass, .package, "silence on the wire is not evidence the seeing ended")
+    }
+
+    func testUnknownFutureDetectionClassFoldsNothing() {
+        var w = Witness(id: "a")
+        FleetMerge.fold(v2Sighting(detectClass: 0x7F, score: 50), into: &w)
+        XCTAssertNil(w.seeingClass, "a class this build has never heard of renders as nothing, not a guess")
+    }
+
+    func testSeeingNowAgesOutInsteadOfGoingStale() {
+        let heard = Date()
+        var w = Witness(id: "a")
+        FleetMerge.fold(v2Sighting(detectClass: FleetBeacon.detectAnimal, score: 42, at: heard),
+                        into: &w)
+
+        let fresh = w.seeingNow(asOf: heard.addingTimeInterval(Witness.seeingFreshness - 1))
+        XCTAssertEqual(fresh?.kind, .animal)
+        XCTAssertEqual(fresh?.score, 42)
+
+        XCTAssertNil(w.seeingNow(asOf: heard.addingTimeInterval(Witness.seeingFreshness + 1)),
+                     #"a quiet beacon must read as silence, never a stale "Seeing animal""#)
+    }
+
     // ── attach(): matching heard beacons to known Canaries ──
 
     func testAttachFoldsIntoTheMatchingWitnessByFingerprint() {

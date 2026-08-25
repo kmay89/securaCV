@@ -59,6 +59,30 @@ struct KeysView: View {
                     Text("Publish the fleet's coarse signals into the Home app so automations can answer the witness. Off until you turn it on; the house learns booleans, never footage.")
                 }
 
+                // The family, named from the app's most personal surface —
+                // the fix for the audit finding that every SecuraCV surface
+                // was engineered to agree with the others and none ever told
+                // a user the others exist. Routing, never a funnel: no
+                // account, no store push, honest availability on every row.
+                Section {
+                    ForEach(EcosystemMap.surfaces) { surface in
+                        Link(destination: surface.url) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(surface.name, systemImage: surface.sfSymbol)
+                                Text(surface.job)
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text(surface.availability)
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                } header: {
+                    Text("SecuraCV everywhere")
+                } footer: {
+                    Text("One fleet, several windows onto it — this phone for living with it, the Flasher for hatching and tending, the Lab for learning, the Wall for the shared screen. All free; none needs an account.")
+                }
+
                 AboutSection()
             }
             .navigationTitle("Keys")
