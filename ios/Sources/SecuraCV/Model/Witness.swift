@@ -206,6 +206,27 @@ extension Witness {
 }
 
 extension Witness {
+    /// True when this row carries ANY of the Sense wellbeing readings —
+    /// the gate for the device screen's Wellbeing section. Today only the
+    /// demo fleet sets these (no live wire exists yet: canary-sense
+    /// publishes them on retained MQTT only, and /api/fleet doesn't carry
+    /// them — the roadmap's fleet-selfreport extension is the transport
+    /// slice). nil-tolerant by construction, so the section lights up the
+    /// moment a transport starts filling the fields, with no view change.
+    var hasWellbeingData: Bool {
+        radarPresent != nil || radarOccupants != nil || breathingLock != nil
+            || tempC != nil || humidityPct != nil
+    }
+
+    /// The occupant count's honest wording: the radar's contract is
+    /// 0 / 1 / 2-meaning-2-or-more — it deliberately cannot count a crowd,
+    /// so neither may the label.
+    static func occupantsLabel(_ count: Int) -> String {
+        count >= 2 ? "2+" : "\(count)"
+    }
+}
+
+extension Witness {
     /// A stable, human one-liner for the row subtitle.
     var statusLine: String {
         if tamper { return tamperKind.isEmpty ? "Tamper detected" : tamperKind }
