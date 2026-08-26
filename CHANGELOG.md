@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### The dash glass learns its own story
+
+- **Tap a Roll Call row → the witness detail sheet.** One canary's whole
+  story on the wall panel: its isometric ledger figure at poster size (the
+  same committed-CAD drawing every other surface renders; an unresolvable
+  wire type shows no figure, never a guess) beside every honest field the
+  fleet model holds — state and age, signal word, battery, room feel, a
+  sensing witness's claim strip, chain verdict and length, which bands
+  carry it right now, and the last event. Live while open; the signed-chain
+  proof QR stays one tap deeper, so the card-tap cryptography contract is
+  unchanged.
+- **Settings → network (dash family).** The joined network, the signal as
+  a word (with the shared join-failure vocabulary while the link is down),
+  the hub link, and the one address where the glass answers on the LAN —
+  refreshed about once a second, so carrying the panel around the house is
+  the signal survey. The `.local` name is claimed only while mDNS actually
+  registered it this boot (new `discovery_up()`); otherwise the page shows
+  the numeric IP, which the glass's web server answers on regardless. The
+  caption scopes the privacy claim honestly: witness data never leaves the
+  home, while signed update checks (and opted-in hub-less weather) do
+  touch the internet.
+- **Transparency sheet.** The live WiFi line and the glass's own address
+  join the honesty body, under the same only-claim-a-name-that-resolves
+  rule.
+
 ## [2.4.14] - 2026-08-23
 
 ### First light on the AMOLED flagship
