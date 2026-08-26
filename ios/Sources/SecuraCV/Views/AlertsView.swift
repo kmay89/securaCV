@@ -53,6 +53,21 @@ struct AlertsView: View {
         return records.last?.id
     }
 
+    /// Land a deep link: consume the pending route and, when its anchor hint
+    /// names a witness with records, bring that witness's newest row into
+    /// view. A hint that matches nothing (a storm summary's thread, an
+    /// unpaired id) lands on the tab itself — an anchor is a courtesy, and
+    /// a courtesy that fails must fail into the right room, not a crash or
+    /// a wrong scroll.
+    private func consumeRoute(_ scroller: ScrollViewProxy) {
+        guard case .alerts(let witnessID) = store.pendingRoute else { return }
+        store.pendingRoute = nil
+        guard let witnessID,
+              let hit = store.alertLog.records.first(where: { $0.witnessID == witnessID })
+        else { return }
+        withAnimation { scroller.scrollTo(hit.id, anchor: .top) }
+    }
+
     private static func dayTitle(_ day: Date) -> String {
         let cal = Calendar.current
         if cal.isDateInToday(day) { return "Earlier today" }
@@ -130,6 +145,14 @@ struct AlertsView: View {
                     }
                 }
             }
+            // The deep link's landing: attached to the List (inside the
+            // reader's scope, which the outer modifiers are not) and run on
+            // both doors — appear covers "route set, then tab switched";
+            // onChange covers "already standing on the tab when the tap
+            // landed". consumeRoute clears the route, so the pair is
+            // idempotent.
+            .onAppear { consumeRoute(scroller) }
+            .onChange(of: store.pendingRoute) { _, _ in consumeRoute(scroller) }
             }
             .navigationTitle("Alerts")
             .toolbar {

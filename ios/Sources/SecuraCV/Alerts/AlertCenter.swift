@@ -138,6 +138,11 @@ final class AlertCenter: NSObject, ObservableObject {
     /// witness id carried as the thread identifier.
     var onAck: ((String) -> Void)?
     var onMute: ((String, MuteDuration) -> Void)?
+    /// The plain tap: take the user to the alert they were told about.
+    /// Carries the thread id, which is the witness id for witness alerts and
+    /// a summary marker for storms — the router treats it as an anchor hint,
+    /// scrolling when it matches a record and landing on the tab when not.
+    var onOpen: ((String) -> Void)?
 
     private let center = UNUserNotificationCenter.current()
 
@@ -387,8 +392,13 @@ extension AlertCenter: UNUserNotificationCenterDelegate {
             case Self.muteMorningActionID:
                 self.onMute?(threadID, .untilMorning)
                 self.clearDelivered(thread: threadID)
+            case UNNotificationDefaultActionIdentifier:
+                // The plain tap: land on the alert the notification was
+                // about, not wherever the app last was. (This used to just
+                // open the app — the same failure every competitor ships.)
+                self.onOpen?(threadID)
             default:
-                break   // default tap just opens the app — the Today tab is the answer
+                break
             }
         }
     }

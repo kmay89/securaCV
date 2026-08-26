@@ -112,10 +112,31 @@ struct RootView: View {
     @State private var section: AppSection = .today
 
     var body: some View {
-        if horizontalSizeClass == .regular {
-            SidebarRootView(section: $section)
-        } else {
-            TabRootView(section: $section)
+        Group {
+            if horizontalSizeClass == .regular {
+                SidebarRootView(section: $section)
+            } else {
+                TabRootView(section: $section)
+            }
+        }
+        // The deep-link doors, both landing on the same route value: a
+        // widget or link speaks the securacv:// dialect; a notification tap
+        // arrives already parsed (AlertCenter → pendingRoute). The shell's
+        // only job is the tab switch — the destination view consumes the
+        // route (and any anchor in it) itself, so routing logic never
+        // leaks into the shell.
+        .onOpenURL { url in
+            if let route = AppRoute(url: url) { store.pendingRoute = route }
+        }
+        .onChange(of: store.pendingRoute) { _, route in
+            guard let route else { return }
+            switch route {
+            case .today:
+                section = .today
+                store.pendingRoute = nil   // no anchor to consume — done here
+            case .alerts:
+                section = .alerts          // AlertsView consumes and clears
+            }
         }
     }
 }

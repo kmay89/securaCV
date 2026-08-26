@@ -23,6 +23,22 @@
   <key>ITSAppUsesNonExemptEncryption</key>
   <false/>
 
+  <!-- Deep links: the securacv:// dialect widgets and links speak
+       (Shared/AppRoute.swift is the one parser — change both together).
+       Routing can only switch tabs and scroll lists the user already owns;
+       there is nothing a link can open, export, or silence. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.securacv.app</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>securacv</string>
+      </array>
+    </dict>
+  </array>
+
   <!-- Live Activities / Dynamic Island -->
   <key>NSSupportsLiveActivities</key>
   <true/>

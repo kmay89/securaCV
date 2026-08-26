@@ -191,6 +191,21 @@ final class HomeKitBridge: ObservableObject {
         if w.lastEventSeverity >= .notice, w.deviceType == .vision {
             out.insert(.motion)
         }
+        // The battery the model already holds, projected at the SAME
+        // threshold the app's own severity ladder warns at — one number,
+        // one meaning, everywhere (Witness.lowBatteryThreshold). The house
+        // learns "this sensor is running low", which is exactly what a dumb
+        // HomeKit sensor would say about itself.
+        if let b = w.batteryPct, b >= 0, b < Witness.lowBatteryThreshold {
+            out.insert(.lowBattery)
+        }
+        // Deliberately NOT derived yet: the class-scoped motion signals
+        // (motionPerson and friends). The beacon's detection class folds
+        // only into the beacon's own provisional row (the FleetMerge
+        // attribution rule), and no transport carries a class for a paired
+        // Canary — projecting one would be a guess wearing a HAP
+        // characteristic. They light up when the fleet-selfreport transport
+        // slice lands, with no change to the consent model here.
         return out.intersection(enabledSignals.union([.tamper]))
     }
 

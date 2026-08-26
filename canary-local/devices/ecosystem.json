@@ -1,0 +1,37 @@
+{
+  "$schema_note": "The family map — every SecuraCV surface a fleet owner can stand at, its canonical URL, and an honest availability status. HAND-EDITED (no generator); this file is the single source the consumer surfaces pin themselves to: the iPhone app's EcosystemMap (ios/Shared/EcosystemMap.swift — belted by tests/ecosystem.test.js reading the Swift source, and by ios/Tests/SecuraCVTests/EcosystemMapTests.swift reading this file) and the desktop Flasher's Atlas (desktop/src/app.js ATLAS_LINKS). Status vocabulary — 'shipping': a normal person can install it today; 'in-browser': no install, it runs where you already are; 'store-pending': built and tested, store availability pending, and every consumer's copy MUST say so. Flipping a status is meant to hurt: the tests fail every consumer whose copy still tells the old story, so the day the tvOS app reaches the store is the day every surface stops saying 'pending' — together.",
+  "site": "https://securacv.com",
+  "repo": "https://github.com/kmay89/securaCV",
+  "surfaces": {
+    "lab": {
+      "name": "The Lab",
+      "url": "https://securacv.com/lab",
+      "status": "in-browser"
+    },
+    "flasher": {
+      "name": "SecuraCV Flasher",
+      "url": "https://securacv.com/download",
+      "status": "shipping"
+    },
+    "lab-app": {
+      "name": "SecuraCV Lab (desktop)",
+      "url": "https://securacv.com/download",
+      "status": "shipping"
+    },
+    "witness-wall": {
+      "name": "The Witness Wall",
+      "url": "https://github.com/kmay89/securaCV/blob/main/tvos/RUN_ON_APPLE_TV.md",
+      "status": "store-pending"
+    },
+    "hub": {
+      "name": "The Hub (Home Assistant)",
+      "url": "https://securacv.com/lab",
+      "status": "shipping"
+    },
+    "ios-app": {
+      "name": "iPhone & Apple Watch app",
+      "url": "https://github.com/kmay89/securaCV/tree/main/ios",
+      "status": "store-pending"
+    }
+  }
+}

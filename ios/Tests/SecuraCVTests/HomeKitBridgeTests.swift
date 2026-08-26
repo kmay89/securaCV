@@ -56,6 +56,37 @@ final class HomeKitBridgeTests: XCTestCase {
     }
 
     @MainActor
+    func testLowBatteryProjectsAtTheSeverityLadderThreshold() {
+        // One number, one meaning: the projection warns exactly where the
+        // app's own severity ladder warns (Witness.lowBatteryThreshold) —
+        // the house and the phone can never tell different battery stories.
+        let bridge = HomeKitBridge()
+        var w = Witness(id: "canary-a")
+        w.batteryPct = Witness.lowBatteryThreshold - 1
+        XCTAssertTrue(bridge.signals(for: w).contains(.lowBattery),
+                      "below the ladder's threshold the house must hear it")
+        w.batteryPct = Witness.lowBatteryThreshold
+        XCTAssertFalse(bridge.signals(for: w).contains(.lowBattery),
+                       "at the threshold the ladder stays calm — so must the projection")
+        w.batteryPct = -1
+        XCTAssertFalse(bridge.signals(for: w).contains(.lowBattery),
+                       "a no-reading sentinel is no signal, never a guess")
+        w.batteryPct = nil
+        XCTAssertFalse(bridge.signals(for: w).contains(.lowBattery))
+    }
+
+    @MainActor
+    func testLowBatteryHonorsConsentLikeEveryNonTamperSignal() {
+        let bridge = HomeKitBridge()
+        XCTAssertTrue(bridge.setSignal(.lowBattery, enabled: false),
+                      "low battery is not tamper — a human may quiet it")
+        var w = Witness(id: "canary-a")
+        w.batteryPct = 3
+        XCTAssertFalse(bridge.signals(for: w).contains(.lowBattery),
+                       "a quieted signal must stay out of the projection")
+    }
+
+    @MainActor
     func testTheStandingLadderReadsTopToBottom() {
         typealias S = HomeKitStanding
         XCTAssertEqual(HomeKitBridge.standing(isEnabled: false, authorized: false,

@@ -53,4 +53,42 @@ final class EcosystemMapTests: XCTestCase {
             XCTAssertTrue(ids.contains(expected), "the family map lost \(expected)")
         }
     }
+
+    /// The machine-readable family map (canary-local/devices/ecosystem.json)
+    /// is the canonical story; this list is a consumer copy. The belt reads
+    /// the JSON off disk so a surface renamed, relinked, or shipped there
+    /// fails here type-checked — and in the always-on node gate
+    /// (canary-local/tests/ecosystem.test.js) for edits the gated iOS CI
+    /// never sees. Same belt-over-the-repo pattern as the const.py mirror.
+    func testTheFamilyMapMirrorsEcosystemJSONOnDisk() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // SecuraCVTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // ios
+            .deletingLastPathComponent()   // repo root
+        let mapURL = repoRoot.appendingPathComponent("canary-local/devices/ecosystem.json")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: mapURL.path),
+                          "repo checkout not visible from the test host")
+
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: mapURL)) as? [String: Any])
+        XCTAssertEqual(json["site"] as? String, EcosystemMap.site)
+        XCTAssertEqual(json["repo"] as? String, EcosystemMap.repo)
+        let canonical = try XCTUnwrap(json["surfaces"] as? [String: [String: String]])
+
+        for surface in EcosystemMap.surfaces {
+            let canon = try XCTUnwrap(canonical[surface.id],
+                                      "\(surface.id) is not a surface ecosystem.json names")
+            XCTAssertEqual(surface.name, canon["name"],
+                           "\(surface.id): the app renames a family member")
+            XCTAssertEqual(surface.url.absoluteString, canon["url"],
+                           "\(surface.id): the app links somewhere the family map doesn't")
+            // Availability copy must agree with the canonical status, in both
+            // directions: "pending" is the store-pending marker, and a shipped
+            // surface still apologizing is as wrong as an overclaim.
+            let saysPending = surface.availability.localizedCaseInsensitiveContains("pending")
+            XCTAssertEqual(saysPending, canon["status"] == "store-pending",
+                           "\(surface.id): availability copy disagrees with canonical status")
+        }
+    }
 }
