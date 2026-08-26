@@ -24,6 +24,13 @@ namespace canary::net {
 bool discovery_init(const char* device_id, const char* device_type,
                     const char* role);
 
+// True once discovery_init actually registered the hostname this boot.
+// The surfaces that PRINT the glass's .local address (settings network
+// page, transparency sheet) must check this before claiming the name
+// resolves — a failed MDNS.begin means the address would be a lie, and
+// the honest fallback is the numeric IP.
+bool discovery_up();
+
 // Once the broker link is UP, advertise where the fleet's broker lives.
 // Only ever called with a broker we are actually connected to — the fleet
 // must not gossip guesses. Idempotent (TXT update).

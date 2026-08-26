@@ -77,6 +77,8 @@ bool resolve_if_mdns_local(const char* host, char* out, size_t cap) {
 
 }  // namespace
 
+bool discovery_up() { return s_up; }
+
 bool discovery_init(const char* device_id, const char* device_type,
                     const char* role) {
   // Remember our own id for the witness-scan self-skip.

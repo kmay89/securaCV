@@ -143,9 +143,16 @@ forgetting lives under *reset* — so the page is pure honest state: the joined
 network's name, the signal as a word (`signal_word`, never dBm), the hub link,
 and the one address where this glass answers on the LAN. The address is
 composed by the same `canary/net/hostname.h` recipe mDNS registers (the
-MAC-free pseudonym suffix, Invariant III), so what the glass tells you to type
-is what actually resolves — it opens the glass's own web page: a live mirror,
-these same settings, and a spinnable 3D model of the device. The page
+MAC-free pseudonym suffix, Invariant III) — and the `.local` name is only ever
+*claimed* while `discovery_up()` says mDNS actually registered it this boot;
+when naming failed (or the build carries no mDNS), the page shows the numeric
+IP instead, which `glass_web` answers on regardless. Either address opens the
+glass's own web page: a live mirror, these same settings, and a spinnable 3D
+model of the device. The caption keeps rule 4 honest: the *page* is LAN-only
+and witness data never leaves the home, but the firmware does touch the
+internet for signed update checks — and, on an opted-in hub-less build, the
+coarse weather fetch — so it says exactly that instead of a tidy
+"nothing ever leaves" slogan. The page
 refreshes ~1 Hz while open, so carrying the panel around the house *is* the
 signal survey. While the link is down, the signal row carries *why*, in the
 same shared `join_failure_label` words the onboarding portal and the serial

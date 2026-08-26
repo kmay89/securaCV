@@ -73,6 +73,10 @@
 #include "wifi_mgr.h"     // live link state for the network page
 #include "hostname.h"     // the glass's .local name (one recipe)
 #include "wifi_join_policy.h"  // join_failure_label (shared words)
+#if !defined(EMU_BUILD_FLAVOR) && defined(FEATURE_MDNS_DISCOVERY) && \
+    FEATURE_MDNS_DISCOVERY
+#include "discovery.h"    // discovery_up — is the .local name real
+#endif
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 #include "field_io.h"      // siren arm/disarm — 4.3B isolated output
@@ -875,30 +879,60 @@ void build_edit_network() {
   y += ROW_H;
 
   // The one address that answers: this glass's own page — a live mirror,
-  // these settings, and a 3D model of the device you can spin. The name is
-  // composed by the same recipe mDNS registered (canary/net/hostname.h),
-  // so what the glass tells you to type is what actually resolves.
+  // these settings, and a 3D model of the device you can spin. The .local
+  // name is composed by the same recipe mDNS registered (canary/net/
+  // hostname.h) — and it is only ever CLAIMED when mDNS actually came up
+  // this boot (Codex P2: a failed MDNS.begin left the page advertising a
+  // name that cannot resolve). The honest fallback is the numeric IP,
+  // which glass_web answers on regardless of naming.
   {
-    char host[48];
-    canary::net::make_hostname(canary::cfg::get().device_id, host,
-                               sizeof(host));
-    lv_obj_t* url = mk_label(s_host, font_body(), col_signed());
-    lv_label_set_text_fmt(url, "http://%s.local", host);
-    lv_obj_align(url, LV_ALIGN_TOP_MID, 0, y + 10);
-    if (up) {
+#if defined(EMU_BUILD_FLAVOR)
+    const bool named = true;   // the emulated LAN has no real mDNS to fail
+#elif defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+    const bool named = canary::net::discovery_up();
+#else
+    const bool named = false;  // no mDNS in this build — the name would lie
+#endif
+    if (up || named) {
+      char host[48];
+      canary::net::make_hostname(canary::cfg::get().device_id, host,
+                                 sizeof(host));
       String ip = WiFi.localIP().toString();
+      lv_obj_t* url = mk_label(s_host, font_body(), col_signed());
+      if (named) lv_label_set_text_fmt(url, "http://%s.local", host);
+      else lv_label_set_text_fmt(url, "http://%s", ip.c_str());
+      lv_obj_align(url, LV_ALIGN_TOP_MID, 0, y + 10);
       lv_obj_t* ipl = mk_label(s_host, font_caption(), col_muted());
-      lv_label_set_text_fmt(ipl, "right now that's %s", ip.c_str());
+      if (up && named) {
+        lv_label_set_text_fmt(ipl, "right now that's %s", ip.c_str());
+      } else if (up) {
+        lv_label_set_text(ipl, ".local naming didn't start this boot");
+      } else {
+        lv_label_set_text(ipl, "answers once WiFi is back");
+      }
       lv_obj_align(ipl, LV_ALIGN_TOP_MID, 0, y + 44);
     }
   }
   lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
   lv_obj_set_style_text_align(cap, LV_TEXT_ALIGN_CENTER, 0);
+  // Honesty over a tidy slogan (AGENTS.md rule 4): the PAGE is LAN-only,
+  // but this firmware does touch the internet for signed update checks —
+  // and, on an opted-in hub-less build, the coarse weather fetch. Say so.
   lv_label_set_text(cap,
+#ifdef CD_SET_WX
       "open it in any browser on your home network:\n"
       "a live mirror of this glass, these settings, and\n"
-      "a 3D model you can spin. LAN only - nothing\n"
-      "this glass does ever leaves your home.");
+      "a 3D model you can spin. witness data never\n"
+      "leaves your home; the internet is touched only\n"
+      "for signed update checks - and weather, only\n"
+      "if you opted in.");
+#else
+      "open it in any browser on your home network:\n"
+      "a live mirror of this glass, these settings, and\n"
+      "a 3D model you can spin. witness data never\n"
+      "leaves your home; the internet is touched\n"
+      "only for signed update checks.");
+#endif
   lv_obj_align(cap, LV_ALIGN_BOTTOM_MID, 0, -14);
 }
 

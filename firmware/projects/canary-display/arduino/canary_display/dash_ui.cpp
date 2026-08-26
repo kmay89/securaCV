@@ -32,8 +32,13 @@
 #include "fleet_figures.h"
 #include "version.h"
 #include "runtime_config.h"   // ssid for the transparency sheet
+#include <WiFi.h>                    // localIP — the fallback address
 #include "wifi_mgr.h"     // live link state (emu implements too)
 #include "hostname.h"     // the glass's .local name (one recipe)
+#if !defined(EMU_BUILD_FLAVOR) && defined(FEATURE_MDNS_DISCOVERY) && \
+    FEATURE_MDNS_DISCOVERY
+#include "discovery.h"    // discovery_up — is the .local name real
+#endif
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
 #include "fleet_cards.h"
 #include "journal_instance.h"
@@ -590,22 +595,39 @@ void about_open(const Fleet& fleet) {
 #endif
   // The live network truth, in the sheet's own vocabulary: which network,
   // how strong (a word, never dBm), and the one address where this glass
-  // answers — composed by the same recipe mDNS registered, so what the
-  // sheet tells you to type is what actually resolves.
+  // answers. The .local name is composed by the same recipe mDNS
+  // registered — and only ever CLAIMED when mDNS actually came up this
+  // boot (Codex P2: a failed MDNS.begin must not leave the sheet
+  // advertising a name that cannot resolve); the honest fallback is the
+  // numeric IP, which glass_web answers on regardless of naming.
   char netline[112];
   {
+#if defined(EMU_BUILD_FLAVOR)
+    const bool named = true;   // the emulated LAN has no real mDNS to fail
+#elif defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+    const bool named = canary::net::discovery_up();
+#else
+    const bool named = false;  // no mDNS in this build — the name would lie
+#endif
     char host[48];
     canary::net::make_hostname(canary::cfg::get().device_id, host,
                                sizeof(host));
     if (canary::net::wifi_connected()) {
+      char addr[56];
+      if (named) snprintf(addr, sizeof(addr), "%s.local", host);
+      else snprintf(addr, sizeof(addr), "%s",
+                    WiFi.localIP().toString().c_str());
       snprintf(netline, sizeof(netline),
-               "WiFi: %.16s (%s)\nBrowse: http://%s.local",
+               "WiFi: %.16s (%s)\nBrowse: http://%s",
                canary::cfg::get().wifi_ssid,
-               signal_word(canary::net::wifi_rssi()), host);
-    } else {
+               signal_word(canary::net::wifi_rssi()), addr);
+    } else if (named) {
       snprintf(netline, sizeof(netline),
                "WiFi: not connected\nBrowse: http://%s.local (once it's back)",
                host);
+    } else {
+      // No link and no registered name: there is no address to promise.
+      snprintf(netline, sizeof(netline), "WiFi: not connected");
     }
   }
 #if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
