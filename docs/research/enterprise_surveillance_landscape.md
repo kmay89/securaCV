@@ -168,13 +168,13 @@ cell cites its invariant or file.
 | **Identity substrate** | The product: plates + vehicle fingerprints, face embeddings and watchlists, person-resolved entities | None, structurally: no plates, no face embeddings, no biometrics — Invariant II ([`spec/invariants.md`](../../spec/invariants.md)); `ObjectClass` is `Person\|Vehicle\|Animal\|Package`, never `Face` or `LicensePlate` ([`AGENTS.md`](../../AGENTS.md) #1) |
 | **Unit of record** | The person/vehicle — dossiers, hot lists, canonical entities | The incident — semantic events in a signed, hash-chained log |
 | **Queryability** | One query fans out across 83,000 cameras nationally (documented, May 2025); retailer networks police-searchable by contract | No retrospective identity search, no bulk pattern mining; inspection of the past is sequential and context-bound — Invariant VII |
-| **Retention** | 30-day everything-archive default until Aug 2026; now a 7-day *recommendation* existing customers can ignore, plus indefinite "Evidence Mode" cold storage | Raw media in memory only; the vault opens only by break-glass — Invariant I. Export timestamps are 10-minute buckets — Invariant III ([why exports work this way](../why_secure.md)) |
+| **Retention** | 30-day everything-archive default until Aug 2026; now a 7-day *recommendation* existing customers can ignore, plus indefinite "Evidence Mode" cold storage | Raw media discarded after processing unless explicitly sealed — Invariant I; ordinary and pre-event frames never persist, while a deliberately sealed snapshot persists as encrypted ciphertext that opens only by break-glass, until its retention window removes it ([vault](../sealed_snapshot_vault.md)). Export timestamps are 10-minute buckets — Invariant III ([why exports work this way](../why_secure.md)) |
 | **Retroactive re-analysis** | The pitch: yesterday's footage under tomorrow's model | Events bind to the ruleset active at creation; a new model can never re-mine yesterday's record — Invariant VI |
 | **Who can verify** | The vendor and the customer's own compliance function; the ACLU could not bound the audit miss rate (Aug 2026) | Anyone, offline: `sha256sum` + `openssl` per the shipped kit ([court export](../court_export.md)), any Content Credentials tool for the C2PA sidecar ([design](../design/c2pa_export.md)), or the drop-a-file [evidence viewer](../../viewer/evidence_viewer.html) — no account, no network, no vendor |
-| **Subject access** | None in the architecture: the scored, mapped, or stopped person gets no notice, access, or verification path | The record verifies for whoever holds the bundle — accused as well as accuser; verification requires no SecuraCV software and no trust in Errer Labs ([court export](../court_export.md)) |
+| **Subject access** | None in the architecture: the scored, mapped, or stopped person gets no notice, access, or verification path | The record's integrity verifies for whoever holds the bundle — accused as well as accuser, no SecuraCV software, no trust in Errer Labs ([court export](../court_export.md)). Honest limit: those checks establish integrity, not authorship — the bundle carries its own key, so authorship is self-attested until checked against a device key obtained separately, and the [evidence viewer](../../viewer/evidence_viewer.html) says exactly that until one is supplied |
 | **Access governance** | A login and a free-text reason field (how "had an abortion" entered a search log); case codes arriving end-2026, customer-enforced | n-of-m trustee quorum for sealed evidence, sign-what-you-see approvals, a receipt for every attempt including denials — shipped ([`spec/break_glass.md`](../../spec/break_glass.md), [operator guide](../operator_guide.md)). Honest limit: an authorization gate with tamper-evident receipts, not a cryptographic threshold — the threshold tier is designed, not shipped ([`spec/quorum_unseal_v2.md`](../../spec/quorum_unseal_v2.md)) |
 | **Disclosure trail** | Search logs readable by the agency, surfaced publicly only via FOIA or leaks | Every disclosure appends a signed, chained receipt labeled with its authorization mode ([evidence lifecycle](../evidence_lifecycle.md)) |
-| **Sharing model** | Opt-in defaults wire private cameras into national police search pools (the HOA checkbox; the Business Network; Fusus enrollment; Ring community requests) | No centralized custody; third parties cannot remotely query or index logs — Invariant IV. Disclosure is operator-initiated, per incident, receipted ([scheduled exports](../scheduled_exports.md)). The neighborhood channel carries no PII on the wire — templates only, two-pubkey co-signed, lint-enforced in CI ([`AGENTS.md`](../../AGENTS.md) Beacon invariants) |
+| **Sharing model** | Opt-in defaults wire private cameras into national police search pools (the HOA checkbox; the Business Network; Fusus enrollment; Ring community requests) | No centralized custody — Invariant IV: the vendor holds nothing and no uninvited party has a query path. Scope stated plainly: an operator MAY delegate remote access (the rotating capability token behind their own TLS proxy or tunnel), and that holder can read events and exports over the local API — what no delegation can grant is an identity or bulk-pattern query, because no such API exists (Invariants II + VII). Disclosure is operator-initiated, per incident, receipted ([scheduled exports](../scheduled_exports.md)). The neighborhood channel carries no PII on the wire — templates only, two-pubkey co-signed, lint-enforced in CI ([`AGENTS.md`](../../AGENTS.md) Beacon invariants) |
 | **Failure mode when abused** | A policy violation inside a working system: the abortion search, the ICE side door, and the stalking cases all used the product as designed; audits found them later or never | The abusive query has no API to call — the refusal is structural (Invariants II + VII); a compromised operator still leaves chained receipts, and tampering becomes visible, never "impossible" ([brand rules](../BRAND.md)) |
 | **Cost model** | ~$2,500–$3,000 per camera per year (Flock Safety benchmarks); per-camera cloud licenses (Verkada); enterprise SaaS by contract | Free to self-host for a business or government at any size and site count — charge for atoms, hours, and liability, never bits or privacy ([`LICENSING.md`](../../LICENSING.md); [strategy 21](../strategy/21-licensing-structure-for-institutions.md)) |
 | **Works with existing cameras** | Proprietary hardware (Verkada) or vendor-owned poles (Flock Safety) | RTSP / V4L2 / Frigate-bridge ingest shipped ([operator guide](../operator_guide.md)); bench-validation caveat carried per [brand rules](../BRAND.md) |
@@ -202,7 +202,9 @@ capture that is:
 - **verifiable by the accused as well as the accuser** — the verification
   path is `sha256sum` and `openssl` on the recipient's own machine, the
   exact property every architecture in §1 lacks and the one their
-  accountability failures turn on.
+  accountability failures turn on. (Scope, per the table's honest limit:
+  the bundle alone proves integrity and timestamps; proving *which device*
+  authored it takes a device key obtained separately from the bundle.)
 
 ### 3.2 The same demand, answered
 
@@ -259,8 +261,12 @@ SecuraCV **cannot**:
   (Invariant III).
 - **Re-mine old records with a new model.** Invariant VI cuts both ways: the
   buyer cannot be feature-crept into surveillance later, and neither can we.
-- **Watch a live video wall.** Invariant I. The Witness Wall renders the
-  verified record, not pixels.
+- **Watch a live video wall — from us.** Invariant I: no SecuraCV output
+  carries live video; the Witness Wall renders the record, not pixels.
+  Scope stated plainly: in a no-rip-and-replace deployment the upstream
+  camera or NVR keeps its own live view and recordings (Frigate retains
+  both — [integration](../frigate_integration.md)); we add a witness layer
+  beside the venue's existing eyes, we do not claim to close them.
 
 Why the refusal is the product: every missing feature above is, verbatim, a
 line item in §1.2's liability record. The plate lookup is the abortion
