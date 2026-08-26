@@ -17,7 +17,7 @@
 #include "canary/log.h"
 #include "canary/fleet/fleet_instance.h"  // the_fleet()
 #include "canary/fleet/fleet_model.h"     // on_status / on_meta
-#include "identity/device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
+#include "canary/net/hostname.h"  // MAC-free hostname (Invariant III), shared
 #include "pins.h"  // CANARY_FIGURE_HARDWARE — which board this is (board -I path)
 
 namespace canary::net {
@@ -46,19 +46,8 @@ void copy_str(char* dst, size_t cap, const char* src) {
   dst[cap - 1] = '\0';
 }
 
-// "canary_watch_001" -> "canary-watch-001-a1b2c3": mDNS hostnames are
-// hyphen-world, and the salted pseudonym suffix keeps two same-id units
-// from colliding without ever touching the MAC.
-void make_hostname(const char* device_id, char* out, size_t cap) {
-  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
-  device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex));
-  char base[24];
-  copy_str(base, sizeof(base), device_id && device_id[0] ? device_id : "canary-display");
-  for (char* p = base; *p; p++) {
-    if (*p == '_' || *p == ' ' || *p == '.') *p = '-';
-  }
-  snprintf(out, cap, "%s-%.6s", base, devid_hex);
-}
+// make_hostname moved to canary/net/hostname.h so the settings network
+// page and the transparency sheet print the exact name registered here.
 
 // Resolve a broker host string to something WiFiClient can connect to:
 // `.local` names only exist in mDNS, so look them up here; anything else

@@ -92,10 +92,10 @@ see the Waveshare wiki / ESP32_Display_Panel discussion #185) that enables
 true PWM; the firmware's day/night profile plumbing would drive it
 unchanged, but the mod is documented, not required.
 
-## The 7" wave — orientation, brightness, firmware (dash glass)
+## The 7" wave — orientation, brightness, network, firmware (dash glass)
 
 The 7" Dash 7 (wall) and Nightstand 7 (bedside) ride the same RGB HAL as the
-4.3" Dash, so the settings sheet grows three rows on every `CD_FLAVOR_DASH`
+4.3" Dash, so the settings sheet grows four rows on every `CD_FLAVOR_DASH`
 build. They follow the same five principles — one screen, one decision, and
 *the screen is the preview*, taken literally.
 
@@ -104,6 +104,7 @@ settings  (dash family: 4.3" · Dash 7 · Nightstand 7)
 ├─ … the shared rows above …
 ├─ orientation   (landscape · portrait · their two flips — live)
 ├─ brightness    (50–100% sustained — a rendered dim, not backlight PWM)
+├─ network       (wifi · signal in a word · hub link · the glass's .local address)
 └─ firmware      (installed version · check · install · auto-update)
 ```
 
@@ -136,6 +137,19 @@ is Night's job, and a wall panel sitting all day behind a heavier scrim would
 be dishonest about a backlight that's still at full. Honesty outranks the dim:
 an unacked Alert/Tamper takes the scrim fully off, and the night face (already
 dark, backlight possibly cut) never carries a day scrim on top.
+
+**Network.** Read-only by design — joining is the onboarding wizard's job and
+forgetting lives under *reset* — so the page is pure honest state: the joined
+network's name, the signal as a word (`signal_word`, never dBm), the hub link,
+and the one address where this glass answers on the LAN. The address is
+composed by the same `canary/net/hostname.h` recipe mDNS registers (the
+MAC-free pseudonym suffix, Invariant III), so what the glass tells you to type
+is what actually resolves — it opens the glass's own web page: a live mirror,
+these same settings, and a spinnable 3D model of the device. The page
+refreshes ~1 Hz while open, so carrying the panel around the house *is* the
+signal survey. While the link is down, the signal row carries *why*, in the
+same shared `join_failure_label` words the onboarding portal and the serial
+log use — one vocabulary, three surfaces.
 
 **Firmware.** The version the glass is running, and the one signed,
 rollback-safe path to a newer one — the same pull-OTA engine Home Assistant
