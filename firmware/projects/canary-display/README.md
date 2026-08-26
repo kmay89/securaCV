@@ -158,15 +158,25 @@ cataloged in
   re-voicings; **per-witness mute** (long-press a witness) is the honest
   bypass — visible always, tamper punches through, persisted until morning;
   **Roll Call** is a live walk test (last word · battery · RSSI, rows light
-  up as each canary answers); the **rhythm line** learns the home's first
+  up as each canary answers) and each of its rows opens the **witness
+  detail sheet** — the canary's isometric ledger figure at poster size
+  beside every honest field the model holds (state, signal word, battery,
+  room feel, claim strip, chain verdict, which bands carry it right now,
+  last event), live while open, with the signed-chain proof QR one tap
+  deeper; the **rhythm line** learns the home's first
   stir on-device and says "Quiet past the usual wake" when it matters (the
   post-Alexa-Together slot nobody fills); **escalation-on-no-ack** publishes
   one `securacv/fleet/escalation` event after 15 unacknowledged minutes so
   automations can widen the circle; and the **transparency page** mirrors on
   the glass exactly what this display consumes, speaks, stores — and never
-  does. Plus: ack attribution ("acked · kitchen-dash"), room comfort lines,
-  an emergency contact on the dash during unacked alarms, glance-first wake,
-  and a cleaning-mode touch lockout.
+  does — now including the live WiFi line and the glass's own `.local`
+  address (the same mDNS name `canary/net/hostname.h` registers). Plus:
+  ack attribution ("acked · kitchen-dash"), room comfort lines, an
+  emergency contact on the dash during unacked alarms, glance-first wake,
+  a cleaning-mode touch lockout, and a read-only **Settings → network**
+  page on the dash family (wifi · signal in a word · hub link · the
+  `.local` address, refreshed ~1 Hz —
+  [doc](../../../docs/hardware/display_settings.md)).
 
 ## Build
 
