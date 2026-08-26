@@ -7,7 +7,11 @@ they break trust, and what that means for SecuraCV's Apple apps, the web
 Lab, and the desktop apps. This is the full-app companion to the
 notification-focused survey in
 [`../design/alerts_event_history.md`](../design/alerts_event_history.md) §2,
-which stays the design of record for the alert lifecycle itself.
+which stays the design of record for the alert lifecycle itself. The
+institutional half of the picture — the ALPR dragnet, retail loss
+prevention, and data fusion, and how the same demand flips into witness
+infrastructure — is
+[the enterprise surveillance landscape](enterprise_surveillance_landscape.md).
 
 Three questions this doc answers:
 
