@@ -2,7 +2,7 @@
   "generated_by": "scripts/gen_board_design.py",
   "board": "canary-witness-s3",
   "confidence": "idea",
-  "pricing_as_of": "2026-08-25T09:50:14Z",
+  "pricing_as_of": "2026-08-26T09:55:34Z",
   "qty_basis": 1000,
   "carrier": {
     "parts_usd": 9.6806,
@@ -202,8 +202,8 @@
         "qty": 1,
         "unit_usd": 0.0446,
         "ext_usd": 0.0446,
-        "provenance": "digikey",
-        "verified": true,
+        "provenance": "carried",
+        "verified": false,
         "price_at_qty": 500,
         "volume_matched": false,
         "why": "buzzer drive MOSFET — placed on the carrier"
@@ -341,10 +341,11 @@
   "confidence_accounting": {
     "note": "Share of the compared dollars that a distributor actually resolved this snapshot, versus a human's stated estimate. Read the saving with this number next to it.",
     "priced_usd": 25.9359,
-    "distributor_verified_usd": 16.2759,
-    "estimated_usd": 9.66,
-    "verified_share": 0.6275,
+    "distributor_verified_usd": 16.2313,
+    "estimated_usd": 9.7046,
+    "verified_share": 0.6258,
     "unverified_mpns": [
+      "2N7002",
       "AP2112K-3.3TRG1",
       "DM3AT-SF-PEJM5",
       "ESP32-S3-WROOM-1-N8R8",
