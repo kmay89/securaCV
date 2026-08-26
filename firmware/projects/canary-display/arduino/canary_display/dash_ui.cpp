@@ -31,6 +31,14 @@
 #include "trust.h"
 #include "fleet_figures.h"
 #include "version.h"
+#include "runtime_config.h"   // ssid for the transparency sheet
+#include <WiFi.h>                    // localIP — the fallback address
+#include "wifi_mgr.h"     // live link state (emu implements too)
+#include "hostname.h"     // the glass's .local name (one recipe)
+#if !defined(EMU_BUILD_FLAVOR) && defined(FEATURE_MDNS_DISCOVERY) && \
+    FEATURE_MDNS_DISCOVERY
+#include "discovery.h"    // discovery_up — is the .local name real
+#endif
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
 #include "fleet_cards.h"
 #include "journal_instance.h"
@@ -141,12 +149,37 @@ lv_obj_t* s_rc_title = nullptr;
 lv_obj_t* s_rc_figs[RC_ROWS] = {nullptr};
 lv_obj_t* s_rc_rows[RC_ROWS] = {nullptr};
 lv_obj_t* s_rc_hint = nullptr;
+
+// Witness detail sheet (care wave §6b): tap a Roll Call row to open one
+// canary's whole story — its isometric figure at poster size (the same
+// ledger drawing every other surface uses) beside every honest field the
+// fleet model holds about it. Live while open, like Roll Call itself; the
+// proof QR stays one tap deeper ("prove it"), so the cryptography remains
+// exactly where spec §1 put it.
+constexpr lv_coord_t DET_X = 100, DET_Y = 26, DET_W = 600, DET_H = 428;
+constexpr int DET_FIG = 180;    // the poster-size figure slot
+constexpr int DET_ROWS = 8;
+constexpr lv_coord_t DET_ROW_Y0 = 100, DET_ROW_H = 34;
+lv_obj_t* s_det = nullptr;
+lv_obj_t* s_det_spine = nullptr;
+lv_obj_t* s_det_title = nullptr;
+lv_obj_t* s_det_sub = nullptr;
+lv_obj_t* s_det_fig = nullptr;
+lv_obj_t* s_det_fw = nullptr;         // under the figure: what it runs
+struct DetRow { lv_obj_t* k = nullptr; lv_obj_t* v = nullptr; };
+DetRow s_det_rows[DET_ROWS];
+lv_obj_t* s_det_prove = nullptr;
+lv_obj_t* s_det_hint = nullptr;
+char s_det_id[48] = {0};              // which witness the open sheet shows
 #endif
 
 // Transparency sheet (care wave §7): tap the footer to open. What this
 // glass consumes/speaks/stores, what it never does — plus the cleaning-mode
-// affordance ("wipe the glass" belongs where the honesty lives).
-constexpr lv_coord_t AB_X = 200, AB_Y = 70, AB_W = 400, AB_H = 340;
+// affordance ("wipe the glass" belongs where the honesty lives). Two rows
+// taller than it shipped: the live WiFi line and the glass's own .local
+// address joined the body (the honesty sheet is where "what network am I
+// on" belongs).
+constexpr lv_coord_t AB_X = 200, AB_Y = 30, AB_W = 400, AB_H = 420;
 lv_obj_t* s_about = nullptr;
 lv_obj_t* s_about_title = nullptr;
 lv_obj_t* s_about_body = nullptr;
@@ -400,6 +433,158 @@ void rc_open(const Fleet& fleet, uint32_t now) {
 void rc_close() {
   if (s_rc) lv_obj_add_flag(s_rc, LV_OBJ_FLAG_HIDDEN);
 }
+
+void det_close() {
+  if (s_det) lv_obj_add_flag(s_det, LV_OBJ_FLAG_HIDDEN);
+  s_det_id[0] = '\0';
+}
+
+// Re-render the open detail sheet from the live model. Called every update
+// pass while open (same posture as Roll Call: ages tick, signal words move,
+// a band going quiet is visible the moment it happens). The witness is
+// re-found by id each pass — if it left the roster, the sheet closes rather
+// than present a freed slot as a living device.
+void det_render(const Fleet& fleet, uint32_t now) {
+  const Witness* w = nullptr;
+  for (int i = 0; i < fleet.count(); i++) {
+    const Witness* c = fleet.at(i);
+    if (c && strncmp(c->id, s_det_id, sizeof(s_det_id)) == 0) { w = c; break; }
+  }
+  if (!w) { det_close(); return; }
+
+  const Sev sev = fleet.witness_sev(*w, now);
+  lv_obj_set_style_bg_color(s_det_spine, sev_color(sev, false), 0);
+
+  if (w->name[0] && w->room[0]) {
+    lv_label_set_text_fmt(s_det_title, "%.16s", w->name);
+    lv_label_set_text_fmt(s_det_sub, "%.12s  •  %.20s", w->room,
+                          w->device_type[0] ? w->device_type : w->id);
+  } else {
+    lv_label_set_text_fmt(s_det_title, "%.20s", Fleet::display_name(*w));
+    lv_label_set_text_fmt(s_det_sub, "%.24s",
+                          w->device_type[0] ? w->device_type : "");
+  }
+
+  // The ledger's own drawing of this product; an unresolvable wire type
+  // keeps the slot hidden — never a guessed device (fleet_figure's rule).
+  const auto* fig = canary::figures::figure_for(w->device_type);
+  fleet_figure_set(s_det_fig, fig ? fig->figure_id : nullptr);
+  if (w->fw[0]) lv_label_set_text_fmt(s_det_fw, "firmware %.12s", w->fw);
+  else lv_label_set_text(s_det_fw, "");
+
+  // The fact column: only rows the model honestly holds; the cursor packs
+  // them from the top and blanks the rest, so absence never renders as zero.
+  int r = 0;
+  auto put = [&](const char* k, const char* v, lv_color_t vc) {
+    if (r >= DET_ROWS) return;
+    lv_label_set_text(s_det_rows[r].k, k);
+    lv_label_set_text_fmt(s_det_rows[r].v, "%.30s", v);
+    lv_obj_set_style_text_color(s_det_rows[r].v, vc, 0);
+    r++;
+  };
+
+  {
+    char v[48], age[8];
+    format_age(now, w->last_seen_ms, age, sizeof(age));
+    snprintf(v, sizeof(v), "%s • %s ago%s", link_label(w->link), age,
+             Fleet::mute_active(*w, now) ? " • muted" : "");
+    put("state", v, sev_color(sev, false));
+  }
+  if (w->rssi_present) put("signal", signal_word((int)w->rssi_dbm), col_text());
+  if (w->battery_present && w->battery_pct >= 0) {
+    char v[8];
+    snprintf(v, sizeof(v), "%d%%", (int)w->battery_pct);
+    put("battery", v, w->battery_pct < 25 ? col_warn() : col_text());
+  }
+  if (w->temp_present) {
+    // Sign carried explicitly, the card renderer's own lesson: %d has no
+    // sign at zero, so -0.5° would otherwise render as 0.5°.
+    char v[24];
+    const char* sign = w->temp_c10 < 0 ? "-" : "";
+    if (w->humidity_pct >= 0) {
+      snprintf(v, sizeof(v), "%s%d.%d\xC2\xB0 • %d%%", sign,
+               abs(w->temp_c10 / 10), abs(w->temp_c10 % 10),
+               (int)w->humidity_pct);
+    } else {
+      snprintf(v, sizeof(v), "%s%d.%d\xC2\xB0", sign, abs(w->temp_c10 / 10),
+               abs(w->temp_c10 % 10));
+    }
+    put("room feel", v, col_text());
+  }
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  // A card-bearing witness (canary-sense, canary-pool) speaks its coarse
+  // claim vocabulary here too — the same strip the wall card wears.
+  if (canary::fleet::has_cards(*w)) {
+    static const canary::fleet::FleetLimits kCardLimits;
+    canary::fleet::CardSet cs;
+    canary::fleet::build_cards(*w, now, kCardLimits, cs);
+    char strip[104];
+    if (canary::fleet::format_card_strip(cs, /*skip_shown=*/true, strip,
+                                         sizeof(strip)) > 0) {
+      put("senses", strip, col_text());
+    }
+  }
+#endif
+  {
+    char v[40];
+    if (w->chain_length > 0) {
+      snprintf(v, sizeof(v), "%s • %lu links", badge_text(w->badge),
+               (unsigned long)w->chain_length);
+    } else {
+      snprintf(v, sizeof(v), "%s", badge_text(w->badge));
+    }
+    put("chain", v, badge_color(w->badge, false));
+  }
+  {
+    // Which bands carry it RIGHT NOW (the model's own freshness window) —
+    // the same honest vocabulary the event labels use. No direct band and
+    // an online link means the hub is doing the carrying.
+    char v[28] = "";
+    size_t o = 0;
+    const struct { canary::fleet::Via via; const char* word; } bands[] = {
+        {canary::fleet::Via::Wifi, "wifi"},
+        {canary::fleet::Via::Mesh, "mesh"},
+        {canary::fleet::Via::Ble, "ble"},
+    };
+    for (const auto& b : bands) {
+      if (!w->carried_by(b.via, now)) continue;
+      const int n = snprintf(v + o, sizeof(v) - o, "%s%s", o ? " + " : "",
+                             b.word);
+      if (n > 0) o = (o + (size_t)n < sizeof(v)) ? o + (size_t)n
+                                                 : sizeof(v) - 1;
+    }
+    if (!v[0] && w->link == canary::fleet::Link::Online) {
+      snprintf(v, sizeof(v), "your hub");
+    }
+    if (v[0]) put("heard over", v, col_text());
+  }
+  if (w->has_event) {
+    char human[40], age[8], v[52];
+    humanize_event(w->last_event, human, sizeof(human));
+    format_age(now, w->last_event_ms, age, sizeof(age));
+    snprintf(v, sizeof(v), "%.32s • %s ago", human, age);
+    put("last event", v, sev_color(w->event_sev, false));
+  }
+  for (; r < DET_ROWS; r++) {
+    lv_label_set_text(s_det_rows[r].k, "");
+    lv_label_set_text(s_det_rows[r].v, "");
+  }
+
+  lv_label_set_text(s_det_prove,
+                    w->chain_raw[0] ? "prove it • signed chain QR"
+                                    : "no signed chain yet");
+  lv_obj_set_style_text_color(s_det_prove,
+                              w->chain_raw[0] ? col_signed() : col_faint(), 0);
+}
+
+void det_open(const Fleet& fleet, const Witness& w, uint32_t now) {
+  if (!s_det) return;
+  snprintf(s_det_id, sizeof(s_det_id), "%s", w.id);
+  det_render(fleet, now);
+  if (!s_det_id[0]) return;  // the witness vanished mid-open
+  lv_obj_move_foreground(s_det);
+  lv_obj_clear_flag(s_det, LV_OBJ_FLAG_HIDDEN);
+}
 #endif  // FEATURE_CARE
 
 void about_open(const Fleet& fleet) {
@@ -408,6 +593,43 @@ void about_open(const Fleet& fleet) {
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
   journal_kept = canary::fleet::the_journal().count();
 #endif
+  // The live network truth, in the sheet's own vocabulary: which network,
+  // how strong (a word, never dBm), and the one address where this glass
+  // answers. The .local name is composed by the same recipe mDNS
+  // registered — and only ever CLAIMED when mDNS actually came up this
+  // boot (Codex P2: a failed MDNS.begin must not leave the sheet
+  // advertising a name that cannot resolve); the honest fallback is the
+  // numeric IP, which glass_web answers on regardless of naming.
+  char netline[112];
+  {
+#if defined(EMU_BUILD_FLAVOR)
+    const bool named = true;   // the emulated LAN has no real mDNS to fail
+#elif defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+    const bool named = canary::net::discovery_up();
+#else
+    const bool named = false;  // no mDNS in this build — the name would lie
+#endif
+    char host[48];
+    canary::net::make_hostname(canary::cfg::get().device_id, host,
+                               sizeof(host));
+    if (canary::net::wifi_connected()) {
+      char addr[56];
+      if (named) snprintf(addr, sizeof(addr), "%s.local", host);
+      else snprintf(addr, sizeof(addr), "%s",
+                    WiFi.localIP().toString().c_str());
+      snprintf(netline, sizeof(netline),
+               "WiFi: %.16s (%s)\nBrowse: http://%s",
+               canary::cfg::get().wifi_ssid,
+               signal_word(canary::net::wifi_rssi()), addr);
+    } else if (named) {
+      snprintf(netline, sizeof(netline),
+               "WiFi: not connected\nBrowse: http://%s.local (once it's back)",
+               host);
+    } else {
+      // No link and no registered name: there is no address to promise.
+      snprintf(netline, sizeof(netline), "WiFi: not connected");
+    }
+  }
 #if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
     defined(HAS_MICROPHONE) && HAS_MICROPHONE
   // Mic-bearing board (4.3C, display_mic_variant.md): the sheet must tell
@@ -420,22 +642,24 @@ void about_open(const Fleet& fleet) {
       "Keeps: %d events on this device - erasable in History\n"
       "Mic: %s - alarm patterns only, never speech;\n"
       "audio never recorded, never leaves this board\n"
-      "Never: cloud, camera, or tracking IDs\n\n"
+      "Never: cloud, camera, or tracking IDs\n"
+      "%s\n\n"
       "Firmware v%s",
       fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
       canary::io::mic_listening() ? "LISTENING (amber chip lit)"
                                   : "off (driver uninstalled)",
-      CANARY_FW_VERSION);
+      netline, CANARY_FW_VERSION);
 #else
   lv_label_set_text_fmt(
       s_about_body,
       "Watches: %d %s, through your home hub only\n"
       "Speaks: its own check-ins, and the alerts you handle\n"
       "Keeps: %d events on this device - erasable in History\n"
-      "Never: cloud, camera, microphone, or tracking IDs\n\n"
+      "Never: cloud, camera, microphone, or tracking IDs\n"
+      "%s\n\n"
       "Firmware v%s",
       fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
-      CANARY_FW_VERSION);
+      netline, CANARY_FW_VERSION);
 #endif
   lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass - touch turns off for 30 s");
   lv_label_set_text(s_about_settings, LV_SYMBOL_SETTINGS "  Screen settings");
@@ -475,6 +699,9 @@ void dash_ui_create() {
   s_ack_holding = false;
   s_glow_pulsing = false;
   s_proof_id[0] = '\0';
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  s_det_id[0] = '\0';
+#endif
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
   s_hist_erase_armed = false;
 #endif
@@ -677,9 +904,49 @@ void dash_ui_create() {
   }
   s_rc_hint = mk_label(s_rc, font_caption(), col_faint());
   lv_label_set_text(s_rc_hint,
-                    "walk past a canary - its row lights as it answers • tap away to close");
+                    "walk past a canary - its row lights as it answers • tap a row for its story");
   lv_obj_align(s_rc_hint, LV_ALIGN_BOTTOM_MID, 0, -12);
   lv_obj_add_flag(s_rc, LV_OBJ_FLAG_HIDDEN);
+
+  // ── Witness detail sheet (care wave §6b), hidden until a Roll Call row
+  // is tapped: the poster-size figure on the left, the fact column on the
+  // right, the proof doorway at the bottom ──
+  s_det = mk_box(s_scr);
+  lv_obj_set_size(s_det, DET_W, DET_H);
+  lv_obj_set_pos(s_det, DET_X, DET_Y);
+  lv_obj_set_style_shadow_width(s_det, 40, 0);
+  lv_obj_set_style_shadow_color(s_det, lv_color_black(), 0);
+  lv_obj_set_style_shadow_opa(s_det, LV_OPA_60, 0);
+  s_det_spine = lv_obj_create(s_det);
+  lv_obj_set_size(s_det_spine, 5, DET_H - 32);
+  lv_obj_set_pos(s_det_spine, 12, 16);
+  lv_obj_set_style_radius(s_det_spine, 3, 0);
+  lv_obj_set_style_border_width(s_det_spine, 0, 0);
+  lv_obj_set_style_bg_opa(s_det_spine, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(s_det_spine, LV_OBJ_FLAG_SCROLLABLE);
+  s_det_title = mk_label(s_det, font_body(), col_text());
+  lv_obj_set_pos(s_det_title, 28, 16);
+  s_det_sub = mk_label(s_det, font_caption(), col_muted());
+  lv_obj_set_pos(s_det_sub, 28, 50);
+  s_det_fig = fleet_figure_create(s_det, nullptr, DET_FIG);
+  if (s_det_fig) lv_obj_set_pos(s_det_fig, 32, DET_ROW_Y0 + 8);
+  s_det_fw = mk_label(s_det, font_caption(), col_faint());
+  lv_obj_set_width(s_det_fw, DET_FIG);
+  lv_obj_set_style_text_align(s_det_fw, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_pos(s_det_fw, 32, DET_ROW_Y0 + DET_FIG + 22);
+  for (int i = 0; i < DET_ROWS; i++) {
+    s_det_rows[i].k = mk_label(s_det, font_caption(), col_muted());
+    lv_obj_set_pos(s_det_rows[i].k, 248, DET_ROW_Y0 + 2 + i * DET_ROW_H);
+    s_det_rows[i].v = mk_label(s_det, font_label(), col_text());
+    lv_obj_align(s_det_rows[i].v, LV_ALIGN_TOP_RIGHT, -24,
+                 DET_ROW_Y0 + i * DET_ROW_H);
+  }
+  s_det_prove = mk_label(s_det, font_caption(), col_signed());
+  lv_obj_align(s_det_prove, LV_ALIGN_BOTTOM_LEFT, 28, -14);
+  s_det_hint = mk_label(s_det, font_caption(), col_faint());
+  lv_label_set_text(s_det_hint, "tap away to close");
+  lv_obj_align(s_det_hint, LV_ALIGN_BOTTOM_RIGHT, -20, -14);
+  lv_obj_add_flag(s_det, LV_OBJ_FLAG_HIDDEN);
 #endif
 
   // ── Transparency sheet (care wave §7), hidden until the footer is tapped ──
@@ -1038,8 +1305,12 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
 
 #if defined(FEATURE_CARE) && FEATURE_CARE
   // Roll Call stays live while open (the whole point is watching rows
-  // answer as you walk the house).
+  // answer as you walk the house), and so does the detail sheet above it —
+  // ages tick, the signal word moves, a band going quiet shows the moment
+  // it happens.
   if (s_rc && !lv_obj_has_flag(s_rc, LV_OBJ_FLAG_HIDDEN)) rc_render(fleet, now);
+  if (s_det && !lv_obj_has_flag(s_det, LV_OBJ_FLAG_HIDDEN))
+    det_render(fleet, now);
 #endif
 
   // Cleaning-mode countdown (the one sanctioned full-screen text).
@@ -1058,11 +1329,34 @@ bool dash_ui_handle_tap(int16_t x, int16_t y) {
   if (!s_scr || !s_fleet) return false;
 
   // An open proof sheet swallows any tap (that's how you close it). It sits
-  // above the history modal, so closing it returns you to the list.
+  // above the history modal and the detail sheet, so closing it returns you
+  // to whichever list opened it.
   if (s_proof && !lv_obj_has_flag(s_proof, LV_OBJ_FLAG_HIDDEN)) {
     proof_close();
     return true;
   }
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // Witness detail sheet: the "prove it" line opens the signed-chain QR
+  // (spec §1's cryptography, one tap deeper); anywhere else closes back to
+  // the Roll Call it came from.
+  if (s_det && !lv_obj_has_flag(s_det, LV_OBJ_FLAG_HIDDEN)) {
+    lv_area_t pa;
+    lv_obj_get_coords(s_det_prove, &pa);
+    if (x >= pa.x1 - 8 && x <= pa.x2 + 8 && y >= pa.y1 - 8 && y <= pa.y2 + 8) {
+      for (int i = 0; i < s_fleet->count(); i++) {
+        const Witness* w = s_fleet->at(i);
+        if (w && strncmp(w->id, s_det_id, sizeof(s_det_id)) == 0) {
+          if (w->chain_raw[0]) proof_open(*w);
+          return true;
+        }
+      }
+      return true;
+    }
+    det_close();
+    return true;
+  }
+#endif
 
   // Transparency sheet: the "wipe the glass" row arms cleaning mode, the
   // gear row opens the settings surface; anywhere else closes.
@@ -1091,9 +1385,20 @@ bool dash_ui_handle_tap(int16_t x, int16_t y) {
   }
 
 #if defined(FEATURE_CARE) && FEATURE_CARE
-  // Open Roll Call swallows the tap to close (no row actions — it's a
-  // diagnostics view, not a control surface).
+  // Open Roll Call: a row opens that witness's detail sheet (its story, at
+  // length); anywhere else closes. Row geometry is the create pass's own.
   if (s_rc && !lv_obj_has_flag(s_rc, LV_OBJ_FLAG_HIDDEN)) {
+    const int n = s_fleet->count();
+    for (int i = 0; i < RC_ROWS && i < n; i++) {
+      const int ry = RC_Y + 52 + i * 34;
+      if (x >= RC_X + 12 && x <= RC_X + RC_W - 12 && y >= ry && y < ry + 34) {
+        const Witness* w = s_fleet->at(i);
+        if (w) {
+          det_open(*s_fleet, *w, s_now_ms);
+          return true;
+        }
+      }
+    }
     rc_close();
     return true;
   }

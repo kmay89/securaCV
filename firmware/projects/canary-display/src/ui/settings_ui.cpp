@@ -67,8 +67,16 @@
 // firmware page. These are compiled out on the round watch and the fixed-
 // portrait SPI nightstands (which map to CD_FLAVOR_WATCH above).
 #ifdef CD_FLAVOR_DASH
+#include <WiFi.h>                    // localIP for the network page
 #include "canary/ui/lvgl_port.h"     // set_rotation / set_dim (live preview)
 #include "canary/net/ota_mgr.h"      // version + signed OTA facade
+#include "canary/net/wifi_mgr.h"     // live link state for the network page
+#include "canary/net/hostname.h"     // the glass's .local name (one recipe)
+#include "network/wifi_join_policy.h"  // join_failure_label (shared words)
+#if !defined(EMU_BUILD_FLAVOR) && defined(FEATURE_MDNS_DISCOVERY) && \
+    FEATURE_MDNS_DISCOVERY
+#include "canary/net/discovery.h"    // discovery_up — is the .local name real
+#endif
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 #include "canary/io/field_io.h"      // siren arm/disarm — 4.3B isolated output
@@ -113,6 +121,7 @@ enum class Page {
   EditDisplay,  // orientation: landscape / portrait / their flips (live)
   EditBright,   // rendered daytime brightness (binary-backlight glass)
   EditClock,    // the clock-face ring (segment family / Analog / Calendar)
+  EditNetwork,  // wifi + address + hub link — the canary.local page, on-glass
 #ifdef CD_SET_WX
   EditWeather,  // hub-less standalone forecast: the opt-in and its gates
 #endif
@@ -150,7 +159,7 @@ enum : int {
   IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD, IT_ROW_HELP,
 #ifdef CD_FLAVOR_DASH
   IT_ROW_DISPLAY, IT_ROW_BRIGHT, IT_ROW_FW, IT_ROW_CLOCK, IT_ROW_12H,
-  IT_ROW_WX,
+  IT_ROW_WX, IT_ROW_NET,
   IT_ROT_0, IT_ROT_90, IT_ROT_180, IT_ROT_270,   // orientation options
   IT_ROW_FW_AUTO,                                 // auto-update toggle
 #endif
@@ -178,16 +187,16 @@ lv_obj_t* s_scr = nullptr;    // our own screen while open
 lv_obj_t* s_host = nullptr;   // content parent (screen on watch, sheet on dash)
 Page s_page = Page::Root;
 // Worst case is the dash root: back + six shared rows + the display /
-// brightness / firmware trio + the get-help row + reset + the modes
-// doorway, each row up to two objects (name+value), plus the board's siren
-// or mic row. The sizes below clear that with margin so add_item never
-// silently drops a hit zone.
+// brightness / network / firmware quartet + the get-help row + reset + the
+// modes doorway, each row up to two objects (name+value), plus the board's
+// siren or mic row. The sizes below clear that with margin so add_item
+// never silently drops a hit zone.
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
-Item s_items[30];
+Item s_items[32];
 #elif defined(CD_SET_MIC)
-Item s_items[28];
+Item s_items[30];
 #else
-Item s_items[26];
+Item s_items[28];
 #endif
 int s_item_n = 0;
 bool s_owns_backlight = false;
@@ -398,11 +407,30 @@ void build_root() {
 #endif
 #else
   // The dash root packs tighter than the editors (the watch does the same):
-  // up to thirteen rows must fit the sheet with the back line above them.
-  // 52 + 12*32 + a label's height = ~456 clears SHEET_H = 460; editors keep
-  // the roomier ROW_H — none of them exceeds five rows. (Codex P2 history:
-  // a new row once pushed reset off the sheet — recount when adding one.)
-  const int y0 = 52, step = 32;
+  // every row must fit the sheet with the back line above them, and the
+  // census below is the recount the Codex P2 history demands (a new row
+  // once pushed reset off the sheet). Eleven rows always: hours, look,
+  // at-night, style, clock, orientation, brightness, network, firmware,
+  // get-help, reset — plus the build's optionals. Thirteen rows at the
+  // roomy spacing end at 52 + 12*32 + ~20 = ~456, clearing SHEET_H = 460;
+  // a fourteen-row build (weather + a siren/mic board + modes) packs to
+  // 48 + 13*30 + ~20 = ~458 instead of overflowing. Editors keep the
+  // roomier ROW_H — none of them exceeds five rows.
+  constexpr int kRootRows = 11
+#ifdef CD_SET_WX
+      + 1
+#endif
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+      + 1
+#elif defined(CD_SET_MIC)
+      + 1
+#endif
+#ifdef CD_SET_MODES
+      + 1
+#endif
+      ;
+  const int y0 = kRootRows >= 14 ? 48 : 52;
+  const int step = kRootRows >= 14 ? 30 : 32;
 #endif
   int y = y0;
   const Settings& gs = settings();
@@ -462,6 +490,20 @@ void build_root() {
     char b[8];
     snprintf(b, sizeof(b), "%d%%", gs.bright_pct);
     mk_row(y, "brightness", b, IT_ROW_BRIGHT);
+    y += step;
+  }
+  {
+    // The row states the live link, not just the stored intent: the joined
+    // network's name while up, the honest in-between while it retries.
+    char nv[20];
+    if (canary::cfg::wifi_is_placeholder()) {
+      snprintf(nv, sizeof(nv), "not set up");
+    } else if (canary::net::wifi_connected()) {
+      snprintf(nv, sizeof(nv), "%.16s", canary::cfg::get().wifi_ssid);
+    } else {
+      snprintf(nv, sizeof(nv), "reconnecting");
+    }
+    mk_row(y, "network", nv, IT_ROW_NET);
     y += step;
   }
   mk_row(y, "firmware", canary::net::ota_status().installed, IT_ROW_FW);
@@ -796,6 +838,103 @@ void build_edit_weather() {
   lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 40);
 }
 #endif  // CD_SET_WX
+
+// The network page: what the glass's own web page says about its link,
+// said on the glass itself. Read-only by design — joining is the wizard's
+// job, forgetting is reset's — so this page is pure honest state: the
+// joined network, the signal in a word, the hub link, and the one address
+// where this glass answers on the LAN. It refreshes ~1 Hz while open
+// (settings_ui_tick), so carrying the panel around IS the signal survey.
+void build_edit_network() {
+  mk_back("network");
+  const bool set_up = !canary::cfg::wifi_is_placeholder();
+  const bool up = set_up && canary::net::wifi_connected();
+  int y = ROOT_Y0 + ROW_H / 2;
+
+  {
+    char v[24];
+    if (!set_up) snprintf(v, sizeof(v), "not set up");
+    else snprintf(v, sizeof(v), "%.20s", canary::cfg::get().wifi_ssid);
+    mk_row(y, "wifi", v, /*inert*/ 0, up);
+    y += ROW_H;
+  }
+  // Signal in a word, never dBm (theme's signal_word rule); while the link
+  // is down the row carries WHY, in the same shared words the onboarding
+  // portal and the serial log use — one vocabulary, three surfaces.
+  if (up) {
+    mk_row(y, "signal", signal_word(canary::net::wifi_rssi()), 0);
+  } else if (set_up) {
+    mk_row(y, "signal",
+           canary::net::join_failure_label(canary::net::wifi_last_failure()),
+           0);
+  } else {
+    mk_row(y, "signal", "-", 0);
+  }
+  y += ROW_H;
+  mk_row(y, "hub link",
+         canary::net::mqtt_broker_is_placeholder() ? "not set up"
+         : canary::net::mqtt_connected()           ? "connected"
+                                                   : "retrying",
+         0, canary::net::mqtt_connected());
+  y += ROW_H;
+
+  // The one address that answers: this glass's own page — a live mirror,
+  // these settings, and a 3D model of the device you can spin. The .local
+  // name is composed by the same recipe mDNS registered (canary/net/
+  // hostname.h) — and it is only ever CLAIMED when mDNS actually came up
+  // this boot (Codex P2: a failed MDNS.begin left the page advertising a
+  // name that cannot resolve). The honest fallback is the numeric IP,
+  // which glass_web answers on regardless of naming.
+  {
+#if defined(EMU_BUILD_FLAVOR)
+    const bool named = true;   // the emulated LAN has no real mDNS to fail
+#elif defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+    const bool named = canary::net::discovery_up();
+#else
+    const bool named = false;  // no mDNS in this build — the name would lie
+#endif
+    if (up || named) {
+      char host[48];
+      canary::net::make_hostname(canary::cfg::get().device_id, host,
+                                 sizeof(host));
+      String ip = WiFi.localIP().toString();
+      lv_obj_t* url = mk_label(s_host, font_body(), col_signed());
+      if (named) lv_label_set_text_fmt(url, "http://%s.local", host);
+      else lv_label_set_text_fmt(url, "http://%s", ip.c_str());
+      lv_obj_align(url, LV_ALIGN_TOP_MID, 0, y + 10);
+      lv_obj_t* ipl = mk_label(s_host, font_caption(), col_muted());
+      if (up && named) {
+        lv_label_set_text_fmt(ipl, "right now that's %s", ip.c_str());
+      } else if (up) {
+        lv_label_set_text(ipl, ".local naming didn't start this boot");
+      } else {
+        lv_label_set_text(ipl, "answers once WiFi is back");
+      }
+      lv_obj_align(ipl, LV_ALIGN_TOP_MID, 0, y + 44);
+    }
+  }
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_obj_set_style_text_align(cap, LV_TEXT_ALIGN_CENTER, 0);
+  // Honesty over a tidy slogan (AGENTS.md rule 4): the PAGE is LAN-only,
+  // but this firmware does touch the internet for signed update checks —
+  // and, on an opted-in hub-less build, the coarse weather fetch. Say so.
+  lv_label_set_text(cap,
+#ifdef CD_SET_WX
+      "open it in any browser on your home network:\n"
+      "a live mirror of this glass, these settings, and\n"
+      "a 3D model you can spin. witness data never\n"
+      "leaves your home; the internet is touched only\n"
+      "for signed update checks - and weather, only\n"
+      "if you opted in.");
+#else
+      "open it in any browser on your home network:\n"
+      "a live mirror of this glass, these settings, and\n"
+      "a 3D model you can spin. witness data never\n"
+      "leaves your home; the internet is touched\n"
+      "only for signed update checks.");
+#endif
+  lv_obj_align(cap, LV_ALIGN_BOTTOM_MID, 0, -14);
+}
 
 // Firmware: the version this glass is running, and the one signed-and-
 // rollback-safe path to a newer one (same engine HA drives). No raw version
@@ -1200,6 +1339,7 @@ void build(Page pg) {
     case Page::EditDisplay:  build_edit_display(); break;
     case Page::EditBright:   build_edit_bright(); break;
     case Page::EditClock:    build_edit_clock(); break;
+    case Page::EditNetwork:  build_edit_network(); break;
 #ifdef CD_SET_WX
     case Page::EditWeather:  build_edit_weather(); break;
 #endif
@@ -1324,6 +1464,7 @@ void dispatch(int id) {
 #ifdef CD_SET_WX
         case IT_ROW_WX:      build(Page::EditWeather); return;
 #endif
+        case IT_ROW_NET:     build(Page::EditNetwork); return;
         case IT_ROW_FW:      build(Page::EditFirmware); return;
 #endif
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
@@ -1453,6 +1594,12 @@ void dispatch(int id) {
       }
       return;
 #endif
+
+    case Page::EditNetwork:
+      // Read-only page: back is the one affordance. Joining lives in the
+      // wizard, forgetting under reset — no network decision is made here.
+      if (id == IT_BACK) { build(Page::Root); return; }
+      return;
 
     case Page::EditFirmware:
       if (id == IT_BACK) { build(Page::Root); return; }
@@ -1759,13 +1906,15 @@ void settings_ui_tick(uint32_t now_ms, bool urgent) {
   }
 #ifdef CD_FLAVOR_DASH
   // The firmware page mirrors a live state machine (checking → downloading →
-  // %). Rebuild it ~1 Hz so the status line and the install progress advance
-  // without a tap; other pages are static and never self-rebuild.
-  if (s_page == Page::EditFirmware) {
+  // %), and the network page a live radio (signal word, reconnects, the hub
+  // link). Rebuild the open one ~1 Hz so they advance without a tap —
+  // carrying the panel around the house IS the network page's signal
+  // survey; other pages are static and never self-rebuild.
+  if (s_page == Page::EditFirmware || s_page == Page::EditNetwork) {
     static uint32_t s_fw_next_ms = 0;
     if ((int32_t)(now_ms - s_fw_next_ms) >= 0) {
       s_fw_next_ms = now_ms + 1000;
-      build(Page::EditFirmware);
+      build(s_page);
     }
   }
 #endif

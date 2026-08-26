@@ -93,6 +93,18 @@ per-witness last-word age, battery, and self-reported WiFi RSSI (watch: its
 own page; dash: tap the headline). Rows light green as each canary answers —
 walk the house and watch them report.
 
+**§6b Witness detail sheet** (dash): tapping a Roll Call row opens one
+canary's whole story — its isometric figure at poster size (the same
+committed-CAD drawing every other surface uses, `fleet_figures_art.h`;
+an unresolvable wire type shows no figure, never a guess) beside every
+honest field the fleet model holds: state + age (+ muted), signal word,
+battery, room feel, a card-bearing witness's claim strip, chain verdict +
+length, which bands carry it right now (`wifi + mesh + ble`, or "your
+hub"), and the last event. The sheet stays live while open, like Roll Call
+itself. The signed-chain QR stays one tap deeper ("prove it"), so the
+spec §1 cryptography is unchanged — the sheet adds the story, not a new
+trust surface.
+
 ## §7 The transparency page
 
 Research consensus: people accept monitoring whose shape they can SEE, and
@@ -105,8 +117,12 @@ the glass itself (watch: last page; dash: tap the footer):
 > Keeps: N events on this device — erasable in History ·
 > Never: cloud, camera, microphone, or your MAC
 
-The dash sheet also hosts **cleaning mode** ("wipe the glass": 30 s touch
-lockout with countdown) — a wet cloth must never acknowledge an alarm.
+The dash sheet also carries the live network truth — which WiFi, the signal
+as a word, and the glass's own `.local` address (composed by the same
+`canary/net/hostname.h` recipe mDNS registers, so it always resolves) —
+because "what network am I on" belongs where the honesty lives. And it hosts
+**cleaning mode** ("wipe the glass": 30 s touch lockout with countdown) — a
+wet cloth must never acknowledge an alarm.
 
 ## §8 Small courtesies from the same research
 
