@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-08-26T09:55:34Z",
+  "as_of": "2026-08-27T19:49:34Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -28,7 +28,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 15.9,
-       "stock": 1466,
+       "stock": 1471,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/102010469/16652896"
       }
@@ -70,7 +70,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 2.2,
-       "stock": 3048,
+       "stock": 3042,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
       }
@@ -100,7 +100,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 801025,
+       "stock": 786755,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/onsemi/1N4148/458603"
       }
@@ -118,7 +118,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 963416,
+       "stock": 937445,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100RL/727543"
       }
@@ -148,7 +148,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 355437,
+       "stock": 339990,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
       }
@@ -166,7 +166,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 6132699,
+       "stock": 5898938,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
       }
@@ -184,7 +184,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 3.76,
-       "stock": 19252,
+       "stock": 19198,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/littelfuse-inc/59140-1-S-02-A/2650435"
       }
@@ -202,7 +202,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.0,
-       "stock": 0,
+       "stock": null,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/diodes-incorporated/AH3572-P-B/9649753"
       }
@@ -232,7 +232,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.35,
-       "stock": 44758,
+       "stock": 44217,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
       }
@@ -274,7 +274,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 1025205,
+       "stock": 975000,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-071KL/727444"
       }
@@ -328,7 +328,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.11,
-       "stock": 1255240,
+       "stock": 1253653,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07100KL/727544"
       }
@@ -494,7 +494,7 @@
     "full_usd": 101.98,
     "required_usd_live": 27.9,
     "full_usd_live": 116.45,
-    "pricing_as_of": "2026-08-26T09:55:34Z",
+    "pricing_as_of": "2026-08-27T19:49:34Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -547,7 +547,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 8.0,
-       "stock": 0,
+       "stock": null,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/espressif-systems/ESP32-C3-DEVKITM-1/13684315"
       }
@@ -595,7 +595,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 2.0,
-       "stock": 736,
+       "stock": 730,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/110990210/5482570"
       }
@@ -637,7 +637,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 355437,
+       "stock": 339990,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/yageo/RC0805FR-07330RL/727866"
       }
@@ -655,7 +655,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.1,
-       "stock": 6132699,
+       "stock": 5898938,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL21B104KBCNNNC/3886661"
       }
@@ -673,7 +673,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 0.35,
-       "stock": 44758,
+       "stock": 44217,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/aratas-formerly-omron-components/B3F-1000/33150"
       }
@@ -691,7 +691,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 2.2,
-       "stock": 3048,
+       "stock": 3042,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
       }
@@ -863,7 +863,7 @@
     "full_usd": 80.15,
     "required_usd_live": 29.49,
     "full_usd_live": 91.83,
-    "pricing_as_of": "2026-08-26T09:55:34Z",
+    "pricing_as_of": "2026-08-27T19:49:34Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -952,7 +952,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 3.76,
-       "stock": 19252,
+       "stock": 19198,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/littelfuse-inc/59140-1-S-02-A/2650435"
       }
@@ -1022,7 +1022,7 @@
     "full_usd": 40.0,
     "required_usd_live": 36.4,
     "full_usd_live": 41.96,
-    "pricing_as_of": "2026-08-26T09:55:34Z",
+    "pricing_as_of": "2026-08-27T19:49:34Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1062,7 +1062,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 7.49,
-       "stock": 10953,
+       "stock": 11008,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991114/19285530"
       }
@@ -1080,7 +1080,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 18.0,
-       "stock": 11,
+       "stock": 9,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/104030087/18724505"
       }
@@ -1122,7 +1122,7 @@
       "orderable": true,
       "live": {
        "unit_usd": 2.2,
-       "stock": 3048,
+       "stock": 3042,
        "src": "digikey",
        "url": "https://www.digikey.com/en/products/detail/same-sky-formerly-cui-devices/CPT-9019S-SMT-TR/6012432"
       }
@@ -1156,7 +1156,7 @@
     "full_usd": 41.94,
     "required_usd_live": 34.99,
     "full_usd_live": 44.14,
-    "pricing_as_of": "2026-08-26T09:55:34Z"
+    "pricing_as_of": "2026-08-27T19:49:34Z"
    }
   },
   "canary-display-dash": {
@@ -1252,7 +1252,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-08-26T09:55:34Z"
+    "pricing_as_of": "2026-08-27T19:49:34Z"
    }
   }
  }
