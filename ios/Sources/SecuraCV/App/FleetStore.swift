@@ -16,6 +16,10 @@ final class FleetStore: ObservableObject {
     // Surfaces
     @Published var witnesses: [Witness] = []
     @Published var timeline: [TimelineEvent] = []
+    /// A tap outside the app (notification, widget, link) that wants a place
+    /// inside it. The shell switches tabs on it; the destination consumes
+    /// and CLEARS it, so a stale route can never re-fire on a later visit.
+    @Published var pendingRoute: AppRoute?
     @Published var fleetName: String = "Your Canaries"
     @Published var isRefreshing = false
 
@@ -90,6 +94,14 @@ final class FleetStore: ObservableObject {
         // in onAppear would silently drop that tap.
         alerts.onMute = { [weak self] id, duration in self?.mute(id, duration: duration) }
         alerts.onAck = { [weak self] id in self?.acknowledgeAlert(for: id) }
+        // The plain tap on a notification: route to the alert it was about.
+        // The thread id is a witness id for witness alerts and a summary
+        // marker for storms; the Alerts tab anchors when it matches a record
+        // and simply shows the list when not — an anchor hint, never a
+        // capability.
+        alerts.onOpen = { [weak self] threadID in
+            self?.pendingRoute = .alerts(witnessID: threadID)
+        }
 
         // Tamper heard over a BLE NOTIFY is the fastest signal the fleet
         // has — sub-second, no polling anywhere in the path. Re-fold and

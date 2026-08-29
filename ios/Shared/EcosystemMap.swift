@@ -19,9 +19,13 @@
 //     never a funnel. The links are the same stable securacv.com paths the
 //     desktop Flasher's Atlas uses.
 //
-// The long-term home for this data is a machine-readable family map every
-// surface consumes (the roadmap's `ecosystem.json`); until that exists this
-// list is the app's copy, and EcosystemMapTests pins its honesty rules.
+// The machine-readable home for this data is canary-local/devices/
+// ecosystem.json (the roadmap's `ecosystem.json`, now real): every surface's
+// canonical URL and honest status, named once. This list is the app's
+// consumer copy of it — EcosystemMapTests pins the honesty rules and mirrors
+// the copy against the JSON, and the always-on node gate
+// (canary-local/tests/ecosystem.test.js) pins this file's text too, so an
+// edit the gated iOS CI never compiles still can't drift the family story.
 
 import Foundation
 

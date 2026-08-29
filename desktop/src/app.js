@@ -4633,7 +4633,7 @@ const ATLAS_LINKS = [
   ["The other windows onto your fleet", [
     ["iPhone & Apple Watch app", "The living-with-it companion: honest alerts, the fleet on your wrist. Built and tested; App Store availability pending.", REPO + "/tree/main/ios"],
     ["SecuraCV Lab (desktop)", "This app's sibling: the whole Lab as a native app — same benches, offline.", SITE + "/download"],
-    ["The Witness Wall (Apple TV)", "The verified record on the TV — try it on the Your Fleet tab; the native app's runbook lives here.", REPO + "/blob/main/tvos/RUN_ON_APPLE_TV.md"],
+    ["The Witness Wall (Apple TV)", "Your fleet's record on the TV — try it on the Your Fleet tab today; the native app is built, App Store availability pending.", REPO + "/blob/main/tvos/RUN_ON_APPLE_TV.md"],
   ]],
   ["The project", [
     ["Source on GitHub", "Every line, open. Read it, fork it.", REPO],

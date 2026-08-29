@@ -35,6 +35,9 @@ on:
       - "ios/Shared/FleetFigures.swift"
       - "firmware/boards/*/pins/pins.h"
       - "ios/Shared/FleetFigureBridge.swift"
+      # the family map: ecosystem.test.js pins the iPhone app's and the
+      # desktop Flasher's copies to devices/ecosystem.json
+      - "ios/Shared/EcosystemMap.swift"
       - "firmware/common/core/fleet_figures.h"
       - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
@@ -106,6 +109,9 @@ on:
       - "ios/Shared/FleetFigures.swift"
       - "firmware/boards/*/pins/pins.h"
       - "ios/Shared/FleetFigureBridge.swift"
+      # the family map: ecosystem.test.js pins the iPhone app's and the
+      # desktop Flasher's copies to devices/ecosystem.json
+      - "ios/Shared/EcosystemMap.swift"
       - "firmware/common/core/fleet_figures.h"
       - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
@@ -205,6 +211,7 @@ jobs:
           node --test canary-local/tests/flash_epic.test.js
           node --test canary-local/tests/flash_select.test.js
           node --test canary-local/tests/desktop_parity.test.js
+          node --test canary-local/tests/ecosystem.test.js
           node --test canary-local/tests/hatchery.test.js
           node --test canary-local/tests/wifi_memory.test.js
           node --test canary-local/tests/lab_bundle.test.js

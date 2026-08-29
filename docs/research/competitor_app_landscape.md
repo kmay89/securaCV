@@ -7,7 +7,11 @@ they break trust, and what that means for SecuraCV's Apple apps, the web
 Lab, and the desktop apps. This is the full-app companion to the
 notification-focused survey in
 [`../design/alerts_event_history.md`](../design/alerts_event_history.md) §2,
-which stays the design of record for the alert lifecycle itself.
+which stays the design of record for the alert lifecycle itself. The
+institutional half of the picture — the ALPR dragnet, retail loss
+prevention, and data fusion, and how the same demand flips into witness
+infrastructure — is
+[the enterprise surveillance landscape](enterprise_surveillance_landscape.md).
 
 Three questions this doc answers:
 
@@ -301,12 +305,24 @@ change)** landed with the change that added this document.
   `const.py` — the map's wire-contract home — by a test that reads it off
   disk. Unmapped types get no row, never a guess. Per-event provenance
   waits on a versioned chain formula that could sign the field.
-- **A8. HomeKit `low_battery` + class-scoped motion.** The bridge mirrors
-  ten dictionary signals but derives four; battery and the beacon class are
-  already in the model. "Person at the door turns on the porch light, app
-  closed, no cloud" is one signal away.
-- **C-tier follow-ups:** deep links from notification to the exact row; a
-  tvOS Top Shelf extension; Chirp advert scanning beside the presence
+- **A8 (landed, deliberately narrowed). HomeKit `low_battery` + class-scoped
+  motion.** `low_battery` landed: the bridge projects it at the SAME
+  threshold the app's own severity ladder warns at
+  (`Witness.lowBatteryThreshold` — one number, one meaning, pinned by a
+  test), consentable like every non-tamper signal. The class-scoped motion
+  half is deliberately deferred, not forgotten: the beacon's detection
+  class folds only into the beacon's own provisional row (the FleetMerge
+  attribution rule), and no transport carries a class for a *paired*
+  Canary — projecting one would be a guess wearing a HAP characteristic.
+  "Person at the door turns on the porch light" lights up when the
+  fleet-selfreport transport slice lands, with no consent-model change.
+- **C-tier follow-ups:** deep links **landed** (wave 3): a tiny
+  `securacv://` dialect (`AppRoute`, one parser shared by all doors) —
+  notification tap lands on the Alerts tab scrolled to that witness's
+  newest record, the Lock Screen widget routes by its own state (trouble →
+  Alerts, calm → Today), unknown hosts parse to nothing. Routing can only
+  switch tabs and scroll lists the user already owns. Still open: a tvOS
+  Top Shelf extension; Chirp advert scanning beside the presence
   beacon. The vault's `frame_sealed` receipt **landed** with the wave-2
   vocabulary: "a frame was sealed" as a calm timeline fact (the acoustic
   trigger that caused it alerts on its own row) — capture that announces
@@ -331,12 +347,18 @@ change)** landed with the change that added this document.
   with honest status (built and CI-tested; store availability pending).
 - **B7 (this change). The Glossary's surface roster gains the companion
   app**, and getting-started opens with the journey across surfaces.
-- **B4. `ecosystem.json` — one machine-readable family map** (name, job,
-  canonical URL, get-it-here, honest status), consumed by the Atlas, the
-  Lab, and both Apple About panels, drift-gated in CI like
-  `build-line.json`. The competitors' coherence rot is uncorrected drift;
-  ours should be a tested artifact. This is the right long-term home for
-  everything B1–B7 hardcodes today.
+- **B4 (landed). `ecosystem.json` — one machine-readable family map.**
+  `canary-local/devices/ecosystem.json` now names every surface's canonical
+  URL and honest status (`shipping` / `in-browser` / `store-pending`), and
+  both consumer copies — the iPhone app's EcosystemMap and the Flasher's
+  Atlas — are pinned to it from two directions: an always-on node gate
+  (`ecosystem.test.js`, reading the Swift and JS source as text, so a
+  JSON-only edit fails even though the iOS CI is path-gated) and a
+  type-checked Swift belt reading the JSON off disk. The gate is built so
+  a status flip hurts on purpose: the day the tvOS or iOS app reaches its
+  store, flipping `store-pending` fails every surface whose copy still
+  says "pending" — the coherence rot the competitors ship, made a loud CI
+  failure instead. Still open: the About panels and the Lab consuming it.
 - **B8. Settle the Playground/Factory vocabulary** across
   `help_ecosystem_layout.md`, the Lab manifest, and the Atlas — and update
   that standard's iOS story, which still describes the pre-native plan.

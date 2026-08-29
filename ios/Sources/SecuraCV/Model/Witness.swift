@@ -126,6 +126,12 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
         return sev
     }
 
+    /// Below this percentage a battery is "low" — the one number shared by
+    /// the severity ladder here and the HomeKit projection (HomeKitBridge's
+    /// low_battery signal), so the app can never warn at one level and tell
+    /// Apple Home a different story.
+    static let lowBatteryThreshold = 15
+
     /// Raw (pre-mute) severity from the worst live condition. Internal on
     /// purpose: mute caps NAGGING (effectiveSeverity), but anything that
     /// reasons about whether an alarm is LIVE — the mood engine's
@@ -136,7 +142,7 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
         if badge == .failed || link.isDark { return .alert }
         var sev = lastEventSeverity
         if link == .stale { sev = max(sev, .warn) }
-        if let b = batteryPct, b >= 0, b < 15 { sev = max(sev, .warn) }
+        if let b = batteryPct, b >= 0, b < Self.lowBatteryThreshold { sev = max(sev, .warn) }
         return sev
     }
 

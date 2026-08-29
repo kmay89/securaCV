@@ -36,6 +36,15 @@ struct PhoneFleetGlanceWidget: Widget {
                             provider: PhoneFleetGlanceProvider()) { entry in
             FleetGlanceWidgetView(entry: entry)
                 .containerBackground(.background, for: .widget)
+                // The tap lands where the state points: a glance showing
+                // trouble opens the Alerts tab; a calm one — or no cached
+                // snapshot at all — opens Today, because "no data yet" has
+                // nothing for Alerts to show. Same securacv:// dialect as
+                // every other door (Shared/AppRoute.swift), so the widget
+                // can never route anywhere the app didn't already offer.
+                .widgetURL((entry.snapshot?.severity ?? .ok) >= .warn
+                           ? AppRoute.alerts(witnessID: nil).url
+                           : AppRoute.today.url)
         }
         .configurationDisplayName("Fleet")
         .description("Your fleet's one honest answer — on the Lock Screen and Home Screen.")
