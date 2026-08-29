@@ -282,13 +282,19 @@ change)** landed with the change that added this document.
   own learned baseline warn; everything else stays everyday; "breathing no
   longer sensed" is worded as a sensing fact, never a medical claim), with
   a firmware-parity test reading every chokepoint module's `type_name`
-  table off disk. The honest caveat, which applies to the acoustic dialect
-  too: the chokepoint's event types reach the WAP's LAN-only
-  `/api/csi/stream` and `/api/events/today` today, which the phone does not
-  yet call — the vocabulary is the anti-rot half; the transport slice
-  (polling those endpoints, or the witness-log payload surfacing them) is
-  its own follow-up. Ring sells the anomaly-baseline version of this at its
-  top tier.
+  table off disk. **The transport slice landed in wave 4**: the paired-WAP
+  poll now reads `/api/events/today` (Bearer-authenticated, LAN-only) every
+  refresh, so acoustic events, wellbeing events, and vault receipts reach
+  the timeline and the alert ladder as real device events — with 10-minute
+  buckets as the only timestamps, because that is the only time on the
+  wire (Invariant III). The wave's scout also surfaced why nothing had ever
+  arrived: the poll led with an `/api/v1` contract no firmware in this repo
+  serves, so a paired WAP sat permanently dark — the dialect-first poll
+  fixes that, and the phone client is now the endpoint's first
+  contract-holder (a belt reads the firmware serializer off disk). Still
+  open: `/api/csi/stream` as a live sensing tile, and the sense radar
+  numerics, which remain MQTT-only with no HTTP path. Ring sells the
+  anomaly-baseline version of this at its top tier.
 - **A6. Per-type tamper narration.** Ten tamper kinds exist in the HA
   vocabulary (`custom_components/securacv/const.py`); no iOS transport
   populates `tamperKind` yet. When one does, map kinds to glyphs and
