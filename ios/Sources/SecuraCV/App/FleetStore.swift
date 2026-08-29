@@ -732,6 +732,16 @@ final class FleetStore: ObservableObject {
         guard ref.deviceType.isHTTPPairable, let api = try? store.devices.api(for: ref) else {
             return (Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name), [])
         }
+        // The dialect this repo's firmware actually serves, tried FIRST: a
+        // WAP answers /api/status and /api/events/today, and no in-repo
+        // firmware answers /api/v1/info — so a poll that led with v1 marked
+        // every real WAP dark forever, events and all. The v1 body below
+        // stays intact as the fallback for the reference device-api
+        // (canary-vision/docs/api.md), same both-dialects spirit as
+        // DeviceAPI.authorize(_:).
+        if let status = try? await api.wapStatus() {
+            return await pollWAP(ref, api: api, status: status)
+        }
         guard let info = try? await api.info() else {
             var w = Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name)
             w.link = .lost                       // couldn't reach it → dark
@@ -787,6 +797,72 @@ final class FleetStore: ObservableObject {
                 w.lastEventAt = head.timestamp
                 w.lastEventSeverity = head.severity
             }
+        }
+        return (w, events)
+    }
+
+    /// Poll one WAP-dialect device: /api/status carried identity + the chain
+    /// head (already fetched by the caller); /api/events/today carries the
+    /// sensing feed the timeline renders — the wire the DeviceEvent dialect
+    /// was built for.
+    private static func pollWAP(_ ref: PairedDeviceRef, api: DeviceAPI,
+                                status: WapStatus) async -> (Witness, [TimelineEvent])? {
+        var w = Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name)
+        // TOFU: same rule and same moment as the v1 path — first sight with
+        // no pinned key fetches and pins; pin() never overwrites.
+        if PinnedKeyStore.key(for: ref.id) == nil,
+           let pub = try? await api.publicKey() {
+            PinnedKeyStore.pin(pub, for: ref.id)
+        }
+        // The trusted fingerprint is DERIVED from the pinned key, never read
+        // off the wire: /api/status carries a self-claimed "fingerprint",
+        // and a claim is not a derivation (the FleetMerge attribution rule).
+        if let pub = PinnedKeyStore.key(for: ref.id),
+           let fp = DeviceFingerprint.hex(forPublicKey: pub) {
+            w.fingerprint = fp
+        }
+        w.firmware = status.firmware ?? ""
+        w.link = .online
+        w.lastSeen = Date()
+        w.baseURL = ref.baseURL
+        w.chainLength = UInt32(clamping: status.chainSeq ?? 0)
+
+        // The event feed: unsigned ring rows, newest first. Dismissed rows
+        // were handled at the device; ambient rows are room-sense chatter
+        // the device's own dashboard graphs — the phone timeline carries
+        // named occurrences only (Wire/WapEvents.swift). TrustBadge stays
+        // .unknown throughout: nothing on this wire is Ed25519-checked
+        // against the pinned key, and "verified" means exactly that check.
+        let rows = ((try? await api.wapEventsToday()) ?? [])
+            .filter { !$0.isDismissed && $0.isNamedOccurrence }
+        let dates = WapEventRow.anchoredDates(for: rows, fetchedAt: Date())
+        let events = zip(rows, dates).map { row, date in
+            TimelineEvent(id: "\(ref.id)#e\(row.id)",
+                          deviceID: ref.id, deviceName: ref.name, zone: "",
+                          headline: EventVocabulary.headline(forWire: row.type,
+                                                             zone: "", deviceName: ref.name),
+                          severity: EventVocabulary.severity(forWire: row.type),
+                          badge: .unknown,
+                          timeBucket: date,
+                          symbol: EventVocabulary.sfSymbol(forWire: row.type))
+        }
+        // The row's story, NEVER its live level. This feed is a historical
+        // record with bundling latency (a state-bearing row surfaces only
+        // when its bundle closes, minutes after the sound) and no dismissal
+        // sync — a smoke row can sit "newest" for hours after the air
+        // cleared. Latching lastEventSeverity from it would leave the
+        // Canary red with no path to calm (evaluateAlerts is level-
+        // triggered on witness severity), and a push minted from it would
+        // claim "now" about something that already ended. Timeline rows
+        // keep their true severity — history stays honestly colored — but
+        // the witness's live state caps at the calm tick. The live-alarm
+        // paths remain the ones built for "now": BLE tamper NOTIFY, the
+        // away wake, and the hub's own automations.
+        if let head = rows.first, let headDate = dates.first {
+            w.lastEvent = EventVocabulary.headline(forWire: head.type,
+                                                   zone: "", deviceName: ref.name)
+            w.lastEventAt = headDate
+            w.lastEventSeverity = min(EventVocabulary.severity(forWire: head.type), .notice)
         }
         return (w, events)
     }

@@ -80,6 +80,27 @@ struct WiFiReply: Codable, Sendable {
     var error: String?
 }
 
+/// `GET /api/status` on a WAP — the subset of its (large) body the poll
+/// needs to stand a paired row up: identity, firmware, and the chain head.
+/// Tolerant like every wire struct here; the WAP serves no `name` key at
+/// all (the pairing receipt's name is the display name), and no field in
+/// this body is a verification — `fingerprint` is the device's own claim,
+/// so the poll keeps deriving the one it trusts from the TOFU-pinned key.
+struct WapStatus: Codable, Sendable {
+    var ok: Bool?
+    var deviceID: String?
+    var deviceType: String?
+    var firmware: String?
+    var chainSeq: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, firmware
+        case deviceID = "device_id"
+        case deviceType = "device_type"
+        case chainSeq = "chain_seq"
+    }
+}
+
 enum DeviceError: Error, LocalizedError {
     case notPrivateAddress
     case http(Int, String)
@@ -116,6 +137,22 @@ actor DeviceAPI {
     }
 
     func config() async throws -> Data { try await getRaw("/api/v1/config") }
+
+    // MARK: - the WAP dialect (the device-api this repo's firmware actually serves)
+
+    /// `GET /api/status` — the WAP's Bearer-gated status body, decoded down
+    /// to what the poll needs. This is the liveness-plus-identity read for
+    /// WAP-class devices: no firmware in this repo serves `/api/v1/info`,
+    /// so a poll that insists on the v1 contract marks every real WAP dark.
+    func wapStatus() async throws -> WapStatus { try await get("/api/status") }
+
+    /// `GET /api/events/today` — the WAP's sensing-event feed (newest first,
+    /// ≤64 rows, Bearer-gated; Wire/WapEvents.swift documents the row). An
+    /// empty array is normal — the ring is RAM-only and empties on reboot.
+    func wapEventsToday() async throws -> [WapEventRow] {
+        let today: WapEventsToday = try await get("/api/events/today")
+        return today.events
+    }
 
     // MARK: - the fleet-wide surface
 
@@ -170,8 +207,14 @@ actor DeviceAPI {
 
     /// The head of the witness chain, one record's worth — the cheap "did
     /// anything happen?" read the 5-second sentinel can afford. Nil when the
-    /// device reports an empty chain.
+    /// device reports an empty chain. WAP dialect first (`chain_seq` on
+    /// `/api/status` — the contract this repo's firmware serves), then the
+    /// v1 page for the reference device-api; same both-dialects spirit as
+    /// `authorize(_:)` and `publicKey()`.
     func witnessHeadSeq() async throws -> UInt64? {
+        if let status = try? await wapStatus(), let seq = status.chainSeq, seq > 0 {
+            return seq
+        }
         let page: WitnessChainPage = try await get("/api/v1/witness",
                                                    query: [URLQueryItem(name: "last", value: "1")])
         return page.records.map(\.seq).max()
