@@ -134,6 +134,17 @@ struct DeviceDetailView: View {
                 if !witness.firmware.isEmpty { LabeledContent("Firmware", value: witness.firmware) }
             }
 
+            // The room right now — the WAP's 1 Hz sensing snapshot, mounted
+            // only when this row is a paired WAP whose token still resolves
+            // (the stream is Bearer-gated; an unpaired row or a Keychain-
+            // lost token would 401 on every poll, so it gets no tile —
+            // the same up-front guard verifyNow applies).
+            if witness.deviceType == .wap,
+               let ref = store.devices.devices.first(where: { $0.id == witness.id }),
+               let api = try? store.devices.api(for: ref) {
+                SensingNowSection(api: api)
+            }
+
             // The Sense wellbeing surface — the radar's coarse readings,
             // rendered at last (they were modeled and invisible; the
             // competitive audit called the Sense product "invisible in the

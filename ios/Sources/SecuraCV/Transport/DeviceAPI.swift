@@ -146,13 +146,19 @@ actor DeviceAPI {
     /// so a poll that insists on the v1 contract marks every real WAP dark.
     func wapStatus() async throws -> WapStatus { try await get("/api/status") }
 
-    /// `GET /api/events/today` — the WAP's sensing-event feed (newest first,
-    /// ≤64 rows, Bearer-gated; Wire/WapEvents.swift documents the row). An
-    /// empty array is normal — the ring is RAM-only and empties on reboot.
+    /// `GET /api/events/today` — the WAP's sensing-event feed (open bundles
+    /// first, then committed ring rows newest-first, ≤72 rows, Bearer-gated;
+    /// Wire/WapEvents.swift documents the row). An empty array is normal —
+    /// the ring is RAM-only and empties on reboot.
     func wapEventsToday() async throws -> [WapEventRow] {
         let today: WapEventsToday = try await get("/api/events/today")
         return today.events
     }
+
+    /// `GET /api/csi/stream` — the 1 Hz sensing snapshot (a plain GET, not
+    /// SSE; Bearer-gated; Wire/WapEvents.swift documents its three variant
+    /// bodies). The Sensing-now tile polls this while visible.
+    func wapStream() async throws -> WapStream { try await get("/api/csi/stream") }
 
     // MARK: - the fleet-wide surface
 

@@ -78,6 +78,17 @@ csi_bundler_outcome_t csi_bundler_admit(const char*           module_id,
                                         uint32_t*             event_id_out);
 
 /**
+ * Close any bundle past its window or quiet gap NOW, without waiting for
+ * the next admissible emit. Admission-time expiry alone lets a room that
+ * goes quiet after a state-bearing event hold its last bundle "open"
+ * indefinitely — snapshot_open would keep reporting it as current, and a
+ * client's present-tense claim would be false. Call once per main loop
+ * (cheap — a bounded slot scan that closes only when overdue); commit
+ * hooks run on the caller's task, outside the lock, like every close.
+ */
+void csi_bundler_tick(void);
+
+/**
  * Force-close every open bundle. Each closed bundle is re-committed via the
  * chokepoint's commit hooks so the host can update its persistence and UI.
  * Called by csi_event_flush_bundles() and at firmware shutdown.
@@ -93,6 +104,18 @@ void csi_bundler_reset(void);
  * Diagnostics: number of currently open bundles.
  */
 size_t csi_bundler_open_count(void);
+
+/**
+ * Copy up to `max` currently OPEN bundles into `out`, newest activity first.
+ * Safe to call from the HTTP server task: the slot table is mutex-guarded
+ * (see csi_bundler.cpp's threading note), and each record is a consistent
+ * copy — never a live pointer into a slot the main loop may close. An open
+ * record's `values.duration_sec` carries the LIVE span so far; its
+ * `values.dismissed` is always 0 (only committed ring rows are dismissable).
+ * This is what lets /api/events/today show an alarm while it is still
+ * happening instead of only after its bundle closes.
+ */
+size_t csi_bundler_snapshot_open(csi_event_record_t* out, size_t max);
 
 #ifdef __cplusplus
 }
