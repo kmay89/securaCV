@@ -94,6 +94,18 @@ void csi_bundler_reset(void);
  */
 size_t csi_bundler_open_count(void);
 
+/**
+ * Copy up to `max` currently OPEN bundles into `out`, newest activity first.
+ * Safe to call from the HTTP server task: the slot table is mutex-guarded
+ * (see csi_bundler.cpp's threading note), and each record is a consistent
+ * copy — never a live pointer into a slot the main loop may close. An open
+ * record's `values.duration_sec` carries the LIVE span so far; its
+ * `values.dismissed` is always 0 (only committed ring rows are dismissable).
+ * This is what lets /api/events/today show an alarm while it is still
+ * happening instead of only after its bundle closes.
+ */
+size_t csi_bundler_snapshot_open(csi_event_record_t* out, size_t max);
+
 #ifdef __cplusplus
 }
 #endif

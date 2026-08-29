@@ -23,7 +23,7 @@ final class WapEventsTests: XCTestCase {
         // Int32 overflow trap), then a presence event. Newest first, as
         // served; order must survive decoding.
         let wire = #"""
-        {"events":[{"id":2147483648,"module":"acoustic.events","type":"smoke_alarm_t3","category":"anomaly","state":"heard","confidence":"confirmed","motion":0,"breathing":0,"bpm":0,"duration_sec":12,"bundled":1,"time_bucket":88,"dismissed":0},{"id":41,"module":"core.presence","type":"presence_changed","category":"event","state":"occupied","confidence":"observed","motion":63,"breathing":0,"bpm":0,"duration_sec":600,"bundled":3,"time_bucket":87,"dismissed":1}]}
+        {"events":[{"id":2147483648,"module":"acoustic.events","type":"smoke_alarm_t3","category":"anomaly","state":"heard","confidence":"confirmed","motion":0,"breathing":0,"bpm":0,"duration_sec":12,"bundled":1,"time_bucket":88,"dismissed":0,"open":1},{"id":41,"module":"core.presence","type":"presence_changed","category":"event","state":"occupied","confidence":"observed","motion":63,"breathing":0,"bpm":0,"duration_sec":600,"bundled":3,"time_bucket":87,"dismissed":1,"open":0}]}
         """#
         let today = try JSONDecoder().decode(WapEventsToday.self, from: Data(wire.utf8))
         XCTAssertEqual(today.events.count, 2)
@@ -39,6 +39,7 @@ final class WapEventsTests: XCTestCase {
         XCTAssertEqual(alarm.bundled, 1)
         XCTAssertEqual(alarm.timeBucket, 88)
         XCTAssertFalse(alarm.isDismissed)
+        XCTAssertTrue(alarm.isOpen, "the serializer's open flag must survive decode")
         XCTAssertTrue(alarm.isNamedOccurrence)
 
         let presence = today.events[1]
@@ -63,6 +64,8 @@ final class WapEventsTests: XCTestCase {
         XCTAssertEqual(row.id, 0)
         XCTAssertEqual(row.timeBucket, 0)
         XCTAssertFalse(row.isDismissed)
+        XCTAssertFalse(row.isOpen,
+                       "pre-wave-5 firmware sends no open key — history, never a false now")
 
         let empty = try JSONDecoder().decode(WapEventsToday.self, from: Data(#"{}"#.utf8))
         XCTAssertTrue(empty.events.isEmpty, "no events key decodes as a quiet feed, not a failure")
@@ -76,6 +79,27 @@ final class WapEventsTests: XCTestCase {
     }
 
     // MARK: - the two pure judgments
+
+    func testLiveSeverityFollowsTheDeviceOwnPresentTense() {
+        // The review rule, encoded: a CLOSED row is history and caps at the
+        // calm tick regardless of what it names; an OPEN row is the device
+        // saying "now", so its true severity speaks — and the latch
+        // self-clears when the bundle closes and the flag drops.
+        var alarm = WapEventRow()
+        alarm.type = "smoke_alarm_t3"
+        alarm.open = 1
+        XCTAssertEqual(alarm.liveSeverity, .alert,
+                       "an alarm the device says is CURRENT may sound like one")
+        alarm.open = 0
+        XCTAssertEqual(alarm.liveSeverity, .notice,
+                       "the same alarm, closed, is history — never a latch")
+
+        var presence = WapEventRow()
+        presence.type = "presence_changed"
+        presence.open = 1
+        XCTAssertEqual(presence.liveSeverity, .notice,
+                       "open does not inflate — a calm event stays calm live")
+    }
 
     func testAmbientRowsAreChatterAndNamedCategoriesAreOccurrences() {
         var row = WapEventRow()
@@ -185,8 +209,17 @@ final class WapEventsTests: XCTestCase {
         XCTAssertEqual(printed,
                        ["id", "module", "type", "category", "state", "confidence",
                         "motion", "breathing", "bpm", "duration_sec", "bundled",
-                        "time_bucket", "dismissed"],
+                        "time_bucket", "dismissed", "open"],
                        "the serializer's row keys drifted from WapEventRow — reconcile both")
+
+        // The live half's load-bearing call: open bundles must actually be
+        // serialized (snapshot, not flush — flushing from the handler would
+        // run commit hooks on the httpd task and fragment every bundle at
+        // the poll cadence).
+        XCTAssertTrue(handler.contains("csi_bundler_snapshot_open"),
+                      "events/today no longer serializes open bundles — live alarms go invisible again")
+        XCTAssertFalse(handler.contains("flush_bundles"),
+                       "the handler must snapshot open bundles, never flush them")
 
         // The category vocabulary the ambient filter judges by.
         for word in ["\"ambient\"", "\"anomaly\"", "\"event\""] {
@@ -203,6 +236,94 @@ final class WapEventsTests: XCTestCase {
             let text = try String(contentsOf: path, encoding: .utf8)
             XCTAssertFalse(text.contains("CSI_CATEGORY_AMBIENT"),
                            "\(module) now emits ambient rows — the timeline filter would hide them")
+        }
+    }
+
+    // MARK: - the 1 Hz stream snapshot (WapStream)
+
+    func testStreamVariantsDecodeAsTheFirmwareSendsThem() throws {
+        // Variant 1 — the radio HAL never came up. status/reason exist ONLY
+        // here (csi_integration.cpp handle_stream, hal-failed branch).
+        let dead = #"{"t":0,"status":"unavailable","reason":"hal_init_failed","category":"ambient","state":"sensing"}"#
+        let d = try JSONDecoder().decode(WapStream.self, from: Data(dead.utf8))
+        XCTAssertTrue(d.isUnavailable)
+
+        // Variant 2 — a committed event, full row plus supply health.
+        let event = #"{"t":812,"id":2147483650,"module":"core.presence","type":"presence_changed","category":"event","privacy":"p0","state":"active","confidence":"confirmed","motion":71,"breathing":12,"bpm":16,"duration_sec":40,"bundled":4,"time_bucket":88,"supply":{"fps":9,"probe":false,"silent_ms":120}}"#
+        let e = try JSONDecoder().decode(WapStream.self, from: Data(event.utf8))
+        XCTAssertFalse(e.isUnavailable)
+        XCTAssertEqual(e.id, 2_147_483_650)
+        XCTAssertEqual(e.stateLabel, "Active")
+        XCTAssertEqual(e.motion, 71)
+        XCTAssertEqual(e.confirmedBPM, 16, "a confirmed vital sign may show")
+        XCTAssertFalse(e.radioSilent)
+
+        // Variant 3 — boot fallback: sensing, nothing committed, and a
+        // radio that has never produced a frame (silent_ms is -1, SIGNED).
+        let boot = #"{"t":4,"category":"ambient","state":"sensing","confidence":"tentative","motion":0,"breathing":0,"supply":{"fps":0,"probe":true,"silent_ms":-1}}"#
+        let b = try JSONDecoder().decode(WapStream.self, from: Data(boot.utf8))
+        XCTAssertNil(b.id)
+        XCTAssertEqual(b.stateLabel, "Sensing…")
+        XCTAssertTrue(b.radioSilent,
+                      "no frames ever must never read as a calm room")
+        XCTAssertNil(b.confirmedBPM)
+    }
+
+    func testVitalSignsHoldToTheConfirmedBar() throws {
+        // A tentative bpm is a number the device itself doesn't stand
+        // behind — the dashboard withholds it, and so does the phone.
+        let tentative = #"{"t":9,"state":"quiet","confidence":"observed","bpm":14}"#
+        let s = try JSONDecoder().decode(WapStream.self, from: Data(tentative.utf8))
+        XCTAssertNil(s.confirmedBPM)
+    }
+
+    func testStateLabelsMirrorTheDashboardDictionary() {
+        var s = WapStream()
+        for (wire, label) in [("empty", "Empty"), ("subtle", "Subtle motion"),
+                              ("quiet", "Quiet"), ("active", "Active"),
+                              ("together", "Together"),
+                              ("breathing_nearby", "Quiet"),
+                              ("breathing_lost", "Subtle motion")] {
+            s.state = wire
+            XCTAssertEqual(s.stateLabel, label)
+        }
+        s.state = "some_future_state"
+        XCTAssertEqual(s.stateLabel, "Sensing…",
+                       "unknown vocabulary degrades to the calm default, never a guess")
+    }
+
+    func testTheStreamDecoderMirrorsItsHandlerOnDisk() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // SecuraCVTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // ios
+            .deletingLastPathComponent()   // repo root
+        let source = repoRoot.appendingPathComponent(
+            "firmware/projects/canary-wap/arduino/canary_wap/csi_integration.cpp")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: source.path),
+                          "repo checkout not visible from the test host")
+        let cpp = try String(contentsOf: source, encoding: .utf8)
+
+        // Slice handle_stream alone — the next handler's keys must not
+        // satisfy these assertions (route order in the file: stream, then
+        // window).
+        guard let start = cpp.range(of: "esp_err_t handle_stream") else {
+            XCTFail("handle_stream moved — update this belt")
+            return
+        }
+        let afterStart = cpp[start.upperBound...]
+        let end = afterStart.range(of: "handle_window")
+        let handler = String(end.map { afterStart[..<$0.lowerBound] } ?? afterStart)
+
+        XCTAssertTrue(handler.contains("CSI_AUTH_OR_RETURN"),
+                      "the stream lost its auth gate — live room sense must stay token-gated")
+        // Every key the Swift decoder reads must still be printed somewhere
+        // in the handler (the three variants interleave, so presence — not
+        // order — is the contract here).
+        for key in ["t", "status", "reason", "state", "confidence",
+                    "motion", "breathing", "bpm", "supply", "fps", "silent_ms"] {
+            XCTAssertTrue(handler.contains("\\\"\(key)\\\""),
+                          "handle_stream no longer prints \"\(key)\" — WapStream reads it")
         }
     }
 }

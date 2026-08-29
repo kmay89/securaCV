@@ -333,6 +333,47 @@ void test_bundler_collapses_burst() {
          "100 same-state emits in a tight window must collapse to ≤ 2 commits");
 }
 
+void test_bundler_snapshot_exposes_open_bundles() {
+  /* The live half of /api/events/today: an open bundle must be visible via
+   * csi_bundler_snapshot_open() BEFORE it commits (the review on the first
+   * phone client found a live alarm invisible for up to the 10-minute
+   * window), carry a live duration rather than the zero a slot holds until
+   * close, and vanish from the snapshot once flushed — at which point it
+   * commits exactly as before. */
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(&TEST_MODULE);
+
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_MOTION_SCORE;
+  strncpy(v.state_name, "active", sizeof(v.state_name) - 1);
+  v.motion_score = 50;
+
+  csi_event_emit("test.module", "test_state", &v);
+  csi_event_emit("test.module", "test_state", &v);
+
+  csi_event_record_t open_rows[8];
+  size_t nopen = csi_bundler_snapshot_open(open_rows, 8);
+  EXPECT(nopen == 1, "two same-state emits must show as ONE open bundle");
+  EXPECT(open_rows[0].event_id >= 0x80000000u,
+         "an open bundle carries its bundler-minted id");
+  EXPECT(strcmp(open_rows[0].type_name, "test_state") == 0,
+         "the open row keeps its type_name");
+  EXPECT(open_rows[0].bundled_count == 2,
+         "the open row's bundled_count tracks roll-ins");
+  EXPECT(open_rows[0].values.dismissed == 0,
+         "an open bundle is never dismissed");
+  EXPECT(g_captured_count == 0,
+         "snapshotting an open bundle must not commit it");
+
+  csi_event_flush_bundles();
+  nopen = csi_bundler_snapshot_open(open_rows, 8);
+  EXPECT(nopen == 0, "a flushed bundle must leave the open snapshot");
+  EXPECT(g_captured_count >= 1, "the flush still commits the bundle");
+}
+
 void test_witness_payload_includes_metadata() {
   /* Spec/event_contract.md §2 mandates that every committed event carry
    * its kernel_version, ruleset_id, and zone_id alongside the existing
@@ -853,6 +894,7 @@ extern "C" int csi_event_invariants_run() {
   test_time_fields_are_coarsened();
   test_strings_are_sanitized();
   test_bundler_collapses_burst();
+  test_bundler_snapshot_exposes_open_bundles();
   test_per_module_ceiling();
   test_witness_payload_includes_metadata();
   test_ble_events_strip_mac_precision_fields();

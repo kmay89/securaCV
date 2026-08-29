@@ -50,6 +50,7 @@
 #include <csi_types.h>
 #include <csi_module.h>
 #include <csi_event.h>
+#include <csi_bundler.h>          // snapshot_open() — live rows for /api/events/today
 
 /* The four v1 modules ship with the library. After the Phase-4 flattening
  * (see commit notes) these live at the library root rather than in a
@@ -728,14 +729,25 @@ esp_err_t handle_events_today(httpd_req_t* req) {
   }
   size_t n = csi_event_recent(buffer, kEventRows);
 
+  /* OPEN bundles ride the same response, ahead of the committed ring: an
+   * alarm mid-bundle is the most current thing this endpoint knows, and
+   * before this block it was invisible for up to the 10-minute window
+   * (review on the first phone client). snapshot_open() hands back
+   * consistent copies under the bundler's mutex — never live slots. */
+  csi_event_record_t open_rows[8];
+  const size_t nopen = csi_bundler_snapshot_open(
+      open_rows, sizeof(open_rows) / sizeof(open_rows[0]));
+
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send_chunk(req, "{\"events\":[", 11);
 
   bool first = true;
-  for (size_t i = 0; i < n; ++i) {
-    const csi_event_record_t* r = &buffer[i];
-    if (r->event_id == 0) continue;
-    if (r->privacy > csi_event_get_privacy_ceiling()) continue;
+  /* One serializer for both kinds of row: `open` is 1 while the bundle is
+   * still collecting (live), 0 for a committed ring row (history). Every
+   * key appears on every row — clients decode one shape. */
+  auto emit_row = [&](const csi_event_record_t* r, unsigned open_flag) {
+    if (r->event_id == 0) return;
+    if (r->privacy > csi_event_get_privacy_ceiling()) return;
     char row[400];
     const char* cat = (r->category == CSI_CATEGORY_AMBIENT) ? "ambient"
                     : (r->category == CSI_CATEGORY_ANOMALY) ? "anomaly" : "event";
@@ -753,7 +765,8 @@ esp_err_t handle_events_today(httpd_req_t* req) {
         "\"duration_sec\":%u,"
         "\"bundled\":%u,"
         "\"time_bucket\":%u,"
-        "\"dismissed\":%u"
+        "\"dismissed\":%u,"
+        "\"open\":%u"
       "}",
       first ? "" : ",",
       (unsigned long)r->event_id,
@@ -765,12 +778,17 @@ esp_err_t handle_events_today(httpd_req_t* req) {
       (unsigned)r->values.duration_sec,
       (unsigned)r->bundled_count,
       (unsigned)r->values.time_bucket,
-      (unsigned)r->values.dismissed);
+      (unsigned)r->values.dismissed,
+      open_flag);
     if (len > 0 && len < (int)sizeof(row)) {
       httpd_resp_send_chunk(req, row, len);
       first = false;
     }
-  }
+  };
+
+  for (size_t i = 0; i < nopen; ++i) emit_row(&open_rows[i], 1u);
+  for (size_t i = 0; i < n; ++i)     emit_row(&buffer[i], 0u);
+
   httpd_resp_send_chunk(req, "]}", 2);
   httpd_resp_send_chunk(req, nullptr, 0);
   return ESP_OK;

@@ -285,21 +285,29 @@ change)** landed with the change that added this document.
   table off disk. **The transport slice landed in wave 4**: the paired-WAP
   poll now reads `/api/events/today` (Bearer-authenticated, LAN-only) every
   refresh, so acoustic events, wellbeing events, and vault receipts reach
-  the timeline as real device events. Deliberately as RECORD, not siren:
-  the feed has bundling latency (a state-bearing row surfaces only when
-  its bundle closes) and no dismissal sync, so it colors history honestly
-  but never latches a live severity or mints a push — the live-alarm
-  paths remain the ones built for "now" (BLE tamper, the away wake, the
-  hub's automations). Timestamps are delta-anchored 10-minute buckets:
+  the timeline as real device events. Record and siren each get the wire
+  that can truthfully carry them: a committed ring row is history — it
+  colors the timeline honestly but never latches a live severity (it can
+  sit "newest" for hours). **Wave 5 added the honest "now"**: the feed
+  serializes OPEN bundles (`"open":1`, copied out under a new bundler
+  mutex — never flushed, which would fragment bundling at the poll
+  cadence), so an alarm mid-bundle is visible while it is happening, its
+  true severity may speak, and the latch self-clears the moment the
+  bundle closes and the flag drops. Wave 5 also gave the device screen a
+  "Sensing now" tile — the WAP's 1 Hz `/api/csi/stream` snapshot, polled
+  only while the screen is open, speaking the dashboard's own state
+  vocabulary, with supply health gating the claim (a starved radio never
+  reads as a calm room) and vital signs held to the device's own
+  "confirmed" bar. Timestamps are delta-anchored 10-minute buckets:
   buckets are the only time on the wire (Invariant III) and boot-relative
   on current firmware, so only their spacing is believed. The wave's scout also surfaced why nothing had ever
   arrived: the poll led with an `/api/v1` contract no firmware in this repo
   serves, so a paired WAP sat permanently dark — the dialect-first poll
   fixes that, and the phone client is now the endpoint's first
-  contract-holder (a belt reads the firmware serializer off disk). Still
-  open: `/api/csi/stream` as a live sensing tile, and the sense radar
-  numerics, which remain MQTT-only with no HTTP path. Ring sells the
-  anomaly-baseline version of this at its top tier.
+  contract-holder (a belt reads the firmware serializer off disk — and a
+  second belt now pins the stream handler the same way). Still open: the
+  sense radar numerics, which remain MQTT-only with no HTTP path. Ring
+  sells the anomaly-baseline version of this at its top tier.
 - **A6. Per-type tamper narration.** Ten tamper kinds exist in the HA
   vocabulary (`custom_components/securacv/const.py`); no iOS transport
   populates `tamperKind` yet. When one does, map kinds to glyphs and

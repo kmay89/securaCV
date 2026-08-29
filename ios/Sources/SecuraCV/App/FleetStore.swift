@@ -846,23 +846,23 @@ final class FleetStore: ObservableObject {
                           timeBucket: date,
                           symbol: EventVocabulary.sfSymbol(forWire: row.type))
         }
-        // The row's story, NEVER its live level. This feed is a historical
-        // record with bundling latency (a state-bearing row surfaces only
-        // when its bundle closes, minutes after the sound) and no dismissal
-        // sync — a smoke row can sit "newest" for hours after the air
-        // cleared. Latching lastEventSeverity from it would leave the
-        // Canary red with no path to calm (evaluateAlerts is level-
-        // triggered on witness severity), and a push minted from it would
-        // claim "now" about something that already ended. Timeline rows
-        // keep their true severity — history stays honestly colored — but
-        // the witness's live state caps at the calm tick. The live-alarm
-        // paths remain the ones built for "now": BLE tamper NOTIFY, the
-        // away wake, and the hub's own automations.
+        // The row's story — and its live level only when the device itself
+        // claims "now". WapEventRow.liveSeverity encodes the rule the first
+        // client's review settled: a CLOSED ring row is history (it can sit
+        // "newest" for hours, so it caps at the calm tick and can never
+        // latch the fleet red), while an OPEN bundle is the device's own
+        // present tense — its true severity speaks, and the latch
+        // self-clears the moment the bundle closes and the flag drops.
+        // Open rows are serialized ahead of the ring, so the worst open
+        // row decides; the timeline keeps every row's true severity either
+        // way, so history stays honestly colored.
         if let head = rows.first, let headDate = dates.first {
             w.lastEvent = EventVocabulary.headline(forWire: head.type,
                                                    zone: "", deviceName: ref.name)
             w.lastEventAt = headDate
-            w.lastEventSeverity = min(EventVocabulary.severity(forWire: head.type), .notice)
+            w.lastEventSeverity = rows.filter(\.isOpen)
+                .map(\.liveSeverity)
+                .max() ?? head.liveSeverity
         }
         return (w, events)
     }

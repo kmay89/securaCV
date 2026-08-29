@@ -69,6 +69,7 @@ struct WapEventRow: Codable, Sendable, Equatable {
     var bundled: Int = 0
     var timeBucket: Int = 0          // 0…143 — ten-minute buckets, Invariant III
     var dismissed: Int = 0           // 0/1 on the wire
+    var open: Int = 0                // 1 while the bundle is still collecting — LIVE
 
     enum CodingKeys: String, CodingKey {
         case id, module, type, category, state, confidence
@@ -77,6 +78,7 @@ struct WapEventRow: Codable, Sendable, Equatable {
         case bundled
         case timeBucket = "time_bucket"
         case dismissed
+        case open
     }
 
     init() {}
@@ -96,9 +98,27 @@ struct WapEventRow: Codable, Sendable, Equatable {
         bundled = (try? c.decode(Int.self, forKey: .bundled)) ?? 0
         timeBucket = (try? c.decode(Int.self, forKey: .timeBucket)) ?? 0
         dismissed = (try? c.decode(Int.self, forKey: .dismissed)) ?? 0
+        open = (try? c.decode(Int.self, forKey: .open)) ?? 0
     }
 
     var isDismissed: Bool { dismissed != 0 }
+
+    /// Whether the device says this row is happening NOW — an open bundle
+    /// still collecting observations. Absent on pre-wave-5 firmware, so the
+    /// tolerant default (0) reads as history, never as a false "now".
+    var isOpen: Bool { open != 0 }
+
+    /// The severity a row may contribute to a witness's LIVE state. The
+    /// review on the first client established the rule this encodes: a
+    /// closed ring row is history — it can sit "newest" for hours, so it
+    /// caps at the calm tick and can never latch the fleet red. An OPEN row
+    /// is the device's own claim of "current", so its true severity speaks —
+    /// and the latch self-clears, because the flag drops the moment the
+    /// bundle closes.
+    var liveSeverity: Severity {
+        let sev = EventVocabulary.severity(forWire: type)
+        return isOpen ? sev : min(sev, .notice)
+    }
 
     /// Whether this row names something that HAPPENED — the firmware's
     /// "anomaly" and "event" categories. "ambient" rows are the room-sense
@@ -129,5 +149,101 @@ struct WapEventRow: Codable, Sendable, Equatable {
             let delta = (((newest.timeBucket - row.timeBucket) % 144) + 144) % 144
             return Date(timeIntervalSince1970: anchor - TimeInterval(delta) * 600)
         }
+    }
+}
+
+// MARK: - the 1 Hz stream snapshot
+
+/// `GET /api/csi/stream` — a plain 1 Hz GET snapshot (not SSE), Bearer-gated,
+/// with THREE mutually exclusive body shapes the firmware actually sends:
+///   * radio HAL never came up → `{"t":0,"status":"unavailable","reason":…}`
+///     (`status`/`reason` exist ONLY in this variant);
+///   * a committed event → the full row (`id`/`module`/`type`/`privacy`/…);
+///   * boot fallback, sensing but nothing committed yet → state "sensing"
+///     with live motion/breathing and no `id`.
+/// So every field is optional here, and the reader keys off `status` first,
+/// then `id`, exactly as the device's own dashboard does. `supply` carries
+/// pipeline health: `silentMs` is SIGNED and -1 means "no frames ever" — a
+/// tile that ignores it would show a healthy quiet room on a starved radio.
+struct WapStream: Codable, Sendable {
+    var t: Double?             // seconds since sensing init — freshness, NOT epoch
+    var status: String?        // "unavailable" in the hal-failed variant only
+    var reason: String?
+    var id: UInt32?            // present only in the committed-event variant
+    var state: String?
+    var confidence: String?
+    var motion: Int?
+    var breathing: Int?
+    var bpm: Int?
+    var supply: WapStreamSupply?
+
+    enum CodingKeys: String, CodingKey {
+        case t, status, reason, id, state, confidence, motion, breathing, bpm, supply
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        t = try? c.decode(Double.self, forKey: .t)
+        status = try? c.decode(String.self, forKey: .status)
+        reason = try? c.decode(String.self, forKey: .reason)
+        id = try? c.decode(UInt32.self, forKey: .id)
+        state = try? c.decode(String.self, forKey: .state)
+        confidence = try? c.decode(String.self, forKey: .confidence)
+        motion = try? c.decode(Int.self, forKey: .motion)
+        breathing = try? c.decode(Int.self, forKey: .breathing)
+        bpm = try? c.decode(Int.self, forKey: .bpm)
+        supply = try? c.decode(WapStreamSupply.self, forKey: .supply)
+    }
+
+    var isUnavailable: Bool { status == "unavailable" }
+
+    /// True when the radio has never produced a frame — the honesty gate the
+    /// dashboard applies before believing a quiet room.
+    var radioSilent: Bool {
+        guard let supply else { return false }
+        if let silent = supply.silentMs, silent < 0 { return true }
+        return supply.fps == 0
+    }
+
+    /// The room, in the dashboard's own words (its state→label dictionary,
+    /// mirrored so the phone and the device tell one story).
+    var stateLabel: String {
+        switch state {
+        case "empty": return "Empty"
+        case "subtle", "breathing_lost": return "Subtle motion"
+        case "quiet", "breathing_nearby": return "Quiet"
+        case "active": return "Active"
+        case "together": return "Together"
+        default: return "Sensing…"
+        }
+    }
+
+    /// BPM is shown only when the device itself says "confirmed" — the same
+    /// bar the dashboard applies (never a tentative number on a vital sign).
+    var confirmedBPM: Int? {
+        guard confidence == "confirmed", let bpm, bpm > 0 else { return nil }
+        return bpm
+    }
+}
+
+struct WapStreamSupply: Codable, Sendable {
+    var fps: Int?
+    var probe: Bool?
+    var silentMs: Int?         // SIGNED: -1 = no frames ever received
+
+    enum CodingKeys: String, CodingKey {
+        case fps, probe
+        case silentMs = "silent_ms"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fps = try? c.decode(Int.self, forKey: .fps)
+        probe = try? c.decode(Bool.self, forKey: .probe)
+        silentMs = try? c.decode(Int.self, forKey: .silentMs)
     }
 }
