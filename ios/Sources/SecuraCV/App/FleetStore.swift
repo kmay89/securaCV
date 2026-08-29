@@ -833,24 +833,36 @@ final class FleetStore: ObservableObject {
         // named occurrences only (Wire/WapEvents.swift). TrustBadge stays
         // .unknown throughout: nothing on this wire is Ed25519-checked
         // against the pinned key, and "verified" means exactly that check.
-        let now = Date()
         let rows = ((try? await api.wapEventsToday()) ?? [])
             .filter { !$0.isDismissed && $0.isNamedOccurrence }
-        let events = rows.map { row in
+        let dates = WapEventRow.anchoredDates(for: rows, fetchedAt: Date())
+        let events = zip(rows, dates).map { row, date in
             TimelineEvent(id: "\(ref.id)#e\(row.id)",
                           deviceID: ref.id, deviceName: ref.name, zone: "",
                           headline: EventVocabulary.headline(forWire: row.type,
                                                              zone: "", deviceName: ref.name),
                           severity: EventVocabulary.severity(forWire: row.type),
                           badge: .unknown,
-                          timeBucket: row.bucketDate(now: now),
+                          timeBucket: date,
                           symbol: EventVocabulary.sfSymbol(forWire: row.type))
         }
-        if let head = rows.first {   // newest first on this wire
+        // The row's story, NEVER its live level. This feed is a historical
+        // record with bundling latency (a state-bearing row surfaces only
+        // when its bundle closes, minutes after the sound) and no dismissal
+        // sync — a smoke row can sit "newest" for hours after the air
+        // cleared. Latching lastEventSeverity from it would leave the
+        // Canary red with no path to calm (evaluateAlerts is level-
+        // triggered on witness severity), and a push minted from it would
+        // claim "now" about something that already ended. Timeline rows
+        // keep their true severity — history stays honestly colored — but
+        // the witness's live state caps at the calm tick. The live-alarm
+        // paths remain the ones built for "now": BLE tamper NOTIFY, the
+        // away wake, and the hub's own automations.
+        if let head = rows.first, let headDate = dates.first {
             w.lastEvent = EventVocabulary.headline(forWire: head.type,
                                                    zone: "", deviceName: ref.name)
-            w.lastEventAt = head.bucketDate(now: now)
-            w.lastEventSeverity = EventVocabulary.severity(forWire: head.type)
+            w.lastEventAt = headDate
+            w.lastEventSeverity = min(EventVocabulary.severity(forWire: head.type), .notice)
         }
         return (w, events)
     }

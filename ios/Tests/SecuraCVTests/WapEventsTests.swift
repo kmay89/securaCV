@@ -89,35 +89,39 @@ final class WapEventsTests: XCTestCase {
         XCTAssertFalse(row.isNamedOccurrence, "an unknown category is not a claim we render — never a guess")
     }
 
-    func testBucketDateIsCoarseAndNeverInTheFuture() {
-        // Fixed clock and UTC calendar so the expectations are bytes, not
-        // vibes: now = 1_000_000_000 (2001-09-09 01:46:40Z), so today's
-        // bucket-of-day is 10 (01:40–01:50).
+    func testAnchoredDatesUseDeltasNeverAbsoluteBuckets() {
+        // Absolute buckets are boot-relative on every current device (no
+        // production caller of the clock-offset setter — review finding on
+        // #1611), so ONLY the deltas may be believed. Fixed clock so the
+        // expectations are bytes: now = 1_000_000_000, whose 10-minute
+        // anchor is 999_999_600.
         let now = Date(timeIntervalSince1970: 1_000_000_000)
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-
-        // A bucket at or before now maps to today's bucket start.
-        var row = WapEventRow()
-        row.timeBucket = 5
-        XCTAssertEqual(row.bucketDate(now: now, calendar: cal),
-                       Date(timeIntervalSince1970: 999_996_600))   // midnight + 5×600
-
-        // A bucket AHEAD of now is an unsynced device's boot-relative
-        // counter — the honest degradation is the fetch time's own bucket,
-        // never an invented time of day.
-        row.timeBucket = 100
-        let degraded = row.bucketDate(now: now, calendar: cal)
-        XCTAssertEqual(degraded, Date(timeIntervalSince1970: 999_999_600))
-        XCTAssertLessThanOrEqual(degraded, now)
-
-        // Both branches land on the 10-minute grid — Invariant III.
-        for bucket in [0, 5, 100, 143] {
-            row.timeBucket = bucket
-            let t = row.bucketDate(now: now, calendar: cal).timeIntervalSince1970
-            XCTAssertEqual(t.truncatingRemainder(dividingBy: 600), 0,
-                           "bucket \(bucket) left the coarse grid")
+        func rowAt(_ bucket: Int) -> WapEventRow {
+            var r = WapEventRow(); r.timeBucket = bucket; return r
         }
+
+        // Newest first, as served: newest anchors at the fetch bucket, each
+        // older row steps back by its bucket delta.
+        let dates = WapEventRow.anchoredDates(for: [rowAt(88), rowAt(87), rowAt(80)],
+                                              fetchedAt: now)
+        XCTAssertEqual(dates, [Date(timeIntervalSince1970: 999_999_600),
+                               Date(timeIntervalSince1970: 999_999_000),
+                               Date(timeIntervalSince1970: 999_994_800)])
+
+        // The mod-144 wrap: newest at bucket 2 with an older row at 140 is
+        // six buckets — one hour — apart, not minus-138.
+        let wrapped = WapEventRow.anchoredDates(for: [rowAt(2), rowAt(140)],
+                                                fetchedAt: now)
+        XCTAssertEqual(wrapped[1],
+                       Date(timeIntervalSince1970: 999_999_600 - 6 * 600))
+
+        // Every result sits on the 10-minute grid (Invariant III) and never
+        // in the future; an empty page maps to an empty page.
+        for d in dates + wrapped {
+            XCTAssertEqual(d.timeIntervalSince1970.truncatingRemainder(dividingBy: 600), 0)
+            XCTAssertLessThanOrEqual(d, now)
+        }
+        XCTAssertTrue(WapEventRow.anchoredDates(for: [], fetchedAt: now).isEmpty)
     }
 
     // MARK: - /api/status subset
