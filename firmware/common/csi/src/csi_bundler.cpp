@@ -297,6 +297,17 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
   return outcome;
 }
 
+void csi_bundler_tick(void) {
+  const uint32_t now_ms = bundler_now_ms();
+  Slot pending[CSI_BUNDLER_SLOTS];
+  size_t npending = 0;
+  {
+    SlotLock _lock;
+    expire_overdue(now_ms, pending, &npending);
+  }
+  for (size_t i = 0; i < npending; ++i) run_commit_hooks(&pending[i]);
+}
+
 void csi_bundler_flush_all(void) {
   Slot pending[CSI_BUNDLER_SLOTS];
   size_t npending = 0;

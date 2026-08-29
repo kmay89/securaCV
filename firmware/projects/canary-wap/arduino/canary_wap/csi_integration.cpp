@@ -2928,6 +2928,15 @@ bool init(httpd_handle_t server, const char* api_token) {
 void loop(bool run_csi) {
   if (!g_initialized) return;
 
+  /* Close any bundle past its window or quiet gap NOW. The bundler only
+   * expires on the next admissible emit, so a room that goes quiet right
+   * after a state-bearing event would otherwise hold its last bundle
+   * "open" indefinitely — and /api/events/today would keep calling it
+   * current (review on the open-bundle serializer). Unconditional on
+   * purpose: bundles opened before a power-gate pause must still commit
+   * on time. Cheap — an 8-slot scan, closes only when overdue. */
+  csi_bundler_tick();
+
 #if FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK
   /* Drain the outbound beacon queue first so events the previous tick
    * enqueued (or that the NimBLE host task enqueued asynchronously)

@@ -39,6 +39,20 @@ struct SensingNowSection: View {
                     // The dashboard's exact sentence — one story, every surface.
                     Text("Sensing is offline. The canary's radio is not running.")
                         .foregroundStyle(Theme.color(.warn))
+                } else if s.radioSilent {
+                    // Starvation gates the CLAIM, not just a footnote under
+                    // it: the snapshot's state can be arbitrarily stale when
+                    // no frames arrive, so nothing cached may wear "Right
+                    // now" — the dashboard parks on "Sensing…" here for the
+                    // same reason (review on this tile's first cut).
+                    LabeledContent("Right now") {
+                        Label("Sensing…", systemImage: "dot.radiowaves.left.and.right")
+                            .foregroundStyle(.secondary)
+                    }
+                    Label("No Wi-Fi signal to sense with — no frames are reaching the radio.",
+                          systemImage: "antenna.radiowaves.left.and.right.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 } else {
                     LabeledContent("Right now") {
                         Label(s.stateLabel, systemImage: "dot.radiowaves.left.and.right")
@@ -48,13 +62,6 @@ struct SensingNowSection: View {
                     if let b = s.breathing { LabeledContent("Breathing", value: "\(b)%") }
                     if let bpm = s.confirmedBPM {
                         LabeledContent("Breaths per minute", value: "\(bpm)")
-                    }
-                    if s.radioSilent {
-                        // "Quiet" without frames is deafness, not calm.
-                        Label("No frames from the radio yet — quiet here means unheard, not empty.",
-                              systemImage: "antenna.radiowaves.left.and.right.slash")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
                     }
                 }
             } else {

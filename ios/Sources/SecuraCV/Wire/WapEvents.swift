@@ -199,12 +199,16 @@ struct WapStream: Codable, Sendable {
 
     var isUnavailable: Bool { status == "unavailable" }
 
-    /// True when the radio has never produced a frame — the honesty gate the
-    /// dashboard applies before believing a quiet room.
+    /// True when the frame supply cannot back a live claim — the dashboard's
+    /// own starvation predicate, MIRRORED EXACTLY (fps below 2 AND silence
+    /// negative-or-longer-than-3-seconds; csi_dashboard_html.h, belted by
+    /// WapEventsTests) so both surfaces make the same supply-health
+    /// judgment: an fps dip right after a recent frame is not starvation,
+    /// and one trickling frame per second is.
     var radioSilent: Bool {
-        guard let supply else { return false }
-        if let silent = supply.silentMs, silent < 0 { return true }
-        return supply.fps == 0
+        guard let supply, let fps = supply.fps, fps < 2,
+              let silent = supply.silentMs else { return false }
+        return silent < 0 || silent > 3000
     }
 
     /// The room, in the dashboard's own words (its state→label dictionary,

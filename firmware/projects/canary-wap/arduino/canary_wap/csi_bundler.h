@@ -78,6 +78,17 @@ csi_bundler_outcome_t csi_bundler_admit(const char*           module_id,
                                         uint32_t*             event_id_out);
 
 /**
+ * Close any bundle past its window or quiet gap NOW, without waiting for
+ * the next admissible emit. Admission-time expiry alone lets a room that
+ * goes quiet after a state-bearing event hold its last bundle "open"
+ * indefinitely — snapshot_open would keep reporting it as current, and a
+ * client's present-tense claim would be false. Call once per main loop
+ * (cheap — a bounded slot scan that closes only when overdue); commit
+ * hooks run on the caller's task, outside the lock, like every close.
+ */
+void csi_bundler_tick(void);
+
+/**
  * Force-close every open bundle. Each closed bundle is re-committed via the
  * chokepoint's commit hooks so the host can update its persistence and UI.
  * Called by csi_event_flush_bundles() and at firmware shutdown.

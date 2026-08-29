@@ -220,6 +220,12 @@ final class WapEventsTests: XCTestCase {
                       "events/today no longer serializes open bundles — live alarms go invisible again")
         XCTAssertFalse(handler.contains("flush_bundles"),
                        "the handler must snapshot open bundles, never flush them")
+        // "open" structurally means CURRENT only because the main loop
+        // expires overdue bundles on its own clock — admission-time expiry
+        // alone lets a quiet room hold its last bundle open forever
+        // (review on #1620). The tick call must stay in the loop.
+        XCTAssertTrue(cpp.contains("csi_bundler_tick"),
+                      "the integration loop lost its bundler tick — a stale bundle would read as now")
 
         // The category vocabulary the ambient filter judges by.
         for word in ["\"ambient\"", "\"anomaly\"", "\"event\""] {
@@ -267,6 +273,48 @@ final class WapEventsTests: XCTestCase {
         XCTAssertTrue(b.radioSilent,
                       "no frames ever must never read as a calm room")
         XCTAssertNil(b.confirmedBPM)
+    }
+
+    func testStarvationPredicateMirrorsTheDashboardExactly() throws {
+        // fps < 2 AND (silent_ms < 0 OR silent_ms > 3000) — both surfaces
+        // must make the same supply-health judgment (review on this tile's
+        // first cut, which diverged in both directions).
+        func stream(fps: Int?, silent: Int?) throws -> WapStream {
+            var body = #"{"t":9,"state":"quiet","supply":{"#
+            var parts: [String] = []
+            if let fps { parts.append(#""fps":\#(fps)"#) }
+            if let silent { parts.append(#""silent_ms":\#(silent)"#) }
+            body += parts.joined(separator: ",") + "}}"
+            return try JSONDecoder().decode(WapStream.self, from: Data(body.utf8))
+        }
+        XCTAssertTrue(try stream(fps: 1, silent: 4000).radioSilent,
+                      "one trickling frame per second after 4 s of silence IS starvation")
+        XCTAssertTrue(try stream(fps: 0, silent: -1).radioSilent,
+                      "no frames ever is starvation")
+        XCTAssertFalse(try stream(fps: 0, silent: 200).radioSilent,
+                       "an fps dip right after a recent frame is not — the dashboard waits")
+        XCTAssertFalse(try stream(fps: 9, silent: 4000).radioSilent,
+                       "a healthy rate is never starved")
+        XCTAssertFalse(try stream(fps: nil, silent: nil).radioSilent,
+                       "missing supply fields make no claim either way")
+
+        // And the mirror is pinned to its source: the dashboard's predicate
+        // lives in csi_dashboard_html.h — if the firmware moves the numbers,
+        // this fails with both sides in hand.
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let dash = repoRoot.appendingPathComponent(
+            "firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: dash.path),
+                          "repo checkout not visible from the test host")
+        let html = try String(contentsOf: dash, encoding: .utf8)
+        XCTAssertTrue(html.contains("supply.fps < 2"),
+                      "the dashboard's fps threshold moved — re-mirror radioSilent")
+        XCTAssertTrue(html.contains("supply.silent_ms > 3000"),
+                      "the dashboard's silence threshold moved — re-mirror radioSilent")
     }
 
     func testVitalSignsHoldToTheConfirmedBar() throws {
