@@ -27,6 +27,7 @@
     "canary-local/workshop.html",
     "canary-local/assets/workshop.js",
     "canary-local/devices/workshop.json",
+    "canary-local/devices/ecosystem.json",
     "canary-local/enclosures/preview/canary_watch_station_drum.stl",
     "docs/hardware/enclosure/preview_dev_station.png",
     "docs/hardware/enclosure/canary_wap_enclosure_compact_base.stl",

@@ -279,4 +279,128 @@ final class FleetMergeTests: XCTestCase {
         XCTAssertFalse(row.id.hasPrefix("demo-"))
         XCTAssertTrue(row.id.hasPrefix("lan:"))
     }
+
+    // ── Rule: the wellbeing words are live state; silence changes nothing ──
+
+    func testWellbeingWordsFoldAsLiveStateAndSilenceChangesNothing() {
+        var w = Witness(id: "canary-a3f7")
+        let claiming = FleetSelfDevice(name: "Bedroom", online: true, chain: "unknown",
+                                       product: "canary-sense",
+                                       presence: "present", occupants: "1", breathing: true)
+        FleetMerge.fold(claiming, into: &w)
+        XCTAssertEqual(w.radarPresent, true)
+        XCTAssertEqual(w.radarOccupants, 1)
+        XCTAssertEqual(w.breathingLock, true)
+
+        // A wordless row (older firmware, or a stale peer whose keys the
+        // display honestly omitted) says nothing — it must not clear.
+        let silent = FleetSelfDevice(name: "Bedroom", online: true, chain: "unknown",
+                                     product: "canary-sense")
+        FleetMerge.fold(silent, into: &w)
+        XCTAssertEqual(w.radarPresent, true, "silence is not evidence the room emptied")
+        XCTAssertEqual(w.breathingLock, true)
+
+        // But a new WORD replaces — the device is the only authority, and
+        // "clear" an hour after "present" must win (the hub-field rule).
+        let cleared = FleetSelfDevice(name: "Bedroom", online: true, chain: "unknown",
+                                      product: "canary-sense",
+                                      presence: "clear", occupants: "0", breathing: false)
+        FleetMerge.fold(cleared, into: &w)
+        XCTAssertEqual(w.radarPresent, false)
+        XCTAssertEqual(w.radarOccupants, 0)
+        XCTAssertEqual(w.breathingLock, false)
+    }
+
+    // ── Rule: the seeing claim folds only from an attributed poll ──
+
+    func testSeeingFoldsOnlyFromAnAttributedPoll() {
+        let heard = Date()
+        let row = FleetSelfDevice(name: "Driveway", online: true, chain: "ok",
+                                  product: "canary-vision",
+                                  seeing: "person", seeingScore: 91)
+
+        // The name-unique peer-row path (attributed defaults false): the
+        // claim must stay off the row — names are documented non-unique,
+        // and this is exactly the two-spoofable-bytes rule at HTTP scale.
+        var peer = Witness(id: "canary-a3f7")
+        FleetMerge.fold(row, into: &peer, heardAt: heard)
+        XCTAssertNil(peer.seeingClass,
+                     "a semantic claim must not ride the name-matched fold")
+
+        // The device's own base URL: attributed, so its self row may say it.
+        var own = Witness(id: "canary-a3f7")
+        FleetMerge.fold(row, into: &own, heardAt: heard, attributed: true)
+        XCTAssertEqual(own.seeingClass, .person)
+        XCTAssertEqual(own.seeingScore, 91)
+        XCTAssertEqual(own.seeingAt, heard)
+    }
+
+    // ── the chirp: proof of life, safety-positive attention, nothing more ──
+
+    private func chirpSighting(kind: ChirpAdvert.Kind, fpB0: UInt8 = 0xAB, fpB1: UInt8 = 0xCD,
+                               at date: Date = Date(), id: UUID = UUID(),
+                               name: String? = nil) -> ChirpSighting {
+        let chirp = ChirpAdvert.parse(manufacturerData:
+            ChirpAdvert.encode(kind: kind, hourBucket: 7,
+                               chainHashPrefix: [1, 2, 3, 4, 5, 6, 7, 8],
+                               fpB0: fpB0, fpB1: fpB1))!
+        return ChirpSighting(chirp: chirp, rssiDBM: -60, lastHeard: date,
+                             peripheralID: id, localName: name)
+    }
+
+    func testChirpProvesLifeAndTamperRaisesButNeverClears() {
+        let s = chirpSighting(kind: .tamper)
+        var w = Witness(id: s.provisionalID)
+        w.link = .lost
+        FleetMerge.fold(s, into: &w)
+        XCTAssertEqual(w.link, .online, "a heard chirp is proof of life")
+        XCTAssertTrue(w.seenViaBLE)
+        XCTAssertTrue(w.tamper)
+
+        // A calm heartbeat afterward clears nothing — same one-way rule as
+        // the beacon's tamper flag.
+        FleetMerge.fold(chirpSighting(kind: .heartbeat, id: s.peripheralID), into: &w)
+        XCTAssertTrue(w.tamper, "no chirp ever clears a tamper")
+    }
+
+    func testHeartbeatChirpChangesNothingButLiveness() {
+        let s = chirpSighting(kind: .heartbeat)
+        var w = Witness(id: s.provisionalID)
+        FleetMerge.fold(s, into: &w)
+        XCTAssertFalse(w.tamper)
+        XCTAssertEqual(w.badge, .unknown, "a chirp can never wear the word verified")
+        XCTAssertEqual(w.link, .online)
+    }
+
+    func testChirpAttachMatchesUniquelyOrStandsAlone() {
+        // Unique fingerprint suffix → decorate the known row.
+        var fleet = [Witness(id: "canary-a3f7")]
+        fleet[0].fingerprint = "0011223344556677889900aabbccabcd"
+        FleetMerge.attach(chirps: [chirpSighting(kind: .tamper)], to: &fleet)
+        XCTAssertEqual(fleet.count, 1)
+        XCTAssertTrue(fleet[0].tamper)
+
+        // Two rows share the suffix → decorate NOBODY; the cry stands alone
+        // rather than landing in the wrong Canary's mouth.
+        var twins = [Witness(id: "canary-1"), Witness(id: "canary-2")]
+        twins[0].fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaabcd"
+        twins[1].fingerprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbabcd"
+        FleetMerge.attach(chirps: [chirpSighting(kind: .tamper)], to: &twins)
+        XCTAssertEqual(twins.count, 3)
+        XCTAssertFalse(twins[0].tamper)
+        XCTAssertFalse(twins[1].tamper)
+        XCTAssertTrue(twins[2].tamper)
+    }
+
+    func testChirpAndBeaconFromOnePeripheralStayOneRow() {
+        // A chirp replaces the sender's beacon on air for 2 s — the same
+        // radio, the same peripheral. One "ble:" namespace means the fleet
+        // shows one row, never a phantom twin.
+        let peripheral = UUID()
+        var fleet: [Witness] = []
+        FleetMerge.attach([sighting(id: peripheral)], to: &fleet)
+        FleetMerge.attach(chirps: [chirpSighting(kind: .witness, id: peripheral)], to: &fleet)
+        XCTAssertEqual(fleet.count, 1)
+        XCTAssertTrue(fleet[0].seenViaBLE)
+    }
 }

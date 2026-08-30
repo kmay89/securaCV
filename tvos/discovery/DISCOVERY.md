@@ -36,10 +36,22 @@ GET /api/fleet        →  200 application/json
 - `hub` is where the device stands with its hub, as a word: `"none"` (nobody
   configured one), `"down"` (configured, unreachable), `"ok"`. Absent means
   the device did not say — which a client must never render as "fine".
+- **Optional wellbeing keys** (a row may carry them; most rows never will):
+  `presence` (`"clear"`/`"present"`), `occupants` (`"0"`/`"1"`/`"2+"`),
+  `breathing` (`true`/`false` — a breathing lock held or lapsed), and
+  `seeing` (`"person"`/`"vehicle"`/`"animal"`/`"package"`, optionally with
+  `seeing_score` 0–100). Words on purpose, so an unknown value falls back to
+  unknown instead of misreading. Every key is **absent unless the device can
+  honestly say** — a stale reading omits rather than lies, and a client must
+  render absence as "cannot say", never as an empty calm room. These are the
+  same coarse facts the fleet already tells anyone in radio range over the
+  BLE presence beacon (the v2 detect class) and the display's glass (`wb`/
+  `br`); this surface deliberately carries **nothing finer** — no range, no
+  lux, and no vital-sign numbers (BPM is P1-gated on the device itself).
 - **No secrets, no raw media** — this is coarse fleet *presence and health*,
   exactly what the Witness Wall renders. It is not an evidence API.
 
-### The optional verification endpoint (nothing serves it yet)
+### The optional verification endpoint (the kernel serves it, token-gated)
 
 The native tvOS app also asks its source, every poll cycle, for
 
@@ -49,15 +61,28 @@ GET /api/sealed-log   →  200 application/json   (optional)
 
 — the sealed-log document its Rust core verifies (`{ "verifying_key",
 "checkpoint_head"?, "entries": [...] }`, see
-`tvos/witness-core/include/securacv_witness_core.h`). **No kernel or firmware
-serves this endpoint today**, and its absence is an answer, not an error: the
-Wall then phrases the fleet's status as the devices' own report ("Your fleet
-reports verified through …") and reserves the word "Verified" for a chain it
-actually walked. A kernel that starts serving it makes the TV's verification
-light up with no app change. Everything above about `/api/fleet` being
-coarse and unauthenticated is exactly why this endpoint is separate: the
-sealed log is how a *display* gets to say something cryptographic instead of
-repeating the wire.
+`tvos/witness-core/include/securacv_witness_core.h`). **The repo-root
+kernel now serves this endpoint** — a checkpoint-anchored, size-capped
+tail, entries' `payload` byte-identical to storage, with **no query
+surface of any kind** (Invariant VII: the log is non-queryable, so there
+is nothing to filter, select, or search) — behind the same capability
+token as its other authenticated routes. One rule binds every consumer:
+the document's `verifying_key` is the endpoint's **claim** about itself,
+so a client may say "Verified" only after comparing it (or, across a key
+rotation, the signed lineage in `rotation_records`) against a key **pinned
+at pairing** — the repo-wide verified-means-Ed25519-vs-pinned-key
+discipline — and proves continuity across polls by remembering the last
+head it walked. A walk that trusts the served key verifies internal
+consistency, not provenance, and must not wear the word. No firmware serves it, and the TV sends no token
+yet, so for the Wall its absence (or a 401) remains an answer, not an
+error: the Wall phrases the fleet's status as the devices' own report
+("Your fleet reports verified through …") and reserves the word "Verified"
+for a chain it actually walked. The day the TV holds a token, its
+verification lights up with no app change. Everything above about
+`/api/fleet` being coarse and unauthenticated is exactly why this endpoint
+is separate — and gated: the sealed log is how a *display* gets to say
+something cryptographic instead of repeating the wire, and the full coarse
+record is more than "anyone who asks" should hold.
 
 ### CORS is the whole trick
 
@@ -132,7 +157,8 @@ one-header change instead of a per-board copy-paste.
 - **The hub/kernel** (Rust) is the natural aggregator home — add the `/api/fleet`
   route with the CORS headers above next to its existing HTTP surface; it can
   reuse the same open/append/close shape to list its peers.
-- It is **coarse and unauthenticated-read** by design (presence/health only) —
-  documented public in the canary-wap route-security allowlist. Anything that
-  touches sealed evidence stays behind the Bearer-gated `/api/fleet-scan` and
+- It is **coarse and unauthenticated-read** by design — presence, health,
+  and the optional coarse wellbeing WORDS above, nothing finer — documented
+  public in the canary-wap route-security allowlist. Anything that touches
+  sealed evidence stays behind the Bearer-gated `/api/fleet-scan` and
   break-glass paths, never here.

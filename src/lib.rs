@@ -969,6 +969,71 @@ pub struct ExportBundle {
     pub pq_public_key: Option<Vec<u8>>,
 }
 
+/// One sealed-log row as `GET /api/sealed-log` serves it to a read-only
+/// verifier — the wire shape `tvos/witness-core`'s `SealedEntry` walks.
+///
+/// `payload` is the LITERAL stored `payload_json` string, the exact UTF-8
+/// bytes hashed at seal time. It is carried as a JSON string (which
+/// round-trips byte-for-byte) and is never parsed and re-emitted as an
+/// object: a re-serialization would change the bytes and a verifier would
+/// correctly report an entry-hash mismatch
+/// (spec/evidence_envelope.md, "never a re-serialization").
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SealedLogDocumentEntry {
+    /// Sealed-log row id (append order; ids are monotonic).
+    pub id: i64,
+    /// The exact stored `payload_json` bytes, verbatim.
+    pub payload: String,
+    /// Hex chain link: the previous entry's hash (or the anchor).
+    pub prev_hash: String,
+    /// Hex `SHA256(prev_hash || payload_utf8)`.
+    pub entry_hash: String,
+    /// Hex Ed25519 signature over the domain-separated signing hash
+    /// (`DOMAIN_SEALED_LOG_ENTRY`).
+    pub signature: String,
+}
+
+/// The checkpoint-anchored sealed-log document served by
+/// `GET /api/sealed-log`: verifying key, optional anchor, the bounded tail,
+/// and the tail's key-rotation lineage. A read-only verifier
+/// (`tvos/witness-core::verify_document`) walks it from `checkpoint_head`
+/// (or genesis, all-zero) through the tail.
+///
+/// TRUST MODEL, stated once: everything in this document comes from the
+/// endpoint being asked, so on its own it proves internal consistency, not
+/// provenance. A verifier earns the word "Verified" only by comparing
+/// `verifying_key` (or, across a rotation, the lineage in
+/// `rotation_records`) against a key it pinned at pairing — the same
+/// pinned-key rule every other surface in this repo holds (AGENTS.md's
+/// verified-means-Ed25519-vs-pinned-key discipline) — and proves
+/// continuity across polls by remembering the last head it walked, the
+/// standard transparency-log posture. The anchor is a continuity CLAIM,
+/// never proof of the history behind it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SealedLogDocument {
+    /// Ed25519 verifying key (hex) that verifies every served entry — the
+    /// CURRENT device key. A claim until compared against a pinned key.
+    pub verifying_key: String,
+    /// Hex anchor the first served entry's `prev_hash` links to: the latest
+    /// checkpoint's `chain_head_hash`, the newest in-tail rotation record's
+    /// `entry_hash`, or the size-cap boundary row's `entry_hash` — whichever
+    /// is newest. Absent only on a from-genesis walk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_head: Option<String>,
+    /// The served tail, exactly as stored, single-key by construction.
+    pub entries: Vec<SealedLogDocumentEntry>,
+    /// Every key-rotation record found in the retained tail, as stored —
+    /// each is a `SealedLogRecord::KeyRotation` payload naming
+    /// `prev_public_key`/`new_public_key` with the new key's possession
+    /// attestation, signed by the retiring key. This is how a verifier that
+    /// pinned a PRE-rotation key authorizes the rotation and then trusts
+    /// the tail's current key: the lineage travels with the document
+    /// instead of being silently dropped by the re-anchor. Readers that
+    /// predate the field (witness-core today) ignore it harmlessly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rotation_records: Vec<SealedLogDocumentEntry>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ExportOptions {
     pub max_events_per_batch: usize,
@@ -2752,6 +2817,123 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         })
     }
 
+    /// Assemble the sealed-log document `GET /api/sealed-log` serves: the
+    /// verifying key (hex), the latest checkpoint anchor when one exists, and
+    /// the post-checkpoint tail of `sealed_events` rows exactly as stored.
+    ///
+    /// Anchoring at the latest checkpoint keeps the response bounded by
+    /// retention — a poller never downloads more than the retained tail. The
+    /// served `payload` strings are the literal stored bytes (never
+    /// re-serialized), so a verifier's `SHA256(prev_hash || payload)` walk
+    /// reproduces every stored `entry_hash`.
+    ///
+    /// Key rotation: the walk re-anchors at the NEWEST rotation record in
+    /// the tail — that record's `entry_hash` becomes the anchor (the same
+    /// role `checkpoint_head` plays), only post-rotation rows are served,
+    /// and `verifying_key` is the current device key. The consumer this
+    /// document exists for (tvos/witness-core `verify_chain`) walks with
+    /// one key, and a rotation-crossing tail would make it misreport a
+    /// healthy log as a signature mismatch; re-anchoring keeps the promise
+    /// exact — everything served verifies, and everything older is anchored
+    /// history, not re-served bytes.
+    pub fn sealed_log_document(&self) -> Result<SealedLogDocument> {
+        let checkpoint = crate::verify::latest_checkpoint(&self.conn)?;
+        let (checkpoint_head, cutoff_event_id) =
+            match (checkpoint.chain_head_hash, checkpoint.cutoff_event_id) {
+                (Some(head), Some(cutoff)) => (Some(head), cutoff),
+                _ => (None, 0),
+            };
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, payload_json, prev_hash, entry_hash, signature \
+             FROM sealed_events WHERE id > ?1 ORDER BY id ASC",
+        )?;
+        let mut rows = stmt.query(params![cutoff_event_id])?;
+        let mut entries = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let payload: String = row.get(1)?;
+            let prev_hash: Vec<u8> = row.get(2)?;
+            let entry_hash: Vec<u8> = row.get(3)?;
+            let signature: Vec<u8> = row.get(4)?;
+            if prev_hash.len() != 32 || entry_hash.len() != 32 {
+                return Err(anyhow!("corrupt sealed log: hash size at id {}", id));
+            }
+            if signature.len() != 64 {
+                return Err(anyhow!("corrupt sealed log: signature size at id {}", id));
+            }
+            entries.push(SealedLogDocumentEntry {
+                id,
+                payload,
+                prev_hash: hex::encode(prev_hash),
+                entry_hash: hex::encode(entry_hash),
+                signature: hex::encode(signature),
+            });
+        }
+
+        // The tail's rotation lineage, kept BEFORE any re-anchoring drops
+        // rows: each rotation record is individually signed by its retiring
+        // key and names the incoming key with a possession attestation, so
+        // serving them is what lets a verifier holding a pre-rotation
+        // pinned key authorize the current one (the review's P1: a lineage
+        // silently dropped by the re-anchor would leave "trust the served
+        // key" as the only option).
+        let rotation_records: Vec<SealedLogDocumentEntry> = entries
+            .iter()
+            .filter(|e| {
+                matches!(
+                    SealedLogRecord::deserialize_compat(&e.payload),
+                    Ok(SealedLogRecord::KeyRotation(_))
+                )
+            })
+            .cloned()
+            .collect();
+
+        // Re-anchor at the newest key rotation in the tail, if any. The
+        // consumer this document exists for — tvos/witness-core's
+        // verify_chain — walks with ONE key, and a tail that crosses a
+        // rotation would make it report a HEALTHY log as a signature
+        // mismatch at the first post-rotation entry: a false alarm from the
+        // endpoint built to prevent them (proved empirically in review).
+        // So the served walk starts just after the newest rotation record:
+        // that record's entry_hash becomes the anchor — exactly the role a
+        // checkpoint head plays — the CURRENT device key verifies every
+        // entry actually served, and the rotation lineage above carries the
+        // authorization a cross-rotation verifier needs. (Unparseable or
+        // non-rotation payloads are simply not rotations.)
+        let mut anchor = checkpoint_head.map(hex::encode);
+        if let Some(pos) = entries.iter().rposition(|e| {
+            matches!(
+                SealedLogRecord::deserialize_compat(&e.payload),
+                Ok(SealedLogRecord::KeyRotation(_))
+            )
+        }) {
+            anchor = Some(entries[pos].entry_hash.clone());
+            entries.drain(..=pos);
+        }
+
+        // Hard size cap (the review's P2): retention is time-based with no
+        // entry ceiling, so a long window or a hot fleet could otherwise
+        // balloon one authenticated response — and the single-threaded
+        // handler with it — without bound. The walk's contract survives a
+        // cap by construction: the boundary row's entry_hash becomes the
+        // anchor, exactly like a checkpoint head, and older rows stay
+        // anchored history a poller already verified on earlier walks.
+        const SEALED_LOG_MAX_ENTRIES: usize = 4096;
+        if entries.len() > SEALED_LOG_MAX_ENTRIES {
+            let boundary = entries.len() - SEALED_LOG_MAX_ENTRIES - 1;
+            anchor = Some(entries[boundary].entry_hash.clone());
+            entries.drain(..=boundary);
+        }
+
+        Ok(SealedLogDocument {
+            verifying_key: hex::encode(self.device_key.verifying_key().to_bytes()),
+            checkpoint_head: anchor,
+            entries,
+            rotation_records,
+        })
+    }
+
     /// Assemble a canonical [`EvidenceEnvelope`] (`profile: "full"`) from an already-built
     /// export bundle plus the device's four ledgers. See `spec/evidence_envelope.md`.
     pub fn evidence_envelope_from_bundle(
@@ -4427,6 +4609,127 @@ mod tests {
             !report.chain_valid,
             "a tampered tail must fail verification"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_document_reanchors_at_the_newest_rotation() -> Result<()> {
+        use ed25519_dalek::{Signature, Verifier};
+
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        kernel.rotate_device_identity("devkey:test:rotated-1111222233334444")?;
+        let new_key = kernel.device_verifying_key();
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+
+        let doc = kernel.sealed_log_document()?;
+        // The consumer walks with ONE key, so a rotation-crossing tail is
+        // never served: the walk re-anchors at the rotation record's hash
+        // (the checkpoint-head role), the CURRENT key is the served key,
+        // and only post-rotation entries ride — every byte served verifies.
+        assert_eq!(
+            doc.entries.len(),
+            1,
+            "pre-rotation entries stay anchored history"
+        );
+        assert!(
+            !doc.entries[0].payload.contains("key_rotation"),
+            "the rotation record itself is the anchor, never a served entry"
+        );
+        assert_eq!(doc.verifying_key, hex::encode(new_key.to_bytes()));
+
+        // But the LINEAGE is not dropped: the rotation record rides beside
+        // the tail, as stored, so a verifier that pinned the pre-rotation
+        // key can authorize the current one instead of trusting the served
+        // key on its own say-so (the review's P1).
+        assert_eq!(doc.rotation_records.len(), 1);
+        assert!(doc.rotation_records[0].payload.contains("key_rotation"));
+        assert_eq!(
+            doc.rotation_records[0].entry_hash.clone(),
+            doc.checkpoint_head.clone().unwrap_or_default(),
+            "the anchor IS the served rotation record's hash — the two must agree"
+        );
+
+        // The anchor is a real link: the served entry's prev_hash is the
+        // rotation record's entry_hash, exactly what checkpoint_head says.
+        let anchor = doc
+            .checkpoint_head
+            .as_deref()
+            .ok_or_else(|| anyhow!("re-anchored document must carry its anchor"))?;
+        assert_eq!(doc.entries[0].prev_hash, anchor);
+
+        // Hand-walk from the anchor with the kernel's own hashing: the link
+        // re-computes and the signature verifies under the served key — a
+        // single-key verifier succeeds on everything this document contains.
+        let mut expected_prev: [u8; 32] = hex::decode(anchor)?
+            .try_into()
+            .map_err(|_| anyhow!("anchor size"))?;
+        for (idx, entry) in doc.entries.iter().enumerate() {
+            let prev: [u8; 32] = hex::decode(&entry.prev_hash)?
+                .try_into()
+                .map_err(|_| anyhow!("prev_hash size"))?;
+            assert_eq!(prev, expected_prev, "chain link at index {idx}");
+            let stored: [u8; 32] = hex::decode(&entry.entry_hash)?
+                .try_into()
+                .map_err(|_| anyhow!("entry_hash size"))?;
+            assert_eq!(
+                crate::log::hash_entry(&expected_prev, entry.payload.as_bytes()),
+                stored,
+                "served payload bytes must reproduce the stored hash at index {idx}"
+            );
+            let signature: [u8; 64] = hex::decode(&entry.signature)?
+                .try_into()
+                .map_err(|_| anyhow!("signature size"))?;
+            let signing_hash = crate::crypto::signatures::domain_separated_hash(
+                crate::crypto::signatures::DOMAIN_SEALED_LOG_ENTRY,
+                &stored,
+            );
+            new_key
+                .verify(&signing_hash, &Signature::from_bytes(&signature))
+                .map_err(|e| anyhow!("signature at index {idx}: {e}"))?;
+            expected_prev = stored;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_document_caps_the_served_tail() -> Result<()> {
+        let (kernel, _cfg) = setup_test_kernel()?;
+        // Plant an oversized retained tail directly (hash/signature SIZES
+        // valid, chaining synthetic-but-linked): the cap guards MEMORY, not
+        // verification, and must bound the response even when no checkpoint
+        // exists to anchor at.
+        {
+            let mut stmt = kernel.conn.prepare(
+                "INSERT INTO sealed_events(created_at, payload_json, prev_hash, entry_hash, signature) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for i in 0..4200i64 {
+                let mut hash = [0u8; 32];
+                hash[..8].copy_from_slice(&i.to_be_bytes());
+                let mut prev = [0u8; 32];
+                prev[..8].copy_from_slice(&(i - 1).to_be_bytes());
+                stmt.execute(rusqlite::params![
+                    0i64,
+                    format!("{{\"n\":{i}}}"),
+                    prev.to_vec(),
+                    hash.to_vec(),
+                    vec![0u8; 64],
+                ])?;
+            }
+        }
+
+        let doc = kernel.sealed_log_document()?;
+        assert_eq!(doc.entries.len(), 4096, "the served tail is hard-capped");
+        // The boundary row's hash became the anchor, so the walk's first
+        // link still holds — a cap re-anchors, it never breaks the chain.
+        let anchor = doc
+            .checkpoint_head
+            .clone()
+            .expect("a capped document must carry its anchor");
+        assert_eq!(doc.entries[0].prev_hash, anchor);
+        // And the newest rows are the ones served (the tail, not the head).
+        assert!(doc.entries.last().unwrap().payload.contains("4199"));
         Ok(())
     }
 

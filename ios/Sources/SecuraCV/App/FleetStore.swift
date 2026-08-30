@@ -389,6 +389,11 @@ final class FleetStore: ObservableObject {
         // above rather than competing with them.
         ble.pruneStaleSightings()
         FleetMerge.attach(ble.freshSightings, to: &next)
+        // And the chirps — the momentary broadcast alerts that replace a
+        // sender's beacon on air for 2 s. Same conservative attach; a tamper
+        // chirp raises the row's level through the existing alert ledger,
+        // which already caps repeats at one alert per condition.
+        FleetMerge.attach(chirps: ble.freshChirps, to: &next)
 
         // Demo fleet: seeded witnesses/events join anything real (ids are
         // "demo-"-namespaced, so they can't collide) — a live Canary paired
@@ -776,6 +781,15 @@ final class FleetStore: ObservableObject {
         w.lastSeen = Date()
         w.baseURL = ref.baseURL
 
+        // Same attributed self-row fold as the WAP path — and this v1 path
+        // is the one a camera-line device would answer on, so it is where
+        // an attributed seeing claim would actually first appear.
+        if let base = ref.baseURL,
+           let report = try? await DeviceAPI.fleetSelfReport(at: base),
+           let selfRow = report.devices.first {
+            FleetMerge.fold(selfRow, into: &w, attributed: true)
+        }
+
         var events: [TimelineEvent] = []
         if let page = try? await api.witness(last: 20) {
             let verdict = ChainVerifier.verify(page, pinnedKey: PinnedKeyStore.key(for: ref.id))
@@ -827,6 +841,19 @@ final class FleetStore: ObservableObject {
         w.baseURL = ref.baseURL
         w.chainLength = UInt32(clamping: status.chainSeq ?? 0)
 
+        // The device's own /api/fleet self-report, folded ATTRIBUTED: this
+        // poll is the device's own address, so its self row may carry the
+        // claims the name-matched path must refuse — the seeing class above
+        // all (FleetMerge's rule). Today a WAP's self row adds its hub
+        // standing, board id and birth day, which /api/status never carried;
+        // the day a camera-line firmware serves the endpoint, the class
+        // signals light up here with no further app change.
+        if let base = ref.baseURL,
+           let report = try? await DeviceAPI.fleetSelfReport(at: base),
+           let selfRow = report.devices.first {
+            FleetMerge.fold(selfRow, into: &w, attributed: true)
+        }
+
         // The event feed: unsigned ring rows, newest first. Dismissed rows
         // were handled at the device; ambient rows are room-sense chatter
         // the device's own dashboard graphs — the phone timeline carries
@@ -863,6 +890,19 @@ final class FleetStore: ObservableObject {
             w.lastEventSeverity = rows.filter(\.isOpen)
                 .map(\.liveSeverity)
                 .max() ?? head.liveSeverity
+        }
+        // The tamper story, narrated per kind (system.integrity): an OPEN
+        // "tamper" bundle is the device's own present tense, so it may set
+        // the level-triggered flag — and the flag self-clears, because this
+        // witness is rebuilt from current open state on every poll and the
+        // open flag drops when the bundle closes. A CLOSED tamper row is
+        // history: the timeline keeps it, the flag must not (record vs
+        // siren, the same rule liveSeverity encodes). An unknown kind word
+        // narrates as the bare "Tamper detected" — calm default, never a
+        // guess.
+        if let live = rows.first(where: { $0.isOpen && $0.type == "tamper" }) {
+            w.tamper = true
+            w.tamperKind = TamperKind(wire: live.state)?.narration ?? ""
         }
         return (w, events)
     }

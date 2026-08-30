@@ -157,6 +157,7 @@
 #include "web_ui.h"
 #include "companion_pwa.h"
 #include "csi_integration.h"     // Boot the CSI library + HTTP endpoints
+#include "tamper_events_module.h" // system.integrity watcher (fed from loop())
 #include "csi_mqtt.h"            // Optional MQTT bridge for HA integration
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -11605,6 +11606,21 @@ void loop() {
     #endif
     csi_integration::loop(csi_gate_on);
   }
+
+  // Tamper narration (system.integrity): feed the watcher the facts only
+  // this file can see together — the boot's reset classification and the
+  // SD state machine's current verdict. The module owns every transition
+  // rule and emits through the chokepoint (tamper_events_module.h); this
+  // call is a data feed, never a policy site. Outside the CSI power gate
+  // on purpose: integrity events are the one story that must survive
+  // battery saver, same as the mesh alerts above.
+  tamper_events_watch(
+      g_hw.last_reset_was_crash ? 1 : 0,
+      (g_hw.last_reset_reason == ESP_RST_INT_WDT ||
+       g_hw.last_reset_reason == ESP_RST_TASK_WDT ||
+       g_hw.last_reset_reason == ESP_RST_WDT) ? 1 : 0,
+      (g_hw.last_reset_reason == ESP_RST_BROWNOUT) ? 1 : 0,
+      (uint8_t)g_hw.sd_state);
 
   // Optional MQTT bridge — pump (no-op when disabled or unconfigured),
   // plus three cadence-gated publishers for the topics HA expects.

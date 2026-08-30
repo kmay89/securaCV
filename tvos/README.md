@@ -44,11 +44,14 @@ categories are simply **empty**, and this app sits in all three:
    implementation of the kernel's chain math, pinned by CI to the kernel's
    own test vectors — and the app asks every poll cycle for a sealed log
    (`GET /api/sealed-log`) to run it on. When a source serves one, that
-   verdict — pass or fail — is what the banner says. **No kernel or firmware
-   ships that endpoint yet**, so today the Wall labels the fleet's status as
-   what it is — the devices' own report ("Your fleet reports verified
-   through …", "reports record ok") — and the word "Verified" stays reserved
-   for a chain this TV actually walked.
+   verdict — pass or fail — is what the banner says. **The repo-root kernel
+   now ships that endpoint, token-gated** (a checkpoint-anchored tail with
+   no query surface — Invariant VII); the TV sends no token yet, so today
+   the Wall still labels the fleet's status as what it is — the devices'
+   own report ("Your fleet reports verified through …", "reports record
+   ok") — and the word "Verified" stays reserved for a chain this TV
+   actually walked. The day the TV holds a token, the verdict lights up
+   with no app change.
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
    well-known LAN addresses the desktop Flasher and Lab probe
    (`canary.local`), finds the fleet by itself, and remembers it. No account,

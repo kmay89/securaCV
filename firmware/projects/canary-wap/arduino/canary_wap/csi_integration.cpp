@@ -69,6 +69,12 @@
 #include "acoustic_events_module.h"
 
 #include "build_config.h"
+/* Unconditional, matching its unconditional registration below: every
+ * profile and every board has a reset reason and an SD state machine.
+ * (Its first cut sat inside the vault guard, which compiles only on
+ * FULL+S3 — exactly the one config CI builds — so DEV/MINIMAL/C3 broke
+ * invisibly. The adversarial review caught it; keep it out here.) */
+#include "tamper_events_module.h"
 #if FEATURE_VAULT_SNAPSHOT
 #include "vault_events_module.h"
 #endif
@@ -2400,6 +2406,13 @@ void register_v1_modules() {
    * that this device cannot decrypt (vault_snapshot.h). */
   csi_module_register(vault_events_module());
 #endif
+
+  /* The WAP's own integrity story (system.integrity). Unconditional, like
+   * ble.events: every WAP has a reset reason and an SD state machine, and
+   * the module's doctrine (tamper_events_module.h) already restricts it to
+   * the kinds this hardware can truly detect. The allow-list constrains
+   * every emit to a const.py vocabulary word (state_name) + time bucket. */
+  csi_module_register(tamper_events_module());
 
 #if FEATURE_BLE_SCAN
   /* BLE Scout — paired-beacon room-attribution (PR 5b ported to

@@ -287,3 +287,43 @@ enum EventVocabulary {
         return out
     }
 }
+
+/// The per-kind tamper vocabulary — the Home Assistant integration's ids
+/// (custom_components/securacv/const.py), which the WAP's system.integrity
+/// module now speaks on the wire as a tamper row's `state`. One id, one
+/// calm sentence: a tamper narrates WHAT happened, never advice and never
+/// panic — the register the whole vocabulary file keeps.
+///
+/// An id this build has never heard (including const.py's fenced future
+/// kinds) folds to nil, and the row falls back to the bare "Tamper
+/// detected" — the calm default, never a guess.
+enum TamperKind: String, CaseIterable, Codable, Sendable {
+    case powerLoss = "power_loss"
+    case sdRemove = "sd_remove"
+    case sdError = "sd_error"
+    case gpsJamming = "gps_jamming"
+    case motion = "motion"
+    case enclosure = "enclosure"
+    case gpio = "gpio"
+    case watchdog = "watchdog"
+    case unexpectedReboot = "unexpected_reboot"
+    case memoryCritical = "memory_critical"
+
+    init?(wire: String) { self.init(rawValue: wire) }
+
+    /// The row's status line when this kind is live.
+    var narration: String {
+        switch self {
+        case .powerLoss: return "Power was cut"
+        case .sdRemove: return "Storage card removed"
+        case .sdError: return "Storage card failing"
+        case .gpsJamming: return "GPS signal lost or jammed"
+        case .motion: return "Moved unexpectedly"
+        case .enclosure: return "Enclosure opened"
+        case .gpio: return "Tamper pin triggered"
+        case .watchdog: return "Recovered from a system hang"
+        case .unexpectedReboot: return "Rebooted unexpectedly"
+        case .memoryCritical: return "Memory critically low"
+        }
+    }
+}

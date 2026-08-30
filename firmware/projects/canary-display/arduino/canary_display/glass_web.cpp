@@ -815,8 +815,62 @@ void handle_fleet() {
   // longest being "canary-nightstand7" (18). The macro's promise is that
   // truncation is impossible BY CONSTRUCTION, and a bound smaller than the
   // string it bounds only kept that promise by accident of headroom.
-  char body[FLEET_SELFREPORT_BODY_CAP(sizeof(cfg.device_id), 24)];
-  fleet_selfreport_build(body, sizeof(body), &self);
+  //
+  // Plus the peer rows: a display is the hub-shaped board of the fleet — it
+  // already hears every peer's retained MQTT state — so its /api/fleet
+  // answers for the fleet, self row first, then one row per heard peer
+  // (the aggregator clause DISCOVERY.md always allowed and nothing served).
+  // Each appended row costs at most its own all-escaping name + product
+  // plus every fixed key and the wellbeing words (peers never carry
+  // hw/born/hub from here) — the same unconditional-worst-case discipline
+  // as the macro, so a full fleet of hostile names still closes its JSON.
+  // Static: ~8 KB belongs in BSS, not on the HTTP handler's stack.
+  constexpr size_t kPeerRows = 8;              // bounded; row count clamps,
+                                               // the JSON never truncates
+  constexpr size_t kPeerRowCap = 6u * 47u + 6u * 23u + 384u;
+  static char body[FLEET_SELFREPORT_BODY_CAP(sizeof(cfg.device_id), 24) +
+                   kPeerRows * kPeerRowCap];
+  size_t o = fleet_selfreport_open(body, sizeof(body), self.name);
+  o = fleet_selfreport_append_device(body, sizeof(body), o, &self);
+  // Peer rows, freshness-honest: liveness comes from the fleet model's own
+  // link state; the coarse wellbeing words ride ONLY on a peer the broker
+  // is currently carrying (stale never renders fine — a quiet peer omits
+  // the keys rather than repeating its last claim). `seeing` is never
+  // filled here: the only class signal a display hears rides the unsigned
+  // BLE beacon, and an unsigned whisper must not be republished as an HTTP
+  // fact. Same task as the fleet model's writers (WebServer runs on the
+  // loop task — see the snapshot note above), so no lock is needed.
+  {
+    const auto& fleet = canary::fleet::the_fleet();
+    size_t appended = 0;
+    for (int i = 0; i < fleet.count() && appended < kPeerRows; ++i) {
+      const auto* w = fleet.at(i);
+      if (!w) continue;
+      if (cfg.device_id[0] && strcmp(w->id, cfg.device_id) == 0) continue;
+      if (w->link == canary::fleet::Link::Unknown) continue;  // never heard
+      FleetSelfDevice peer{};
+      peer.name         = w->name[0] ? w->name : w->id;
+      peer.product      = w->device_type;
+      peer.online       = (w->link == canary::fleet::Link::Online) ? 1 : 0;
+      peer.chain_ok     = 0;   // a display cannot verify a peer's chain
+      peer.chain_height = -1;
+      if (peer.online) {
+        if (w->sense_present && w->radar_presence != 0) {
+          peer.presence  = (w->radar_presence == 2) ? "present" : "clear";
+          peer.occupants = (w->radar_occupants >= 2) ? "2+"
+                           : (w->radar_occupants == 1) ? "1" : "0";
+        }
+        if (w->wb_present) {
+          peer.breathing = w->wb_breathing ? FSR_BREATHING_LOCK
+                                           : FSR_BREATHING_QUIET;
+        }
+      }
+      o = fsr__raw(body, sizeof(body), o, ",");
+      o = fleet_selfreport_append_device(body, sizeof(body), o, &peer);
+      ++appended;
+    }
+  }
+  o = fleet_selfreport_close(body, sizeof(body), o);
   s_server->sendHeader("Access-Control-Allow-Origin", "*");
   s_server->send(200, "application/json", body);
 }

@@ -45,10 +45,15 @@
 // runtime string. It is a compile-time token out of the generator's own
 // vocabulary (see FLEET_SELFREPORT_HW_MAX), so one fixed worst case covers
 // every board and no call site has to know its own length.
+// The fixed term budgets every optional key at its all-escaping worst case —
+// including the wellbeing/seeing words, which are firmware vocabulary and
+// could never escape in practice, because the cap's promise is "truncation
+// is impossible by construction" and a constant proven only against friendly
+// bytes does not keep it (same reasoning as the hw budget below).
 #define FLEET_SELFREPORT_HW_MAX 48u
 #define FLEET_SELFREPORT_BODY_CAP(name_max, product_max)             \
   (12u * (size_t)(name_max) + 6u * (size_t)(product_max)             \
-   + 6u * FLEET_SELFREPORT_HW_MAX + 208u)
+   + 6u * FLEET_SELFREPORT_HW_MAX + 384u)
 
 // Coarse, non-extractive self-state — presence + health only, never raw media.
 typedef struct {
@@ -103,12 +108,45 @@ typedef struct {
   // Deliberately coarse and deliberately address-free: the point is to let an
   // owner be TOLD they need a hub, not to publish where theirs lives.
   int hub;
+  // THE ROOM, COARSELY — the sense line's presence story, in the words it
+  // already speaks on MQTT (canary-sense mqtt_mgr): "clear" or "present",
+  // and a headcount bucket "0"/"1"/"2+". Words, not numbers, for the hub
+  // field's reason: a reader that meets a value this firmware never sent
+  // falls back to unknown instead of misreading it. NULL/"" = omit — this
+  // device cannot say. A WAP or a lone display never fills these; a display
+  // that hears a sense peer's retained state fills them on that PEER's row
+  // only, freshness-gated (a stale claim omits rather than lies). Coarse on
+  // purpose: presence and bucket only — range, lux, and every vital-sign
+  // NUMBER stay off this anyone-who-asks surface (BPM is P1-gated on the
+  // device itself and never leaves it).
+  const char* presence;     // "clear" | "present";              NULL/"" = omit
+  const char* occupants;    // "0" | "1" | "2+";                 NULL/"" = omit
+  // Breathing lock, as the display's glass already tells it ("br"): held or
+  // not. FSR_BREATHING_UNKNOWN (0 — the zero-filled default) omits the key,
+  // so a glue that says nothing claims nothing.
+  int breathing;
+  // WHAT THE CAMERA LINE IS SEEING — the BLE v2 presence beacon's
+  // detect-class vocabulary verbatim (fleet_beacon.h: person / vehicle /
+  // animal / package), given an HTTP spelling. NULL/"" = omit ("not
+  // claiming"). No board in this repo fills it yet — vision has the
+  // classifier but no HTTP server — so the key exists data-first, like
+  // matter_device_type did: the day a producer lands, every reader lights
+  // up with no app change.
+  const char* seeing;       // "person"|"vehicle"|"animal"|"package"; NULL/"" = omit
+  // Detection confidence 0..100 (%), written only beside a `seeing` word
+  // and only when genuinely scored: <= 0 omits (the beacon's 0xFF-unknown
+  // maps to omit, and a claim at zero confidence is not a claim).
+  int seeing_score;
 } FleetSelfDevice;
 
 #define FSR_HUB_UNKNOWN 0
 #define FSR_HUB_NONE    1
 #define FSR_HUB_DOWN    2
 #define FSR_HUB_OK      3
+
+#define FSR_BREATHING_UNKNOWN 0
+#define FSR_BREATHING_QUIET   1
+#define FSR_BREATHING_LOCK    2
 
 // ── clamp-safe primitives (never write past cap-1; always keep a NUL) ──
 static inline size_t fsr__raw(char* out, size_t cap, size_t o, const char* s) {
@@ -170,7 +208,9 @@ static inline size_t fsr__int(char* out, size_t cap, size_t o, int v) {
 
 // One device object:
 //   {"name":..,"online":..,"chain":..,"product":..
-//    [,"chain_height":..][,"born_day":..,"born_exact":..][,"hw":".."]}
+//    [,"chain_height":..][,"born_day":..,"born_exact":..][,"hw":".."]
+//    [,"hub":".."][,"presence":".."][,"occupants":".."][,"breathing":..]
+//    [,"seeing":".."[,"seeing_score":..]]}
 static inline size_t fleet_selfreport_append_device(char* out, size_t cap, size_t o,
                                                     const FleetSelfDevice* d) {
   o = fsr__raw(out, cap, o, "{\"name\":\"");
@@ -215,6 +255,33 @@ static inline size_t fleet_selfreport_append_device(char* out, size_t cap, size_
                  : d->hub == FSR_HUB_NONE ? "none"
                                           : "unknown");
     o = fsr__raw(out, cap, o, "\"");
+  }
+  // The wellbeing keys. Absent means "this device cannot say" — the born_day
+  // honesty rule — never a default a reader could mistake for an empty room.
+  if (d && d->presence && d->presence[0]) {
+    o = fsr__raw(out, cap, o, ",\"presence\":\"");
+    o = fsr__jstr(out, cap, o, d->presence);
+    o = fsr__raw(out, cap, o, "\"");
+  }
+  if (d && d->occupants && d->occupants[0]) {
+    o = fsr__raw(out, cap, o, ",\"occupants\":\"");
+    o = fsr__jstr(out, cap, o, d->occupants);
+    o = fsr__raw(out, cap, o, "\"");
+  }
+  if (d && d->breathing != FSR_BREATHING_UNKNOWN) {
+    o = fsr__raw(out, cap, o, ",\"breathing\":");
+    o = fsr__raw(out, cap, o, d->breathing == FSR_BREATHING_LOCK ? "true" : "false");
+  }
+  // The seeing claim travels as a pair: the word, then its score — and the
+  // score never appears without the word (a confidence in nothing).
+  if (d && d->seeing && d->seeing[0]) {
+    o = fsr__raw(out, cap, o, ",\"seeing\":\"");
+    o = fsr__jstr(out, cap, o, d->seeing);
+    o = fsr__raw(out, cap, o, "\"");
+    if (d->seeing_score > 0 && d->seeing_score <= 100) {
+      o = fsr__raw(out, cap, o, ",\"seeing_score\":");
+      o = fsr__int(out, cap, o, d->seeing_score);
+    }
   }
   o = fsr__raw(out, cap, o, "}");
   return o;

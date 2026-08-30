@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Shares the app group so the Top Shelf provider can read the fleet
+       summary the Wall cached (ShelfCache). Group-only ON PURPOSE: this
+       process must never claim the iCloud container — an unentitled process
+       constructing a CKContainer traps uncatchably, and the provider has no
+       business syncing anything. It renders a cache; that is the whole job. -->
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.com.securacv.witnesswall</string>
+  </array>
+</dict>
+</plist>

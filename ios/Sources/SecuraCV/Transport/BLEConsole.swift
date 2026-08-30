@@ -63,6 +63,12 @@ final class BLEConsole: NSObject, ObservableObject {
     static let staleAfter: TimeInterval = 60
 
     @Published private(set) var sightings: [UUID: BeaconSighting] = [:]
+    /// Chirps heard, keyed like `sightings`. A SEPARATE map on purpose: a
+    /// chirping Canary stops advertising its beacon for 2 seconds, so a
+    /// "latest mfg blob wins" store would erase the beacon's status every
+    /// time the device had something to say — the display keeps them apart
+    /// for the same reason.
+    @Published private(set) var chirpSightings: [UUID: ChirpSighting] = [:]
     @Published private(set) var snapshotsByDevice: [String: BLESnapshot] = [:]
     @Published private(set) var poweredOn = false
     @Published private(set) var scanning = false
@@ -91,6 +97,15 @@ final class BLEConsole: NSObject, ObservableObject {
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
+    /// Chirps heard recently — same window as the beacons: a chirp is proof
+    /// of life the moment it lands, and a minute later it is history.
+    var freshChirps: [ChirpSighting] {
+        let cutoff = Date().addingTimeInterval(-Self.staleAfter)
+        return chirpSightings.values
+            .filter { $0.lastHeard >= cutoff }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
     func startScan() {
         wantsScan = true
         guard poweredOn else { return }   // resumed by centralManagerDidUpdateState
@@ -114,6 +129,7 @@ final class BLEConsole: NSObject, ObservableObject {
     func pruneStaleSightings(now: Date = Date()) {
         let cutoff = now.addingTimeInterval(-Self.staleAfter)
         sightings = sightings.filter { $0.value.lastHeard >= cutoff }
+        chirpSightings = chirpSightings.filter { $0.value.lastHeard >= cutoff }
     }
 
     // MARK: - Wi-Fi provisioning over BLE (the rescue path)
@@ -217,16 +233,29 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        // ── Layer 1: the universal presence beacon ──
-        if let mfg = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-           let beacon = FleetBeacon.parse(manufacturerData: mfg) {
-            sightings[peripheral.identifier] = BeaconSighting(
-                beacon: beacon,
-                rssiDBM: RSSI.intValue,
-                lastHeard: Date(),
-                peripheralID: peripheral.identifier,
-                localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
-            )
+        // ── Layer 1: the universal presence beacon — or, for 2 seconds at a
+        // time, the chirp that replaces it on air. Each parser rejects the
+        // other's length, so the order is cosmetic; what matters is that a
+        // chirp lands in its OWN map and the beacon's last sighting stands
+        // (2 s of replacement is well inside the staleness window).
+        if let mfg = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data {
+            if let beacon = FleetBeacon.parse(manufacturerData: mfg) {
+                sightings[peripheral.identifier] = BeaconSighting(
+                    beacon: beacon,
+                    rssiDBM: RSSI.intValue,
+                    lastHeard: Date(),
+                    peripheralID: peripheral.identifier,
+                    localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
+                )
+            } else if let chirp = ChirpAdvert.parse(manufacturerData: mfg) {
+                chirpSightings[peripheral.identifier] = ChirpSighting(
+                    chirp: chirp,
+                    rssiDBM: RSSI.intValue,
+                    lastHeard: Date(),
+                    peripheralID: peripheral.identifier,
+                    localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
+                )
+            }
         }
 
         // ── Layer 2: connect ONLY to a WAP-class console ──

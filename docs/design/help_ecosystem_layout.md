@@ -16,11 +16,19 @@ The public story is told through three places, in order:
 | Place | Question | Canonical surface |
 |---|---|---|
 | **The Lab** | "What is a Canary?" | `canary-local/` + `securacv.com/lab` — explore every device; the emulator is the shipping firmware compiled to WASM |
-| **The Playground** | "Can I touch it?" | the on-device peripheral bench (`firmware/projects/canary-display/src/playground/`, [dev playground doc](../hardware/dev_playground_43b.md)) + `securacv.com/playground` |
+| **The Test bench** | "Can I touch it?" | the on-device peripheral bench (`firmware/projects/canary-display/src/playground/`, [dev playground doc](../hardware/dev_playground_43b.md)) + `securacv.com/playground` |
 | **The Factory** | "How is one born?" | `securacv.com/factory` — the factory image (`firmware/scripts/make_factory.py`), first-flash-seeds-NVS, and the SLSA/Rekor birth certificate |
 
 Explore → touch → make. Every surface that mentions one of these should
 link it by this name and this order.
+
+(The Test bench was named "the Playground" through mid-2026. The Lab
+manifest — `canary-local/build-line.json`, the machine-readable map rule 1
+makes authoritative — carries the rename as `wasNamed` and redirects the
+old slug, and the public URL keeps its historic `/playground` path. Code
+identifiers and filenames — `playground.json`, `FEATURE_PLAYGROUND`, the
+firmware `playground/` sources, `gen_playground.py` — deliberately keep
+the old name: renaming them buys no clarity and breaks generators.)
 
 ## The rules
 
@@ -41,9 +49,12 @@ link it by this name and this order.
 5. **Write once, wrap thin.** The web pages are canonical; native apps are
    thin wrappers (Tauri OS WebViews) over the same content. Web is the
    source; Android gets it as a PWA (manifest + shortcuts); macOS/Linux
-   (and Windows, on the roadmap) get it via `desktop/`/`desktop-lab/`;
-   iOS/App Store waits on Tauri mobile already scaffolded in
-   `desktop-lab/MOBILE.md`. One help system, not five.
+   (and Windows, on the roadmap) get it via `desktop/`/`desktop-lab/`.
+   iOS is the deliberate exception: the companion app (`ios/`) is a
+   native SwiftUI witness console, not wrapped web — built and CI-tested,
+   App Store availability pending (`canary-local/devices/ecosystem.json`
+   keeps the honest status). One help system, not five — and one named
+   native exception.
 6. **Quiet Glass everywhere.** Visual tokens descend from the display
    firmware's `theme.h` → the Lab's `canary-local/assets/canary-local.css` →
    the desktop shells. The website keeps its own light token set today;

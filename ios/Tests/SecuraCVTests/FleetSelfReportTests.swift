@@ -282,4 +282,51 @@ final class FleetSelfReportTests: XCTestCase {
         XCTAssertEqual(w.bornDay, 20673, "a row with no birth day says nothing, it does not say 'none'")
         XCTAssertTrue(w.bornExact)
     }
+
+    // ── the wellbeing words + the seeing claim (the aggregated body) ──
+
+    /// A display aggregating its fleet: self row, a sense peer carrying the
+    /// coarse wellbeing words, and a (future) camera-line row carrying a
+    /// seeing claim. Verbatim stdout of the firmware's open/append/close
+    /// composition, like every literal in this file.
+    static let aggregatedBody = #"""
+    {"kernel":"Hallway Glass","verified_through":"now","devices":[{"name":"Hallway Glass","online":true,"chain":"unknown","product":"canary-dash7","hw":"waveshare-esp32s3-lcd7","hub":"ok"},{"name":"Bedroom","online":true,"chain":"unknown","product":"canary-sense","presence":"present","occupants":"1","breathing":true},{"name":"Driveway","online":true,"chain":"ok","product":"canary-vision","chain_height":512,"seeing":"package","seeing_score":87}]}
+    """#
+
+    func testWellbeingWordsDecodeFromTheDisplaysAggregatedBody() throws {
+        let report = try FleetSelfReport.decode(Data(Self.aggregatedBody.utf8))
+        XCTAssertEqual(report.devices.count, 3)
+
+        // The self row carries no wellbeing keys — and none may be invented.
+        let glass = report.devices[0]
+        XCTAssertNil(glass.radarPresent)
+        XCTAssertNil(glass.radarOccupants)
+        XCTAssertNil(glass.breathing)
+        XCTAssertNil(glass.seenClass)
+
+        // The sense peer's words fold to the model's shapes.
+        let bedroom = report.devices[1]
+        XCTAssertEqual(bedroom.radarPresent, true)
+        XCTAssertEqual(bedroom.radarOccupants, 1)
+        XCTAssertEqual(bedroom.breathing, true)
+    }
+
+    func testSeeingRowDecodesToTheAppClassVocabulary() throws {
+        let report = try FleetSelfReport.decode(Data(Self.aggregatedBody.utf8))
+        let driveway = report.devices[2]
+        XCTAssertEqual(driveway.seenClass, .package)
+        XCTAssertEqual(driveway.seeingScore, 87)
+    }
+
+    /// Words this build has never heard fold to nil verdicts, never to a
+    /// guess — the same tolerance rule as chain/hub, held for the new keys.
+    /// And a score outside 1…100 reads as unscored, not as a confidence.
+    func testUnknownWellbeingWordsFoldToNilNotAGuess() throws {
+        let body = #"{"kernel":"K","verified_through":"now","devices":[{"name":"K","online":true,"chain":"ok","product":"canary-wap","presence":"levitating","occupants":"many","seeing":"face","seeing_score":150}]}"#
+        let row = try XCTUnwrap(try FleetSelfReport.decode(Data(body.utf8)).devices.first)
+        XCTAssertNil(row.radarPresent, "an unknown presence word must not read as either answer")
+        XCTAssertNil(row.radarOccupants)
+        XCTAssertNil(row.seenClass, "a class outside the vocabulary renders as nothing (Invariant II)")
+        XCTAssertNil(row.seeingScore, "150 is not a percentage")
+    }
 }

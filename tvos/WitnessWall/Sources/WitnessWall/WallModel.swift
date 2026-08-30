@@ -299,6 +299,11 @@ final class WallModel {
         }
         let snapshot = FleetSnapshot.merged(parts)
         state = .live(snapshot, asOf: Date())
+        // The Top Shelf renders from this cache when the app is off screen.
+        // Written ONLY here — on a fresh answer — so the shelf can never say
+        // something the wall did not just verify; the provider ages the cache
+        // out (ShelfSnapshot.maxAge) rather than trusting it forever.
+        ShelfCache.save(ShelfSnapshot(fleet: snapshot, asOf: Date()))
         // The resident sees every snapshot the Wall does. It publishes a
         // wake only on a transition, only when a human turned it on, and
         // only for what this endpoint can honestly show (dark Canary,
@@ -404,5 +409,22 @@ final class WallModel {
                 return   // canceled
             }
         }
+    }
+}
+
+// MARK: - What the Wall tells the shelf
+
+extension ShelfSnapshot {
+    /// Built from the fleet the Wall just went live with. The summary is
+    /// `FleetSnapshot.summary` VERBATIM — the shelf and the wall must never
+    /// word the same fleet two ways. This bridge lives here rather than in
+    /// ShelfCache.swift because that file is compiled into the Top Shelf
+    /// target too, which has no `FleetSnapshot` (and must not grow one).
+    init(fleet: FleetSnapshot, asOf: Date) {
+        self.init(summary: fleet.summary,
+                  onlineCount: fleet.onlineCount,
+                  total: fleet.devices.count,
+                  hasChainTrouble: fleet.hasChainTrouble,
+                  asOf: asOf)
     }
 }

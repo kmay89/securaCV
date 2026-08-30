@@ -213,12 +213,13 @@ extension Witness {
 
 extension Witness {
     /// True when this row carries ANY of the Sense wellbeing readings —
-    /// the gate for the device screen's Wellbeing section. Today only the
-    /// demo fleet sets these (no live wire exists yet: canary-sense
-    /// publishes them on retained MQTT only, and /api/fleet doesn't carry
-    /// them — the roadmap's fleet-selfreport extension is the transport
-    /// slice). nil-tolerant by construction, so the section lights up the
-    /// moment a transport starts filling the fields, with no view change.
+    /// the gate for the device screen's Wellbeing section. The live wire is
+    /// /api/fleet's coarse wellbeing words (presence/occupants/breathing),
+    /// which a display aggregating its sense peers now fills — canary-sense
+    /// itself stays MQTT-only by design, and the display that already
+    /// listens answers for it (FleetMerge.fold(row:)). The demo fleet seeds
+    /// the same fields. tempC/humidityPct still have NO producer anywhere;
+    /// they stay demo-only until real hardware exists to speak them.
     var hasWellbeingData: Bool {
         radarPresent != nil || radarOccupants != nil || breathingLock != nil
             || tempC != nil || humidityPct != nil
