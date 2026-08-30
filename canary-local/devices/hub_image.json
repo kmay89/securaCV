@@ -158,6 +158,10 @@
         "name": "alerts"
       },
       {
+        "file": "docs/blueprints/securacv_busybar_alert.yaml",
+        "name": "busybar alert"
+      },
+      {
         "file": "docs/blueprints/securacv_daily_digest.yaml",
         "name": "daily digest"
       },
