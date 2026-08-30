@@ -149,11 +149,12 @@ struct DeviceDetailView: View {
             // rendered at last (they were modeled and invisible; the
             // competitive audit called the Sense product "invisible in the
             // app that sells it"). Shown only when the row carries any of
-            // them: today that is the demo fleet — no live wire exists yet
-            // (canary-sense publishes on retained MQTT only, which the
-            // phone deliberately doesn't speak; the roadmap's transport
-            // slice is extending /api/fleet). The section lights up for
-            // real data the moment a transport fills the fields.
+            // them. The live wire is /api/fleet's coarse wellbeing words:
+            // canary-sense stays MQTT-only by design, and a display that
+            // hears its retained state now relays it as peer rows the
+            // fleet fold fills these fields from (FleetMerge.fold(row:)).
+            // The demo fleet seeds the same fields; temperature/humidity
+            // remain demo-only — no producer hardware exists yet.
             if liveWitness.hasWellbeingData {
                 Section {
                     if let present = liveWitness.radarPresent {

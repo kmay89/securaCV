@@ -137,12 +137,73 @@ enum FleetMerge {
         }
     }
 
+    // MARK: - BLE chirp (tier 1, momentary)
+
+    /// Fold a heard chirp into a Witness. A chirp is the most transient and
+    /// least trustworthy thing on any of these wires — unsigned, checksum-
+    /// free, test company id — so it may do exactly two things: prove life
+    /// and raise safety-positive attention. Everything else on it is
+    /// deliberately unread here: the hour bucket is boot-relative (never a
+    /// time of day), and the chain-hash prefix is an existence claim nothing
+    /// on this phone can verify.
+    static func fold(_ sighting: ChirpSighting, into w: inout Witness) {
+        w.seenViaBLE = true
+        w.link = .online
+        if let existing = w.lastSeen {
+            w.lastSeen = max(existing, sighting.lastHeard)
+        } else {
+            w.lastSeen = sighting.lastHeard
+        }
+        // Safety-positive only, same as the beacon's tamper flag: hearing a
+        // tamper chirp sets tamper; no chirp ever clears anything. The alert
+        // ledger's one-alert-per-condition rule already governs how loudly
+        // this may repeat.
+        if sighting.chirp.kind == .tamper { w.tamper = true }
+    }
+
+    /// A Canary we have only ever heard chirp — same provisional posture as
+    /// the beacon rows, and the same "ble:" namespace, so a device heard
+    /// both ways is one row, never a phantom twin.
+    static func provisionalWitness(from sighting: ChirpSighting) -> Witness {
+        var w = Witness(id: sighting.provisionalID)
+        w.name = sighting.displayName
+        fold(sighting, into: &w)
+        return w
+    }
+
+    /// Attach chirps to the fleet under the SAME conservative matching as
+    /// beacons: a two-byte suffix decorates a known row only when it picks
+    /// out exactly one; ambiguity stands alone rather than putting a tamper
+    /// cry in the wrong Canary's mouth.
+    static func attach(chirps: [ChirpSighting], to fleet: inout [Witness]) {
+        for sighting in chirps {
+            let candidates = fleet.indices.filter { i in
+                !fleet[i].fingerprint.isEmpty && fleet[i].id != sighting.provisionalID
+                    && sighting.chirp.matches(fingerprint: fleet[i].fingerprint)
+            }
+            if candidates.count == 1 {
+                fold(sighting, into: &fleet[candidates[0]])
+                continue
+            }
+            if let i = fleet.firstIndex(where: { $0.id == sighting.provisionalID }) {
+                fold(sighting, into: &fleet[i])
+                continue
+            }
+            fleet.append(provisionalWitness(from: sighting))
+        }
+    }
+
     // MARK: - /api/fleet self-report (tier 2)
 
     /// Fold one `/api/fleet` row into a Witness. The device is describing
     /// itself over an unauthenticated endpoint, so this fills identity and
     /// liveness — and stops short of trust.
-    static func fold(_ row: FleetSelfDevice, into w: inout Witness, heardAt: Date = Date()) {
+    ///
+    /// `attributed` says the row came from polling the device's OWN base
+    /// URL (a paired device's address), not from a name-matched peer row a
+    /// hub relayed. Only the seeing claim cares — see its fold below.
+    static func fold(_ row: FleetSelfDevice, into w: inout Witness, heardAt: Date = Date(),
+                     attributed: Bool = false) {
         if w.name.isEmpty { w.name = row.name }
         if w.deviceType == .unknown { w.deviceType = row.deviceType }
         // The raw product string, kept beside the coarse enum: it is what the
@@ -186,6 +247,31 @@ enum FleetMerge {
         if let day = row.bornDay, day > 0 {
             w.bornDay = day
             w.bornExact = row.bornExact
+        }
+
+        // The coarse wellbeing words — live state like `hub`, not gap-fill:
+        // the device (or the display relaying its retained broker claim) is
+        // the only authority, so a present key replaces and silence changes
+        // nothing. Presence/health-grade, so they may ride the name-matched
+        // fold: the sense device itself published these words, the display
+        // only repeats them, and a wrong-row worst case is a coarse
+        // someone-is-home on a neighbor row — visible, correctable, and
+        // carrying no identity. The seeing claim below is held to more.
+        if let p = row.radarPresent { w.radarPresent = p }
+        if let o = row.radarOccupants { w.radarOccupants = o }
+        if let b = row.breathing { w.breathingLock = b }
+
+        // The seeing claim is identity-grade — "your camera saw a person"
+        // attached to the wrong named row is exactly the lie the attach()
+        // rules exist to prevent — so it folds ONLY from an address-
+        // attributed poll of the device's own base URL, never through the
+        // name-unique peer-row match (names are documented non-unique). Live
+        // state with its own timestamp: readers age it out through
+        // Witness.seeingNow, the same 120 s the beacon's claim gets.
+        if attributed, let seen = row.seenClass {
+            w.seeingClass = seen
+            w.seeingScore = row.seeingScore
+            w.seeingAt = heardAt
         }
 
         // `row.chainVerifies` is intentionally unused: "chain":"ok" is the

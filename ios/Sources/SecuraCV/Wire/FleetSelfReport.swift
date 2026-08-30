@@ -67,6 +67,20 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     /// word from newer firmware degrades to `.unknown` instead of failing the
     /// decode.
     var hub: String
+    /// The coarse wellbeing words a hub-shaped row MAY carry — a display's
+    /// /api/fleet aggregation relaying a sense peer's own retained MQTT
+    /// claim. Kept verbatim (words, per the wire's fallback rule) with
+    /// folded verdicts below. nil = the row did not say — which a reader
+    /// must never render as an empty calm room.
+    var presence: String?      // "clear" | "present"
+    var occupants: String?     // "0" | "1" | "2+"
+    var breathing: Bool?       // a breathing lock held (true) or lapsed (false)
+    /// What the device's own pipeline reports seeing — the BLE v2 beacon's
+    /// class vocabulary given an HTTP spelling. No firmware fills it yet
+    /// (vision has the classifier but no HTTP server); decoded data-first so
+    /// every reader lights up the day a producer speaks, with no app change.
+    var seeing: String?        // "person"|"vehicle"|"animal"|"package"
+    var seeingScore: Int?      // 1–100; nil when the wire didn't score it
 
     enum CodingKeys: String, CodingKey {
         case name, online, chain, product
@@ -75,6 +89,8 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
         case bornExact = "born_exact"
         case hardware = "hw"
         case hub
+        case presence, occupants, breathing, seeing
+        case seeingScore = "seeing_score"
     }
 
     /// Tolerant decode: a device that omits a field is reported, not dropped.
@@ -101,11 +117,25 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
         let hw = (try? c.decodeIfPresent(String.self, forKey: .hardware)) ?? nil
         hardware = (hw?.isEmpty == false) ? hw : nil
         hub = (try? c.decode(String.self, forKey: .hub)) ?? ""
+        // The wellbeing words, verbatim-or-nil; empty folds to nil like hw.
+        let pres = (try? c.decodeIfPresent(String.self, forKey: .presence)) ?? nil
+        presence = (pres?.isEmpty == false) ? pres : nil
+        let occ = (try? c.decodeIfPresent(String.self, forKey: .occupants)) ?? nil
+        occupants = (occ?.isEmpty == false) ? occ : nil
+        breathing = (try? c.decodeIfPresent(Bool.self, forKey: .breathing)) ?? nil
+        let see = (try? c.decodeIfPresent(String.self, forKey: .seeing)) ?? nil
+        seeing = (see?.isEmpty == false) ? see : nil
+        // The firmware only writes a score in 1…100 beside a seeing word;
+        // anything else reaching us is a stranger's phrasing, folded to nil
+        // (unscored) rather than rendered as a confidence.
+        let score = (try? c.decodeIfPresent(Int.self, forKey: .seeingScore)) ?? nil
+        seeingScore = ((score ?? 0) > 0 && (score ?? 0) <= 100) ? score : nil
     }
 
     init(name: String, online: Bool, chain: String, product: String, chainHeight: Int? = nil,
          bornDay: Int? = nil, bornExact: Bool = false, hardware: String? = nil,
-         hub: String = "") {
+         hub: String = "", presence: String? = nil, occupants: String? = nil,
+         breathing: Bool? = nil, seeing: String? = nil, seeingScore: Int? = nil) {
         self.name = name
         self.online = online
         self.chain = chain
@@ -115,6 +145,11 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
         self.bornExact = bornExact
         self.hardware = hardware
         self.hub = hub
+        self.presence = presence
+        self.occupants = occupants
+        self.breathing = breathing
+        self.seeing = seeing
+        self.seeingScore = seeingScore
     }
 
     /// True only for the explicit "ok". Anything else — "unknown", "degraded",
@@ -131,6 +166,34 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     /// build has never heard of — including silence — is `.unknown`, which
     /// renders as nothing rather than as reassurance.
     var hubState: HubState { HubState(tolerant: hub) }
+
+    /// The radar presence claim as the model holds it: true = present,
+    /// false = clear, nil = the row did not say — and nil also for a word
+    /// this build has never heard, because a future word must not read as
+    /// either answer.
+    var radarPresent: Bool? {
+        switch presence {
+        case "present": return true
+        case "clear": return false
+        default: return nil
+        }
+    }
+
+    /// "0"/"1"/"2+" folded to the model's 0/1/2 occupant shape; nil for
+    /// silence and unknown words alike.
+    var radarOccupants: Int? {
+        switch occupants {
+        case "0": return 0
+        case "1": return 1
+        case "2+": return 2
+        default: return nil
+        }
+    }
+
+    /// The seeing word folded to the app's SeenClass — nil for silence and
+    /// for any word outside the vocabulary (a face or plate class here is a
+    /// rejected PR, not a render).
+    var seenClass: SeenClass? { seeing.flatMap(SeenClass.init(rawValue:)) }
 }
 
 /// The whole `/api/fleet` body.

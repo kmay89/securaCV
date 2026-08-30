@@ -199,13 +199,24 @@ final class HomeKitBridge: ObservableObject {
         if let b = w.batteryPct, b >= 0, b < Witness.lowBatteryThreshold {
             out.insert(.lowBattery)
         }
-        // Deliberately NOT derived yet: the class-scoped motion signals
-        // (motionPerson and friends). The beacon's detection class folds
-        // only into the beacon's own provisional row (the FleetMerge
-        // attribution rule), and no transport carries a class for a paired
-        // Canary — projecting one would be a guess wearing a HAP
-        // characteristic. They light up when the fleet-selfreport transport
-        // slice lands, with no change to the consent model here.
+        // The class-scoped motion signals, live now that a transport can
+        // carry a class for a PAIRED Canary: the fleet-selfreport slice
+        // folds `seeing` only from an address-attributed poll of the
+        // device's own URL (FleetMerge's rule — a beacon's class still
+        // never leaves the beacon's own provisional row), and the claim
+        // ages out through seeingNow's freshness window, so a stale claim
+        // derives nothing. Derived only while plain .motion is derivable —
+        // a class is a refinement of motion, never a second opinion — and
+        // the consent model is unchanged: each class signal projects only
+        // if the owner enabled it, exactly like every signal above.
+        if out.contains(.motion), let seen = w.seeingNow() {
+            switch seen.kind {
+            case .person: out.insert(.motionPerson)
+            case .vehicle: out.insert(.motionVehicle)
+            case .animal: out.insert(.motionAnimal)
+            case .package: out.insert(.motionPackage)
+            }
+        }
         return out.intersection(enabledSignals.union([.tamper]))
     }
 
