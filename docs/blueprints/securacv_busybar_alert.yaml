@@ -220,11 +220,26 @@ action:
                  or (co_entity | length > 0 and is_state(co_entity, 'on'))
                  or (chain_entity | length > 0 and is_state(chain_entity, 'off')) }}
     then:
+      # Re-derive the word here rather than reusing alert_text: when this
+      # branch was entered by the template re-check (a critical sensor went
+      # active during the offline branch), trigger.id still says "offline",
+      # and a red OFFLINE would misname the alarm. Name what is actually
+      # active, most severe first.
+      - variables:
+          critical_word: >-
+            {% if trigger.id in ['tamper', 'smoke', 'co', 'chain'] %}{{ alert_word }}
+            {%- elif tamper_entity | length > 0 and is_state(tamper_entity, 'on') %}TAMPER
+            {%- elif smoke_entity | length > 0 and is_state(smoke_entity, 'on') %}SMOKE
+            {%- elif co_entity | length > 0 and is_state(co_entity, 'on') %}CO ALARM
+            {%- else %}CHAIN FAIL{% endif %}
+          critical_text: >-
+            {{ critical_word | trim }}{% if device_label | trim | length > 0 %} {{ device_label | trim | upper }}{% endif %}
+
       # No timeout: the red word holds the bar (at top priority) until the
       # sensors clear — the wait below is the all-clear, not a timer.
       - service: rest_command.securacv_busybar_alert
         data:
-          text: "{{ alert_text }}"
+          text: "{{ critical_text }}"
           color: "#FF0000"
           priority: 100
           timeout_ms: 0

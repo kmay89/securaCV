@@ -107,12 +107,53 @@ pub fn draw_payload(poke: &Poke) -> serde_json::Value {
     })
 }
 
-/// Accept only a direct LAN address for the bar. `http://` is fine here —
-/// this sink never leaves the owner's network, and the bar's local API is
-/// plain HTTP (USB-Ethernet ships at `http://10.0.4.20`). What is refused,
-/// unconditionally, is any `busy.app` host: that is the vendor's cloud
-/// proxy, and a poke routed through it becomes a per-event timing feed to a
-/// third party under an account-linked token.
+/// One drawing currently owned by the relay on the bar, for severity
+/// arbitration. The bar replaces content drawn under the same application
+/// name, so without this a later low-severity draw (an offline nudge, the
+/// drill) would wipe an active red alarm off the display — the bar's own
+/// `priority` field arbitrates against *other* apps, not within ours.
+/// Pure and clock-free like the rest of the core: callers pass monotonic
+/// seconds, so the rule is unit-tested.
+#[derive(Default)]
+pub struct DisplayArbiter {
+    /// What the bar is showing for us: (draw priority, expiry in caller
+    /// seconds). None once nothing of ours can still be on the display.
+    holding: Option<(u8, u64)>,
+}
+
+impl DisplayArbiter {
+    /// May this poke be drawn now? Equal severity redraws (latest wins —
+    /// a new tamper refreshes the word and the hold); strictly lower
+    /// severity waits until the held drawing has expired on its own.
+    pub fn may_draw(&self, poke: &Poke, now_secs: u64) -> bool {
+        match self.holding {
+            None => true,
+            Some((priority, until)) => {
+                now_secs >= until || poke.class.busybar_priority() >= priority
+            }
+        }
+    }
+
+    /// Mark this poke as on the display. Call only after a successful draw.
+    pub fn record_draw(&mut self, poke: &Poke, now_secs: u64) {
+        self.holding = Some((
+            poke.class.busybar_priority(),
+            now_secs.saturating_add(poke.class.busybar_hold_ms() / 1000),
+        ));
+    }
+}
+
+/// Refuse the vendor cloud; accept anything else the owner points at.
+///
+/// `http://` is fine here — the bar's local API is plain HTTP (USB-Ethernet
+/// ships at `http://10.0.4.20`). What is refused, unconditionally, is any
+/// `busy.app` host: that is the vendor's cloud proxy, and a poke routed
+/// through it becomes a per-event timing feed to a third party under an
+/// account-linked token. This check is a guardrail against configuring the
+/// one documented cloud path, not a reachability proof — the relay cannot
+/// know which of the owner's hostnames resolve on their LAN, so keeping the
+/// sink actually LAN-local is the owner's half of the contract (use the
+/// bar's local IP or LAN name).
 pub fn validate_url(url: &str) -> Result<(), String> {
     let rest = url
         .strip_prefix("http://")
@@ -128,6 +169,8 @@ pub fn validate_url(url: &str) -> Result<(), String> {
         .split(':')
         .next()
         .unwrap_or_default()
+        // A trailing dot is the DNS root — `busy.app.` IS `busy.app`.
+        .trim_end_matches('.')
         .to_ascii_lowercase();
     if host.is_empty() {
         return Err("Busy Bar URL has no host".to_string());
@@ -241,9 +284,40 @@ mod tests {
         assert!(validate_url("https://api.busy.app").is_err());
         assert!(validate_url("https://cloud.busy.app:443/x").is_err());
         assert!(validate_url("https://user@api.busy.app/api").is_err());
+        // The DNS-root spelling: `busy.app.` IS `busy.app`.
+        assert!(validate_url("https://busy.app.").is_err());
+        assert!(validate_url("https://api.busy.app./x").is_err());
         // But a LAN hostname that merely contains the word is fine.
         assert!(validate_url("http://mybusy.appliance.lan").is_ok());
         // No scheme, no dice — a bare host would default somewhere silently.
         assert!(validate_url("10.0.4.20").is_err());
+    }
+
+    #[test]
+    fn a_lower_severity_draw_never_wipes_an_active_alarm() {
+        // The bar replaces same-application content, so the arbiter is what
+        // keeps a drill or an offline nudge from erasing a red tamper word
+        // mid-hold. Lower severity waits out the hold; it does not queue.
+        let tamper = evaluate(
+            "securacv/porch/tamper",
+            br#"{"state":"on","kind":"enclosure_tamper"}"#,
+        )
+        .unwrap();
+        let offline = evaluate("securacv/porch/availability", b"offline").unwrap();
+        let mut arb = DisplayArbiter::default();
+        assert!(arb.may_draw(&tamper, 1000));
+        arb.record_draw(&tamper, 1000);
+        assert!(!arb.may_draw(&offline, 1001), "offline must not wipe red");
+        assert!(!arb.may_draw(&Poke::drill(), 1001), "nor may the drill");
+        // Equal-or-higher severity redraws — latest wins, the hold refreshes.
+        let smoke = evaluate(
+            "securacv/hall/sensing",
+            br#"{"acoustic_event":"smoke_alarm_t3","t3_detected":1}"#,
+        )
+        .unwrap();
+        assert!(arb.may_draw(&smoke, 1001), "an alarm may replace an alarm");
+        // Once the held drawing has expired off the bar, anything may draw.
+        let after = 1000 + PokeClass::Tamper.busybar_hold_ms() / 1000;
+        assert!(arb.may_draw(&offline, after));
     }
 }

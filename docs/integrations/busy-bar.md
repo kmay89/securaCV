@@ -171,7 +171,9 @@ What you get, per the relay's rules (`docs/design/alert_relay.md`):
 
 - Severity color and the poke's fixed title as scrolling text — red for
   tamper and heard alarms, amber for integrity and offline, green for the
-  drill. Higher severities win the display if something else is drawing.
+  drill. Higher severities win the display if something else is drawing,
+  and within SecuraCV's own drawings a lower-severity poke never replaces
+  an active red alarm — it waits out the hold.
 - **Auto-expiry**: the relay has no all-clear lane, so every alert leaves
   the bar on its own after a bounded hold (the class's debounce gap,
   60 s–15 min). A condition that persists re-lights it on the next

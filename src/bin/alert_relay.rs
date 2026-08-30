@@ -15,19 +15,22 @@
 //! - **Busy Bar** (`--busybar-url`): the desk status light's local
 //!   `POST /api/display/draw` — severity color plus the fixed title as
 //!   scrolling text, auto-expiring (`relay::busybar` is the pure mapping).
-//!   LAN-only by construction: the vendor's cloud proxy is refused.
+//!   The vendor's cloud proxy is refused. A severity arbiter keeps a
+//!   lower-severity draw from wiping an active red alarm off the matrix.
 //!
-//! Each sink runs the identical machinery — its own per-(class, device)
-//! debounce and its own retry lane — so a bar that is unplugged never delays
-//! or consumes the phone's poke, and vice versa.
+//! Each sink is its own delivery lane on its own thread, with its own
+//! per-(class, device) debounce and its own retry queue — so a hung or
+//! unplugged sink neither delays nor consumes another sink's poke. The main
+//! thread only evaluates and fans out; it never waits on a socket.
 
 use std::collections::HashMap;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 use rumqttc::{Event, Incoming, MqttOptions, QoS};
+use witness_kernel::relay::busybar::DisplayArbiter;
 use witness_kernel::relay::{busybar, evaluate, Debouncer, Poke, PokeClass, SUBSCRIBE_TOPICS};
 use witness_kernel::transport::{
     parse_mqtt_endpoint, validate_loopback_addr, TlsBackend, TlsConfig, TlsMaterials,
@@ -111,7 +114,7 @@ struct Args {
 
 fn http_agent() -> ureq::Agent {
     // Bounded timeout so a hung server fails the poke instead of wedging
-    // the relay (FR-4); a failure lands in the sink's retry lane.
+    // its lane (FR-4); a failure lands in that lane's retry queue.
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .build()
@@ -137,6 +140,10 @@ enum Sink {
     BusyBar {
         url: String,
         token: Option<String>,
+        /// Keeps a later low-severity draw from replacing an active alarm:
+        /// the bar swaps same-application content, so ordering is ours to
+        /// hold, not the display's.
+        arbiter: DisplayArbiter,
     },
 }
 
@@ -159,16 +166,20 @@ impl Sink {
         url.split('/').take(3).collect::<Vec<_>>().join("/")
     }
 
-    fn deliver(&self, poke: &Poke) -> Result<()> {
+    /// Deliver one poke. `now_secs` is this lane's monotonic clock, for the
+    /// Busy Bar's severity hold. Ok(()) means the poke is handled — sent,
+    /// or deliberately not drawn because a more severe alarm still owns the
+    /// display (that is a decision, not a failure, so it must not retry).
+    fn deliver(&mut self, poke: &Poke, now_secs: u64) -> Result<()> {
         match self {
             Sink::Ntfy { url, link_home } => {
                 let mut req = http_agent()
-                    .post(url)
+                    .post(url.as_str())
                     .header("Title", poke.title)
                     .header("Priority", &poke.class.ntfy_priority().to_string())
                     .header("Tags", poke.class.sev());
                 if let Some(link) = link_home {
-                    req = req.header("Click", link);
+                    req = req.header("Click", link.as_str());
                 }
                 let mut response = req
                     .send(poke.body.as_bytes())
@@ -176,41 +187,32 @@ impl Sink {
                 drain(&mut response);
                 Ok(())
             }
-            Sink::BusyBar { url, token } => {
+            Sink::BusyBar {
+                url,
+                token,
+                arbiter,
+            } => {
+                if !arbiter.may_draw(poke, now_secs) {
+                    log::info!(
+                        "busybar holding a higher-severity alarm; {} poke not drawn",
+                        poke.class.sev()
+                    );
+                    return Ok(());
+                }
                 let endpoint = format!("{}{}", url.trim_end_matches('/'), busybar::DRAW_PATH);
                 let mut req = http_agent()
                     .post(&endpoint)
                     .header("Content-Type", "application/json");
                 if let Some(token) = token {
-                    req = req.header("X-API-Token", token);
+                    req = req.header("X-API-Token", token.as_str());
                 }
                 let mut response = req
                     .send(busybar::draw_payload(poke).to_string().as_bytes())
                     .map_err(|e| anyhow!("Busy Bar draw failed: {e}"))?;
                 drain(&mut response);
+                arbiter.record_draw(poke, now_secs);
                 Ok(())
             }
-        }
-    }
-}
-
-/// One sink plus its own debounce and retry state. Sinks fail independently
-/// (the bar can be unplugged while ntfy is fine), so each runs the full
-/// machinery: ready-check, deliver, record only on success, hold for retry
-/// on failure. One shared debouncer would let one sink's success consume
-/// another sink's send slot.
-struct Lane {
-    sink: Sink,
-    debouncer: Debouncer,
-    pending: HashMap<(PokeClass, String), (Poke, u64)>,
-}
-
-impl Lane {
-    fn new(sink: Sink) -> Lane {
-        Lane {
-            sink,
-            debouncer: Debouncer::default(),
-            pending: HashMap::new(),
         }
     }
 }
@@ -233,12 +235,95 @@ fn build_sinks(args: &Args) -> Result<Vec<Sink>> {
         sinks.push(Sink::BusyBar {
             url: url.clone(),
             token: args.busybar_token.clone(),
+            arbiter: DisplayArbiter::default(),
         });
     }
     if sinks.is_empty() {
         bail!("no sink configured: pass --ntfy-url and/or --busybar-url");
     }
     Ok(sinks)
+}
+
+/// One sink's whole delivery life, on its own thread: debounce, deliver,
+/// record only on success, hold failures for retry on a cadence, give up
+/// after an hour. Nothing here is shared — a lane that is stuck in a 30 s
+/// HTTP timeout stalls only itself.
+fn run_lane(mut sink: Sink, rx: Receiver<Poke>) {
+    const RETRY_SECS: u64 = 30;
+    const GIVE_UP_SECS: u64 = 3600;
+    let started = Instant::now();
+    let mut debouncer = Debouncer::default();
+    let mut pending: HashMap<(PokeClass, String), (Poke, u64)> = HashMap::new();
+    let mut last_retry: u64 = 0;
+
+    loop {
+        let now = started.elapsed().as_secs();
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(poke) => {
+                if debouncer.ready(&poke, now) {
+                    match sink.deliver(&poke, now) {
+                        Ok(()) => {
+                            debouncer.record(&poke, now);
+                            log::info!(
+                                "poked via {}: {} ({})",
+                                sink.name(),
+                                poke.title,
+                                poke.class.sev()
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("{} poke failed, holding for retry: {e}", sink.name());
+                            let key = (poke.class, poke.device.clone());
+                            // Keep the earliest failure time if this lane's
+                            // slot is already held.
+                            let first = pending.get(&key).map(|(_, t)| *t).unwrap_or(now);
+                            pending.insert(key, (poke, first));
+                        }
+                    }
+                } else {
+                    log::debug!(
+                        "debounced {} poke for '{}' on {}",
+                        poke.class.sev(),
+                        poke.device,
+                        sink.name()
+                    );
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+        // Retry cadence: attempt held pokes, newest state wins per slot.
+        let now = started.elapsed().as_secs();
+        if now.saturating_sub(last_retry) >= RETRY_SECS && !pending.is_empty() {
+            last_retry = now;
+            let held: Vec<_> = pending.drain().collect();
+            for (key, (poke, first_failed)) in held {
+                if now.saturating_sub(first_failed) > GIVE_UP_SECS {
+                    log::warn!(
+                        "dropping undeliverable {} poke for {} after an hour of retries",
+                        poke.class.sev(),
+                        sink.name()
+                    );
+                    continue;
+                }
+                match sink.deliver(&poke, now) {
+                    Ok(()) => {
+                        debouncer.record(&poke, now);
+                        log::info!(
+                            "poked via {} (retried): {} ({})",
+                            sink.name(),
+                            poke.title,
+                            poke.class.sev()
+                        );
+                    }
+                    Err(e) => {
+                        log::debug!("{} retry still failing: {e}", sink.name());
+                        pending.insert(key, (poke, first_failed));
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -252,8 +337,8 @@ fn main() -> Result<()> {
     if args.send_test {
         let poke = Poke::drill();
         let mut failed = false;
-        for sink in &sinks {
-            match sink.deliver(&poke) {
+        for mut sink in sinks {
+            match sink.deliver(&poke, 0) {
                 Ok(()) => println!("Test poke sent via {}.", sink.name()),
                 Err(e) => {
                     failed = true;
@@ -334,109 +419,36 @@ fn main() -> Result<()> {
         std::thread::sleep(Duration::from_secs(3));
     });
 
-    let mut lanes: Vec<Lane> = sinks.into_iter().map(Lane::new).collect();
+    // One thread per sink: the main loop only evaluates and fans out, so a
+    // sink stuck in its HTTP timeout stalls its own lane and nothing else.
+    let mut lane_names = Vec::new();
+    let mut lane_txs = Vec::new();
+    for sink in sinks {
+        lane_names.push(format!("{} ({}/<redacted>)", sink.name(), sink.redacted()));
+        let (lane_tx, lane_rx) = channel::<Poke>();
+        lane_txs.push(lane_tx);
+        std::thread::spawn(move || run_lane(sink, lane_rx));
+    }
     log::info!(
         "alert relay up: {} topics -> {}",
         SUBSCRIBE_TOPICS.len(),
-        lanes
-            .iter()
-            .map(|l| format!("{} ({}/<redacted>)", l.sink.name(), l.sink.redacted()))
-            .collect::<Vec<_>>()
-            .join(", ")
+        lane_names.join(", ")
     );
 
-    let started = Instant::now();
-    // Failed pokes wait in each lane's pending map, keyed per (class, device)
-    // (latest wins), and retry on a cadence — a one-shot tamper alert must
-    // survive a sink being briefly down. Bounded by the lane count; entries
-    // expire after an hour of failures rather than growing a forever-queue
-    // (FR-4).
-    const RETRY_SECS: u64 = 30;
-    const GIVE_UP_SECS: u64 = 3600;
-    let mut last_retry: u64 = 0;
-
     loop {
-        let now = started.elapsed().as_secs();
-        match rx.recv_timeout(Duration::from_secs(10)) {
+        match rx.recv() {
             Ok((topic, payload)) => {
                 if let Some(poke) = evaluate(&topic, &payload) {
-                    for lane in &mut lanes {
-                        if lane.debouncer.ready(&poke, now) {
-                            deliver(lane, poke.clone(), now);
-                        } else {
-                            log::debug!(
-                                "debounced {} poke for '{}' on {}",
-                                poke.class.sev(),
-                                poke.device,
-                                lane.sink.name()
-                            );
+                    for lane_tx in &lane_txs {
+                        // A lane whose thread died would drop pokes; that
+                        // only happens on panic, and the log says which.
+                        if lane_tx.send(poke.clone()).is_err() {
+                            log::error!("a delivery lane is gone; its pokes are being dropped");
                         }
                     }
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                bail!("MQTT feed channel closed");
-            }
-        }
-        // Retry lane: attempt held pokes on the cadence, newest state wins.
-        if now.saturating_sub(last_retry) >= RETRY_SECS
-            && lanes.iter().any(|l| !l.pending.is_empty())
-        {
-            last_retry = now;
-            for lane in &mut lanes {
-                let held: Vec<_> = lane.pending.drain().collect();
-                for (key, (poke, first_failed)) in held {
-                    if now.saturating_sub(first_failed) > GIVE_UP_SECS {
-                        log::warn!(
-                            "dropping undeliverable {} poke for {} after an hour of retries",
-                            poke.class.sev(),
-                            lane.sink.name()
-                        );
-                        continue;
-                    }
-                    match lane.sink.deliver(&poke) {
-                        Ok(()) => {
-                            lane.debouncer.record(&poke, now);
-                            log::info!(
-                                "poked via {} (retried): {} ({})",
-                                lane.sink.name(),
-                                poke.title,
-                                poke.class.sev()
-                            );
-                        }
-                        Err(e) => {
-                            log::debug!("{} retry still failing: {e}", lane.sink.name());
-                            lane.pending.insert(key, (poke, first_failed));
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Try to send on one lane; on success record its debounce, on failure hold
-/// the poke in that lane's retry map. A failed delivery must not consume the
-/// send slot (relay core rule), and one sink's outcome never touches another
-/// sink's state.
-fn deliver(lane: &mut Lane, poke: Poke, now: u64) {
-    match lane.sink.deliver(&poke) {
-        Ok(()) => {
-            lane.debouncer.record(&poke, now);
-            log::info!(
-                "poked via {}: {} ({})",
-                lane.sink.name(),
-                poke.title,
-                poke.class.sev()
-            );
-        }
-        Err(e) => {
-            log::warn!("{} poke failed, holding for retry: {e}", lane.sink.name());
-            let key = (poke.class, poke.device.clone());
-            // Keep the earliest failure time if this lane is already held.
-            let first = lane.pending.get(&key).map(|(_, t)| *t).unwrap_or(now);
-            lane.pending.insert(key, (poke, first));
+            Err(_) => bail!("MQTT feed channel closed"),
         }
     }
 }
