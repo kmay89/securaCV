@@ -62,11 +62,18 @@ GET /api/sealed-log   →  200 application/json   (optional)
 — the sealed-log document its Rust core verifies (`{ "verifying_key",
 "checkpoint_head"?, "entries": [...] }`, see
 `tvos/witness-core/include/securacv_witness_core.h`). **The repo-root
-kernel now serves this endpoint** — a checkpoint-anchored tail, entries'
-`payload` byte-identical to storage, with **no query surface of any kind**
-(Invariant VII: the log is non-queryable, so there is nothing to filter,
-select, or search) — behind the same capability token as its other
-authenticated routes. No firmware serves it, and the TV sends no token
+kernel now serves this endpoint** — a checkpoint-anchored, size-capped
+tail, entries' `payload` byte-identical to storage, with **no query
+surface of any kind** (Invariant VII: the log is non-queryable, so there
+is nothing to filter, select, or search) — behind the same capability
+token as its other authenticated routes. One rule binds every consumer:
+the document's `verifying_key` is the endpoint's **claim** about itself,
+so a client may say "Verified" only after comparing it (or, across a key
+rotation, the signed lineage in `rotation_records`) against a key **pinned
+at pairing** — the repo-wide verified-means-Ed25519-vs-pinned-key
+discipline — and proves continuity across polls by remembering the last
+head it walked. A walk that trusts the served key verifies internal
+consistency, not provenance, and must not wear the word. No firmware serves it, and the TV sends no token
 yet, so for the Wall its absence (or a 401) remains an answer, not an
 error: the Wall phrases the fleet's status as the devices' own report
 ("Your fleet reports verified through …") and reserves the word "Verified"
