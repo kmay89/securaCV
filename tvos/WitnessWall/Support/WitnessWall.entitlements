@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- CloudKit private database — the ONE capability this app claims.
+  <!-- CloudKit private database — one of the TWO capabilities this app
+       claims (the other, below, is the app group its Top Shelf reads).
        The Wall is a display; the only thing it writes is the household's own
        away wake (ResidentWatch), into the household's own iCloud. There is no
        aps-environment here on purpose: an Apple TV standing watch PUBLISHES
@@ -21,6 +22,15 @@
   <key>com.apple.developer.icloud-container-identifiers</key>
   <array>
     <string>iCloud.com.securacv.witness</string>
+  </array>
+  <!-- The tvOS-local app group, shared with ONLY the Top Shelf extension
+       (Support/TopShelf.entitlements): the Wall writes its latest fleet
+       summary there (ShelfCache) and the shelf renders it when the app is
+       off screen. The app WRITES, the shelf READS — one writer, so the two
+       surfaces cannot hold two truths. -->
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>group.com.securacv.witnesswall</string>
   </array>
 </dict>
 </plist>

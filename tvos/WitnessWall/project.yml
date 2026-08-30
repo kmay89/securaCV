@@ -96,6 +96,11 @@ targets:
       # drag) — one projector, one massing, two hands.
       - path: ../../ios/Shared/FleetSolids.swift
       - path: ../../ios/Shared/FleetIsoProjector.swift
+    dependencies:
+      # XcodeGen embeds an extension dependency via an "Embed App Extensions"
+      # phase — the Top Shelf provider ships INSIDE the app, and the existing
+      # WitnessWall scheme builds it, so CI compiles it on every PR.
+      - target: WitnessWallTopShelf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall
@@ -103,6 +108,32 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Support/WitnessWall.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         OTHER_LDFLAGS: "$(inherited) -lsecuracv_witness_core"
+
+  # ── The Top Shelf — the Wall's one-line glance above the app icon ───────
+  # Apple TV renders the shelf from a separate extension PROCESS, so the
+  # provider is deliberately tiny: it reads the summary the app last cached
+  # (ShelfCache) and shows NOTHING when that answer is old — an empty shelf
+  # is honest; a stale "all online" is not. Two rules keep it that way:
+  #   * It compiles ONE shared file, not the app's sources — the NSE
+  #     single-file precedent (ios/project.yml). ShelfCache.swift is pure
+  #     Foundation for exactly this reason: the provider links neither the
+  #     Rust core nor CloudKit (an unentitled process constructing a
+  #     CKContainer traps uncatchably — this one is entitled to the app
+  #     group and nothing else, see Support/TopShelf.entitlements).
+  #   * It declares NO MARKETING_VERSION of its own — the release tag guard
+  #     reads the FIRST one in this file (same rule as the watch target in
+  #     ios/project.yml). Never add one.
+  WitnessWallTopShelf:
+    type: tv-app-extension        # XcodeGen's com.apple.product-type.tv-app-extension
+    platform: tvOS
+    sources:
+      - path: Sources/WitnessWallTopShelf
+      - path: Sources/WitnessWall/ShelfCache.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall.topshelf
+        INFOPLIST_FILE: Support/TopShelf-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/TopShelf.entitlements
 
   WitnessWallTests:
     type: bundle.unit-test
