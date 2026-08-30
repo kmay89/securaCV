@@ -3,7 +3,12 @@
 **Status:** the flagship ntfy lane is **built** — the `alert_relay` bin behind the
 `alert-relay` Cargo feature, with the poke vocabulary, the fingerprint-free
 subscribe list, and the per-class debounce as a pure, unit-tested core
-(`src/relay/`). Fan-out beyond ntfy, payload encryption, the away-detection
+(`src/relay/`). The in-tree fan-out is **built** too, with its first second
+sink: a [Busy Bar](https://busy.app) desk light on the owner's LAN
+(`--busybar-url`, pure mapping in `src/relay/busybar.rs`, recipe in
+[`docs/integrations/busy-bar.md`](../integrations/busy-bar.md)) — each sink
+runs its own debounce and retry so one sink's outage never touches another's.
+Payload encryption, the away-detection
 policy, and the mesh-gateway outage path remain design (§7). Two build-time
 decisions the implementation made, recorded here: the fan-out substrate is an
 in-tree Rust notifier, not an Apprise sidecar (§7 leaned Apprise; zero new
