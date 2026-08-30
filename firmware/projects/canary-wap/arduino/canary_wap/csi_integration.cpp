@@ -69,9 +69,14 @@
 #include "acoustic_events_module.h"
 
 #include "build_config.h"
+/* Unconditional, matching its unconditional registration below: every
+ * profile and every board has a reset reason and an SD state machine.
+ * (Its first cut sat inside the vault guard, which compiles only on
+ * FULL+S3 — exactly the one config CI builds — so DEV/MINIMAL/C3 broke
+ * invisibly. The adversarial review caught it; keep it out here.) */
+#include "tamper_events_module.h"
 #if FEATURE_VAULT_SNAPSHOT
 #include "vault_events_module.h"
-#include "tamper_events_module.h"
 #endif
 #if FEATURE_BLE_SCAN
 #include "ble_scout.h"

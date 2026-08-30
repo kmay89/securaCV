@@ -150,7 +150,8 @@ one-header change instead of a per-board copy-paste.
 - **The hub/kernel** (Rust) is the natural aggregator home — add the `/api/fleet`
   route with the CORS headers above next to its existing HTTP surface; it can
   reuse the same open/append/close shape to list its peers.
-- It is **coarse and unauthenticated-read** by design (presence/health only) —
-  documented public in the canary-wap route-security allowlist. Anything that
-  touches sealed evidence stays behind the Bearer-gated `/api/fleet-scan` and
+- It is **coarse and unauthenticated-read** by design — presence, health,
+  and the optional coarse wellbeing WORDS above, nothing finer — documented
+  public in the canary-wap route-security allowlist. Anything that touches
+  sealed evidence stays behind the Bearer-gated `/api/fleet-scan` and
   break-glass paths, never here.

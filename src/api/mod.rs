@@ -675,12 +675,19 @@ fn handle_connection(
         // The checkpoint-anchored sealed-log tail as a self-contained
         // document (verifying key + entries exactly as stored) for read-only
         // chain verifiers such as the Witness Wall's `tvos/witness-core`.
-        // Entries are served verbatim, key-rotation records included: the
-        // document promises verification *through* what it serves and
-        // nothing more — a single-key verifier's walk honestly ends at a
-        // rotation record. No query parameters exist for this route
-        // (Invariant VII, non-queryable): any query string is ignored, apart
-        // from the `?token=` rejection above.
+        // A rotation-crossing tail is never served — the walk re-anchors at
+        // the newest rotation record so a single-key verifier verifies
+        // everything it receives (see Kernel::sealed_log_document).
+        //
+        // Deliberate, and different from `/export/bundle`: the payloads are
+        // the STORED bytes, so nothing can be redacted from them — not even
+        // `correlation_token`, which the export path's reshaped rows strip —
+        // because any byte removed breaks the entry-hash walk that is this
+        // endpoint's entire purpose. The capability token therefore reads
+        // the chain as the chain, and redaction remains the export lane's
+        // job. No query parameters exist for this route (Invariant VII,
+        // non-queryable): any query string is ignored, apart from the
+        // `?token=` rejection above.
         let doc = kernel.sealed_log_document()?;
         let payload = serde_json::to_vec(&doc)?;
         write_response(&mut stream, 200, "application/json", &payload)?;
