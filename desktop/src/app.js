@@ -4615,14 +4615,14 @@ const ATLAS_LINKS = [
   ["Learn & try", [
     ["How it works", "The witness kernel, in plain language.", SITE + "/how-it-works"],
     ["The Lab", "The browser flasher this app grew from.", SITE + "/lab"],
-    ["Playground", "Drive a simulated Canary — no hardware.", SITE + "/playground"],
+    ["Test bench", "Wire a real peripheral to the bench firmware — poke it, read its serial.", SITE + "/playground"],
     ["Checkup", "Point it at a board and read its health.", SITE + "/checkup"],
   ]],
   ["Build & extend", [
     ["Download", "Get this app for every platform.", SITE + "/download"],
     ["Plugin", "Wire a Canary into your own stack.", SITE + "/plugin"],
     ["Maker", "Roll your own from parts.", SITE + "/maker"],
-    ["Factory", "Batch-provision a whole run.", SITE + "/factory"],
+    ["Factory", "How a Canary is born: the factory image and its birth certificate.", SITE + "/factory"],
   ]],
   // The rest of the family, named from the flashing bench — the moment of
   // maximum investment used to end at a dead end: this app derives birth

@@ -261,6 +261,21 @@ flash a blank chip, watch it boot, check its cryptographic birth certificate,
 all with no hardware. The project's most differentiating asset.
 → [`canary-local/README.md`](../canary-local/README.md)
 
+**The Test bench** (was: "the Playground") — the middle workshop of the
+Lab → Test bench → Factory story: the on-device peripheral bench, a
+network-silent build of Canary Display (`FEATURE_PLAYGROUND`) where a maker
+wires a real peripheral and reads its serial. Told at
+`securacv.com/playground` — the URL keeps the historic slug, and code
+identifiers (`playground.json`, the firmware `playground/` sources) keep
+the old name on purpose. The Lab manifest
+(`canary-local/build-line.json`) carries the rename.
+→ [the help ecosystem layout](design/help_ecosystem_layout.md)
+
+**The Factory** — "how is one born": the whole-flash factory image
+(`firmware/scripts/make_factory.py`), first-flash-seeds-NVS, and the
+SLSA/Rekor birth certificate, told at `securacv.com/factory`.
+→ [the help ecosystem layout](design/help_ecosystem_layout.md)
+
 **The Flasher** — The desktop app ([`desktop/`](../desktop)) that flashes and
 tends devices. **Note for contributors:** there are *two* flashers — the
 in-browser one (`canary-local/assets/`) and this desktop app (`desktop/src/`) —
