@@ -305,14 +305,25 @@ change)** landed with the change that added this document.
   serves, so a paired WAP sat permanently dark — the dialect-first poll
   fixes that, and the phone client is now the endpoint's first
   contract-holder (a belt reads the firmware serializer off disk — and a
-  second belt now pins the stream handler the same way). Still open: the
-  sense radar numerics, which remain MQTT-only with no HTTP path. Ring
-  sells the anomaly-baseline version of this at its top tier.
-- **A6. Per-type tamper narration.** Ten tamper kinds exist in the HA
-  vocabulary (`custom_components/securacv/const.py`); no iOS transport
-  populates `tamperKind` yet. When one does, map kinds to glyphs and
-  sentences ("Power was cut", "SD card removed") — tamper already pierces
-  every mute.
+  second belt now pins the stream handler the same way). The sense radar
+  numerics **landed** (wave 6) by the honest path this entry always named:
+  canary-sense stays MQTT-only by design, and the display — which already
+  parses its retained radar state — now aggregates peer rows onto
+  `/api/fleet` with coarse wellbeing WORDS (`presence`/`occupants`/
+  `breathing`), freshness-gated so a quiet peer omits rather than repeats,
+  and the app's Wellbeing section lights up with zero view changes. No
+  range, no lux, no vital-sign numbers on the anyone-who-asks surface.
+  Ring sells the anomaly-baseline version of this at its top tier.
+- **A6 (landed, wave 6). Per-type tamper narration.** The gap was the
+  producer, not the vocabulary: no WAP firmware ever emitted a kind. A new
+  `system.integrity` chokepoint module now speaks the const.py ids the WAP
+  can honestly detect (crash/watchdog/brownout boots, SD error/removal) as
+  a tamper row's `state` — riding every existing wire unchanged — and the
+  app narrates the ten non-future kinds ("Power was cut", "Storage card
+  removed"), gated on OPEN bundles so the flag self-clears (record vs
+  siren). Unknown kinds fall back to the bare "Tamper detected", and a
+  belt pins the app vocabulary to const.py off disk, future-fence honored.
+  Tamper already pierces every mute.
 - **A7 (landed, deliberately narrowed). Modality as a device fact.** The
   scout found no payload the phone reads carries a per-event modality or
   attestation field (the witness record's signed preimage is frozen at
@@ -333,16 +344,31 @@ change)** landed with the change that added this document.
   class folds only into the beacon's own provisional row (the FleetMerge
   attribution rule), and no transport carries a class for a *paired*
   Canary — projecting one would be a guess wearing a HAP characteristic.
-  "Person at the door turns on the porch light" lights up when the
-  fleet-selfreport transport slice lands, with no consent-model change.
+  "Person at the door turns on the porch light" is now one producer away:
+  the fleet-selfreport transport slice **landed** (wave 6 — optional
+  `seeing`/`seeing_score` keys, folded ONLY from an address-attributed poll
+  of a paired device's own URL, never the name-matched peer path), and the
+  shepherd derives the class-scoped motion signals from it with the
+  promised zero consent-model change (per-class opt-in, fresh-claim-only,
+  a refinement of plain motion, never a second opinion). The tiles stay
+  dark in the field until a camera-line firmware serves `/api/fleet` —
+  vision has the classifier but no HTTP server — the same data-first
+  posture the wellbeing fields took, and kept.
 - **C-tier follow-ups:** deep links **landed** (wave 3): a tiny
   `securacv://` dialect (`AppRoute`, one parser shared by all doors) —
   notification tap lands on the Alerts tab scrolled to that witness's
   newest record, the Lock Screen widget routes by its own state (trouble →
   Alerts, calm → Today), unknown hosts parse to nothing. Routing can only
-  switch tabs and scroll lists the user already owns. Still open: a tvOS
-  Top Shelf extension; Chirp advert scanning beside the presence
-  beacon. The vault's `frame_sealed` receipt **landed** with the wave-2
+  switch tabs and scroll lists the user already owns. The tvOS Top Shelf
+  **landed** (wave 6): a tiny extension rendering one line — the Wall's own
+  `FleetSnapshot.summary`, verbatim, from an app-group cache the wall alone
+  writes — and showing NOTHING when the cache is older than 15 minutes (the
+  shelf has no room for a "stale" label, so its only honest degraded state
+  is silence). Chirp scanning **landed** too: the phone now hears the
+  2-second broadcast alerts beside the beacon (a byte-pinned decoder with a
+  firmware source belt — the chirp has no host test to lift vectors from),
+  attached under the beacon's exact conservative rules: proof of life,
+  tamper raises and never clears, ambiguity stands alone. The vault's `frame_sealed` receipt **landed** with the wave-2
   vocabulary: "a frame was sealed" as a calm timeline fact (the acoustic
   trigger that caused it alerts on its own row) — capture that announces
   itself, the inverse of eufy's secret thumbnail.
@@ -377,10 +403,19 @@ change)** landed with the change that added this document.
   a status flip hurts on purpose: the day the tvOS or iOS app reaches its
   store, flipping `store-pending` fails every surface whose copy still
   says "pending" — the coherence rot the competitors ship, made a loud CI
-  failure instead. Still open: the About panels and the Lab consuming it.
-- **B8. Settle the Playground/Factory vocabulary** across
-  `help_ecosystem_layout.md`, the Lab manifest, and the Atlas — and update
-  that standard's iOS story, which still describes the pre-native plan.
+  failure instead. The owed consumers **landed** (wave 6): the Lab gained a
+  "SecuraCV everywhere" reference view that fetches the JSON at render time
+  (structurally unable to rot — only the status VOCABULARY is mirrored, and
+  the gate pins it), and the Flasher's About panel renders the Atlas' own
+  family group by name instead of growing a third copy.
+- **B8 (landed, wave 6). The Playground/Factory vocabulary is settled.**
+  The Lab manifest's decision won, per the standard's own rule 1 (the
+  machine-readable map is the authority): the middle workshop is **the Test
+  bench** everywhere — the standard's table, the Atlas card (with an honest
+  bench blurb), the docs index, two new GLOSSARY entries — while the
+  `/playground` URL slug and every code identifier deliberately keep the
+  old name. The standard's rule 5 now tells the native-iOS truth (one named
+  exception to write-once-wrap-thin) instead of the pre-native Tauri plan.
 
 ## 7. What we will not adopt (with reasons)
 

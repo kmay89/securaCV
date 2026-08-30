@@ -342,11 +342,15 @@ aspirational.
    template-only alerts, no descriptions of people, no plates, no GPS, no
    household identifiers on the wire, two-pubkey co-signing, drills
    wire-distinct from real alerts, several rules lint-enforced in CI.
-10. **Graduate the dispute pack from demo to product.** *Needs design.* The
-    highest-value product gap this analysis exposes: the emulator's one-tap
-    incident capture and dispute pack become real by wiring the tvOS
-    Business profile to the shipped primitives (receipted export, court kit,
-    sealed snapshots) plus the missing `/api/sealed-log` endpoint.
+10. **Graduate the dispute pack from demo to product.** *Needs design —
+    but its one missing primitive shipped.* The emulator's one-tap incident
+    capture and dispute pack become real by wiring the tvOS Business
+    profile to the shipped primitives (receipted export, court kit, sealed
+    snapshots) plus `/api/sealed-log` — which the kernel now serves
+    (wave 6): a token-gated, checkpoint-anchored tail with stored-byte
+    payloads and no query surface (Invariant VII), verified end-to-end
+    against the TV core's own chain math. The remaining design work is the
+    pairing/token story that lets the TV read it.
 11. **The enterprise-custody threshold tier.** *Needs design* (spec exists:
     [`spec/quorum_unseal_v2.md`](../../spec/quorum_unseal_v2.md)). Upgrades
     move #2's honest limit into a cryptographic guarantee for buyers whose
