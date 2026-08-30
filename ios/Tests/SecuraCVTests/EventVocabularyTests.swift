@@ -137,6 +137,7 @@ final class EventVocabularyTests: XCTestCase {
         let modules = [
             "acoustic_events_module.cpp",   // smoke/CO/knock/doorbell/glass + mic audit
             "vault_events_module.cpp",      // frame_sealed
+            "tamper_events_module.cpp",     // tamper (per-kind via state)
             "core_presence.cpp",            // presence_changed
             "core_breathing.cpp",           // breathing_confirmed / breathing_lost
             "anomaly_baseline.cpp",         // unusual_motion / unusual_breathing
@@ -242,5 +243,50 @@ final class EventVocabularyTests: XCTestCase {
         XCTAssertEqual(EventVocabulary.snakeCase("BoundaryCrossingObjectLarge"),
                        "boundary_crossing_object_large")
         XCTAssertEqual(EventVocabulary.snakeCase("already_snake"), "already_snake")
+    }
+
+    /// TamperKind mirrors the integration's tamper vocabulary EXACTLY: every
+    /// non-future const.py id narrates here, and nothing extra — an id this
+    /// app invents is a tamper no device can raise, and a missing one is a
+    /// kind the phone would flatten back to the bare "Tamper detected".
+    /// Same const.py-off-disk discipline as the module belt above.
+    func testTamperKindsMirrorTheIntegrationVocabulary() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let constPy = repoRoot.appendingPathComponent("custom_components/securacv/const.py")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: constPy.path),
+                          "repo checkout not visible from the test host")
+        let src = try String(contentsOf: constPy, encoding: .utf8)
+
+        // Every TAMPER_<NAME> = "<id>" pair.
+        let regex = try NSRegularExpression(pattern: #"(TAMPER_[A-Z_]+) = "([a-z_]+)""#)
+        var idByName: [String: String] = [:]
+        for m in regex.matches(in: src, range: NSRange(src.startIndex..., in: src)) {
+            guard let n = Range(m.range(at: 1), in: src),
+                  let v = Range(m.range(at: 2), in: src) else { continue }
+            idByName[String(src[n])] = String(src[v])
+        }
+        XCTAssertFalse(idByName.isEmpty,
+                       "const.py's tamper vocabulary moved — update this extraction")
+
+        // The future fence lists constant NAMES the integration deliberately
+        // does not advertise; those ids stay out of the app too.
+        let fenceStart = try XCTUnwrap(src.range(of: "FUTURE_TAMPER_TYPES = ["))
+        let fenceEnd = try XCTUnwrap(src.range(of: "]",
+                                               range: fenceStart.upperBound..<src.endIndex))
+        let fence = String(src[fenceStart.upperBound..<fenceEnd.lowerBound])
+        let future = Set(idByName.filter { fence.contains($0.key) }.map(\.value))
+
+        let expected = Set(idByName.values).subtracting(future)
+        let ours = Set(TamperKind.allCases.map(\.rawValue))
+        XCTAssertEqual(ours, expected,
+                       "TamperKind and const.py diverged — move them together")
+        for kind in TamperKind.allCases {
+            XCTAssertFalse(kind.narration.isEmpty,
+                           "\(kind.rawValue) owes one calm sentence")
+        }
     }
 }

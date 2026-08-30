@@ -891,6 +891,19 @@ final class FleetStore: ObservableObject {
                 .map(\.liveSeverity)
                 .max() ?? head.liveSeverity
         }
+        // The tamper story, narrated per kind (system.integrity): an OPEN
+        // "tamper" bundle is the device's own present tense, so it may set
+        // the level-triggered flag — and the flag self-clears, because this
+        // witness is rebuilt from current open state on every poll and the
+        // open flag drops when the bundle closes. A CLOSED tamper row is
+        // history: the timeline keeps it, the flag must not (record vs
+        // siren, the same rule liveSeverity encodes). An unknown kind word
+        // narrates as the bare "Tamper detected" — calm default, never a
+        // guess.
+        if let live = rows.first(where: { $0.isOpen && $0.type == "tamper" }) {
+            w.tamper = true
+            w.tamperKind = TamperKind(wire: live.state)?.narration ?? ""
+        }
         return (w, events)
     }
 
