@@ -36,6 +36,18 @@ GET /api/fleet        →  200 application/json
 - `hub` is where the device stands with its hub, as a word: `"none"` (nobody
   configured one), `"down"` (configured, unreachable), `"ok"`. Absent means
   the device did not say — which a client must never render as "fine".
+- **Optional wellbeing keys** (a row may carry them; most rows never will):
+  `presence` (`"clear"`/`"present"`), `occupants` (`"0"`/`"1"`/`"2+"`),
+  `breathing` (`true`/`false` — a breathing lock held or lapsed), and
+  `seeing` (`"person"`/`"vehicle"`/`"animal"`/`"package"`, optionally with
+  `seeing_score` 0–100). Words on purpose, so an unknown value falls back to
+  unknown instead of misreading. Every key is **absent unless the device can
+  honestly say** — a stale reading omits rather than lies, and a client must
+  render absence as "cannot say", never as an empty calm room. These are the
+  same coarse facts the fleet already tells anyone in radio range over the
+  BLE presence beacon (the v2 detect class) and the display's glass (`wb`/
+  `br`); this surface deliberately carries **nothing finer** — no range, no
+  lux, and no vital-sign numbers (BPM is P1-gated on the device itself).
 - **No secrets, no raw media** — this is coarse fleet *presence and health*,
   exactly what the Witness Wall renders. It is not an evidence API.
 

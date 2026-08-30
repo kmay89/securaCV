@@ -298,6 +298,64 @@ static void test_hub_distinguishes_none_from_down() {
   CHECK(has(build(d), "\"hub\":\"ok\""));
 }
 
+// ── the wellbeing keys: absent until someone can say, words when they can ───
+//
+// The two ways this surface could lie, both tested: a device that knows
+// nothing growing keys a reader renders as an empty calm room, and a device
+// that knows something publishing it as numbers instead of the fallback-safe
+// words. (The keys ride the same anyone-who-asks body as name/hub — coarse
+// presence only; every vital-sign NUMBER stays off it by construction.)
+static void test_wellbeing_is_omitted_until_someone_can_say() {
+  std::string s = build(sample());       // sample() leaves all wellbeing unset
+  CHECK(!has(s, "presence"));
+  CHECK(!has(s, "occupants"));
+  CHECK(!has(s, "breathing"));
+  CHECK(!has(s, "seeing"));
+
+  // A zero-filled struct — every glue that predates the keys — must serve
+  // exactly the old wire: nothing new to parse, nothing new to misread.
+  FleetSelfDevice d{};
+  d.chain_height = -1;
+  s = build(d);
+  CHECK(!has(s, "presence") && !has(s, "occupants"));
+  CHECK(!has(s, "breathing") && !has(s, "seeing"));
+}
+
+static void test_wellbeing_reports_words_and_the_lock() {
+  FleetSelfDevice d = sample();
+  d.presence = "present";
+  d.occupants = "2+";
+  d.breathing = FSR_BREATHING_LOCK;
+  std::string s = build(d);
+  // Words in the sense line's own MQTT vocabulary, in wire order after the
+  // health keys — the ordering is part of the shape, like hw's.
+  CHECK(has(s, "\"presence\":\"present\",\"occupants\":\"2+\",\"breathing\":true}"));
+
+  // A lock that lapses reports false — a different answer from silence.
+  d.breathing = FSR_BREATHING_QUIET;
+  CHECK(has(build(d), "\"breathing\":false}"));
+}
+
+static void test_seeing_claim_carries_its_score_only_when_scored() {
+  FleetSelfDevice d = sample();
+  d.seeing = "person";
+  d.seeing_score = 88;
+  CHECK(has(build(d), "\"seeing\":\"person\",\"seeing_score\":88}"));
+
+  // Unscored (or out-of-range) keeps the word and drops the number: a claim
+  // at zero confidence is not a claim, and 101 is not a percentage.
+  d.seeing_score = 0;
+  CHECK(has(build(d), "\"seeing\":\"person\"}"));
+  d.seeing_score = 101;
+  CHECK(has(build(d), "\"seeing\":\"person\"}"));
+
+  // And the score never appears without the word — a confidence in nothing.
+  d.seeing = nullptr;
+  d.seeing_score = 88;
+  std::string s = build(d);
+  CHECK(!has(s, "seeing"));
+}
+
 // ── FLEET_SELFREPORT_BODY_CAP really covers the worst case ──────────────────
 static void test_body_cap_covers_worst_case() {
   // The failure this guards (Codex P2 on #1226): a device ACCEPTS a name whose
@@ -335,6 +393,19 @@ static void test_body_cap_covers_worst_case() {
   d.hardware = hw;
   d.hub = FSR_HUB_UNKNOWN + 99;                // an unknown value -> "unknown",
                                                // the longest literal this emits
+  // The wellbeing/seeing words at their widest vocabulary length (7 bytes:
+  // "present", "vehicle"/"package"), every byte escaping — real values are
+  // firmware vocabulary and could never escape, but the cap's promise is
+  // unconditional, so the proof is too (the hw rationale, again).
+  char word7[8];
+  for (size_t i = 0; i < 7; ++i) word7[i] = '\x04';
+  word7[7] = '\0';
+  d.presence = word7;
+  char occ[3] = { '\x05', '\x06', '\0' };      // "2+" is the widest bucket
+  d.occupants = occ;
+  d.breathing = FSR_BREATHING_QUIET;           // "false" is the longer literal
+  d.seeing = word7;
+  d.seeing_score = 100;                        // the widest legal score
   char body[FLEET_SELFREPORT_BODY_CAP(NAME_MAX, PROD_MAX)];
   size_t n = fleet_selfreport_build(body, sizeof body, &d);
   CHECK(n > 0);
@@ -372,6 +443,9 @@ int main() {
   test_hardware_reports_the_board_not_the_product();
   test_hub_is_omitted_when_the_device_has_no_opinion();
   test_hub_distinguishes_none_from_down();
+  test_wellbeing_is_omitted_until_someone_can_say();
+  test_wellbeing_reports_words_and_the_lock();
+  test_seeing_claim_carries_its_score_only_when_scored();
   test_body_cap_covers_worst_case();
   test_degenerate_caps();
 
