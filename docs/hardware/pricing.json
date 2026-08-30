@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-08-29T14:27:27Z",
+ "as_of": "2026-08-30T14:24:55Z",
  "note": "Nightly distributor snapshot; provenance marks which rows are distributor-verified vs csv-seed.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
