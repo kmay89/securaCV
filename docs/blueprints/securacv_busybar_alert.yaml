@@ -1,0 +1,279 @@
+# SecuraCV Alert Blueprint for a Busy Bar desk light (busy.app)
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_busybar_alert.yaml
+#
+# Turns a Busy Bar — the desk status light with a 72x16 LED matrix and an
+# open local HTTP API — into an alert beacon for a SecuraCV Canary. The
+# full recipe (one copy-paste rest_command package, then this blueprint) is
+# docs/integrations/busy-bar.md.
+#
+# REQUIRES the two rest_command services from that recipe, named exactly:
+#   rest_command.securacv_busybar_alert   (POST /api/display/draw)
+#   rest_command.securacv_busybar_clear   (DELETE /api/display/draw)
+# They hold the bar's LAN address (and optional HTTP-access PIN) so this
+# blueprint never needs to know it. Talk to the bar's local IP only — never
+# the busy.app cloud proxy; alerts about your home stay on your LAN.
+#
+# Signals:
+#   - CRITICAL (tamper / smoke heard / CO heard / chain failure): the bar
+#     shows the alert word in red at top display priority and holds it
+#     until every configured sensor reads healthy again — then a short
+#     green ALL CLEAR, and the bar goes back to its own business.
+#   - OFFLINE (device unreachable past a delay): an amber note that
+#     expires on its own. Deliberately gentle — Wi-Fi blips are common
+#     and benign.
+#
+# Notes:
+#   - The words on the bar are fixed (TAMPER, SMOKE, CO ALARM, CHAIN FAIL,
+#     OFFLINE) plus the optional label below — never event content. A desk
+#     display is readable by anyone in the room.
+#   - If HA restarts mid-alert the bar stays red until the sensors clear it
+#     or you press the bar's own controls (arguably the right failure mode
+#     for a witness alert).
+#   - Pairs well with the securacv_alerts.yaml blueprint: that one pushes
+#     to your phone, this one signals the desk.
+#
+# Where to find the sensors (entity IDs follow
+# `<domain>.securacv_canary_<device_id>_<name>`):
+#   - Tamper:        binary_sensor.securacv_canary_<id>_tamper
+#   - Smoke heard:   the "Smoke Alarm Heard" binary sensor (mic builds only)
+#   - CO heard:      the "CO Alarm Heard" binary sensor (mic builds only)
+#   - Chain valid:   binary_sensor.securacv_canary_<id>_chain_valid
+#   - Online:        binary_sensor.securacv_canary_<id>_online
+
+blueprint:
+  name: "SecuraCV — Alert on a Busy Bar"
+  description: >-
+    Use a Busy Bar desk light as an alert beacon for a SecuraCV Canary.
+    Critical events — tamper, smoke/CO heard, witness-chain failure — put a
+    red alert word on the bar at top display priority and hold it until the
+    sensors clear; the all-clear shows a short green note. A device going
+    offline gives an amber note that expires on its own. Every sensor is
+    opt-in: pick the ones you want, leave the rest empty. Requires the two
+    rest_command services from docs/integrations/busy-bar.md.
+  domain: automation
+  author: "ERRERlabs"
+  homeassistant:
+    min_version: "2024.6.0"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_busybar_alert.yaml"
+
+  input:
+    tamper_entity:
+      name: "Tamper sensor (optional)"
+      description: >-
+        The Canary's tamper binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_tamper). Leave empty to
+        skip tamper signaling.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    smoke_entity:
+      name: "Smoke-alarm-heard sensor (optional)"
+      description: >-
+        The "Smoke Alarm Heard" binary sensor (mic builds only). Leave
+        empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    co_entity:
+      name: "CO-alarm-heard sensor (optional)"
+      description: >-
+        The "CO Alarm Heard" binary sensor (mic builds only). Leave empty
+        to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    chain_entity:
+      name: "Chain-valid sensor (optional)"
+      description: >-
+        The witness-chain integrity binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_chain_valid). Signals when
+        chain verification fails. Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    online_entity:
+      name: "Online sensor (optional)"
+      description: >-
+        The device connectivity binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_online). Gives the gentle
+        offline note after the delay below. Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: connectivity
+          multiple: false
+      default: []
+
+    offline_delay:
+      name: "Offline delay"
+      description: "How long the device must stay offline before signaling (avoids WiFi blips)"
+      selector:
+        duration:
+      default:
+        minutes: 5
+
+    device_label:
+      name: "Label on the bar (optional)"
+      description: >-
+        A short word shown after the alert word, e.g. the Canary's room
+        ("PORCH"). Keep it to plain letters and digits — it is drawn on a
+        72-pixel-wide matrix. Leave empty for the alert word alone.
+      selector:
+        text:
+      default: ""
+
+# No `from:` guards on the critical triggers: a sensor returning from
+# unavailable straight to its alarming state (e.g. MQTT reconnecting while
+# a retained tamper alarm is still active) must fire too. Distinct ids per
+# sensor so the bar can name what it is showing.
+trigger:
+  - platform: state
+    entity_id: !input tamper_entity
+    to: "on"
+    id: tamper
+
+  - platform: state
+    entity_id: !input smoke_entity
+    to: "on"
+    id: smoke
+
+  - platform: state
+    entity_id: !input co_entity
+    to: "on"
+    id: co
+
+  - platform: state
+    entity_id: !input chain_entity
+    to: "off"
+    id: chain
+
+  - platform: state
+    entity_id: !input online_entity
+    to: "off"
+    for: !input offline_delay
+    id: offline
+
+condition: []
+
+action:
+  - variables:
+      tamper_entity: !input tamper_entity
+      smoke_entity: !input smoke_entity
+      co_entity: !input co_entity
+      chain_entity: !input chain_entity
+      device_label: !input device_label
+      # Fixed vocabulary only — the same posture as every SecuraCV alert
+      # lane: a class word, never event content.
+      alert_word: >-
+        {{ {'tamper': 'TAMPER', 'smoke': 'SMOKE', 'co': 'CO ALARM',
+            'chain': 'CHAIN FAIL', 'offline': 'OFFLINE'}.get(trigger.id, 'ALERT') }}
+      alert_text: >-
+        {{ alert_word }}{% if device_label | trim | length > 0 %} {{ device_label | trim | upper }}{% endif %}
+
+  # ---- OFFLINE: an amber note that expires on its own ----
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: offline
+        sequence:
+          - service: rest_command.securacv_busybar_alert
+            data:
+              text: "{{ alert_text }}"
+              color: "#FF8C00"
+              priority: 60
+              timeout_ms: 180000
+
+  # ---- CRITICAL: hold red until clear, then a short green note ----
+  # Runs on a critical trigger — and ALSO after the offline branch above if
+  # a critical sensor went active in the meantime. mode: single would have
+  # silently dropped that trigger, and a retained alarm makes no further
+  # state transition to re-fire it, so we re-check here instead of letting
+  # it fall on the floor.
+  - if:
+      - condition: or
+        conditions:
+          - condition: trigger
+            id:
+              - tamper
+              - smoke
+              - co
+              - chain
+          - condition: template
+            value_template: >-
+              {{ (tamper_entity | length > 0 and is_state(tamper_entity, 'on'))
+                 or (smoke_entity | length > 0 and is_state(smoke_entity, 'on'))
+                 or (co_entity | length > 0 and is_state(co_entity, 'on'))
+                 or (chain_entity | length > 0 and is_state(chain_entity, 'off')) }}
+    then:
+      # Re-derive the word here rather than reusing alert_text: when this
+      # branch was entered by the template re-check (a critical sensor went
+      # active during the offline branch), trigger.id still says "offline",
+      # and a red OFFLINE would misname the alarm. Name what is actually
+      # active, most severe first.
+      - variables:
+          critical_word: >-
+            {% if trigger.id in ['tamper', 'smoke', 'co', 'chain'] %}{{ alert_word }}
+            {%- elif tamper_entity | length > 0 and is_state(tamper_entity, 'on') %}TAMPER
+            {%- elif smoke_entity | length > 0 and is_state(smoke_entity, 'on') %}SMOKE
+            {%- elif co_entity | length > 0 and is_state(co_entity, 'on') %}CO ALARM
+            {%- else %}CHAIN FAIL{% endif %}
+          critical_text: >-
+            {{ critical_word | trim }}{% if device_label | trim | length > 0 %} {{ device_label | trim | upper }}{% endif %}
+
+      # No timeout: the red word holds the bar (at top priority) until the
+      # sensors clear — the wait below is the all-clear, not a timer.
+      - service: rest_command.securacv_busybar_alert
+        data:
+          text: "{{ critical_text }}"
+          color: "#FF0000"
+          priority: 100
+          timeout_ms: 0
+
+      # Hold until every configured sensor reads healthy again. Each
+      # clause short-circuits on the `length` check first: an unconfigured
+      # input is `[]`, and is_state() must never see a list — it would
+      # error out and strand the bar red. A sensor that goes unavailable
+      # doesn't hold the bar red forever — the offline signal covers
+      # reachability.
+      - wait_template: >-
+          {{ (tamper_entity | length == 0 or not is_state(tamper_entity, 'on'))
+             and (smoke_entity | length == 0 or not is_state(smoke_entity, 'on'))
+             and (co_entity | length == 0 or not is_state(co_entity, 'on'))
+             and (chain_entity | length == 0 or not is_state(chain_entity, 'off')) }}
+
+      # All clear: a short green note (drawing under the same application
+      # name replaces the red word), then take our content off the bar so
+      # it goes back to its own business.
+      - service: rest_command.securacv_busybar_alert
+        data:
+          text: "ALL CLEAR"
+          color: "#00BE50"
+          priority: 100
+          timeout_ms: 5000
+      - delay:
+          seconds: 6
+      - service: rest_command.securacv_busybar_clear
+        data: {}
+
+# single + silent: while a critical episode is holding the bar red, later
+# triggers are ignored rather than redrawing the (already red) display —
+# the wait_template already watches every configured sensor, so the episode
+# ends only when all of them are healthy. The critical re-check after the
+# offline branch covers the one gap this policy leaves.
+mode: single
+max_exceeded: silent

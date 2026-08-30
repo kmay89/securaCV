@@ -277,6 +277,14 @@ three gentle amber pulses if the device goes offline. Pair the bulb first
 via HA's built-in Hue integration (**Settings > Devices & Services > Add
 Integration > Philips Hue**, press the bridge button).
 
+**Have a Busy Bar?** The busy.app desk light works as an alert beacon too —
+red alert word held until the sensors clear, amber note when a device goes
+offline, all over your LAN. It needs a small `rest_command` package first
+(the bar's address lives there, not in the blueprint), so follow
+[`docs/integrations/busy-bar.md`](integrations/busy-bar.md), then import
+[`securacv_busybar_alert.yaml`](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV%2Fblob%2Fmain%2Fdocs%2Fblueprints%2Fsecuracv_busybar_alert.yaml)
+the same way as the others.
+
 **Radar (canary-sense / MR60BHA2) witnesses** get three extra blueprints —
 after-hours presence (with optional two-physics corroboration),
 lights-out-with-presence tamper, and a non-diagnostic welfare check — plus a

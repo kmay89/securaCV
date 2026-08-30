@@ -85,7 +85,8 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Home Assistant setup](homeassistant_setup.md) — flashing, first boot, add-ons, entity catalog
 - [Frigate integration](frigate_integration.md) — compose quickstart, doctor check, API tokens
 - [The Verified Timeline card](lovelace_timeline.md) — ✓-badged events on your dashboard
-- [Alert & digest blueprints](blueprints/canary_sense_wellbeing.md) — plus the YAML: [alerts](blueprints/securacv_alerts.yaml), [daily digest](blueprints/securacv_daily_digest.yaml), [after-hours presence](blueprints/canary_sense_after_hours_presence.yaml), [lights-out tamper](blueprints/canary_sense_lights_out_tamper.yaml), [welfare check](blueprints/canary_sense_welfare_check.yaml)
+- [Alert & digest blueprints](blueprints/canary_sense_wellbeing.md) — plus the YAML: [alerts](blueprints/securacv_alerts.yaml), [daily digest](blueprints/securacv_daily_digest.yaml), [after-hours presence](blueprints/canary_sense_after_hours_presence.yaml), [lights-out tamper](blueprints/canary_sense_lights_out_tamper.yaml), [welfare check](blueprints/canary_sense_welfare_check.yaml), [Busy Bar desk light](blueprints/securacv_busybar_alert.yaml)
+- [Busy Bar alerts, worked recipe](integrations/busy-bar.md) — the busy.app desk light as an alert beacon, both lanes: the HA blueprint (hold-until-clear) and the alert relay's LAN-only sink (auto-expiring)
 - [Example automations](homeassistant_automations.yaml) — copy-paste YAML
 - [HA + Frigate over MQTT, worked example](integrations/home-assistant-frigate-mqtt.md)
 - [Apple Home quickstart](integrations/apple-home-quickstart.md) — nothing to a sensor in the Home app, both lanes, with the troubleshooting table

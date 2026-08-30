@@ -28,6 +28,8 @@
 
 use std::collections::HashMap;
 
+pub mod busybar;
+
 /// The coarse severity classes — the whole vocabulary that may leave the LAN.
 /// The first four match the shipped iOS wake vocabulary; do not widen
 /// casually. `Drill` is the owner's own test and is lane-local (see below).
