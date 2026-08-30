@@ -1,12 +1,14 @@
 //  FleetClient.swift — reaching the kernel, and healing when it isn't there.
 //
 //  The network contract is one required endpoint, `GET /api/fleet`
-//  (tvos/discovery/DISCOVERY.md), plus one OPTIONAL one the Wall asks for and
-//  no source serves yet: `GET /api/sealed-log`, the document the Rust core
-//  verifies. Its absence is an answer, not an error. Everything else in this
-//  file exists to make a flaky LAN a non-event: bounded timeouts, capped
-//  exponential backoff, and a protocol seam so the whole reconnect story is
-//  testable without a network.
+//  (tvos/discovery/DISCOVERY.md), plus one OPTIONAL one: `GET
+//  /api/sealed-log`, the document the Rust core verifies. The repo-root
+//  kernel serves it token-gated as of the wave-6 slice — and this client
+//  sends no token, so for the Wall its absence (or a 401) is still an
+//  answer, not an error, until a pairing/token story lands here. Everything
+//  else in this file exists to make a flaky LAN a non-event: bounded
+//  timeouts, capped exponential backoff, and a protocol seam so the whole
+//  reconnect story is testable without a network.
 
 import Foundation
 
@@ -17,9 +19,11 @@ protocol FleetTransport: Sendable {
     func fetchFleet(from base: URL) async throws -> String
 
     /// Fetch `GET /api/sealed-log` from `base` — the sealed-log document the
-    /// Rust core verifies — or nil when the source doesn't serve one. Absence
-    /// is an answer, not an error: no kernel or firmware ships the endpoint
-    /// yet, and the Wall renders the honest self-report state until one does.
+    /// Rust core verifies — or nil when the source doesn't answer it to us.
+    /// Absence is an answer, not an error: the kernel serves the endpoint
+    /// token-gated and this client holds no token yet (no firmware serves it
+    /// at all), so the Wall renders the honest self-report state until a
+    /// pairing/token story lands.
     func fetchSealedLog(from base: URL) async -> String?
 }
 

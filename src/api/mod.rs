@@ -509,11 +509,16 @@ fn handle_connection(
         // `/status` (storage health) is token-gated like `/events`: storage
         // metrics are operational metadata and stay behind the capability
         // token (Invariant III posture — only `/health` liveness is open).
+        // `/api/sealed-log` (the checkpoint-anchored chain tail for read-only
+        // verifiers) is token-gated like `/events`. It takes NO query
+        // parameters — the sealed log is non-queryable (Invariant VII), so a
+        // query string is ignored the same way `/events` ignores one.
         ("GET", "/events")
         | ("GET", "/events/latest")
         | ("GET", "/digest")
         | ("GET", "/status")
-        | ("GET", "/export/bundle") => {}
+        | ("GET", "/export/bundle")
+        | ("GET", "/api/sealed-log") => {}
         // POST /verify carries no body — verification has no parameters and
         // request parsing stays at the 8 KB header-only surface.
         ("POST", "/verify") => {
@@ -533,7 +538,8 @@ fn handle_connection(
         | (_, "/digest")
         | (_, "/verify")
         | (_, "/status")
-        | (_, "/export/bundle") => {
+        | (_, "/export/bundle")
+        | (_, "/api/sealed-log") => {
             write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
             return Ok(());
         }
@@ -662,6 +668,22 @@ fn handle_connection(
             TimeBucket::now_10min()?.start_epoch_s
         );
         write_download_response(&mut stream, "application/json", &payload, &filename)?;
+        return Ok(());
+    }
+
+    if request.path == "/api/sealed-log" {
+        // The checkpoint-anchored sealed-log tail as a self-contained
+        // document (verifying key + entries exactly as stored) for read-only
+        // chain verifiers such as the Witness Wall's `tvos/witness-core`.
+        // Entries are served verbatim, key-rotation records included: the
+        // document promises verification *through* what it serves and
+        // nothing more — a single-key verifier's walk honestly ends at a
+        // rotation record. No query parameters exist for this route
+        // (Invariant VII, non-queryable): any query string is ignored, apart
+        // from the `?token=` rejection above.
+        let doc = kernel.sealed_log_document()?;
+        let payload = serde_json::to_vec(&doc)?;
+        write_response(&mut stream, 200, "application/json", &payload)?;
         return Ok(());
     }
 
@@ -1025,6 +1047,329 @@ mod tests {
                 "auth-failure map exceeded its cap at request {i}"
             );
         }
+    }
+
+    // ---------------------------------------------------------------
+    // GET /api/sealed-log — the checkpoint-anchored chain tail served
+    // to read-only verifiers. The harness mirrors the crate's API
+    // integration tests (tests/api_export_bundle.rs): a real Kernel on
+    // a temp DB, a spawned ApiServer, raw HTTP over loopback.
+    // ---------------------------------------------------------------
+
+    use crate::crypto::signatures::{
+        domain_separated_hash, SignatureKeys, DOMAIN_SEALED_LOG_ENTRY,
+    };
+    use crate::{
+        CandidateEvent, EventType, InferenceBackend, Kernel, KernelConfig, ModuleDescriptor,
+        SealedLogDocument, TimeBucket, ZonePolicy,
+    };
+    use anyhow::{anyhow, Result};
+    use std::net::TcpStream;
+
+    fn sealed_log_kernel_config(db_path: &std::path::Path) -> KernelConfig {
+        KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        }
+    }
+
+    fn seal_event(kernel: &mut Kernel, cfg: &KernelConfig, zone: &str) -> Result<()> {
+        let desc = ModuleDescriptor {
+            id: "test_module",
+            allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+            requested_capabilities: &[],
+            supported_backends: &[InferenceBackend::Stub],
+        };
+        kernel.append_event_checked(
+            &desc,
+            CandidateEvent {
+                event_type: EventType::BoundaryCrossingObjectLarge,
+                time_bucket: TimeBucket::now(600)?,
+                zone_id: zone.to_string(),
+                confidence: 0.5,
+                correlation_token: None,
+                attestation: None,
+            },
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        Ok(())
+    }
+
+    /// Append one correctly chained and signed row whose `payload_json` is
+    /// the EXACT given string — spacing, key order, tabs and all — bypassing
+    /// serde so the byte-verbatim serving contract is actually exercised.
+    fn plant_verbatim_payload(kernel: &Kernel, cfg: &KernelConfig, payload: &str) -> Result<i64> {
+        let signing_key = crate::signing_key_from_seed(&cfg.device_key_seed)?;
+        let keys = SignatureKeys::new(&signing_key);
+        let prev = kernel.last_event_hash_or_checkpoint_head()?;
+        let entry_hash = crate::log::hash_entry(&prev, payload.as_bytes());
+        let signatures = crate::log::sign_entry(&keys, &entry_hash, DOMAIN_SEALED_LOG_ENTRY)?;
+        kernel.conn.execute(
+            "INSERT INTO sealed_events(created_at, payload_json, prev_hash, entry_hash, signature) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                0i64,
+                payload,
+                prev.to_vec(),
+                entry_hash.to_vec(),
+                signatures.ed25519_signature,
+            ],
+        )?;
+        Ok(kernel.conn.last_insert_rowid())
+    }
+
+    struct SealedLogTestApi {
+        _dir: tempfile::TempDir,
+        api_handle: Option<ApiHandle>,
+    }
+
+    impl SealedLogTestApi {
+        /// Spawn the API server over a kernel DB prepared by `prepare`.
+        fn spawn(prepare: impl FnOnce(&mut Kernel, &KernelConfig) -> Result<()>) -> Result<Self> {
+            let dir = tempfile::tempdir()?;
+            let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
+            let mut kernel = Kernel::open(&cfg)?;
+            prepare(&mut kernel, &cfg)?;
+            drop(kernel);
+
+            let api_config = ApiConfig {
+                addr: "127.0.0.1:0".to_string(),
+                ..ApiConfig::default()
+            };
+            let api_handle = ApiServer::new(api_config, cfg).spawn()?;
+            Ok(Self {
+                _dir: dir,
+                api_handle: Some(api_handle),
+            })
+        }
+
+        fn handle(&self) -> &ApiHandle {
+            self.api_handle
+                .as_ref()
+                .expect("test API handle should be initialized")
+        }
+
+        fn request(&self, method: &str, path: &str, with_token: bool) -> Result<(String, String)> {
+            let mut stream = TcpStream::connect(self.handle().addr)?;
+            let token_header = if with_token {
+                format!("X-Witness-Token: {}\r\n", self.handle().token)
+            } else {
+                String::new()
+            };
+            let request =
+                format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n{token_header}\r\n");
+            stream.write_all(request.as_bytes())?;
+            let mut response = String::new();
+            stream.read_to_string(&mut response)?;
+            let mut parts = response.splitn(2, "\r\n\r\n");
+            let headers = parts.next().unwrap_or("").to_string();
+            let body = parts.next().unwrap_or("").to_string();
+            Ok((headers, body))
+        }
+
+        fn get(&self, path: &str, with_token: bool) -> Result<(String, String)> {
+            self.request("GET", path, with_token)
+        }
+    }
+
+    impl Drop for SealedLogTestApi {
+        fn drop(&mut self) {
+            if let Some(handle) = self.api_handle.take() {
+                if let Err(err) = handle.stop() {
+                    eprintln!("Failed to stop API server: {err}");
+                }
+            }
+        }
+    }
+
+    /// Walk a served document exactly the way a read-only verifier does
+    /// (`tvos/witness-core::verify_chain`), but using the KERNEL's own
+    /// hashing and domain separation — proving the served fields reproduce
+    /// the stored chain. Returns how many entries verified before the walk
+    /// stopped.
+    fn walk_with_kernel_hashing(doc: &SealedLogDocument) -> Result<u64> {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let key_bytes: [u8; 32] = hex::decode(&doc.verifying_key)?
+            .try_into()
+            .map_err(|_| anyhow!("verifying_key is not 32 bytes"))?;
+        let key = VerifyingKey::from_bytes(&key_bytes)?;
+        let mut expected_prev: [u8; 32] = match &doc.checkpoint_head {
+            Some(head) => hex::decode(head)?
+                .try_into()
+                .map_err(|_| anyhow!("checkpoint_head is not 32 bytes"))?,
+            None => [0u8; 32],
+        };
+        let mut verified = 0u64;
+        for entry in &doc.entries {
+            let prev_hash: [u8; 32] = hex::decode(&entry.prev_hash)?
+                .try_into()
+                .map_err(|_| anyhow!("prev_hash is not 32 bytes"))?;
+            if prev_hash != expected_prev {
+                break;
+            }
+            let stored_hash: [u8; 32] = hex::decode(&entry.entry_hash)?
+                .try_into()
+                .map_err(|_| anyhow!("entry_hash is not 32 bytes"))?;
+            if crate::log::hash_entry(&expected_prev, entry.payload.as_bytes()) != stored_hash {
+                break;
+            }
+            let signature: [u8; 64] = hex::decode(&entry.signature)?
+                .try_into()
+                .map_err(|_| anyhow!("signature is not 64 bytes"))?;
+            let signing_hash = domain_separated_hash(DOMAIN_SEALED_LOG_ENTRY, &stored_hash);
+            if key
+                .verify(&signing_hash, &Signature::from_bytes(&signature))
+                .is_err()
+            {
+                break;
+            }
+            expected_prev = stored_hash;
+            verified += 1;
+        }
+        Ok(verified)
+    }
+
+    #[test]
+    fn sealed_log_requires_capability_token() -> Result<()> {
+        let api = SealedLogTestApi::spawn(|kernel, cfg| seal_event(kernel, cfg, "zone:a"))?;
+
+        let (headers, body) = api.get("/api/sealed-log", false)?;
+        assert!(headers.contains("401 Unauthorized"), "headers: {headers}");
+        assert!(body.contains("missing_token"), "body: {body}");
+
+        let (headers, body) = api.get("/api/sealed-log", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let doc: SealedLogDocument = serde_json::from_str(&body)?;
+        assert_eq!(doc.entries.len(), 1);
+
+        let (headers, _) = api.request("POST", "/api/sealed-log", true)?;
+        assert!(
+            headers.contains("405 Method Not Allowed"),
+            "headers: {headers}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_serves_stored_payload_bytes_verbatim() -> Result<()> {
+        // Distinctive spacing, a tab, and non-alphabetical key order: any
+        // parse-and-re-serialize (serde_json::Value) would normalize all
+        // three and the verifier's entry hash would stop matching.
+        const VERBATIM: &str =
+            "{\"record_type\": \"event\",   \"zz_last\": 1,\t\"aa_first\": \"kept   verbatim\"}";
+        let mut planted_id = 0i64;
+        let api = SealedLogTestApi::spawn(|kernel, cfg| {
+            seal_event(kernel, cfg, "zone:a")?;
+            planted_id = plant_verbatim_payload(kernel, cfg, VERBATIM)?;
+            Ok(())
+        })?;
+
+        let (headers, body) = api.get("/api/sealed-log", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let doc: SealedLogDocument = serde_json::from_str(&body)?;
+        let planted = doc
+            .entries
+            .iter()
+            .find(|e| e.id == planted_id)
+            .expect("planted row is served");
+        assert_eq!(
+            planted.payload, VERBATIM,
+            "served payload must be byte-identical to storage"
+        );
+        // And those exact bytes reproduce the stored entry hash.
+        let prev: [u8; 32] = hex::decode(&planted.prev_hash)?
+            .try_into()
+            .map_err(|_| anyhow!("prev_hash is not 32 bytes"))?;
+        assert_eq!(
+            hex::encode(crate::log::hash_entry(&prev, planted.payload.as_bytes())),
+            planted.entry_hash
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_tail_is_checkpoint_anchored_and_bounded() -> Result<()> {
+        let api = SealedLogTestApi::spawn(|kernel, cfg| {
+            seal_event(kernel, cfg, "zone:a")?;
+            seal_event(kernel, cfg, "zone:b")?;
+            // Age the sealed rows past retention (created_at is bookkeeping,
+            // not part of the hashed payload), then checkpoint-and-prune.
+            kernel.conn.execute(
+                "UPDATE sealed_events SET created_at = created_at - 86400",
+                [],
+            )?;
+            kernel.enforce_retention_with_checkpoint(std::time::Duration::from_secs(3600))?;
+            seal_event(kernel, cfg, "zone:c")
+        })?;
+
+        let (headers, body) = api.get("/api/sealed-log", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let doc: SealedLogDocument = serde_json::from_str(&body)?;
+
+        // Bounded: only the post-checkpoint tail, never the whole chain.
+        assert_eq!(doc.entries.len(), 1, "entries: {:?}", doc.entries);
+        let anchor = doc
+            .checkpoint_head
+            .as_ref()
+            .expect("checkpoint anchor served");
+        assert_eq!(&doc.entries[0].prev_hash, anchor);
+
+        // The anchored tail verifies end to end with the kernel's hashing.
+        assert_eq!(walk_with_kernel_hashing(&doc)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_document_verifies_with_kernel_hashing() -> Result<()> {
+        let api = SealedLogTestApi::spawn(|kernel, cfg| {
+            seal_event(kernel, cfg, "zone:a")?;
+            seal_event(kernel, cfg, "zone:b")?;
+            seal_event(kernel, cfg, "zone:c")
+        })?;
+
+        let (headers, body) = api.get("/api/sealed-log", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let doc: SealedLogDocument = serde_json::from_str(&body)?;
+        assert!(doc.checkpoint_head.is_none(), "no checkpoint yet");
+        assert_eq!(doc.entries.len(), 3);
+        assert_eq!(
+            walk_with_kernel_hashing(&doc)?,
+            3,
+            "a verifier must be able to walk the whole served tail"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_has_no_query_surface() -> Result<()> {
+        let api = SealedLogTestApi::spawn(|kernel, cfg| seal_event(kernel, cfg, "zone:a"))?;
+
+        // Non-queryable (Invariant VII): a query string neither filters nor
+        // errors — the response is identical to the plain request, exactly
+        // as `/events` treats an unexpected query.
+        let (_, plain) = api.get("/api/sealed-log", true)?;
+        let (headers, queried) = api.get("/api/sealed-log?last=24h&zone=zone:a", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        assert_eq!(
+            plain, queried,
+            "a query string must not change the served document"
+        );
+
+        // The shared token-in-query guard still applies.
+        let (headers, body) = api.get("/api/sealed-log?token=abc", true)?;
+        assert!(headers.contains("400 Bad Request"), "headers: {headers}");
+        assert!(
+            body.contains("token_query_param_not_allowed"),
+            "body: {body}"
+        );
+        Ok(())
     }
 
     #[test]

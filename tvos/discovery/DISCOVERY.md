@@ -51,7 +51,7 @@ GET /api/fleet        →  200 application/json
 - **No secrets, no raw media** — this is coarse fleet *presence and health*,
   exactly what the Witness Wall renders. It is not an evidence API.
 
-### The optional verification endpoint (nothing serves it yet)
+### The optional verification endpoint (the kernel serves it, token-gated)
 
 The native tvOS app also asks its source, every poll cycle, for
 
@@ -61,15 +61,21 @@ GET /api/sealed-log   →  200 application/json   (optional)
 
 — the sealed-log document its Rust core verifies (`{ "verifying_key",
 "checkpoint_head"?, "entries": [...] }`, see
-`tvos/witness-core/include/securacv_witness_core.h`). **No kernel or firmware
-serves this endpoint today**, and its absence is an answer, not an error: the
-Wall then phrases the fleet's status as the devices' own report ("Your fleet
-reports verified through …") and reserves the word "Verified" for a chain it
-actually walked. A kernel that starts serving it makes the TV's verification
-light up with no app change. Everything above about `/api/fleet` being
-coarse and unauthenticated is exactly why this endpoint is separate: the
-sealed log is how a *display* gets to say something cryptographic instead of
-repeating the wire.
+`tvos/witness-core/include/securacv_witness_core.h`). **The repo-root
+kernel now serves this endpoint** — a checkpoint-anchored tail, entries'
+`payload` byte-identical to storage, with **no query surface of any kind**
+(Invariant VII: the log is non-queryable, so there is nothing to filter,
+select, or search) — behind the same capability token as its other
+authenticated routes. No firmware serves it, and the TV sends no token
+yet, so for the Wall its absence (or a 401) remains an answer, not an
+error: the Wall phrases the fleet's status as the devices' own report
+("Your fleet reports verified through …") and reserves the word "Verified"
+for a chain it actually walked. The day the TV holds a token, its
+verification lights up with no app change. Everything above about
+`/api/fleet` being coarse and unauthenticated is exactly why this endpoint
+is separate — and gated: the sealed log is how a *display* gets to say
+something cryptographic instead of repeating the wire, and the full coarse
+record is more than "anyone who asks" should hold.
 
 ### CORS is the whole trick
 

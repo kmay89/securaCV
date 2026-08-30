@@ -28,9 +28,10 @@
 // opt-in marker that scripts/lint_apple_parity.py looks for (do not name that
 // marker here — the lint greps for the bare string and would enroll this file
 // by describing it), and the Wall has no time-bearing event data to draw:
-// sealed entries carry no timestamp, and no kernel serves /api/sealed-log.
+// sealed entries carry no timestamp, and while the kernel now serves
+// /api/sealed-log (token-gated), the TV holds no token to read it yet.
 // Adding the marker plus one project.yml entry is the whole port on the day
-// that data exists. See docs/design/witness_log_viewer.md.
+// that data reaches the TV. See docs/design/witness_log_viewer.md.
 
 import Foundation
 

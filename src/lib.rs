@@ -969,6 +969,48 @@ pub struct ExportBundle {
     pub pq_public_key: Option<Vec<u8>>,
 }
 
+/// One sealed-log row as `GET /api/sealed-log` serves it to a read-only
+/// verifier — the wire shape `tvos/witness-core`'s `SealedEntry` walks.
+///
+/// `payload` is the LITERAL stored `payload_json` string, the exact UTF-8
+/// bytes hashed at seal time. It is carried as a JSON string (which
+/// round-trips byte-for-byte) and is never parsed and re-emitted as an
+/// object: a re-serialization would change the bytes and a verifier would
+/// correctly report an entry-hash mismatch
+/// (spec/evidence_envelope.md, "never a re-serialization").
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SealedLogDocumentEntry {
+    /// Sealed-log row id (append order; ids are monotonic).
+    pub id: i64,
+    /// The exact stored `payload_json` bytes, verbatim.
+    pub payload: String,
+    /// Hex chain link: the previous entry's hash (or the anchor).
+    pub prev_hash: String,
+    /// Hex `SHA256(prev_hash || payload_utf8)`.
+    pub entry_hash: String,
+    /// Hex Ed25519 signature over the domain-separated signing hash
+    /// (`DOMAIN_SEALED_LOG_ENTRY`).
+    pub signature: String,
+}
+
+/// The checkpoint-anchored sealed-log document served by
+/// `GET /api/sealed-log`: verifying key, optional checkpoint anchor, and the
+/// post-checkpoint tail — bounded by retention, never the whole chain.
+/// A read-only verifier (`tvos/witness-core::verify_document`) walks it from
+/// `checkpoint_head` (or genesis, all-zero) through the tail.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SealedLogDocument {
+    /// Ed25519 verifying key (hex) of the signer of the FIRST served entry,
+    /// so a single-key walk verifies as far as the record allows.
+    pub verifying_key: String,
+    /// Hex `chain_head_hash` of the latest checkpoint, when one exists —
+    /// the anchor the first served entry's `prev_hash` links to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_head: Option<String>,
+    /// The tail, exactly as stored (key-rotation records included).
+    pub entries: Vec<SealedLogDocumentEntry>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ExportOptions {
     pub max_events_per_batch: usize,
@@ -2752,6 +2794,79 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         })
     }
 
+    /// Assemble the sealed-log document `GET /api/sealed-log` serves: the
+    /// verifying key (hex), the latest checkpoint anchor when one exists, and
+    /// the post-checkpoint tail of `sealed_events` rows exactly as stored.
+    ///
+    /// Anchoring at the latest checkpoint keeps the response bounded by
+    /// retention — a poller never downloads more than the retained tail. The
+    /// served `payload` strings are the literal stored bytes (never
+    /// re-serialized), so a verifier's `SHA256(prev_hash || payload)` walk
+    /// reproduces every stored `entry_hash`.
+    ///
+    /// Key rotation: rotation records in the tail are served as stored, and
+    /// `verifying_key` is the key that signed the FIRST served entry (rows up
+    /// to and including a rotation record are signed by the retiring key). A
+    /// single-key read-only verifier therefore verifies *through* the
+    /// rotation record and honestly stops there — the document promises
+    /// verification through what it serves, nothing more.
+    pub fn sealed_log_document(&self) -> Result<SealedLogDocument> {
+        let checkpoint = crate::verify::latest_checkpoint(&self.conn)?;
+        let (checkpoint_head, cutoff_event_id) =
+            match (checkpoint.chain_head_hash, checkpoint.cutoff_event_id) {
+                (Some(head), Some(cutoff)) => (Some(head), cutoff),
+                _ => (None, 0),
+            };
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, payload_json, prev_hash, entry_hash, signature \
+             FROM sealed_events WHERE id > ?1 ORDER BY id ASC",
+        )?;
+        let mut rows = stmt.query(params![cutoff_event_id])?;
+        let mut entries = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let payload: String = row.get(1)?;
+            let prev_hash: Vec<u8> = row.get(2)?;
+            let entry_hash: Vec<u8> = row.get(3)?;
+            let signature: Vec<u8> = row.get(4)?;
+            if prev_hash.len() != 32 || entry_hash.len() != 32 {
+                return Err(anyhow!("corrupt sealed log: hash size at id {}", id));
+            }
+            if signature.len() != 64 {
+                return Err(anyhow!("corrupt sealed log: signature size at id {}", id));
+            }
+            entries.push(SealedLogDocumentEntry {
+                id,
+                payload,
+                prev_hash: hex::encode(prev_hash),
+                entry_hash: hex::encode(entry_hash),
+                signature: hex::encode(signature),
+            });
+        }
+
+        // The key that signed the first served entry: walk the tail's
+        // rotation records backward from the current device key (mirrors the
+        // envelope verifier's lineage reconstruction; unparseable or
+        // non-rotation payloads are simply not rotations).
+        let mut serving_key = self.device_key.verifying_key().to_bytes();
+        for entry in entries.iter().rev() {
+            if let Ok(SealedLogRecord::KeyRotation(rotation)) =
+                SealedLogRecord::deserialize_compat(&entry.payload)
+            {
+                if rotation.new_public_key == serving_key {
+                    serving_key = rotation.prev_public_key;
+                }
+            }
+        }
+
+        Ok(SealedLogDocument {
+            verifying_key: hex::encode(serving_key),
+            checkpoint_head: checkpoint_head.map(hex::encode),
+            entries,
+        })
+    }
+
     /// Assemble a canonical [`EvidenceEnvelope`] (`profile: "full"`) from an already-built
     /// export bundle plus the device's four ledgers. See `spec/evidence_envelope.md`.
     pub fn evidence_envelope_from_bundle(
@@ -4427,6 +4542,59 @@ mod tests {
             !report.chain_valid,
             "a tampered tail must fail verification"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_document_serves_tail_start_signer_across_rotation() -> Result<()> {
+        use ed25519_dalek::{Signature, Verifier};
+
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        let old_key = kernel.device_verifying_key();
+        kernel.rotate_device_identity("devkey:test:rotated-1111222233334444")?;
+        let new_key = kernel.device_verifying_key();
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+
+        let doc = kernel.sealed_log_document()?;
+        // Entries are served as stored — the rotation record rides in the
+        // tail — and the served key is the signer of the FIRST entry (the
+        // retiring key), not the current one, so a single-key walk verifies
+        // through the rotation record and honestly stops there.
+        assert_eq!(doc.entries.len(), 3);
+        assert!(doc.entries[1].payload.contains("key_rotation"));
+        assert_eq!(doc.verifying_key, hex::encode(old_key.to_bytes()));
+
+        // Hand-walk with the kernel's own hashing: every link re-computes,
+        // the first two entries (event + rotation record) verify under the
+        // served key, and the post-rotation entry verifies under the new key.
+        let mut expected_prev = [0u8; 32];
+        for (idx, entry) in doc.entries.iter().enumerate() {
+            let prev: [u8; 32] = hex::decode(&entry.prev_hash)?
+                .try_into()
+                .map_err(|_| anyhow!("prev_hash size"))?;
+            assert_eq!(prev, expected_prev, "chain link at index {idx}");
+            let stored: [u8; 32] = hex::decode(&entry.entry_hash)?
+                .try_into()
+                .map_err(|_| anyhow!("entry_hash size"))?;
+            assert_eq!(
+                crate::log::hash_entry(&expected_prev, entry.payload.as_bytes()),
+                stored,
+                "served payload bytes must reproduce the stored hash at index {idx}"
+            );
+            let signature: [u8; 64] = hex::decode(&entry.signature)?
+                .try_into()
+                .map_err(|_| anyhow!("signature size"))?;
+            let signing_hash = crate::crypto::signatures::domain_separated_hash(
+                crate::crypto::signatures::DOMAIN_SEALED_LOG_ENTRY,
+                &stored,
+            );
+            let signer = if idx <= 1 { &old_key } else { &new_key };
+            signer
+                .verify(&signing_hash, &Signature::from_bytes(&signature))
+                .map_err(|e| anyhow!("signature at index {idx}: {e}"))?;
+            expected_prev = stored;
+        }
         Ok(())
     }
 
