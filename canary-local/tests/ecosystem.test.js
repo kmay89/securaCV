@@ -145,3 +145,65 @@ test("the iPhone app's family map tells the same family story", () => {
       `iPhone map carries "${m[1]}" — not a surface ecosystem.json names`);
   }
 });
+
+test("the Flasher's About panel derives its family footer from the Atlas", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const start = appJs.indexOf("const SITE = ");
+  const atlasIdx = appJs.indexOf("const ATLAS_LINKS", start);
+  const end = appJs.indexOf("\n];", atlasIdx);
+  assert.ok(start >= 0 && atlasIdx > start && end > atlasIdx,
+    "couldn't find SITE/REPO/ATLAS_LINKS in desktop/src/app.js — update this extraction");
+  const atlas = new Function(
+    appJs.slice(start, end + 3) +
+    "\nreturn { ATLAS_FAMILY_GROUP, ATLAS_LINKS };")();
+
+  // The named group exists and is the one carrying the family cards test 2
+  // already pins to ecosystem.json — so the About footer, which renders THIS
+  // group, inherits those pins for free.
+  const group = atlas.ATLAS_LINKS.find(([t]) => t === atlas.ATLAS_FAMILY_GROUP);
+  assert.ok(group, "ATLAS_FAMILY_GROUP doesn't name a group in ATLAS_LINKS");
+  const names = group[1].map(([name]) => name);
+  for (const id of ["ios-app", "lab-app", "witness-wall"]) {
+    assert.ok(names.some((n) => n.startsWith(map.surfaces[id].name)),
+      `the family group lost its ${id} card — the About footer would too`);
+  }
+
+  // And renderAbout really derives from it (a find on the named group), so
+  // there is no third hand-mirrored copy of the family story to rot.
+  assert.ok(appJs.includes("ATLAS_LINKS.find(([t]) => t === ATLAS_FAMILY_GROUP)"),
+    "renderAbout no longer derives its family footer from ATLAS_FAMILY_GROUP — " +
+    "if the footer grew its own copy, pin it here like the Atlas cards");
+});
+
+test("the Lab's family view reads ecosystem.json live, status copy derived", () => {
+  const shell = read(join(CANARY, "assets/lab-shell.js"));
+
+  // The consumer that structurally cannot drift: names/urls/statuses come off
+  // the JSON at render time…
+  assert.ok(shell.includes('fetch("devices/ecosystem.json"'),
+    "lab-shell.js familyView no longer fetches devices/ecosystem.json at runtime");
+
+  // …and the only mirrored piece is the status VOCABULARY, pinned here: the
+  // copy map must cover exactly the statuses the family map may use, and the
+  // word "pending" may appear only under store-pending (an apology on a
+  // shipping surface and a download-implying line on a pending one both lie).
+  const cStart = shell.indexOf("const FAMILY_STATUS_COPY = {");
+  const cEnd = shell.indexOf("\n};", cStart);
+  assert.ok(cStart >= 0 && cEnd > cStart,
+    "couldn't find FAMILY_STATUS_COPY in lab-shell.js — update this extraction");
+  const copy = new Function(
+    shell.slice(cStart, cEnd + 3) + "\nreturn FAMILY_STATUS_COPY;")();
+
+  assert.deepStrictEqual(Object.keys(copy).sort(), [...STATUSES].sort(),
+    "FAMILY_STATUS_COPY and the ecosystem.json status vocabulary diverged");
+  for (const [status, line] of Object.entries(copy)) {
+    assert.ok(line && typeof line === "string", `${status} has no copy`);
+    if (status === "store-pending") {
+      assert.match(line, /pending/i,
+        "store-pending copy must say pending, not imply a download");
+    } else {
+      assert.ok(!/pending/i.test(line),
+        `${status} ships but its copy still apologizes with "pending"`);
+    }
+  }
+});

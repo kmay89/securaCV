@@ -188,6 +188,7 @@ function renderSidebar(view, entry) {
       h("div", { class: "side-sec" }, "Reference"),
       navItem("all", view === "all", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16"/></svg>', "All benches, by stage"),
       navLink("site-map.html", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18l6-12M4 6h5v5H4zM15 13h5v5h-5z"/></svg>', "Complete site map"),
+      navItem("family", view === "family", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="8" height="6" rx="1"/><rect x="13" y="3" width="8" height="10" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="17" width="8" height="4" rx="1"/></svg>', "SecuraCV everywhere"),
       // The two references people actually reach for. On the website these sit
       // in the "still on SecuraCV" strip along the top, which earns its place
       // there (you are on a different origin, this is the way back). In the app
@@ -230,7 +231,8 @@ function onSearch(e) {
 function renderTopbar(view, entry) {
   let bar = document.querySelector(".topbar");
   const title = view === "bench" ? entry.bench.noun : view === "start" ? "Get started"
-    : view === "all" ? "All benches" : view === "settings" ? "Updates & about" : "The Lab";
+    : view === "all" ? "All benches" : view === "family" ? "SecuraCV everywhere"
+    : view === "settings" ? "Updates & about" : "The Lab";
   const content = [
     h("button", { class: "back", hidden: view === "overview", onclick: () => navigate("overview") },
       h("span", { html: "‹" }), " Lab"),
@@ -263,6 +265,7 @@ function renderContent(view, entry) {
   if (view === "overview") c.replaceChildren(overviewView());
   else if (view === "start") c.replaceChildren(startView());
   else if (view === "all") c.replaceChildren(allView());
+  else if (view === "family") c.replaceChildren(familyView());
   else if (view === "settings") c.replaceChildren(settingsView());
   else c.replaceChildren(benchView(entry));
   // A bench fills the window; the reading views keep their measure. Toggled
@@ -486,6 +489,45 @@ function allView() {
   );
 }
 
+/* The family, consumed live. devices/ecosystem.json is the ONE place the
+   SecuraCV family is named — each surface's canonical URL and an honest
+   availability status (see canary-local/tests/ecosystem.test.js, the drift
+   gate over the hand-mirrored consumers). This view deliberately owns no
+   copy that could rot: names, links and availability all come off the JSON
+   at render time, and the status line is DERIVED from the status word — so
+   the day a status flips (store-pending → shipping), this page tells the
+   new story with no edit. Only the status vocabulary itself is mirrored
+   here, and the gate pins it to the map's. */
+const FAMILY_STATUS_COPY = {
+  "shipping": "Shipping — install it today.",
+  "in-browser": "No install — it runs right here in the browser.",
+  "store-pending": "Built and tested; store availability pending.",
+};
+function familyView() {
+  const grid = h("div", { class: "allgrid" },
+    h("p", {}, "Reading the family map…"));
+  fetch("devices/ecosystem.json", { cache: "no-cache" })
+    .then((r) => { if (!r.ok) throw new Error("ecosystem " + r.status); return r.json(); })
+    .then((eco) => {
+      grid.replaceChildren(...Object.entries(eco.surfaces).map(([id, s]) =>
+        h("div", { class: "allcol" },
+          h("h4", {}, s.name),
+          h("div", { class: "sitelinks" },
+            h("span", { class: "k" }, FAMILY_STATUS_COPY[s.status] || s.status),
+            h("div", {}, h("a", { class: "chip", href: s.url, target: "_blank",
+              rel: "noopener" }, "Open"))))));
+    })
+    .catch(() => {
+      grid.replaceChildren(h("p", {},
+        "The family map didn't load. Every surface is still reachable from the complete site map."));
+    });
+  return h("div", {},
+    h("div", { class: "crumbs" }, h("b", {}, "Reference")),
+    h("div", { class: "c-h" }, h("h1", {}, "SecuraCV everywhere")),
+    h("p", {}, "Every window onto the same fleet — the Lab, the apps, the Wall, the hub. One machine-readable map names them all, read live by this page."),
+    grid);
+}
+
 function birdSVG() {
   return h("span", { class: "bird", html:
     '<svg class="bird" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="36" r="17" fill="#FFD44F"/><circle cx="41" cy="24" r="10" fill="#FFD44F"/><circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/><path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/><ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/></svg>' });
@@ -512,7 +554,7 @@ async function boot() {
   // answer rather than a stale default. Resolves false on the website and on
   // iOS/iPadOS (App Store updates), true only on the desktop app.
   await probeSettings();
-  VALID_IDS = ["overview", "start", "all", ...(SETTINGS_AVAILABLE ? ["settings"] : []), ...ROUTE.map((e) => e.bench.slug)];
+  VALID_IDS = ["overview", "start", "all", "family", ...(SETTINGS_AVAILABLE ? ["settings"] : []), ...ROUTE.map((e) => e.bench.slug)];
   root.removeAttribute("data-loading");
   const shell = h("div", { class: "shell" }, h("div", { class: "main" }));
   root.replaceChildren(shell);

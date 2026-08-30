@@ -4604,6 +4604,11 @@ async function onInstallUpdate() {
 // itself every time the app updates.
 const SITE = "https://securacv.com";
 const REPO = "https://github.com/kmay89/securaCV";
+// The family group's title, named so the About panel can render the SAME
+// cards (renderAbout finds this group in ATLAS_LINKS) — one copy of the
+// family story per app, pinned to devices/ecosystem.json by
+// canary-local/tests/ecosystem.test.js, never a second hand-mirror.
+const ATLAS_FAMILY_GROUP = "The other windows onto your fleet";
 const ATLAS_LINKS = [
   ["Your Canaries on the web", [
     ["Home", "The privacy-first witness, start to finish.", SITE + "/"],
@@ -4630,7 +4635,7 @@ const ATLAS_LINKS = [
   // anyone an iPhone app exists. Availability copy stays honest
   // (non-negotiable #4): a built-and-tested app that isn't in a store yet
   // says so instead of implying a download.
-  ["The other windows onto your fleet", [
+  [ATLAS_FAMILY_GROUP, [
     ["iPhone & Apple Watch app", "The living-with-it companion: honest alerts, the fleet on your wrist. Built and tested; App Store availability pending.", REPO + "/tree/main/ios"],
     ["SecuraCV Lab (desktop)", "This app's sibling: the whole Lab as a native app — same benches, offline.", SITE + "/download"],
     ["The Witness Wall (Apple TV)", "Your fleet's record on the TV — try it on the Your Fleet tab today; the native app is built, App Store availability pending.", REPO + "/blob/main/tvos/RUN_ON_APPLE_TV.md"],
@@ -4731,6 +4736,16 @@ function renderAbout() {
     : `<p class="status">You're on the newest build. The app checks on its own — at launch and every few hours — and heals forward; updates are signed and verified before they install.</p>
        <div class="row"><button class="btn btn-ghost btn-small" id="about-check">Check now</button></div>`;
 
+  // The family footer renders the Atlas' own family cards — found by the
+  // named group, never a second copy of the story. ecosystem.test.js pins
+  // both the cards (to devices/ecosystem.json) and this derivation.
+  const family = (ATLAS_LINKS.find(([t]) => t === ATLAS_FAMILY_GROUP) || [null, []])[1];
+  const familyHtml = family.map(([name, blurb, url]) =>
+    `<button class="atlas-card" data-url="${esc(url)}">
+       <div class="ac-top">${linkIcon()}<b>${esc(name)}</b>${extIcon()}</div>
+       <span>${esc(blurb)}</span>
+     </button>`).join("");
+
   const log = (prefs.log || []);
   const logHtml = log.length
     ? log.map((e) =>
@@ -4766,12 +4781,21 @@ function renderAbout() {
       <div class="log-list">${logHtml}</div>
       <div class="row"><button class="btn btn-ghost btn-small" id="about-reset">Reset the app's memory</button></div>
       <p class="fineprint muted">Reset also forgets the setup profile's saved passwords (from ${esc(secretStore.where())}), every stored device API key, and the fleet book.</p>
+    </section>
+
+    <section class="card">
+      <div class="step-head"><span class="step-n">⌂</span><h2>The family</h2></div>
+      <p class="muted">This app is one window onto your fleet. The others, with honest availability — same cards as the Explore tab, one source.</p>
+      <div class="atlas-grid">${familyHtml}</div>
     </section>`;
 
   const check = $("about-check");
   if (check) check.addEventListener("click", () => { check.disabled = true; check.textContent = "Checking…"; checkForUpdate(true); });
   const upd = $("about-update");
   if (upd) upd.addEventListener("click", onInstallUpdate);
+  $("about-body").querySelectorAll(".atlas-card").forEach((c) =>
+    c.addEventListener("click", () => openExternal(c.dataset.url))
+  );
   const reset = $("about-reset");
   if (reset) reset.addEventListener("click", async () => {
     prefs.roster = []; prefs.log = []; prefs.prov = {}; prefs.hubSsid = "";
