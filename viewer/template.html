@@ -169,6 +169,7 @@
              border:1px solid var(--line); border-radius:999px; padding:4px 11px; cursor:pointer;
              display:inline-flex; align-items:center; gap:7px; }
   .tl-chip:hover { color:var(--fg); border-color:var(--accent); }
+  .tl-chip:focus-visible, .tl-list:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   .tl-chip[aria-pressed="true"] { border-color:var(--accent); color:var(--fg); box-shadow:0 0 0 1px var(--accent); }
   .tl-dot { width:8px; height:8px; border-radius:50%; background:var(--fam); flex:0 0 auto; }
   .tl-dot.fam-tamper { border-radius:1px; clip-path:polygon(50% 0, 100% 100%, 0 100%); }
@@ -189,8 +190,15 @@
   .tl-gline { position:absolute; left:0; right:0; height:1px; background:var(--line); opacity:.45; pointer-events:none; }
   .tl-gline.major { opacity:1; }
   .tl-tick { position:absolute; height:2px; border-radius:1px; background:var(--fam); opacity:.92;
-             pointer-events:none; animation:tlreveal .4s ease both; }
+             pointer-events:none; animation:tlreveal .4s ease both; transition:opacity .18s ease; }
   .tl-tick.tl-more { height:3px; opacity:1; }
+  /* The reading pane and the map are the same record twice — hovering a row
+     lights its bucket's strokes so the correspondence teaches itself. Pure
+     addition: nothing else dims, nothing hides. */
+  .tl-tick.tl-hot { opacity:1; box-shadow:0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); }
+  .tl-maplab { position:absolute; left:3px; padding:0 3px; border-radius:3px; pointer-events:none;
+               font-size:8.5px; letter-spacing:.3px; text-transform:uppercase; color:var(--muted);
+               white-space:nowrap; background:color-mix(in srgb, var(--bg) 78%, transparent); }
   .tl-tickgap { left:4px; right:4px; border-radius:2px;
     background:repeating-linear-gradient(45deg, var(--fam) 0 3px, transparent 3px 6px);
     box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fam) 55%, transparent); }
@@ -201,8 +209,16 @@
     background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 14%, transparent) 0 4px, transparent 4px 8px); }
   .tl-view { position:absolute; left:0; right:0; min-height:16px; border-radius:4px;
              background:color-mix(in srgb, var(--accent) 13%, transparent);
-             border:1px solid var(--accent); pointer-events:none; }
+             border:1px solid var(--accent); pointer-events:auto; cursor:grab; }
+  .tl-map.tl-grabbing, .tl-map.tl-grabbing .tl-view { cursor:grabbing; }
+  .tl-view:hover { border-color:color-mix(in srgb, var(--accent) 100%, transparent);
+                   background:color-mix(in srgb, var(--accent) 20%, transparent); }
   @keyframes tlreveal { from { opacity:0; transform:translateX(-4px); } to { transform:none; } }
+  /* Always-visible one-liner: the map earns a name and its keys are written
+     down, so nothing about the scrubber is a secret handshake. Doubles as
+     the spotlight's mode line (a mode with no visible state is a trap). */
+  .tl-caption { font-size:11.5px; color:var(--muted); margin-top:7px; }
+  .tl-caption b { font-weight:650; color:var(--fg); }
 
   .tl-list { flex:1; min-width:0; height:var(--tl-h); overflow-y:auto; position:relative;
              border:1px solid var(--line); border-radius:8px; scrollbar-width:thin;
@@ -213,18 +229,41 @@
   .tl-strip { position:relative; flex:1; height:10px; min-width:60px; cursor:pointer;
               border-radius:5px; outline-offset:3px; }
   .tl-strip:focus-visible { outline:2px solid var(--accent); }
+  /* The visible bar stays a slim 10px; the pseudo-element widens the HIT
+     target past it (26px here, 44px for coarse pointers) without moving a
+     pixel of layout — the drawn cells must keep their honest geometry. */
+  .tl-strip::before { content:""; position:absolute; inset:-8px 0; }
+  /* A slider owns up to its value: a thin caret marks where the strip was
+     last scrubbed to, so keyboard users are not adjusting an invisible
+     number. Shown while the strip is in use, gone when it is left. */
+  .tl-stripcaret { position:absolute; top:-2px; bottom:-2px; width:2px; margin-left:-1px;
+                   border-radius:1px; background:var(--accent); pointer-events:none; }
+  .tl-stripcaret[hidden] { display:none; }
   .tl-covtrack { position:absolute; top:0; bottom:0; background:var(--bg); border-radius:5px;
                  box-shadow:inset 0 0 0 1px var(--line); }
-  .tl-cell { position:absolute; top:1px; bottom:1px; border-radius:2px; background:var(--fam); }
+  /* Density rides a custom property, NOT an inline opacity: an inline style
+     out-specifies every stylesheet rule, which silently exempted these cells
+     from the spotlight dim. The ladder floors at .7 so a lone record still
+     clears 3:1 against the track. */
+  .tl-cell { position:absolute; top:1px; bottom:1px; border-radius:2px; background:var(--fam);
+             opacity:var(--cnt, 1); transition:opacity .18s ease; }
   .tl-cellgap { background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 3px); }
   .tl-daymeta { font-size:12px; color:var(--muted); white-space:nowrap; }
   .tl-daymeta b { font-weight:650; }
   .tl-daymeta .tl-tam { color:var(--bad); }
   .tl-daymeta .tl-gapn { color:var(--warn); }
+  /* "· 2 tamper" is a destination, not a caption — the counts jump to their
+     records, so the scariest number on the page is also the fastest path
+     to the evidence behind it. */
+  button.tl-tam, button.tl-gapn { font:inherit; font-size:12px; font-weight:650; background:none; border:0;
+    padding:0; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
+  button.tl-tam:focus-visible, button.tl-gapn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
 
   .tl-row { display:flex; align-items:center; gap:10px; padding:7px 12px 7px 0; font-size:13.5px;
-            border-bottom:1px solid color-mix(in srgb, var(--line) 45%, transparent); }
+            border-bottom:1px solid color-mix(in srgb, var(--line) 45%, transparent);
+            transition:opacity .18s ease, background-color .3s ease; }
   .tl-row:last-child { border-bottom:none; }
+  .tl-row.tl-hot { background:color-mix(in srgb, var(--accent) 7%, transparent); }
   .tl-rail { flex:0 0 26px; align-self:stretch; position:relative; min-height:20px; }
   .tl-rail::before { content:""; position:absolute; left:12px; top:-8px; bottom:-8px; width:2px;
                      background:color-mix(in srgb, var(--line) 80%, transparent); }
@@ -260,13 +299,15 @@
   @keyframes tlflash { 0% { background:var(--accent-bg); } 100% { background:transparent; } }
 
   /* Spotlight: a legend chip dims everything that isn't its family —
-     emphasis only; nothing is ever hidden. */
-  .tl-panel[data-spot="move"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-move),
-  .tl-panel[data-spot="touch"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-touch),
-  .tl-panel[data-spot="sound"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-sound),
-  .tl-panel[data-spot="tamper"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-tamper),
-  .tl-panel[data-spot="gap"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-gap),
-  .tl-panel[data-spot="other"] :is(.tl-row,.tl-tick,.tl-cell):not(.fam-other) { opacity:.25; }
+     emphasis only; nothing is ever hidden. The quiet folds dim too, or the
+     pleats would out-shout the very records being spotlighted. */
+  .tl-panel[data-spot="move"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-move),
+  .tl-panel[data-spot="touch"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-touch),
+  .tl-panel[data-spot="sound"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-sound),
+  .tl-panel[data-spot="tamper"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-tamper),
+  .tl-panel[data-spot="gap"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-gap),
+  .tl-panel[data-spot="other"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-other) { opacity:.25; }
+  .tl-fold { transition:opacity .18s ease; }
 
   .tl-lens { position:absolute; z-index:5; left:92px; max-width:300px; pointer-events:none;
              background:var(--panel); border:1px solid var(--line); border-radius:8px;
@@ -292,12 +333,21 @@
     .tl-strip { flex:1 0 100%; order:3; }
   }
   /* Touch, pen, and TV-remote pointers: legend chips and day strips grow to a
-     44px target, and the minimap widens so a thumb can scrub it. */
+     44px target, and the minimap widens so a thumb can scrub it. The strip's
+     drawn bar stays 10px — the ::before pseudo-element carries the extra
+     reach, so a fat finger gets 44px without the chart lying about size. */
   @media (pointer: coarse) {
-    .tl-chip { padding:9px 14px; }
-    .tl-strip { height:16px; padding:6px 0; background-clip:content-box; }
+    .tl-chip { padding:9px 14px; min-height:44px; }
+    .tl-strip::before { inset:-17px 0; }
     .tl-map { width:96px; }
     .tl-lens { left:104px; }
+  }
+  /* Narrow AND coarse (a phone): the wrapped layout puts the strip on its
+     own line 6px under the day-meta jump buttons, so the full 17px upward
+     hit reach would swallow taps meant for "2 tamper". Keep the reach below,
+     trim it above. */
+  @media (max-width: 620px) and (pointer: coarse) {
+    .tl-strip::before { top:-4px; }
   }
   /* Windows High Contrast / forced-colors flattens background paint, which
      would erase every tick and cell. Redraw them as bordered marks in system
@@ -310,6 +360,7 @@
     .tl-nodegap, .tl-nodesys { background:Canvas; border:2px solid CanvasText; }
     .tl-pleat { border-color:GrayText; }
     .tl-chip[aria-pressed="true"] { outline:2px solid Highlight; }
+    .tl-stripcaret { forced-color-adjust:none; background:Highlight; }
   }
   @media (prefers-contrast: more) {
     .tl-tick { opacity:1; }
@@ -335,7 +386,7 @@
     .c-tech { display:block; } /* the printed record carries the full technical claims */
     /* The printed timeline is the full reading pane — every row, no scroll,
        no scrub chrome; marks keep their ink so the paper record stays legible. */
-    .tl-map, .tl-lens, .tl-utc { display:none; }
+    .tl-map, .tl-lens, .tl-utc, .tl-caption, .tl-stripcaret { display:none; }
     .tl-list { height:auto; overflow:visible; border:none; }
     .tl-day { position:static; }
     .tl-cell, .tl-covtrack, .tl-tick, .tl-node, .tl-meter, .tl-meter > i, .tl-dot, .tl-pleatchip {
@@ -994,7 +1045,13 @@ function scrubTimeline(src, opts) {
   let rows = '';
   for (const item of model.items) rows += tlRow(item);
   let hint = esc(opts.hint) + ` Times are UTC, in ${bucketMin}-minute buckets — the scrubber snaps to`
-    + ' buckets because finer timing was never recorded.';
+    + ' buckets because finer timing was never recorded.'
+    + ' Everything in the record is on this page: the legend spotlight dims the rest, it never hides or filters.';
+  if (model.records.some((r) => typeof r.conf === 'number')) {
+    // The visible twin of the tooltip/aria sentence — a sighted touch user
+    // gets no hover and no screen reader, and was reading the bar as odds.
+    hint += ' Confidence scores grade how well the kernel’s rule was satisfied, not the odds the event really happened.';
+  }
   if (model.heartbeats) {
     // NOT "prove the device stayed alive". This viewer counts heartbeats; it
     // never audits their cadence, so two of them four hours apart would have
@@ -1013,10 +1070,11 @@ function scrubTimeline(src, opts) {
     <div class="tl-wrap" id="tlwrap">
       <div class="tl-map" id="tlmap" tabindex="0" role="scrollbar" aria-controls="tllist" aria-orientation="vertical"
         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
-        aria-label="Timeline minimap — the shape of the record. Drag to scrub; Up and Down arrows step between records."></div>
+        aria-label="Timeline minimap — the shape of the record. Drag to scrub. Arrows step between records; N and P jump to the next or previous tamper or gap; Alt with an arrow switches days; Home, End, and the Page keys travel further."></div>
       <div class="tl-list" id="tllist" tabindex="0" aria-label="Verified records, oldest first">${rows}</div>
       <div class="tl-lens" id="tllens" hidden></div>
     </div>
+    <div class="tl-caption" id="tlcap" aria-hidden="true">Drag the map to scrub · arrows step records · <b>n</b>/<b>p</b> jump to tamper &amp; gaps</div>
     <p class="sr-only" id="tlsay" role="status" aria-live="polite"></p>
     <div class="hint">${hint}</div>
   </div>`;
@@ -1030,12 +1088,17 @@ function tlRow(item) {
     const covL = hasCoverage ? d.covFrom * 100 : 0;
     const covW = hasCoverage ? Math.max((d.covTo - d.covFrom) * 100, 0) : 0;
     const cells = d.cells.map((c) => {
-      const op = c.count >= 4 ? 1 : c.count >= 2 ? 0.75 : 0.5;
-      return `<i class="tl-cell fam-${c.family}${c.hasGap ? ' tl-cellgap' : ''}" style="left:${(c.i * cellW).toFixed(3)}%;width:${Math.max(cellW, 0.35).toFixed(3)}%;opacity:${op}"></i>`;
+      // Density as a custom property, never an inline opacity — the spotlight
+      // dim must be able to win (see the .tl-cell comment). Statuses that ARE
+      // the point (tamper, gap) never fade below full ink.
+      const op = c.family === 'tamper' || c.hasGap ? 1 : c.count >= 4 ? 1 : c.count >= 2 ? 0.85 : 0.7;
+      return `<i class="tl-cell fam-${c.family}${c.hasGap ? ' tl-cellgap' : ''}" style="left:${(c.i * cellW).toFixed(3)}%;width:${Math.max(cellW, 0.35).toFixed(3)}%;--cnt:${op}"></i>`;
     }).join('');
     const meta = `${d.count} record${d.count === 1 ? '' : 's'}`
-      + (d.tamperCount ? `<b class="tl-tam"> · ${d.tamperCount} tamper</b>` : '')
-      + (d.gapCount ? `<b class="tl-gapn"> · ${d.gapCount} gap${d.gapCount === 1 ? '' : 's'}</b>` : '');
+      + (d.tamperCount ? ` · <button class="tl-tam" type="button" data-day="${d.dayT0}" data-kind="tamper"
+          title="Jump to this day’s tamper record${d.tamperCount === 1 ? '' : 's'}">${d.tamperCount} tamper</button>` : '')
+      + (d.gapCount ? ` · <button class="tl-gapn" type="button" data-day="${d.dayT0}" data-kind="gap"
+          title="Jump to this day’s declared gap${d.gapCount === 1 ? '' : 's'}">${d.gapCount} gap${d.gapCount === 1 ? '' : 's'}</button>` : '');
     // The strip is operable, so it is a real control, not an image: focusable
     // in the tab order, with arrow keys scrubbing the day by the hour and
     // Home/End jumping to its ends. A click target reachable only by mouse
@@ -1046,7 +1109,7 @@ function tlRow(item) {
         aria-label="Scrub ${esc(d.label)} — ${d.count} record${d.count === 1 ? '' : 's'}. ${hasCoverage
           ? 'The bar marks the window this export declares it covers; hours outside it are blank, not quiet.'
           : 'This bundle declares no coverage window, so no span of this day is claimed as watched.'}">
-        ${hasCoverage ? `<i class="tl-covtrack" style="left:${covL.toFixed(3)}%;width:${covW.toFixed(3)}%"></i>` : ''}${cells}</span>
+        ${hasCoverage ? `<i class="tl-covtrack" style="left:${covL.toFixed(3)}%;width:${covW.toFixed(3)}%"></i>` : ''}${cells}<i class="tl-stripcaret" hidden></i></span>
       <span class="tl-daymeta">${meta}</span></div>`;
   }
   if (item.kind === 'fold') {
@@ -1061,7 +1124,7 @@ function tlRow(item) {
     return `<div class="tl-row tl-gap fam-gap" data-t0="${r.t0}">
       <span class="tl-rail"><i class="tl-node tl-nodegap"></i></span>
       <span class="tl-time">${time}</span>
-      <span class="tl-body"><b>Gap — ${esc(r.label)}</b> <span class="tl-det">${esc(r.details || 'the device could not observe')}</span></span>
+      <span class="tl-body"><b>Gap — ${esc(r.label)}</b> <span class="tl-det">· ${esc(r.details || 'the device could not observe')}</span></span>
     </div>`;
   }
   if (item.kind === 'system' || item.kind === 'heartbeat') {
@@ -1079,7 +1142,7 @@ function tlRow(item) {
     <span class="tl-rail"><i class="tl-node"></i></span>
     <span class="tl-time">${time}</span>
     <span class="tl-body">${r.family === 'tamper' ? TAMPER_ICON : ''}${esc(r.label)}</span>
-    ${r.zone ? `<span class="tl-zone">${esc(r.zone)}</span>` : ''}
+    ${r.zone ? `<span class="tl-zone" title="${esc(r.zone)}">${esc(r.zone)}</span>` : ''}
     ${conf}</div>`;
 }
 
@@ -1107,20 +1170,42 @@ function initTimeline() {
     for (const line of T.gridLines(layout, 22)) {
       html += `<i class="tl-gline${line.major ? ' major' : ''}" style="top:${line.y.toFixed(1)}px"></i>`;
     }
+    // Name the days. A greeked map is a remembered shape, and two busy
+    // mornings look alike — a tiny real-text label where each day begins is
+    // the landmark that tells them apart (multi-day records only). Derived
+    // from the day list, not the grid: most midnights sit inside a folded
+    // quiet stretch, where no grid line is ever drawn.
+    if (model.days.length > 1) {
+      let labelY = -20;
+      for (const d of model.days) {
+        const y = Math.min(Math.max(T.yOfTime(layout, d.dayT0), 0), H - 12);
+        if (y - labelY < 14) continue;
+        labelY = y;
+        // "Wed 25", one short token — the full name wraps in an 84px column
+        // and reads as a strikethrough where strokes cross it.
+        const parts = d.label.split(', ');
+        const lab = parts[0].slice(0, 3) + ' ' + ((parts[1] || '').split(' ')[1] || '');
+        html += `<i class="tl-maplab" style="top:${(y + 2).toFixed(1)}px">${esc(lab.trim())}</i>`;
+      }
+    }
     for (const s of layout) {
       if (s.kind === 'fold') html += `<i class="tl-pleat" style="top:${s.y0.toFixed(1)}px;height:${(s.y1 - s.y0).toFixed(1)}px"></i>`;
     }
-    // How many drawable strokes each bucket holds, counted BEFORE drawing so
-    // the "there is more here" bar is only drawn when something is actually
+    // How many strokes each bucket will actually SKIP, counted BEFORE drawing
+    // so the "there is more here" bar is only drawn when something really is
     // hidden — `n === 4` alone marked the fifth stroke even in a bucket of
-    // exactly five, claiming a truncation that never happened.
+    // exactly five, claiming a truncation that never happened. Tamper is
+    // exempt from the cap (drawn below), so it never counts as skippable.
     const bucketKey = (r) => Math.floor(r.t0 / model.bucketS);
-    const bucketTotal = new Map();
-    for (const r of visible) {
-      if (r.kind === 'gap') continue; // gaps are never subject to the cap
-      const k = bucketKey(r);
-      bucketTotal.set(k, (bucketTotal.get(k) || 0) + 1);
-    }
+    const bucketSkipped = new Map();
+    { const seen = new Map();
+      for (const r of visible) {
+        if (r.kind === 'gap') continue; // gaps are never subject to the cap
+        const k = bucketKey(r);
+        const n = seen.get(k) || 0;
+        seen.set(k, n + 1);
+        if (n >= 5 && r.family !== 'tamper') bucketSkipped.set(k, (bucketSkipped.get(k) || 0) + 1);
+      } }
     const perBucket = new Map();
     let tickIdx = 0;
     for (const r of visible) {
@@ -1132,28 +1217,110 @@ function initTimeline() {
       if (r.kind === 'gap') {
         tickIdx += 1;
         const h = Math.max(3, T.yOfTime(layout, r.t0 + r.size) - T.yOfTime(layout, r.t0));
-        html += `<i class="tl-tick tl-tickgap fam-gap" style="top:${T.yOfTime(layout, r.t0).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${delay}ms"></i>`;
+        html += `<i class="tl-tick tl-tickgap fam-gap" data-b="${bucketKey(r)}" style="top:${T.yOfTime(layout, r.t0).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${delay}ms"></i>`;
         continue;
       }
       const key = bucketKey(r);
       const n = perBucket.get(key) || 0;
       perBucket.set(key, n + 1);
-      if (n >= 5) continue; // a crowded bucket keeps its five densest strokes
+      // A crowded bucket keeps its five densest strokes — except tamper,
+      // which is never crowded out: worst-first is the invariant, and a
+      // minimap that can lose exactly the record that mattered most to a
+      // busy ten minutes would be the invariant broken at the glance layer.
+      if (n >= 5 && r.family !== 'tamper') continue;
       tickIdx += 1;
       // Same bucket, same y. The minimap's vertical axis IS time, so nudging
       // a stacked stroke downward drew it at a time the record does not
       // claim — at a typical scale a 3px stagger spans more than the bucket
       // itself. Stack sideways instead, where the axis means nothing.
       const y = T.yOfTime(layout, r.t0);
-      const over = n === 4 && (bucketTotal.get(key) || 0) > 5;
+      const over = n === 4 && (bucketSkipped.get(key) || 0) > 0;
       const w = over ? 46 : T.greekWidth(r.label);
-      const x = 8 + T.zoneIndent(model.zones, r.zone) + n * 2;
-      html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
+      // The sideways stack is capped at lane 5 — the one lane past the five
+      // kept strokes, reserved for cap-exempt tamper. Unbounded, a tamper
+      // behind ~26 skipped records stacked its LEFT edge past the map's
+      // overflow:hidden and vanished again — the exact disappearance the
+      // exemption exists to prevent.
+      const x = 8 + T.zoneIndent(model.zones, r.zone) + Math.min(n, 5) * 2;
+      html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" data-b="${key}" style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
     }
     html += '<i class="tl-view" id="tlview"></i>';
     map.innerHTML = html;
+    ticksByBucket = new Map();
+    for (const el of map.querySelectorAll('.tl-tick[data-b]')) {
+      const k = +el.dataset.b;
+      if (!ticksByBucket.has(k)) ticksByBucket.set(k, []);
+      ticksByBucket.get(k).push(el);
+    }
     syncView();
   }
+
+  // ---- the row <-> stroke bond (brushing, purely additive) ---------------
+  // Hovering or focusing a reading-pane row lights that bucket's strokes on
+  // the map, and the keyboard caret does the same on arrival — the mapping
+  // between the two panes teaches itself. Bucket-level on purpose: the
+  // record's own time grain, never finer.
+  let ticksByBucket = new Map();
+  let hotTicks = [];
+  function heatBucket(k) {
+    // The newest heat source owns the cooldown — a stale goto() timer must
+    // not wipe a highlight the mouse is actively holding.
+    clearTimeout(coolTicks);
+    for (const el of hotTicks) el.classList.remove('tl-hot');
+    hotTicks = k === null ? [] : (ticksByBucket.get(k) || []);
+    for (const el of hotTicks) el.classList.add('tl-hot');
+  }
+  let hotRows = [];
+  function heatRows(k) {
+    for (const el of hotRows) el.classList.remove('tl-hot');
+    hotRows = [];
+    if (k === null) return;
+    for (const el of nav) {
+      if (Math.floor(+el.dataset.t0 / model.bucketS) === k) { el.classList.add('tl-hot'); hotRows.push(el); }
+    }
+  }
+  list.addEventListener('mouseover', (e) => {
+    const row = e.target.closest('.tl-row');
+    heatBucket(row ? Math.floor(+row.dataset.t0 / model.bucketS) : null);
+  });
+  list.addEventListener('mouseleave', () => heatBucket(null));
+
+  // A drag or a strip click must END somewhere visible: flash the row the
+  // scrub landed on, the same acknowledgment keyboard users already get.
+  function flashRow(el) {
+    if (!el) return;
+    el.classList.remove('tl-flash');
+    void el.offsetWidth;
+    el.classList.add('tl-flash');
+  }
+  function anchorAt(t) {
+    let target = anchors[anchors.length - 1];
+    for (const el of anchors) { if (+el.dataset.t0 >= t) { target = el; break; } }
+    return target;
+  }
+
+  // ---- glide: the pane follows a scrub like paper, not a slide carousel --
+  // Each pointermove used to hard-assign scrollTop, so the pane teleported
+  // between snapped rows in 30-70px cuts. A short exponential chase keeps
+  // every frame moving toward the target instead; the position still comes
+  // only from bucket-snapped times, so nothing gets finer — just smoother.
+  let glideRaf = 0, glideGoal = null, glideWrote = -1;
+  function glideTo(top) {
+    if (REDUCED) { glideGoal = null; list.scrollTop = top; return; }
+    glideGoal = top;
+    if (glideRaf) return;
+    const step = () => {
+      glideRaf = 0;
+      if (glideGoal === null || !list.isConnected) return;
+      const d = glideGoal - list.scrollTop;
+      if (Math.abs(d) < 1) { list.scrollTop = glideGoal; glideWrote = list.scrollTop; glideGoal = null; return; }
+      list.scrollTop += d * 0.35;
+      glideWrote = list.scrollTop;
+      glideRaf = requestAnimationFrame(step);
+    };
+    glideRaf = requestAnimationFrame(step);
+  }
+  function stopGlide() { glideGoal = null; if (glideRaf) { cancelAnimationFrame(glideRaf); glideRaf = 0; } }
 
   function syncView() {
     const view = $('tlview');
@@ -1192,9 +1359,9 @@ function initTimeline() {
   }
 
   function scrollToTime(t, smooth) {
-    let target = anchors[anchors.length - 1];
-    for (const el of anchors) { if (+el.dataset.t0 >= t) { target = el; break; } }
+    const target = anchorAt(t);
     if (!target) return;
+    stopGlide();
     list.scrollTo({ top: centerTop(target), behavior: smooth && !REDUCED ? 'smooth' : 'auto' });
   }
 
@@ -1203,25 +1370,52 @@ function initTimeline() {
     return Math.min(Math.max(e.clientY - r.top, 0), r.height);
   }
 
+  const bucketRecs = (b0) => visible.filter((r) => r.t0 >= b0 && r.t0 < b0 + model.bucketS);
+  // Worst first inside the lens: its three-line cap must never be the thing
+  // that hides the record that mattered. Emphasis and order, not filtering —
+  // every record is still one line below in the pane.
+  const famRank = { tamper: 0, gap: 1 };
+  const worstFirst = (recs) => recs.slice().sort((a, b) =>
+    (famRank[a.family] ?? 2) - (famRank[b.family] ?? 2));
+
   function showLens(e) {
     const y = yIn(e);
     const t = T.timeOfY(layout, y);
     const seg = layout.find((s) => t >= s.t0 && t <= s.t1);
     let html = '';
+    let hotB = null;
     if (seg && seg.kind === 'fold') {
       const beats = seg.heartbeats ? ` · ${seg.heartbeats} heartbeat${seg.heartbeats === 1 ? '' : 's'} sealed` : '';
       html = `<div class="lh">${T.fmtHM(seg.t0)} → ${T.fmtHM(seg.t1)} UTC</div>`
         + `<div>Quiet · ${esc(T.fmtDuration(seg.t1 - seg.t0))} — no events, no declared gaps${beats}</div>`;
     } else {
-      const b0 = Math.floor(t / model.bucketS) * model.bucketS;
-      const recs = visible.filter((r) => r.t0 >= b0 && r.t0 < b0 + model.bucketS);
-      html = `<div class="lh">${esc(T.fmtBucketRange(b0, model.bucketS))} UTC</div>`;
+      let b0 = Math.floor(t / model.bucketS) * model.bucketS;
+      let recs = bucketRecs(b0);
+      if (!recs.length) {
+        // Magnetism: a bucket is 1-3px tall here, so reading a stroke used to
+        // need pixel aim. If ink sits within a few px, the lens snaps to that
+        // bucket and says ITS honest range — reachability, zero extra
+        // precision (the shown window is still the full bucket).
+        for (const dy of [1, -1, 2, -2, 3, -3]) {
+          const cand = Math.floor(T.timeOfY(layout, y + dy) / model.bucketS) * model.bucketS;
+          if (cand === b0) continue;
+          const r = bucketRecs(cand);
+          if (r.length) { b0 = cand; recs = r; break; }
+        }
+      }
+      const dayName = model.days.length > 1
+        ? esc(T.fmtDayLabel(Math.floor(b0 / T.DAY_S) * T.DAY_S).replace(/, \d+$/, '')) + ' · ' : '';
+      html = `<div class="lh">${dayName}${esc(T.fmtBucketRange(b0, model.bucketS))} UTC</div>`;
       if (!recs.length) html += `<div class="tl-det">Quiet bucket</div>`;
-      for (const r of recs.slice(0, 3)) {
+      for (const r of worstFirst(recs).slice(0, 3)) {
         html += `<div class="lr">${famDot(r.family)}<span>${esc(r.label)}</span>${r.zone ? `<span class="tl-det">${esc(r.zone)}</span>` : ''}</div>`;
       }
       if (recs.length > 3) html += `<div class="tl-det">+${recs.length - 3} more</div>`;
+      if (recs.length) hotB = Math.floor(b0 / model.bucketS);
     }
+    // The bond runs the other way too: the bucket under the lens lights its
+    // rows in the pane, when they happen to be on screen.
+    heatRows(hotB);
     lens.innerHTML = html;
     lens.hidden = false;
     const wr = wrap.getBoundingClientRect(), mr = map.getBoundingClientRect();
@@ -1229,21 +1423,45 @@ function initTimeline() {
   }
 
   let dragging = false;
+  let grab = null; // pointer started on the viewport pane: drag it like a scrollbar thumb
+  let lastScrubT = null;
   map.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     dragging = true;
     try { map.setPointerCapture(e.pointerId); } catch { /* older engines */ }
-    scrollToTime(T.timeOfY(layout, yIn(e)), false);
+    const view = $('tlview');
+    const vr = view ? view.getBoundingClientRect() : null;
+    if (vr && e.clientY >= vr.top && e.clientY <= vr.bottom) {
+      // Grabbing the pane moves the pane — no jump-to-cursor first, exactly
+      // like a scrollbar thumb (which role=scrollbar promises this is).
+      stopGlide();
+      grab = { y: e.clientY, top: list.scrollTop,
+               scale: Math.max(list.scrollHeight - list.clientHeight, 0) / Math.max(map.clientHeight - vr.height, 1) };
+      map.classList.add('tl-grabbing');
+    } else {
+      lastScrubT = T.timeOfY(layout, yIn(e));
+      glideTo(centerTop(anchorAt(lastScrubT)));
+    }
     showLens(e);
     e.preventDefault();
   });
   map.addEventListener('pointermove', (e) => {
-    if (dragging) scrollToTime(T.timeOfY(layout, yIn(e)), false);
+    if (dragging && grab) {
+      list.scrollTop = grab.top + (e.clientY - grab.y) * grab.scale;
+    } else if (dragging) {
+      lastScrubT = T.timeOfY(layout, yIn(e));
+      glideTo(centerTop(anchorAt(lastScrubT)));
+    }
     showLens(e);
   });
-  map.addEventListener('pointerup', () => { dragging = false; });
-  map.addEventListener('pointercancel', () => { dragging = false; });
-  map.addEventListener('pointerleave', () => { if (!dragging) lens.hidden = true; });
+  const endDrag = () => {
+    if (dragging && !grab && lastScrubT !== null) flashRow(anchorAt(lastScrubT));
+    dragging = false; grab = null; lastScrubT = null;
+    map.classList.remove('tl-grabbing');
+  };
+  map.addEventListener('pointerup', endDrag);
+  map.addEventListener('pointercancel', endDrag);
+  map.addEventListener('pointerleave', () => { if (!dragging) { lens.hidden = true; heatRows(null); } });
 
   // Wheel and trackpad scroll the reading pane from over the minimap, so the
   // two panes never disagree about which gesture does what.
@@ -1254,24 +1472,42 @@ function initTimeline() {
     const px = e.deltaMode === 1 ? e.deltaY * 16
       : e.deltaMode === 2 ? e.deltaY * list.clientHeight
       : e.deltaY;
+    stopGlide();
     list.scrollTop += px;
     e.preventDefault();
   }, { passive: false });
 
   const say = $('tlsay');
   let cur = -1;
+  let coolTicks = 0;
+  let gotoUntil = 0; // while a goto's smooth scroll is in flight, cur is truth
   function goto(i) {
     if (!nav.length) return;
     cur = Math.min(Math.max(i, 0), nav.length - 1);
     const el = nav[cur];
+    stopGlide();
+    gotoUntil = performance.now() + (REDUCED ? 0 : 600);
     list.scrollTo({ top: centerTop(el), behavior: REDUCED ? 'auto' : 'smooth' });
-    el.classList.remove('tl-flash');
-    void el.offsetWidth;
-    el.classList.add('tl-flash');
+    flashRow(el);
+    // The caret's strokes light up on the map too, so a keyboard walk
+    // teaches the row-to-stroke mapping the same way hovering does.
+    heatBucket(Math.floor(+el.dataset.t0 / model.bucketS));
+    clearTimeout(coolTicks);
+    coolTicks = setTimeout(() => heatBucket(null), 1200);
     // Keyboard and remote users get the row read out; the minimap itself is
     // a picture, so without this the caret would move in silence.
     if (say) say.textContent = (el.textContent || '').replace(/\s+/g, ' ').trim()
       + ' · record ' + (cur + 1) + ' of ' + nav.length;
+  }
+  // n/p step between the records that justify the trip: tamper and declared
+  // gaps. Stepping order, not a filtered view — everything stays on the page.
+  const notable = (el) => el.classList.contains('fam-tamper') || el.classList.contains('tl-gap');
+  function gotoNotable(direction) {
+    reseatCaret(direction);
+    for (let i = cur + direction; i >= 0 && i < nav.length; i += direction) {
+      if (notable(nav[i])) { goto(i); return; }
+    }
+    if (say) say.textContent = 'No ' + (direction > 0 ? 'later' : 'earlier') + ' tamper or gap records.';
   }
   // The caret is only moved by goto(), so every OTHER way of moving —
   // dragging the minimap, the wheel, a day strip, scrolling the pane itself —
@@ -1286,6 +1522,10 @@ function initTimeline() {
     return r.bottom > lr.top && r.top < lr.bottom;
   }
   function reseatCaret(direction) {
+    // Mid-flight of a goto's smooth scroll the caret row is legitimately
+    // offscreen — it is TRAVELING. Re-seating to the transient viewport sent
+    // a rapid n,n from End backward through half the record.
+    if (performance.now() < gotoUntil) return;
     if (caretOnScreen()) return;
     const lr = list.getBoundingClientRect();
     let first = -1, last = -1;
@@ -1301,8 +1541,32 @@ function initTimeline() {
   map.addEventListener('keydown', (e) => {
     const k = e.key;
     if (!nav.length) return;
-    if (k === 'ArrowDown' || k === 'ArrowRight') { reseatCaret(1); goto(cur + 1); }
+    // Browser and OS chords pass through untouched: Ctrl/Cmd+P must print
+    // the evidence, not scrub to the previous tamper.
+    if (e.ctrlKey || e.metaKey) return;
+    if ((k === 'ArrowRight' || k === 'ArrowLeft' || k === 'ArrowUp' || k === 'ArrowDown') && e.altKey) {
+      // Days are chapters: Alt+arrow lands on the first record of the next
+      // or previous day — all four arrows, so the promise in the aria-label
+      // holds whichever pair the hand reaches for.
+      const dir = k === 'ArrowRight' || k === 'ArrowDown' ? 1 : -1;
+      reseatCaret(dir);
+      const at = Math.floor(+nav[Math.min(Math.max(cur, 0), nav.length - 1)].dataset.t0 / T.DAY_S);
+      let best = -1;
+      for (let i = cur + dir; i >= 0 && i < nav.length; i += dir) {
+        const d = Math.floor(+nav[i].dataset.t0 / T.DAY_S);
+        if (dir > 0 ? d > at : d < at) { best = i; break; }
+      }
+      if (dir < 0 && best >= 0) { // walk back to that day's FIRST record
+        const d = Math.floor(+nav[best].dataset.t0 / T.DAY_S);
+        while (best > 0 && Math.floor(+nav[best - 1].dataset.t0 / T.DAY_S) === d) best -= 1;
+      }
+      if (best >= 0) goto(best);
+      else if (say) say.textContent = 'No ' + (dir > 0 ? 'later' : 'earlier') + ' day in this record.';
+    }
+    else if (k === 'ArrowDown' || k === 'ArrowRight') { reseatCaret(1); goto(cur + 1); }
     else if (k === 'ArrowUp' || k === 'ArrowLeft') { reseatCaret(-1); goto(cur - 1); }
+    else if (k === 'n' || k === 'N') gotoNotable(1);
+    else if (k === 'p' || k === 'P') gotoNotable(-1);
     else if (k === 'Home') goto(0);
     else if (k === 'End') goto(nav.length - 1);
     else if (k === 'PageDown' || k === 'PageUp') {
@@ -1317,18 +1581,54 @@ function initTimeline() {
     e.preventDefault();
   });
 
+  // The spotlight is a MODE, so it gets visible state (the caption line
+  // doubles as its status), a standard exit (Escape), and wayfinding: turning
+  // it on brings the first record of that family into view — with everything
+  // scrolled off screen, "dimmed, not hidden" used to look exactly like
+  // "gone". Dim only, always; nothing here removes a row.
+  const cap = $('tlcap');
+  const capIdle = cap ? cap.innerHTML : '';
+  function setSpot(fam, chip) {
+    panel.querySelectorAll('.tl-chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+    if (!fam) {
+      delete panel.dataset.spot;
+      if (cap) cap.innerHTML = capIdle;
+      if (say) say.textContent = 'Spotlight off — showing everything equally.';
+      return;
+    }
+    panel.dataset.spot = fam;
+    if (chip) chip.setAttribute('aria-pressed', 'true');
+    if (cap) cap.innerHTML = `Spotlight on <b>${esc(T.FAMILY_LABELS[fam])}</b> — everything else is dimmed, never hidden · Esc clears`;
+    if (say) say.textContent = `Spotlight on ${T.FAMILY_LABELS[fam]}. Other records are dimmed, still present.`;
+    const idx = nav.findIndex((el) => el.classList.contains('fam-' + fam));
+    if (idx >= 0 && !rowOnScreen(nav[idx])) {
+      stopGlide();
+      list.scrollTo({ top: centerTop(nav[idx]), behavior: REDUCED ? 'auto' : 'smooth' });
+      flashRow(nav[idx]);
+    }
+  }
+  function rowOnScreen(el) {
+    const r = el.getBoundingClientRect(), lr = list.getBoundingClientRect();
+    return r.bottom > lr.top && r.top < lr.bottom;
+  }
   for (const chip of panel.querySelectorAll('.tl-chip')) {
     chip.addEventListener('click', () => {
       const fam = chip.dataset.fam;
-      const wasOn = panel.dataset.spot === fam;
-      panel.querySelectorAll('.tl-chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
-      if (wasOn) delete panel.dataset.spot;
-      else { panel.dataset.spot = fam; chip.setAttribute('aria-pressed', 'true'); }
+      setSpot(panel.dataset.spot === fam ? null : fam, chip);
     });
   }
+  // On the document, not the panel: focus is elsewhere for every Safari
+  // mouse user (clicking a button there never focuses it), and "Esc clears"
+  // is a promise the caption makes unconditionally. Torn down with the
+  // panel's watcher so re-renders do not stack listeners.
+  const onDocKey = (e) => {
+    if (e.key === 'Escape' && panel.isConnected && panel.dataset.spot) { setSpot(null); e.preventDefault(); }
+  };
+  document.addEventListener('keydown', onDocKey);
 
   for (const strip of panel.querySelectorAll('.tl-strip')) {
     const dayT0 = +strip.dataset.day;
+    const caret = strip.querySelector('.tl-stripcaret');
     // Snap to the bucket grid here too — the strip may not offer a position
     // the record cannot justify.
     const goTo = (minuteOfDay, smooth) => {
@@ -1339,8 +1639,17 @@ function initTimeline() {
       // assistive tool happens to read.
       strip.setAttribute('aria-valuenow', String(Math.floor((t - dayT0) / 60)));
       strip.setAttribute('aria-valuetext', T.fmtHM(t) + ' UTC');
+      // The slider shows its hand: a caret at the snapped position (sighted
+      // keyboard users were adjusting an invisible value), and the row the
+      // scrub lands on flashes, closing the gesture with an acknowledgment.
+      if (caret) {
+        caret.style.left = (((t - dayT0) / T.DAY_S) * 100).toFixed(2) + '%';
+        caret.hidden = false;
+      }
       scrollToTime(t, smooth);
+      flashRow(anchorAt(t));
     };
+    strip.addEventListener('blur', () => { if (caret) caret.hidden = true; });
     strip.addEventListener('click', (e) => {
       const r = strip.getBoundingClientRect();
       const frac = Math.min(Math.max((e.clientX - r.left) / Math.max(r.width, 1), 0), 1);
@@ -1359,8 +1668,60 @@ function initTimeline() {
     });
   }
 
+  // "· 2 tamper" and "· 1 gap" in a day header jump to those records —
+  // repeat presses cycle through the day's matches.
+  for (const btn of panel.querySelectorAll('button.tl-tam, button.tl-gapn')) {
+    const dayT0 = +btn.dataset.day;
+    const match = btn.dataset.kind === 'tamper'
+      ? (el) => el.classList.contains('fam-tamper')
+      : (el) => el.classList.contains('tl-gap');
+    const mine = [];
+    for (let i = 0; i < nav.length; i++) {
+      const t = +nav[i].dataset.t0;
+      if (t >= dayT0 && t < dayT0 + T.DAY_S && match(nav[i])) mine.push(i);
+    }
+    let at = -1;
+    btn.addEventListener('click', () => {
+      if (!mine.length) return;
+      at = (at + 1) % mine.length;
+      goto(mine[at]);
+    });
+  }
+
+  // A short export must not rattle inside a fixed 54vh frame: when every row
+  // fits, the panes shrink to the content and the empty border goes away.
+  // Measured from the first and last child rects — scrollHeight floors at the
+  // box height, so it can never say "the content is shorter than the frame".
+  // Re-run on every resize (the stylesheet default is restored first): a
+  // once-pinned height clipped half the record after the rows re-wrapped
+  // taller in a narrower window.
+  function fitPane() {
+    wrap.style.removeProperty('--tl-h');
+    if (!list.firstElementChild || !list.lastElementChild) return;
+    const contentH = list.lastElementChild.getBoundingClientRect().bottom
+      - list.firstElementChild.getBoundingClientRect().top;
+    if (contentH > 0 && contentH + 2 < list.clientHeight) {
+      wrap.style.setProperty('--tl-h', Math.max(Math.ceil(contentH) + 2, 160) + 'px');
+      // The rail's ::before overhang bleeds a few px past the last row —
+      // invisible ink that still counts as scroll overflow. Absorb it, so a
+      // pane sized to "everything fits" cannot be scrolled at all; if the
+      // leftover is larger than decoration can explain, the fit call was
+      // wrong — fall back to the stylesheet height rather than clip.
+      const extra = list.scrollHeight - list.clientHeight;
+      if (extra > 0 && extra <= 24) {
+        wrap.style.setProperty('--tl-h', (Math.ceil(contentH) + 2 + extra) + 'px');
+      } else if (extra > 24) {
+        wrap.style.removeProperty('--tl-h');
+      }
+    }
+  }
+  fitPane();
+
   let raf = 0;
   list.addEventListener('scroll', () => {
+    // A scroll the glide did not write is the user taking the pane back —
+    // the glide yields instantly rather than fighting the scrollbar.
+    if (glideGoal !== null && Math.abs(list.scrollTop - glideWrote) > 1) stopGlide();
     if (!raf) raf = requestAnimationFrame(() => { raf = 0; syncView(); });
   });
 
@@ -1371,14 +1732,16 @@ function initTimeline() {
   // window listener behind for each.
   if (tlWatcher) { tlWatcher(); tlWatcher = null; }
   let rto = 0;
-  const onResize = () => { clearTimeout(rto); rto = setTimeout(buildMap, 120); };
+  const onResize = () => { clearTimeout(rto); rto = setTimeout(() => { fitPane(); buildMap(); }, 120); };
   if (typeof ResizeObserver === 'function') {
     const ro = new ResizeObserver(onResize);
     ro.observe(map);
-    tlWatcher = () => { clearTimeout(rto); ro.disconnect(); };
+    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide();
+      document.removeEventListener('keydown', onDocKey); ro.disconnect(); };
   } else {
     window.addEventListener('resize', onResize);
-    tlWatcher = () => { clearTimeout(rto); window.removeEventListener('resize', onResize); };
+    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide();
+      document.removeEventListener('keydown', onDocKey); window.removeEventListener('resize', onResize); };
   }
 
   buildMap();

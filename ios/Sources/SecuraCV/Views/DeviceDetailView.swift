@@ -306,7 +306,9 @@ struct DeviceDetailView: View {
                 Section {
                     TimelineScrubSection(records: ownRecords) { bucket in
                         if let id = anchorID(for: bucket) {
-                            scroller.scrollTo(id, anchor: .top)
+                            // Animated, or the release of a scrub reads as a
+                            // teleport — continuity is the confirmation.
+                            withAnimation(.snappy) { scroller.scrollTo(id, anchor: .top) }
                         }
                     }
                     .listRowInsets(EdgeInsets())
