@@ -2,20 +2,20 @@
   "$generated_by": "canary-local/tools/pin_hub_image.py \u2014 the pin ceremony; do not edit by hand",
   "$doc": "Repo-vouched SHA-256 pins for the hub base-OS images (docs/design/raspberry_pi_hub_flashing.md). Each hash was taken over the actual downloaded asset bytes and cross-checked against GitHub's asset digest where one was published; gen_hub_image.py folds these into hub_image.json (pinned=true) only while they match the current haos_version, so a version bump honestly un-pins until the ceremony re-runs. Re-verified weekly by pin_hub_image.py --verify in the freshness workflow.",
   "schema_version": 1,
-  "haos_version": "18.1",
-  "pinned_at": "2026-07-24",
+  "haos_version": "18.2",
+  "pinned_at": "2026-08-31",
   "channels": [
     "downloaded asset bytes (sha256)",
     "GitHub release asset digest (cross-check)"
   ],
   "boards": {
     "rpi5-64": {
-      "asset": "haos_rpi5-64-18.1.img.xz",
-      "sha256": "0058e7aa7a2cb0d83fb4611bbbfa7e410c09e2241f6487ad8af94f3208d2d52c"
+      "asset": "haos_rpi5-64-18.2.img.xz",
+      "sha256": "aac01e8ca6e57532a77501c05e433d311209a0e00b7db256c7329386a19f0ca2"
     },
     "rpi4-64": {
-      "asset": "haos_rpi4-64-18.1.img.xz",
-      "sha256": "e86baac3b6d714833d747ca96df32103da116561c5467871d8e88da5af4279fd"
+      "asset": "haos_rpi4-64-18.2.img.xz",
+      "sha256": "ab9af5bcec8f2ce1672ceb155e589bee7b3582e45906acca8d3456690849241a"
     }
   }
 }

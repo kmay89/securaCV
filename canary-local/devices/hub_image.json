@@ -5,7 +5,7 @@
   "base_os": {
     "name": "Home Assistant OS",
     "why": "HAOS is already the self-healing, auto-updating appliance the request asks for: an immutable A/B root (RAUC) that rolls back a bad boot, a Supervisor that watchdogs add-ons, and hands-off OS + add-on updates. We post-process the official image; we do not fork it. See the design doc \u00a74.",
-    "version": "18.1",
+    "version": "18.2",
     "version_source": "canary-local/devices/homeassistant.json:upstream.haos_version",
     "arch": "aarch64",
     "pinned": true,
@@ -22,9 +22,9 @@
         ],
         "usb_device_boot": "hold the power button while connecting USB-C (CM5: nRPIBOOT on the IO board)",
         "durable_default": "boot from NVMe/SSD (Pi 5) for multi-year endurance",
-        "image_asset": "haos_rpi5-64-18.1.img.xz",
-        "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.1/haos_rpi5-64-18.1.img.xz",
-        "sha256": "0058e7aa7a2cb0d83fb4611bbbfa7e410c09e2241f6487ad8af94f3208d2d52c"
+        "image_asset": "haos_rpi5-64-18.2.img.xz",
+        "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.2/haos_rpi5-64-18.2.img.xz",
+        "sha256": "aac01e8ca6e57532a77501c05e433d311209a0e00b7db256c7329386a19f0ca2"
       },
       {
         "id": "rpi4-64",
@@ -37,9 +37,9 @@
         ],
         "usb_device_boot": "connect USB-C with no card inserted (CM4: nRPIBOOT on the IO board; Pi 400: use a card reader)",
         "durable_default": "use a high-endurance A2 microSD; watch the SD wear sensor",
-        "image_asset": "haos_rpi4-64-18.1.img.xz",
-        "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.1/haos_rpi4-64-18.1.img.xz",
-        "sha256": "e86baac3b6d714833d747ca96df32103da116561c5467871d8e88da5af4279fd"
+        "image_asset": "haos_rpi4-64-18.2.img.xz",
+        "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.2/haos_rpi4-64-18.2.img.xz",
+        "sha256": "ab9af5bcec8f2ce1672ceb155e589bee7b3582e45906acca8d3456690849241a"
       }
     ],
     "excluded_boards": [
@@ -185,7 +185,7 @@
   },
   "meta": {
     "design": "docs/design/raspberry_pi_hub_flashing.md",
-    "upstream_fetched_at": "2026-07-19",
+    "upstream_fetched_at": "2026-08-31",
     "sources": [
       "canary-local/devices/homeassistant.json",
       "desktop/hub-core/src/hub_disk.rs",

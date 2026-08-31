@@ -10,10 +10,10 @@
   },
   "fw_train": "2.4.14",
   "upstream": {
-    "haos_version": "18.1",
-    "ha_version": "2026.7.2",
+    "haos_version": "18.2",
+    "ha_version": "2026.8.3",
     "source": "https://version.home-assistant.io/stable.json",
-    "fetched_at": "2026-07-19"
+    "fetched_at": "2026-08-31"
   },
   "why": [
     {
