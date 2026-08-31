@@ -187,6 +187,11 @@
             border:1px solid var(--line); border-radius:8px; background:var(--bg);
             cursor:crosshair; touch-action:none; user-select:none; -webkit-user-select:none; }
   .tl-map:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  /* Scripted focus() from pointerdown reads as :focus-visible in Chromium,
+     which would ring the map on every mouse click. The marker class says
+     "this focus came from a pointer" — the first keydown removes it, so
+     keyboard users keep their ring. */
+  .tl-map.tl-ptrfocus:focus-visible { outline:none; }
   .tl-gline { position:absolute; left:0; right:0; height:1px; background:var(--line); opacity:.45; pointer-events:none; }
   .tl-gline.major { opacity:1; }
   .tl-tick { position:absolute; height:2px; border-radius:1px; background:var(--fam); opacity:.92;
@@ -3874,10 +3879,16 @@ function initTimeline() {
       return;
     }
     pendingFlash = el;
-    flashFallback = setTimeout(() => { // a trip should never owe a flash forever
-      if (pendingFlash) { const p = pendingFlash; pendingFlash = null; flashRow(p); }
+    flashFallback = setTimeout(() => {
+      // The debt expires: pay only if the row made it on screen by now —
+      // an abandoned trip must never flash a false acknowledgment later.
+      const p = pendingFlash;
+      pendingFlash = null;
+      if (p && rowOnScreen(p)) flashRow(p);
     }, 1500);
   }
+  // The user taking the pane back voids any owed flash outright.
+  function voidFlashDebt() { pendingFlash = null; clearTimeout(flashFallback); }
   // The flash class outlives its animation; shed it on animationend so the
   // spotlight's flash exemption (opacity:1 while flashing) stays transient.
   list.addEventListener('animationend', (e) => {
@@ -3893,26 +3904,31 @@ function initTimeline() {
   // The scrub target, the lens, and the landing flash all consume the SAME
   // resolved answer, so the magnetic snap can never make them disagree.
   // Tamper and declared-gap ticks within 6px catch the scrub (released at
-  // 10px — hysteresis so the hold cannot flicker at the boundary). Emphasis
-  // and reachability only: the snapped position is a bucket the record
-  // holds, never finer, and nothing else is harder to reach.
+  // 10px — hysteresis so the hold cannot flicker at the boundary). The snap
+  // engages ONLY while the pointer's own bucket is empty: a magnet that
+  // could shadow an occupied neighbor would make ordinary records harder to
+  // reach from the map, and emphasis must never cost reach. The snapped
+  // position is a bucket the record holds, never finer.
   let notables = [];
   let snap = null;
   const SNAP_ON = 6, SNAP_OFF = 10;
   function resolveScrub(e, allowSnap) {
     const y = yIn(e);
-    if (allowSnap && snap && Math.abs(y - snap.y) <= SNAP_OFF) return { y, t: snap.t0, snap };
+    const rawT = T.timeOfY(layout, y);
+    const ownB0 = Math.floor(rawT / model.bucketS) * model.bucketS;
+    const magnetic = allowSnap && !bucketRecs(ownB0).length;
+    if (magnetic && snap && Math.abs(y - snap.y) <= SNAP_OFF) return { y, t: snap.t0, snap };
     snap = null;
-    if (allowSnap) {
-      let best = null, bd = SNAP_ON + 1;
+    if (magnetic) {
+      let best = null, bd = Infinity;
       for (const n of notables) {
         const d = Math.abs(n.y - y);
-        if (d < bd) { bd = d; best = n; }
+        if (d <= SNAP_ON && d < bd) { bd = d; best = n; }
         else if (n.y - y > SNAP_ON) break; // sorted by y: nothing closer ahead
       }
       if (best) { snap = best; return { y, t: best.t0, snap: best }; }
     }
-    return { y, t: T.timeOfY(layout, y), snap: null };
+    return { y, t: rawT, snap: null };
   }
 
   // Scroll target for a drag: proportional scrollbar motion (pointer fraction
@@ -4088,7 +4104,9 @@ function initTimeline() {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     // preventDefault below cancels the mousedown that would have focused this
     // tabindex=0 element — without an explicit focus, no mouse user ever
-    // unlocked the keyboard layer the aria-label promises.
+    // unlocked the keyboard layer the aria-label promises. The marker class
+    // keeps the scripted focus from painting the keyboard ring (see CSS).
+    map.classList.add('tl-ptrfocus');
     try { map.focus({ preventScroll: true }); } catch { /* older engines */ }
     dragging = true;
     try { map.setPointerCapture(e.pointerId); } catch { /* older engines */ }
@@ -4144,6 +4162,7 @@ function initTimeline() {
       : e.deltaMode === 2 ? e.deltaY * list.clientHeight
       : e.deltaY;
     stopGlide();
+    voidFlashDebt();
     list.scrollTop += px;
     e.preventDefault();
   }, { passive: false });
@@ -4156,7 +4175,10 @@ function initTimeline() {
     if (!nav.length) return;
     cur = Math.min(Math.max(i, 0), nav.length - 1);
     const el = nav[cur];
-    gotoUntil = performance.now() + (REDUCED ? 0 : 600); // honest now: the smooth leg is <= 1 viewport
+    // The smooth leg is bounded: long trips teleport to within one viewport,
+    // and the medium trips that ride native smooth (up to ~2.5 viewports)
+    // settle inside this guard too.
+    gotoUntil = performance.now() + (REDUCED ? 0 : 600);
     jumpTo(centerTop(el));
     flashRow(el);
     // The caret's strokes light up on the map too, so a keyboard walk
@@ -4208,7 +4230,9 @@ function initTimeline() {
     if (first >= 0) cur = direction > 0 ? first - 1 : last + 1;
   }
 
+  map.addEventListener('blur', () => map.classList.remove('tl-ptrfocus'));
   map.addEventListener('keydown', (e) => {
+    map.classList.remove('tl-ptrfocus'); // a key restores the keyboard ring
     const k = e.key;
     if (!nav.length) return;
     // Browser and OS chords pass through untouched: Ctrl/Cmd+P must print
@@ -4397,8 +4421,9 @@ function initTimeline() {
   let raf = 0;
   list.addEventListener('scroll', () => {
     // A scroll the glide did not write is the user taking the pane back —
-    // the glide yields instantly rather than fighting the scrollbar.
-    if (glideGoal !== null && Math.abs(list.scrollTop - glideWrote) > 1) stopGlide();
+    // the glide yields instantly rather than fighting the scrollbar, and
+    // whatever flash that trip still owed is voided with it.
+    if (glideGoal !== null && Math.abs(list.scrollTop - glideWrote) > 1) { stopGlide(); voidFlashDebt(); }
     if (!raf) raf = requestAnimationFrame(() => {
       raf = 0;
       syncView();
