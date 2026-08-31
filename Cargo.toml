@@ -88,6 +88,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 [dev-dependencies]
 trybuild = "1.0.89"
 proptest = "1"
+# Self-signed certificates for the `api-tls` end-to-end tests. Same crate and
+# version already vetted as the optional c2pa-export dependency.
+rcgen = "0.14"
 
 # libc is needed on every Unix (statvfs free-space preflight in witnessd);
 # seccomp is Linux-only.
@@ -111,6 +114,11 @@ adapter-frigate = []
 adapter-mqtt-sensor = []
 adapter-webhook = ["adapter-mqtt-sensor"]
 adapter-webhook-tls = ["adapter-webhook", "rustls", "rustls-pemfile", "rustls-pki-types"]
+# In-process TLS for the event API and break-glass servers: with this feature
+# a configured cert/key is terminated by rustls inside the accept loop, so
+# "provide a cert/key" actually encrypts the socket instead of attesting to an
+# external terminator (docs/security/ENTERPRISE_CUSTODY.md section 4).
+api-tls = ["rustls", "rustls-pemfile", "rustls-pki-types"]
 adapter-ble-presence = []
 # Egress bridge: the paced Apple Home projection core
 # (docs/design/apple_home_integration.md). Pure Rust, no HAP dependency yet —

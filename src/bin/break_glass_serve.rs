@@ -2,9 +2,10 @@
 //! unseal) over HTTP.
 //!
 //! Operator-mediated and loopback-default: binds `127.0.0.1` unless a routable
-//! address is given *with* TLS materials (which must be terminated by a front
-//! proxy). Every request needs the rotating capability token written to
-//! `--token-path`. See `src/break_glass/server.rs` for the security model.
+//! address is given *with* TLS materials — terminated in-process on an
+//! `api-tls` build, by a front proxy otherwise. Every request needs the
+//! rotating capability token written to `--token-path`. See
+//! `src/break_glass/server.rs` for the security model.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,6 +73,7 @@ fn main() -> Result<()> {
         (Some(cert), Some(key)) => Some(ApiTlsConfig::load(cert, key)?),
         _ => None,
     };
+    let tls_configured = tls.as_ref().is_some_and(|t| t.is_configured());
     let server_cfg = BreakGlassServerConfig {
         addr: args.addr.clone(),
         output_dir: args.output_dir.clone(),
@@ -82,10 +84,15 @@ fn main() -> Result<()> {
     let server = BreakGlassServer::bind(server_cfg)?;
     let addr = server.local_addr();
     log::info!("break-glass server bound to {addr}");
-    // Only advertise the plaintext URL for loopback. On a routable bind the
-    // listener is plaintext behind a TLS terminator, so pointing operators at
+    // On an `api-tls` build with material configured, the listener itself
+    // terminates TLS — advertise https:// directly. Otherwise only advertise
+    // the plaintext URL for loopback: on a routable bind the listener is
+    // plaintext behind a TLS terminator, so pointing operators at
     // http://<addr> directly would bypass the proxy and leak the token.
-    if addr.ip().is_loopback() {
+    let in_process_tls = cfg!(feature = "api-tls") && tls_configured;
+    if in_process_tls {
+        log::info!("operator console: https://{addr}/breakglass (TLS terminated in-process)");
+    } else if addr.ip().is_loopback() {
         log::info!("operator console: http://{addr}/breakglass");
     } else {
         log::info!(

@@ -218,6 +218,15 @@ jobs:
       run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
     - name: Clippy (adapters)
       run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-can-bus,adapter-sandbox -- -D warnings
+    - name: Clippy (api-tls)
+      run: cargo clippy --all-targets --features api-tls -- -D warnings
+    # In-process TLS is the capability token's transport boundary, so its tests
+    # run here rather than merely compiling: the end-to-end tests in api:: and
+    # break_glass::server:: prove the listener actually terminates TLS (a rustls
+    # client handshakes and reads a response) and that plaintext clients get
+    # nothing back from a TLS socket.
+    - name: Test (api-tls)
+      run: cargo test --verbose --features api-tls
     - name: Clippy (backend-tract)
       run: cargo clippy --all-targets --features backend-tract -- -D warnings
     - name: Clippy (ingest-v4l2)

@@ -308,3 +308,72 @@ untrusted-signer, honest-label, and end-to-end writer→verify paths; `cargo
 clippy --lib --bins -- -D warnings` and `cargo fmt --check` clean (default and
 `pqc-signatures`); spelling and docs-index lints pass; the kernel-status-grid
 generator produces no diff.
+
+---
+
+# In-process TLS pass (2026-08-31)
+
+Scope: close the ENTERPRISE_CUSTODY §4 residual — "provide a cert/key" on the
+token-bearing HTTP surfaces now encrypts the socket instead of attesting that
+something else does.
+
+## Fixed in this pass
+
+- **New `api-tls` feature: in-process rustls termination for the Event API and
+  the break-glass server.** Both accept loops serve every connection through a
+  `rustls::StreamOwned` session when TLS material is configured (the same
+  arrangement as the webhook adapter's `adapter-webhook-tls` module). PEM
+  parsing and `ServerConfig` construction happen at spawn/bind time, so bad
+  material fails startup, not the first connection.
+- **Exposure gates key off TLS being ACTIVE, never off config presence.** The
+  Event API's non-loopback refusal now admits a bind when in-process TLS
+  actually wraps the socket; a plaintext bind still requires
+  `WITNESS_API_ALLOW_INSECURE=1`. On a build without the feature, configuring
+  cert/key on the Event API is a **startup error** — material the build cannot
+  terminate must not look like protection. Break-glass keeps its bind-time
+  refusal; without the feature its cert/key remain an explicit attestation of
+  an external terminator (now with a startup warning saying exactly that).
+- **A hostile connection cannot wedge the single-threaded loops.** Every
+  socket operation — the lazy rustls handshake included — runs through a
+  `DeadlineStream` that enforces the per-op inactivity timeout (2s API / 5s
+  break-glass) AND an absolute 30s wall-clock budget for the whole
+  connection. A per-op timeout alone is reset forever by a peer dripping one
+  byte per interval (slowloris) — a pre-existing gap on the plaintext request
+  path that in-process TLS would have widened with one more drip-able phase;
+  both are closed by the budget, which also bounds a peer draining a large
+  response one byte at a time. The break-glass server additionally gains the
+  write timeout the Event API already had. (Raised independently by review;
+  regression-tested with a spent-budget unit test.)
+- **Operator wiring.** witnessd and witness_api read `WITNESS_API_TLS_CERT` /
+  `WITNESS_API_TLS_KEY` (paths to PEM files, both-or-neither);
+  `break_glass_serve` keeps its `--tls-cert`/`--tls-key` flags and now
+  advertises `https://` when termination is in-process. The container image's
+  health probe follows the TLS configuration (https when a cert is named).
+- **Key-material hygiene.** `ApiTlsConfig` scrubs its PEM buffers on drop
+  (zeroize) and redacts the key from `Debug` formatting; TLS sessions send
+  `close_notify` on teardown so strict clients see an orderly closure.
+
+## Honest scope
+
+- Server-authentication only: client auth on these surfaces remains the
+  rotating capability token. mTLS (as the webhook module already offers) would
+  be a further tier.
+- The RFC-3161 CMS countersignature check in Rust stays tracked in
+  `ENTERPRISE_CUSTODY.md` §4 — this pass is transport only.
+- Deliberate asymmetry, signed off: on a non-`api-tls` build the Event API
+  hard-refuses configured TLS material, while break-glass keeps its
+  pre-existing attestation contract (routable bind allowed with cert/key as
+  the operator's claim that an external terminator fronts it, warned at
+  startup). Changing break-glass to refuse would break existing front-proxy
+  deployments; the honest posture is the warning plus this record.
+
+## Verification (this pass)
+
+`cargo test --lib` passes on the default build (including the new
+refuse-material-without-feature and non-loopback-refusal tests) and with
+`--features api-tls` (389 tests, including end-to-end handshakes: a rustls
+client reads `/health` and the break-glass console over the encrypted session,
+and a plaintext client gets no HTTP from a TLS listener). `cargo clippy
+--all-targets -- -D warnings` clean on default, `api-tls`, and the pqc combo;
+`cargo fmt --check` clean. CI gains `Clippy (api-tls)` + `Test (api-tls)`
+steps in the optional-feature build gate.

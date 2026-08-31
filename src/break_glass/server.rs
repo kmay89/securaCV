@@ -4,12 +4,15 @@
 //! API server, so that surface is unchanged. It reuses the event API's
 //! [`CapabilityTokenManager`] (rotating,
 //! constant-time-validated bearer token) and mirrors its plaintext-bind + TLS
-//! conformance model — TLS is terminated by a front proxy, never in-process.
+//! conformance model — with the `api-tls` feature compiled in, configured TLS
+//! materials are terminated **in-process** by rustls; without it, they attest
+//! that an external front proxy terminates TLS.
 //!
 //! Security posture (operator-mediated, loopback-default):
 //! - Binds `127.0.0.1` by default; a routable address is allowed **only** when
-//!   TLS materials are configured (the operator's attestation that a terminator
-//!   fronts it). Non-loopback without TLS is a hard refusal at bind time.
+//!   TLS materials are configured — terminated in-process on an `api-tls`
+//!   build, otherwise the operator's attestation that a terminator fronts it.
+//!   Non-loopback without TLS is a hard refusal at bind time.
 //! - Every request needs the rotating capability bearer token; per-IP failures
 //!   are rate-limited with exponential lockout.
 //! - Only the operator talks to the server. Trustees sign the request hash
@@ -29,7 +32,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 
-use crate::api::{ApiTlsConfig, CapabilityTokenManager};
+use crate::api::{plain_wrap, ApiTlsConfig, CapabilityTokenManager, StreamWrap};
 use crate::break_glass::http::{handle_break_glass, BreakGlassOps};
 use crate::break_glass::session::BreakGlassSession;
 use crate::TimeBucket;
@@ -67,6 +70,9 @@ impl Default for BreakGlassServerConfig {
 }
 
 /// Refuse to expose break-glass on a routable interface without TLS configured.
+/// On an `api-tls` build, configured material is terminated in-process (so this
+/// gate admits genuinely encrypted exposure); otherwise it is the operator's
+/// attestation that an external terminator fronts the socket.
 fn validate_exposure(addr: &SocketAddr, cfg: &BreakGlassServerConfig) -> Result<()> {
     let tls_configured = cfg.tls.as_ref().is_some_and(|t| t.is_configured());
     if !addr.ip().is_loopback() && !tls_configured {
@@ -79,6 +85,29 @@ fn validate_exposure(addr: &SocketAddr, cfg: &BreakGlassServerConfig) -> Result<
     Ok(())
 }
 
+/// Resolve what this build does with the configured TLS material: an in-process
+/// rustls wrap when `api-tls` is compiled in, the identity wrap otherwise
+/// (attestation semantics — the front proxy terminates). Bad material fails
+/// here, at bind time, not on the first connection.
+fn resolve_wrap(cfg: &BreakGlassServerConfig) -> Result<StreamWrap> {
+    #[cfg(feature = "api-tls")]
+    if let Some(tls_cfg) = cfg.tls.as_ref() {
+        if let Some(server_config) = crate::api::tls::resolve(tls_cfg)? {
+            log::info!("break-glass server terminating TLS in-process");
+            return Ok(crate::api::tls::tls_wrap(server_config));
+        }
+    }
+    #[cfg(not(feature = "api-tls"))]
+    if cfg.tls.as_ref().is_some_and(|t| t.is_configured()) {
+        log::warn!(
+            "break-glass TLS cert/key configured, but this build has no in-process TLS \
+             (feature `api-tls` is not compiled in): treating the material as attestation \
+             of an external TLS terminator — the listener itself serves plaintext"
+        );
+    }
+    Ok(plain_wrap())
+}
+
 /// A bound break-glass server, ready to serve. Binding happens up front so the
 /// caller can learn the actual address (and the capability token, for tests)
 /// before the blocking serve loop starts.
@@ -87,6 +116,9 @@ pub struct BreakGlassServer {
     addr: SocketAddr,
     cfg: BreakGlassServerConfig,
     token_mgr: CapabilityTokenManager,
+    /// How accepted connections are served: an in-process TLS session on an
+    /// `api-tls` build with material configured, the plain stream otherwise.
+    wrap: StreamWrap,
 }
 
 impl BreakGlassServer {
@@ -98,6 +130,7 @@ impl BreakGlassServer {
             .parse()
             .map_err(|e| anyhow!("invalid break-glass server address '{}': {e}", cfg.addr))?;
         validate_exposure(&configured, &cfg)?;
+        let wrap = resolve_wrap(&cfg)?;
 
         let listener = TcpListener::bind(configured)?;
         let addr = listener.local_addr()?;
@@ -118,6 +151,7 @@ impl BreakGlassServer {
             addr,
             cfg,
             token_mgr,
+            wrap,
         })
     }
 
@@ -151,6 +185,7 @@ impl BreakGlassServer {
                     if let Err(err) = handle_conn(
                         stream,
                         peer,
+                        &self.wrap,
                         &self.cfg,
                         &mut ops,
                         &mut session,
@@ -172,15 +207,27 @@ impl BreakGlassServer {
 
 #[allow(clippy::too_many_arguments)]
 fn handle_conn<O: BreakGlassOps>(
-    mut stream: TcpStream,
+    stream: TcpStream,
     peer: SocketAddr,
+    wrap: &StreamWrap,
     cfg: &BreakGlassServerConfig,
     ops: &mut O,
     session: &mut BreakGlassSession,
     token_mgr: &mut CapabilityTokenManager,
     lockout: &mut Lockout,
 ) -> Result<()> {
+    // Addresses are taken on the TCP stream BEFORE any TLS wrap; every
+    // subsequent socket operation (the lazy rustls handshake included) runs
+    // through the DeadlineStream, which enforces a 5s per-op inactivity
+    // timeout AND an absolute wall-clock budget for the whole connection —
+    // a per-op timeout alone is reset forever by a byte-dripping peer
+    // (slowloris), wedging this single-threaded serve loop. The budget is
+    // sized for the slowest legitimate request (an unseal runs Argon2id and
+    // envelope crypto) while capping a hostile peer's hold on the loop.
     let local = stream.local_addr()?;
+    let stream =
+        crate::api::DeadlineStream::new(stream, Duration::from_secs(30), Duration::from_secs(5));
+    let mut stream = wrap(stream)?;
     // Defense in depth: even if bound to loopback, never serve a non-loopback peer.
     if local.ip().is_loopback() && !peer.ip().is_loopback() {
         return write_json(&mut stream, 403, r#"{"error":"forbidden"}"#);
@@ -193,7 +240,6 @@ fn handle_conn<O: BreakGlassOps>(
         );
     }
 
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let request = read_http_request(&mut stream)?;
 
     if request.has_query_token() {
@@ -358,7 +404,7 @@ fn read_http_request<R: Read>(reader: &mut R) -> Result<HttpRequest> {
     })
 }
 
-fn write_json(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
+fn write_json<S: Write>(stream: &mut S, status: u16, body: &str) -> Result<()> {
     let status_line = match status {
         200 => "HTTP/1.1 200 OK",
         400 => "HTTP/1.1 400 Bad Request",
@@ -386,13 +432,16 @@ fn write_json(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
     );
     stream.write_all(header.as_bytes())?;
     stream.write_all(body.as_bytes())?;
+    // Flush matters under TLS: buffered records must reach the socket before
+    // the connection is dropped (no-op for a plain TcpStream).
+    stream.flush()?;
     Ok(())
 }
 
 /// Serve the static operator console. A tight CSP confines it to inline
 /// script/style and same-origin `fetch` — no external resources, framing, or
 /// form submissions.
-fn write_html(stream: &mut TcpStream, body: &str) -> Result<()> {
+fn write_html<S: Write>(stream: &mut S, body: &str) -> Result<()> {
     let header = format!(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: text/html; charset=utf-8\r\n\
@@ -409,6 +458,7 @@ style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'non
     );
     stream.write_all(header.as_bytes())?;
     stream.write_all(body.as_bytes())?;
+    stream.flush()?;
     Ok(())
 }
 
@@ -583,5 +633,122 @@ mod tests {
         );
         lk.clear(&ip);
         assert!(lk.locked(&ip).is_none());
+    }
+
+    /// In-process TLS (`api-tls`): configured material terminates on the
+    /// listener itself, so the operator console is served over an encrypted
+    /// session end to end.
+    #[cfg(feature = "api-tls")]
+    mod tls_active {
+        use super::*;
+        use crate::break_glass::{Approval, QuorumPolicy, UnlockRequest};
+        use std::path::PathBuf;
+
+        /// Minimal ops: break-glass not provisioned. The console page needs
+        /// no auth and no policy, which is all this transport test exercises.
+        struct NoopOps;
+        impl BreakGlassOps for NoopOps {
+            fn policy(&self) -> Result<Option<QuorumPolicy>> {
+                Ok(None)
+            }
+            fn ruleset_hash(&self) -> [u8; 32] {
+                [0u8; 32]
+            }
+            fn authorize_unseal(
+                &mut self,
+                _request: &UnlockRequest,
+                _approvals: &[Approval],
+                _now_bucket: TimeBucket,
+                _output_dir: &str,
+            ) -> Result<PathBuf> {
+                Err(anyhow!("not provisioned"))
+            }
+        }
+
+        fn self_signed_identity() -> (Vec<u8>, Vec<u8>) {
+            let rcgen::CertifiedKey { cert, signing_key } =
+                rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+                    .expect("generate self-signed certificate");
+            (
+                cert.pem().into_bytes(),
+                signing_key.serialize_pem().into_bytes(),
+            )
+        }
+
+        #[test]
+        fn console_served_over_in_process_tls() {
+            let (cert_pem, key_pem) = self_signed_identity();
+            let cfg = BreakGlassServerConfig {
+                addr: "127.0.0.1:0".to_string(),
+                tls: Some(ApiTlsConfig {
+                    cert_pem: Some(cert_pem.clone()),
+                    key_pem: Some(key_pem),
+                }),
+                ..Default::default()
+            };
+            let server = BreakGlassServer::bind(cfg).expect("bind TLS break-glass server");
+            let addr = server.local_addr();
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let serve_shutdown = shutdown.clone();
+            let join = std::thread::spawn(move || server.serve(NoopOps, serve_shutdown));
+
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in rustls_pemfile::certs(&mut &cert_pem[..]) {
+                roots.add(cert.expect("parse test cert")).expect("add root");
+            }
+            let client_config = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            let server_name =
+                rustls::pki_types::ServerName::try_from("localhost").expect("server name");
+            let conn = rustls::ClientConnection::new(Arc::new(client_config), server_name)
+                .expect("client connection");
+            let tcp = TcpStream::connect(addr).expect("connect");
+            let mut tls_stream = rustls::StreamOwned::new(conn, tcp);
+            tls_stream
+                .write_all(
+                    b"GET /breakglass HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .expect("write request over TLS");
+            let mut response = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                match tls_stream.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => response.extend_from_slice(&buf[..n]),
+                }
+            }
+            let response = String::from_utf8_lossy(&response);
+            assert!(
+                response.contains("200 OK"),
+                "response head: {response:.200}"
+            );
+            assert!(
+                response.contains("<!doctype html>"),
+                "console page should be served over TLS"
+            );
+
+            shutdown.store(true, Ordering::SeqCst);
+            join.join()
+                .expect("serve thread join")
+                .expect("serve loop exits cleanly");
+        }
+
+        /// Bad PEM fails at bind time, before the socket ever opens.
+        #[test]
+        fn garbage_pem_fails_bind() {
+            let cfg = BreakGlassServerConfig {
+                addr: "127.0.0.1:0".to_string(),
+                tls: Some(ApiTlsConfig {
+                    cert_pem: Some(b"not a cert".to_vec()),
+                    key_pem: Some(b"not a key".to_vec()),
+                }),
+                ..Default::default()
+            };
+            assert!(
+                BreakGlassServer::bind(cfg).is_err(),
+                "garbage TLS material must fail bind"
+            );
+        }
     }
 }

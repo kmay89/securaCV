@@ -80,6 +80,7 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `adapter-mqtt-sensor` | off | stable | MQTT sensor adapter | keep |
 | `adapter-webhook` | off | stable | Webhook adapter (implies `adapter-mqtt-sensor`) | keep |
 | `adapter-webhook-tls` | off | stable | Webhook adapter + rustls TLS/mTLS | keep |
+| `api-tls` | off | stable | In-process rustls termination for the event API and break-glass servers; exposure gates admit a non-loopback bind only when TLS is actually active (docs/security/ENTERPRISE_CUSTODY.md §4) | keep |
 | `adapter-ble-presence` | off | stable | BLE presence adapter | keep |
 | `adapter-meshtastic` | off | stable | Meshtastic LoRa-mesh detection-sensor adapter | keep |
 | `adapter-can-bus` | off | exp | Passive-only vehicle CAN bus adapter (arrival/departure claims via Linux SocketCAN) | promote to stable once bench-validated against a real vehicle (docs/hardware/canary_vehicle_can.md) |
