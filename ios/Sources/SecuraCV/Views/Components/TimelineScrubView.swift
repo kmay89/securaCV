@@ -55,13 +55,17 @@ private struct TimelineDayAudioGraph: AXChartDescriptorRepresentable {
             gridlinePositions: [36, 72, 108], // 6:00, 12:00, 18:00 — the ribbon's own tall ticks
             valueDescriptionProvider: { clock(Int($0.rounded())) })
         let busiest = Double(max(day.cells.map(\.count).max() ?? 1, 1))
+        // "Alert records", never "sealed": this ribbon is fed by the phone's
+        // alert notebook (AlertLedger), not the device's sealed witness
+        // chain — an integrity claim the notebook cannot make (AGENTS.md
+        // rule 4), and the device-detail footer already draws that line.
         let yAxis = AXNumericDataAxisDescriptor(
-            title: "Records sealed",
+            title: "Alert records",
             range: 0...busiest,
             gridlinePositions: [],
             valueDescriptionProvider: { value in
                 let n = Int(value.rounded())
-                return n == 1 ? "1 record" : "\(n) records"
+                return n == 1 ? "1 alert record" : "\(n) alert records"
             })
         let recorded = day.cells.filter { !$0.hasGap }.map { cell in
             AXDataPoint(x: Double(cell.index), y: Double(cell.count),
@@ -71,14 +75,16 @@ private struct TimelineDayAudioGraph: AXChartDescriptorRepresentable {
             AXDataPoint(x: Double(cell.index), y: Double(cell.count),
                         additionalValues: [], label: "Declared gap, " + clock(cell.index))
         }
-        var series = [AXDataSeriesDescriptor(name: "Records sealed per 10 minutes",
+        var series = [AXDataSeriesDescriptor(name: "Alert records per 10 minutes",
                                              isContinuous: false, dataPoints: recorded)]
         if !gaps.isEmpty {
             series.append(AXDataSeriesDescriptor(
                 name: "Declared gaps — blind spots the device reported",
                 isContinuous: false, dataPoints: gaps))
         }
-        var summary = day.count == 1 ? "1 record." : "\(day.count) records."
+        var summary = day.count == 1
+            ? "1 alert record, from this phone's notebook."
+            : "\(day.count) alert records, from this phone's notebook."
         if day.gapCount > 0 {
             summary += " \(day.gapCount) declared gap\(day.gapCount == 1 ? "" : "s")"
                 + " — buckets where the device said it could not see. Blind spots, not quiet."
@@ -92,9 +98,18 @@ private struct TimelineDayAudioGraph: AXChartDescriptorRepresentable {
                                  additionalAxes: [], series: series)
     }
 
-    // No @Environment reads feed the descriptor; an explicit no-op beats
-    // relying on the protocol's default.
-    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {}
+    // SwiftUI reuses the descriptor across view updates: when the ledger
+    // changes while the ribbon stays mounted, this — not makeChartDescriptor
+    // — is what runs, and the protocol's do-nothing default would leave
+    // VoiceOver reading yesterday's data off today's ribbon.
+    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {
+        let fresh = makeChartDescriptor()
+        descriptor.title = fresh.title
+        descriptor.summary = fresh.summary
+        descriptor.xAxis = fresh.xAxis
+        descriptor.yAxis = fresh.yAxis
+        descriptor.series = fresh.series
+    }
 }
 
 /// Once-per-app-session latch for the gesture-hint shimmer. MainActor
