@@ -1236,7 +1236,12 @@ function initTimeline() {
       const y = T.yOfTime(layout, r.t0);
       const over = n === 4 && (bucketSkipped.get(key) || 0) > 0;
       const w = over ? 46 : T.greekWidth(r.label);
-      const x = 8 + T.zoneIndent(model.zones, r.zone) + n * 2;
+      // The sideways stack is capped at lane 5 — the one lane past the five
+      // kept strokes, reserved for cap-exempt tamper. Unbounded, a tamper
+      // behind ~26 skipped records stacked its LEFT edge past the map's
+      // overflow:hidden and vanished again — the exact disappearance the
+      // exemption exists to prevent.
+      const x = 8 + T.zoneIndent(model.zones, r.zone) + Math.min(n, 5) * 2;
       html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" data-b="${key}" style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
     }
     html += '<i class="tl-view" id="tlview"></i>';

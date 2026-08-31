@@ -371,7 +371,12 @@ struct TimelineDayShapeView: View {
         let generation = caretGen
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000)
-            if caretGen == generation, scrub == nil { position = nil }
+            // `position` is shared across every ribbon, but the generation
+            // and drag state are this ribbon's own — so also require the
+            // caret to still be OURS. Without that, landing here and then
+            // scrubbing a second day within 900ms let this timer erase the
+            // other ribbon's live caret.
+            if caretGen == generation, scrub == nil, position?.dayT0 == day.dayT0 { position = nil }
         }
     }
 
