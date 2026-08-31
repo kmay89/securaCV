@@ -342,6 +342,13 @@
     .tl-map { width:96px; }
     .tl-lens { left:104px; }
   }
+  /* Narrow AND coarse (a phone): the wrapped layout puts the strip on its
+     own line 6px under the day-meta jump buttons, so the full 17px upward
+     hit reach would swallow taps meant for "2 tamper". Keep the reach below,
+     trim it above. */
+  @media (max-width: 620px) and (pointer: coarse) {
+    .tl-strip::before { top:-4px; }
+  }
   /* Windows High Contrast / forced-colors flattens background paint, which
      would erase every tick and cell. Redraw them as bordered marks in system
      colors, and keep the status families distinguishable by shape. */
@@ -3808,6 +3815,9 @@ function initTimeline() {
   let ticksByBucket = new Map();
   let hotTicks = [];
   function heatBucket(k) {
+    // The newest heat source owns the cooldown — a stale goto() timer must
+    // not wipe a highlight the mouse is actively holding.
+    clearTimeout(coolTicks);
     for (const el of hotTicks) el.classList.remove('tl-hot');
     hotTicks = k === null ? [] : (ticksByBucket.get(k) || []);
     for (const el of hotTicks) el.classList.add('tl-hot');
@@ -3846,7 +3856,7 @@ function initTimeline() {
   // between snapped rows in 30-70px cuts. A short exponential chase keeps
   // every frame moving toward the target instead; the position still comes
   // only from bucket-snapped times, so nothing gets finer — just smoother.
-  let glideRaf = 0, glideGoal = null;
+  let glideRaf = 0, glideGoal = null, glideWrote = -1;
   function glideTo(top) {
     if (REDUCED) { glideGoal = null; list.scrollTop = top; return; }
     glideGoal = top;
@@ -3855,8 +3865,9 @@ function initTimeline() {
       glideRaf = 0;
       if (glideGoal === null || !list.isConnected) return;
       const d = glideGoal - list.scrollTop;
-      if (Math.abs(d) < 1) { list.scrollTop = glideGoal; glideGoal = null; return; }
+      if (Math.abs(d) < 1) { list.scrollTop = glideGoal; glideWrote = list.scrollTop; glideGoal = null; return; }
       list.scrollTop += d * 0.35;
+      glideWrote = list.scrollTop;
       glideRaf = requestAnimationFrame(step);
     };
     glideRaf = requestAnimationFrame(step);
@@ -4021,11 +4032,13 @@ function initTimeline() {
   const say = $('tlsay');
   let cur = -1;
   let coolTicks = 0;
+  let gotoUntil = 0; // while a goto's smooth scroll is in flight, cur is truth
   function goto(i) {
     if (!nav.length) return;
     cur = Math.min(Math.max(i, 0), nav.length - 1);
     const el = nav[cur];
     stopGlide();
+    gotoUntil = performance.now() + (REDUCED ? 0 : 600);
     list.scrollTo({ top: centerTop(el), behavior: REDUCED ? 'auto' : 'smooth' });
     flashRow(el);
     // The caret's strokes light up on the map too, so a keyboard walk
@@ -4061,6 +4074,10 @@ function initTimeline() {
     return r.bottom > lr.top && r.top < lr.bottom;
   }
   function reseatCaret(direction) {
+    // Mid-flight of a goto's smooth scroll the caret row is legitimately
+    // offscreen — it is TRAVELING. Re-seating to the transient viewport sent
+    // a rapid n,n from End backward through half the record.
+    if (performance.now() < gotoUntil) return;
     if (caretOnScreen()) return;
     const lr = list.getBoundingClientRect();
     let first = -1, last = -1;
@@ -4076,10 +4093,14 @@ function initTimeline() {
   map.addEventListener('keydown', (e) => {
     const k = e.key;
     if (!nav.length) return;
-    if ((k === 'ArrowRight' || k === 'ArrowLeft') && e.altKey) {
+    // Browser and OS chords pass through untouched: Ctrl/Cmd+P must print
+    // the evidence, not scrub to the previous tamper.
+    if (e.ctrlKey || e.metaKey) return;
+    if ((k === 'ArrowRight' || k === 'ArrowLeft' || k === 'ArrowUp' || k === 'ArrowDown') && e.altKey) {
       // Days are chapters: Alt+arrow lands on the first record of the next
-      // or previous day. (Plain Ctrl+arrows belong to the OS.)
-      const dir = k === 'ArrowRight' ? 1 : -1;
+      // or previous day — all four arrows, so the promise in the aria-label
+      // holds whichever pair the hand reaches for.
+      const dir = k === 'ArrowRight' || k === 'ArrowDown' ? 1 : -1;
       reseatCaret(dir);
       const at = Math.floor(+nav[Math.min(Math.max(cur, 0), nav.length - 1)].dataset.t0 / T.DAY_S);
       let best = -1;
@@ -4148,9 +4169,14 @@ function initTimeline() {
       setSpot(panel.dataset.spot === fam ? null : fam, chip);
     });
   }
-  panel.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && panel.dataset.spot) { setSpot(null); e.preventDefault(); }
-  });
+  // On the document, not the panel: focus is elsewhere for every Safari
+  // mouse user (clicking a button there never focuses it), and "Esc clears"
+  // is a promise the caption makes unconditionally. Torn down with the
+  // panel's watcher so re-renders do not stack listeners.
+  const onDocKey = (e) => {
+    if (e.key === 'Escape' && panel.isConnected && panel.dataset.spot) { setSpot(null); e.preventDefault(); }
+  };
+  document.addEventListener('keydown', onDocKey);
 
   for (const strip of panel.querySelectorAll('.tl-strip')) {
     const dayT0 = +strip.dataset.day;
@@ -4218,16 +4244,36 @@ function initTimeline() {
   // fits, the panes shrink to the content and the empty border goes away.
   // Measured from the first and last child rects — scrollHeight floors at the
   // box height, so it can never say "the content is shorter than the frame".
-  if (list.firstElementChild && list.lastElementChild) {
+  // Re-run on every resize (the stylesheet default is restored first): a
+  // once-pinned height clipped half the record after the rows re-wrapped
+  // taller in a narrower window.
+  function fitPane() {
+    wrap.style.removeProperty('--tl-h');
+    if (!list.firstElementChild || !list.lastElementChild) return;
     const contentH = list.lastElementChild.getBoundingClientRect().bottom
       - list.firstElementChild.getBoundingClientRect().top;
     if (contentH > 0 && contentH + 2 < list.clientHeight) {
       wrap.style.setProperty('--tl-h', Math.max(Math.ceil(contentH) + 2, 160) + 'px');
+      // The rail's ::before overhang bleeds a few px past the last row —
+      // invisible ink that still counts as scroll overflow. Absorb it, so a
+      // pane sized to "everything fits" cannot be scrolled at all; if the
+      // leftover is larger than decoration can explain, the fit call was
+      // wrong — fall back to the stylesheet height rather than clip.
+      const extra = list.scrollHeight - list.clientHeight;
+      if (extra > 0 && extra <= 24) {
+        wrap.style.setProperty('--tl-h', (Math.ceil(contentH) + 2 + extra) + 'px');
+      } else if (extra > 24) {
+        wrap.style.removeProperty('--tl-h');
+      }
     }
   }
+  fitPane();
 
   let raf = 0;
   list.addEventListener('scroll', () => {
+    // A scroll the glide did not write is the user taking the pane back —
+    // the glide yields instantly rather than fighting the scrollbar.
+    if (glideGoal !== null && Math.abs(list.scrollTop - glideWrote) > 1) stopGlide();
     if (!raf) raf = requestAnimationFrame(() => { raf = 0; syncView(); });
   });
 
@@ -4238,14 +4284,16 @@ function initTimeline() {
   // window listener behind for each.
   if (tlWatcher) { tlWatcher(); tlWatcher = null; }
   let rto = 0;
-  const onResize = () => { clearTimeout(rto); rto = setTimeout(buildMap, 120); };
+  const onResize = () => { clearTimeout(rto); rto = setTimeout(() => { fitPane(); buildMap(); }, 120); };
   if (typeof ResizeObserver === 'function') {
     const ro = new ResizeObserver(onResize);
     ro.observe(map);
-    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide(); ro.disconnect(); };
+    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide();
+      document.removeEventListener('keydown', onDocKey); ro.disconnect(); };
   } else {
     window.addEventListener('resize', onResize);
-    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide(); window.removeEventListener('resize', onResize); };
+    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide();
+      document.removeEventListener('keydown', onDocKey); window.removeEventListener('resize', onResize); };
   }
 
   buildMap();

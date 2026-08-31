@@ -44,6 +44,12 @@ struct TimelineDayShapeView: View {
     /// The active scrub across ALL ribbons; this one reads it only when it
     /// names this day (see `myBucket`).
     @Binding var position: TimelineScrubPosition?
+    /// This day's first tamper bucket, derived by the host FROM THE RECORDS.
+    /// The cells cannot answer it: a bucket where a tamper shares ten minutes
+    /// with a declared gap is family `.gap` by the worst-first rule, so a
+    /// cell scan misses exactly the "lens covered, then pried" pairing that
+    /// matters most. Nil when the day holds no tamper records.
+    var firstTamperBucket: Date?
     /// Fired when the drag ENDS, already snapped to a bucket, so the caller
     /// can bring the matching row into view.
     var onScrub: (Date) -> Void
@@ -70,6 +76,10 @@ struct TimelineDayShapeView: View {
     /// changes input speed only: every output still snaps to a bucket, so
     /// "fine" means reliably landing on ONE 10-minute bucket, never between.
     @State private var gainTier = 0
+    /// Bumped by every seat and every scheduled clear, so a pending
+    /// caret-clear task can tell "still my landing" from "someone landed
+    /// here again" without comparing position values.
+    @State private var caretGen = 0
 
     private struct ScrubDrag {
         var lastX: CGFloat
@@ -334,14 +344,17 @@ struct TimelineDayShapeView: View {
 
     /// Scrub straight to the day's first tamper (or first declared-gap)
     /// bucket and walk the list there — the footer counts and the VoiceOver
-    /// custom actions both land here.
+    /// custom actions both land here. Tamper comes from `firstTamperBucket`
+    /// (see its comment); gaps have a dedicated per-cell flag, so a cell scan
+    /// is exact for them.
     private func jump(toTamper: Bool) {
-        let hit = day.cells
-            .filter { toTamper ? $0.family == .tamper : $0.hasGap }
-            .map(\.index).min()
-        guard let index = hit else { return }
-        let bucket = Date(timeIntervalSince1970:
-            TimeInterval(day.dayT0 + index * TimelineScrub.defaultBucketSeconds))
+        let bucket: Date? = toTamper
+            ? firstTamperBucket
+            : day.cells.filter(\.hasGap).map(\.index).min().map {
+                Date(timeIntervalSince1970:
+                    TimeInterval(day.dayT0 + $0 * TimelineScrub.defaultBucketSeconds))
+            }
+        guard let bucket else { return }
         position = TimelineScrubPosition(dayT0: day.dayT0, bucket: bucket)
         onScrub(bucket)
         scheduleCaretClear()
@@ -349,12 +362,16 @@ struct TimelineDayShapeView: View {
 
     /// The finger lifts, the list glides — and only then does the caret bow
     /// out. Clearing it the same frame erased the answer ("where did I land?")
-    /// at the exact moment the question was asked.
+    /// at the exact moment the question was asked. The token is a GENERATION,
+    /// never the position value: two landings on the same bucket compare
+    /// equal, so a value check let the first landing's timer erase the
+    /// second's caret — or void a live drag resting on the same bucket.
     private func scheduleCaretClear() {
-        let seated = position
+        caretGen += 1
+        let generation = caretGen
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000)
-            if position == seated { position = nil }
+            if caretGen == generation, scrub == nil { position = nil }
         }
     }
 
@@ -384,6 +401,7 @@ struct TimelineDayShapeView: View {
     /// rounding convenience: the log holds buckets, so the scrubber may not
     /// offer a position the record cannot justify.
     private func seat(secondsIntoDay: Double) {
+        caretGen += 1 // a fresh seating voids any pending caret-clear
         let clamped = min(max(secondsIntoDay, 0), Double(TimelineScrub.daySeconds - 1))
         let bucketSize = Double(TimelineScrub.defaultBucketSeconds)
         let snapped = (clamped / bucketSize).rounded(.down) * bucketSize
@@ -421,12 +439,29 @@ struct TimelineScrubSection: View {
         TimelineScrub.model(for: TimelineScrub.records(from: records), calendar: .current)
     }
 
+    /// Earliest tamper bucket per calendar day, straight from the records —
+    /// the one question the worst-first cells cannot answer (a tamper sharing
+    /// a bucket with a declared gap lives in a `.gap`-family cell).
+    private func firstTamperBuckets(in model: TimelineModel, calendar: Calendar) -> [Int: Date] {
+        var out: [Int: Date] = [:]
+        for record in model.records where record.family == .tamper {
+            let bucket = Date(timeIntervalSince1970: TimeInterval(record.t0))
+            let dayT0 = Int(calendar.startOfDay(for: bucket).timeIntervalSince1970)
+            if out[dayT0] == nil { out[dayT0] = bucket }
+        }
+        return out
+    }
+
     var body: some View {
-        let days = model.days.sorted { $0.dayT0 > $1.dayT0 }
+        let built = model
+        let days = built.days.sorted { $0.dayT0 > $1.dayT0 }
+        let tamperBuckets = firstTamperBuckets(in: built, calendar: .current)
         if !days.isEmpty {
             VStack(alignment: .leading, spacing: Theme.m) {
                 ForEach(Array(days.prefix(3))) { day in
-                    TimelineDayShapeView(day: day, position: $position, onScrub: onScrub)
+                    TimelineDayShapeView(day: day, position: $position,
+                                         firstTamperBucket: tamperBuckets[day.dayT0],
+                                         onScrub: onScrub)
                 }
                 if days.count > 3 {
                     // The ribbons stop at three; the record does not. Say so,
