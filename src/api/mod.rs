@@ -15,14 +15,19 @@ use subtle::ConstantTimeEq;
 
 const MAX_REQUEST_BYTES: usize = 8192;
 
-/// TLS front-proxy attestation material (PEM cert/key paths an operator
-/// points at their terminating proxy's material).
+/// TLS material (PEM cert chain + private key) for the token-bearing HTTP
+/// surfaces (event API, break-glass).
 ///
-/// NOTE: nothing in this crate terminates TLS in-process. The break-glass
-/// server uses this struct to *attest* that a front proxy is configured
-/// (see `break_glass::server::validate_exposure`); the event API deliberately
-/// has no TLS field at all — its socket is loopback-only unless
-/// `WITNESS_API_ALLOW_INSECURE=1` explicitly accepts plaintext exposure.
+/// What configuring it *means* depends on the build:
+/// - With the `api-tls` feature compiled in, the material is terminated
+///   **in-process** by rustls — every accepted connection is served through a
+///   TLS session, and a non-loopback bind becomes acceptable because the
+///   capability token never crosses the network in cleartext.
+/// - Without the feature, the break-glass server treats it as an *attestation*
+///   that an external terminator fronts the socket (see
+///   `break_glass::server::validate_exposure`), and the event API refuses it
+///   outright at startup — material a build cannot terminate must not look
+///   like protection.
 #[derive(Clone, Debug, Default)]
 pub struct ApiTlsConfig {
     /// PEM-encoded certificate chain.
@@ -49,8 +54,101 @@ impl ApiTlsConfig {
         })
     }
 
+    /// Load TLS materials from the `WITNESS_API_TLS_CERT` /
+    /// `WITNESS_API_TLS_KEY` environment variables (paths to PEM files).
+    /// Both-or-neither: a lone half is an error rather than a silent fall
+    /// back to plaintext.
+    pub fn from_env() -> Result<Self> {
+        match (
+            std::env::var_os(API_TLS_CERT_ENV),
+            std::env::var_os(API_TLS_KEY_ENV),
+        ) {
+            (Some(cert), Some(key)) => Self::load(Path::new(&cert), Path::new(&key)),
+            (None, None) => Ok(Self::default()),
+            _ => Err(anyhow!(
+                "{API_TLS_CERT_ENV} and {API_TLS_KEY_ENV} must be set together"
+            )),
+        }
+    }
+
     pub fn is_configured(&self) -> bool {
         self.cert_pem.is_some() && self.key_pem.is_some()
+    }
+}
+
+/// Environment variable naming a PEM certificate-chain file for the event API.
+pub const API_TLS_CERT_ENV: &str = "WITNESS_API_TLS_CERT";
+/// Environment variable naming a PEM private-key file for the event API.
+pub const API_TLS_KEY_ENV: &str = "WITNESS_API_TLS_KEY";
+
+/// A bidirectional stream a request can be served over (plain `TcpStream` or
+/// an in-process TLS session).
+pub(crate) trait ReadWrite: Read + Write {}
+impl<T: Read + Write> ReadWrite for T {}
+
+/// Converts an accepted `TcpStream` into a served stream (identity for
+/// plaintext, a rustls session when `api-tls` is active). The wrap only
+/// constructs the session — the TLS handshake itself runs lazily on the first
+/// read/write through the same socket, so it is bounded by the read/write
+/// timeouts set on the `TcpStream` before wrapping.
+pub(crate) type StreamWrap =
+    Arc<dyn Fn(TcpStream) -> std::io::Result<Box<dyn ReadWrite + Send>> + Send + Sync>;
+
+/// Identity wrap: serve the TCP stream directly (no TLS).
+pub(crate) fn plain_wrap() -> StreamWrap {
+    Arc::new(|tcp| Ok(Box::new(tcp) as Box<dyn ReadWrite + Send>))
+}
+
+/// In-process TLS for the token-bearing HTTP surfaces (feature `api-tls`).
+/// The capability token crosses the network in plaintext otherwise, which is
+/// why the exposure gates below only relax for TLS that is actually ACTIVE.
+#[cfg(feature = "api-tls")]
+pub(crate) mod tls {
+    use super::{ReadWrite, StreamWrap};
+    use anyhow::{anyhow, Context, Result};
+    use rustls::ServerConfig;
+    use std::net::TcpStream;
+    use std::sync::Arc;
+
+    /// Build a rustls server config (no client auth) from in-memory PEM
+    /// bytes — [`super::ApiTlsConfig`] holds material as bytes, not paths.
+    pub(crate) fn server_config_from_pem(
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> Result<Arc<ServerConfig>> {
+        let certs = rustls_pemfile::certs(&mut &cert_pem[..])
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("parsing TLS certificate PEM")?;
+        if certs.is_empty() {
+            return Err(anyhow!("no certificates found in TLS cert PEM"));
+        }
+        let key = rustls_pemfile::private_key(&mut &key_pem[..])
+            .context("parsing TLS key PEM")?
+            .ok_or_else(|| anyhow!("no private key found in TLS key PEM"))?;
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .context("building TLS server config")?;
+        Ok(Arc::new(config))
+    }
+
+    /// Wrap every accepted connection in an in-process rustls session.
+    pub(crate) fn tls_wrap(config: Arc<ServerConfig>) -> StreamWrap {
+        Arc::new(move |tcp: TcpStream| {
+            let conn = rustls::ServerConnection::new(Arc::clone(&config))
+                .map_err(std::io::Error::other)?;
+            Ok(Box::new(rustls::StreamOwned::new(conn, tcp)) as Box<dyn ReadWrite + Send>)
+        })
+    }
+
+    /// Resolve an [`super::ApiTlsConfig`] into a server config, or `None`
+    /// when no material is configured. Mismatched halves are an error.
+    pub(crate) fn resolve(cfg: &super::ApiTlsConfig) -> Result<Option<Arc<ServerConfig>>> {
+        match (&cfg.cert_pem, &cfg.key_pem) {
+            (Some(cert), Some(key)) => Ok(Some(server_config_from_pem(cert, key)?)),
+            (None, None) => Ok(None),
+            _ => Err(anyhow!("TLS cert and key must be configured together")),
+        }
     }
 }
 
@@ -66,6 +164,12 @@ pub struct ApiConfig {
     /// stolen-or-not client cannot hammer `/events` or `POST /verify`
     /// (which walks the whole sealed log). 0 disables the limit.
     pub rate_limit_per_minute: u32,
+    /// In-process TLS material for the event API socket. With the `api-tls`
+    /// feature compiled in, a configured cert/key means every accepted
+    /// connection is served through an in-process rustls session (and a
+    /// non-loopback bind no longer needs the insecure override). Without the
+    /// feature, configuring this is a startup error.
+    pub tls: ApiTlsConfig,
 }
 
 /// Generous for legitimate clients — the HA coordinator polls every 30 s and
@@ -81,6 +185,7 @@ impl Default for ApiConfig {
             token_path: None,
             allow_insecure: false,
             rate_limit_per_minute: DEFAULT_API_RATE_LIMIT_PER_MINUTE,
+            tls: ApiTlsConfig::default(),
         }
     }
 }
@@ -175,38 +280,59 @@ impl ApiServer {
     }
 
     pub fn spawn(self) -> Result<ApiHandle> {
-        // Firmware alignment: DEFAULT_TLS_REQUIRED = 1. The event API
-        // terminates no TLS in-process, so the honest remedies are the ones
-        // that actually exist: keep the default loopback bind and put a TLS
-        // reverse proxy or SSH tunnel in front of it, or accept plaintext
-        // exposure explicitly with WITNESS_API_ALLOW_INSECURE=1. (Earlier
-        // versions of this warning named --api-tls-cert/--api-tls-key flags
-        // that were never implemented.)
-        if !self.cfg.allow_insecure {
+        // Resolve in-process TLS up front so bad material fails startup, not
+        // the first connection. `tls_config` is Some only when this BUILD can
+        // actually terminate it — the exposure gate below keys off that, never
+        // off configuration alone.
+        #[cfg(feature = "api-tls")]
+        let tls_config = tls::resolve(&self.cfg.tls)?;
+        #[cfg(not(feature = "api-tls"))]
+        let tls_config: Option<()> = match (&self.cfg.tls.cert_pem, &self.cfg.tls.key_pem) {
+            (None, None) => None,
+            // Material a build cannot terminate must not look like protection.
+            _ => {
+                return Err(anyhow!(
+                    "API TLS cert/key configured, but this build has no in-process TLS \
+                     (feature `api-tls` is not compiled in). Rebuild with --features api-tls, \
+                     or remove the cert/key and keep the loopback bind behind a TLS reverse \
+                     proxy or SSH tunnel."
+                ))
+            }
+        };
+        let tls_active = tls_config.is_some();
+
+        // Firmware alignment: DEFAULT_TLS_REQUIRED = 1. When in-process TLS is
+        // not active, the honest remedies are: keep the default loopback bind
+        // and put a TLS reverse proxy or SSH tunnel in front of it, provide
+        // cert/key to an `api-tls` build, or accept plaintext exposure
+        // explicitly with WITNESS_API_ALLOW_INSECURE=1.
+        if !tls_active && !self.cfg.allow_insecure {
             log::warn!(
-                "CONFORMANCE: event API serves plaintext HTTP (no in-process TLS; \
-                 firmware policy DEFAULT_TLS_REQUIRED=1). Keep the bind loopback \
-                 behind a TLS reverse proxy or SSH tunnel, or set \
+                "CONFORMANCE: event API serves plaintext HTTP (in-process TLS not \
+                 active; firmware policy DEFAULT_TLS_REQUIRED=1). Keep the bind \
+                 loopback behind a TLS reverse proxy or SSH tunnel, configure \
+                 cert/key on an `api-tls` build, or set \
                  WITNESS_API_ALLOW_INSECURE=1 to accept plaintext exposure."
             );
         }
+        if tls_active {
+            log::info!("event API terminating TLS in-process");
+        }
 
         let configured_addr: SocketAddr = self.cfg.addr.parse()?;
-        // Fail closed on off-host exposure. The event API terminates NO TLS
-        // in-process — a populated `ApiTlsConfig` is not yet wired into the
-        // accept loop — so a non-loopback bind puts the bearer capability token
-        // on the wire in cleartext *regardless* of whether cert/key are loaded.
-        // Do not treat loaded key material as protection: require an explicit
-        // operator override. Mirrors the break-glass server's validate_exposure;
-        // the loopback path (behind a TLS reverse proxy or SSH tunnel) is the
-        // default. (When in-process TLS lands, gate this on TLS actually wrapping
-        // the socket, not on config being present.)
-        if !configured_addr.ip().is_loopback() && !self.cfg.allow_insecure {
+        // Fail closed on off-host exposure: unless in-process TLS actually
+        // wraps the accepted sockets, a non-loopback bind puts the bearer
+        // capability token on the wire in cleartext, so it needs the explicit
+        // operator override. Gated on TLS being ACTIVE (feature compiled in
+        // AND material loaded), not on config being present. Mirrors the
+        // break-glass server's validate_exposure; the loopback path (behind a
+        // TLS reverse proxy or SSH tunnel) is the default.
+        if !configured_addr.ip().is_loopback() && !tls_active && !self.cfg.allow_insecure {
             return Err(anyhow!(
                 "refusing to bind non-loopback address '{configured_addr}': the event API \
-                 capability token would cross the network in cleartext (in-process TLS is not \
-                 implemented, so cert/key config does not protect this socket). Bind a loopback \
-                 address behind a TLS reverse proxy or SSH tunnel, or set \
+                 capability token would cross the network in cleartext. Terminate TLS \
+                 in-process (build with --features api-tls and configure cert/key), bind a \
+                 loopback address behind a TLS reverse proxy or SSH tunnel, or set \
                  WITNESS_API_ALLOW_INSECURE=1 to accept plaintext exposure explicitly."
             ));
         }
@@ -228,6 +354,14 @@ impl ApiServer {
             write_token_file(path, &token)?;
         }
 
+        #[cfg(feature = "api-tls")]
+        let wrap: StreamWrap = match tls_config {
+            Some(config) => tls::tls_wrap(config),
+            None => plain_wrap(),
+        };
+        #[cfg(not(feature = "api-tls"))]
+        let wrap: StreamWrap = plain_wrap();
+
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_thread = shutdown.clone();
         let cfg = self.cfg.clone();
@@ -242,6 +376,7 @@ impl ApiServer {
                 storage_health,
                 &mut token_mgr,
                 shutdown_thread,
+                wrap,
             ) {
                 log::error!("event api stopped: {}", err);
             }
@@ -423,6 +558,7 @@ impl RateLimiter {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_api(
     listener: TcpListener,
     cfg: ApiConfig,
@@ -430,6 +566,7 @@ fn run_api(
     storage_health: Option<SharedStorageHealth>,
     token_mgr: &mut CapabilityTokenManager,
     shutdown: Arc<AtomicBool>,
+    wrap: StreamWrap,
 ) -> Result<()> {
     let mut kernel = Kernel::open(&kernel_cfg)?;
     let expected_ruleset_hash = kernel_cfg.ruleset_hash;
@@ -448,6 +585,7 @@ fn run_api(
             Ok((stream, _)) => {
                 if let Err(err) = handle_connection(
                     stream,
+                    &wrap,
                     &mut kernel,
                     &cfg,
                     token_mgr,
@@ -474,7 +612,8 @@ fn run_api(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_connection(
-    mut stream: TcpStream,
+    stream: TcpStream,
+    wrap: &StreamWrap,
     kernel: &mut Kernel,
     cfg: &ApiConfig,
     token_mgr: &mut CapabilityTokenManager,
@@ -486,8 +625,19 @@ fn handle_connection(
     rate_limiter: &mut RateLimiter,
     last_verify: &mut Option<VerifyReport>,
 ) -> Result<()> {
+    // Addresses and socket timeouts are taken on the TCP stream BEFORE any
+    // TLS wrap: rustls performs its handshake lazily on the first read/write
+    // through the same socket, so these bounds cover the handshake too — a
+    // client that stalls mid-handshake cannot wedge this single-threaded
+    // accept loop (same K6 reasoning as the write timeout below).
     let peer = stream.peer_addr()?;
     let local = stream.local_addr()?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    // A response write can block forever against a peer that stops reading;
+    // on this single-threaded accept loop that wedges every endpoint
+    // including /health (docs/strategy/12, K6).
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    let mut stream = wrap(stream)?;
     if local.ip().is_loopback() && !peer.ip().is_loopback() {
         write_json_response(&mut stream, 403, r#"{"error":"forbidden"}"#)?;
         return Ok(());
@@ -797,12 +947,11 @@ fn period_of_day(epoch_s: u64) -> &'static str {
     }
 }
 
-fn read_request(stream: &mut TcpStream) -> Result<HttpRequest> {
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    // A response write can block forever against a peer that stops reading;
-    // on this single-threaded accept loop that wedges every endpoint
-    // including /health (docs/strategy/12, K6).
-    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+/// Read and parse one HTTP request (header section only). Generic over the
+/// stream so it serves both plaintext and in-process-TLS connections; the
+/// socket timeouts bounding this read are set in `handle_connection` before
+/// any TLS wrap.
+fn read_request<S: Read>(stream: &mut S) -> Result<HttpRequest> {
     let mut buf = [0u8; 1024];
     let mut data = Vec::new();
     loop {
@@ -842,7 +991,7 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest> {
     })
 }
 
-fn write_json_response(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
+fn write_json_response<S: Write>(stream: &mut S, status: u16, body: &str) -> Result<()> {
     write_response(stream, status, "application/json", body.as_bytes())
 }
 
@@ -882,8 +1031,8 @@ fn parse_window_query(raw_path: &str) -> Result<Option<crate::ExportWindow>> {
 
 /// As [`write_response`] but marked as a browser download. `filename` is
 /// produced internally (timestamp pattern) — never derived from request input.
-fn write_download_response(
-    stream: &mut TcpStream,
+fn write_download_response<S: Write>(
+    stream: &mut S,
     content_type: &str,
     body: &[u8],
     filename: &str,
@@ -905,11 +1054,14 @@ fn write_download_response(
     );
     stream.write_all(header.as_bytes())?;
     stream.write_all(body)?;
+    // Flush matters under TLS: buffered records must reach the socket before
+    // the connection is dropped (no-op for a plain TcpStream).
+    stream.flush()?;
     Ok(())
 }
 
-fn write_response(
-    stream: &mut TcpStream,
+fn write_response<S: Write>(
+    stream: &mut S,
     status: u16,
     content_type: &str,
     body: &[u8],
@@ -941,6 +1093,9 @@ fn write_response(
     );
     stream.write_all(header.as_bytes())?;
     stream.write_all(body)?;
+    // Flush matters under TLS: buffered records must reach the socket before
+    // the connection is dropped (no-op for a plain TcpStream).
+    stream.flush()?;
     Ok(())
 }
 
@@ -1393,5 +1548,210 @@ mod tests {
 
         let contents = std::fs::read_to_string(&path).unwrap();
         assert_eq!(contents, "secret-token-value\n");
+    }
+
+    // ---------------------------------------------------------------
+    // Exposure policy + in-process TLS (`api-tls`).
+    // ---------------------------------------------------------------
+
+    /// The non-loopback fail-closed gate holds whenever in-process TLS is not
+    /// ACTIVE — on every build when nothing is configured.
+    #[test]
+    fn spawn_refuses_non_loopback_plaintext_bind() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
+        let api_config = ApiConfig {
+            addr: "0.0.0.0:0".to_string(),
+            ..ApiConfig::default()
+        };
+        let err = ApiServer::new(api_config, cfg)
+            .spawn()
+            .expect_err("plaintext non-loopback bind must be refused");
+        assert!(
+            err.to_string().contains("refusing to bind non-loopback"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A build without `api-tls` must refuse configured material outright:
+    /// cert/key that cannot be terminated must not look like protection.
+    #[test]
+    #[cfg(not(feature = "api-tls"))]
+    fn spawn_refuses_tls_material_without_feature() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
+        let api_config = ApiConfig {
+            addr: "127.0.0.1:0".to_string(),
+            tls: ApiTlsConfig {
+                cert_pem: Some(b"cert".to_vec()),
+                key_pem: Some(b"key".to_vec()),
+            },
+            ..ApiConfig::default()
+        };
+        let err = ApiServer::new(api_config, cfg)
+            .spawn()
+            .expect_err("TLS material on a non-TLS build must be refused");
+        assert!(
+            err.to_string().contains("api-tls"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(feature = "api-tls")]
+    mod tls_active {
+        use super::*;
+        use rustls::pki_types::ServerName;
+
+        /// A fresh self-signed identity for `localhost` (PEM cert + key).
+        pub(crate) fn self_signed_identity() -> (Vec<u8>, Vec<u8>) {
+            let rcgen::CertifiedKey { cert, signing_key } =
+                rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+                    .expect("generate self-signed certificate");
+            (
+                cert.pem().into_bytes(),
+                signing_key.serialize_pem().into_bytes(),
+            )
+        }
+
+        /// Read until EOF, tolerating the missing-close_notify error a rustls
+        /// client reports when the server drops the TCP stream after its
+        /// response (this single-connection server does not send close_notify).
+        fn read_lenient(stream: &mut impl Read) -> Vec<u8> {
+            let mut out = Vec::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                match stream.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => out.extend_from_slice(&buf[..n]),
+                }
+            }
+            out
+        }
+
+        fn spawn_tls_api(addr: &str) -> (tempfile::TempDir, ApiHandle) {
+            let dir = tempfile::tempdir().unwrap();
+            let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
+            let (cert_pem, key_pem) = self_signed_identity();
+            let api_config = ApiConfig {
+                addr: addr.to_string(),
+                tls: ApiTlsConfig {
+                    cert_pem: Some(cert_pem),
+                    key_pem: Some(key_pem),
+                },
+                ..ApiConfig::default()
+            };
+            let handle = ApiServer::new(api_config, cfg)
+                .spawn()
+                .expect("TLS API server should spawn");
+            (dir, handle)
+        }
+
+        #[test]
+        fn garbage_pem_is_rejected_at_startup() {
+            let err = tls::server_config_from_pem(b"not a cert", b"not a key")
+                .expect_err("garbage PEM must not build a server config");
+            assert!(
+                err.to_string().contains("certificate"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn mismatched_tls_halves_are_rejected() {
+            let dir = tempfile::tempdir().unwrap();
+            let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
+            let api_config = ApiConfig {
+                addr: "127.0.0.1:0".to_string(),
+                tls: ApiTlsConfig {
+                    cert_pem: Some(b"cert only".to_vec()),
+                    key_pem: None,
+                },
+                ..ApiConfig::default()
+            };
+            let err = ApiServer::new(api_config, cfg)
+                .spawn()
+                .expect_err("half-configured TLS must be refused");
+            assert!(
+                err.to_string().contains("together"),
+                "unexpected error: {err}"
+            );
+        }
+
+        /// End to end: the socket actually speaks TLS — a rustls client that
+        /// trusts the server certificate completes a handshake and reads
+        /// `/health` over the encrypted session. One identity is generated in
+        /// the test and shared by both sides: the server terminates with it,
+        /// the client pins it as its only trust root.
+        #[test]
+        fn health_served_over_in_process_tls() {
+            let dir = tempfile::tempdir().unwrap();
+            let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
+            let (cert_pem, key_pem) = self_signed_identity();
+            let api_config = ApiConfig {
+                addr: "127.0.0.1:0".to_string(),
+                tls: ApiTlsConfig {
+                    cert_pem: Some(cert_pem.clone()),
+                    key_pem: Some(key_pem),
+                },
+                ..ApiConfig::default()
+            };
+            let handle = ApiServer::new(api_config, cfg)
+                .spawn()
+                .expect("TLS API server should spawn");
+
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in rustls_pemfile::certs(&mut &cert_pem[..]) {
+                roots.add(cert.expect("parse test cert")).expect("add root");
+            }
+            let client_config = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            let server_name = ServerName::try_from("localhost").expect("server name");
+            let conn =
+                rustls::ClientConnection::new(std::sync::Arc::new(client_config), server_name)
+                    .expect("client connection");
+            let tcp = TcpStream::connect(handle.addr).expect("connect");
+            let mut tls_stream = rustls::StreamOwned::new(conn, tcp);
+            tls_stream
+                .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .expect("write request over TLS");
+            let response = read_lenient(&mut tls_stream);
+            let response = String::from_utf8_lossy(&response);
+            assert!(response.contains("200 OK"), "response: {response}");
+            assert!(
+                response.contains(r#""status":"ok""#),
+                "response: {response}"
+            );
+
+            handle.stop().expect("stop API server");
+        }
+
+        /// A plaintext client against the TLS listener gets no HTTP response —
+        /// the capability token surface never falls back to cleartext.
+        #[test]
+        fn plaintext_client_gets_no_http_from_tls_listener() {
+            let (_dir, handle) = spawn_tls_api("127.0.0.1:0");
+
+            let mut stream = TcpStream::connect(handle.addr).expect("connect");
+            stream
+                .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .expect("write plaintext request");
+            let response = read_lenient(&mut stream);
+            let response = String::from_utf8_lossy(&response);
+            assert!(
+                !response.contains("200 OK"),
+                "TLS listener must not answer plaintext HTTP: {response}"
+            );
+
+            handle.stop().expect("stop API server");
+        }
+
+        /// With in-process TLS active, a non-loopback bind is legitimate —
+        /// the token never crosses the network in cleartext.
+        #[test]
+        fn non_loopback_bind_allowed_when_tls_active() {
+            let (_dir, handle) = spawn_tls_api("0.0.0.0:0");
+            handle.stop().expect("stop API server");
+        }
     }
 }

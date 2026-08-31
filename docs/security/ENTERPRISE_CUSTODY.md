@@ -152,19 +152,38 @@ key-free process) so a code-exec bug in the child never sees key pages.
 
 ## 4. Transport — in-process TLS on the token surfaces
 
-**State today (hardened in this pass).** The Event API and the webhook adapter
-now **fail closed** on a non-loopback bind without protection, matching the
-break-glass server's `validate_exposure`. The API refuses an off-loopback bind
-unless `WITNESS_API_ALLOW_INSECURE=1`; the webhook refuses a non-loopback bind
-without auth (or mutual TLS) unless `ADAPTER_WEBHOOK_ALLOW_INSECURE=1`. This
-closes the *accidental plaintext-on-LAN* exposure.
+**State today (shipped).** The Event API and the break-glass HTTP server now
+terminate TLS **in-process** on a build with the `api-tls` feature: a
+configured cert/key stands up a rustls session inside the accept loop (the same
+`ServerConfig`/`StreamOwned` arrangement as the webhook adapter's
+`adapter-webhook-tls` module), so "provide a cert/key" actually encrypts the
+socket. The exposure gates key off TLS being **active**, never off
+configuration alone:
 
-**Residual, tracked:** neither the Event API nor the break-glass HTTP server
-terminates TLS **in-process** — cert/key on break-glass attests an external
-terminator. Wire `rustls` into both accept loops (mirror the webhook module) so
-"provide a cert/key" actually encrypts the socket, and verify the CMS
-countersignature of RFC-3161 anchors inside Rust (not only via an optional
-external `openssl ts -verify`).
+- The Event API (`ApiConfig.tls`; `WITNESS_API_TLS_CERT` /
+  `WITNESS_API_TLS_KEY` on witnessd and witness_api) allows a non-loopback
+  bind when in-process TLS wraps the socket; otherwise it still refuses unless
+  `WITNESS_API_ALLOW_INSECURE=1`. On a build *without* the feature, configuring
+  cert/key is a **startup error** — material the build cannot terminate must
+  not look like protection.
+- Break-glass keeps its bind-time refusal of a routable address without TLS.
+  On an `api-tls` build the configured material is terminated in-process; on
+  other builds it remains what it always was, an operator's attestation that an
+  external terminator fronts the socket (with a startup warning saying so).
+- Bad PEM fails at spawn/bind time, not on the first connection; end-to-end
+  handshake tests (rustls client against the live listener) gate the feature in
+  CI, including the property that a plaintext client gets no HTTP response from
+  a TLS socket.
+
+The webhook adapter had this already (`adapter-webhook-tls`, including mTLS).
+The prior fail-closed behavior is unchanged for plaintext builds:
+non-loopback binds still require the explicit insecure override.
+
+**Residual, tracked:** verify the CMS countersignature of RFC-3161 anchors
+inside Rust (not only via an optional external `openssl ts -verify`). And the
+break-glass/api TLS lane is server-auth only — client authentication on these
+surfaces remains the capability token (mTLS on the event API would be a
+further tier, mirroring `load_server_config_mtls` in the webhook module).
 
 ### 4a. PWK wizard — authenticate the mutating endpoints
 

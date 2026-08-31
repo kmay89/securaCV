@@ -308,3 +308,57 @@ untrusted-signer, honest-label, and end-to-end writer→verify paths; `cargo
 clippy --lib --bins -- -D warnings` and `cargo fmt --check` clean (default and
 `pqc-signatures`); spelling and docs-index lints pass; the kernel-status-grid
 generator produces no diff.
+
+---
+
+# In-process TLS pass (2026-08-31)
+
+Scope: close the ENTERPRISE_CUSTODY §4 residual — "provide a cert/key" on the
+token-bearing HTTP surfaces now encrypts the socket instead of attesting that
+something else does.
+
+## Fixed in this pass
+
+- **New `api-tls` feature: in-process rustls termination for the Event API and
+  the break-glass server.** Both accept loops serve every connection through a
+  `rustls::StreamOwned` session when TLS material is configured (the same
+  arrangement as the webhook adapter's `adapter-webhook-tls` module). PEM
+  parsing and `ServerConfig` construction happen at spawn/bind time, so bad
+  material fails startup, not the first connection.
+- **Exposure gates key off TLS being ACTIVE, never off config presence.** The
+  Event API's non-loopback refusal now admits a bind when in-process TLS
+  actually wraps the socket; a plaintext bind still requires
+  `WITNESS_API_ALLOW_INSECURE=1`. On a build without the feature, configuring
+  cert/key on the Event API is a **startup error** — material the build cannot
+  terminate must not look like protection. Break-glass keeps its bind-time
+  refusal; without the feature its cert/key remain an explicit attestation of
+  an external terminator (now with a startup warning saying exactly that).
+- **Handshake cannot wedge the single-threaded loops.** Peer address capture
+  and the read/write socket timeouts are applied to the TCP stream *before*
+  the TLS wrap; rustls handshakes lazily on first read/write through that
+  socket, so a client stalling mid-handshake (or refusing to read a response)
+  times out instead of blocking every other endpoint. The break-glass server
+  also gains the write timeout the Event API already had.
+- **Operator wiring.** witnessd and witness_api read `WITNESS_API_TLS_CERT` /
+  `WITNESS_API_TLS_KEY` (paths to PEM files, both-or-neither);
+  `break_glass_serve` keeps its `--tls-cert`/`--tls-key` flags and now
+  advertises `https://` when termination is in-process.
+
+## Honest scope
+
+- Server-authentication only: client auth on these surfaces remains the
+  rotating capability token. mTLS (as the webhook module already offers) would
+  be a further tier.
+- The RFC-3161 CMS countersignature check in Rust stays tracked in
+  `ENTERPRISE_CUSTODY.md` §4 — this pass is transport only.
+
+## Verification (this pass)
+
+`cargo test --lib` passes on the default build (including the new
+refuse-material-without-feature and non-loopback-refusal tests) and with
+`--features api-tls` (389 tests, including end-to-end handshakes: a rustls
+client reads `/health` and the break-glass console over the encrypted session,
+and a plaintext client gets no HTTP from a TLS listener). `cargo clippy
+--all-targets -- -D warnings` clean on default, `api-tls`, and the pqc combo;
+`cargo fmt --check` clean. CI gains `Clippy (api-tls)` + `Test (api-tls)`
+steps in the optional-feature build gate.

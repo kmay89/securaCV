@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime};
 #[cfg(feature = "backend-tract")]
 use witness_kernel::detect::TractBackend;
 use witness_kernel::{
-    api::{ApiConfig, ApiServer},
+    api::{ApiConfig, ApiServer, ApiTlsConfig},
     break_glass::BreakGlassTokenFile,
     config::DetectBackendPreference,
     detect::{BackendRegistry, CpuBackend, StubBackend},
@@ -172,6 +172,10 @@ fn main() -> Result<()> {
                 v == "1" || v.eq_ignore_ascii_case("true")
             })
             .unwrap_or(false),
+        // In-process TLS material (WITNESS_API_TLS_CERT / WITNESS_API_TLS_KEY,
+        // paths to PEM files). Terminated by the server only on an `api-tls`
+        // build; configuring it on any other build is a startup error.
+        tls: ApiTlsConfig::from_env()?,
         ..ApiConfig::default()
     };
     let api_handle = {

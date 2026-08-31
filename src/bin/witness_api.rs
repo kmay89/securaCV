@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use std::sync::mpsc;
 
 use witness_kernel::{
-    api::{ApiConfig, ApiServer},
+    api::{ApiConfig, ApiServer, ApiTlsConfig},
     KernelConfig, ZonePolicy,
 };
 
@@ -48,6 +48,10 @@ fn main() -> Result<()> {
         rate_limit_per_minute: config.api_rate_limit_per_minute,
         // Explicit opt-in required to expose the plaintext API off-loopback.
         allow_insecure: env_flag("WITNESS_API_ALLOW_INSECURE"),
+        // In-process TLS material (WITNESS_API_TLS_CERT / WITNESS_API_TLS_KEY,
+        // paths to PEM files). Terminated by the server only on an `api-tls`
+        // build; configuring it on any other build is a startup error.
+        tls: ApiTlsConfig::from_env()?,
         ..ApiConfig::default()
     };
     let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;
