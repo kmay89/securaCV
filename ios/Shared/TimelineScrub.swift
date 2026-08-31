@@ -541,6 +541,16 @@ extension TimelineScrub {
                 foldIndex += 1
                 out.append(.fold(t0: f.t0, t1: f.t1, heartbeats: f.heartbeats))
             }
+            // KNOWN LIMIT: this floor is UTC-aligned, while days(for:calendar:)
+            // groups by calendar.startOfDay — so with a non-UTC calendar the
+            // dayByT0 lookup misses and day headers silently drop from the
+            // item stream. Harmless today: the only non-UTC consumer (the
+            // phone's ribbon section) reads `days`, never `items`, and the
+            // parity fixture pins the UTC path where both agree. Fixing it
+            // means threading the calendar through here — a three-part parity
+            // commit (both implementations + regenerated fixture) — so do
+            // that deliberately, not in passing, if items() ever gains a
+            // calendar-aware consumer.
             let dayT0 = Int((Double(r.t0) / Double(daySeconds)).rounded(.down)) * daySeconds
             if dayT0 != currentDay, let day = dayByT0[dayT0] {
                 // Advance the cursor only when a header is actually emitted, so

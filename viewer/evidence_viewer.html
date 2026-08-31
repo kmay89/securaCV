@@ -187,6 +187,11 @@
             border:1px solid var(--line); border-radius:8px; background:var(--bg);
             cursor:crosshair; touch-action:none; user-select:none; -webkit-user-select:none; }
   .tl-map:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  /* Scripted focus() from pointerdown reads as :focus-visible in Chromium,
+     which would ring the map on every mouse click. The marker class says
+     "this focus came from a pointer" — the first keydown removes it, so
+     keyboard users keep their ring. */
+  .tl-map.tl-ptrfocus:focus-visible { outline:none; }
   .tl-gline { position:absolute; left:0; right:0; height:1px; background:var(--line); opacity:.45; pointer-events:none; }
   .tl-gline.major { opacity:1; }
   .tl-tick { position:absolute; height:2px; border-radius:1px; background:var(--fam); opacity:.92;
@@ -308,6 +313,9 @@
   .tl-panel[data-spot="gap"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-gap),
   .tl-panel[data-spot="other"] :is(.tl-row,.tl-tick,.tl-cell,.tl-fold):not(.fam-other) { opacity:.25; }
   .tl-fold { transition:opacity .18s ease; }
+  /* A landing the user just performed outranks the dim while its flash runs —
+     transient emphasis only; the dim re-applies the moment the flash ends. */
+  .tl-panel[data-spot] .tl-row.tl-flash { opacity:1; }
 
   .tl-lens { position:absolute; z-index:5; left:92px; max-width:300px; pointer-events:none;
              background:var(--panel); border:1px solid var(--line); border-radius:8px;
@@ -315,6 +323,10 @@
   .tl-lens .lh { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
                  font-size:11.5px; color:var(--muted); }
   .tl-lens .lr { display:flex; align-items:center; gap:6px; margin-top:4px; }
+  /* The lens announces a held magnetic snap (a tamper or declared gap caught
+     the scrub) with a firmer ring, so the pull the hand feels has a face. */
+  .tl-lens.tl-snap { border-color:var(--accent);
+    box-shadow:0 0 0 1px var(--accent), 0 4px 14px rgba(0,0,0,.22); }
 
   /* Phone and narrow-panel layout: the fixed time/zone/confidence columns
      would crush the label to one character per line, so the row folds — rail
@@ -3809,6 +3821,14 @@ function initTimeline() {
       if (!ticksByBucket.has(k)) ticksByBucket.set(k, []);
       ticksByBucket.get(k).push(el);
     }
+    // The records that justify a trip are magnetic (see resolveScrub):
+    // rebuilt with the layout so a resize never leaves stale y positions.
+    notables = [];
+    for (const r of visible) {
+      if (r.kind === 'gap' || r.family === 'tamper') notables.push({ y: T.yOfTime(layout, r.t0), t0: r.t0 });
+    }
+    notables.sort((a, b) => a.y - b.y);
+    snap = null;
     syncView();
   }
 
@@ -3844,16 +3864,88 @@ function initTimeline() {
 
   // A drag or a strip click must END somewhere visible: flash the row the
   // scrub landed on, the same acknowledgment keyboard users already get.
+  // The flash waits for the row to actually ARRIVE — fired at gesture time,
+  // a long smooth trip spent most of the animation off screen and the
+  // acknowledgment landed pre-faded.
+  let pendingFlash = null, flashFallback = 0;
   function flashRow(el) {
     if (!el) return;
-    el.classList.remove('tl-flash');
-    void el.offsetWidth;
-    el.classList.add('tl-flash');
+    pendingFlash = null;
+    clearTimeout(flashFallback);
+    if (rowOnScreen(el)) {
+      el.classList.remove('tl-flash');
+      void el.offsetWidth;
+      el.classList.add('tl-flash');
+      return;
+    }
+    pendingFlash = el;
+    flashFallback = setTimeout(() => {
+      // The debt expires: pay only if the row made it on screen by now —
+      // an abandoned trip must never flash a false acknowledgment later.
+      const p = pendingFlash;
+      pendingFlash = null;
+      if (p && rowOnScreen(p)) flashRow(p);
+    }, 1500);
   }
+  // The user taking the pane back voids any owed flash outright.
+  function voidFlashDebt() { pendingFlash = null; clearTimeout(flashFallback); }
+  // The flash class outlives its animation; shed it on animationend so the
+  // spotlight's flash exemption (opacity:1 while flashing) stays transient.
+  list.addEventListener('animationend', (e) => {
+    if (e.animationName === 'tlflash') e.target.classList.remove('tl-flash');
+  });
   function anchorAt(t) {
     let target = anchors[anchors.length - 1];
     for (const el of anchors) { if (+el.dataset.t0 >= t) { target = el; break; } }
     return target;
+  }
+
+  // ---- one resolver for pointer -> time -------------------------------
+  // The scrub target, the lens, and the landing flash all consume the SAME
+  // resolved answer, so the magnetic snap can never make them disagree.
+  // Tamper and declared-gap ticks within 6px catch the scrub (released at
+  // 10px — hysteresis so the hold cannot flicker at the boundary). The snap
+  // engages ONLY while the pointer's own bucket is empty: a magnet that
+  // could shadow an occupied neighbor would make ordinary records harder to
+  // reach from the map, and emphasis must never cost reach. The snapped
+  // position is a bucket the record holds, never finer.
+  let notables = [];
+  let snap = null;
+  const SNAP_ON = 6, SNAP_OFF = 10;
+  function resolveScrub(e, allowSnap) {
+    const y = yIn(e);
+    const rawT = T.timeOfY(layout, y);
+    const ownB0 = Math.floor(rawT / model.bucketS) * model.bucketS;
+    const magnetic = allowSnap && !bucketRecs(ownB0).length;
+    if (magnetic && snap && Math.abs(y - snap.y) <= SNAP_OFF) return { y, t: snap.t0, snap };
+    snap = null;
+    if (magnetic) {
+      let best = null, bd = Infinity;
+      for (const n of notables) {
+        const d = Math.abs(n.y - y);
+        if (d <= SNAP_ON && d < bd) { bd = d; best = n; }
+        else if (n.y - y > SNAP_ON) break; // sorted by y: nothing closer ahead
+      }
+      if (best) { snap = best; return { y, t: best.t0, snap: best }; }
+    }
+    return { y, t: rawT, snap: null };
+  }
+
+  // Scroll target for a drag: proportional scrollbar motion (pointer fraction
+  // of the map = fraction of the scroll range, so max scroll arrives exactly
+  // at the map's bottom — pure center-alignment pinned the pane at max for
+  // the last quarter of the map, a dead zone holding the newest day's ink),
+  // clamped so the bucket-snapped target row is ALWAYS inside the viewport.
+  // Time claims are untouched: the lens, aria text, and landing flash all
+  // ride the same snapped bucket whatever the pane's exact offset.
+  function alignTop(el, fy) {
+    const r = el.getBoundingClientRect(), lr = list.getBoundingClientRect();
+    const f = Math.min(Math.max(fy, 0), 1);
+    const rowTop = list.scrollTop + (r.top - lr.top);
+    const maxScroll = Math.max(list.scrollHeight - list.clientHeight, 0);
+    const lowest = Math.max(rowTop - list.clientHeight + r.height, 0); // row at viewport bottom
+    const highest = Math.min(rowTop, maxScroll);                       // row at viewport top
+    return Math.min(Math.max(f * maxScroll, lowest), Math.max(highest, lowest));
   }
 
   // ---- glide: the pane follows a scrub like paper, not a slide carousel --
@@ -3871,7 +3963,10 @@ function initTimeline() {
       if (glideGoal === null || !list.isConnected) return;
       const d = glideGoal - list.scrollTop;
       if (Math.abs(d) < 1) { list.scrollTop = glideGoal; glideWrote = list.scrollTop; glideGoal = null; return; }
-      list.scrollTop += d * 0.35;
+      // Per-frame cap: a 55-record bucket puts ~1700px of rows between two
+      // adjacent map pixels, and 35% of that in one frame reads as a cut.
+      // Capped, a density cliff becomes a two-frame whoosh instead.
+      list.scrollTop += Math.sign(d) * Math.min(Math.abs(d) * 0.35, 300);
       glideWrote = list.scrollTop;
       glideRaf = requestAnimationFrame(step);
     };
@@ -3915,11 +4010,24 @@ function initTimeline() {
     return Math.max(list.scrollTop + (r.top - lr.top) - list.clientHeight / 2 + r.height / 2, 0);
   }
 
+  // Long trips teleport most of the way and glide only the last viewport:
+  // native smooth scroll runs seconds on a multi-thousand-px jump, outliving
+  // the caret's settle guard and spending the landing flash off screen.
+  function jumpTo(top) {
+    stopGlide();
+    if (REDUCED) { list.scrollTop = top; return; }
+    const d = top - list.scrollTop;
+    const vh = list.clientHeight;
+    if (Math.abs(d) > 2.5 * vh) list.scrollTop = top - Math.sign(d) * vh;
+    list.scrollTo({ top, behavior: 'smooth' });
+  }
+
   function scrollToTime(t, smooth) {
     const target = anchorAt(t);
     if (!target) return;
+    if (smooth) { jumpTo(centerTop(target)); return; }
     stopGlide();
-    list.scrollTo({ top: centerTop(target), behavior: smooth && !REDUCED ? 'smooth' : 'auto' });
+    list.scrollTo({ top: centerTop(target), behavior: 'auto' });
   }
 
   function yIn(e) {
@@ -3935,10 +4043,13 @@ function initTimeline() {
   const worstFirst = (recs) => recs.slice().sort((a, b) =>
     (famRank[a.family] ?? 2) - (famRank[b.family] ?? 2));
 
-  function showLens(e) {
-    const y = yIn(e);
-    const t = T.timeOfY(layout, y);
-    const seg = layout.find((s) => t >= s.t0 && t <= s.t1);
+  function showLens(e, resolved) {
+    // Hover snaps too (aiming at a notable should feel the same before and
+    // during a drag); only the scrollbar-thumb grab never snaps.
+    const s = resolved || resolveScrub(e, !grab);
+    const y = s.y;
+    const t = s.t;
+    const seg = layout.find((sg) => t >= sg.t0 && t <= sg.t1);
     let html = '';
     let hotB = null;
     if (seg && seg.kind === 'fold') {
@@ -3948,11 +4059,12 @@ function initTimeline() {
     } else {
       let b0 = Math.floor(t / model.bucketS) * model.bucketS;
       let recs = bucketRecs(b0);
-      if (!recs.length) {
+      if (!recs.length && !s.snap) {
         // Magnetism: a bucket is 1-3px tall here, so reading a stroke used to
         // need pixel aim. If ink sits within a few px, the lens snaps to that
         // bucket and says ITS honest range — reachability, zero extra
-        // precision (the shown window is still the full bucket).
+        // precision (the shown window is still the full bucket). Skipped
+        // while a notable snap holds: that snap already chose the bucket.
         for (const dy of [1, -1, 2, -2, 3, -3]) {
           const cand = Math.floor(T.timeOfY(layout, y + dy) / model.bucketS) * model.bucketS;
           if (cand === b0) continue;
@@ -3970,13 +4082,19 @@ function initTimeline() {
       if (recs.length > 3) html += `<div class="tl-det">+${recs.length - 3} more</div>`;
       if (recs.length) hotB = Math.floor(b0 / model.bucketS);
     }
-    // The bond runs the other way too: the bucket under the lens lights its
-    // rows in the pane, when they happen to be on screen.
+    // The bond runs both ways: the bucket under the lens lights its rows in
+    // the pane AND its own strokes on the map — the one direction where the
+    // hand is literally aiming at ticks.
     heatRows(hotB);
+    heatBucket(hotB);
+    lens.classList.toggle('tl-snap', !!s.snap);
     lens.innerHTML = html;
     lens.hidden = false;
+    // Clamp against the lens's real height so it never overhangs the wrap's
+    // bottom edge into whatever content sits below.
     const wr = wrap.getBoundingClientRect(), mr = map.getBoundingClientRect();
-    lens.style.top = Math.min(Math.max(mr.top - wr.top + y - 14, 0), Math.max(wr.height - 64, 0)) + 'px';
+    const maxTop = Math.max(wr.height - lens.offsetHeight - 2, 0);
+    lens.style.top = Math.min(Math.max(mr.top - wr.top + y - 14, 0), maxTop) + 'px';
   }
 
   let dragging = false;
@@ -3984,6 +4102,12 @@ function initTimeline() {
   let lastScrubT = null;
   map.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
+    // preventDefault below cancels the mousedown that would have focused this
+    // tabindex=0 element — without an explicit focus, no mouse user ever
+    // unlocked the keyboard layer the aria-label promises. The marker class
+    // keeps the scripted focus from painting the keyboard ring (see CSS).
+    map.classList.add('tl-ptrfocus');
+    try { map.focus({ preventScroll: true }); } catch { /* older engines */ }
     dragging = true;
     try { map.setPointerCapture(e.pointerId); } catch { /* older engines */ }
     const view = $('tlview');
@@ -3995,21 +4119,27 @@ function initTimeline() {
       grab = { y: e.clientY, top: list.scrollTop,
                scale: Math.max(list.scrollHeight - list.clientHeight, 0) / Math.max(map.clientHeight - vr.height, 1) };
       map.classList.add('tl-grabbing');
+      showLens(e);
     } else {
-      lastScrubT = T.timeOfY(layout, yIn(e));
-      glideTo(centerTop(anchorAt(lastScrubT)));
+      const s = resolveScrub(e, true);
+      lastScrubT = s.t;
+      glideTo(alignTop(anchorAt(s.t), s.y / Math.max(map.clientHeight, 1)));
+      showLens(e, s);
     }
-    showLens(e);
     e.preventDefault();
   });
   map.addEventListener('pointermove', (e) => {
     if (dragging && grab) {
       list.scrollTop = grab.top + (e.clientY - grab.y) * grab.scale;
+      showLens(e);
     } else if (dragging) {
-      lastScrubT = T.timeOfY(layout, yIn(e));
-      glideTo(centerTop(anchorAt(lastScrubT)));
+      const s = resolveScrub(e, true);
+      lastScrubT = s.t;
+      glideTo(alignTop(anchorAt(s.t), s.y / Math.max(map.clientHeight, 1)));
+      showLens(e, s);
+    } else {
+      showLens(e);
     }
-    showLens(e);
   });
   const endDrag = () => {
     if (dragging && !grab && lastScrubT !== null) flashRow(anchorAt(lastScrubT));
@@ -4018,7 +4148,9 @@ function initTimeline() {
   };
   map.addEventListener('pointerup', endDrag);
   map.addEventListener('pointercancel', endDrag);
-  map.addEventListener('pointerleave', () => { if (!dragging) { lens.hidden = true; heatRows(null); } });
+  map.addEventListener('pointerleave', () => {
+    if (!dragging) { lens.hidden = true; heatRows(null); heatBucket(null); snap = null; }
+  });
 
   // Wheel and trackpad scroll the reading pane from over the minimap, so the
   // two panes never disagree about which gesture does what.
@@ -4030,6 +4162,7 @@ function initTimeline() {
       : e.deltaMode === 2 ? e.deltaY * list.clientHeight
       : e.deltaY;
     stopGlide();
+    voidFlashDebt();
     list.scrollTop += px;
     e.preventDefault();
   }, { passive: false });
@@ -4042,9 +4175,11 @@ function initTimeline() {
     if (!nav.length) return;
     cur = Math.min(Math.max(i, 0), nav.length - 1);
     const el = nav[cur];
-    stopGlide();
+    // The smooth leg is bounded: long trips teleport to within one viewport,
+    // and the medium trips that ride native smooth (up to ~2.5 viewports)
+    // settle inside this guard too.
     gotoUntil = performance.now() + (REDUCED ? 0 : 600);
-    list.scrollTo({ top: centerTop(el), behavior: REDUCED ? 'auto' : 'smooth' });
+    jumpTo(centerTop(el));
     flashRow(el);
     // The caret's strokes light up on the map too, so a keyboard walk
     // teaches the row-to-stroke mapping the same way hovering does.
@@ -4095,7 +4230,9 @@ function initTimeline() {
     if (first >= 0) cur = direction > 0 ? first - 1 : last + 1;
   }
 
+  map.addEventListener('blur', () => map.classList.remove('tl-ptrfocus'));
   map.addEventListener('keydown', (e) => {
+    map.classList.remove('tl-ptrfocus'); // a key restores the keyboard ring
     const k = e.key;
     if (!nav.length) return;
     // Browser and OS chords pass through untouched: Ctrl/Cmd+P must print
@@ -4159,8 +4296,7 @@ function initTimeline() {
     if (say) say.textContent = `Spotlight on ${T.FAMILY_LABELS[fam]}. Other records are dimmed, still present.`;
     const idx = nav.findIndex((el) => el.classList.contains('fam-' + fam));
     if (idx >= 0 && !rowOnScreen(nav[idx])) {
-      stopGlide();
-      list.scrollTo({ top: centerTop(nav[idx]), behavior: REDUCED ? 'auto' : 'smooth' });
+      jumpTo(centerTop(nav[idx]));
       flashRow(nav[idx]);
     }
   }
@@ -4207,6 +4343,14 @@ function initTimeline() {
       flashRow(anchorAt(t));
     };
     strip.addEventListener('blur', () => { if (caret) caret.hidden = true; });
+    // A focused slider shows its hand BEFORE the first keypress — the caret
+    // appears at the current value on focus, not only after an adjustment.
+    strip.addEventListener('focus', () => {
+      if (!caret) return;
+      const now = +(strip.getAttribute('aria-valuenow') || 0);
+      caret.style.left = ((now / 1440) * 100).toFixed(2) + '%';
+      caret.hidden = false;
+    });
     strip.addEventListener('click', (e) => {
       const r = strip.getBoundingClientRect();
       const frac = Math.min(Math.max((e.clientX - r.left) / Math.max(r.width, 1), 0), 1);
@@ -4277,9 +4421,15 @@ function initTimeline() {
   let raf = 0;
   list.addEventListener('scroll', () => {
     // A scroll the glide did not write is the user taking the pane back —
-    // the glide yields instantly rather than fighting the scrollbar.
-    if (glideGoal !== null && Math.abs(list.scrollTop - glideWrote) > 1) stopGlide();
-    if (!raf) raf = requestAnimationFrame(() => { raf = 0; syncView(); });
+    // the glide yields instantly rather than fighting the scrollbar, and
+    // whatever flash that trip still owed is voided with it.
+    if (glideGoal !== null && Math.abs(list.scrollTop - glideWrote) > 1) { stopGlide(); voidFlashDebt(); }
+    if (!raf) raf = requestAnimationFrame(() => {
+      raf = 0;
+      syncView();
+      // A flash owed to a still-traveling row pays out the moment it shows.
+      if (pendingFlash && rowOnScreen(pendingFlash)) { const p = pendingFlash; flashRow(p); }
+    });
   });
 
   // Tear down the PREVIOUS timeline's watcher before wiring this one. Each
@@ -4288,20 +4438,40 @@ function initTimeline() {
   // of them alive — and on engines without ResizeObserver, left a live
   // window listener behind for each.
   if (tlWatcher) { tlWatcher(); tlWatcher = null; }
-  let rto = 0;
+  let rto = 0, hintTimer = 0;
   const onResize = () => { clearTimeout(rto); rto = setTimeout(() => { fitPane(); buildMap(); }, 120); };
+  const teardown = () => { clearTimeout(rto); clearTimeout(coolTicks); clearTimeout(flashFallback);
+    clearTimeout(hintTimer); stopGlide(); document.removeEventListener('keydown', onDocKey); };
   if (typeof ResizeObserver === 'function') {
     const ro = new ResizeObserver(onResize);
     ro.observe(map);
-    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide();
-      document.removeEventListener('keydown', onDocKey); ro.disconnect(); };
+    tlWatcher = () => { teardown(); ro.disconnect(); };
   } else {
     window.addEventListener('resize', onResize);
-    tlWatcher = () => { clearTimeout(rto); clearTimeout(coolTicks); stopGlide();
-      document.removeEventListener('keydown', onDocKey); window.removeEventListener('resize', onResize); };
+    tlWatcher = () => { teardown(); window.removeEventListener('resize', onResize); };
   }
 
   buildMap();
+
+  // Once per session, after the tick reveal settles: the viewport thumb gives
+  // a single small nudge — "this moves" said in motion, no tutorial. Private
+  // modes that refuse storage simply never see it, which is fine.
+  try {
+    if (!REDUCED && nav.length && !sessionStorage.getItem('scv-tl-hint')) {
+      sessionStorage.setItem('scv-tl-hint', '1');
+      hintTimer = setTimeout(() => {
+        const v = $('tlview');
+        if (v && v.isConnected && typeof v.animate === 'function') {
+          v.animate(
+            [{ transform: 'translateY(0)' },
+             { transform: 'translateY(4px)', offset: 0.35 },
+             { transform: 'translateY(-1.5px)', offset: 0.7 },
+             { transform: 'translateY(0)' }],
+            { duration: 480, easing: 'ease-in-out' });
+        }
+      }, 700);
+    }
+  } catch { /* storage blocked — the hint is optional chrome */ }
 }
 
 function renderBad(msg, detail) {
