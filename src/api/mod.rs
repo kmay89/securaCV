@@ -15,6 +15,14 @@ use subtle::ConstantTimeEq;
 
 const MAX_REQUEST_BYTES: usize = 8192;
 
+/// Absolute wall-clock budget for one event-API connection: TLS handshake,
+/// request read, handler, and response write together. Generous for the real
+/// clients (the HA coordinator's poll and a `POST /verify` full pass finish in
+/// seconds) while capping how long a hostile peer — dripping handshake or
+/// request bytes, or draining a response one byte at a time — can hold the
+/// single-threaded accept loop.
+const API_CONNECTION_BUDGET: Duration = Duration::from_secs(30);
+
 /// TLS material (PEM cert chain + private key) for the token-bearing HTTP
 /// surfaces (event API, break-glass).
 ///
@@ -28,12 +36,27 @@ const MAX_REQUEST_BYTES: usize = 8192;
 ///   `break_glass::server::validate_exposure`), and the event API refuses it
 ///   outright at startup — material a build cannot terminate must not look
 ///   like protection.
-#[derive(Clone, Debug, Default)]
+///
+/// Not `derive(Debug)`: the key bytes must never reach a log through a
+/// formatted config, and clones (spawn hands one to the server thread) scrub
+/// their PEM buffers on drop. rustls's parsed copy inside the running
+/// `ServerConfig` is inherent to in-process termination; this keeps the raw
+/// PEM from outliving its use anywhere else.
+#[derive(Clone, Default, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct ApiTlsConfig {
     /// PEM-encoded certificate chain.
     pub cert_pem: Option<Vec<u8>>,
     /// PEM-encoded private key.
     pub key_pem: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for ApiTlsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiTlsConfig")
+            .field("cert_pem", &self.cert_pem.as_ref().map(|c| c.len()))
+            .field("key_pem", &self.key_pem.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl ApiTlsConfig {
@@ -86,17 +109,81 @@ pub const API_TLS_KEY_ENV: &str = "WITNESS_API_TLS_KEY";
 pub(crate) trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
 
-/// Converts an accepted `TcpStream` into a served stream (identity for
-/// plaintext, a rustls session when `api-tls` is active). The wrap only
-/// constructs the session — the TLS handshake itself runs lazily on the first
-/// read/write through the same socket, so it is bounded by the read/write
-/// timeouts set on the `TcpStream` before wrapping.
-pub(crate) type StreamWrap =
-    Arc<dyn Fn(TcpStream) -> std::io::Result<Box<dyn ReadWrite + Send>> + Send + Sync>;
+/// A `TcpStream` bounded by BOTH a per-operation inactivity timeout and an
+/// absolute wall-clock budget for the whole connection.
+///
+/// A per-op `set_read_timeout` alone does not bound a connection: a peer that
+/// drips one byte per interval resets the timer forever, monopolizing a
+/// single-threaded accept loop (classic slowloris — and with in-process TLS
+/// the handshake is one more drip-able phase). Every read/write here first
+/// charges the remaining budget, so no connection — handshaking, sending a
+/// request, or draining a response — outlives the budget, while the per-op
+/// cap keeps the inactivity bound as tight as before.
+pub(crate) struct DeadlineStream {
+    tcp: TcpStream,
+    deadline: std::time::Instant,
+    per_op: Duration,
+}
 
-/// Identity wrap: serve the TCP stream directly (no TLS).
+impl DeadlineStream {
+    pub(crate) fn new(tcp: TcpStream, budget: Duration, per_op: Duration) -> Self {
+        Self {
+            tcp,
+            deadline: std::time::Instant::now() + budget,
+            per_op,
+        }
+    }
+
+    /// Time allowed for the next socket operation: the smaller of the per-op
+    /// cap and what is left of the connection budget. Errors once the budget
+    /// is exhausted (`set_read_timeout` rejects zero, and a spent budget must
+    /// fail rather than grant more time).
+    fn op_timeout(&self) -> std::io::Result<Duration> {
+        let remaining = self
+            .deadline
+            .saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "connection wall-clock budget exhausted",
+            ));
+        }
+        Ok(remaining.min(self.per_op))
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let timeout = self.op_timeout()?;
+        self.tcp.set_read_timeout(Some(timeout))?;
+        self.tcp.read(buf)
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let timeout = self.op_timeout()?;
+        self.tcp.set_write_timeout(Some(timeout))?;
+        self.tcp.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.tcp.flush()
+    }
+}
+
+/// Converts an accepted connection (already under its deadline) into a served
+/// stream: identity for plaintext, a rustls session when `api-tls` is active.
+/// The wrap only constructs the session — the TLS handshake itself runs lazily
+/// on the first read/write, through the [`DeadlineStream`], so the handshake
+/// is charged against the same per-op timeouts and wall-clock budget as the
+/// request that follows it.
+pub(crate) type StreamWrap =
+    Arc<dyn Fn(DeadlineStream) -> std::io::Result<Box<dyn ReadWrite + Send>> + Send + Sync>;
+
+/// Identity wrap: serve the deadline-bounded TCP stream directly (no TLS).
 pub(crate) fn plain_wrap() -> StreamWrap {
-    Arc::new(|tcp| Ok(Box::new(tcp) as Box<dyn ReadWrite + Send>))
+    Arc::new(|stream| Ok(Box::new(stream) as Box<dyn ReadWrite + Send>))
 }
 
 /// In-process TLS for the token-bearing HTTP surfaces (feature `api-tls`).
@@ -104,10 +191,9 @@ pub(crate) fn plain_wrap() -> StreamWrap {
 /// why the exposure gates below only relax for TLS that is actually ACTIVE.
 #[cfg(feature = "api-tls")]
 pub(crate) mod tls {
-    use super::{ReadWrite, StreamWrap};
+    use super::{DeadlineStream, ReadWrite, StreamWrap};
     use anyhow::{anyhow, Context, Result};
     use rustls::ServerConfig;
-    use std::net::TcpStream;
     use std::sync::Arc;
 
     /// Build a rustls server config (no client auth) from in-memory PEM
@@ -132,12 +218,44 @@ pub(crate) mod tls {
         Ok(Arc::new(config))
     }
 
-    /// Wrap every accepted connection in an in-process rustls session.
+    /// A served TLS session that sends `close_notify` on drop, so strict
+    /// clients see an orderly TLS closure instead of a bare TCP EOF after the
+    /// response (every response carries Content-Length, so this is protocol
+    /// hygiene, not data integrity). Best-effort: a failed flush on teardown
+    /// is ignored — the response is already written.
+    pub(crate) struct TlsStream(rustls::StreamOwned<rustls::ServerConnection, DeadlineStream>);
+
+    impl std::io::Read for TlsStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+
+    impl std::io::Write for TlsStream {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.write(buf)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.flush()
+        }
+    }
+
+    impl Drop for TlsStream {
+        fn drop(&mut self) {
+            self.0.conn.send_close_notify();
+            let _ = self.0.conn.write_tls(&mut self.0.sock);
+        }
+    }
+
+    /// Wrap every accepted connection in an in-process rustls session. The
+    /// session reads and writes through the [`DeadlineStream`], so handshake
+    /// bytes are charged against the connection's wall-clock budget.
     pub(crate) fn tls_wrap(config: Arc<ServerConfig>) -> StreamWrap {
-        Arc::new(move |tcp: TcpStream| {
+        Arc::new(move |stream: DeadlineStream| {
             let conn = rustls::ServerConnection::new(Arc::clone(&config))
                 .map_err(std::io::Error::other)?;
-            Ok(Box::new(rustls::StreamOwned::new(conn, tcp)) as Box<dyn ReadWrite + Send>)
+            Ok(Box::new(TlsStream(rustls::StreamOwned::new(conn, stream)))
+                as Box<dyn ReadWrite + Send>)
         })
     }
 
@@ -290,7 +408,7 @@ impl ApiServer {
         let tls_config: Option<()> = match (&self.cfg.tls.cert_pem, &self.cfg.tls.key_pem) {
             (None, None) => None,
             // Material a build cannot terminate must not look like protection.
-            _ => {
+            (Some(_), Some(_)) => {
                 return Err(anyhow!(
                     "API TLS cert/key configured, but this build has no in-process TLS \
                      (feature `api-tls` is not compiled in). Rebuild with --features api-tls, \
@@ -298,6 +416,9 @@ impl ApiServer {
                      proxy or SSH tunnel."
                 ))
             }
+            // Same message an `api-tls` build gives for a lone half, so fixing
+            // the config isn't chasing a different error per build.
+            _ => return Err(anyhow!("TLS cert and key must be configured together")),
         };
         let tls_active = tls_config.is_some();
 
@@ -625,18 +746,17 @@ fn handle_connection(
     rate_limiter: &mut RateLimiter,
     last_verify: &mut Option<VerifyReport>,
 ) -> Result<()> {
-    // Addresses and socket timeouts are taken on the TCP stream BEFORE any
-    // TLS wrap: rustls performs its handshake lazily on the first read/write
-    // through the same socket, so these bounds cover the handshake too — a
-    // client that stalls mid-handshake cannot wedge this single-threaded
-    // accept loop (same K6 reasoning as the write timeout below).
+    // Addresses are taken on the TCP stream BEFORE any TLS wrap; every
+    // subsequent socket operation (the lazy rustls handshake included) runs
+    // through the DeadlineStream, which enforces a 2s per-op inactivity
+    // timeout AND an absolute wall-clock budget for the whole connection.
+    // The per-op timeout alone is not enough: a peer dripping bytes — or
+    // draining a response one byte at a time — resets it forever and wedges
+    // this single-threaded accept loop, /health included (docs/strategy/12,
+    // K6; slowloris). The budget caps any one peer's hold on the loop.
     let peer = stream.peer_addr()?;
     let local = stream.local_addr()?;
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    // A response write can block forever against a peer that stops reading;
-    // on this single-threaded accept loop that wedges every endpoint
-    // including /health (docs/strategy/12, K6).
-    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    let stream = DeadlineStream::new(stream, API_CONNECTION_BUDGET, Duration::from_secs(2));
     let mut stream = wrap(stream)?;
     if local.ip().is_loopback() && !peer.ip().is_loopback() {
         write_json_response(&mut stream, 403, r#"{"error":"forbidden"}"#)?;
@@ -1553,6 +1673,66 @@ mod tests {
     // ---------------------------------------------------------------
     // Exposure policy + in-process TLS (`api-tls`).
     // ---------------------------------------------------------------
+
+    /// The wall-clock budget is absolute: a peer that keeps individual reads
+    /// alive (slowloris) still cannot outlive it — once the budget is spent,
+    /// the next socket operation fails instead of granting a fresh timeout.
+    #[test]
+    fn deadline_stream_budget_is_absolute() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (server_side, _) = listener.accept().unwrap();
+
+        let mut stream = DeadlineStream::new(
+            server_side,
+            Duration::from_millis(50),
+            Duration::from_secs(2),
+        );
+        std::thread::sleep(Duration::from_millis(80));
+        let mut buf = [0u8; 16];
+        let err = stream
+            .read(&mut buf)
+            .expect_err("a spent budget must fail the next operation, not re-arm the timeout");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "err: {err}");
+        let err = stream
+            .write(b"x")
+            .expect_err("writes are budgeted like reads");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "err: {err}");
+        drop(client);
+    }
+
+    /// Within the budget, the per-op cap still bounds each operation.
+    #[test]
+    fn deadline_stream_per_op_timeout_still_applies() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(addr).unwrap();
+        let (server_side, _) = listener.accept().unwrap();
+
+        // Budget far from spent; the idle read must still end at the per-op cap.
+        let mut stream = DeadlineStream::new(
+            server_side,
+            Duration::from_secs(30),
+            Duration::from_millis(50),
+        );
+        let started = std::time::Instant::now();
+        let mut buf = [0u8; 16];
+        let err = stream
+            .read(&mut buf)
+            .expect_err("an idle peer must hit the per-op timeout");
+        assert!(
+            matches!(
+                err.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "err: {err}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "read should have timed out at the per-op cap"
+        );
+    }
 
     /// The non-loopback fail-closed gate holds whenever in-process TLS is not
     /// ACTIVE — on every build when nothing is configured.

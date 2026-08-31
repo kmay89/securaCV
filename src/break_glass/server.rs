@@ -216,14 +216,17 @@ fn handle_conn<O: BreakGlassOps>(
     token_mgr: &mut CapabilityTokenManager,
     lockout: &mut Lockout,
 ) -> Result<()> {
-    // Addresses and socket timeouts go on the TCP stream BEFORE any TLS wrap:
-    // rustls handshakes lazily on the first read/write through the same
-    // socket, so these bounds cover the handshake too — a client that stalls
-    // mid-handshake (or stops reading the response) cannot wedge this
-    // single-threaded serve loop.
+    // Addresses are taken on the TCP stream BEFORE any TLS wrap; every
+    // subsequent socket operation (the lazy rustls handshake included) runs
+    // through the DeadlineStream, which enforces a 5s per-op inactivity
+    // timeout AND an absolute wall-clock budget for the whole connection —
+    // a per-op timeout alone is reset forever by a byte-dripping peer
+    // (slowloris), wedging this single-threaded serve loop. The budget is
+    // sized for the slowest legitimate request (an unseal runs Argon2id and
+    // envelope crypto) while capping a hostile peer's hold on the loop.
     let local = stream.local_addr()?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    let stream =
+        crate::api::DeadlineStream::new(stream, Duration::from_secs(30), Duration::from_secs(5));
     let mut stream = wrap(stream)?;
     // Defense in depth: even if bound to loopback, never serve a non-loopback peer.
     if local.ip().is_loopback() && !peer.ip().is_loopback() {

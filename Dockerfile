@@ -66,12 +66,16 @@ COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_ve
 COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799
-# The event API terminates no TLS in-process, so witnessd now fails closed on a
-# non-loopback bind unless plaintext exposure is explicitly acknowledged. This
-# image binds 0.0.0.0 by design (so the published port is reachable) and relies
-# on Docker network isolation / the operator's published-port and firewall
-# controls for confidentiality — put a TLS terminator in front for untrusted
-# networks. Opt in explicitly so the container boots under the fail-closed guard.
+# The default build of this image terminates no TLS in-process, so witnessd
+# fails closed on a non-loopback bind unless plaintext exposure is explicitly
+# acknowledged. This image binds 0.0.0.0 by design (so the published port is
+# reachable) and relies on Docker network isolation / the operator's
+# published-port and firewall controls for confidentiality — put a TLS
+# terminator in front for untrusted networks, or rebuild with
+# CARGO_FEATURES including api-tls and mount cert/key named by
+# WITNESS_API_TLS_CERT / WITNESS_API_TLS_KEY to terminate in-process (the
+# health check below follows that configuration). The opt-in here only takes
+# effect when TLS is not active, so it is safe to leave set in TLS deployments.
 ENV WITNESS_API_ALLOW_INSECURE=1
 ENV RUST_LOG=info
 
@@ -84,7 +88,16 @@ USER 1001:1001
 
 # SECURITY: Health check for orchestrators to detect stuck processes.
 # Probes the Event API /health endpoint (witnessd serves it on WITNESS_API_ADDR).
+# The scheme follows the TLS configuration: with WITNESS_API_TLS_CERT set (an
+# api-tls build terminating in-process), port 8799 speaks only TLS, so the
+# probe must too. -k because the operator's cert is typically self-signed or
+# not minted for 127.0.0.1 — this is a same-container liveness probe, not a
+# trust decision.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8799/health || exit 1
+  CMD if [ -n "$WITNESS_API_TLS_CERT" ]; then \
+        curl -fsSk https://127.0.0.1:8799/health || exit 1; \
+      else \
+        curl -fsS http://127.0.0.1:8799/health || exit 1; \
+      fi
 
 ENTRYPOINT ["witnessd"]

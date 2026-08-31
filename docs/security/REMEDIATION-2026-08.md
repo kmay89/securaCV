@@ -333,16 +333,25 @@ something else does.
   terminate must not look like protection. Break-glass keeps its bind-time
   refusal; without the feature its cert/key remain an explicit attestation of
   an external terminator (now with a startup warning saying exactly that).
-- **Handshake cannot wedge the single-threaded loops.** Peer address capture
-  and the read/write socket timeouts are applied to the TCP stream *before*
-  the TLS wrap; rustls handshakes lazily on first read/write through that
-  socket, so a client stalling mid-handshake (or refusing to read a response)
-  times out instead of blocking every other endpoint. The break-glass server
-  also gains the write timeout the Event API already had.
+- **A hostile connection cannot wedge the single-threaded loops.** Every
+  socket operation — the lazy rustls handshake included — runs through a
+  `DeadlineStream` that enforces the per-op inactivity timeout (2s API / 5s
+  break-glass) AND an absolute 30s wall-clock budget for the whole
+  connection. A per-op timeout alone is reset forever by a peer dripping one
+  byte per interval (slowloris) — a pre-existing gap on the plaintext request
+  path that in-process TLS would have widened with one more drip-able phase;
+  both are closed by the budget, which also bounds a peer draining a large
+  response one byte at a time. The break-glass server additionally gains the
+  write timeout the Event API already had. (Raised independently by review;
+  regression-tested with a spent-budget unit test.)
 - **Operator wiring.** witnessd and witness_api read `WITNESS_API_TLS_CERT` /
   `WITNESS_API_TLS_KEY` (paths to PEM files, both-or-neither);
   `break_glass_serve` keeps its `--tls-cert`/`--tls-key` flags and now
-  advertises `https://` when termination is in-process.
+  advertises `https://` when termination is in-process. The container image's
+  health probe follows the TLS configuration (https when a cert is named).
+- **Key-material hygiene.** `ApiTlsConfig` scrubs its PEM buffers on drop
+  (zeroize) and redacts the key from `Debug` formatting; TLS sessions send
+  `close_notify` on teardown so strict clients see an orderly closure.
 
 ## Honest scope
 
@@ -351,6 +360,12 @@ something else does.
   be a further tier.
 - The RFC-3161 CMS countersignature check in Rust stays tracked in
   `ENTERPRISE_CUSTODY.md` §4 — this pass is transport only.
+- Deliberate asymmetry, signed off: on a non-`api-tls` build the Event API
+  hard-refuses configured TLS material, while break-glass keeps its
+  pre-existing attestation contract (routable bind allowed with cert/key as
+  the operator's claim that an external terminator fronts it, warned at
+  startup). Changing break-glass to refuse would break existing front-proxy
+  deployments; the honest posture is the warning plus this record.
 
 ## Verification (this pass)
 
