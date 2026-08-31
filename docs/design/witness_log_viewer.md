@@ -127,6 +127,22 @@ quiet differently disagree about what a day *was*, and then the record stops
 being a record. **Changing a folding or layout rule is a three-part commit:
 both implementations plus a regenerated fixture.**
 
+**The interaction grammar (the polish pass).** The bucket is a detent, not a
+limitation, and every layer agrees on it: the web lens magnetizes to the
+nearest inked bucket (reachability, zero extra precision — it always names
+the full bucket range), the iOS ribbon ticks a selection haptic per record
+bucket and a firmer nudge entering a declared gap or tamper bucket (never
+scaled by severity — a scrub must not become a Geiger counter), and pulling
+the finger down slows the drag Music-scrubber-style without ever offering a
+sub-bucket position. Every scrub ends with an acknowledgment (the landing
+row flashes; the iOS caret lingers while the list glides), tamper is exempt
+from the minimap's density cap exactly as gaps are, `n`/`p` step between
+tamper and gap records and the day-header counts jump to them — navigation
+order, never a filtered view — and the spotlight is a visible mode: the
+caption line names it, Escape clears it, and switching it on brings the
+first match into view, because "dimmed, not hidden" must never look like
+"gone".
+
 On the phone the same model drives a horizontal day-shape ribbon in the
 Alerts tab (`ios/Sources/SecuraCV/Views/Components/TimelineScrubView.swift`),
 colored by the app's existing `Severity` → `Theme.Role` vocabulary rather

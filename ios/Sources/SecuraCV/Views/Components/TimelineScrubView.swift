@@ -60,6 +60,22 @@ struct TimelineDayShapeView: View {
     /// larger-text user gets a proportionally taller, easier target.
     @ScaledMetric(relativeTo: .caption) private var ribbonHeight: CGFloat = 44
 
+    /// The live drag, in ribbon coordinates. `virtualX` is where the scrub
+    /// IS; `lastX` is where the finger was — they separate so pulling the
+    /// finger down can slow the scrub (see `gain`) without the caret leaping
+    /// back to the fingertip. Non-nil exactly while a drag owns the ribbon.
+    @State private var scrub: ScrubDrag?
+    /// 0 = full speed, 1 = half, 2 = quarter — chosen by how far the finger
+    /// has pulled down from the ribbon, the Music-scrubber gesture. Gain
+    /// changes input speed only: every output still snaps to a bucket, so
+    /// "fine" means reliably landing on ONE 10-minute bucket, never between.
+    @State private var gainTier = 0
+
+    private struct ScrubDrag {
+        var lastX: CGFloat
+        var virtualX: CGFloat
+    }
+
     /// Columns are keyed by index into the day, so a lookup is a dictionary
     /// hit rather than a scan per drawn column. Indices are unique by
     /// construction; `uniquingKeysWith` keeps a malformed model from trapping
@@ -91,30 +107,65 @@ struct TimelineDayShapeView: View {
                     }
                 }
                 .contentShape(Rectangle())
+                .onTapGesture { location in
+                    // The most natural gesture of all: tap the peak, land on
+                    // it. seat() snaps, so a tap can never claim a finer
+                    // moment than the bucket it touched.
+                    preview(atX: location.x, width: width)
+                    if let bucket = myBucket { onScrub(bucket) }
+                    scheduleCaretClear()
+                }
                 .gesture(
                     // `minimumDistance: 0` claimed the touch on touch-DOWN, so
                     // three 44pt bands of the Alerts list stopped scrolling:
                     // a flick that began on a ribbon scrubbed instead. Require
                     // real movement, and only take the gesture once it is
                     // mostly sideways — a vertical flick belongs to the list
-                    // this ribbon is a row of.
+                    // this ribbon is a row of. Once the drag IS claimed,
+                    // vertical distance stops meaning "scroll" and starts
+                    // meaning "slower": pulling down drops the horizontal
+                    // gain to half, then a quarter, the same way the system
+                    // media scrubber does.
                     DragGesture(minimumDistance: 8)
                         .onChanged { value in
-                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                            preview(atX: value.location.x, width: width)
+                            if scrub == nil {
+                                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                                scrub = ScrubDrag(lastX: value.location.x, virtualX: value.location.x)
+                            }
+                            guard var drag = scrub else { return }
+                            let pull = max(value.translation.height, 0)
+                            let tier = pull > 120 ? 2 : pull > 60 ? 1 : 0
+                            if tier != gainTier { gainTier = tier }
+                            let gain: CGFloat = tier == 2 ? 0.25 : tier == 1 ? 0.5 : 1
+                            drag.virtualX = min(max(drag.virtualX + (value.location.x - drag.lastX) * gain, 0), width)
+                            drag.lastX = value.location.x
+                            scrub = drag
+                            preview(atX: drag.virtualX, width: width)
                         }
-                        .onEnded { value in
+                        .onEnded { _ in
                             // Scrolling DURING the drag moved the ribbon out
                             // from under the finger — it is a row of the very
                             // list it scrolls. So the drag only previews, and
                             // the list is moved once, on release.
-                            if abs(value.translation.width) > abs(value.translation.height),
-                               let bucket = myBucket {
+                            if scrub != nil, let bucket = myBucket {
                                 onScrub(bucket)
                             }
-                            position = nil
+                            scrub = nil
+                            gainTier = 0
+                            scheduleCaretClear()
                         }
                 )
+                // The bucket IS the detent, felt as well as seen: a tick when
+                // the caret crosses into a bucket that holds records, a firmer
+                // nudge entering a declared gap or a tamper bucket — the
+                // tactile twin of the outline-not-fill rule. Silence over
+                // empty buckets, and nothing scaled by severity or count: a
+                // scrub must never become a Geiger counter.
+                .sensoryFeedback(trigger: myBucket) { _, seated in
+                    guard let bucket = seated, let cell = cell(at: bucket) else { return nil }
+                    if cell.hasGap || cell.family == .tamper { return .impact(weight: .light) }
+                    return .selection
+                }
             }
             .frame(height: ribbonHeight)
             .accessibilityElement()
@@ -123,6 +174,17 @@ struct TimelineDayShapeView: View {
             .accessibilityHint("Swipe up or down to move through the day by the hour.")
             .accessibilityAdjustableAction { direction in
                 adjust(by: direction == .increment ? 3600 : -3600)
+            }
+            .accessibilityActions {
+                // The records worth the trip get one-gesture routes: the same
+                // jumps the sighted footer buttons offer. Navigation order,
+                // never a filter — the full day stays exactly as spoken.
+                if day.tamperCount > 0 {
+                    Button("Jump to tamper") { jump(toTamper: true) }
+                }
+                if day.gapCount > 0 {
+                    Button("Jump to declared gap") { jump(toTamper: false) }
+                }
             }
             footer
         }
@@ -135,6 +197,13 @@ struct TimelineDayShapeView: View {
             Text(day.label)
                 .font(.subheadline.weight(.semibold))
             Spacer(minLength: Theme.xs)
+            if gainTier > 0 {
+                // Names the gear the finger already felt shift, exactly as the
+                // system media scrubber labels its speed while dragging.
+                Text(gainTier == 2 ? "¼ speed" : "½ speed")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if let bucket = myBucket {
                 Text(Self.clock(bucket))
                     .font(.caption.monospacedDigit())
@@ -150,17 +219,25 @@ struct TimelineDayShapeView: View {
         HStack(spacing: Theme.s) {
             Text(countPhrase)
             if day.gapCount > 0 {
-                Label("\(day.gapCount) gap\(day.gapCount == 1 ? "" : "s")", systemImage: "eye.slash")
-                    .foregroundStyle(Theme.color(.warn))
+                // The counts are destinations, not captions: tapping one
+                // scrubs straight to the first record behind the number.
+                Button { jump(toTamper: false) } label: {
+                    Label("\(day.gapCount) gap\(day.gapCount == 1 ? "" : "s")", systemImage: "eye.slash")
+                        .foregroundStyle(Theme.color(.warn))
+                }
+                .buttonStyle(.plain)
             }
             if day.tamperCount > 0 {
-                Label("\(day.tamperCount) tamper", systemImage: "hand.raised.slash.fill")
-                    .foregroundStyle(Theme.color(.tamper))
+                Button { jump(toTamper: true) } label: {
+                    Label("\(day.tamperCount) tamper", systemImage: "hand.raised.slash.fill")
+                        .foregroundStyle(Theme.color(.tamper))
+                }
+                .buttonStyle(.plain)
             }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .accessibilityHidden(true) // the ribbon already speaks this
+        .accessibilityHidden(true) // the ribbon speaks this, and carries the same jumps as custom actions
     }
 
     private var countPhrase: String {
@@ -199,6 +276,18 @@ struct TimelineDayShapeView: View {
                 with: .color(Theme.color(.neutral).opacity(0.28)))
         }
 
+        // Faint hour ticks along the baseline, a touch stronger at 6/12/18,
+        // so a scrub toward "around 3pm" is aimable. Hours are the visual
+        // grid; the felt grid stays the 10-minute bucket — ticking all 144
+        // would promise a pointing precision no fingertip has.
+        for hour in 1..<24 {
+            let x = size.width * CGFloat(hour) / 24
+            let tall: CGFloat = hour % 6 == 0 ? 5 : 3
+            context.fill(
+                Path(CGRect(x: x - 0.5, y: size.height - tall, width: 1, height: tall)),
+                with: .color(Theme.color(.neutral).opacity(hour % 6 == 0 ? 0.4 : 0.22)))
+        }
+
         let cells = cellsByIndex
         for index in 0..<columns {
             guard let cell = cells[index] else { continue }
@@ -235,6 +324,39 @@ struct TimelineDayShapeView: View {
     }
 
     // MARK: - input
+
+    /// The day's cell under a bucket date, if that bucket holds records.
+    private func cell(at bucket: Date) -> TimelineDayCell? {
+        let offset = bucket.timeIntervalSince1970 - TimeInterval(day.dayT0)
+        guard offset >= 0, offset < TimeInterval(TimelineScrub.daySeconds) else { return nil }
+        return cellsByIndex[Int(offset) / TimelineScrub.defaultBucketSeconds]
+    }
+
+    /// Scrub straight to the day's first tamper (or first declared-gap)
+    /// bucket and walk the list there — the footer counts and the VoiceOver
+    /// custom actions both land here.
+    private func jump(toTamper: Bool) {
+        let hit = day.cells
+            .filter { toTamper ? $0.family == .tamper : $0.hasGap }
+            .map(\.index).min()
+        guard let index = hit else { return }
+        let bucket = Date(timeIntervalSince1970:
+            TimeInterval(day.dayT0 + index * TimelineScrub.defaultBucketSeconds))
+        position = TimelineScrubPosition(dayT0: day.dayT0, bucket: bucket)
+        onScrub(bucket)
+        scheduleCaretClear()
+    }
+
+    /// The finger lifts, the list glides — and only then does the caret bow
+    /// out. Clearing it the same frame erased the answer ("where did I land?")
+    /// at the exact moment the question was asked.
+    private func scheduleCaretClear() {
+        let seated = position
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            if position == seated { position = nil }
+        }
+    }
 
     private func caretX(for bucket: Date, width: CGFloat) -> CGFloat? {
         let offset = bucket.timeIntervalSince1970 - TimeInterval(day.dayT0)
@@ -305,6 +427,13 @@ struct TimelineScrubSection: View {
             VStack(alignment: .leading, spacing: Theme.m) {
                 ForEach(Array(days.prefix(3))) { day in
                     TimelineDayShapeView(day: day, position: $position, onScrub: onScrub)
+                }
+                if days.count > 3 {
+                    // The ribbons stop at three; the record does not. Say so,
+                    // or the boundary reads as the history ending here.
+                    Text("Shapes for the 3 most recent days — earlier days continue in the list below.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.vertical, Theme.xs)
