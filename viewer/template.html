@@ -27,6 +27,14 @@
        always carry a glyph or texture and a text label — never color alone. */
     --fam-move:#2a78d6; --fam-touch:#e87ba4; --fam-sound:#1baf7a;
     --fam-tamper:#cf222e; --fam-gap:#9a6700; --fam-other:#636c76;
+    /* Timeline chrome (the "Seismograph" treatment): the quietest legible
+       ink, THE hairline (defined once — var(--line) resolves at use time,
+       so it tracks both themes), the lens elevation, and the strength of
+       the family-hue row wash (steps up in dark, where low alpha dies). */
+    --whisper:#6e7781;
+    --line-soft:color-mix(in srgb, var(--line) 45%, transparent);
+    --pop-shadow:0 1px 2px rgba(31,35,40,.10), 0 10px 28px rgba(31,35,40,.16);
+    --wash:7%;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -35,6 +43,9 @@
       --accent:#4493f8; --accent-bg:#121d2f; --shadow:none;
       --fam-move:#3987e5; --fam-touch:#d55181; --fam-sound:#0f7a55;
       --fam-tamper:#f85149; --fam-gap:#d29922; --fam-other:#9198a1;
+      --whisper:#848d97;
+      --pop-shadow:0 0 0 1px var(--line), 0 12px 32px rgba(0,0,0,.55);
+      --wash:12%;
     }
   }
   * { box-sizing:border-box; }
@@ -164,27 +175,39 @@
 
   .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden;
              clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; border:0; }
-  .tl-legend { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
-  .tl-chip { font:inherit; font-size:12px; font-weight:600; color:var(--muted); background:var(--bg);
-             border:1px solid var(--line); border-radius:999px; padding:4px 11px; cursor:pointer;
+  /* The panel reads as a page, not a filing stamp: this h2 alone drops the
+     house uppercase treatment (every other panel keeps it). */
+  .tl-panel h2 { text-transform:none; font-size:15px; font-weight:650; letter-spacing:-.1px;
+                 color:var(--fg); margin:0 0 6px; }
+  .tl-legend { display:flex; flex-wrap:wrap; gap:4px 18px; align-items:center; margin:0 0 16px; }
+  /* Legend entries are words with a colored dot, not pills — the label
+     carries the weight, the count whispers, the pressed state is a plain
+     accent underline. Chrome died; the affordances (hover shift, focus
+     ring, 44px coarse targets) all survive. */
+  .tl-chip { font:inherit; font-size:12.5px; font-weight:600; color:var(--muted); background:none;
+             border:0; border-radius:4px; padding:4px 2px; cursor:pointer;
              display:inline-flex; align-items:center; gap:7px; }
-  .tl-chip:hover { color:var(--fg); border-color:var(--accent); }
+  .tl-chip:hover { color:var(--fg); }
   .tl-chip:focus-visible, .tl-list:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  .tl-chip[aria-pressed="true"] { border-color:var(--accent); color:var(--fg); box-shadow:0 0 0 1px var(--accent); }
+  .tl-chip[aria-pressed="true"] { color:var(--fg); box-shadow:inset 0 -2px 0 0 var(--accent); }
   .tl-dot { width:8px; height:8px; border-radius:50%; background:var(--fam); flex:0 0 auto; }
   .tl-dot.fam-tamper { border-radius:1px; clip-path:polygon(50% 0, 100% 100%, 0 100%); }
   .tl-dot.fam-gap { border-radius:2px;
     background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 4px);
     box-shadow:inset 0 0 0 1px var(--fam); }
-  .tl-n { color:var(--fg); }
-  .tl-utc { margin-left:auto; font-size:11.5px; color:var(--muted); }
+  .tl-n { color:var(--muted); font-weight:400; font-variant-numeric:tabular-nums; }
+  .tl-utc { margin-left:auto; font-size:11px; color:var(--whisper); letter-spacing:.02em; }
 
   /* One height token drives the map and the reading pane, so they stay locked
      together on every display — a laptop, a phone in landscape, a 10-foot TV
      browser, or a short HMI panel. */
-  .tl-wrap { display:flex; gap:12px; position:relative; --tl-h:clamp(300px, 54vh, 640px); }
+  /* Air is the boundary now: the tape and the text separate by whitespace,
+     not by frames. */
+  .tl-wrap { display:flex; gap:28px; position:relative; --tl-h:clamp(300px, 54vh, 640px); }
+  /* The seismograph tape: greeked strokes floating directly on the page —
+     no box, no fill. The record is the object; the widget chrome died. */
   .tl-map { position:relative; width:84px; flex:0 0 auto; height:var(--tl-h); overflow:hidden;
-            border:1px solid var(--line); border-radius:8px; background:var(--bg);
+            border:0; border-radius:0; background:transparent;
             cursor:crosshair; touch-action:none; user-select:none; -webkit-user-select:none; }
   .tl-map:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   /* Scripted focus() from pointerdown reads as :focus-visible in Chromium,
@@ -192,8 +215,8 @@
      "this focus came from a pointer" — the first keydown removes it, so
      keyboard users keep their ring. */
   .tl-map.tl-ptrfocus:focus-visible { outline:none; }
-  .tl-gline { position:absolute; left:0; right:0; height:1px; background:var(--line); opacity:.45; pointer-events:none; }
-  .tl-gline.major { opacity:1; }
+  .tl-gline { position:absolute; left:0; right:0; height:1px; background:var(--line); opacity:.22; pointer-events:none; }
+  .tl-gline.major { opacity:.55; }
   .tl-tick { position:absolute; height:2px; border-radius:1px; background:var(--fam); opacity:.92;
              pointer-events:none; animation:tlreveal .4s ease both; transition:opacity .18s ease; }
   .tl-tick.tl-more { height:3px; opacity:1; }
@@ -202,8 +225,8 @@
      addition: nothing else dims, nothing hides. */
   .tl-tick.tl-hot { opacity:1; box-shadow:0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); }
   .tl-maplab { position:absolute; left:3px; padding:0 3px; border-radius:3px; pointer-events:none;
-               font-size:8.5px; letter-spacing:.3px; text-transform:uppercase; color:var(--muted);
-               white-space:nowrap; background:color-mix(in srgb, var(--bg) 78%, transparent); }
+               font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:var(--whisper);
+               white-space:nowrap; background:color-mix(in srgb, var(--panel) 78%, transparent); }
   .tl-tickgap { left:4px; right:4px; border-radius:2px;
     background:repeating-linear-gradient(45deg, var(--fam) 0 3px, transparent 3px 6px);
     box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fam) 55%, transparent); }
@@ -212,27 +235,55 @@
   .tl-pleat { position:absolute; left:0; right:0; pointer-events:none; opacity:.55;
     border-top:1px dashed var(--line); border-bottom:1px dashed var(--line);
     background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 14%, transparent) 0 4px, transparent 4px 8px); }
-  .tl-view { position:absolute; left:0; right:0; min-height:16px; border-radius:4px;
-             background:color-mix(in srgb, var(--accent) 13%, transparent);
-             border:1px solid var(--accent); pointer-events:auto; cursor:grab; }
+  /* The reading window is a bracket gliding along the tape's edge, not a
+     selection box drawn on a chart. */
+  .tl-view { position:absolute; left:0; right:0; min-height:16px; border:0;
+             border-left:2px solid var(--accent); border-radius:0 3px 3px 0;
+             background:linear-gradient(to right,
+               color-mix(in srgb, var(--accent) 16%, transparent),
+               color-mix(in srgb, var(--accent) 3%, transparent) 85%);
+             pointer-events:auto; cursor:grab; }
   .tl-map.tl-grabbing, .tl-map.tl-grabbing .tl-view { cursor:grabbing; }
-  .tl-view:hover { border-color:color-mix(in srgb, var(--accent) 100%, transparent);
-                   background:color-mix(in srgb, var(--accent) 20%, transparent); }
+  .tl-view:hover { background:linear-gradient(to right,
+    color-mix(in srgb, var(--accent) 22%, transparent),
+    color-mix(in srgb, var(--accent) 7%, transparent) 85%); }
+  /* The ink very slightly enriches under the window — progressive
+     enhancement, invisible where unsupported. */
+  @supports (backdrop-filter:saturate(1)) or (-webkit-backdrop-filter:saturate(1)) {
+    .tl-view { backdrop-filter:saturate(1.8); -webkit-backdrop-filter:saturate(1.8); }
+  }
   @keyframes tlreveal { from { opacity:0; transform:translateX(-4px); } to { transform:none; } }
   /* Always-visible one-liner: the map earns a name and its keys are written
      down, so nothing about the scrubber is a secret handshake. Doubles as
      the spotlight's mode line (a mode with no visible state is a trap). */
-  .tl-caption { font-size:11.5px; color:var(--muted); margin-top:7px; }
-  .tl-caption b { font-weight:650; color:var(--fg); }
+  .tl-caption { font-size:11.5px; color:var(--whisper); margin-top:10px; }
+  /* The bottom bevel is what makes a glyph read as a key. */
+  .tl-caption b { font-weight:600; color:var(--fg); padding:0 5px; border-radius:4px;
+                  background:color-mix(in srgb, var(--fg) 8%, transparent);
+                  box-shadow:inset 0 0 0 1px var(--line-soft), inset 0 -1.5px 0 var(--line); }
+  /* The honesty paragraph is the fine print on an instrument face: every
+     word stays, set small over the panel's second (and last) hairline. */
+  .tl-panel .hint { margin-top:18px; padding-top:14px; border-top:1px solid var(--line-soft);
+                    font-size:12px; line-height:1.65; color:var(--muted);
+                    /* The rule spans the panel like its sibling under the day
+                       header; the measure stays 70ch via right padding. */
+                    max-width:none; padding-right:max(0px, calc(100% - 70ch)); }
 
   .tl-list { flex:1; min-width:0; height:var(--tl-h); overflow-y:auto; position:relative;
-             border:1px solid var(--line); border-radius:8px; scrollbar-width:thin;
+             border:0; border-radius:0; scrollbar-width:thin;
              overscroll-behavior:contain; -webkit-overflow-scrolling:touch; }
+  /* The opaque background MUST stay — this header is sticky over borderless
+     rows — and its single soft hairline is one of the panel's only two
+     structural lines. Load-bearing; do not "clean up". */
   .tl-day { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px;
-            background:var(--panel); border-bottom:1px solid var(--line); padding:8px 12px; }
-  .tl-date { font-size:13px; font-weight:650; white-space:nowrap; }
+            background:var(--panel); border-bottom:0; box-shadow:0 1px 0 var(--line-soft);
+            padding:12px 12px 10px 0; }
+  .tl-date { font-size:14px; font-weight:700; letter-spacing:-.2px; white-space:nowrap; }
+  /* The strip's cells are beads on a visible wire — a continuous 1px
+     baseline gives the slider a rail without giving it a box. */
   .tl-strip { position:relative; flex:1; height:10px; min-width:60px; cursor:pointer;
-              border-radius:5px; outline-offset:3px; }
+              border-radius:5px; outline-offset:3px;
+              background:linear-gradient(to right, var(--line-soft), var(--line-soft)) center / 100% 1px no-repeat; }
   .tl-strip:focus-visible { outline:2px solid var(--accent); }
   /* The visible bar stays a slim 10px; the pseudo-element widens the HIT
      target past it (26px here, 44px for coarse pointers) without moving a
@@ -244,16 +295,16 @@
   .tl-stripcaret { position:absolute; top:-2px; bottom:-2px; width:2px; margin-left:-1px;
                    border-radius:1px; background:var(--accent); pointer-events:none; }
   .tl-stripcaret[hidden] { display:none; }
-  .tl-covtrack { position:absolute; top:0; bottom:0; background:var(--bg); border-radius:5px;
-                 box-shadow:inset 0 0 0 1px var(--line); }
+  .tl-covtrack { position:absolute; top:0; bottom:0; border-radius:2px; box-shadow:none;
+                 background:color-mix(in srgb, var(--line) 60%, transparent); }
   /* Density rides a custom property, NOT an inline opacity: an inline style
      out-specifies every stylesheet rule, which silently exempted these cells
      from the spotlight dim. The ladder floors at .7 so a lone record still
      clears 3:1 against the track. */
-  .tl-cell { position:absolute; top:1px; bottom:1px; border-radius:2px; background:var(--fam);
+  .tl-cell { position:absolute; top:1px; bottom:1px; border-radius:1px; background:var(--fam);
              opacity:var(--cnt, 1); transition:opacity .18s ease; }
   .tl-cellgap { background:repeating-linear-gradient(45deg, var(--fam) 0 2px, transparent 2px 3px); }
-  .tl-daymeta { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .tl-daymeta { font-size:12px; color:var(--whisper); white-space:nowrap; }
   .tl-daymeta b { font-weight:650; }
   .tl-daymeta .tl-tam { color:var(--bad); }
   .tl-daymeta .tl-gapn { color:var(--warn); }
@@ -264,14 +315,17 @@
     padding:0; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
   button.tl-tam:focus-visible, button.tl-gapn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
 
-  .tl-row { display:flex; align-items:center; gap:10px; padding:7px 12px 7px 0; font-size:13.5px;
-            border-bottom:1px solid color-mix(in srgb, var(--line) 45%, transparent);
+  /* Rows separate by leading and air — no per-row hairlines. Hovering (or
+     the keyboard caret arriving) floods the line with ITS OWN family color
+     from a 2px edge: the same ink as its stroke on the tape, twice. */
+  .tl-row { display:flex; align-items:center; gap:10px; padding:10px 12px 10px 0; font-size:13.5px;
+            border-bottom:0;
             transition:opacity .18s ease, background-color .3s ease; }
-  .tl-row:last-child { border-bottom:none; }
-  .tl-row.tl-hot { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+  .tl-row.tl-hot { background:color-mix(in srgb, var(--fam, var(--accent)) var(--wash), transparent);
+                   box-shadow:inset 2px 0 0 var(--fam, var(--accent)); }
   .tl-rail { flex:0 0 26px; align-self:stretch; position:relative; min-height:20px; }
   .tl-rail::before { content:""; position:absolute; left:12px; top:-8px; bottom:-8px; width:2px;
-                     background:color-mix(in srgb, var(--line) 80%, transparent); }
+                     background:color-mix(in srgb, var(--line) 60%, transparent); }
   .tl-node { position:absolute; left:8.5px; top:50%; margin-top:-4.5px; width:9px; height:9px;
              border-radius:50%; background:var(--fam); box-shadow:0 0 0 2px var(--panel); }
   .tl-nodegap { border-radius:2px;
@@ -279,29 +333,43 @@
     box-shadow:0 0 0 2px var(--panel), inset 0 0 0 1px var(--fam); }
   .tl-nodesys { width:7px; height:7px; margin-top:-3.5px; left:9.5px; background:transparent;
                 border:2px solid var(--fam); box-sizing:border-box; box-shadow:0 0 0 2px var(--panel); }
-  .tl-time { flex:0 0 100px; font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-             font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
-  .tl-body { flex:1; min-width:0; overflow-wrap:break-word; }
-  .tl-body b { font-weight:650; }
+  /* Times keep exact column alignment via tabular figures — but in the text
+     face, quietly. The monospace lab-chart voice is gone. */
+  .tl-time { flex:0 0 96px; font-family:inherit; font-size:12px; letter-spacing:.01em;
+             color:var(--muted); font-variant-numeric:tabular-nums; }
+  /* The alert's own words are the loudest text on the panel. */
+  .tl-body { flex:1; min-width:0; overflow-wrap:break-word; font-size:14px; font-weight:500; }
+  .tl-body b { font-weight:700; }
+  .tl-sys .tl-body { font-weight:400; color:var(--muted); }
   .tl-shield { width:13px; height:13px; color:var(--fam-tamper); vertical-align:-2px; margin-right:5px; }
   .tl-det { color:var(--muted); font-size:12.5px; }
-  .tl-zone { flex:0 0 auto; font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-             font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px;
-             padding:1px 8px; max-width:14ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tl-conf { flex:0 0 78px; display:flex; align-items:center; gap:6px; }
-  .tl-meter { width:36px; height:3px; border-radius:2px; background:var(--line); overflow:hidden; }
+  /* The zone is a quiet word, not a specimen label — the pill died, and the
+     wider budget truncates less than the pill ever allowed. */
+  .tl-zone { flex:0 0 auto; font-family:inherit; font-size:12px; color:var(--muted);
+             border:0; border-radius:0; background:none; padding:0;
+             max-width:16ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Confidence: a 2px family-ink filament and a small plain number — not a
+     lab gauge. The number is always visible; the caveat sentence lives in
+     the hint, the tooltip, and the aria-label unchanged. */
+  .tl-conf { flex:0 0 70px; display:flex; align-items:center; gap:7px; }
+  .tl-meter { width:32px; height:2px; border-radius:1px; overflow:hidden;
+              background:color-mix(in srgb, var(--line) 55%, transparent); }
   .tl-meter > i { display:block; height:100%; background:var(--fam); }
-  .tl-conf b { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-               font-size:11px; font-weight:400; color:var(--muted); }
+  .tl-conf b { font-family:inherit; font-size:11px; font-weight:400; color:var(--muted);
+               font-variant-numeric:tabular-nums; }
   .tl-sys { font-size:12.5px; }
   .tl-sys .tl-time { color:color-mix(in srgb, var(--muted) 70%, transparent); }
-  .tl-fold { display:flex; align-items:center; gap:10px; padding:6px 12px 6px 0;
-             color:var(--muted); font-size:12px; }
-  .tl-pleatchip { width:26px; height:8px; border-radius:2px; flex:0 0 auto;
-    background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 30%, transparent) 0 3px, transparent 3px 6px);
-    border:1px dashed var(--line); }
+  .tl-fold { display:flex; align-items:center; gap:10px; padding:8px 12px 8px 0;
+             color:var(--whisper); font-size:12px; }
+  /* The hatch texture stays — it is the honesty mark; only the border died. */
+  .tl-pleatchip { width:26px; height:6px; border:0; border-radius:2px; flex:0 0 auto;
+    background:repeating-linear-gradient(-45deg, color-mix(in srgb, var(--muted) 30%, transparent) 0 3px, transparent 3px 6px); }
   .tl-flash { animation:tlflash 1.2s ease; }
-  @keyframes tlflash { 0% { background:var(--accent-bg); } 100% { background:transparent; } }
+  /* A landing blooms in the record's own family hue, not generic accent. */
+  @keyframes tlflash {
+    0% { background:color-mix(in srgb, var(--fam, var(--accent)) 22%, transparent); }
+    100% { background:transparent; }
+  }
 
   /* Spotlight: a legend chip dims everything that isn't its family —
      emphasis only; nothing is ever hidden. The quiet folds dim too, or the
@@ -317,24 +385,34 @@
      transient emphasis only; the dim re-applies the moment the flash ends. */
   .tl-panel[data-spot] .tl-row.tl-flash { opacity:1; }
 
-  .tl-lens { position:absolute; z-index:5; left:92px; max-width:300px; pointer-events:none;
-             background:var(--panel); border:1px solid var(--line); border-radius:8px;
-             padding:8px 11px; font-size:12.5px; box-shadow:0 4px 14px rgba(0,0,0,.22); }
-  .tl-lens .lh { font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-                 font-size:11.5px; color:var(--muted); }
+  /* The lens floats on elevation alone in light; in dark the shadow token's
+     built-in hairline ring stands in for the invisible shadow. */
+  .tl-lens { position:absolute; z-index:5; left:96px; max-width:300px; pointer-events:none;
+             background:var(--panel); border:0; border-radius:6px;
+             padding:9px 12px; font-size:12.5px;
+             box-shadow:0 0 0 1px var(--line-soft), var(--pop-shadow); }
+  /* Frosted where supported, so covering the words reads as deliberate
+     layering rather than the page tearing. */
+  @supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+    .tl-lens { background:color-mix(in srgb, var(--panel) 84%, transparent);
+               backdrop-filter:blur(8px) saturate(1.2);
+               -webkit-backdrop-filter:blur(8px) saturate(1.2); }
+  }
+  .tl-lens .lh { font-family:inherit; font-size:11.5px; color:var(--muted);
+                 font-variant-numeric:tabular-nums; }
   .tl-lens .lr { display:flex; align-items:center; gap:6px; margin-top:4px; }
   /* The lens announces a held magnetic snap (a tamper or declared gap caught
      the scrub) with a firmer ring, so the pull the hand feels has a face. */
-  .tl-lens.tl-snap { border-color:var(--accent);
-    box-shadow:0 0 0 1px var(--accent), 0 4px 14px rgba(0,0,0,.22); }
+  .tl-lens.tl-snap { box-shadow:0 0 0 1.5px var(--accent), var(--pop-shadow); }
 
   /* Phone and narrow-panel layout: the fixed time/zone/confidence columns
      would crush the label to one character per line, so the row folds — rail
      and time on top, the alert's own words on a full-width line under it. */
   @media (max-width: 620px) {
+    .tl-wrap { gap:16px; }
     .tl-map { width:56px; }
     .tl-lens { left:62px; max-width:min(300px, calc(100vw - 96px)); }
-    .tl-row, .tl-fold { position:relative; flex-wrap:wrap; row-gap:3px; padding:8px 12px 9px 32px; }
+    .tl-row, .tl-fold { position:relative; flex-wrap:wrap; row-gap:3px; padding:10px 12px 12px 32px; }
     .tl-rail { position:absolute; left:0; top:0; bottom:0; width:26px; flex:none; }
     .tl-time { flex:0 0 auto; }
     .tl-conf { flex:0 0 auto; margin-left:auto; }
@@ -373,12 +451,19 @@
     .tl-pleat { border-color:GrayText; }
     .tl-chip[aria-pressed="true"] { outline:2px solid Highlight; }
     .tl-stripcaret { forced-color-adjust:none; background:Highlight; }
+    /* Buttons regain visible bounds where backgrounds are flattened. */
+    .tl-chip { border:1px solid ButtonText; border-radius:999px; padding:4px 11px; }
   }
+  /* These rules RESTORE chrome the base design removed — frames, row lines,
+     button bounds return on request. Do not "clean up". */
   @media (prefers-contrast: more) {
     .tl-tick { opacity:1; }
     .tl-cell { opacity:1 !important; }
-    .tl-row { border-bottom-color:var(--line); }
-    .tl-map, .tl-list { border-color:var(--fg); }
+    .tl-row { box-shadow:inset 0 -1px 0 var(--line); }
+    /* The hot row's family edge must not evict the restored hairline. */
+    .tl-row.tl-hot { box-shadow:inset 2px 0 0 var(--fam, var(--accent)), inset 0 -1px 0 var(--line); }
+    .tl-map, .tl-list { border:1px solid var(--fg); border-radius:6px; }
+    .tl-chip { border:1px solid var(--muted); border-radius:999px; padding:4px 11px; }
   }
 
   table { width:100%; border-collapse:collapse; font-size:13.5px; }
@@ -400,7 +485,10 @@
        no scrub chrome; marks keep their ink so the paper record stays legible. */
     .tl-map, .tl-lens, .tl-utc, .tl-caption, .tl-stripcaret { display:none; }
     .tl-list { height:auto; overflow:visible; border:none; }
-    .tl-day { position:static; }
+    /* Paper regains the row separation the screen carries by spacing. */
+    .tl-row { border-bottom:1px solid var(--line); }
+    .tl-day { position:static; box-shadow:none; border-bottom:1px solid var(--line); }
+    .tl-zone { color:var(--fg); }
     .tl-cell, .tl-covtrack, .tl-tick, .tl-node, .tl-meter, .tl-meter > i, .tl-dot, .tl-pleatchip {
       print-color-adjust:exact; -webkit-print-color-adjust:exact; }
   }
