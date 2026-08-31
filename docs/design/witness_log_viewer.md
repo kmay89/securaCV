@@ -143,6 +143,19 @@ caption line names it, Escape clears it, and switching it on brings the
 first match into view, because "dimmed, not hidden" must never look like
 "gone".
 
+The second pass made the worst records the easiest to reach and the map
+fully productive: a tamper or declared-gap tick within a few pixels catches
+the scrub magnetically (one resolver feeds the scrub target, the lens, and
+the landing flash, so they can never disagree; the held snap is announced by
+a ring on the lens), the row's viewport alignment mirrors the pointer's map
+position so no region of the map is a dead zone, long jumps teleport most of
+the way and glide only the last viewport with the flash paid out on arrival,
+and the day's edges rubber-band on iOS — but never at declared-coverage
+edges, where uncovered time must stay freely scrubbable. VoiceOver gets the
+day as an Audio Graph: recorded buckets as one series, declared gaps as a
+second named series, and absent buckets as absent data rather than zeros,
+because this feed declares no coverage.
+
 On the phone the same model drives a horizontal day-shape ribbon in the
 Alerts tab (`ios/Sources/SecuraCV/Views/Components/TimelineScrubView.swift`),
 colored by the app's existing `Severity` → `Theme.Role` vocabulary rather

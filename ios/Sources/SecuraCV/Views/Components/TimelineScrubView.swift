@@ -27,7 +27,80 @@
 // viewer/fixtures/timeline/scrub_parity.json). This file is the thin shell:
 // it draws and it handles input, and it decides nothing about what a day was.
 
+import Accessibility
 import SwiftUI
+
+/// Audio Graph twin of the ribbon: the same worst-first day, spoken and
+/// sonified through VoiceOver's rotor. Dormant for everyone else — no render
+/// cost, no gesture interplay. Honesty falls out of the data shape: points
+/// exist only for buckets that hold cells (a silent bucket is ABSENT data,
+/// never a zero — this feed declares no coverage), and declared gaps ride a
+/// second, named series so a blind spot is announced as one, the audio twin
+/// of the outline-not-fill drawing rule.
+private struct TimelineDayAudioGraph: AXChartDescriptorRepresentable {
+    let day: TimelineDay
+
+    func makeChartDescriptor() -> AXChartDescriptor {
+        let day = self.day // value copy for the escaping providers
+        func clock(_ index: Int) -> String {
+            let start = Date(timeIntervalSince1970:
+                TimeInterval(day.dayT0 + index * TimelineScrub.defaultBucketSeconds))
+            let end = start.addingTimeInterval(TimeInterval(TimelineScrub.defaultBucketSeconds))
+            return start.formatted(.dateTime.hour().minute())
+                + " to " + end.formatted(.dateTime.hour().minute())
+        }
+        let xAxis = AXNumericDataAxisDescriptor(
+            title: "Time of day, in 10-minute buckets",
+            range: 0...Double(max(day.cellsPerDay - 1, 1)),
+            gridlinePositions: [36, 72, 108], // 6:00, 12:00, 18:00 — the ribbon's own tall ticks
+            valueDescriptionProvider: { clock(Int($0.rounded())) })
+        let busiest = Double(max(day.cells.map(\.count).max() ?? 1, 1))
+        let yAxis = AXNumericDataAxisDescriptor(
+            title: "Records sealed",
+            range: 0...busiest,
+            gridlinePositions: [],
+            valueDescriptionProvider: { value in
+                let n = Int(value.rounded())
+                return n == 1 ? "1 record" : "\(n) records"
+            })
+        let recorded = day.cells.filter { !$0.hasGap }.map { cell in
+            AXDataPoint(x: Double(cell.index), y: Double(cell.count),
+                        additionalValues: [], label: clock(cell.index))
+        }
+        let gaps = day.cells.filter(\.hasGap).map { cell in
+            AXDataPoint(x: Double(cell.index), y: Double(cell.count),
+                        additionalValues: [], label: "Declared gap, " + clock(cell.index))
+        }
+        var series = [AXDataSeriesDescriptor(name: "Records sealed per 10 minutes",
+                                             isContinuous: false, dataPoints: recorded)]
+        if !gaps.isEmpty {
+            series.append(AXDataSeriesDescriptor(
+                name: "Declared gaps — blind spots the device reported",
+                isContinuous: false, dataPoints: gaps))
+        }
+        var summary = day.count == 1 ? "1 record." : "\(day.count) records."
+        if day.gapCount > 0 {
+            summary += " \(day.gapCount) declared gap\(day.gapCount == 1 ? "" : "s")"
+                + " — buckets where the device said it could not see. Blind spots, not quiet."
+        }
+        if day.coverageFrom == nil {
+            summary += " This feed declares no coverage window:"
+                + " buckets without records are absent data, not proof of quiet."
+        }
+        return AXChartDescriptor(title: "Shape of \(day.label)", summary: summary,
+                                 xAxis: xAxis, yAxis: yAxis,
+                                 additionalAxes: [], series: series)
+    }
+
+    // No @Environment reads feed the descriptor; an explicit no-op beats
+    // relying on the protocol's default.
+    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {}
+}
+
+/// Once-per-app-session latch for the gesture-hint shimmer. MainActor
+/// isolation makes the mutable static legal under strict concurrency; body
+/// and `.task` both run on the main actor.
+@MainActor private enum TimelineHintFlag { static var shown = false }
 
 /// Which day is being scrubbed, and where. Scoped to a day on purpose: one
 /// shared `Date` made every OTHER ribbon print and announce a time that was
@@ -50,9 +123,12 @@ struct TimelineDayShapeView: View {
     /// cell scan misses exactly the "lens covered, then pried" pairing that
     /// matters most. Nil when the day holds no tamper records.
     var firstTamperBucket: Date?
-    /// Fired when the drag ENDS, already snapped to a bucket, so the caller
-    /// can bring the matching row into view.
+    /// Fired whenever an interaction commits a bucket — drag release, tap,
+    /// the VoiceOver adjustable action, and both jump paths — always already
+    /// snapped, so the caller can bring the matching row into view.
     var onScrub: (Date) -> Void
+    /// The newest ribbon shows the one-time gesture-hint shimmer.
+    var showsFirstUseHint = false
 
     /// The scrub position if it belongs to this day, otherwise nil.
     private var myBucket: Date? {
@@ -80,6 +156,9 @@ struct TimelineDayShapeView: View {
     /// caret-clear task can tell "still my landing" from "someone landed
     /// here again" without comparing position values.
     @State private var caretGen = 0
+    /// Non-nil only while the one-time gesture-hint shimmer runs (see the
+    /// `.task` below). Purely visual — it never touches `position`.
+    @State private var hintX: CGFloat?
 
     private struct ScrubDrag {
         var lastX: CGFloat
@@ -111,8 +190,23 @@ struct TimelineDayShapeView: View {
                         Rectangle()
                             .fill(Theme.color(.info))
                             .frame(width: 2)
-                            .offset(x: x - 1)
+                            .offset(x: x - 1 + edgeOvershoot(width: width))
                             .animation(reduceMotion ? nil : .interactiveSpring(), value: bucket)
+                            // Springs the overshoot home when the drag ends.
+                            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7),
+                                       value: scrub == nil)
+                            .accessibilityHidden(true)
+                    }
+                    if let hx = hintX {
+                        // The one-time "this drags" shimmer — a ghost caret,
+                        // never a seated position: it goes nowhere near
+                        // seat()/position, so it announces nothing, fires no
+                        // detent haptic, and a real touch dismisses it.
+                        Capsule()
+                            .fill(Theme.color(.info).opacity(0.35))
+                            .frame(width: 3)
+                            .offset(x: hx)
+                            .animation(.easeInOut(duration: 0.13), value: hx)
                             .accessibilityHidden(true)
                     }
                 }
@@ -121,6 +215,7 @@ struct TimelineDayShapeView: View {
                     // The most natural gesture of all: tap the peak, land on
                     // it. seat() snaps, so a tap can never claim a finer
                     // moment than the bucket it touched.
+                    hintX = nil // a real touch outranks the hint
                     preview(atX: location.x, width: width)
                     if let bucket = myBucket { onScrub(bucket) }
                     scheduleCaretClear()
@@ -138,6 +233,7 @@ struct TimelineDayShapeView: View {
                     // media scrubber does.
                     DragGesture(minimumDistance: 8)
                         .onChanged { value in
+                            hintX = nil // a real touch outranks the hint
                             if scrub == nil {
                                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
                                 scrub = ScrubDrag(lastX: value.location.x, virtualX: value.location.x)
@@ -147,7 +243,13 @@ struct TimelineDayShapeView: View {
                             let tier = pull > 120 ? 2 : pull > 60 ? 1 : 0
                             if tier != gainTier { gainTier = tier }
                             let gain: CGFloat = tier == 2 ? 0.25 : tier == 1 ? 0.5 : 1
-                            drag.virtualX = min(max(drag.virtualX + (value.location.x - drag.lastX) * gain, 0), width)
+                            // The clamp keeps a little slack past the day's
+                            // edges so the caret can rubber-band (see
+                            // edgeOvershoot); the SEATED bucket still clamps
+                            // hard inside preview — the overshoot is caret
+                            // travel only, never a time the day doesn't hold.
+                            let slack: CGFloat = reduceMotion ? 0 : 80
+                            drag.virtualX = min(max(drag.virtualX + (value.location.x - drag.lastX) * gain, -slack), width + slack)
                             drag.lastX = value.location.x
                             scrub = drag
                             preview(atX: drag.virtualX, width: width)
@@ -176,6 +278,25 @@ struct TimelineDayShapeView: View {
                     if cell.hasGap || cell.family == .tamper { return .impact(weight: .light) }
                     return .selection
                 }
+                // Once per app session, on the newest ribbon: a ghost caret
+                // drifts across two buckets and fades — "this drags", said in
+                // motion, no tutorial. Deliberately silent: the haptic
+                // vocabulary fires only under a real finger, and this is not
+                // one. A drag or tap that starts mid-shimmer dismisses it.
+                .task {
+                    guard showsFirstUseHint, !reduceMotion, !TimelineHintFlag.shown else { return }
+                    TimelineHintFlag.shown = true
+                    let colW = width / CGFloat(max(day.cellsPerDay, 1))
+                    let start = day.cells.max(by: { $0.count < $1.count })?.index ?? day.cellsPerDay / 2
+                    hintX = CGFloat(start) * colW
+                    for step in 1...2 {
+                        try? await Task.sleep(nanoseconds: 140_000_000)
+                        guard hintX != nil else { return } // a real gesture won
+                        hintX = CGFloat(min(start + step, day.cellsPerDay - 1)) * colW
+                    }
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    hintX = nil
+                }
             }
             .frame(height: ribbonHeight)
             .accessibilityElement()
@@ -196,6 +317,8 @@ struct TimelineDayShapeView: View {
                     Button("Jump to declared gap") { jump(toTamper: false) }
                 }
             }
+            // VoiceOver's Audio Graphs rotor: the day's shape, sonified.
+            .accessibilityChartDescriptor(TimelineDayAudioGraph(day: day))
             footer
         }
     }
@@ -260,6 +383,10 @@ struct TimelineDayShapeView: View {
             parts.append("worst: " + Severity(tolerant: Int(raw)).label)
         }
         if day.gapCount > 0 { parts.append("\(day.gapCount) declared gap\(day.gapCount == 1 ? "" : "s")") }
+        // Spoken explicitly: the footer is accessibility-hidden on the
+        // promise that the ribbon says everything it shows, and "worst:
+        // tamper" only covers the case where tamper happens to be worst.
+        if day.tamperCount > 0 { parts.append("\(day.tamperCount) tamper") }
         if let bucket = myBucket { parts.append("at " + Self.clock(bucket)) }
         return parts.joined(separator: ", ")
     }
@@ -276,14 +403,16 @@ struct TimelineDayShapeView: View {
         // declares nothing, so no track is drawn there — inferring coverage
         // from where the records happen to fall would claim the device was
         // watching on exactly the evidence that cannot show it.
-        let coverX0 = size.width * CGFloat(day.coverageFrom ?? 0)
-        let coverX1 = size.width * CGFloat(day.coverageTo ?? 0)
-        if day.coverageFrom != nil, day.coverageTo != nil, coverX1 > coverX0 {
-            context.fill(
-                Path(roundedRect: CGRect(x: coverX0, y: size.height - 3,
-                                         width: coverX1 - coverX0, height: 3),
-                     cornerRadius: 1.5),
-                with: .color(Theme.color(.neutral).opacity(0.28)))
+        if let from = day.coverageFrom, let to = day.coverageTo {
+            let coverX0 = size.width * CGFloat(from)
+            let coverX1 = size.width * CGFloat(to)
+            if coverX1 > coverX0 {
+                context.fill(
+                    Path(roundedRect: CGRect(x: coverX0, y: size.height - 3,
+                                             width: coverX1 - coverX0, height: 3),
+                         cornerRadius: 1.5),
+                    with: .color(Theme.color(.neutral).opacity(0.28)))
+            }
         }
 
         // Faint hour ticks along the baseline, a touch stronger at 6/12/18,
@@ -386,6 +515,17 @@ struct TimelineDayShapeView: View {
         return width * CGFloat(offset / TimeInterval(TimelineScrub.daySeconds))
     }
 
+    /// Cosmetic caret overshoot past the day's 00:00/24:00 edges — the WWDC
+    /// rubber-band: the boundary acknowledges the pull instead of going dead.
+    /// NEVER applies at declared-coverage edges; nothing clamps there, so
+    /// uncovered time stays freely scrubbable by construction.
+    private func edgeOvershoot(width: CGFloat) -> CGFloat {
+        guard !reduceMotion, let drag = scrub else { return 0 }
+        if drag.virtualX < 0 { return drag.virtualX * 0.15 }
+        if drag.virtualX > width { return (drag.virtualX - width) * 0.15 }
+        return 0
+    }
+
     /// Moves the caret and the header clock only — the list is left alone
     /// until the drag ends.
     private func preview(atX x: CGFloat, width: CGFloat) {
@@ -434,20 +574,32 @@ struct TimelineScrubSection: View {
 
     @State private var position: TimelineScrubPosition?
 
+    /// Built ONCE, at init. `position` is @State here, so every per-frame
+    /// seat() during a drag re-runs this body — as a computed property the
+    /// whole model (stable sort, segments, days, items) was being rebuilt on
+    /// every frame of every scrub. Init runs only when the host's body does.
+    ///
     /// `Calendar.current`, deliberately: the Alerts list below groups its
     /// sections with the user's own calendar (`AlertHistory.daySections`), and
     /// a ribbon grouped by UTC would put a Sunday-evening alert under a
     /// "Monday" heading sitting directly above the Sunday rows it scrolls to.
     /// The evidence viewer keeps the UTC default — there the record's own
     /// frame is the honest one, and the page says so.
-    private var model: TimelineModel {
-        TimelineScrub.model(for: TimelineScrub.records(from: records), calendar: .current)
+    private let built: TimelineModel
+    private let tamperBuckets: [Int: Date]
+
+    init(records: [AlertRecord], onScrub: @escaping (Date) -> Void) {
+        self.records = records
+        self.onScrub = onScrub
+        let model = TimelineScrub.model(for: TimelineScrub.records(from: records), calendar: .current)
+        self.built = model
+        self.tamperBuckets = Self.firstTamperBuckets(in: model, calendar: .current)
     }
 
     /// Earliest tamper bucket per calendar day, straight from the records —
     /// the one question the worst-first cells cannot answer (a tamper sharing
     /// a bucket with a declared gap lives in a `.gap`-family cell).
-    private func firstTamperBuckets(in model: TimelineModel, calendar: Calendar) -> [Int: Date] {
+    private static func firstTamperBuckets(in model: TimelineModel, calendar: Calendar) -> [Int: Date] {
         var out: [Int: Date] = [:]
         for record in model.records where record.family == .tamper {
             let bucket = Date(timeIntervalSince1970: TimeInterval(record.t0))
@@ -458,15 +610,14 @@ struct TimelineScrubSection: View {
     }
 
     var body: some View {
-        let built = model
         let days = built.days.sorted { $0.dayT0 > $1.dayT0 }
-        let tamperBuckets = firstTamperBuckets(in: built, calendar: .current)
         if !days.isEmpty {
             VStack(alignment: .leading, spacing: Theme.m) {
                 ForEach(Array(days.prefix(3))) { day in
                     TimelineDayShapeView(day: day, position: $position,
                                          firstTamperBucket: tamperBuckets[day.dayT0],
-                                         onScrub: onScrub)
+                                         onScrub: onScrub,
+                                         showsFirstUseHint: day.dayT0 == days.first?.dayT0)
                 }
                 if days.count > 3 {
                     // The ribbons stop at three; the record does not. Say so,
