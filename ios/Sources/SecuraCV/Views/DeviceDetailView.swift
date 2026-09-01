@@ -313,6 +313,9 @@ struct DeviceDetailView: View {
                     }
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
+                    // UIKit's hairline must never undercut the instrument's
+                    // one baseline (same rule as the Alerts mount).
+                    .listRowSeparator(.hidden)
                     ForEach(ownRecords) { record in
                         AlertRecordRow(record: record).id(record.id)
                     }

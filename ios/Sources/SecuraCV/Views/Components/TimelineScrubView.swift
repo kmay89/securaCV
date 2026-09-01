@@ -174,6 +174,21 @@ struct TimelineDayShapeView: View {
     /// Non-nil only while the one-time gesture-hint shimmer runs (see the
     /// `.task` below). Purely visual — it never touches `position`.
     @State private var hintX: CGFloat?
+    /// The landing bloom: a stroked ring in the landed record's own ink,
+    /// fired only by a real commit inside the ribbon (tap, drag release).
+    /// Write-only visual state — it never touches position or haptics.
+    @State private var bloom: BloomState?
+    @State private var bloomExpanded = false
+    /// Generation token, mirroring `caretGen`: two fast landings on the same
+    /// bucket must not let the first bloom's cleanup erase the second.
+    @State private var bloomGen = 0
+
+    private struct BloomState: Equatable {
+        var x: CGFloat
+        var y: CGFloat
+        var color: Color
+        var gen: Int
+    }
 
     private struct ScrubDrag {
         var lastX: CGFloat
@@ -195,6 +210,7 @@ struct TimelineDayShapeView: View {
             header
             GeometryReader { geo in
                 let width = max(geo.size.width, 1)
+                let height = max(geo.size.height, 1)
                 ZStack(alignment: .topLeading) {
                     Canvas { context, size in
                         draw(in: context, size: size)
@@ -202,27 +218,51 @@ struct TimelineDayShapeView: View {
                     .accessibilityHidden(true)
 
                     if let bucket = myBucket, let x = caretX(for: bucket, width: width) {
-                        Rectangle()
+                        // The pen: a glowing capsule that physically NARROWS
+                        // in half/quarter gain — precision seen as well as
+                        // felt. Same offset math, same springs as before.
+                        Capsule()
                             .fill(Theme.color(.info))
-                            .frame(width: 2)
-                            .offset(x: x - 1 + edgeOvershoot(width: width))
+                            .frame(width: gainTier > 0 ? 2 : 3)
+                            .shadow(color: Theme.color(.info).opacity(0.45), radius: 3)
+                            .offset(x: x - (gainTier > 0 ? 1 : 1.5) + edgeOvershoot(width: width))
                             .animation(reduceMotion ? nil : .interactiveSpring(), value: bucket)
                             // Springs the overshoot home when the drag ends.
                             .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7),
                                        value: scrub == nil)
+                            .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: gainTier)
                             .accessibilityHidden(true)
                     }
                     if let hx = hintX {
                         // The one-time "this drags" shimmer — a ghost caret,
                         // never a seated position: it goes nowhere near
                         // seat()/position, so it announces nothing, fires no
-                        // detent haptic, and a real touch dismisses it.
+                        // detent haptic, and a real touch dismisses it. The
+                        // ghost matches the idle pen's width, visibly lighter.
                         Capsule()
-                            .fill(Theme.color(.info).opacity(0.35))
+                            .fill(Theme.color(.info).opacity(0.30))
                             .frame(width: 3)
                             .offset(x: hx)
                             .animation(.easeInOut(duration: 0.13), value: hx)
                             .accessibilityHidden(true)
+                    }
+                    if let b = bloom {
+                        // The landing bloom (see fireBloom). Identity is the
+                        // generation, so every landing re-inserts the ring and
+                        // onAppear drives the expansion — a contract, not a
+                        // bet on Task-vs-transaction scheduling.
+                        Circle()
+                            .stroke(b.color, lineWidth: 1.5)
+                            .frame(width: 8, height: 8)
+                            .scaleEffect(bloomExpanded ? 3.2 : 0.6)
+                            .opacity(bloomExpanded ? 0 : 0.9)
+                            .position(x: b.x, y: b.y)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                            .id(b.gen)
+                            .onAppear {
+                                withAnimation(.easeOut(duration: 0.5)) { bloomExpanded = true }
+                            }
                     }
                 }
                 .contentShape(Rectangle())
@@ -233,6 +273,7 @@ struct TimelineDayShapeView: View {
                     hintX = nil // a real touch outranks the hint
                     preview(atX: location.x, width: width)
                     if let bucket = myBucket { onScrub(bucket) }
+                    fireBloom(width: width, height: height)
                     scheduleCaretClear()
                 }
                 .gesture(
@@ -276,6 +317,7 @@ struct TimelineDayShapeView: View {
                             // the list is moved once, on release.
                             if scrub != nil, let bucket = myBucket {
                                 onScrub(bucket)
+                                fireBloom(width: width, height: height)
                             }
                             scrub = nil
                             gainTier = 0
@@ -342,20 +384,30 @@ struct TimelineDayShapeView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.s) {
+            // Whisper: the List's own day section header below keeps the loud
+            // date — the ribbon must not compete with it.
             Text(day.label)
-                .font(.subheadline.weight(.semibold))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
             Spacer(minLength: Theme.xs)
             if gainTier > 0 {
-                // Names the gear the finger already felt shift, exactly as the
-                // system media scrubber labels its speed while dragging.
-                Text(gainTier == 2 ? "¼ speed" : "½ speed")
-                    .font(.caption2)
+                // Names the gear the finger already felt shift; the word
+                // "speed" becomes the system's own glyph, the multiplier
+                // stays visible.
+                Label(gainTier == 2 ? "¼×" : "½×", systemImage: "tortoise.fill")
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .imageScale(.small)
+                    .labelStyle(.titleAndIcon)
             }
             if let bucket = myBucket {
+                // The record speaking — the loudest text on the ribbon while
+                // seated; digits roll like a counter as the pen moves.
                 Text(Self.clock(bucket))
-                    .font(.caption.monospacedDigit())
+                    .font(.footnote.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Theme.color(.info))
+                    .contentTransition(.numericText())
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: bucket)
             }
         }
     }
@@ -366,12 +418,15 @@ struct TimelineDayShapeView: View {
     private var footer: some View {
         HStack(spacing: Theme.s) {
             Text(countPhrase)
+                .monospacedDigit()
             if day.gapCount > 0 {
                 // The counts are destinations, not captions: tapping one
                 // scrubs straight to the first record behind the number.
                 Button { jump(toTamper: false) } label: {
                     Label("\(day.gapCount) gap\(day.gapCount == 1 ? "" : "s")", systemImage: "eye.slash")
                         .foregroundStyle(Theme.color(.warn))
+                        .imageScale(.small)
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .buttonStyle(.plain)
             }
@@ -379,6 +434,8 @@ struct TimelineDayShapeView: View {
                 Button { jump(toTamper: true) } label: {
                     Label("\(day.tamperCount) tamper", systemImage: "hand.raised.slash.fill")
                         .foregroundStyle(Theme.color(.tamper))
+                        .imageScale(.small)
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .buttonStyle(.plain)
             }
@@ -408,59 +465,132 @@ struct TimelineDayShapeView: View {
 
     // MARK: - drawing
 
+    /// The height law, extracted so draw() and the landing bloom can never
+    /// disagree. Formula unchanged: count against the day's busiest column,
+    /// floored so a single record is never invisible.
+    private func barHeight(for cell: TimelineDayCell, in height: CGFloat) -> CGFloat {
+        let ratio = CGFloat(cell.count) / CGFloat(busiest)
+        return max(4, (height - 4) * (0.35 + 0.65 * ratio))
+    }
+
+    /// Column silhouette: rounded cap up, a 1pt seat down — a capsule column
+    /// standing on the baseline, not a floating rectangle. Radii are safe by
+    /// construction (height floor 4 keeps height/2 - 1 >= 1).
+    private func columnPath(_ rect: CGRect) -> Path {
+        let top = max(0, min(rect.width / 2, rect.height / 2 - 1))
+        var path = Path()
+        path.addRoundedRect(in: rect,
+                            cornerRadii: RectangleCornerRadii(topLeading: top, bottomLeading: 1,
+                                                              bottomTrailing: 1, topTrailing: top),
+                            style: .continuous)
+        return path
+    }
+
     private func draw(in context: GraphicsContext, size: CGSize) {
         let columns = max(day.cellsPerDay, 1)
         let colWidth = size.width / CGFloat(columns)
-        let barWidth = max(colWidth - 0.5, 0.75)
+        let barWidth = max(colWidth - 1, 0.75) // a true 1pt air gap between columns
 
-        // The covered window: the ONLY region allowed to read as "quiet",
-        // and only when the source actually declares one. The alert ledger
-        // declares nothing, so no track is drawn there — inferring coverage
-        // from where the records happen to fall would claim the device was
-        // watching on exactly the evidence that cannot show it.
+        // (1) The baseline — the ribbon's only structural line, drawn always.
+        context.fill(Path(CGRect(x: 0, y: size.height - 1, width: size.width, height: 1)),
+                     with: .color(Theme.color(.neutral).opacity(0.18)))
+
+        // (2) Coverage is the baseline THICKENING, never a separate box —
+        // and only when the source actually declares a window. The alert
+        // ledger declares nothing, so its days keep the bare hairline:
+        // inferring coverage from where records happen to fall would claim
+        // the device was watching on exactly the evidence that cannot show it.
         if let from = day.coverageFrom, let to = day.coverageTo {
             let coverX0 = size.width * CGFloat(from)
             let coverX1 = size.width * CGFloat(to)
             if coverX1 > coverX0 {
                 context.fill(
-                    Path(roundedRect: CGRect(x: coverX0, y: size.height - 3,
-                                             width: coverX1 - coverX0, height: 3),
-                         cornerRadius: 1.5),
-                    with: .color(Theme.color(.neutral).opacity(0.28)))
+                    Path(roundedRect: CGRect(x: coverX0, y: size.height - 2,
+                                             width: coverX1 - coverX0, height: 2),
+                         cornerRadius: 1),
+                    with: .color(Theme.color(.neutral).opacity(0.35)))
             }
         }
 
-        // Faint hour ticks along the baseline, a touch stronger at 6/12/18,
-        // so a scrub toward "around 3pm" is aimable. Hours are the visual
-        // grid; the felt grid stays the 10-minute bucket — ticking all 144
-        // would promise a pointing precision no fingertip has.
+        // (3) Hour ticks rise from the baseline, whispering — a touch louder
+        // at 6/12/18 so "around 3pm" stays aimable, and restored to their
+        // stronger voice under increased contrast. Hours are the visual
+        // grid; the felt grid stays the 10-minute bucket.
         for hour in 1..<24 {
             let x = size.width * CGFloat(hour) / 24
             let tall: CGFloat = hour % 6 == 0 ? 5 : 3
+            let op: Double = hour % 6 == 0
+                ? (contrast == .increased ? 0.40 : 0.36)
+                : (contrast == .increased ? 0.22 : 0.20)
             context.fill(
-                Path(CGRect(x: x - 0.5, y: size.height - tall, width: 1, height: tall)),
-                with: .color(Theme.color(.neutral).opacity(hour % 6 == 0 ? 0.4 : 0.22)))
+                Path(CGRect(x: x - 0.5, y: size.height - 1 - tall, width: 1, height: tall)),
+                with: .color(Theme.color(.neutral).opacity(op)))
         }
 
+        // (4a) Filled columns stand ON the baseline: capsule silhouettes with
+        // tip-heavy ink (the gradient is finish, never data — uniform on
+        // every column) and one shared micro-shadow layer. Under increased
+        // contrast both collapse to solid, shadowless fills.
         let cells = cellsByIndex
-        for index in 0..<columns {
-            guard let cell = cells[index] else { continue }
-            let x = CGFloat(index) * colWidth
-            // Height is the column's count against the day's busiest column,
-            // with a floor so a single record is never invisible.
-            let ratio = CGFloat(cell.count) / CGFloat(busiest)
-            let height = max(4, (size.height - 4) * (0.35 + 0.65 * ratio))
-            let rect = CGRect(x: x, y: size.height - 3 - height, width: barWidth, height: height)
-            let path = Path(roundedRect: rect, cornerRadius: min(1.5, barWidth / 2))
-
-            if cell.hasGap {
-                // A declared blind spot is drawn as an OUTLINE, not a fill:
-                // shape carries the meaning so it survives grayscale, color
-                // blindness, and a black-and-white printout.
-                context.stroke(path, with: .color(Theme.color(.warn)), lineWidth: 1)
-            } else {
-                context.fill(path, with: .color(color(for: cell)))
+        func rect(for index: Int, cell: TimelineDayCell) -> CGRect {
+            let h = barHeight(for: cell, in: size.height)
+            let x = CGFloat(index) * colWidth + (colWidth - barWidth) / 2
+            return CGRect(x: x, y: size.height - 1 - h, width: barWidth, height: h)
+        }
+        if contrast == .increased {
+            for index in 0..<columns {
+                guard let cell = cells[index], !cell.hasGap else { continue }
+                context.fill(columnPath(rect(for: index, cell: cell)), with: .color(color(for: cell)))
             }
+        } else {
+            // Filter on the OUTER copy, columns in one layer: the shadow is
+            // applied once to the merged composite, a true single micro
+            // shadow rather than one per column.
+            var shadowed = context
+            shadowed.addFilter(.shadow(color: .black.opacity(0.10), radius: 0.6, y: 0.5))
+            shadowed.drawLayer { layer in
+                for index in 0..<columns {
+                    guard let cell = cells[index], !cell.hasGap else { continue }
+                    let r = rect(for: index, cell: cell)
+                    let c = color(for: cell)
+                    // Explicit Gradient(colors:) — the AnyGradient overload
+                    // that looks identical is iOS 18-only.
+                    layer.fill(columnPath(r),
+                               with: .linearGradient(Gradient(colors: [c, c.opacity(0.62)]),
+                                                     startPoint: CGPoint(x: r.midX, y: r.minY),
+                                                     endPoint: CGPoint(x: r.midX, y: r.maxY)))
+                }
+            }
+        }
+
+        // (4b) Declared gaps: outline + interior 45-degree hatch, NEVER a
+        // fill, in every contrast branch — shape and texture carry the
+        // meaning so a blind spot survives grayscale and print. The hatch is
+        // uniform (never data); at phone column widths it degrades to a
+        // faint stipple while the solid outline still carries everything.
+        for index in 0..<columns {
+            guard let cell = cells[index], cell.hasGap else { continue }
+            let r = rect(for: index, cell: cell)
+            // The inset must never exceed the geometry: at Slide Over widths
+            // barWidth drops below 1pt, and a full 0.5 inset would make
+            // CGRect.insetBy return the NULL rect — the declared blind spot
+            // silently vanishing, the exact thing the outline rule forbids.
+            let path = columnPath(r.insetBy(dx: min(0.5, r.width / 4), dy: 0.5))
+            context.drawLayer { layer in
+                layer.clip(to: path)
+                var hatch = Path()
+                var hx = r.minX - r.height
+                while hx < r.maxX {
+                    hatch.move(to: CGPoint(x: hx, y: r.maxY))
+                    hatch.addLine(to: CGPoint(x: hx + r.height, y: r.minY))
+                    hx += 3
+                }
+                layer.stroke(hatch,
+                             with: .color(Theme.color(.warn).opacity(contrast == .increased ? 0.5 : 0.35)),
+                             lineWidth: 1)
+            }
+            context.stroke(path, with: .color(Theme.color(.warn)),
+                           lineWidth: contrast == .increased ? 1.5 : 1)
         }
     }
 
@@ -528,6 +658,33 @@ struct TimelineDayShapeView: View {
         let offset = bucket.timeIntervalSince1970 - TimeInterval(day.dayT0)
         guard offset >= 0, offset < TimeInterval(TimelineScrub.daySeconds) else { return nil }
         return width * CGFloat(offset / TimeInterval(TimelineScrub.daySeconds))
+    }
+
+    /// A commit answers in the record's own ink: a stroked ring blooms from
+    /// the tip of the landed column. STROKED, never filled — a gap landing
+    /// blooms hollow in warn, the outline rule even in celebration. An empty
+    /// bucket blooms nothing: absence stays absent. Never promoted toward
+    /// red, no sound, no haptic (the haptic vocabulary stays finger-only).
+    /// Fired only from the two commit sites inside the GeometryReader — the
+    /// jump buttons' acknowledgment is the row that scrolls in.
+    private func fireBloom(width: CGFloat, height: CGFloat) {
+        guard !reduceMotion,
+              let bucket = myBucket,
+              let x = caretX(for: bucket, width: width),
+              let cell = cell(at: bucket) else { return }
+        let colWidth = width / CGFloat(max(day.cellsPerDay, 1))
+        let h = barHeight(for: cell, in: height)
+        let ink = cell.hasGap ? Theme.color(.warn) : color(for: cell)
+        bloomGen += 1
+        let generation = bloomGen
+        bloom = BloomState(x: x + colWidth / 2, y: max(height - 1 - h, 6), color: ink, gen: generation)
+        bloomExpanded = false
+        // Expansion is driven by the ring's own onAppear (identity = gen);
+        // this task only retires the ring, and only if it is still ours.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            if bloomGen == generation { bloom = nil; bloomExpanded = false }
+        }
     }
 
     /// Cosmetic caret overshoot past the day's 00:00/24:00 edges — the WWDC
@@ -627,7 +784,11 @@ struct TimelineScrubSection: View {
     var body: some View {
         let days = built.days.sorted { $0.dayT0 > $1.dayT0 }
         if !days.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.m) {
+            // Air is the boundary: each tape floats in its own band of
+            // whitespace. No Card, no material, no background, no divider —
+            // the float on the List ground IS the design, and the clear
+            // listRowBackground in the hosts is load-bearing.
+            VStack(alignment: .leading, spacing: Theme.l) {
                 ForEach(Array(days.prefix(3))) { day in
                     TimelineDayShapeView(day: day, position: $position,
                                          firstTamperBucket: tamperBuckets[day.dayT0],
@@ -640,9 +801,11 @@ struct TimelineScrubSection: View {
                     Text("Shapes for the 3 most recent days — earlier days continue in the list below.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .padding(.top, Theme.xs)
                 }
             }
-            .padding(.vertical, Theme.xs)
+            .padding(.top, Theme.xs)
+            .padding(.bottom, Theme.s)
         }
     }
 }

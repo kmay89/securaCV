@@ -136,6 +136,9 @@ struct AlertsView: View {
                         }
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
+                        // UIKit's hairline must never undercut the
+                        // instrument's one baseline.
+                        .listRowSeparator(.hidden)
                     }
                 }
 
