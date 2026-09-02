@@ -25,9 +25,12 @@ GET /api/fleet        →  200 application/json
 }
 ```
 
-- Only `devices[].name` is required; `online` defaults to `false` (a silent field is never a presence claim). `chain`,
-  `product`, `hw`, and `hub` are optional and shown when present. A bare JSON
-  array of devices is also accepted.
+- Only `devices[].name` is required; `online` defaults to `false` (a silent
+  field is never a presence claim — pinned by
+  `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, which the
+  core's `fleet_contract.rs` test replays). `chain`, `product`, `hw`, and
+  `hub` are optional and shown when present. A bare JSON array of devices is
+  also accepted.
 - `hw` names the **board** the device compiled against (each pins header's
   `CANARY_FIGURE_HARDWARE`, e.g. `"waveshare-esp32s3-lcd7"`). It is the only
   field exact about the device's *shape* — several products share one
@@ -76,8 +79,11 @@ head it walked. A walk that trusts the served key verifies internal
 consistency, not provenance, and must not wear the word. No firmware serves it, and the TV sends no token
 yet, so for the Wall its absence (or a 401) remains an answer, not an
 error: the Wall phrases the fleet's status as the devices' own report
-("Your fleet reports verified through …") and reserves the word "Verified"
-for a chain it actually walked. The day the TV holds a token, its
+("Your fleet reported in through <this TV's own receipt time>", with the
+device's self-stamped `verified_through` shown only as "Device reports …",
+because the firmware fills that field with the literal word "now") and
+reserves the word "Verified" for a chain it actually walked against a key
+pinned at pairing. The day the TV holds a token, its
 verification lights up with no app change. Everything above about
 `/api/fleet` being coarse and unauthenticated is exactly why this endpoint
 is separate — and gated: the sealed log is how a *display* gets to say
@@ -114,6 +120,26 @@ That last row is why the public demo ships a **same-origin live demo kernel**
 (`/demo-fleet.json`) so you can watch a real fetch populate the fleet in the
 browser — and why the *real* fleet shows up once the page is served next to the
 kernel (hub, LAN, or desktop app).
+
+### What the Wall does with an advert (the native tvOS app)
+
+The Apple TV has no browser sandbox, so beyond probing `canary.local` it
+browses the `_securacv._tcp` Bonjour service every Canary announces and reads
+the TXT `host` key — the salted per-unit mDNS hostname the firmware writes.
+An advert is a claim anyone on the LAN can make, so two rules bound it:
+
+- **The host is validated before it is ever dialed** — the same private-host
+  rule the iPhone applies to every base URL (`DeviceAPI.isPrivate`),
+  restated once in Rust (`tvos/witness-core/src/host.rs`) and called from
+  Swift: a bare DNS label (qualified to `<label>.local`), a `.local` name of
+  well-formed labels, or a private IPv4 address (10/8, 172.16/12,
+  192.168/16, 169.254/16, 127/8). A public name or address is logged and
+  skipped; it never becomes a source.
+- **Discovered sources expire.** The Wall stores when each source last served
+  a real fleet and drops any that has not answered in 30 days on the next
+  load, so a Canary that moved out — or a stranger's box that announced
+  itself once — is not polled by a television forever. A typed hub address
+  is one deliberate entry and is not aged out.
 
 ## Try it in ~30 seconds
 
@@ -154,9 +180,13 @@ one-header change instead of a per-board copy-paste.
   *other* server style — the parity core means both emit byte-identical JSON. A
   display holds no witness chain of its own, so it honestly reports
   `chain: "unknown"`.
-- **The hub/kernel** (Rust) is the natural aggregator home — add the `/api/fleet`
-  route with the CORS headers above next to its existing HTTP surface; it can
-  reuse the same open/append/close shape to list its peers.
+- **The hub/kernel** (Rust, `src/api/mod.rs`) serves `GET /api/fleet` and its
+  `OPTIONS` preflight with the CORS headers above, open and rate-limited like
+  the rest of its surface but with no token: one row, itself, `product:
+  "witness-kernel"`, and `chain` only once a verify pass has actually run
+  (the key is absent before that — a silent key is never a claim). It does
+  not yet aggregate the Canaries it hears; that is the open half, and the
+  same open/append/close shape is how it would list them.
 - It is **coarse and unauthenticated-read** by design — presence, health,
   and the optional coarse wellbeing WORDS above, nothing finer — documented
   public in the canary-wap route-security allowlist. Anything that touches

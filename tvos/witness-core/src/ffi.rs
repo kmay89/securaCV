@@ -3,7 +3,9 @@
 //! Deliberately the narrowest possible surface: **JSON in, JSON out, one
 //! free function.** No structs cross the boundary, so adding a field to a
 //! report can never desync a Swift struct layout from a Rust one — the only
-//! contract is the JSON, which both sides already parse.
+//! contract is the JSON, which both sides already parse. The one plain-string
+//! exception is [`scv_normalize_source_host`]: a hostname is a string, not a
+//! document, and null there is an answer ("skip this advert"), not a failure.
 //!
 //! Every entry point is panic-safe. The release profile builds with
 //! `panic = "abort"`, so a panic unwinding into Swift is not merely undefined,
@@ -91,6 +93,30 @@ pub unsafe extern "C" fn scv_parse_fleet(json: *const c_char) -> *mut c_char {
     )
 }
 
+/// Validate and normalize a Bonjour TXT `host` value into the hostname the
+/// Wall may poll — [`crate::host::normalize_source_host`], the same gate the
+/// iPhone's `DeviceAPI.isPrivate` applies. Returns the lower-cased host,
+/// qualified with `.local` when the advert carried a bare label — or **null
+/// when the advert must be skipped**: a public name or address, a malformed
+/// label, empty input, a null pointer, or bytes that are not UTF-8. This is
+/// the one entry point where null is an answer rather than an allocation
+/// failure, because both mean the same thing to the caller: do not poll it.
+///
+/// # Safety
+/// `host` must be null or a valid NUL-terminated C string. A non-null result
+/// must be released with [`scv_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn scv_normalize_source_host(host: *const c_char) -> *mut c_char {
+    let result = std::panic::catch_unwind(|| {
+        let input = from_c_string(host)?;
+        crate::host::normalize_source_host(&input)
+    });
+    match result {
+        Ok(Some(normalized)) => into_c_string(normalized),
+        Ok(None) | Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// The core's version, so the TV's About panel can prove which core it links
 /// rather than guessing. Static — the caller must NOT free it.
 #[no_mangle]
@@ -104,8 +130,8 @@ pub extern "C" fn scv_core_version() -> *const c_char {
 ///
 /// # Safety
 /// `ptr` must be null, or a pointer returned by [`scv_verify_sealed_log`] /
-/// [`scv_parse_fleet`] that has not already been freed. Never pass
-/// [`scv_core_version`]'s pointer here — it is static.
+/// [`scv_parse_fleet`] / [`scv_normalize_source_host`] that has not already
+/// been freed. Never pass [`scv_core_version`]'s pointer here — it is static.
 #[no_mangle]
 pub unsafe extern "C" fn scv_string_free(ptr: *mut c_char) {
     if !ptr.is_null() {
@@ -182,7 +208,10 @@ mod tests {
         let out = unsafe { call(scv_parse_fleet, r#"[{"name":"Front Door"}]"#) };
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["devices"][0]["name"], "Front Door");
-        assert_eq!(v["devices"][0]["online"], false, "a silent `online` is not a presence claim");
+        assert_eq!(
+            v["devices"][0]["online"], false,
+            "a silent `online` is not a presence claim"
+        );
     }
 
     #[test]
@@ -190,6 +219,38 @@ mod tests {
         let out = unsafe { call(scv_parse_fleet, "<html>captive portal</html>") };
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert!(v["error"].is_string());
+    }
+
+    #[test]
+    fn a_bare_advert_host_comes_back_qualified() {
+        let out = unsafe { call(scv_normalize_source_host, "canary-nightstand7-001-a1b2c3") };
+        assert_eq!(out, "canary-nightstand7-001-a1b2c3.local");
+    }
+
+    #[test]
+    fn a_private_address_comes_back_as_itself() {
+        let out = unsafe { call(scv_normalize_source_host, "192.168.1.20") };
+        assert_eq!(
+            out, "192.168.1.20",
+            "an address must not grow a .local suffix"
+        );
+    }
+
+    #[test]
+    fn a_hostile_advert_host_is_null_not_a_host() {
+        // Null is the answer here, by contract: Swift reads it as "skip".
+        for bad in [
+            "evil.example.com",
+            "8.8.8.8",
+            "10.0.0.1.attacker.com",
+            "-canary",
+            "",
+        ] {
+            let c_in = CString::new(bad).unwrap();
+            let out = unsafe { scv_normalize_source_host(c_in.as_ptr()) };
+            assert!(out.is_null(), "{bad:?} must be refused");
+        }
+        assert!(unsafe { scv_normalize_source_host(std::ptr::null()) }.is_null());
     }
 
     #[test]

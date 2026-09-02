@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "Anti-drift vectors for the GET /api/fleet contract (tvos/discovery/DISCOVERY.md).",
+    "Each vector's `input` is the exact body a source serves, as a string so the bytes",
+    "are pinned; `normalized` is the snapshot the Wall's Rust core must hand Swift for",
+    "it. tvos/witness-core/tests/fleet_contract.rs reads this file. The contract doc",
+    "changes first, then this file, then the code — never the other way around.",
+    "The first vector pins the one default the doc and both decoders used to disagree",
+    "on: a device that omits `online` is NOT claimed present (`online: false`)."
+  ],
+  "vectors": [
+    {
+      "name": "a silent `online` is not a presence claim",
+      "input": "{\"devices\":[{\"name\":\"Porch\"}]}",
+      "normalized": {
+        "devices": [
+          { "name": "Porch", "online": false }
+        ]
+      }
+    },
+    {
+      "name": "the documented example",
+      "input": "{\"kernel\":\"kitchen-hub\",\"verified_through\":\"4:02 PM\",\"devices\":[{\"name\":\"Front Door\",\"online\":true,\"chain\":\"ok\",\"product\":\"canary-wap\",\"hub\":\"ok\"},{\"name\":\"Studio\",\"online\":true,\"chain\":\"ok\",\"product\":\"canary\"},{\"name\":\"Driveway\",\"online\":false,\"chain\":\"ok\",\"product\":\"canary-vision\",\"hw\":\"xiao-esp32c3\"}]}",
+      "normalized": {
+        "kernel": "kitchen-hub",
+        "verified_through": "4:02 PM",
+        "devices": [
+          { "name": "Front Door", "online": true, "chain": "ok", "product": "canary-wap", "hub": "ok" },
+          { "name": "Studio", "online": true, "chain": "ok", "product": "canary" },
+          { "name": "Driveway", "online": false, "chain": "ok", "product": "canary-vision", "hw": "xiao-esp32c3" }
+        ]
+      }
+    },
+    {
+      "name": "the bare array form, with `online` silent on every row",
+      "input": "[{\"name\":\"Front Door\"},{\"name\":\"Studio\"}]",
+      "normalized": {
+        "devices": [
+          { "name": "Front Door", "online": false },
+          { "name": "Studio", "online": false }
+        ]
+      }
+    },
+    {
+      "name": "a display's own self-report bytes (fleet_selfreport_build, verbatim)",
+      "input": "{\"kernel\":\"canary_nightstand7_001\",\"verified_through\":\"now\",\"devices\":[{\"name\":\"canary_nightstand7_001\",\"online\":true,\"chain\":\"unknown\",\"product\":\"canary-nightstand7\",\"hw\":\"waveshare-esp32s3-lcd7\",\"hub\":\"none\"}]}",
+      "normalized": {
+        "kernel": "canary_nightstand7_001",
+        "verified_through": "now",
+        "devices": [
+          { "name": "canary_nightstand7_001", "online": true, "chain": "unknown", "product": "canary-nightstand7", "hw": "waveshare-esp32s3-lcd7", "hub": "none" }
+        ]
+      }
+    },
+    {
+      "name": "an explicit `online: false` survives, and an explicit `true` is not the default talking",
+      "input": "{\"devices\":[{\"name\":\"A\",\"online\":false},{\"name\":\"B\",\"online\":true},{\"name\":\"C\"}]}",
+      "normalized": {
+        "devices": [
+          { "name": "A", "online": false },
+          { "name": "B", "online": true },
+          { "name": "C", "online": false }
+        ]
+      }
+    }
+  ]
+}

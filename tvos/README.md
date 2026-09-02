@@ -48,9 +48,10 @@ categories are simply **empty**, and this app sits in all three:
    now ships that endpoint, token-gated** (a checkpoint-anchored tail with
    no query surface — Invariant VII); the TV sends no token yet, so today
    the Wall still labels the fleet's status as what it is — the devices'
-   own report ("Your fleet reports verified through …", "reports record
-   ok") — and the word "Verified" stays reserved for a chain this TV
-   actually walked. The day the TV holds a token, the verdict lights up
+   own report ("Your fleet reported in through <this TV's own receipt
+   time>" with the device's self-stamp shown only as "Device reports …",
+   and "reports record ok") — and the word "Verified" stays reserved for a
+   chain this TV actually walked against a key pinned at pairing. The day the TV holds a token, the verdict lights up
    with no app change.
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
    well-known LAN addresses the desktop Flasher and Lab probe

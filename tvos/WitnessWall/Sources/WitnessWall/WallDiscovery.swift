@@ -12,6 +12,12 @@
 //  TXT `host` key is the salted mDNS hostname (`canary-nightstand7-001-a1b2c3`)
 //  — unique per unit even on firmware whose device_id is the compile-time
 //  default, which is exactly why the iPhone keys its rows on it too.
+//
+//  It is also a CLAIM anyone on the LAN can make. An advert saying
+//  `host=evil.example.com` used to be taken at its word and polled — so every
+//  host now passes the core's gate (`WitnessCore.normalizeSourceHost`, the
+//  same private-host rule the iPhone's DeviceAPI.isPrivate applies) before it
+//  becomes a source, and `pollableHosts` is the pure, tested half of that.
 
 import Foundation
 import Network
@@ -31,19 +37,35 @@ enum WallDiscovery {
 
         let box = HostBox()
         browser.browseResultsChangedHandler = { results, _ in
-            var hosts: [String] = []
+            var advertised: [String] = []
             for result in results {
                 guard case let .bonjour(txt) = result.metadata else { continue }
-                if let host = txt.dictionary["host"], !host.isEmpty {
-                    hosts.append(host.hasSuffix(".local") ? host : host + ".local")
-                }
+                if let host = txt.dictionary["host"] { advertised.append(host) }
             }
-            box.add(hosts)
+            box.add(pollableHosts(advertised))
         }
         browser.start(queue: .global(qos: .utility))
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         browser.cancel()
         return box.snapshot()
+    }
+
+    /// The TXT `host` values one browse window heard, reduced to the ones the
+    /// Wall may poll: validated and `.local`-qualified by the Rust core
+    /// (witness-core/src/host.rs — a bare label, a `.local` name, or a
+    /// private IPv4 address; nothing else). A rejected host is logged and
+    /// skipped, never polled and never persisted. Pure, so it is the testable
+    /// half of `browse` (WallDiscoveryTests).
+    static func pollableHosts(_ advertised: [String]) -> [String] {
+        var hosts: [String] = []
+        for raw in advertised {
+            if let host = WitnessCore.normalizeSourceHost(raw) {
+                hosts.append(host)
+            } else if !raw.isEmpty {
+                NSLog("WallDiscovery: skipping an advert whose host is not a LAN name: %@", raw)
+            }
+        }
+        return hosts
     }
 }
 

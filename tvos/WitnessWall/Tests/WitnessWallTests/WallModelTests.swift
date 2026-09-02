@@ -261,6 +261,93 @@ final class WallModelTests: XCTestCase {
         XCTAssertEqual(fleet.devices.map(\.name).sorted(), ["Attic", "Porch"])
     }
 
+    // MARK: Pruning — a discovered source is a claim, and claims expire.
+
+    private static let thirtyOneDays: TimeInterval = 31 * 24 * 60 * 60
+
+    func testADiscoveredSourceNotSeenForThirtyDaysIsDroppedOnLoad() {
+        let defaults = scratchDefaults()
+        defaults.set(["fresh.local", "gone.local"], forKey: "SecuraCVWallSources")
+        defaults.set(true, forKey: "SecuraCVWallSourcesDiscovered")
+        let now = Date().timeIntervalSince1970
+        defaults.set(["fresh.local": now - 60, "gone.local": now - Self.thirtyOneDays],
+                     forKey: "SecuraCVWallSourcesSeen")
+
+        let m = model([.success(goodFleet)], defaults: defaults)
+
+        XCTAssertEqual(m.sources, ["fresh.local"],
+                       "a Canary that moved out — or a stranger's advert — is not polled forever")
+        XCTAssertEqual(defaults.stringArray(forKey: "SecuraCVWallSources"), ["fresh.local"],
+                       "and the pruned list is what the next boot reads")
+        let seen = defaults.dictionary(forKey: "SecuraCVWallSourcesSeen") ?? [:]
+        XCTAssertNil(seen["gone.local"], "the dropped source's record goes with it")
+        XCTAssertNotNil(seen["fresh.local"])
+    }
+
+    func testASourceSavedBeforeTheTableExistedIsKeptAndStampedNow() {
+        // Upgrading must not blank a working wall: with no record, the clock
+        // starts today rather than at the epoch.
+        let defaults = scratchDefaults()
+        defaults.set(["a.local", "b.local"], forKey: "SecuraCVWallSources")
+        defaults.set(true, forKey: "SecuraCVWallSourcesDiscovered")
+
+        let m = model([.success(goodFleet)], defaults: defaults)
+
+        XCTAssertEqual(m.sources, ["a.local", "b.local"])
+        let seen = defaults.dictionary(forKey: "SecuraCVWallSourcesSeen") ?? [:]
+        XCTAssertEqual(Set(seen.keys), Set(["a.local", "b.local"]),
+                       "every kept source now has a record to age against")
+    }
+
+    func testATypedHubIsNotPrunedByAge() {
+        // One deliberate address, re-validated every poll; forgetting it after
+        // a month away would send someone back to typing with a TV remote.
+        let defaults = scratchDefaults()
+        defaults.set(["hub.example.local:8099"], forKey: "SecuraCVWallSources")
+        defaults.set(false, forKey: "SecuraCVWallSourcesDiscovered")
+        defaults.set(["hub.example.local:8099": Date().timeIntervalSince1970 - Self.thirtyOneDays],
+                     forKey: "SecuraCVWallSourcesSeen")
+
+        let m = model([.success(goodFleet)], defaults: defaults)
+
+        XCTAssertEqual(m.sources, ["hub.example.local:8099"])
+    }
+
+    func testAnAnsweringSourceRestartsItsThirtyDayClock() async {
+        let defaults = scratchDefaults()
+        defaults.set(["a.local"], forKey: "SecuraCVWallSources")
+        defaults.set(true, forKey: "SecuraCVWallSourcesDiscovered")
+        let old = Date().timeIntervalSince1970 - 20 * 24 * 60 * 60
+        defaults.set(["a.local": old], forKey: "SecuraCVWallSourcesSeen")
+        let m = model([.success(goodFleet)], defaults: defaults)
+
+        await m.refreshOnce()
+
+        let seen = defaults.dictionary(forKey: "SecuraCVWallSourcesSeen") ?? [:]
+        let stamp = seen["a.local"] as? Double ?? 0
+        XCTAssertGreaterThan(stamp, old, "every real answer restarts the clock")
+    }
+
+    func testADarkSourceDoesNotGetItsClockRestarted() async {
+        let porch = #"{"devices":[{"name":"Porch","online":true}]}"#
+        let defaults = scratchDefaults()
+        defaults.set(["a.local", "b.local"], forKey: "SecuraCVWallSources")
+        defaults.set(true, forKey: "SecuraCVWallSourcesDiscovered")
+        let old = Date().timeIntervalSince1970 - 20 * 24 * 60 * 60
+        defaults.set(["a.local": old, "b.local": old], forKey: "SecuraCVWallSourcesSeen")
+        let m = model([
+            .success(porch),
+            .failure(FleetError.unreachable("asleep")),
+        ], defaults: defaults)
+
+        await m.refreshOnce()
+
+        let seen = defaults.dictionary(forKey: "SecuraCVWallSourcesSeen") ?? [:]
+        XCTAssertGreaterThan(seen["a.local"] as? Double ?? 0, old)
+        XCTAssertEqual(seen["b.local"] as? Double, old,
+                       "silence is not an answer — only a real fleet restarts the clock")
+    }
+
     func testAGoodFetchGoesLive() async {
         let m = model([.success(goodFleet)])
         m.connect(to: "http://canary.local:8099")

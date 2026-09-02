@@ -5,8 +5,12 @@
 //! `tvos/discovery/DISCOVERY.md`. Two rules from it are load-bearing and
 //! enforced by the tests below:
 //!
-//! * only `devices[].name` is required; `online` defaults to `true`, and
-//!   `chain` / `product` / `hw` / `hub` are shown only when present;
+//! * only `devices[].name` is required; `online` defaults to `false` — a
+//!   silent field is never a presence claim — and `chain` / `product` / `hw`
+//!   / `hub` are shown only when present. That default is pinned by
+//!   `tests/fixtures/fleet_contract_vectors.json` (`tests/fleet_contract.rs`),
+//!   because it once drifted three ways between the doc, this crate and the
+//!   Swift decoder;
 //! * a bare JSON array of devices is also accepted;
 //! * `chain: "unknown"` is an ABSENT claim, not a failure — a display holds no
 //!   witness chain of its own, and painting it as trouble is a lie about every
