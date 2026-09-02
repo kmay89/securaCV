@@ -6,7 +6,8 @@ firmware-type selector mirrors: "which build includes which feature". This lint
 proves the load-bearing cells against the ONLY files that actually decide them —
 firmware/canary/platformio.ini (per-env -DFEATURE_* lines) and
 firmware/canary/include/canary_config.h (the #ifndef defaults) — plus internal
-consistency against flavors.json + boards.json. It is a cheap grep-style check
+consistency against flavors.json + boards.json (every flavors.json product
+must have a lane here, by id or by `flavor`). It is a cheap grep-style check
 (no PlatformIO), run in .github/workflows/lint.yml.
 
 Exit non-zero on any drift, printing every problem.
@@ -185,6 +186,20 @@ def main():
                 err(f"product {p['id']}: flasher catalog has no '{want}' "
                     f"(canary-local/devices/flash.json) — the Flash-in-browser "
                     f"deep-link would 404; add it or fix productPrefix")
+
+    # ── 2b-bis. every product firmware/flavors.json ships has a lane here ─────
+    # The matrix answers "which build includes which feature" for every
+    # product a user can flash — so a product that ships with no lane is the
+    # dashboard omitting the thing people actually install. canary-display,
+    # the most actively released product, had no lane for its whole life.
+    # A lane is a product whose id IS the flavor, or a board-specialized
+    # product whose `flavor` names it (the display's watch lane is one).
+    covered = {p.get("flavor", p["id"]) for p in matrix.get("products", [])}
+    for name in sorted(flavor_names - covered):
+        err(f"flavors.json product '{name}' has no lane in build_matrix.json — "
+            f"add a product with id '{name}', or a board-specialized product "
+            f"whose `flavor` is '{name}' (the matrix must cover every product "
+            f"that ships)")
 
     # ── 2c. the default recommendation must resolve to a real product/level ───
     by_id = {p["id"]: p for p in matrix.get("products", [])}
