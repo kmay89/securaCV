@@ -107,8 +107,11 @@ def _replay_gate(
     field = _REPLAY_COUNTER_FIELD.get(getattr(verifier, "__name__", ""))
     if field is None or not isinstance(payload, dict):
         return verdict
+    raw = payload.get(field)
+    if raw is None or isinstance(raw, bool):
+        return verdict
     try:
-        counter = int(payload.get(field))
+        counter = int(raw)
     except (TypeError, ValueError):
         return verdict
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
@@ -813,7 +816,7 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
             # A stale, validly signed head: annotate, never move the length
             # or the hash the dashboard shows as current.
             self._attr_extra_state_attributes = {
-                **(self._attr_extra_state_attributes or {}),
+                **(getattr(self, "_attr_extra_state_attributes", None) or {}),
                 **_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
@@ -877,7 +880,7 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 # newer state we already hold and only annotate the trust view.
                 self._attr_native_value = previous_value
                 self._attr_extra_state_attributes = {
-                    **(self._attr_extra_state_attributes or {}),
+                    **(getattr(self, "_attr_extra_state_attributes", None) or {}),
                     **_trust_attrs(self.hass, self._entry, self._device_id),
                 }
                 self.async_write_ha_state()
