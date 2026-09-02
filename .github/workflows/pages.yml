@@ -56,6 +56,12 @@ jobs:
           # generators as "source" links.
           rm -rf _site/canary-local/tests
           rm -rf _site/canary-local/emulator/third_party _site/canary-local/emulator/.build
+          # The Python generators and shell scripts under tools/ (and the
+          # emulator's build.sh) are repo tooling, not site content: no page
+          # loads a .py or .sh (the Lab's "source" links are to the .mjs
+          # helpers and to GitHub), so publishing them only put the hub
+          # host-provision script and two dozen generators on a public URL.
+          find _site/canary-local -type f \( -name '*.py' -o -name '*.sh' \) -delete
           cp -rL docs/hardware/enclosure _site/docs/hardware/enclosure
           # front door: / → the guide
           cat > _site/index.html <<'EOF'
