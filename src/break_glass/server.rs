@@ -198,7 +198,14 @@ impl BreakGlassServer {
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(50));
                 }
-                Err(err) => return Err(err.into()),
+                Err(err) => match crate::accept_error_disposition(&err) {
+                    crate::AcceptErrorDisposition::Retry => {}
+                    crate::AcceptErrorDisposition::BackOff => {
+                        log::warn!("break-glass accept backing off: {err}");
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    crate::AcceptErrorDisposition::Fatal => return Err(err.into()),
+                },
             }
         }
         Ok(())

@@ -500,7 +500,6 @@ impl FrameBuffer {
     /// possession of the token is enforced by this signature, but validity
     /// cannot be checked here without the device key and receipt ledger.
     /// Frames are yielded oldest-first; `.last()` is the newest.
-    #[allow(dead_code)]
     pub fn drain_for_vault(
         &mut self,
         _token: &BreakGlassToken,
