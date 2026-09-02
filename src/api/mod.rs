@@ -857,7 +857,13 @@ fn handle_connection(
         // machinery so an unauthenticated poll never counts as an auth
         // failure against the caller's address.
         let body = fleet_document(last_verify.as_ref());
-        write_response_with_headers(&mut stream, 200, "application/json", body.as_bytes(), FLEET_CORS)?;
+        write_response_with_headers(
+            &mut stream,
+            200,
+            "application/json",
+            body.as_bytes(),
+            FLEET_CORS,
+        )?;
         return Ok(());
     }
 
@@ -1636,13 +1642,22 @@ mod tests {
         // does not allow.
         let (headers, _) = api.request("OPTIONS", "/api/fleet", false)?;
         assert!(headers.contains("204 No Content"), "headers: {headers}");
-        assert!(headers.contains("Access-Control-Allow-Methods: GET, OPTIONS"), "headers: {headers}");
+        assert!(
+            headers.contains("Access-Control-Allow-Methods: GET, OPTIONS"),
+            "headers: {headers}"
+        );
         let (headers, _) = api.request("POST", "/api/fleet", false)?;
-        assert!(headers.contains("405 Method Not Allowed"), "headers: {headers}");
+        assert!(
+            headers.contains("405 Method Not Allowed"),
+            "headers: {headers}"
+        );
 
         // Every other route stays same-origin: no CORS header escapes.
         let (headers, _) = api.get("/api/sealed-log", true)?;
-        assert!(!headers.contains("Access-Control-Allow-Origin"), "headers: {headers}");
+        assert!(
+            !headers.contains("Access-Control-Allow-Origin"),
+            "headers: {headers}"
+        );
         Ok(())
     }
 

@@ -1201,6 +1201,23 @@ struct PublishCursor {
 /// (duplicate events, motion re-triggered, zone counts inflated by one
 /// bucket-load per 30 s). Counting what was already published within that
 /// bucket is what makes a second poll over the same artifact yield nothing.
+/// The bucket start BEFORE export jitter. Every `/events` export re-draws
+/// each bucket's start by up to ±`jitter_s` (default 120 s, in 60 s steps)
+/// around the true, size-aligned start, and a fresh draw lands on every
+/// poll — so the raw start is not an identity: the same bucket compares
+/// "newer" than the cursor one poll and "older" the next, and its events
+/// republish. The true start is the nearest multiple of the bucket size,
+/// which is recoverable exactly as long as the jitter stays below half the
+/// bucket (120 s against a 600 s bucket, and the kernel's minimum bucket
+/// is 300 s). The bridge is the kernel's own local companion, so undoing
+/// the jitter for *ordering* here reveals nothing to anyone else; what it
+/// publishes still carries the exported (jittered) bucket.
+fn stable_bucket_start(bucket: &TimeBucket) -> u64 {
+    let size = u64::from(bucket.size_s.max(1));
+    let half = size / 2;
+    bucket.start_epoch_s.saturating_add(half) / size * size
+}
+
 fn select_new_events<'a>(
     events: &'a [ExportEvent],
     cursor: &mut Option<PublishCursor>,
@@ -1209,7 +1226,7 @@ fn select_new_events<'a>(
     let mut seen_in_newest = 0usize;
     let mut newest: Option<u64> = None;
     for event in events {
-        let start = event.time_bucket.start_epoch_s;
+        let start = stable_bucket_start(&event.time_bucket);
         // Track the newest bucket and how many events it holds in this artifact.
         match newest {
             Some(n) if start == n => seen_in_newest += 1,
@@ -1329,11 +1346,55 @@ mod tests {
             "event_type": "BoundaryCrossingObjectLarge",
             "zone_id": format!("zone:{zone}"),
             "time_bucket": { "start_epoch_s": start, "size_s": 600 },
-            "confidence": 0.9
+            "confidence": 0.9,
+            "kernel_version": "test",
+            "ruleset_id": "test-ruleset",
+            "ruleset_hash": vec![0u8; 32]
         }))
         .expect("export event shape");
-        e.time_bucket = TimeBucket { start_epoch_s: start, size_s: 600 };
+        e.time_bucket = TimeBucket {
+            start_epoch_s: start,
+            size_s: 600,
+        };
         e
+    }
+
+    #[test]
+    fn select_new_events_is_immune_to_export_jitter() {
+        // The same two events, exported twice: the first poll drew -120 s
+        // for the bucket, the second +60 s. Raw starts differ; the bucket
+        // is the same, so the second poll publishes nothing.
+        let mut cursor = None;
+        let first = vec![ev(1_000_200 - 120, "a"), ev(1_000_200 - 120, "b")];
+        assert_eq!(select_new_events(&first, &mut cursor).len(), 2);
+        let second = vec![ev(1_000_200 + 60, "a"), ev(1_000_200 + 60, "b")];
+        assert!(
+            select_new_events(&second, &mut cursor).is_empty(),
+            "a re-jittered export of the same bucket must not republish"
+        );
+        // The cursor is keyed on the recovered true start, not the draw.
+        assert_eq!(cursor.map(|c| c.bucket_start_epoch_s), Some(1_000_200));
+        // A genuinely newer bucket, jittered downwards, still counts as new.
+        let third = vec![
+            ev(1_000_200 + 120, "a"),
+            ev(1_000_200 + 120, "b"),
+            ev(1_000_800 - 120, "c"),
+        ];
+        let fresh = select_new_events(&third, &mut cursor);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].zone_id, "zone:c");
+    }
+
+    #[test]
+    fn stable_bucket_start_undoes_every_jitter_step() {
+        for offset in [-120i64, -60, 0, 60, 120] {
+            let start = (1_000_200i64 + offset) as u64;
+            let b = TimeBucket {
+                start_epoch_s: start,
+                size_s: 600,
+            };
+            assert_eq!(stable_bucket_start(&b), 1_000_200, "offset {offset}");
+        }
     }
 
     #[test]
@@ -1350,11 +1411,22 @@ mod tests {
         assert_eq!(fresh[0].zone_id, "zone:c");
         assert!(select_new_events(&grown, &mut cursor).is_empty());
         // The bucket advances: only the new bucket's events, and the cursor moves.
-        let next = vec![ev(1_000_200, "a"), ev(1_000_200, "b"), ev(1_000_200, "c"), ev(1_000_800, "d")];
+        let next = vec![
+            ev(1_000_200, "a"),
+            ev(1_000_200, "b"),
+            ev(1_000_200, "c"),
+            ev(1_000_800, "d"),
+        ];
         let fresh = select_new_events(&next, &mut cursor);
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].zone_id, "zone:d");
-        assert_eq!(cursor, Some(PublishCursor { bucket_start_epoch_s: 1_000_800, published_in_bucket: 1 }));
+        assert_eq!(
+            cursor,
+            Some(PublishCursor {
+                bucket_start_epoch_s: 1_000_800,
+                published_in_bucket: 1
+            })
+        );
         // Retention drops the old bucket from the artifact: still nothing new.
         let trimmed = vec![ev(1_000_800, "d")];
         assert!(select_new_events(&trimmed, &mut cursor).is_empty());

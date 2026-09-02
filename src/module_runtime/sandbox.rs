@@ -319,7 +319,10 @@ mod linux {
         // zombie per failed frame, at ingest rate, until the daemon hit
         // EMFILE. The guard kills a child that is still running so a hung
         // backend cannot hold the reaper either.
-        let mut child = ChildGuard { pid, read_fd: fds[0] };
+        let mut child = ChildGuard {
+            pid,
+            read_fd: fds[0],
+        };
 
         // SECURITY: Cap IPC payload to prevent a malicious/corrupted child
         // from sending a huge length value and causing OOM in the parent.
@@ -384,7 +387,9 @@ mod tests {
     #[test]
     fn sandbox_child_dying_before_reply_leaks_neither_fd_nor_zombie() {
         fn open_fds() -> usize {
-            std::fs::read_dir("/proc/self/fd").map(|d| d.count()).unwrap_or(0)
+            std::fs::read_dir("/proc/self/fd")
+                .map(|d| d.count())
+                .unwrap_or(0)
         }
         let before = open_fds();
         for _ in 0..8 {
@@ -392,12 +397,18 @@ mod tests {
                 // Die without writing a response — the short-read path.
                 unsafe { libc::_exit(3) }
             });
-            assert!(result.is_err(), "a child that never replies must surface an error");
+            assert!(
+                result.is_err(),
+                "a child that never replies must surface an error"
+            );
         }
         // Eight failed children, zero leaked read-ends (read_dir itself
         // opens one fd transiently, so allow that much slack).
         let after = open_fds();
-        assert!(after <= before + 1, "fd leak: {before} before, {after} after");
+        assert!(
+            after <= before + 1,
+            "fd leak: {before} before, {after} after"
+        );
         // No zombies: every child pid has been reaped, so a reap of "any
         // child" finds nothing left.
         let rc = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };

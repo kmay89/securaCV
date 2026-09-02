@@ -4905,17 +4905,27 @@ mod tests {
     fn coarsen_to_rejects_the_fifteen_to_ten_minute_narrowing() {
         // Aligned to its own 900 s grid (as TimeBucket::now produces), and
         // sitting at 300 mod 600 — the start the old code moved backwards.
-        let fifteen = TimeBucket { start_epoch_s: 900 * 1_001, size_s: 900 };
+        let fifteen = TimeBucket {
+            start_epoch_s: 900 * 1_001,
+            size_s: 900,
+        };
         assert_eq!(fifteen.start_epoch_s % 600, 300);
         assert!(fifteen.coarsen_to(600).is_err());
         // The enforcer's rule keeps a coarser source as-is.
-        let kept = fifteen.coarsen_to(TEN_MINUTES_S.max(fifteen.size_s)).unwrap();
+        let kept = fifteen
+            .coarsen_to(TEN_MINUTES_S.max(fifteen.size_s))
+            .unwrap();
         assert_eq!(kept, fifteen);
         // A finer source still coarsens to ten minutes.
-        let five = TimeBucket { start_epoch_s: 1_234_500, size_s: 300 };
+        let five = TimeBucket {
+            start_epoch_s: 1_234_500,
+            size_s: 300,
+        };
         let ten = five.coarsen_to(TEN_MINUTES_S.max(five.size_s)).unwrap();
         assert_eq!(ten.size_s, 600);
-        assert!(ten.start_epoch_s <= five.start_epoch_s && five.start_epoch_s < ten.start_epoch_s + 600);
+        assert!(
+            ten.start_epoch_s <= five.start_epoch_s && five.start_epoch_s < ten.start_epoch_s + 600
+        );
     }
 
     proptest::proptest! {
