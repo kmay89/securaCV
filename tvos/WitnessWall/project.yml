@@ -55,6 +55,11 @@ targets:
     platform: tvOS
     sources:
       - path: Sources/WitnessWall
+      # App Store privacy manifest (required-reason API: UserDefaults). Listed
+      # as a source so XcodeGen copies it into the bundle; the Top Shelf
+      # extension lists the same file. scripts/lint_apple_plists.py fails the
+      # build if a target that reads UserDefaults drops it.
+      - path: Support/PrivacyInfo.xcprivacy
       # Apple TV will not accept an archive without an app icon and top-shelf
       # art. The catalog is GENERATED and committed by
       # scripts/make_app_icon.py (tvOS icons are layered image stacks — ~20
@@ -131,6 +136,7 @@ targets:
     sources:
       - path: Sources/WitnessWallTopShelf
       - path: Sources/WitnessWall/ShelfCache.swift
+      - path: Support/PrivacyInfo.xcprivacy
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall.topshelf

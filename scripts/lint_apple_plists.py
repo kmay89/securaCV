@@ -35,7 +35,15 @@ IOS = REPO / "ios"
 TVOS = REPO / "tvos" / "WitnessWall"
 
 LAN_PLISTS = [IOS / "Support" / "Info.plist", TVOS / "Support" / "Info.plist"]
-PRIVACY_MANIFEST = IOS / "Support" / "PrivacyInfo.xcprivacy"
+# Every Xcode project in the repo, with its privacy manifest. The first
+# version of this gate walked ios/project.yml only, so the two tvOS bundles
+# (the Wall reads UserDefaults in WallModel and ResidentWatch, the Top Shelf
+# extension in ShelfCache) could ship without a manifest while the lint
+# stayed green — the exact rejection the gate exists to catch.
+PROJECTS = [
+    (IOS / "project.yml", IOS / "Support" / "PrivacyInfo.xcprivacy"),
+    (TVOS / "project.yml", TVOS / "Support" / "PrivacyInfo.xcprivacy"),
+]
 # Reason codes Apple accepts for NSPrivacyAccessedAPICategoryUserDefaults.
 USERDEFAULTS_REASONS = {"CA92.1", "1C8F.1", "C56D.1", "AC6B.1"}
 
@@ -105,9 +113,9 @@ def targets_using_user_defaults(project_yml: Path) -> dict[str, list[str]]:
     return targets
 
 
-def sources_use_user_defaults(paths: list[str]) -> bool:
+def sources_use_user_defaults(project_root: Path, paths: list[str]) -> bool:
     for rel in paths:
-        p = IOS / rel
+        p = project_root / rel
         files = [p] if p.is_file() else list(p.rglob("*.swift")) if p.is_dir() else []
         for f in files:
             if f.suffix == ".swift" and "UserDefaults" in f.read_text(encoding="utf-8", errors="replace"):
@@ -115,16 +123,18 @@ def sources_use_user_defaults(paths: list[str]) -> bool:
     return False
 
 
-def check_privacy_manifest() -> None:
-    if not PRIVACY_MANIFEST.is_file():
-        errors.append(f"{PRIVACY_MANIFEST.relative_to(REPO)} is missing — App Store Connect rejects the upload")
+def check_privacy_manifest(project_yml: Path, manifest_path: Path) -> None:
+    rel_manifest = manifest_path.relative_to(REPO)
+    rel_project = project_yml.relative_to(REPO)
+    if not manifest_path.is_file():
+        errors.append(f"{rel_manifest} is missing — App Store Connect rejects the upload")
         return
-    with PRIVACY_MANIFEST.open("rb") as fh:
+    with manifest_path.open("rb") as fh:
         manifest = plistlib.load(fh)
     if manifest.get("NSPrivacyTracking") is not False:
-        errors.append("PrivacyInfo.xcprivacy: NSPrivacyTracking must be false — the app tracks nobody")
+        errors.append(f"{rel_manifest}: NSPrivacyTracking must be false — the app tracks nobody")
     if manifest.get("NSPrivacyCollectedDataTypes"):
-        errors.append("PrivacyInfo.xcprivacy: NSPrivacyCollectedDataTypes must be empty — nothing is collected")
+        errors.append(f"{rel_manifest}: NSPrivacyCollectedDataTypes must be empty — nothing is collected")
     kinds = {
         entry.get("NSPrivacyAccessedAPIType"): set(entry.get("NSPrivacyAccessedAPITypeReasons") or [])
         for entry in manifest.get("NSPrivacyAccessedAPITypes") or []
@@ -132,18 +142,20 @@ def check_privacy_manifest() -> None:
     reasons = kinds.get("NSPrivacyAccessedAPICategoryUserDefaults")
     if not reasons or not reasons & USERDEFAULTS_REASONS:
         errors.append(
-            "PrivacyInfo.xcprivacy: must declare NSPrivacyAccessedAPICategoryUserDefaults with an "
+            f"{rel_manifest}: must declare NSPrivacyAccessedAPICategoryUserDefaults with an "
             f"accepted reason ({', '.join(sorted(USERDEFAULTS_REASONS))})"
         )
 
-    targets = targets_using_user_defaults(IOS / "project.yml")
+    targets = targets_using_user_defaults(project_yml)
+    if not targets:
+        errors.append(f"{rel_project}: no app/extension targets found — the walker is broken, not the project")
     for name, paths in targets.items():
-        if not sources_use_user_defaults(paths):
+        if not sources_use_user_defaults(project_yml.parent, paths):
             continue
         if not any(Path(p).name == "PrivacyInfo.xcprivacy" for p in paths):
             errors.append(
-                f"ios/project.yml target {name}: its sources use UserDefaults but "
-                "Support/PrivacyInfo.xcprivacy is not listed under its sources:, so the "
+                f"{rel_project} target {name}: its sources use UserDefaults but "
+                f"{rel_manifest.name} is not listed under its sources:, so the "
                 "bundle ships without a privacy manifest"
             )
 
@@ -154,14 +166,15 @@ def main() -> int:
             check_ats(plist)
         else:
             errors.append(f"{plist.relative_to(REPO)} not found")
-    check_privacy_manifest()
+    for project_yml, manifest_path in PROJECTS:
+        check_privacy_manifest(project_yml, manifest_path)
     if errors:
         for e in errors:
             print(f"::error::{e}")
         print("lint_apple_plists: FAIL")
         return 1
     print("lint_apple_plists: OK — ATS allows local networking only on both LAN apps; "
-          "PrivacyInfo.xcprivacy declares UserDefaults and rides in every bundle that reads it")
+          "PrivacyInfo.xcprivacy declares UserDefaults and rides in every iOS and tvOS bundle that reads it")
     return 0
 
 

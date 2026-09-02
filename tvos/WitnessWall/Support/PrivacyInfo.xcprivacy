@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- App Store privacy manifest, shipped in BOTH tvOS bundles (the Wall app
+       and its Top Shelf extension — project.yml lists it under each target's
+       sources so XcodeGen copies it as a resource). Two honest statements:
+         1. No tracking, no collected data types: the Wall talks only to the
+            owner's own Canaries and hub; nothing is sent to any company.
+         2. UserDefaults is a "required reason" API since May 2024. Both
+            bundles read it (WallModel's source list and last-seen stamps,
+            ResidentWatch, the Top Shelf cache), and an upload without this
+            declaration is rejected by App Store Connect AFTER CI is green —
+            by email. CA92.1 is the reason code for "access info from the
+            same app, on this device". Same content as ios/Support/
+            PrivacyInfo.xcprivacy; scripts/lint_apple_plists.py gates both. -->
+  <key>NSPrivacyTracking</key>
+  <false/>
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array/>
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>CA92.1</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

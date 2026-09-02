@@ -104,7 +104,9 @@ final class WitnessCoreTests: XCTestCase {
     func testABareArrayOfDevicesIsAccepted() throws {
         let fleet = try WitnessCore.parseFleet(json: #"[{"name":"Front Door"},{"name":"Studio"}]"#)
         XCTAssertEqual(fleet.devices.count, 2)
-        XCTAssertEqual(fleet.summary, "2 Canaries, all online")
+        // Neither row says `online`, and a silent field is never a presence
+        // claim — so the summary counts none of them online.
+        XCTAssertEqual(fleet.summary, "0 of 2 Canaries online")
     }
 
     func testATroubledChainIsSurfaced() throws {
