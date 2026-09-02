@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "entry_hash": "ffa77fde26628fce58992f59f317c09840d043754ddc2aea34a6ac2f6975739d",
+      "id": 1,
+      "payload": "{\"record_type\":\"event\",\"event_type\":\"BoundaryCrossingObjectLarge\",\"zone_id\":\"zone:a\",\"time_bucket\":{\"start_epoch_s\":1700000400,\"size_s\":600}}",
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signature": "ebe7400c457b63441c295cae28d387315096c74fa1c065e31a370005f3f580c62d3a75ddbb201ba9e88c9b473e78d29805d27789aa93643e81b53706c7c1b50e"
+    },
+    {
+      "entry_hash": "1b3557a7795fea1d414499eeba808112f2dc52742685cb96275fdae9c6054e44",
+      "id": 2,
+      "payload": "{\"record_type\":\"event\",\"event_type\":\"BoundaryCrossingObjectLarge\",\"zone_id\":\"zone:b\",\"time_bucket\":{\"start_epoch_s\":1700001000,\"size_s\":600}}",
+      "prev_hash": "ffa77fde26628fce58992f59f317c09840d043754ddc2aea34a6ac2f6975739d",
+      "signature": "902dbde7cbeb5b58d6a509117d89e75cd225a35fda7df4e32dfa4f31cdfe1d30b782cdf3fbe0051c30278225fd033c516641f63581d97742ac55a3acb4f8ee02"
+    },
+    {
+      "entry_hash": "ba6d8b450333f8703a8f06e69e28c13cd7faf8ef5689d620cf1a262c246531f1",
+      "id": 3,
+      "payload": "{\"record_type\":\"heartbeat\",\"time_bucket\":{\"start_epoch_s\":1700001600,\"size_s\":600}}",
+      "prev_hash": "1b3557a7795fea1d414499eeba808112f2dc52742685cb96275fdae9c6054e44",
+      "signature": "d5ef8039298bb4fe991482e092466ea2b37c0680c3f86c26e3f94470c7e59e8c74bc60d195f9fcea9fabbb45b126d7c959c9d6295fb956545ab064d9a969d90c"
+    }
+  ],
+  "verifying_key": "ad220887aa0ba4d061b3f42712d73c9ce796dcb57be1f62dd2d9bd22ec29526c"
+}

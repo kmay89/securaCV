@@ -1661,6 +1661,48 @@ mod tests {
         Ok(())
     }
 
+    /// The shared anti-drift vector for the WHOLE sealed-log document, not
+    /// just the domain-separated hash: three planted entries under the test
+    /// seed, serialized exactly as `/api/sealed-log` serves them. The Apple TV
+    /// core (`tvos/witness-core/tests/vectors.rs`) verifies the same file with
+    /// its own implementation, so the two can no longer disagree on
+    /// `hash_entry`, the Ed25519 domain, or the document shape without a test
+    /// going red on one side. Regenerate only from THIS kernel:
+    /// `UPDATE_SEALED_LOG_VECTOR=1 cargo test --lib sealed_log_document_matches`
+    /// — never from the TV crate, which would delete the check.
+    #[test]
+    fn sealed_log_document_matches_the_shared_vector() -> Result<()> {
+        const PAYLOADS: [&str; 3] = [
+            r#"{"record_type":"event","event_type":"BoundaryCrossingObjectLarge","zone_id":"zone:a","time_bucket":{"start_epoch_s":1700000400,"size_s":600}}"#,
+            r#"{"record_type":"event","event_type":"BoundaryCrossingObjectLarge","zone_id":"zone:b","time_bucket":{"start_epoch_s":1700001000,"size_s":600}}"#,
+            r#"{"record_type":"heartbeat","time_bucket":{"start_epoch_s":1700001600,"size_s":600}}"#,
+        ];
+        let api = SealedLogTestApi::spawn(|kernel, cfg| {
+            for payload in PAYLOADS {
+                plant_verbatim_payload(kernel, cfg, payload)?;
+            }
+            Ok(())
+        })?;
+        let (headers, body) = api.get("/api/sealed-log", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let served: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(served["entries"].as_array().map(Vec::len), Some(3));
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/envelope/sealed_log_document_vector.json");
+        if std::env::var_os("UPDATE_SEALED_LOG_VECTOR").is_some() {
+            std::fs::write(&path, serde_json::to_string_pretty(&served)? + "\n")?;
+        }
+        let pinned: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        assert_eq!(
+            served, pinned,
+            "the served sealed-log document drifted from tests/fixtures/envelope/sealed_log_document_vector.json; \
+             if the kernel's chain math changed on purpose, regenerate with UPDATE_SEALED_LOG_VECTOR=1 and \
+             expect the Apple TV core's vectors test to tell you what it now disagrees with"
+        );
+        Ok(())
+    }
+
     #[test]
     fn sealed_log_requires_capability_token() -> Result<()> {
         let api = SealedLogTestApi::spawn(|kernel, cfg| seal_event(kernel, cfg, "zone:a"))?;
