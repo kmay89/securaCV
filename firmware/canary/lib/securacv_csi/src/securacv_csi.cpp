@@ -231,6 +231,23 @@ namespace features {
     s_env_ring_len  = 0;
   }
 
+  /* A window that closed late stood for `missed` whole windows: hold the
+   * last envelope sample that many times so the 1 Hz time base the
+   * breathing bins assume survives a stall. Mirrors csi_features.cpp in
+   * firmware/common/csi (this library carries its own copy of the
+   * extractor; roadmap item 22 is the consolidation). */
+  static void note_missed_windows(uint32_t missed) {
+    if (missed == 0 || s_env_ring_len == 0) return;   /* nothing to hold */
+    if (missed > BREATH_RING) missed = BREATH_RING;
+    const size_t last = (s_env_ring_head + BREATH_RING - 1) % BREATH_RING;
+    const int16_t held = s_env_ring[last];
+    for (uint32_t i = 0; i < missed; i++) {
+      s_env_ring[s_env_ring_head] = held;
+      s_env_ring_head = (uint16_t)((s_env_ring_head + 1) % BREATH_RING);
+      if (s_env_ring_len < BREATH_RING) s_env_ring_len++;
+    }
+  }
+
   static void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
                          int8_t rssi_dbm, uint8_t channel, uint8_t bw_code) {
     if (iq == nullptr || subcarrier_cnt == 0) return;
