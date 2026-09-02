@@ -129,6 +129,7 @@ jobs:
         shell: bash
         env:
           SECRET_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBLISH_RUN: ${{ github.event_name == 'push' || inputs.publish }}
         run: |
           set -euo pipefail
           if [ -n "${SECRET_KEY:-}" ]; then
@@ -142,7 +143,7 @@ jobs:
             # apply it — self-update bricked fleet-wide until the next real
             # publish. firmware-release.yml already refuses to publish without
             # its OTA key; this is the same posture for the apps.
-            if [ "${{ github.event_name == 'push' || inputs.publish }}" = "true" ]; then
+            if [ "${PUBLISH_RUN:-}" = "true" ]; then
               echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, and this run PUBLISHES. Refusing to publish an update the installed base cannot verify. Add the repository signing secret (desktop/README.md, 'real self-update signing') or run build-only."
               exit 1
             fi

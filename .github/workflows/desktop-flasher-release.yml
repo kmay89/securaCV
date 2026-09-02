@@ -93,6 +93,11 @@ jobs:
       - name: Decide whether to publish
         id: plan
         shell: bash
+        env:
+          # Expressions stay out of the shell text (a `${{ }}` inside run: is
+          # interpolated before bash sees it — the code-injection shape CodeQL
+          # flags); the value arrives as an environment variable instead.
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           # All THREE version files must agree before we build a release out of
           # them. The first version of this check compared two of the three and
@@ -107,7 +112,7 @@ jobs:
           python3 desktop/scripts/release_notes.py check
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF_NAME}"; publish=true
-          elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
+          elif [[ "${DRY_RUN:-}" == "false" ]]; then
             # Publish the app's actual version (from tauri.conf.json), so the
             # "Run workflow" button cuts a real release, not a dev stub.
             ver=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
@@ -414,6 +419,7 @@ jobs:
         shell: bash
         env:
           SECRET_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBLISH_RUN: ${{ steps.plan.outputs.publish }}
         run: |
           set -euo pipefail
           if [ -n "${SECRET_KEY:-}" ]; then
@@ -427,7 +433,7 @@ jobs:
             # apply it — self-update bricked fleet-wide until the next real
             # publish. firmware-release.yml already refuses to publish without
             # its OTA key; this is the same posture for the apps.
-            if [ "${{ steps.plan.outputs.publish }}" = "true" ]; then
+            if [ "${PUBLISH_RUN:-}" = "true" ]; then
               echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, and this run PUBLISHES. Refusing to publish an update the installed base cannot verify. Add the repository signing secret (desktop/README.md, 'real self-update signing') or run build-only."
               exit 1
             fi
