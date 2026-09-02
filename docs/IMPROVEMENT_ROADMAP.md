@@ -37,8 +37,8 @@ survived only if a majority could not. The counts:
 | Findings reported | 138 |
 | Rated high | 27 |
 | Landed in the September PRs (first pass) | 78 |
-| Open list items landed in the same PR before merge | 27 |
-| Still open | 33 |
+| Open list items landed in the same PR before merge | 31 |
+| Still open | 29 |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -71,16 +71,20 @@ Each item names the file to start from.
 
 ### Landed before the PR merged
 
-The open list below is the one the audit produced. Twenty-seven of its
+The open list below is the one the audit produced. Thirty-one of its
 sixty items landed in the same PR while it was in review, so the numbers
 are kept but the rows are marked **(landed)** and the reasoning stays for the
 record: 1 (kernel serves `/api/fleet`, self row only — aggregation is still
-open), 10, 11 (peer wellbeing words omitted for cross-site origins; the
-wildcard itself stays because the Wall needs it), 15, 18, 20, 23 (the gate
-against `flavors.json`; deriving the release steps from it is still open),
-24, 25, 32, 33, 39, 43, 45, 47, 48, 49 (CI-backed rows; the `cargo doc`
-gate is still open), 50, 52, 53, 54, 55, 56, 58 (already true at HEAD), 59,
-60, plus two the review of the PR itself found: the MQTT bridge's publish
+open), 4 (the envelope ring holds its sample across a late window, so the
+time base survives a stall; a timestamped resample is the fuller fix if the
+bench shows drift remains), 10, 11 (peer wellbeing words omitted for
+cross-site origins; the wildcard itself stays because the Wall needs it), 14,
+15, 18, 19 (a full sealed-log document vector the kernel emits and the TV
+core walks), 20, 23 (the gate against `flavors.json`; deriving the release
+steps from it is still open), 24, 25, 32, 33, 39, 43, 45, 47, 48, 49
+(CI-backed rows; the `cargo doc` gate is still open), 50, 52, 53, 54, 55,
+56, 57, 58 (already true at HEAD), 59, 60, plus two the review of the PR
+itself found: the MQTT bridge's publish
 cursor now ignores export jitter, and the tvOS bundles carry a privacy
 manifest that the plist lint actually inspects.
 
@@ -91,7 +95,7 @@ manifest that the plist lint actually inspects.
 | 1 | **(landed, in part)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Serve `GET /api/fleet` from `src/api/mod.rs` with the same document the firmware boards serve (`firmware/common/fleet_selfreport/`), and add the anti-drift vector for it. | M |
 | 2 | **CSI mixes every transmitter into one window.** Neighbor-AP beacons, peer Canaries' ESP-NOW probes and router echoes all land in the same 64-frame window; per-subcarrier variance across alternating links reads as motion. | The presence detector's false-positive floor is set by the neighborhood's Wi-Fi, not by the room. | Filter `rx_cb` on the transmitter address: accept the associated BSSID (and, when the probe layer is up, registered peers) and count the rest under a new `frames_dropped_foreign` stat. `csi_hal.cpp` already has `info->mac`. | S |
 | 3 | **Breathing envelope is raw magnitude the driver's AGC removes.** The host test passes because synthetic frames have no automatic scaling. | `quiet` presence and `unusual_breathing` will not fire on a real device. | Normalize each frame by its own mean magnitude before the Goertzel stage (`csi_features.cpp`), or read the per-frame scale the HE `val_scale_cfg` path exposes; then re-run `test_csi_features` with a scaled fixture. | S |
-| 4 | **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Timestamp each window and resample onto a fixed 1 Hz grid before the bin stage; expose the achieved cadence in `csi_stats_t`. | S |
+| 4 | **(landed, in part)** **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Timestamp each window and resample onto a fixed 1 Hz grid before the bin stage; expose the achieved cadence in `csi_stats_t`. | S |
 | 5 | **A TLS-enabled WAP is unreachable from the iOS app.** `URLSession.shared` never answers the server-trust challenge and the receipt's `tls_cert_fp` pin is discarded. | The one configuration that protects the router password in transit is the one the app cannot talk to. | A `URLSessionDelegate` that pins the receipt fingerprint (`ios/Sources/SecuraCV/Transport/DeviceAPI.swift`); reject on mismatch with a user-readable error. | M |
 | 6 | **On-phone chain verification targets the wrong API.** `DeviceAPI.witness()` fetches `/api/v1/witness` (the canary-vision Node reference), while the WAP serves `/api/witness` with a different record shape and no signature. | The app's headline trust feature cannot run against any firmware in this repo. | Pick one contract, put it in `spec/`, and make the WAP handler and the Swift decoder both conform; add a fixture test on each side. | M |
 | 7 | **Two flashers still disagree on Ed25519 refusals** in one direction: the browser now classifies them as integrity failures, but the desktop Flasher's diagnostic copy and recovery hint differ. | Half the users get the vague message (AGENTS.md rule 7). | Share the classification table as a JSON both frontends load (`canary-local/assets/flash-core.js`, `desktop/src/`). | S |
@@ -106,12 +110,12 @@ manifest that the plist lint actually inspects.
 | 11 | **(landed, in part)** **`/api/fleet` is served with `Access-Control-Allow-Origin: *`** and now carries per-peer presence, occupant count and breathing state. | Any drive-by web page on the LAN can read who is home. | Drop the wildcard; the Wall and Lab talk to it from known origins, and the fleet contract can list them. | S |
 | 12 | **Headless MQTT variants (display/sense/vision) have no TLS option** while canary-wap does; the gap is undocumented. | A broker credential crosses the LAN in the clear on three of four products. | Port the WAP's `mqtt_mgr` TLS branch into `firmware/common/network/`, and say so in `FIRMWARE_VARIANT_AUDIT.md` until it lands. | M |
 | 13 | **Fleet Wi-Fi rollout sends the router password over cleartext HTTP** without telling the user, while the BLE rescue path is bonded. | The user believes the app is the safe path. | Prefer BLE when bonded; otherwise show the disclosure once and require the TLS receipt (item 5). | S |
-| 14 | **`PinnedKeyStore.pin` swallows the Keychain error**, so a failed pin leaves the device permanently "Signed" with no signal. | The trust ladder silently stalls one rung down. | Surface the error and retry on next launch. | S |
+| 14 | **(landed)** **`PinnedKeyStore.pin` swallows the Keychain error**, so a failed pin leaves the device permanently "Signed" with no signal. | The trust ladder silently stalls one rung down. | Surface the error and retry on next launch. | S |
 | 15 | **(landed)** **The Wall's mDNS TXT `host` is used unvalidated as a URL host** and discovered sources are never pruned. | A hostile advertiser steers the TV to any host, forever. | Validate against the same private-host rules the iOS app now uses; expire sources not seen for 30 days. | S |
 | 16 | **Lab CSP exists on `flash.html` only**; the other 24 pages, including the webcam and microphone benches, have none. | The benches that touch the camera and mic are the least protected pages. | Generate the meta CSP from the Lab manifest so every page carries it; a test asserts presence. | M |
 | 17 | **Any LAN host can enable the display's only outbound egress (`wx_direct`)** and store a coarse location via unauthenticated `/api/set`. | Zero-phone-home is a principle a neighbor can flip. | Put `/api/set` behind the bearer token and gate `wx_direct` on a physical-button confirmation. | S |
 | 18 | **(landed)** **canary-wap accepts the bearer token as a URL query parameter** on `POST /api/identify`; the kernel rejects that. | Tokens land in router and proxy logs. | Header only, like the kernel. | S |
-| 19 | **Anti-drift vectors pin only `domain_separated_hash`**; `hash_entry`, the Ed25519 path and the document shape are never checked against kernel-produced bytes. | The Wall and the kernel can disagree on what a valid chain is with no test going red. | Emit a golden document from `cargo test` into `spec/` and load it in the Swift and Rust tests. | S |
+| 19 | **(landed)** **Anti-drift vectors pin only `domain_separated_hash`**; `hash_entry`, the Ed25519 path and the document shape are never checked against kernel-produced bytes. | The Wall and the kernel can disagree on what a valid chain is with no test going red. | Emit a golden document from `cargo test` into `spec/` and load it in the Swift and Rust tests. | S |
 | 20 | **(landed)** **Witness Wall "Verified through <time>" stitches the TV's verdict to a timestamp the fleet self-reported** (firmware sends "now"). | The banner asserts a time the TV did not measure. | Show the TV's own receipt time; label the device time as reported. | S |
 
 ### P2 — cohesion: one source of truth per fact
@@ -164,7 +168,7 @@ manifest that the plist lint actually inspects.
 | 54 | (landed) Options flow and the TOFU health hook have no tests. | Add to `tests/`; the mirror check will carry them. |
 | 55 | (landed) `install.sh` installs from an unverified moving-branch tarball and ships tests into `/config`. | Pin to a release tag, verify a checksum, exclude `tests/`. |
 | 56 | (landed) iOS README claims Secure Enclave key custody; the Keychain layer stores generic-password items. | Either adopt `kSecAttrTokenIDSecureEnclave` or say Keychain. |
-| 57 | The Notification Service Extension sets `.critical` for tamper wakes without checking the entitlement. | Fall back to `.timeSensitive` like `AlertCenter`. |
+| 57 | (landed) The Notification Service Extension sets `.critical` for tamper wakes without checking the entitlement. | Fall back to `.timeSensitive` like `AlertCenter`. |
 | 58 | (landed) Desktop README says the Flasher builds for Windows; no target exists. | Remove the claim or add the target. |
 | 59 | (landed) `docs/LAYOUT.md` on the website says GitHub Pages; `_headers` and `_redirects` only work on a Netlify-style host. | State the real host; the CSP/HSTS story depends on it. |
 | 60 | (landed) No skip-to-content link on any website page; the primary nav is JS-rendered. | One link before the header in the shared template. |
