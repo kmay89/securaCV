@@ -1,12 +1,18 @@
 /**
  * @file device_signature.cpp
  * @brief Implementation of device_signature.h — Ed25519 sigs over the
- *        outbound MQTT publish set.
+ *        outbound MQTT publish set, the whoami proof, and (Arduino only)
+ *        the HTTP enrollment card.
  *
- * Crypto: Arduino Crypto's Ed25519 (rweather/arduino-cryptography) is
- * already on the include path (used by canary_wap.ino's witness-record
- * signer). We just feed it the canonical message bytes; Ed25519
- * internally hashes with SHA-512 so we don't pre-hash.
+ * One module, two byte-identical committed copies — see the header for the
+ * sync relationship and firmware/scripts/check_signature_sync.sh for the
+ * guard. Edit firmware/common/identity/ (canonical) and copy into the
+ * canary-wap sketch.
+ *
+ * Crypto: Arduino Crypto's Ed25519 (rweather/arduino-cryptography) — on
+ * the wap it is already on the include path (canary_wap.ino's
+ * witness-record signer uses it). We feed it the canonical message bytes;
+ * Ed25519 internally hashes with SHA-512 so we don't pre-hash.
  *
  * Base64url: ESP-IDF ships mbedtls_base64_encode (standard alphabet
  * with '+/' and padding '='). We post-process to translate to the URL
@@ -75,7 +81,7 @@ namespace {
  * sig path in a half-initialized state. */
 uint8_t s_priv[32]              = {};
 uint8_t s_pub[32]               = {};
-char    s_device_id[33]         = {};
+char    s_device_id[49]         = {};
 char    s_fingerprint_hex[17]   = {};
 char    s_pubkey_hex[65]        = {};
 bool    s_ready                 = false;
@@ -84,7 +90,7 @@ bool    s_ready                 = false;
  * >= 2*in_len + 1. Lowercase, no separators. */
 void hex_encode(const uint8_t* in, size_t in_len, char* out, size_t out_cap) {
   static const char H[] = "0123456789abcdef";
-  if (!out || out_cap < 2 * in_len + 1) {
+  if (!in || !out || out_cap < 2 * in_len + 1) {
     if (out && out_cap) out[0] = '\0';
     return;
   }
@@ -160,7 +166,10 @@ size_t build_chain_canonical(uint32_t      length,
                              const char*   device_id,
                              char*         out,
                              size_t        cap) {
-  if (!out || cap == 0) return 0;
+  if (!latest_hash_32 || !out || cap == 0) {
+    if (out && cap) out[0] = '\0';
+    return 0;
+  }
   char hash_hex[65];
   hex_encode(latest_hash_32, 32, hash_hex, sizeof(hash_hex));
   int n = snprintf(out, cap, "%s|v%d|chain|%s|%lu|%s",
@@ -210,6 +219,32 @@ size_t build_counts_canonical(uint32_t      total,
                    SIG_PREFIX, SCHEMA_V,
                    device_id ? device_id : "",
                    (unsigned long)total);
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
+
+size_t build_sense_canonical(uint32_t    seq,
+                             const char* event_name,
+                             const char* presence,
+                             const char* occupants,
+                             const char* range,
+                             uint32_t    bucket_uptime_s,
+                             const char* device_id,
+                             char*       out,
+                             size_t      cap) {
+  if (!out || cap == 0) return 0;
+  int n = snprintf(out, cap, "%s|v%d|sense|%s|%lu|%s|%s|%s|%s|%lu",
+                   SIG_PREFIX, SCHEMA_V,
+                   device_id ? device_id : "",
+                   (unsigned long)seq,
+                   event_name ? event_name : "",
+                   presence ? presence : "",
+                   occupants ? occupants : "",
+                   range ? range : "",
+                   (unsigned long)bucket_uptime_s);
   if (n <= 0 || (size_t)n >= cap) {
     out[0] = '\0';
     return 0;
@@ -282,6 +317,22 @@ bool sign_counts(uint32_t total,
                  size_t   sig_cap) {
   char canon[128];
   size_t n = build_counts_canonical(total, s_device_id, canon, sizeof(canon));
+  if (n == 0) return false;
+  return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
+}
+
+bool sign_sense(uint32_t    seq,
+                const char* event_name,
+                const char* presence,
+                const char* occupants,
+                const char* range,
+                uint32_t    bucket_uptime_s,
+                char*       sig_b64url_out,
+                size_t      sig_cap) {
+  char canon[256];
+  size_t n = build_sense_canonical(seq, event_name, presence, occupants,
+                                   range, bucket_uptime_s,
+                                   s_device_id, canon, sizeof(canon));
   if (n == 0) return false;
   return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
 }

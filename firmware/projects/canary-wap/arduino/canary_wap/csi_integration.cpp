@@ -2125,7 +2125,7 @@ void traffic_pump(bool run_csi) {
   static bool s_traffic_init = false;
   if (!g_hal_ready) return;
   if (!s_traffic_init) {
-    csi_traffic::Config tc = csi_traffic::Config::defaults();
+    csi_traffic::TrafficConfig tc = csi_traffic::TrafficConfig::defaults();
     tc.rate_hz = CSI_TRAFFIC_PING_HZ;
     csi_traffic::init(tc);
     s_traffic_init = true;

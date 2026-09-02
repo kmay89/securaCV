@@ -36,7 +36,7 @@ namespace csi_traffic {
  * ────────────────────────────────────────────────────────────────────────── */
 
 static bool     s_initialized = false;
-static Config   s_cfg = Config::defaults();
+static TrafficConfig s_cfg = TrafficConfig::defaults();
 static bool     s_enabled = false;
 static bool     s_link_up = false;
 static uint32_t s_gateway = 0;
@@ -156,7 +156,7 @@ static void poll_link() {
  * API
  * ────────────────────────────────────────────────────────────────────────── */
 
-bool init(const Config& cfg) {
+bool init(const TrafficConfig& cfg) {
   /* A re-init after deinit() must not inherit the previous run's timers:
    * a stale last-attempt stamp would silently defer the first session by
    * retry_ms (the host test caught exactly that). */

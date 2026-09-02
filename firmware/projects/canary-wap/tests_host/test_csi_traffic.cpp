@@ -49,7 +49,7 @@ void fresh() {
   csi_traffic::deinit();
   g_starts.clear(); g_stops.clear(); g_start_ok = true;
   g_now = 1000; csi_traffic::test::set_now_ms(g_now);
-  csi_traffic::Config c = csi_traffic::Config::defaults();
+  csi_traffic::TrafficConfig c = csi_traffic::TrafficConfig::defaults();
   c.rate_hz = 20; c.start_delay_ms = 3000; c.retry_ms = 5000;
   assert(csi_traffic::init(c));
   csi_traffic::test::set_start_hook(start_hook);

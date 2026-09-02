@@ -49,7 +49,7 @@
 
 namespace csi_traffic {
 
-struct Config {
+struct TrafficConfig {
   /* Echo requests per second. Matches csi_hal's default max_frame_rate_hz
    * so the receiver's rate limiter never throws away what we paid airtime
    * for. Clamped to 1..100 (esp-csi's examples run 100 Hz; the HAL only
@@ -67,19 +67,19 @@ struct Config {
    * builds, where set_link() is the test's steering wheel. */
   bool     auto_link;
 
-  static Config defaults() {
-    Config c;
-    c.rate_hz        = 20;
-    c.payload_bytes  = 1;
-    c.start_delay_ms = 3000;
-    c.retry_ms       = 5000;
-    c.auto_link      = true;
-    return c;
+  /* Named TrafficConfig, not Config: the WAP sketch compiles this header
+   * into the same translation unit as csi_hal::Config, csi_probe::Config and
+   * csi_mqtt::Config, and cppcheck (the firmware.yml static-analysis gate)
+   * resolves a bare `Config c;` against the union of all four — reporting
+   * every OTHER struct's members as uninitialized here. A distinct name
+   * keeps the analyzer honest; brace-init keeps the members ordered. */
+  static TrafficConfig defaults() {
+    return TrafficConfig{20, 1, 3000, 5000, true};
   }
 };
 
 /* Lifecycle. init() stores the config and does no radio work. */
-bool init(const Config& cfg);
+bool init(const TrafficConfig& cfg);
 void deinit();
 
 /* Policy gate from the integration layer: false stops the session on the
