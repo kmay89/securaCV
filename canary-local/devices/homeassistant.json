@@ -447,7 +447,7 @@
         "initial": "1,284",
         "unit": "records",
         "icon": "\u25a6",
-        "desc": "Total witness records created"
+        "desc": "total witness records created (`witness_count`; signed `counts` topic)"
       },
       {
         "name": "Chain Valid",
@@ -458,21 +458,21 @@
           "verified": "true",
           "trust_reason": "ok"
         },
-        "desc": "Witness chain integrity"
+        "desc": "ON only when the device reports its chain intact and the chain publish verified against the pinned key; unknown until a chain publish has been checked (`chain_valid`; signed `chain` topic)"
       },
       {
         "name": "Online",
         "kind": "binary_sensor",
         "initial": "on",
         "icon": "\u25cf",
-        "desc": "Device connectivity (via MQTT LWT)"
+        "desc": "device connectivity, from the `status` topic (`online`; unsigned)"
       },
       {
         "name": "Uptime",
         "kind": "sensor",
         "initial": "1d 1h 56m",
         "icon": "\u23f1",
-        "desc": "Device uptime"
+        "desc": "device uptime"
       },
       {
         "name": "Die Temperature",
@@ -480,21 +480,21 @@
         "initial": "41",
         "unit": "\u00b0C",
         "icon": "\ud83c\udf21",
-        "desc": "Chip die temperature, whole degrees (silicon, not room)"
+        "desc": "chip die temperature, whole degrees (silicon, not room)"
       },
       {
         "name": "SD Card Healthy",
         "kind": "binary_sensor",
         "initial": "on",
         "icon": "\u25a4",
-        "desc": "Storage health"
+        "desc": "storage health"
       },
       {
         "name": "Tamper Detected",
         "kind": "binary_sensor",
         "initial": "off",
         "icon": "\u26a0",
-        "desc": "Tamper event status"
+        "desc": "tamper event status"
       },
       {
         "name": "Smoke Alarm Heard",
@@ -531,47 +531,155 @@
   "entity_catalog": [
     {
       "name": "Witness Count",
-      "desc": "Total witness records created"
+      "desc": "total witness records created (`witness_count`; signed `counts` topic)"
     },
     {
-      "name": "Chain Sequence",
-      "desc": "Current chain sequence number"
+      "name": "Chain Length",
+      "desc": "hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)"
     },
     {
-      "name": "Uptime",
-      "desc": "Device uptime"
+      "name": "Last Event",
+      "desc": "latest witness event type, with zone, confidence, modality and attestation (`last_event`; signed `events` topic)"
     },
     {
-      "name": "Free Heap",
-      "desc": "Available memory"
-    },
-    {
-      "name": "GPS Satellites",
-      "desc": "Satellite count"
-    },
-    {
-      "name": "Online",
-      "desc": "Device connectivity (via MQTT LWT)"
-    },
-    {
-      "name": "Chain Valid",
-      "desc": "Witness chain integrity"
-    },
-    {
-      "name": "Tamper Detected",
-      "desc": "Tamper event status"
+      "name": "Health",
+      "desc": "`healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version (`health_status`; `health` topic, unsigned)"
     },
     {
       "name": "GPS Fix",
-      "desc": "GPS fix status"
+      "desc": "GPS fix status, with satellites and HDOP (`gps_fix`; `health` topic, unsigned)"
+    },
+    {
+      "name": "SD Wear Estimate",
+      "desc": "estimated SD-card wear percent, only when the firmware reports its `sd` object (`sd_wear`; `health` topic, unsigned; diagnostic)"
+    },
+    {
+      "name": "Radar Link",
+      "desc": "`ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)"
+    },
+    {
+      "name": "Online",
+      "desc": "device connectivity, from the `status` topic (`online`; unsigned)"
+    },
+    {
+      "name": "Chain Valid",
+      "desc": "ON only when the device reports its chain intact and the chain publish verified against the pinned key; unknown until a chain publish has been checked (`chain_valid`; signed `chain` topic)"
+    },
+    {
+      "name": "Tamper",
+      "desc": "any tamper detected, from the `health` and `tamper` topics (`tamper`; unsigned)"
+    },
+    {
+      "name": "Power Loss",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "SD Removed",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "SD Error",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "GPS Jamming",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "Unexpected Motion",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "Enclosure Open",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "GPIO Tamper",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "Watchdog Timeout",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "Unexpected Reboot",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "Memory Critical",
+      "desc": "one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)"
+    },
+    {
+      "name": "SD Replacement Recommended",
+      "desc": "the device recommends replacing its SD card (`sd_replace`; `health` topic, unsigned)"
+    },
+    {
+      "name": "Motion",
+      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
+    },
+    {
+      "name": "Occupancy",
+      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
+    },
+    {
+      "name": "WiFi AP",
+      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+    },
+    {
+      "name": "WiFi Station",
+      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+    },
+    {
+      "name": "MQTT",
+      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+    },
+    {
+      "name": "Bluetooth",
+      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+    },
+    {
+      "name": "Mesh Network",
+      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+    },
+    {
+      "name": "Chirp Network",
+      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+    },
+    {
+      "name": "Mesh Connected",
+      "desc": "Opera mesh peers present, with peer and relay counts (`mesh_connected`; `mesh` topic, unsigned)"
+    },
+    {
+      "name": "Chirp Active",
+      "desc": "Chirp community network enabled and ready, with the session emoji and alert counters (`chirp_active`; `chirp` topic, unsigned)"
+    },
+    {
+      "name": "Chain Sequence",
+      "desc": "current chain sequence number"
+    },
+    {
+      "name": "Uptime",
+      "desc": "device uptime"
+    },
+    {
+      "name": "Free Heap",
+      "desc": "available memory"
+    },
+    {
+      "name": "GPS Satellites",
+      "desc": "satellite count"
+    },
+    {
+      "name": "Tamper Detected",
+      "desc": "tamper event status"
     },
     {
       "name": "SD Card Healthy",
-      "desc": "Storage health"
+      "desc": "storage health"
     },
     {
       "name": "Die Temperature",
-      "desc": "Chip die temperature, whole degrees (silicon, not room)"
+      "desc": "chip die temperature, whole degrees (silicon, not room)"
     },
     {
       "name": "Thermal Performance",
