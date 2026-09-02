@@ -27,9 +27,10 @@ Rust-first.
 
 > **Scope note.** A `.dmg` is macOS-only, and iOS/iPadOS **cannot** flash an
 > ESP32 over USB at all — Apple blocks generic USB-serial access for third-party
-> apps. So this app targets **macOS and Linux** (and builds for Windows for
-> free). For iPad/iPhone, the browser Lab installs as a PWA and covers
-> everything *except* USB flashing.
+> apps. So this app targets **macOS and Linux**. Windows is neither built nor
+> tested (no release job, no `msi`/`nsis` bundle target, and the Windows
+> branch in `secret_store.rs` has never been compiled by CI). For iPad/iPhone,
+> the browser Lab installs as a PWA and covers everything *except* USB flashing.
 
 ## How it's built
 
@@ -105,11 +106,18 @@ the entry is still missing, refresh the Actions page; as a fallback, run
 ### One-time: real self-update signing (recommended)
 
 Self-update artifacts are signed. Until you set a persistent key, CI mints an
-**ephemeral** one per run so builds still succeed — but cross-release updates
-won't verify. To make self-update work for good:
+**ephemeral** one for build-only runs so the bundle can still be smoke-tested —
+and **refuses to publish**: a publish signed with a throwaway key would advance
+the rolling updater pointer with signatures no installed app can verify, and
+every existing install would see "update ready" and fail to apply it. To make
+self-update work for good:
 
 1. Generate a keypair (needs the Tauri CLI once): `npx @tauri-apps/cli signer generate -w ~/.tauri/securacv-flasher.key`
-2. Put the **public** key into `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
+2. Put the **public** key into `plugins.updater.pubkey` in **both**
+   `desktop/src-tauri/tauri.conf.json` and `desktop-lab/src-tauri/tauri.conf.json`.
+   The Flasher and the Lab share one updater key by design (one secret, one
+   rotation), and `canary-local/tests/desktop_parity.test.js` pins the two
+   values equal — rotate one and CI names the other.
 3. Add repo secrets **`TAURI_SIGNING_PRIVATE_KEY`** (the private key file's
    contents) and **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`**.
 

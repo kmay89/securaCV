@@ -1,12 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-self-update",
-  "description": "Self-update for the desktop Lab: check the signed lab-latest manifest, ask via a native dialog, relaunch after install. Desktop only — the iOS/iPadOS builds update through the App Store and don't carry these plugins.",
-  "windows": ["main"],
-  "platforms": ["macOS", "linux", "windows"],
-  "permissions": [
-    "updater:default",
-    "dialog:default",
-    "process:default"
-  ]
+  "description": "Desktop-only capability set for the main SecuraCV Lab window. Intentionally EMPTY: the self-update flow (manifest check, native confirm dialog, relaunch) is driven entirely from Rust (self_update.rs), which the webview capability system does not gate, and the Lab frontend never calls plugin:updater, plugin:dialog or plugin:process \u2014 it uses core.invoke, event and opener only (see default.json). Granting those three here only widened what an injected script could do. Kept as a file so the desktop/iOS platform split stays visible.",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "macOS",
+    "linux",
+    "windows"
+  ],
+  "permissions": []
 }
