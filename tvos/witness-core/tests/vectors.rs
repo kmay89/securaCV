@@ -132,3 +132,63 @@ fn the_domain_length_prefix_is_little_endian_32_bit() {
 
     assert_eq!(domain_separated_hash(domain, &entry_hash), expected);
 }
+
+/// The WHOLE document, not just the hash primitive: the kernel serializes a
+/// three-entry sealed log under its test seed into
+/// `tests/fixtures/envelope/sealed_log_document_vector.json`
+/// (`src/api/mod.rs`, `sealed_log_document_matches_the_shared_vector`), and
+/// this crate must walk it to the end with its own implementation — same
+/// `hash_entry`, same Ed25519 domain, same document shape. Before this test
+/// the two sides shared only `domain_separated_hash`; `hash_entry`, the
+/// signature path and the field names could drift with nothing going red.
+#[test]
+fn the_kernels_sealed_log_document_verifies_end_to_end() {
+    let path = repo_root()
+        .join("tests")
+        .join("fixtures")
+        .join("envelope")
+        .join("sealed_log_document_vector.json");
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "could not read the shared sealed-log vector at {}: {e}\n\
+             Regenerate it from the KERNEL (UPDATE_SEALED_LOG_VECTOR=1 cargo test --lib \
+             sealed_log_document_matches), never from this crate.",
+            path.display()
+        )
+    });
+
+    let report = securacv_witness_core::verify_json(&raw);
+    assert!(
+        report.ok,
+        "the kernel's own document must verify here: {report:?}"
+    );
+    let doc: Value = serde_json::from_str(&raw).expect("vector is not valid JSON");
+    let entries = doc["entries"].as_array().expect("vector has no entries");
+    assert_eq!(entries.len(), 3, "the vector is three planted entries");
+    assert_eq!(report.verified, entries.len() as u64);
+
+    // Entry by entry: this crate's hash_entry over the served payload bytes
+    // reproduces the kernel's entry_hash, and each prev_hash is the previous
+    // entry_hash (the first chains from the all-zero genesis).
+    let mut prev = [0u8; 32];
+    for (i, entry) in entries.iter().enumerate() {
+        let prev_hash = hex32(entry["prev_hash"].as_str().expect("prev_hash"));
+        assert_eq!(
+            prev_hash, prev,
+            "entry {i}: prev_hash is not the previous entry_hash"
+        );
+        let payload = entry["payload"].as_str().expect("payload");
+        let expected = hex32(entry["entry_hash"].as_str().expect("entry_hash"));
+        assert_eq!(
+            hash_entry(&prev, payload.as_bytes()),
+            expected,
+            "entry {i}: hash_entry disagrees with the kernel"
+        );
+        prev = expected;
+    }
+    assert_eq!(
+        report.head,
+        hex::encode(prev),
+        "the walk's head is the last entry_hash"
+    );
+}

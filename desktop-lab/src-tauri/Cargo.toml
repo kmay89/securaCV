@@ -6,7 +6,8 @@ authors = ["Errer Labs"]
 license = "Apache-2.0"
 repository = "https://github.com/kmay89/securaCV"
 edition = "2021"
-rust-version = "1.77.2"
+# Same Tauri 2.11 dependency graph as desktop/src-tauri, same floor (see there).
+rust-version = "1.88"
 
 # The Tauri app links the local Lab frontend (../../canary-local) into a
 # native shell. See ../README.md for the architecture and roadmap

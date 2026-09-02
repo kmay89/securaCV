@@ -2,6 +2,127 @@
 
 ## [Unreleased]
 
+### Wi-Fi sensing that a solo Canary can actually run
+
+- **The CSI HAL compiles on the ESP32-C6 / C5 it always claimed to support.**
+  ESP-IDF 5.1+ gives those parts a different `wifi_csi_config_t` (the
+  `acquire_csi_*` bitfields); both HALs filled the legacy `lltf_en` fields
+  unconditionally, so the "C6 ✅" in the README described a build that did
+  not exist. One shim (`csi_idf_compat.h`) now fills whichever shape the
+  target exposes and is compile-tested against four IDF struct revisions.
+  The docs say "compiles, bench-unverified" until a C6 has run it.
+- **Every CSI frame is the same 52 tones.** Non-HT frames (every router
+  beacon) and HT frames delivered 64 vs 128 tones, and the feature extractor
+  locked the count on the first frame of each window — mixing two different
+  measurements and reading the missing half as motion. `csi_subcarriers.h`
+  reduces each frame to the L-LTF data+pilot tones in frequency order, drops
+  the twelve null tones from the AGC mean, and detects the tone ordering
+  from the frame's own nulls. Host-tested; the synthetic channel the physics
+  tests already used is now what the device feeds them.
+- **A router echo keeps a solo device supplied with frames.** A device
+  cannot receive its own ESP-NOW probes, so a single Canary on home Wi-Fi
+  lived on ~10 beacons/s against a 20-frame window. `csi_traffic` pings the
+  gateway at the HAL's target rate while sensing runs — the same remedy
+  espressif/esp-csi ships — and the dashboard's supply chip reports it
+  (`supply.ping`). Policy host-tested; device path uses lwIP's `esp_ping`.
+- **Research note.** `docs/csi_wifi_sensing_research.md` surveys esp-csi /
+  esp-radar / esp_wifi_sensing, ESP32-CSI-Tool, CSIKit, nexmon_csi,
+  PicoScenes, FeitCSI and 802.11bf, and records what was adopted, what was
+  refused (raw export, MAC filtering, HE-LTF for now) and why.
+
+### Kernel: four silent-evidence bugs
+
+- **Time buckets only widen.** `TimeBucket::coarsen_to` refused nothing
+  narrower than five minutes, so an adapter running 15-minute buckets had
+  its events "coarsened" to a 10-minute bucket that could end before the
+  source bucket began — a false statement in a signed log. Coarsening now
+  rejects a narrower target, the enforcer keeps a coarser source as-is, and
+  a property test pins containment.
+- **The event API and break-glass listeners survive a bad accept.** Both
+  accept loops returned on any error other than `WouldBlock`, so a peer that
+  reset between SYN and accept, or a moment of descriptor pressure, ended the
+  listener thread and left witnessd half-alive. Per-connection errors retry,
+  resource exhaustion backs off, and only a broken listener is fatal.
+- **The MQTT bridge stops republishing the current bucket every 30 s.** It
+  remembered only the newest bucket, so every event in it went out again on
+  each poll — duplicate events, motion re-triggered, zone counts inflated.
+  A publish cursor now remembers how many of that bucket's events went out.
+- **The detector sandbox reaps its children.** A child that died before
+  replying left one leaked pipe fd and one zombie per frame; a guard now
+  closes and reaps on every exit path, and `statx` (which Rust's std tries
+  first) joined the seccomp denylist so `fs::metadata` is refused too.
+
+### Home Assistant integration
+
+- **Replay protection.** A validly signed publish whose counter (event id,
+  radar seq, chain length, counts total) runs backwards is now
+  `trust_reason: replay`, and the chain, counts and last-event entities keep
+  the newer state instead of moving to the stale one. Equal counters stay
+  benign (idle republishes, retained re-delivery); a fresh TOFU pin resets
+  the marks.
+- **"Both" mode no longer dies with the kernel.** A kernel that is down at
+  startup made the whole entry `ConfigEntryNotReady` before a single MQTT
+  subscription existed; it now refreshes tolerantly and the Canaries keep
+  working while the kernel entities report unavailable.
+- **Device ids are validated** on every wildcard subscription, so a hostile
+  publisher can no longer mint unbounded devices and entities from a topic
+  segment. The Lovelace cards register with `?v=<version>` so an update
+  actually reaches browsers.
+
+### Apple
+
+- **iPhone: local networking allowed.** The iOS Info.plist had no
+  `NSAllowsLocalNetworking`, so every `http://<canary>.local` request was
+  refused by App Transport Security on device (the tvOS Wall always had it).
+  A new lint (`scripts/lint_apple_plists.py`) keeps both apps honest.
+- **Privacy manifest.** `PrivacyInfo.xcprivacy` declares the one required-
+  reason API in use (UserDefaults) and rides in every bundle, so App Store
+  Connect stops rejecting the upload by email after CI is green.
+- **The private-host gate parses addresses properly.** `isPrivate` dropped
+  non-numeric labels, so `10.0.0.1.attacker.com` read as 10.0.0.1 and passed;
+  it now requires exactly four decimal octets, and has tests.
+- **The Witness Wall says what it checked.** "Verified" is reserved for a
+  pinned key; the Wall walks the chain against the key the log itself
+  supplies, and its banner now says so. A device that omits `online` is no
+  longer rendered as online by the Rust normalizer (the Swift side already
+  said false); the About panel's "firmware train" reads the firmware's
+  version instead of the kernel crate's.
+
+### CI and release
+
+- Kernel `v*` releases now run `keep-firmware-latest`, so the first kernel
+  tag cannot re-point every device's `releases/latest` at a manifest-less
+  release. The desktop app workflows refuse to PUBLISH on an ephemeral
+  updater key (build-only runs still mint one). The nightly BOM push runs the
+  gates that consume its output before it lands on main. Dependabot now sees
+  the composite actions and the Python test pins. Secret scanning covers
+  every text file type and the minisign/OTA key headers TruffleHog cannot
+  "verify". The canary-vision device API's 11 security suites run in CI for
+  the first time. New lints: firmware version lockstep across six files,
+  mesh module copies in sync, Apple plists.
+
+### CSI sensing modules
+
+- **core.presence could never leave "tentative"** — it passed a literal 0
+  for the streak; it now passes the real one. **Breathing is a peak, not a
+  mean** — a clean breath is one Goertzel bin, so the 8-bin mean could never
+  reach the "quiet" threshold; one shared reducer now serves core.presence,
+  anomaly.baseline and the dashboard. **Same-state refreshes no longer spend
+  the hourly ceiling**, so real transitions are not dropped after three
+  minutes of presence. **Closed bundles reach the event ring**, so
+  `/api/events/today` and the daily summary see them. Windows are phase-
+  locked to 1 Hz so the breathing bins mean what they say.
+
+### Repo hygiene
+
+- Removed six zero-byte files (`characteriz`, `initializ`, `labeled`,
+  `optimiz`, `program`, `realiz`) that a spelling sweep's shell redirect
+  left at the repo root in #1567.
+- The weekly `homeassistant-freshness` and `board-facts-freshness` runs no
+  longer fail when the repo's Actions settings refuse to let them open a
+  PR: the refreshed branch is still pushed, and one deduplicated issue
+  carries the compare link instead of a red run nobody reads.
+
 ### The dash glass learns its own story
 
 - **Tap a Roll Call row → the witness detail sheet.** One canary's whole
@@ -2089,7 +2210,11 @@ Display exposes the switch over MQTT — retained
 topics, and checks the new channel promptly after a switch. Host-tested
 (`test_ota_logic.cpp`).
 
-## [0.6.0] - Unreleased
+## [0.6.0 → folded into 0.7.0]
+
+> The 0.6.0 number was never cut. Everything in this section shipped on
+> 2026-08-21 under **0.7.0** (the kernel, integration and app moved together);
+> the heading is kept so the entries' history stays readable.
 
 **State summary.** The Frigate -> MQTT -> sealed-log pipeline is verified
 end-to-end in CI (real-broker ingest test included); the kernel test suite

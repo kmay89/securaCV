@@ -144,3 +144,26 @@ jobs:
         with:
           category: integration
           ignore: brands
+
+  # Any workflow that creates a GitHub release must also repair the
+  # releases/latest pointer: GitHub moves `latest` to the newest non-prerelease
+  # release, and the fleet's flashers and OTA pull manifests resolve
+  # releases/latest expecting the FIRMWARE release's manifest there. A kernel
+  # `v*` release has none, so without this job the first kernel tag would
+  # re-point every device's update URL at a release with no manifest. The
+  # action is idempotent and the other release workflows already carry the
+  # same job (desktop-flasher-release.yml `keep-latest`).
+  keep-latest:
+    name: Keep releases/latest on the firmware
+    needs: release
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: kernel ${{ github.ref_name }} publish (release ${{ needs.release.result }})

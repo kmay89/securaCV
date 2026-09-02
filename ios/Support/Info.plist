@@ -45,6 +45,20 @@
   <key>NSSupportsLiveActivitiesFrequentUpdates</key>
   <true/>
 
+  <!-- App Transport Security: every Canary is reached over plain HTTP at a
+       .local name or a private IP (the pairing receipt hands the phone
+       http://<canary>.local), and since iOS 10 ATS refuses cleartext to .local
+       and unqualified hosts unless local networking is allowed explicitly.
+       Without this key every device call failed with -1022 on the phone while
+       the tvOS Wall (which has always carried it) worked. Scoped to LOCAL
+       networking only: arbitrary public http:// loads stay blocked, so the
+       "nothing off-network" promise below is still enforced by the OS. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+
   <!-- Local network + Bonjour: reach Canaries on the LAN, nothing off-network. -->
   <key>NSLocalNetworkUsageDescription</key>
   <string>SecuraCV finds and talks to your Canaries on your own Wi-Fi. Nothing is sent to any company server.</string>

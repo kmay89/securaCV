@@ -63,6 +63,12 @@ extern "C" {
   #include <esp_system.h>
   #include <esp_timer.h>   /* esp_timer_get_time */
 }
+/* After <esp_wifi.h>: the driver-config field names differ between the
+ * legacy (ESP32/S3/C3) and HE (C6/C5/C61) Wi-Fi MAC generations, and the
+ * shim is the one place they are spelled out. */
+#include "csi_idf_compat.h"
+/* Every frame is reduced to the same 52 L-LTF tones before it is buffered. */
+#include "csi_subcarriers.h"
 
 /*
  * CSI compile-time gate. ESP-IDF can be built with or without CSI support.
@@ -132,6 +138,7 @@ static std::atomic<uint32_t> s_frames_received{0};
 static std::atomic<uint32_t> s_frames_dropped_rssi{0};
 static std::atomic<uint32_t> s_frames_dropped_rate{0};
 static std::atomic<uint32_t> s_frames_dropped_full{0};
+static std::atomic<uint32_t> s_frames_dropped_short{0};  /* no L-LTF section */
 static std::atomic<uint32_t> s_windows_emitted{0};
 static std::atomic<uint32_t> s_windows_degraded{0};
 
@@ -244,15 +251,20 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
   /* PRIVACY BARRIER: metadata extraction happens BEFORE any buffer copy. */
   extract_scrubbed_metadata(info, slot);
 
-  /* Copy subcarrier samples. ESP-IDF gives us interleaved int8 I,Q pairs.
-   * len is in bytes; each subcarrier is 2 bytes. */
-  const size_t bytes = info->len;
-  const size_t pairs = bytes / 2;
-  const size_t copy_pairs =
-      pairs > CSI_MAX_SUBCARRIERS ? CSI_MAX_SUBCARRIERS : pairs;
-
-  memcpy(slot->iq, info->buf, copy_pairs * 2);
-  slot->subcarrier_cnt = (uint8_t)copy_pairs;
+  /* Canonicalize: every frame becomes the 52 L-LTF data+pilot tones in
+   * frequency order (csi_subcarriers.h), whether the driver delivered a
+   * 64-tone non-HT frame or a 128-tone L-LTF+HT-LTF frame — so a window
+   * never mixes tone counts and the null tones never reach the AGC mean.
+   * A frame too short to carry an L-LTF section is dropped here, before
+   * the slot is published. */
+  const uint8_t tones = csi_lltf_select(info->buf, info->len,
+                                        info->rx_ctrl.cwb == 1,
+                                        info->first_word_invalid, slot->iq);
+  if (tones == 0) {
+    s_frames_dropped_short.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  slot->subcarrier_cnt = tones;
 
   /* Publish. */
   s_head.store(head + 1, std::memory_order_release);
@@ -320,15 +332,10 @@ void deinit() {
  */
 static int try_enable_csi_now() {
 #if SECURACV_HAVE_CSI_API
+  /* L-LTF on every frame + HT-LTF on HT frames, on whichever struct shape
+   * this target's ESP-IDF exposes (csi_idf_compat.h). */
   wifi_csi_config_t cfg;
-  memset(&cfg, 0, sizeof(cfg));
-  cfg.lltf_en           = true;
-  cfg.htltf_en          = true;
-  cfg.stbc_htltf2_en    = false;
-  cfg.ltf_merge_en      = true;
-  cfg.channel_filter_en = true;
-  cfg.manu_scale        = false;
-  cfg.shift             = 0;
+  csi_idf_fill_config(&cfg);
 
   esp_err_t err = esp_wifi_set_csi_config(&cfg);
   if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
@@ -599,7 +606,12 @@ int process() {
     return 0;
   }
 
-  /* Close window and emit. */
+  /* Close window and emit. A window that closes late (loop stall, quiet
+   * radio, power gating) stands for every whole window that elapsed
+   * meanwhile; tell the feature layer so the breathing envelope keeps its
+   * one-sample-per-second time base instead of compressing the gap. */
+  const uint32_t missed = (now_ms - s_window_start_ms) / CSI_WINDOW_MS - 1u;
+  csi_features::note_missed_windows(missed);
   csi_features_t feats = {};
   csi_features::finalize(&feats, s_window_frames);
 
@@ -643,6 +655,7 @@ bool get_stats(csi_stats_t* out) {
   out->frames_dropped_full = s_frames_dropped_full.load(std::memory_order_relaxed);
   out->windows_emitted     = s_windows_emitted.load(std::memory_order_relaxed);
   out->windows_degraded    = s_windows_degraded.load(std::memory_order_relaxed);
+  out->frames_dropped_short = s_frames_dropped_short.load(std::memory_order_relaxed);
   return true;
 }
 

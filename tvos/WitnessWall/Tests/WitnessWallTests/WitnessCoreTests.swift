@@ -92,9 +92,11 @@ final class WitnessCoreTests: XCTestCase {
         XCTAssertNil(fleet.devices[1].hw)
     }
 
-    func testOnlineDefaultsToTrueWhenOmitted() throws {
+    func testOnlineDefaultsToFalseWhenOmitted() throws {
+        // Same rule as the Swift decoder and the phone: a silent field is
+        // never a presence claim (DeviceParityTests.testASilentFieldCostsTheDeviceNothing).
         let fleet = try WitnessCore.parseFleet(json: #"{"devices":[{"name":"Porch"}]}"#)
-        XCTAssertTrue(fleet.devices[0].online)
+        XCTAssertFalse(fleet.devices[0].online, "absent is not a presence claim — never rendered as online")
         XCTAssertNil(fleet.devices[0].chain)
         XCTAssertFalse(fleet.devices[0].chainIsTroubled, "an absent chain is 'not reported', not 'broken'")
     }
@@ -102,7 +104,9 @@ final class WitnessCoreTests: XCTestCase {
     func testABareArrayOfDevicesIsAccepted() throws {
         let fleet = try WitnessCore.parseFleet(json: #"[{"name":"Front Door"},{"name":"Studio"}]"#)
         XCTAssertEqual(fleet.devices.count, 2)
-        XCTAssertEqual(fleet.summary, "2 Canaries, all online")
+        // Neither row says `online`, and a silent field is never a presence
+        // claim — so the summary counts none of them online.
+        XCTAssertEqual(fleet.summary, "0 of 2 Canaries online")
     }
 
     func testATroubledChainIsSurfaced() throws {

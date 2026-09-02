@@ -1,19 +1,23 @@
 /**
  * @file device_signature.cpp
  * @brief Implementation of device_signature.h — Ed25519 sigs over the
- *        outbound MQTT publish set (shared common copy).
+ *        outbound MQTT publish set, the whoami proof, and (Arduino only)
+ *        the HTTP enrollment card.
  *
- * Crypto: Arduino Crypto's Ed25519 (rweather/arduino-cryptography). We
- * feed it the canonical message bytes; Ed25519 internally hashes with
- * SHA-512 so we don't pre-hash.
+ * One module, two byte-identical committed copies — see the header for the
+ * sync relationship and firmware/scripts/check_signature_sync.sh for the
+ * guard. Edit firmware/common/identity/ (canonical) and copy into the
+ * canary-wap sketch.
+ *
+ * Crypto: Arduino Crypto's Ed25519 (rweather/arduino-cryptography) — on
+ * the wap it is already on the include path (canary_wap.ino's
+ * witness-record signer uses it). We feed it the canonical message bytes;
+ * Ed25519 internally hashes with SHA-512 so we don't pre-hash.
  *
  * Base64url: ESP-IDF ships mbedtls_base64_encode (standard alphabet
  * with '+/' and padding '='). We post-process to translate to the URL
  * alphabet ('-_') and strip padding — same trick HA uses on the
  * verification side, so the wire format matches.
- *
- * Ported from the canary-wap tree's proven module (see the header for
- * the sync relationship); the only addition is the `sense` canonical.
  */
 
 #include "device_signature.h"
@@ -248,6 +252,34 @@ size_t build_sense_canonical(uint32_t    seq,
   return (size_t)n;
 }
 
+size_t build_whoami_canonical(const char*   nonce_hex,
+                              const char*   device_id,
+                              char*         out,
+                              size_t        cap) {
+  if (!out || cap == 0) return 0;
+  int n = snprintf(out, cap, "%s|v%d|whoami|%s|%s",
+                   SIG_PREFIX, SCHEMA_V,
+                   device_id ? device_id : "",
+                   nonce_hex ? nonce_hex : "");
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
+
+bool whoami_nonce_ok(const char* nonce_hex) {
+  if (!nonce_hex) return false;
+  size_t len = 0;
+  while (nonce_hex[len]) {
+    const char c = nonce_hex[len];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    len++;
+    if (len > 64) return false;
+  }
+  return len >= 16;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Public sign_*() — caller hands us scalar fields; we build the
  * canonical string + sign + encode in one call. */
@@ -305,6 +337,30 @@ bool sign_sense(uint32_t    seq,
   return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
 }
 
+bool sign_whoami(const char* nonce_hex,
+                 char*       sig_hex_out,
+                 size_t      sig_cap) {
+  if (!s_ready || !sig_hex_out || sig_cap < SIG_HEX_CAP) return false;
+  /* Belt and suspenders: the HTTP handler validates before calling, but
+   * this key must never sign an unvalidated nonce through ANY caller. */
+  if (!whoami_nonce_ok(nonce_hex)) return false;
+  char canon[160];
+  size_t n = build_whoami_canonical(nonce_hex, s_device_id, canon, sizeof(canon));
+  if (n == 0) return false;
+#ifdef ARDUINO
+  uint8_t sig_bin[64] = {};
+  Ed25519::sign(sig_bin, s_priv, s_pub,
+                reinterpret_cast<const uint8_t*>(canon), n);
+  hex_encode(sig_bin, sizeof(sig_bin), sig_hex_out, sig_cap);
+  return true;
+#else
+  /* Host build: the canonical + nonce gate are tested directly; the full
+   * sign/verify round-trip is exercised by the Flasher's Rust verifier. */
+  sig_hex_out[0] = '\0';
+  return false;
+#endif
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Base64url helper. mbedtls gives us standard b64; we post-process to
  * the URL-safe alphabet and strip '=' padding so the wire bytes match
@@ -346,3 +402,188 @@ size_t b64url_encode_nopad(const uint8_t* in,
 }
 
 }  /* namespace device_signature */
+
+/* ──────────────────────────────────────────────────────────────────
+ * HTTP enrollment endpoints. ARDUINO-only — host tests don't link
+ * esp_http_server. Both handlers serve PUBLIC data (device_id, pubkey,
+ * fingerprint) so they are intentionally unauthenticated. They read
+ * the cached identity that device_signature::init copied at boot, so
+ * there's no race with the rest of the radio coming up.
+ */
+#ifdef ARDUINO
+#include <esp_http_server.h>
+/* esp_timer, not Arduino's millis(): this translation unit deliberately
+ * stays off Arduino.h (it pulls Ed25519 from the Crypto library and
+ * mbedtls directly), and the throttle below only needs a monotonic
+ * clock. esp_timer_get_time() is microseconds since boot. */
+#include <esp_timer.h>
+
+namespace device_identity_api {
+
+namespace {
+/* Render the enrollment JSON body into out. Returns bytes written
+ * (excluding NUL), or 0 on truncation / snprintf error. Shared by
+ * both the JSON endpoint and the HTML one's "Raw payload" panel.
+ * All fields come from device_signature's public accessors so this
+ * handler doesn't reach into private state.
+ *
+ * Contract matches the canonical builders earlier in this file: a
+ * 0 return means "buffer too small, output cleared" — never a
+ * partial JSON the caller would mistake for a complete payload. */
+size_t render_enroll_json(char* out, size_t cap) {
+  if (!out || cap == 0) return 0;
+  const char* fp  = device_signature::fingerprint_hex();
+  const char* pk  = device_signature::pubkey_hex();
+  const char* did = device_signature::device_id();
+  const int n = snprintf(out, cap,
+    "{"
+      "\"device_id\":\"%s\","
+      "\"pubkey_hex\":\"%s\","
+      "\"fingerprint_hex\":\"%s\","
+      "\"alg\":\"%s\","
+      "\"v\":%d"
+    "}",
+    did ? did : "",
+    pk  ? pk  : "",
+    fp  ? fp  : "",
+    device_signature::ALG_NAME,
+    device_signature::SCHEMA_V);
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
+}  /* namespace */
+
+esp_err_t handle_enroll_json(httpd_req_t* req) {
+  /* Optional ?nonce=<16-64 lowercase hex>: the identity card gains a
+   * PROOF — an Ed25519 signature over the whoami canonical binding this
+   * device's key to the caller's fresh nonce. It turns "the card's static
+   * fields, which anyone on the LAN can copy" into "a device holding this
+   * key answered a challenge it could not have precomputed".
+   *
+   * It is NOT channel binding, and the caller must not treat it as such:
+   * a peer on the same LAN can spoof the announcement, relay the nonce to
+   * this endpoint, and pass the signature on as its own. See the header
+   * for the full limitation — it is the reason this is a building block
+   * rather than the whole answer. Unauthenticated on purpose, like the
+   * card itself
+   * — the proof only ever discloses PUBLIC identity, and the strict
+   * nonce gate (whoami_nonce_ok) plus the fixed canonical prefix mean
+   * the key never signs attacker-shaped bytes. */
+  char nonce[80] = {0};
+  bool with_proof = false;
+  {
+    char query[128];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "nonce", nonce, sizeof(nonce)) == ESP_OK &&
+        nonce[0] != '\0') {
+      if (!device_signature::whoami_nonce_ok(nonce)) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req,
+          "{\"error\":\"bad_nonce\",\"hint\":\"16-64 lowercase hex chars\"}");
+        return ESP_OK;
+      }
+      /* A signing endpoint with no auth deserves its own throttle, even
+       * a cheap one: at most ~4 proofs a second, self-contained so this
+       * file stays free of the api_auth stack. Discovery flows ask once
+       * per device per session; only a hammering client ever sees 429. */
+      static uint32_t s_last_proof_ms = 0;
+      const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+      if (s_last_proof_ms != 0 && (now - s_last_proof_ms) < 250) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_sendstr(req, "{\"error\":\"slow_down\"}");
+        return ESP_OK;
+      }
+      s_last_proof_ms = now;
+      with_proof = true;
+    }
+  }
+
+  char body[608];
+  size_t n = render_enroll_json(body, sizeof(body));
+  if (n == 0 || n >= sizeof(body)) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  if (with_proof) {
+    char sig_hex[device_signature::SIG_HEX_CAP];
+    if (!device_signature::sign_whoami(nonce, sig_hex, sizeof(sig_hex))) {
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+    /* Splice the proof fields in before the closing brace — the base
+     * render stays byte-identical for proof-less callers (HA's TOFU
+     * flow), and a truncation here clears the body like every other
+     * builder in this file. */
+    const int m = snprintf(body + (n - 1), sizeof(body) - (n - 1),
+                           ",\"nonce\":\"%s\",\"sig_hex\":\"%s\"}",
+                           nonce, sig_hex);
+    if (m <= 0 || (size_t)m >= sizeof(body) - (n - 1)) {
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+    n = (n - 1) + (size_t)m;
+  }
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, body, (ssize_t)n);
+}
+
+esp_err_t handle_enroll_html(httpd_req_t* req) {
+  char json_body[320];
+  /* render_enroll_json already returns 0 on truncation (post-fix), so
+   * a single == 0 check covers both empty + truncated. Pre-fix this
+   * was an unguarded cast that could feed a >= cap value into the
+   * outer snprintf as part of %s and produce a half-rendered <pre>
+   * panel — flagged by Gemini Code Review on PR #447. */
+  const size_t jn = render_enroll_json(json_body, sizeof(json_body));
+  if (jn == 0) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  /* Page deliberately uses inline CSS — no external assets so the
+   * captive-portal flow doesn't break behind a router that intercepts
+   * other domains. The fingerprint is rendered in big monospace text
+   * so an installer can read it off a phone screen and type it into
+   * HA's config flow on a different device. */
+  char page[2048];
+  const int n = snprintf(page, sizeof(page),
+    "<!doctype html><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>SecuraCV Canary — Enroll</title>"
+    "<style>"
+      "body{font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:32px auto;padding:0 16px;color:#1a1a1a;}"
+      "h1{font-size:20px;margin-bottom:4px;}"
+      "p{color:#555;line-height:1.5;}"
+      ".fp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:28px;letter-spacing:2px;background:#f4f4f5;padding:16px 20px;border-radius:8px;text-align:center;margin:20px 0;word-break:break-all;}"
+      ".pk{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#777;word-break:break-all;}"
+      "details{margin-top:24px;}"
+      "summary{cursor:pointer;color:#0066cc;}"
+      "pre{background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;overflow:auto;font-size:12px;}"
+    "</style>"
+    "<h1>Device fingerprint</h1>"
+    "<p>Read this fingerprint into Home Assistant when adding this Canary. "
+    "Pinning the fingerprint protects you from a hostile MQTT broker spoofing the device.</p>"
+    "<div class=\"fp\">%s</div>"
+    "<p>Full Ed25519 public key:</p>"
+    "<p class=\"pk\">%s</p>"
+    "<details><summary>Raw enrollment payload (for scripts)</summary>"
+    "<pre>%s</pre></details>",
+    device_signature::fingerprint_hex(),
+    device_signature::pubkey_hex(),
+    json_body);
+  if (n <= 0 || (size_t)n >= sizeof(page)) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  httpd_resp_set_type(req, "text/html; charset=utf-8");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, page, (ssize_t)n);
+}
+
+}  /* namespace device_identity_api */
+#endif  /* ARDUINO */

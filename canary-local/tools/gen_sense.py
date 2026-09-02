@@ -359,7 +359,7 @@ D = FSM["presence"]
 BANNER = [
     "              ,_,          Waking up...",
     "             (o.o)",
-    f"             /| |\\         SecuraCV Canary Sense",
+    "             /| |\\         SecuraCV Canary Sense",
     f"              d b          v{FW_VERSION}",
     "",
     "    This is your privacy witness device.",

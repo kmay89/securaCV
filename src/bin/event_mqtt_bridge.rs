@@ -612,7 +612,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
 
     let mut discovered_zones: HashSet<String> = HashSet::new();
     let mut zone_states: HashMap<String, ZoneState> = HashMap::new();
-    let mut last_bucket_seen: Option<TimeBucket> = None;
+    let mut publish_cursor: Option<PublishCursor> = None;
 
     loop {
         // Only fetch+publish while the broker is reachable. During an outage
@@ -632,20 +632,11 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                 Ok(artifact) => {
                     let events = flatten_export_events(&artifact);
 
-                    // Filter to only new events
-                    let new_events: Vec<_> = events
-                        .iter()
-                        .filter(|e| {
-                            last_bucket_seen
-                                .as_ref()
-                                .map(|lb| {
-                                    e.time_bucket.start_epoch_s > lb.start_epoch_s
-                                        || (e.time_bucket.start_epoch_s == lb.start_epoch_s
-                                            && e.time_bucket.size_s >= lb.size_s)
-                                })
-                                .unwrap_or(true)
-                        })
-                        .collect();
+                    // Filter to only new events. The cursor remembers how many
+                    // events of the newest bucket were already published, so a
+                    // 30 s poll inside a 10-minute bucket does not republish the
+                    // whole bucket (and re-count every zone) every time.
+                    let new_events = select_new_events(&events, &mut publish_cursor);
 
                     if !new_events.is_empty() {
                         // Discover new zones
@@ -709,8 +700,6 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                             let payload = build_event_state_payload(last)?;
                             let json = serde_json::to_vec(&payload)?;
                             mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
-
-                            last_bucket_seen = Some(last.time_bucket);
                         }
 
                         log::info!("Published {} new events", new_events.len());
@@ -1195,6 +1184,88 @@ fn api_request(
     Ok(body.to_vec())
 }
 
+/// Where publication stopped: the newest bucket seen and how many of its
+/// events (in export order) have already gone out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PublishCursor {
+    bucket_start_epoch_s: u64,
+    published_in_bucket: usize,
+}
+
+/// The events not yet published, in export order, advancing the cursor.
+///
+/// Sealed events all carry the same bucket size, so "bucket start > last
+/// seen" is the only ordering the artifact gives us — and within the
+/// current bucket every event compares equal. The first bridge kept only
+/// the last bucket and re-emitted its entire contents on every poll
+/// (duplicate events, motion re-triggered, zone counts inflated by one
+/// bucket-load per 30 s). Counting what was already published within that
+/// bucket is what makes a second poll over the same artifact yield nothing.
+/// The bucket start BEFORE export jitter. Every `/events` export re-draws
+/// each bucket's start by up to ±`jitter_s` (default 120 s, in 60 s steps)
+/// around the true, size-aligned start, and a fresh draw lands on every
+/// poll — so the raw start is not an identity: the same bucket compares
+/// "newer" than the cursor one poll and "older" the next, and its events
+/// republish. The true start is the nearest multiple of the bucket size,
+/// which is recoverable exactly as long as the jitter stays below half the
+/// bucket (120 s against a 600 s bucket, and the kernel's minimum bucket
+/// is 300 s). The bridge is the kernel's own local companion, so undoing
+/// the jitter for *ordering* here reveals nothing to anyone else; what it
+/// publishes still carries the exported (jittered) bucket.
+fn stable_bucket_start(bucket: &TimeBucket) -> u64 {
+    let size = u64::from(bucket.size_s.max(1));
+    let half = size / 2;
+    bucket.start_epoch_s.saturating_add(half) / size * size
+}
+
+fn select_new_events<'a>(
+    events: &'a [ExportEvent],
+    cursor: &mut Option<PublishCursor>,
+) -> Vec<&'a ExportEvent> {
+    let mut out = Vec::new();
+    let mut seen_in_newest = 0usize;
+    let mut newest: Option<u64> = None;
+    for event in events {
+        let start = stable_bucket_start(&event.time_bucket);
+        // Track the newest bucket and how many events it holds in this artifact.
+        match newest {
+            Some(n) if start == n => seen_in_newest += 1,
+            Some(n) if start > n => {
+                newest = Some(start);
+                seen_in_newest = 1;
+            }
+            Some(_) => {}
+            None => {
+                newest = Some(start);
+                seen_in_newest = 1;
+            }
+        }
+        let is_new = match cursor {
+            None => true,
+            Some(c) => {
+                start > c.bucket_start_epoch_s
+                    || (start == c.bucket_start_epoch_s
+                        && seen_in_newest > c.published_in_bucket
+                        && newest == Some(start))
+            }
+        };
+        if is_new {
+            out.push(event);
+        }
+    }
+    if let Some(n) = newest {
+        let published = match cursor {
+            Some(c) if c.bucket_start_epoch_s == n => c.published_in_bucket.max(seen_in_newest),
+            _ => seen_in_newest,
+        };
+        *cursor = Some(PublishCursor {
+            bucket_start_epoch_s: n,
+            published_in_bucket: published,
+        });
+    }
+    out
+}
+
 fn flatten_export_events(artifact: &ExportArtifact) -> Vec<ExportEvent> {
     let mut events = Vec::new();
     for batch in &artifact.batches {
@@ -1269,6 +1340,97 @@ fn mqtt_publish_qos1(client: &Client, topic: &str, payload: &[u8], retain: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ev(start: u64, zone: &str) -> ExportEvent {
+        let mut e: ExportEvent = serde_json::from_value(serde_json::json!({
+            "event_type": "BoundaryCrossingObjectLarge",
+            "zone_id": format!("zone:{zone}"),
+            "time_bucket": { "start_epoch_s": start, "size_s": 600 },
+            "confidence": 0.9,
+            "kernel_version": "test",
+            "ruleset_id": "test-ruleset",
+            "ruleset_hash": vec![0u8; 32]
+        }))
+        .expect("export event shape");
+        e.time_bucket = TimeBucket {
+            start_epoch_s: start,
+            size_s: 600,
+        };
+        e
+    }
+
+    #[test]
+    fn select_new_events_is_immune_to_export_jitter() {
+        // The same two events, exported twice: the first poll drew -120 s
+        // for the bucket, the second +60 s. Raw starts differ; the bucket
+        // is the same, so the second poll publishes nothing.
+        let mut cursor = None;
+        let first = vec![ev(1_000_200 - 120, "a"), ev(1_000_200 - 120, "b")];
+        assert_eq!(select_new_events(&first, &mut cursor).len(), 2);
+        let second = vec![ev(1_000_200 + 60, "a"), ev(1_000_200 + 60, "b")];
+        assert!(
+            select_new_events(&second, &mut cursor).is_empty(),
+            "a re-jittered export of the same bucket must not republish"
+        );
+        // The cursor is keyed on the recovered true start, not the draw.
+        assert_eq!(cursor.map(|c| c.bucket_start_epoch_s), Some(1_000_200));
+        // A genuinely newer bucket, jittered downwards, still counts as new.
+        let third = vec![
+            ev(1_000_200 + 120, "a"),
+            ev(1_000_200 + 120, "b"),
+            ev(1_000_800 - 120, "c"),
+        ];
+        let fresh = select_new_events(&third, &mut cursor);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].zone_id, "zone:c");
+    }
+
+    #[test]
+    fn stable_bucket_start_undoes_every_jitter_step() {
+        for offset in [-120i64, -60, 0, 60, 120] {
+            let start = (1_000_200i64 + offset) as u64;
+            let b = TimeBucket {
+                start_epoch_s: start,
+                size_s: 600,
+            };
+            assert_eq!(stable_bucket_start(&b), 1_000_200, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn select_new_events_does_not_republish_the_current_bucket() {
+        let mut cursor = None;
+        let artifact = vec![ev(1_000_200, "a"), ev(1_000_200, "b")];
+        assert_eq!(select_new_events(&artifact, &mut cursor).len(), 2);
+        // Same artifact 30 s later: nothing new.
+        assert!(select_new_events(&artifact, &mut cursor).is_empty());
+        // One more event lands in the same bucket: exactly that one.
+        let grown = vec![ev(1_000_200, "a"), ev(1_000_200, "b"), ev(1_000_200, "c")];
+        let fresh = select_new_events(&grown, &mut cursor);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].zone_id, "zone:c");
+        assert!(select_new_events(&grown, &mut cursor).is_empty());
+        // The bucket advances: only the new bucket's events, and the cursor moves.
+        let next = vec![
+            ev(1_000_200, "a"),
+            ev(1_000_200, "b"),
+            ev(1_000_200, "c"),
+            ev(1_000_800, "d"),
+        ];
+        let fresh = select_new_events(&next, &mut cursor);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].zone_id, "zone:d");
+        assert_eq!(
+            cursor,
+            Some(PublishCursor {
+                bucket_start_epoch_s: 1_000_800,
+                published_in_bucket: 1
+            })
+        );
+        // Retention drops the old bucket from the artifact: still nothing new.
+        let trimmed = vec![ev(1_000_800, "d")];
+        assert!(select_new_events(&trimmed, &mut cursor).is_empty());
+    }
 
     #[test]
     fn serialize_event_state_payload() {

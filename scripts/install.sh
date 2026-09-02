@@ -19,7 +19,17 @@ set -euo pipefail
 # the kernel app generates and keeps its own signing key.
 #
 # Environment overrides (all optional):
-#   SECURACV_BRANCH       git branch to install from (default: main)
+#   SECURACV_BRANCH       git ref (branch or tag) to install from. Default:
+#                         the latest GitHub release tag, so a re-run a month
+#                         later installs the same reviewed tree and not
+#                         whatever main holds that minute; falls back to
+#                         main, saying so, when the release lookup fails.
+#   SECURACV_TARBALL_SHA256
+#                         expected SHA-256 of the downloaded archive; when
+#                         set, a mismatch aborts before anything is extracted
+#                         (GitHub source tarballs are not byte-stable across
+#                         time, so pin the hash you verified, not one from a
+#                         list — there is none to publish)
 #   SECURACV_TARBALL      path to a local .tar.gz of the repo instead of
 #                         downloading (used by the test suite)
 #   SECURACV_WITH         space-separated optional plan features, e.g.
@@ -34,10 +44,12 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-SECURACV_BRANCH="${SECURACV_BRANCH:-main}"
 GITHUB_ORG="kmay89"
 GITHUB_REPO="securaCV"
-TARBALL_URL="https://api.github.com/repos/${GITHUB_ORG}/${GITHUB_REPO}/tarball/${SECURACV_BRANCH}"
+# Resolved in fetch_source (a release lookup needs the network and the
+# logging helpers); SECURACV_BRANCH set by the operator always wins.
+SECURACV_BRANCH="${SECURACV_BRANCH:-}"
+TARBALL_URL=""
 
 HA_CONFIG_DIR="${HA_CONFIG_DIR:-/config}"
 ADDON_CONFIGS_DIR="${ADDON_CONFIGS_DIR:-/addon_configs}"
@@ -119,15 +131,52 @@ fetch_source() {
     log_info "Using local source archive ${SECURACV_TARBALL} (SECURACV_TARBALL override)."
     cp "$SECURACV_TARBALL" "$tarball"
   else
-    log_info "Downloading ${GITHUB_ORG}/${GITHUB_REPO} (branch ${SECURACV_BRANCH}) — one archive covers every file this install needs."
+    # Which tree to install. A moving branch means two people running the
+    # same one-liner an hour apart can get different code; the latest
+    # release tag is a tree somebody cut on purpose. main stays available
+    # (SECURACV_BRANCH=main) and is the fallback when the lookup fails —
+    # offline API, rate limit, a repo with no releases yet — said out loud.
+    if [ -z "$SECURACV_BRANCH" ]; then
+      local latest=""
+      latest="$(curl -fsSL --max-time 15 \
+        "https://api.github.com/repos/${GITHUB_ORG}/${GITHUB_REPO}/releases/latest" 2>/dev/null \
+        | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | sed 's/.*"\([^"]*\)"$/\1/' | head -n1 || true)"
+      if [ -n "$latest" ]; then
+        SECURACV_BRANCH="$latest"
+        log_info "Installing the latest release, ${SECURACV_BRANCH} (set SECURACV_BRANCH to pick another ref)."
+      else
+        SECURACV_BRANCH="main"
+        log_warn "Could not resolve the latest release tag from GitHub; installing from branch main instead."
+      fi
+    fi
+    TARBALL_URL="https://api.github.com/repos/${GITHUB_ORG}/${GITHUB_REPO}/tarball/${SECURACV_BRANCH}"
+    log_info "Downloading ${GITHUB_ORG}/${GITHUB_REPO} (ref ${SECURACV_BRANCH}) — one archive covers every file this install needs."
     # Temp-file-then-move: a partial download can never masquerade as a
     # complete archive.
     local part="${tarball}.part"
     if ! curl -fsSL "$TARBALL_URL" -o "$part"; then
-      die "Download failed (${TARBALL_URL}). Check network connectivity to github.com and that branch '${SECURACV_BRANCH}' exists. Nothing on this machine was changed."
+      die "Download failed (${TARBALL_URL}). Check network connectivity to github.com and that ref '${SECURACV_BRANCH}' exists. Nothing on this machine was changed."
     fi
     mv "$part" "$tarball"
     log_ok "Downloaded source archive"
+  fi
+
+  # An operator who verified an archive can pin its hash; a mismatch stops
+  # here, before extraction, with nothing on the machine changed.
+  if [ -n "${SECURACV_TARBALL_SHA256:-}" ]; then
+    local got=""
+    if have sha256sum; then
+      got="$(sha256sum "$tarball" | cut -d' ' -f1)"
+    elif have shasum; then
+      got="$(shasum -a 256 "$tarball" | cut -d' ' -f1)"
+    else
+      die "SECURACV_TARBALL_SHA256 is set but neither sha256sum nor shasum is available to check it."
+    fi
+    if [ "$got" != "$SECURACV_TARBALL_SHA256" ]; then
+      die "Source archive SHA-256 mismatch: expected ${SECURACV_TARBALL_SHA256}, got ${got}. Refusing to extract it."
+    fi
+    log_ok "Source archive SHA-256 matches SECURACV_TARBALL_SHA256"
   fi
 
   mkdir -p "${WORKDIR}/src"
@@ -450,6 +499,10 @@ ha_install_integration() {
   local staging="${dest}.securacv-staging.$$"
   rm -rf "$staging"
   cp -R "$src" "$staging"
+  # The integration's test suite and any bytecode caches ride along in the
+  # source archive but have no business in a running Home Assistant's
+  # config directory (HACS does not ship them either).
+  rm -rf "${staging}/tests" "${staging}/__pycache__"
   rm -rf "$dest"
   mv "$staging" "$dest"
 

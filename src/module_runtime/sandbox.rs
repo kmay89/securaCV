@@ -67,6 +67,12 @@ mod linux {
         "lstat",
         "fstat",
         "newfstatat",
+        // Rust's std issues statx FIRST for fs::metadata / Path::exists and only
+        // falls back to fstatat on ENOSYS — EPERM is not ENOSYS, so with statx
+        // absent from this list the call simply succeeded inside the sandbox.
+        "statx",
+        "mknod",
+        "mknodat",
         "access",
         "faccessat",
         "faccessat2",
@@ -203,6 +209,53 @@ mod linux {
         Ok(())
     }
 
+    /// Parent-side ownership of a forked child and the read end of its result
+    /// pipe. `finish()` is the orderly path (child already exited, or about
+    /// to); `Drop` is the early-return path — it closes the fd and reaps,
+    /// killing a child that has not exited yet so a hung backend cannot pin
+    /// the parent in waitpid.
+    struct ChildGuard {
+        pid: libc::pid_t,
+        read_fd: c_int,
+    }
+
+    impl ChildGuard {
+        fn finish(&mut self) {
+            self.close_fd();
+            if self.pid > 0 {
+                let mut status = 0;
+                let _ = unsafe { waitpid(self.pid, &mut status as *mut c_int, 0) };
+                self.pid = 0;
+            }
+        }
+
+        fn close_fd(&mut self) {
+            if self.read_fd >= 0 {
+                unsafe { close(self.read_fd) };
+                self.read_fd = -1;
+            }
+        }
+    }
+
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            self.close_fd();
+            if self.pid > 0 {
+                let mut status = 0;
+                // Reap if it already exited; otherwise kill and reap. WNOHANG
+                // first so a child that is done is not signaled needlessly.
+                let rc = unsafe { waitpid(self.pid, &mut status as *mut c_int, libc::WNOHANG) };
+                if rc == 0 {
+                    unsafe {
+                        libc::kill(self.pid, libc::SIGKILL);
+                        waitpid(self.pid, &mut status as *mut c_int, 0);
+                    }
+                }
+                self.pid = 0;
+            }
+        }
+    }
+
     pub(super) fn run_in_sandbox<T, F>(f: F) -> Result<T>
     where
         T: Serialize + DeserializeOwned,
@@ -259,20 +312,27 @@ mod linux {
 
         unsafe { close(fds[1]) };
 
+        // Every exit from here on — the happy path AND every `?` — must close
+        // the read end and reap the child. Before this guard a child that
+        // died before replying (SIGKILL, OOM, a crash inside f()) made
+        // read_exact return early, skipping both: one leaked fd and one
+        // zombie per failed frame, at ingest rate, until the daemon hit
+        // EMFILE. The guard kills a child that is still running so a hung
+        // backend cannot hold the reaper either.
+        let mut child = ChildGuard {
+            pid,
+            read_fd: fds[0],
+        };
+
         // SECURITY: Cap IPC payload to prevent a malicious/corrupted child
         // from sending a huge length value and causing OOM in the parent.
         // 16 MiB is generous for any serialized sandbox response.
         const MAX_SANDBOX_PAYLOAD: u64 = 16 * 1024 * 1024;
 
         let mut len_bytes = [0u8; 8];
-        read_exact(fds[0], &mut len_bytes)?;
+        read_exact(child.read_fd, &mut len_bytes)?;
         let len = u64::from_le_bytes(len_bytes);
         if len > MAX_SANDBOX_PAYLOAD {
-            unsafe {
-                close(fds[0]);
-                libc::kill(pid, libc::SIGKILL);
-                waitpid(pid, std::ptr::null_mut(), 0);
-            }
             return Err(anyhow!(
                 "sandbox: response too large ({} bytes, max {})",
                 len,
@@ -281,11 +341,8 @@ mod linux {
         }
         let len = len as usize;
         let mut payload = vec![0u8; len];
-        read_exact(fds[0], &mut payload)?;
-        unsafe { close(fds[0]) };
-
-        let mut status = 0;
-        let _ = unsafe { waitpid(pid, &mut status as *mut c_int, 0) };
+        read_exact(child.read_fd, &mut payload)?;
+        child.finish();
 
         let response: SandboxResponse<T> =
             serde_json::from_slice(&payload).context("sandbox: response decode failed")?;
@@ -310,6 +367,52 @@ mod tests {
         .expect("sandbox run should succeed");
 
         assert_eq!(result, Some(1));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_blocks_metadata_via_statx() {
+        // std::fs::metadata goes through statx first; before statx joined the
+        // denylist this call SUCCEEDED inside the sandbox.
+        let result = run_in_sandbox(|| {
+            let err = std::fs::metadata("/etc/hosts").unwrap_err();
+            Ok(err.raw_os_error())
+        })
+        .expect("sandbox run should succeed");
+
+        assert_eq!(result, Some(1));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_child_dying_before_reply_leaks_neither_fd_nor_zombie() {
+        fn open_fds() -> usize {
+            std::fs::read_dir("/proc/self/fd")
+                .map(|d| d.count())
+                .unwrap_or(0)
+        }
+        let before = open_fds();
+        for _ in 0..8 {
+            let result: Result<u8> = run_in_sandbox(|| {
+                // Die without writing a response — the short-read path.
+                unsafe { libc::_exit(3) }
+            });
+            assert!(
+                result.is_err(),
+                "a child that never replies must surface an error"
+            );
+        }
+        // Eight failed children, zero leaked read-ends (read_dir itself
+        // opens one fd transiently, so allow that much slack).
+        let after = open_fds();
+        assert!(
+            after <= before + 1,
+            "fd leak: {before} before, {after} after"
+        );
+        // No zombies: every child pid has been reaped, so a reap of "any
+        // child" finds nothing left.
+        let rc = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+        assert!(rc <= 0, "an unreaped sandbox child remained");
     }
 
     #[cfg(target_os = "linux")]

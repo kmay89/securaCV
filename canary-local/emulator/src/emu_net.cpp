@@ -3,11 +3,12 @@
 // Replaces the firmware's ESP-specific net TUs (wifi_mgr, tz_auto,
 // ota_mgr, discovery, chirp_scan, provision) with implementations of the
 // same canary::net contracts, driven by page-side switches. The
-// semantics stay honest to the originals — including the uncomfortable
-// ones: a display that boots with no reachable Wi-Fi really does give up
-// and reboot after the same timeout, because watching that happen (and
-// reading the serial log while it does) is exactly what canary.local is
-// for. mqtt_mgr.cpp is NOT here: the real one compiles against the
+// semantics stay honest to the originals: a display that boots with no
+// reachable Wi-Fi finishes booting and the loop owns the retry (never a
+// reboot loop — common/network/wifi_join_policy.h), while a link that once
+// worked and stays down for WIFI_OUTAGE_REBOOT_MS does reboot, because
+// watching that happen (and reading the serial log while it does) is
+// exactly what canary.local is for. mqtt_mgr.cpp is NOT here: the real one compiles against the
 // PubSubClient shim in emu_mqtt.cpp.
 #include <Arduino.h>
 

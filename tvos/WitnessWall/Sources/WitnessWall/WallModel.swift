@@ -44,8 +44,13 @@ final class WallModel {
     /// Where the fleet answers, persisted so a power cut heals itself. ONE
     /// entry when a hub (or a typed address) fronts the fleet; SEVERAL when
     /// the Wall found standalone Canaries by their own announcements and
-    /// polls them all, merging the answers (FleetSnapshot.merged).
+    /// polls them all, merging the answers (FleetSnapshot.merged). Discovered
+    /// sources are not forever: one that has not answered in `sourceMaxAge`
+    /// is dropped on load (`pruneStaleDiscoveredSources`).
     private(set) var sources: [String] = []
+    /// When each source last served a real fleet. Written on every answer,
+    /// read at load to prune; mirrored to defaults under `seenKey`.
+    private var seen: [String: Date] = [:]
     /// What the footer and the settings panel print for "connected to".
     var hubAddress: String {
         switch sources.count {
@@ -78,6 +83,18 @@ final class WallModel {
     /// listening (see `reconcileDiscovered`), because a fleet you didn't
     /// configure is a fleet that grows without telling you.
     private static let discoveredKey = "SecuraCVWallSourcesDiscovered"
+    /// The last-seen table, `[source: secondsSince1970]` — a plain plist
+    /// dictionary, so defaults can hold it without an encoder.
+    private static let seenKey = "SecuraCVWallSourcesSeen"
+    /// A DISCOVERED source that has not answered in this long is dropped on
+    /// the next load. An advert is a claim anyone on the LAN can make, and a
+    /// Canary that moved out — or a stranger's box that announced itself
+    /// once — must not be polled by this television forever. A typed or
+    /// well-known-found hub is one deliberate address, re-validated every
+    /// poll cycle, and is NOT pruned here: forgetting a hub someone typed
+    /// with a TV remote because the TV was off for a month is its own
+    /// failure.
+    static let sourceMaxAge: TimeInterval = 30 * 24 * 60 * 60
     /// How long one Bonjour browse listens before reporting. Announcements
     /// arrive within a second or two on a healthy LAN; four is patience, not
     /// hope — the search loop comes back around anyway.
@@ -111,7 +128,9 @@ final class WallModel {
         } else if let single = defaults.string(forKey: Self.hubKey), !single.isEmpty {
             self.sources = [single]
         }
+        self.seen = Self.loadSeen(from: defaults)
         self.resident = ResidentWatch(defaults: defaults)
+        pruneStaleDiscoveredSources()
     }
 
     private func persist(_ sources: [String], discovered: Bool = false) {
@@ -120,6 +139,61 @@ final class WallModel {
         defaults.set(discovered, forKey: Self.discoveredKey)
         // Keep the legacy key coherent for anything still reading it.
         defaults.set(sources.first ?? "", forKey: Self.hubKey)
+    }
+
+    /// Read the last-seen table. A value that is not a number is ignored —
+    /// a corrupt entry means "no record", which `pruneStaleDiscoveredSources`
+    /// treats as seen now, never as seen never.
+    private static func loadSeen(from defaults: UserDefaults) -> [String: Date] {
+        var seen: [String: Date] = [:]
+        for (source, value) in defaults.dictionary(forKey: seenKey) ?? [:] {
+            if let stamp = value as? Double {
+                seen[source] = Date(timeIntervalSince1970: stamp)
+            }
+        }
+        return seen
+    }
+
+    /// Write the table back, keeping only sources the Wall still polls so a
+    /// replaced set does not leave a stranger's hostname in defaults.
+    private func writeSeen() {
+        seen = seen.filter { sources.contains($0.key) }
+        var table: [String: Double] = [:]
+        for (source, date) in seen {
+            table[source] = date.timeIntervalSince1970
+        }
+        defaults.set(table, forKey: Self.seenKey)
+    }
+
+    /// Record that each of `answered` just served a real fleet — the only
+    /// thing that restarts a source's 30-day clock.
+    private func markSeen(_ answered: [String], at now: Date = Date()) {
+        guard !answered.isEmpty else { return }
+        for source in answered { seen[source] = now }
+        writeSeen()
+    }
+
+    /// On load, drop discovered sources not seen within `sourceMaxAge`. A
+    /// source with no record at all (saved before the table existed) is
+    /// stamped now rather than dropped: the clock starts at the upgrade, so a
+    /// working wall does not go blank the day this ships.
+    private func pruneStaleDiscoveredSources(now: Date = Date()) {
+        guard defaults.bool(forKey: Self.discoveredKey), !sources.isEmpty else { return }
+        var kept: [String] = []
+        for source in sources {
+            guard let last = seen[source] else {
+                seen[source] = now
+                kept.append(source)
+                continue
+            }
+            if now.timeIntervalSince(last) < Self.sourceMaxAge {
+                kept.append(source)
+            }
+        }
+        if kept.count != sources.count {
+            persist(kept, discovered: true)
+        }
+        writeSeen()
     }
 
     // No `deinit` canceling the poll task, for two reasons. It cannot compile
@@ -170,6 +244,7 @@ final class WallModel {
             return
         }
         persist([typed])
+        markSeen([typed])
         // The old source's verdict does not cover the new source's fleet.
         report = nil
         backoff.reset()
@@ -197,6 +272,7 @@ final class WallModel {
             guard let body = try? await transport.fetchFleet(from: url),
                   let snapshot = try? WitnessCore.parseFleet(json: body) else { continue }
             persist([candidate])
+            markSeen([candidate])
             backoff.reset()
             state = .live(snapshot, asOf: Date())
             return true
@@ -223,6 +299,7 @@ final class WallModel {
                 : parts
             for (host, part) in zip(confirmed, tagged) { lastAnswer[host] = part }
             persist(confirmed, discovered: true)
+            markSeen(confirmed)
             backoff.reset()
             state = .live(FleetSnapshot.merged(tagged), asOf: Date())
             return true
@@ -273,7 +350,7 @@ final class WallModel {
         }
 
         var parts: [FleetSnapshot] = []
-        var anyAnswered = false
+        var answered: [String] = []
         var lastError = "unreachable"
         let multi = sources.count > 1
         for source in sources {
@@ -284,7 +361,7 @@ final class WallModel {
                 let part = multi ? snapshot.tagged(bySource: source) : snapshot
                 lastAnswer[source] = part
                 parts.append(part)
-                anyAnswered = true
+                answered.append(source)
             } catch {
                 lastError = error.localizedDescription
                 if let remembered = lastAnswer[source] {
@@ -293,10 +370,13 @@ final class WallModel {
             }
         }
 
-        if !anyAnswered {
+        if answered.isEmpty {
             degrade(reason: lastError)
             return
         }
+        // A real answer is what keeps a discovered source on the wall past
+        // `sourceMaxAge`; a source that never answers again ages out.
+        markSeen(answered)
         let snapshot = FleetSnapshot.merged(parts)
         state = .live(snapshot, asOf: Date())
         // The Top Shelf renders from this cache when the app is off screen.
@@ -377,6 +457,7 @@ final class WallModel {
                   let snapshot = try? WitnessCore.parseFleet(json: body) else { continue }
             lastAnswer[host] = snapshot.tagged(bySource: host)
             persist(sources + [host], discovered: true)
+            markSeen([host])
             grew = true
         }
         if grew { await refreshOnce() }

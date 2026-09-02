@@ -230,7 +230,41 @@ HELPQR_SRC = test_help_qr_logic.cpp
 $(HELPQR_BIN): $(HELPQR_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(HELPQR_SRC)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(HELPQR_BIN)
+# CSI L-LTF tone canonicalization (csi_subcarriers.h): the 52-tone map for
+# FFT-ordered 20 MHz and linear 40 MHz L-LTF sections, HT/non-HT parity,
+# first_word_invalid patching, and the zero-based order detector.
+CSI_SUBC_BIN = test_csi_subcarriers
+CSI_SUBC_SRC = test_csi_subcarriers.cpp
+
+$(CSI_SUBC_BIN): $(CSI_SUBC_SRC)
+	$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -o $@ $(CSI_SUBC_SRC)
+
+# CSI ESP-IDF config shim (csi_idf_compat.h): one source, four struct shapes
+# (legacy IDF 4.4 / 5.x, HE IDF 5.1 / 5.5). A member rename upstream fails
+# here, not on a customer's C6.
+CSI_COMPAT_SRC  = test_csi_idf_compat.cpp
+CSI_COMPAT_BINS = test_csi_idf_compat_legacy44 test_csi_idf_compat_legacy5x \
+                  test_csi_idf_compat_he51 test_csi_idf_compat_he55
+
+test_csi_idf_compat_legacy44: $(CSI_COMPAT_SRC)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_SHAPE_LEGACY44 -I $(SRC_DIR) -o $@ $(CSI_COMPAT_SRC)
+test_csi_idf_compat_legacy5x: $(CSI_COMPAT_SRC)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_SHAPE_LEGACY5X -I $(SRC_DIR) -o $@ $(CSI_COMPAT_SRC)
+test_csi_idf_compat_he51: $(CSI_COMPAT_SRC)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_SHAPE_HE51 -I $(SRC_DIR) -o $@ $(CSI_COMPAT_SRC)
+test_csi_idf_compat_he55: $(CSI_COMPAT_SRC)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_SHAPE_HE55 -I $(SRC_DIR) -o $@ $(CSI_COMPAT_SRC)
+
+# CSI router-echo frame supply (csi_traffic): start/stop policy through the
+# host hooks — delay, retry, link/gateway changes, the enable gate.
+CSI_TRAFFIC_BIN     = test_csi_traffic
+CSI_TRAFFIC_SOURCES = test_csi_traffic.cpp \
+                      $(SRC_DIR)/csi_traffic.cpp
+
+$(CSI_TRAFFIC_BIN): $(CSI_TRAFFIC_SOURCES)
+	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -o $@ $(CSI_TRAFFIC_SOURCES)
+
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -252,6 +286,9 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(EVDRIVE_BIN)
 	./$(EVVERIFY_BIN)
 	./$(HELPQR_BIN)
+	./$(CSI_SUBC_BIN)
+	for b in $(CSI_COMPAT_BINS); do ./$$b || exit 1; done
+	./$(CSI_TRAFFIC_BIN)
 
 clean:
-	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN)
+	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN)

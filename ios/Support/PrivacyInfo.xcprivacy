@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- App Store privacy manifest, shipped in EVERY bundle (app, widgets, watch
+       app, watch widgets — project.yml lists it under each target's sources
+       so XcodeGen copies it as a resource). Two honest statements:
+         1. No tracking, no collected data types: the app talks only to the
+            owner's own Canaries and hub; nothing is sent to any company.
+         2. UserDefaults is a "required reason" API since May 2024. Every
+            target reads it (DeviceStore, AlertCenter, the widget caches, the
+            wrist store), and an upload without this declaration is rejected
+            by App Store Connect AFTER CI is green — by email. CA92.1 is the
+            reason code for "access info from the same app, on this device". -->
+  <key>NSPrivacyTracking</key>
+  <false/>
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array/>
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>CA92.1</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

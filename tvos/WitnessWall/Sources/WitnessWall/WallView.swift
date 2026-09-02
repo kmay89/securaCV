@@ -165,7 +165,7 @@ struct WallView: View {
                 // element on screen, rather than letting old data read as now.
                 StatusBanner(
                     tone: .warning,
-                    title: "Showing the last report received at \(asOf.formatted(date: .omitted, time: .shortened))",
+                    title: "Showing the last report received at \(receipt(asOf))",
                     detail: stale
                 )
             } else if let report = model.report, !report.ok {
@@ -193,26 +193,45 @@ struct WallView: View {
                     detail: nil
                 )
             } else if let verifiedThrough = fleet.verifiedThrough {
-                // Two sentences for two claims. "Verified" belongs to this
-                // TV's own verdict (the Rust core walking a served sealed
-                // log); without one, the same timestamp is the fleet's own
-                // report and is labeled as exactly that — the wire string
-                // must never wear this screen's authority.
+                // Two sentences for two claims — and two clocks. The time
+                // after "through" is THIS TV's: when it received (and, given
+                // a sealed log, checked) the report, the only time this
+                // screen measured. The fleet's own `verified_through` is a
+                // wire string the firmware fills with the literal word "now";
+                // it is shown, but labeled as the device's report, and never
+                // stitched to this screen's verdict or clock. "Verified"
+                // itself belongs to this TV's own verdict (the Rust core
+                // walking a served sealed log) and to nothing on the wire.
                 if let report = model.report, report.ok {
+                    // "Verified" is reserved (AGENTS.md rule 4) for a signature
+                    // checked against a PINNED key. The Wall walks the chain
+                    // against the key the sealed-log document itself supplies —
+                    // it proves the log is internally consistent and signed by
+                    // one key, not that the key is the kernel's. Until the Wall
+                    // pins that key at first contact, the banner says exactly
+                    // that, and keeps the fleet's own timestamp labeled as the
+                    // fleet's report rather than this screen's verdict.
                     StatusBanner(
                         tone: .calm,
-                        title: "Verified through \(verifiedThrough)",
-                        detail: "Chain of \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries") checked on this Apple TV."
+                        title: "Chain intact through \(receipt(asOf)) · \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries")",
+                        detail: "Signatures checked on this Apple TV against the key the log supplied (not yet pinned). Device reports “\(verifiedThrough)”."
                     )
                 } else {
                     StatusBanner(
                         tone: .calm,
-                        title: "Your fleet reports verified through \(verifiedThrough)",
-                        detail: nil
+                        title: "Your fleet reported in through \(receipt(asOf))",
+                        detail: "Device reports “\(verifiedThrough)” — its own word, not a check this Apple TV performed."
                     )
                 }
             }
         }
+    }
+
+    /// This TV's own clock, as the banners print it: when THIS screen received
+    /// the report it is describing. Never the fleet's self-stamped time — that
+    /// one is shown only as "Device reports …".
+    private func receipt(_ asOf: Date) -> String {
+        asOf.formatted(date: .omitted, time: .shortened)
     }
 
     /// The line under the fleet name, phrased for the room. Counts come from

@@ -36,15 +36,44 @@
     <div id="serial"></div>
   </div>
 
-  <script src="../dist/canary-display-watch.js"></script>
   <script type="module">
     import { CanaryEmulator, demoFleet } from "./emu-shell.js";
 
+    // Which glass boots is a query parameter, not a hard-coded script tag:
+    // ?flavor=watch (the default) | dash | nightstand | touch169 | amoled241,
+    // each a committed dist/canary-display-<flavor>.js exporting
+    // createCanaryEmu<Flavor>. The boot probe walks every flavor this way, so
+    // a display CI never booted cannot ship broken.
+    // Allowlist, not sanitization: the query value only ever SELECTS one of
+    // these entries; no user-controlled string reaches a script URL or a
+    // global name. Add a flavor here when a new dist bundle is committed.
+    const FLAVORS = {
+      watch:     { src: "../dist/canary-display-watch.js",     factory: "createCanaryEmuWatch" },
+      dash:      { src: "../dist/canary-display-dash.js",      factory: "createCanaryEmuDash" },
+      nightstand:{ src: "../dist/canary-display-nightstand.js",factory: "createCanaryEmuNightstand" },
+      touch169:  { src: "../dist/canary-display-touch169.js",  factory: "createCanaryEmuTouch169" },
+      amoled241: { src: "../dist/canary-display-amoled241.js", factory: "createCanaryEmuAmoled241" },
+    };
+    const q = new URLSearchParams(location.search);
+    const wanted = (q.get("flavor") || "watch").toLowerCase();
+    const entry = Object.hasOwn(FLAVORS, wanted) ? FLAVORS[wanted] : null;
+    if (!entry) throw new Error("unknown flavor; known: " + Object.keys(FLAVORS).join(", "));
+    const flavor = wanted;
+    await new Promise((resolve, reject) => {
+      const tag = document.createElement("script");
+      tag.src = entry.src;
+      tag.onload = resolve;
+      tag.onerror = () => reject(new Error("dist bundle failed to load for " + flavor));
+      document.head.appendChild(tag);
+    });
+    const factory = window[entry.factory];
+    if (typeof factory !== "function") throw new Error("dist bundle for " + flavor + " exports no factory");
+
     const serial = document.getElementById("serial");
-    const state = { booted: false, flushes: 0, serialText: "", mqtt: [] };
+    const state = { booted: false, flushes: 0, serialText: "", mqtt: [], flavor };
     window.__state = state;
 
-    const emu = new CanaryEmulator(window.createCanaryEmuWatch, {
+    const emu = new CanaryEmulator(factory, {
       canvas: document.getElementById("glass"),
       onSerial: (t) => {
         state.serialText += t;
@@ -64,7 +93,6 @@
     });
     window.__emu = emu;
 
-    const q = new URLSearchParams(location.search);
     await emu.start({
       provisioned: q.get("provisioned") !== "0",
       firstMeeting: q.get("meet") === "1",

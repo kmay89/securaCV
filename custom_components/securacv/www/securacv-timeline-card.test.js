@@ -146,10 +146,39 @@ test("resolveVerification only awards ✓ verified on a real check", () => {
   // verified:false with only "no_pubkey" is not a failure — it's just unproven.
   assert.equal(resolveVerification({ verified: false, trustReason: "no_pubkey" }).level, "logged");
 
+  // an unsigned publish (pre-PKI firmware, or a topic the firmware never signs)
+  // is neutral: nothing was checked, so nothing failed. Distinct from both
+  // "failed" (no ⚠) and "logged" (it names the reason).
+  const unsigned = resolveVerification({ verified: false, trustReason: "unsigned" });
+  assert.equal(unsigned.level, "unsigned");
+  assert.equal(unsigned.label, "Unsigned");
+  assert.notEqual(unsigned.symbol, "⚠");
+  assert.notEqual(unsigned.symbol, "✓");
+  // ...and the payload's own `signed` flag never outranks the verifier's verdict.
+  assert.equal(resolveVerification({ verified: false, trustReason: "unsigned", signed: true }).level, "unsigned");
+  // the verdicts that mean a check ran and rejected the publish stay failures.
+  for (const reason of ["mismatch", "replay"]) {
+    assert.equal(resolveVerification({ verified: false, trustReason: reason }).level, "failed", reason);
+  }
+
   // kernel HTTP path with no signals → neutral "logged", never a green check.
   const logged = resolveVerification({});
   assert.equal(logged.level, "logged");
   assert.equal(logged.symbol, "·");
+});
+
+test("historyToTimelineItems renders an unsigned pre-PKI event as unsigned, not failed", () => {
+  const bucket = { start_epoch_s: 600, size_s: 600 };
+  const history = {
+    "sensor.securacv_canary_old_last_event": [
+      { s: "contact_state_change", a: { zone: "zone:door", verified: false, trust_reason: "unsigned", time_bucket: bucket }, lu: 100 },
+      { s: "tamper_detected", a: { zone: "zone:door", verified: false, trust_reason: "mismatch", time_bucket: bucket }, lu: 200 },
+    ],
+  };
+  const items = historyToTimelineItems(history, { maxEvents: 50 });
+  assert.equal(items.length, 2);
+  assert.equal(items[1].verification.level, "unsigned");
+  assert.equal(items[0].verification.level, "failed");
 });
 
 test("normalizeHistoryEntry handles compact and verbose shapes", () => {

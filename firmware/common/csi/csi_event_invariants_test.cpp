@@ -793,6 +793,46 @@ void test_per_module_ceiling() {
          "per-module hourly ceiling (6) must cap commits");
 }
 
+/* 12b. Same-state refreshes of an OPEN bundle do not spend the ceiling.
+ *
+ * core.presence re-emits its current state every minute so the bundler can
+ * refresh duration/confidence. Each refresh used to pre-account a ceiling
+ * slot and never roll it back, so after six refreshes (~3 minutes of
+ * sustained presence) every REAL transition was dropped for the rest of the
+ * hour. Openings still count: the burst test above stays exactly as it is. */
+void test_bundle_refresh_does_not_spend_ceiling() {
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(&TEST_MODULE);
+
+  /* 30 refreshes of ONE open state: one bundle, no ceiling spent. */
+  for (int i = 0; i < 30; ++i) {
+    csi_event_values_t v;
+    csi_event_values_init(&v);
+    v.category       = CSI_CATEGORY_EVENT;
+    v.present_fields = CSI_FIELD_STATE_NAME;
+    snprintf(v.state_name, sizeof(v.state_name), "active");
+    EXPECT(csi_event_emit("test.module", "test_state", &v) != 0,
+           "a same-state refresh must still be admitted");
+  }
+  /* Five NEW states must all still open: only ONE slot (the "active"
+   * opening) has been spent of the six. */
+  int opened = 0;
+  for (int i = 0; i < 5; ++i) {
+    csi_event_values_t v;
+    csi_event_values_init(&v);
+    v.category       = CSI_CATEGORY_EVENT;
+    v.present_fields = CSI_FIELD_STATE_NAME;
+    snprintf(v.state_name, sizeof(v.state_name), "t%d", i);
+    if (csi_event_emit("test.module", "test_state", &v) != 0) ++opened;
+  }
+  EXPECT(opened == 5,
+         "refreshing an open bundle must not consume the hourly ceiling");
+  csi_event_flush_bundles();
+  EXPECT(g_captured_count == 6,
+         "one bundle for the refreshed state plus five new ones commit");
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * 13. No peer MAC in CSI feature vector
  *
@@ -896,6 +936,7 @@ extern "C" int csi_event_invariants_run() {
   test_bundler_collapses_burst();
   test_bundler_snapshot_exposes_open_bundles();
   test_per_module_ceiling();
+  test_bundle_refresh_does_not_spend_ceiling();
   test_witness_payload_includes_metadata();
   test_ble_events_strip_mac_precision_fields();
   /* PR 6: pin the per-event allow-lists for core.multilink_fusion and

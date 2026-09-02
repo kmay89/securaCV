@@ -238,6 +238,26 @@
         ]
       },
       "note": "60 GHz radar presence board. No camera / SD / CSI / BLE. USB-Serial console only; end-to-end bench validation pending."
+    },
+    {
+      "id": "canary-display-watch",
+      "flavor": "canary-display",
+      "name": "Canary Watch Station",
+      "board": "xiao-esp32s3-round",
+      "mcu": "ESP32-S3",
+      "tier": "compile-tested",
+      "flow": "onboard",
+      "otaProduct": "securacv-canary-display-watch",
+      "manifestUrl": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-watch.json",
+      "hasLevels": false,
+      "build": {
+        "env": "canary-display-watch",
+        "partition": "default_8MB.csv",
+        "features": [
+          "selftest"
+        ]
+      },
+      "note": "The canary-display lane: a fleet VIEWER, not a witness. It renders and verifies what the Canaries publish (TOFU-pinned Ed25519 chain heads, MQTT + HA discovery, signed pull-OTA with an HA update entity), records no witness chain of its own, and has no camera, mic, CSI, GPS or SD witness log — so none of the sensing tiles apply. 'selftest' here is the OTA engine's post-update boot self-test (rollback safety), not the canary tree's 10-probe suite. The watch (XIAO ESP32-S3 + Seeed Round Display, flavors.json check_env) stands for the line; the other display products are the same firmware on other glass, listed in canary-local/devices/flash.json and flavors.json release_envs. USB-flashable and OTA-published; the hardware tier stays compile-tested until a Hardware Test Report promotes a board."
     }
   ],
   "recommended": {
@@ -263,9 +283,9 @@
   "provenance": {
     "levels": "firmware/canary/platformio.ini · [env:dev] (~132), [env:release] (~171), [env:full] (~255); base [env] sets -DFEATURE_BLE_STATUS=0 (~66)",
     "featureCatalog": "firmware/canary/platformio.ini per-env -DFEATURE_* + firmware/canary/include/canary_config.h #ifndef defaults (FEATURE_DIAGNOSTICS=1, FEATURE_BLE_STATUS base 0 / full 1, FEATURE_MESH_NETWORK full only, FEATURE_TEST_CONSOLE never set)",
-    "products": "firmware/flavors.json (build_envs per product) + firmware/boards/boards.json (board id, mcu, tier, used_by)",
+    "products": "firmware/flavors.json (build_envs per product; release_envs for the display board envs the release publishes) + firmware/boards/boards.json (board id, mcu, tier, used_by)",
     "manifests": "firmware/scripts/ota_release.py + docs/firmware_ota.md · per-variant manifest-<product>.json at releases/latest/download/; manifest-index.json lists all products",
     "flasher": "firmware/scripts/build_flash_manifest.py · *-factory.bin + manifest-flash.json (esp-web-tools format)",
-    "lint": "firmware/scripts/lint_build_matrix.py — pins the load-bearing cells (BLE full-only, TEST_CONSOLE never shipped, DIAGNOSTICS always, sense/vision serial-only) to platformio.ini + canary_config.h"
+    "lint": "scripts/lint_build_matrix.py — pins the load-bearing cells (BLE full-only, TEST_CONSOLE never shipped, DIAGNOSTICS always, sense/vision serial-only) to platformio.ini + canary_config.h, and requires a lane for every flavors.json product"
   }
 }

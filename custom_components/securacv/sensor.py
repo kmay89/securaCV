@@ -44,7 +44,13 @@ from .const import (
     normalize_attestation,
 )
 from .device_trust import TrustStore
-from . import async_record_verify, parse_mqtt_json
+from . import (
+    async_record_verify,
+    parse_mqtt_json,
+    unsigned_trust_attrs,
+    valid_device_id,
+)
+from .device_trust import TrustVerdict
 from .voice import record_canary_event
 from .watch_runtime import async_observe_event
 from .health_metrics import (
@@ -71,26 +77,97 @@ def _trust_store_for(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore | No
     return entry_data.get("trust_store")
 
 
+# Which payload field is the monotonic counter for each signed kind. The
+# canonicals sign these (signature.py) but nothing consumed them: an old,
+# validly signed message replayed by anyone on the broker verified green and
+# moved entity state.
+_REPLAY_COUNTER_FIELD = {
+    "verify_event": "event_id",
+    "verify_sense_event": "seq",
+    "verify_chain": "length",
+    "verify_counts": "total",
+}
+
+
+def _replay_gate(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    device_id: str,
+    payload: dict[str, Any],
+    verifier,
+    verdict: TrustVerdict,
+) -> TrustVerdict:
+    """Downgrade a VERIFIED publish whose counter runs backwards to a replay.
+
+    Only a decrease is a replay: the firmware republishes its current chain
+    head / counts total unchanged while idle, and a broker re-delivers the
+    retained last event on reconnect, so an EQUAL counter is benign and passes.
+    A lower counter cannot be the device's present state — it is an older
+    message, however valid its signature. The high-water mark is reset when a
+    device is (re)pinned via TOFU (async_record_verify), which is what a
+    factory reset looks like from here.
+    """
+    if not verdict.trusted:
+        return verdict
+    field = _REPLAY_COUNTER_FIELD.get(getattr(verifier, "__name__", ""))
+    if field is None or not isinstance(payload, dict):
+        return verdict
+    raw = payload.get(field)
+    if raw is None or isinstance(raw, bool):
+        return verdict
+    try:
+        counter = int(raw)
+    except (TypeError, ValueError):
+        return verdict
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not isinstance(entry_data, dict):
+        return verdict
+    marks = entry_data.setdefault("replay", {}).setdefault(device_id, {})
+    last = marks.get(field)
+    if last is not None and counter < last:
+        return TrustVerdict(
+            trusted=False,
+            reason="replay",
+            pinned_fingerprint=verdict.pinned_fingerprint,
+            received_fingerprint=verdict.received_fingerprint,
+            detail=(
+                f"{field}={counter} is older than the last verified "
+                f"{field}={last}; a validly signed but stale publish"
+            ),
+        )
+    marks[field] = counter
+    return verdict
+
+
 def _verify_and_record(
     hass: HomeAssistant,
     entry: ConfigEntry,
     device_id: str,
     payload: dict[str, Any],
     verifier,
-) -> None:
+) -> TrustVerdict | None:
     """Run the kind-specific verifier and stamp the result so the
     extra_state_attributes block can surface it next to the entity.
 
     Verifier signature: `verifier(trust_store, device_id, payload) -> TrustVerdict`.
     Failing payloads (no trust store yet, unsigned firmware) are
     silently treated as "unverified" — we never want to drop entity
-    state on a sig issue, only annotate it. The persistent_notification
-    fan-out lives in __init__.py's async_record_verify."""
+    state on a sig issue, only annotate it. The one exception is a
+    REPLAY (a verified publish whose counter runs backwards): callers
+    get the verdict back so they can refuse to move state on it. The
+    persistent_notification fan-out lives in __init__.py's
+    async_record_verify."""
     trust_store = _trust_store_for(hass, entry)
     if trust_store is None:
-        return
+        return None
     verdict = verifier(trust_store, device_id, payload)
+    verdict = _replay_gate(hass, entry, device_id, payload, verifier, verdict)
     async_record_verify(hass, entry, device_id, verdict)
+    return verdict
+
+
+def _is_replay(verdict: TrustVerdict | None) -> bool:
+    return verdict is not None and verdict.reason == "replay"
 
 
 def _trust_attrs(
@@ -98,7 +175,12 @@ def _trust_attrs(
 ) -> dict[str, Any]:
     """Return the verify-state slice that every signed-topic entity
     surfaces as part of extra_state_attributes. Keys are kept short
-    and JSON-friendly because they show up directly in HA's UI."""
+    and JSON-friendly because they show up directly in HA's UI.
+
+    Entities moved by a topic the firmware never signs (health, and the
+    binary_sensor tamper / transport / mesh / chirp family) stamp the
+    same keys via ``unsigned_trust_attrs`` in __init__.py instead, so an
+    unsigned publish and a verified one differ by value, not by absence."""
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     verify = entry_data.get("verify", {}).get(device_id)
     if not verify:
@@ -250,6 +332,8 @@ async def _setup_mqtt_sensors(
 
         device_id = parts[-2]
         topic_type = parts[-1]
+        if not valid_device_id(device_id):
+            return
 
         if device_id not in entities_added:
             entities_added[device_id] = set()
@@ -700,9 +784,10 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
             except (ValueError, TypeError):
                 return
         else:
-            self._attr_native_value = data.get("total", data.get("count", 0))
-            _verify_and_record(self.hass, self._entry, self._device_id,
-                               data, verify_counts)
+            verdict = _verify_and_record(self.hass, self._entry, self._device_id,
+                                         data, verify_counts)
+            if not _is_replay(verdict):
+                self._attr_native_value = data.get("total", data.get("count", 0))
             self._attr_extra_state_attributes = _trust_attrs(
                 self.hass, self._entry, self._device_id)
         self.async_write_ha_state()
@@ -735,9 +820,18 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
         data = parse_mqtt_json(msg.payload)
         if data is None:
             return
+        verdict = _verify_and_record(self.hass, self._entry, self._device_id,
+                                     data, verify_chain)
+        if _is_replay(verdict):
+            # A stale, validly signed head: annotate, never move the length
+            # or the hash the dashboard shows as current.
+            self._attr_extra_state_attributes = {
+                **(getattr(self, "_attr_extra_state_attributes", None) or {}),
+                **_trust_attrs(self.hass, self._entry, self._device_id),
+            }
+            self.async_write_ha_state()
+            return
         self._attr_native_value = data.get("length", data.get("chain_length", 0))
-        _verify_and_record(self.hass, self._entry, self._device_id,
-                           data, verify_chain)
         self._attr_extra_state_attributes = {
             "latest_hash": data.get("latest_hash", ""),
             "algorithm": data.get("algorithm", "ed25519"),
@@ -775,6 +869,7 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 # degrade to the bounded raw-payload fallback rather than
                 # AttributeError out of the @callback and stall the entity.
                 raise TypeError("Event payload is not a JSON object")
+            previous_value = getattr(self, "_attr_native_value", None)
             self._attr_native_value = data.get(
                 "event_type", data.get("type", data.get("event", "unknown"))
             )
@@ -785,11 +880,21 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
             # the wrong verifier would mark a validly signed payload
             # "unsigned".
             if "event_id" not in data and "occupants" in data:
-                _verify_and_record(self.hass, self._entry, self._device_id,
-                                   data, verify_sense_event)
+                verdict = _verify_and_record(self.hass, self._entry, self._device_id,
+                                             data, verify_sense_event)
             else:
-                _verify_and_record(self.hass, self._entry, self._device_id,
-                                   data, verify_event)
+                verdict = _verify_and_record(self.hass, self._entry, self._device_id,
+                                             data, verify_event)
+            if _is_replay(verdict):
+                # An older event re-sent with a valid signature: keep the
+                # newer state we already hold and only annotate the trust view.
+                self._attr_native_value = previous_value
+                self._attr_extra_state_attributes = {
+                    **(getattr(self, "_attr_extra_state_attributes", None) or {}),
+                    **_trust_attrs(self.hass, self._entry, self._device_id),
+                }
+                self.async_write_ha_state()
+                return
             # Mirror the event for the voice brief AFTER the verifier has
             # stamped its verdict, so a spoken answer can carry the trust
             # qualifier a forged/unsigned publish deserves (voice.py).
@@ -891,6 +996,9 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             "uptime_seconds": data.get("uptime", 0),
             "firmware_version": data.get("firmware_version", ""),
             "public_key": data.get("public_key", ""),
+            # Health is not signed: say so with the same slice the signed
+            # entities carry, rather than moving with no verdict at all.
+            **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
         }
         # Battery detail, when the firmware reports it.
         for key in (
@@ -947,8 +1055,9 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
             # Firmware without SD reporting: leave the sensor untouched.
             return
         self._attr_native_value = wear
+        attrs: dict[str, Any] = {}
         if (sd := canary_sd(data)) is not None:
-            self._attr_extra_state_attributes = {
+            attrs = {
                 "mounted": sd.get("mounted"),
                 "usage_pct": sd.get("usage_pct"),
                 "writes": sd.get("writes"),
@@ -956,6 +1065,8 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
                 "lifetime_kb": sd.get("lifetime_kb"),
                 "replace_recommended": sd.get("replace_recommended"),
             }
+        attrs.update(unsigned_trust_attrs(self.hass, self._entry, self._device_id))
+        self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
 
 
@@ -986,6 +1097,7 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
             return
         gps = data.get("gps", {})
 
+        trust = unsigned_trust_attrs(self.hass, self._entry, self._device_id)
         if isinstance(gps, dict):
             self._attr_native_value = gps.get("fix_type", "no_fix")
             self._attr_extra_state_attributes = {
@@ -993,9 +1105,14 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
                 "hdop": gps.get("hdop", 0),
                 "latitude": gps.get("latitude", ""),
                 "longitude": gps.get("longitude", ""),
+                **trust,
             }
         else:
             self._attr_native_value = str(gps) if gps else "no_fix"
+            self._attr_extra_state_attributes = {
+                **(getattr(self, "_attr_extra_state_attributes", None) or {}),
+                **trust,
+            }
         self.async_write_ha_state()
 
 
@@ -1102,5 +1219,6 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
         for key in ("frames", "frame_errors", "reboots"):
             if (val := radar.get(key)) is not None:
                 attrs[key] = val
-        self._attr_extra_state_attributes = attrs or None
+        attrs.update(unsigned_trust_attrs(self.hass, self._entry, self._device_id))
+        self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()

@@ -32,8 +32,14 @@ final class NotificationService: UNNotificationServiceExtension {
         let wake = WakePayload.wakeClass(from: content.userInfo) ?? .pattern
         content.title = "Your Canaries"
         content.body = wake.line
-        content.interruptionLevel = wake.isLifeSafety ? .critical : .timeSensitive
-        content.sound = wake.isLifeSafety ? .defaultCritical : .default
+        // Time-sensitive is the safe default for every class, including
+        // life-safety: iOS does NOT ignore an unentitled critical alert, it
+        // drops the notification. AlertCenter learned this the hard way for
+        // local alerts and gates .critical on the granted setting; this
+        // extension has no access to that cache, so it asks the system
+        // itself below and upgrades only when critical alerts are enabled.
+        content.interruptionLevel = .timeSensitive
+        content.sound = .default
         // Rank inside the system's summary the same way local alerts do, so a
         // wake and an on-Wi-Fi alert about the same trouble sort together.
         content.relevanceScore = wake.isLifeSafety ? 0.9 : 0.6
@@ -41,7 +47,14 @@ final class NotificationService: UNNotificationServiceExtension {
         // (Full build: verify content.userInfo["sig"] against the pinned key and
         // drop the notification if it doesn't check out; then hydrate detail from
         // the local digest. Kept content-free here on purpose.)
-        contentHandler(content)
+        guard wake.isLifeSafety else { contentHandler(content); return }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            if settings.criticalAlertSetting == .enabled {
+                content.interruptionLevel = .critical
+                content.sound = .defaultCritical
+            }
+            contentHandler(content)
+        }
     }
 
     override func serviceExtensionTimeWillExpire() {

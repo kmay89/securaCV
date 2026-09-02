@@ -418,6 +418,64 @@ fn enforce_db_file_permissions(db_path: &str) {
 /// Minimum allowed bucket size per spec/event_contract.md §3 (5 minutes).
 pub const MIN_BUCKET_SIZE_S: u32 = 300;
 const TEN_MINUTES_S: u32 = 600;
+
+/// What a listener's accept loop should do with an `accept()` error.
+///
+/// The event API and the break-glass server each run one accept loop on a
+/// dedicated thread; until this classifier existed both loops returned on ANY
+/// error other than `WouldBlock`, so a peer that reset between SYN and accept
+/// (`ECONNABORTED`) or a moment of descriptor pressure (`EMFILE`) ended the
+/// thread and left witnessd half-alive — sealing frames, answering nothing.
+/// Per-connection failures retry at once; resource exhaustion backs off so the
+/// loop does not spin; everything else is still fatal and loud.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcceptErrorDisposition {
+    /// A single connection failed; the listener is fine — accept the next one.
+    Retry,
+    /// The process is short of descriptors or memory; sleep briefly and retry.
+    BackOff,
+    /// The listener itself is broken; return the error.
+    Fatal,
+}
+
+pub fn accept_error_disposition(err: &std::io::Error) -> AcceptErrorDisposition {
+    use std::io::ErrorKind;
+    match err.kind() {
+        ErrorKind::ConnectionAborted
+        | ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionRefused
+        | ErrorKind::Interrupted
+        | ErrorKind::TimedOut => return AcceptErrorDisposition::Retry,
+        ErrorKind::OutOfMemory => return AcceptErrorDisposition::BackOff,
+        _ => {}
+    }
+    #[cfg(unix)]
+    {
+        if let Some(code) = err.raw_os_error() {
+            if code == libc::EMFILE
+                || code == libc::ENFILE
+                || code == libc::ENOBUFS
+                || code == libc::ENOMEM
+                || code == libc::EAGAIN
+            {
+                return AcceptErrorDisposition::BackOff;
+            }
+            // EPROTO / ENETDOWN / EHOSTUNREACH and friends: Linux surfaces
+            // network errors of an already-queued connection through accept();
+            // they belong to that connection, not the listener.
+            if code == libc::EPROTO
+                || code == libc::ENETDOWN
+                || code == libc::ENETUNREACH
+                || code == libc::EHOSTDOWN
+                || code == libc::EHOSTUNREACH
+                || code == libc::EOPNOTSUPP
+            {
+                return AcceptErrorDisposition::Retry;
+            }
+        }
+    }
+    AcceptErrorDisposition::Fatal
+}
 const FIFTEEN_MINUTES_S: u32 = 900;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -465,9 +523,20 @@ impl TimeBucket {
         Self::now(TEN_MINUTES_S)
     }
 
-    /// Coarsen to a larger bucket. The target bucket size must be >= MIN_BUCKET_SIZE_S.
+    /// Coarsen to a larger bucket. The target bucket size must be >= MIN_BUCKET_SIZE_S
+    /// and >= this bucket's own size: "coarsen" may only widen. Narrowing a 900 s
+    /// bucket to 600 s would emit a bucket that does not contain the event (the
+    /// 900 s bucket starting at 300 "coarsened" to the 600 s bucket at 0), which
+    /// is a false statement in a signed log, not a rounding error.
     pub fn coarsen_to(self, bucket_size_s: u32) -> Result<Self> {
         Self::validate_bucket_size(bucket_size_s)?;
+        if bucket_size_s < self.size_s {
+            return Err(anyhow!(
+                "time bucket coarsen: target {}s is narrower than the source {}s",
+                bucket_size_s,
+                self.size_s
+            ));
+        }
         let size = bucket_size_s as u64;
         let start = (self.start_epoch_s / size) * size;
         Ok(TimeBucket {
@@ -1123,8 +1192,12 @@ impl ContractEnforcer {
             return Err(anyhow!("conformance: confidence out of bounds"));
         }
 
-        // Coarsen timestamps to 10-minute buckets before logging.
-        let time_bucket = c.time_bucket.coarsen_to(TEN_MINUTES_S)?;
+        // Coarsen timestamps to 10-minute buckets before logging — or keep a
+        // source bucket that is already coarser (an adapter running 15-minute
+        // buckets stays at 15; coarsen_to refuses to narrow).
+        let time_bucket = c
+            .time_bucket
+            .coarsen_to(TEN_MINUTES_S.max(c.time_bucket.size_s))?;
 
         // Zone discipline (positive allowlist)
         validate_zone_id(&c.zone_id)?;
@@ -1202,6 +1275,9 @@ impl BucketKeyManager {
     }
 
     /// For conformance tests: prove key rotation occurred (current key differs from old).
+    /// Test-only by construction, not by name: a production build has no way to read
+    /// the live per-bucket correlation secret out of the manager.
+    #[cfg(test)]
     pub fn export_key_for_test_only(&self) -> [u8; 32] {
         *self.key
     }
@@ -1846,7 +1922,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
 
     fn coarsen_or_now(bucket: TimeBucket) -> Result<TimeBucket> {
         bucket
-            .coarsen_to(TEN_MINUTES_S)
+            .coarsen_to(TEN_MINUTES_S.max(bucket.size_s))
             .or_else(|_| TimeBucket::now_10min())
     }
 
@@ -1922,7 +1998,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         ruleset_id: &str,
         ruleset_hash: [u8; 32],
     ) -> Result<FailureEvent> {
-        let time_bucket = time_bucket.coarsen_to(TEN_MINUTES_S)?;
+        let time_bucket = time_bucket.coarsen_to(TEN_MINUTES_S.max(time_bucket.size_s))?;
         let failure = FailureEvent {
             failure_type,
             time_bucket,
@@ -1953,7 +2029,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         ruleset_hash: [u8; 32],
     ) -> Result<()> {
         let heartbeat = HeartbeatRecord {
-            time_bucket: time_bucket.coarsen_to(TEN_MINUTES_S)?,
+            time_bucket: time_bucket.coarsen_to(TEN_MINUTES_S.max(time_bucket.size_s))?,
             ingest_healthy,
             frames_captured_delta,
             events_appended_delta,
@@ -4735,21 +4811,42 @@ mod tests {
 
     proptest::proptest! {
         // TimeBucket::coarsen_to is aligned to the target size, never later
-        // than the input, within one bucket of it, and idempotent — for any
-        // epoch and any valid (>= MIN_BUCKET_SIZE_S) target size.
+        // than the input, within one bucket of it, idempotent, and CONTAINS
+        // the source bucket — for any epoch, any source size, and any target
+        // size at least as wide as the source.
         #[test]
-        fn coarsen_to_is_aligned_monotonic_and_idempotent(
+        fn coarsen_to_is_aligned_monotonic_idempotent_and_containing(
             epoch in 0u64..4_000_000_000,
-            size in MIN_BUCKET_SIZE_S..(7 * 24 * 3600),
+            src_size in MIN_BUCKET_SIZE_S..(24 * 3600),
+            widen in 0u32..(6 * 24 * 3600),
         ) {
-            let bucket = TimeBucket { start_epoch_s: epoch, size_s: 600 };
-            let coarse = bucket.coarsen_to(size).expect("valid size must coarsen");
+            let size = src_size + widen;
+            let bucket = TimeBucket { start_epoch_s: epoch, size_s: src_size };
+            let coarse = bucket.coarsen_to(size).expect("a wider size must coarsen");
             proptest::prop_assert_eq!(coarse.size_s, size);
             proptest::prop_assert_eq!(coarse.start_epoch_s % u64::from(size), 0); // aligned
             proptest::prop_assert!(coarse.start_epoch_s <= epoch);               // never later
             proptest::prop_assert!(epoch - coarse.start_epoch_s < u64::from(size)); // within one bucket
+            // The coarse bucket contains the source's START — the instant the
+            // event is attested to. (A source bucket that is not itself aligned
+            // to the target size can straddle two target buckets; the log
+            // attests the start, so that is what must be inside.)
+            proptest::prop_assert!(coarse.start_epoch_s <= bucket.start_epoch_s);
+            proptest::prop_assert!(bucket.start_epoch_s < coarse.start_epoch_s + u64::from(coarse.size_s));
             let again = coarse.coarsen_to(size).expect("idempotent");
             proptest::prop_assert_eq!(again.start_epoch_s, coarse.start_epoch_s);
+        }
+
+        // Coarsening may only widen: a narrower target is always rejected,
+        // because it can produce a bucket that does not contain the event.
+        #[test]
+        fn coarsen_to_never_narrows(
+            epoch in 0u64..4_000_000_000,
+            target in MIN_BUCKET_SIZE_S..(24 * 3600),
+            extra in 1u32..(24 * 3600),
+        ) {
+            let bucket = TimeBucket { start_epoch_s: epoch, size_s: target + extra };
+            proptest::prop_assert!(bucket.coarsen_to(target).is_err());
         }
 
         // Any bucket size below the minimum bucket size floor is always rejected.
@@ -4758,6 +4855,77 @@ mod tests {
             let bucket = TimeBucket { start_epoch_s: 600, size_s: 600 };
             proptest::prop_assert!(bucket.coarsen_to(size).is_err());
         }
+    }
+
+    #[test]
+    fn accept_errors_that_belong_to_one_connection_do_not_end_the_listener() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(
+            accept_error_disposition(&Error::from(ErrorKind::ConnectionAborted)),
+            AcceptErrorDisposition::Retry
+        );
+        assert_eq!(
+            accept_error_disposition(&Error::from(ErrorKind::ConnectionReset)),
+            AcceptErrorDisposition::Retry
+        );
+        assert_eq!(
+            accept_error_disposition(&Error::from(ErrorKind::Interrupted)),
+            AcceptErrorDisposition::Retry
+        );
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                accept_error_disposition(&Error::from_raw_os_error(libc::EMFILE)),
+                AcceptErrorDisposition::BackOff
+            );
+            assert_eq!(
+                accept_error_disposition(&Error::from_raw_os_error(libc::ENFILE)),
+                AcceptErrorDisposition::BackOff
+            );
+            assert_eq!(
+                accept_error_disposition(&Error::from_raw_os_error(libc::EPROTO)),
+                AcceptErrorDisposition::Retry
+            );
+            // A listener that is genuinely gone stays fatal.
+            assert_eq!(
+                accept_error_disposition(&Error::from_raw_os_error(libc::EBADF)),
+                AcceptErrorDisposition::Fatal
+            );
+        }
+        assert_eq!(
+            accept_error_disposition(&Error::from(ErrorKind::InvalidInput)),
+            AcceptErrorDisposition::Fatal
+        );
+    }
+
+    // The case that motivated the widen-only rule: a 15-minute adapter bucket
+    // starting at 900k+300 used to "coarsen" to the 10-minute bucket at 900k-300,
+    // which ends before the source bucket begins.
+    #[test]
+    fn coarsen_to_rejects_the_fifteen_to_ten_minute_narrowing() {
+        // Aligned to its own 900 s grid (as TimeBucket::now produces), and
+        // sitting at 300 mod 600 — the start the old code moved backwards.
+        let fifteen = TimeBucket {
+            start_epoch_s: 900 * 1_001,
+            size_s: 900,
+        };
+        assert_eq!(fifteen.start_epoch_s % 600, 300);
+        assert!(fifteen.coarsen_to(600).is_err());
+        // The enforcer's rule keeps a coarser source as-is.
+        let kept = fifteen
+            .coarsen_to(TEN_MINUTES_S.max(fifteen.size_s))
+            .unwrap();
+        assert_eq!(kept, fifteen);
+        // A finer source still coarsens to ten minutes.
+        let five = TimeBucket {
+            start_epoch_s: 1_234_500,
+            size_s: 300,
+        };
+        let ten = five.coarsen_to(TEN_MINUTES_S.max(five.size_s)).unwrap();
+        assert_eq!(ten.size_s, 600);
+        assert!(
+            ten.start_epoch_s <= five.start_epoch_s && five.start_epoch_s < ten.start_epoch_s + 600
+        );
     }
 
     proptest::proptest! {

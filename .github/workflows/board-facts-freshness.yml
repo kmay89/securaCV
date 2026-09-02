@@ -29,6 +29,9 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # issues: the fallback when the repo forbids Actions from opening PRs
+  # (see the PR step) — that setting does not gate issue creation.
+  issues: write
 
 # Two refreshes racing would fight over the bot branch push — queue, never
 # cancel mid-PR-ceremony.
@@ -76,7 +79,27 @@ jobs:
               --title "Board facts: Waveshare vendor snapshot moved" \
               --body "Weekly freshness run: a Waveshare wiki page changed a fact we track (a pin, a part, a parameter), so \`board_facts.json\` re-lined itself. Refreshed by \`gen_board_facts.py --refresh-upstream\` and validated by \`board_facts.test.mjs\` (which also re-checks that our firmware \`pins.h\` still matches) before this PR was opened. Review the diff to decide whether our pin maps should follow." \
             || {
-              echo "::error::snapshot branch '$BRANCH' pushed, but PR creation was refused. Open it by hand (https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}), or enable 'Allow GitHub Actions to create and approve pull requests' (Settings → Actions → General) / add a FRESHNESS_PAT secret."
-              exit 1
+              # The default GITHUB_TOKEN can PUSH the branch but this repo's
+              # Actions settings refuse to let it open a pull request
+              # ("GitHub Actions is not permitted to create or approve pull
+              # requests"). Before this fallback, every scheduled run that
+              # had something to propose failed right here — the refreshed
+              # branch was pushed, the run went red, and the only record was
+              # a log nobody reads. Issues are NOT gated by that setting, so
+              # the snapshot is delivered as one deduplicated issue carrying
+              # the compare link (the same pattern bom-pricing.yml uses for
+              # supply-chain exceptions), and the run exits green with a
+              # warning annotation. Set FRESHNESS_PAT or flip the setting to
+              # get PRs again; this branch keeps working either way.
+              TITLE_PREFIX="Board facts: Waveshare vendor snapshot moved"
+              TITLE="${TITLE_PREFIX} (needs a PR)"
+              OPEN=$(gh issue list --state open --search "\"${TITLE_PREFIX}\" in:title" --json number --jq '.[].number' | head -1)
+              if [ -n "$OPEN" ]; then
+                gh issue comment "$OPEN" --body "Refreshed again on $(date -u +%Y-%m-%d): branch \`${BRANCH}\` was force-pushed with the latest snapshot — [open the PR](https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1)."
+                echo "::warning::PR creation refused; updated open issue #$OPEN with the compare link instead."
+              else
+                gh issue create --title "$TITLE" --body "Weekly freshness run: a Waveshare wiki page changed a fact we track, so \`board_facts.json\` re-lined itself. The refreshed snapshot is pushed on branch [\`${BRANCH}\`](https://github.com/${GITHUB_REPOSITORY}/tree/${BRANCH}) and already passed \`board_facts.test.mjs\`, but this repo does not let Actions open pull requests, so a human has to: [open the PR](https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1) and decide whether our pin maps should follow. To make this automatic, enable *Allow GitHub Actions to create and approve pull requests* (Settings → Actions → General) or add a \`FRESHNESS_PAT\` secret. Raised by \`board-facts-freshness.yml\`; this issue is reused while it stays open."
+                echo "::warning::PR creation refused; opened an issue with the compare link instead. Enable 'Allow GitHub Actions to create and approve pull requests' or add FRESHNESS_PAT to get PRs."
+              fi
             }
           fi

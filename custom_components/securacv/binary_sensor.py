@@ -3,6 +3,13 @@
 Surfaces tamper events and transport health for multi-path resilience.
 Canary devices use ANY available transport to communicate - these sensors
 show which paths are alive and what threats have been detected.
+
+None of the tamper / transport / mesh / chirp / health topics is signed by
+the firmware. Every entity here that moves on one stamps the shared
+``unsigned_trust_attrs`` slice (``verified: false``, ``trust_reason:
+"unsigned"``) — the same keys the signed entities carry — so a dashboard
+tells an unsigned publish from a verified one by the attribute's value,
+never by noticing it is missing.
 """
 from __future__ import annotations
 
@@ -63,7 +70,12 @@ from .const import (
     homekit_signals_for_event,
 )
 from homeassistant.helpers.event import async_call_later
-from . import mqtt_payload_within_cap, parse_mqtt_json
+from . import (
+    mqtt_payload_within_cap,
+    parse_mqtt_json,
+    unsigned_trust_attrs,
+    valid_device_id,
+)
 from .health_metrics import (
     canary_sd_replace_recommended,
     replacement_recommended,
@@ -143,6 +155,8 @@ async def _setup_mqtt_binary_sensors(
 
         device_id = parts[-2]
         topic_type = parts[-1]
+        if not valid_device_id(device_id):
+            return
 
         if device_id not in entities_added:
             entities_added[device_id] = set()
@@ -490,6 +504,12 @@ class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
             return
         tamper = data.get("tamper_detected", data.get("tamper", False))
         self._attr_is_on = bool(tamper)
+        # Health is unsigned: keep what the tamper topic last said and
+        # annotate honestly rather than moving the row with no verdict.
+        self._attr_extra_state_attributes = {
+            **(getattr(self, "_attr_extra_state_attributes", None) or {}),
+            **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
+        }
         self.async_write_ha_state()
 
     @callback
@@ -499,12 +519,19 @@ class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
         # Any publish on the tamper topic triggers this sensor; a JSON
         # object additionally carries detail attributes.
         self._attr_is_on = True
+        attrs: dict[str, _Any] = dict(
+            getattr(self, "_attr_extra_state_attributes", None) or {}
+        )
         if data is not None:
-            self._attr_extra_state_attributes = {
-                "tamper_type": data.get("type", "unknown"),
-                "timestamp": data.get("timestamp", ""),
-                "detail": data.get("detail", ""),
-            }
+            attrs.update(
+                {
+                    "tamper_type": data.get("type", "unknown"),
+                    "timestamp": data.get("timestamp", ""),
+                    "detail": data.get("detail", ""),
+                }
+            )
+        attrs.update(unsigned_trust_attrs(self.hass, self._entry, self._device_id))
+        self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
 
 
@@ -564,6 +591,7 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
                 "last_triggered": self._last_triggered,
                 "detail": data.get("detail", ""),
                 "severity": data.get("severity", "tamper"),
+                **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
 
@@ -615,6 +643,7 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
             self._attr_is_on = is_triggered
             self._attr_extra_state_attributes = {
                 "last_triggered": self._last_triggered,
+                **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
         except TypeError:
@@ -700,6 +729,7 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
         if data is None:
             return
         transport_data = data.get(self._transport_type, {})
+        trust = unsigned_trust_attrs(self.hass, self._entry, self._device_id)
 
         if isinstance(transport_data, dict):
             self._attr_is_on = transport_data.get("connected", False)
@@ -708,9 +738,14 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
                 "message_count": transport_data.get("messages", 0),
                 "error_count": transport_data.get("errors", 0),
                 "last_activity": transport_data.get("last_activity"),
+                **trust,
             }
         elif isinstance(transport_data, bool):
             self._attr_is_on = transport_data
+            self._attr_extra_state_attributes = {
+                **(getattr(self, "_attr_extra_state_attributes", None) or {}),
+                **trust,
+            }
 
         self.async_write_ha_state()
 
@@ -905,6 +940,7 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
                 "messages_sent": data.get("sent", 0),
                 "messages_received": data.get("received", 0),
                 "relay_count": data.get("relayed", 0),
+                **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
         except TypeError:
@@ -953,5 +989,6 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
             "alerts_sent": data.get("sent", 0),
             "alerts_received": data.get("received", 0),
             "confirmations_given": data.get("confirmed", 0),
+            **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
         }
         self.async_write_ha_state()

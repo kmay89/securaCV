@@ -36,6 +36,11 @@ extern "C" {
   #include <esp_err.h>
   #include <esp_system.h>
 }
+/* Shared with firmware/common/csi (on the include path via
+ * -I../common/csi/src): the driver-config field names for both ESP-IDF
+ * struct shapes, and the 52-tone L-LTF canonicalization every frame gets. */
+#include "csi_idf_compat.h"
+#include "csi_subcarriers.h"
 
 /*
  * CSI compile-time gate. If a future arduino-esp32 release reorganizes the
@@ -94,6 +99,7 @@ static std::atomic<uint32_t> s_frames_received{0};
 static std::atomic<uint32_t> s_frames_dropped_rssi{0};
 static std::atomic<uint32_t> s_frames_dropped_rate{0};
 static std::atomic<uint32_t> s_frames_dropped_full{0};
+static std::atomic<uint32_t> s_frames_dropped_short{0};  /* no L-LTF section */
 static std::atomic<uint32_t> s_last_frame_ms{0};
 static std::atomic<uint32_t> s_windows_emitted{0};
 static std::atomic<uint32_t> s_windows_degraded{0};
@@ -223,6 +229,23 @@ namespace features {
     memset(s_env_ring, 0, sizeof(s_env_ring));
     s_env_ring_head = 0;
     s_env_ring_len  = 0;
+  }
+
+  /* A window that closed late stood for `missed` whole windows: hold the
+   * last envelope sample that many times so the 1 Hz time base the
+   * breathing bins assume survives a stall. Mirrors csi_features.cpp in
+   * firmware/common/csi (this library carries its own copy of the
+   * extractor; roadmap item 22 is the consolidation). */
+  static void note_missed_windows(uint32_t missed) {
+    if (missed == 0 || s_env_ring_len == 0) return;   /* nothing to hold */
+    if (missed > BREATH_RING) missed = BREATH_RING;
+    const size_t last = (s_env_ring_head + BREATH_RING - 1) % BREATH_RING;
+    const int16_t held = s_env_ring[last];
+    for (uint32_t i = 0; i < missed; i++) {
+      s_env_ring[s_env_ring_head] = held;
+      s_env_ring_head = (uint16_t)((s_env_ring_head + 1) % BREATH_RING);
+      if (s_env_ring_len < BREATH_RING) s_env_ring_len++;
+    }
   }
 
   static void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
@@ -518,13 +541,18 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
 
   extract_scrubbed_metadata(info, slot);
 
-  const size_t bytes = info->len;
-  const size_t pairs = bytes / 2;
-  const size_t copy_pairs =
-      pairs > CSI_MAX_SUBCARRIERS ? CSI_MAX_SUBCARRIERS : pairs;
-
-  memcpy(slot->iq, info->buf, copy_pairs * 2);
-  slot->subcarrier_cnt = (uint8_t)copy_pairs;
+  /* Canonicalize to the 52 L-LTF data+pilot tones in frequency order
+   * (csi_subcarriers.h) so non-HT and HT frames never mix tone counts in a
+   * window and null tones stay out of the AGC mean. A frame too short for
+   * an L-LTF section is dropped unpublished. */
+  const uint8_t tones = csi_lltf_select(info->buf, info->len,
+                                        info->rx_ctrl.cwb == 1,
+                                        info->first_word_invalid, slot->iq);
+  if (tones == 0) {
+    s_frames_dropped_short.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  slot->subcarrier_cnt = tones;
 
   s_head.store(head + 1, std::memory_order_release);
   s_frames_received.fetch_add(1, std::memory_order_relaxed);
@@ -573,15 +601,10 @@ void deinit() {
 
 static int try_enable_csi_now() {
 #if SECURACV_HAVE_CSI_API
+  /* L-LTF on every frame + HT-LTF on HT frames, on whichever struct shape
+   * this target's ESP-IDF exposes (csi_idf_compat.h). */
   wifi_csi_config_t cfg;
-  memset(&cfg, 0, sizeof(cfg));
-  cfg.lltf_en           = true;
-  cfg.htltf_en          = true;
-  cfg.stbc_htltf2_en    = false;
-  cfg.ltf_merge_en      = true;
-  cfg.channel_filter_en = true;
-  cfg.manu_scale        = false;
-  cfg.shift             = 0;
+  csi_idf_fill_config(&cfg);
 
   esp_err_t err = esp_wifi_set_csi_config(&cfg);
   if (err == ESP_ERR_WIFI_NOT_STARTED) return 0;
@@ -726,6 +749,10 @@ int process() {
   const uint32_t now_ms = millis();
   if ((now_ms - s_window_start_ms) < CSI_WINDOW_MS) return 0;
 
+  /* A window that closes late stands for every whole window that elapsed
+   * meanwhile; the feature layer holds the breathing envelope across the gap
+   * so its one-sample-per-second time base survives a stall. */
+  features::note_missed_windows((now_ms - s_window_start_ms) / CSI_WINDOW_MS - 1u);
   csi_features_t feats = {};
   features::finalize(&feats, s_window_frames);
 
@@ -768,6 +795,7 @@ bool get_stats(csi_stats_t* out) {
   out->frames_dropped_full = s_frames_dropped_full.load(std::memory_order_relaxed);
   out->windows_emitted     = s_windows_emitted.load(std::memory_order_relaxed);
   out->windows_degraded    = s_windows_degraded.load(std::memory_order_relaxed);
+  out->frames_dropped_short = s_frames_dropped_short.load(std::memory_order_relaxed);
   return true;
 }
 

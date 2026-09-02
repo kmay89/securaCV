@@ -38,7 +38,8 @@ is an explicit owner opt-in on that satellite and is honestly a `won't`, not a
 `can't`: a false wake transiently transcribes a few seconds of room audio,
 which is why command transcripts are never retained, sealed, or exported. The
 full five-rule contract is in `docs/research/whisper_local_voice.md`. `ObjectClass`
-is `Person | Vehicle | Animal | Package` — never `Face` or `LicensePlate`. This
+is `Person | Vehicle | Animal | Package` (plus `Unknown`, for a detection the
+backend could not class) — never `Face` or `LicensePlate`. This
 is Invariant II (`spec/invariants.md`) and it is a rejected PR, not a config flag.
 
 **2. Never widen the raw-frame escape hatch.** `RawFrame.data` stays private: no

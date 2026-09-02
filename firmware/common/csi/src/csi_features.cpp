@@ -460,6 +460,20 @@ static void compute_breathing(int8_t out[BREATH_BINS]) {
 /* Current per-window frame count (for csi_hal introspection). */
 uint32_t current_frame_count() { return s_frame_count; }
 
+size_t envelope_len() { return s_env_ring_len; }
+
+void note_missed_windows(uint32_t missed) {
+  if (missed == 0 || s_env_ring_len == 0) return;   /* nothing to hold */
+  if (missed > BREATH_RING) missed = BREATH_RING;
+  const size_t last = (s_env_ring_head + BREATH_RING - 1) % BREATH_RING;
+  const int16_t held = s_env_ring[last];
+  for (uint32_t i = 0; i < missed; i++) {
+    s_env_ring[s_env_ring_head] = held;
+    s_env_ring_head = (uint16_t)((s_env_ring_head + 1) % BREATH_RING);
+    if (s_env_ring_len < BREATH_RING) s_env_ring_len++;
+  }
+}
+
 void finalize(csi_features_t* out, uint32_t frames_in_window) {
   if (out == nullptr) return;
   memset(out, 0, sizeof(*out));

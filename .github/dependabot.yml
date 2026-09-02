@@ -144,9 +144,17 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  # GitHub Actions used across .github/workflows/.
+  # GitHub Actions used across .github/workflows/ AND inside the two composite
+  # actions. `directory: "/"` only covers .github/workflows/*; a composite
+  # action's own `uses:` pins are invisible to it — which is how
+  # keep-firmware-latest sat on github-script@v8 while every workflow had
+  # moved to v9, and how the SHA-pinned arduino/setup-arduino-cli in
+  # setup-arduino-esp32 would never have been bumped.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/keep-firmware-latest"
+      - "/.github/actions/setup-arduino-esp32"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
@@ -154,6 +162,21 @@ updates:
       prefix: "ci(actions)"
     groups:
       github-actions:
+        patterns: ["*"]
+
+  # Python test tooling (requirements_test.txt, mirrored byte-for-byte in the
+  # HACS repo securacv-homeassistant, which already has this entry and has
+  # merged bumps the monorepo never saw — so the two copies of the same test
+  # suite were running under different pytest/ruff/mypy pins).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(pip)"
+    groups:
+      pip-test-deps:
         patterns: ["*"]
 
   # Docker base images (FROM lines in the root and sidecar Dockerfiles). The

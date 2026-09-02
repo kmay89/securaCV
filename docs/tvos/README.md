@@ -42,8 +42,10 @@ The Witness Wall shows **the verified record, not the footage**:
   Semantic events from the Privacy Witness Kernel, rendered as plain language.
   The Ed25519 hash-chain is checked as it scrolls; a tampered or missing link
   shows up *here*, on the shared screen, not buried in a log.
-- **Chain health as ambient calm.** A quiet, ever-present "verified through
-  4:02 pm" heartbeat. The reassurance the whole product is built to give,
+- **Chain health as ambient calm.** A quiet, ever-present "chain intact
+  through 4:02 pm" heartbeat — the time is the TV's own receipt, and the word
+  becomes "verified" only once the chain has been checked against a key
+  pinned at pairing. The reassurance the whole product is built to give,
   finally sitting where the household can see it.
 - **Ambient mode (the magic).** When idle, the Apple TV becomes a witness
   screensaver — the fleet slowly breathing, the chain growing link by link,

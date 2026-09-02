@@ -43,7 +43,7 @@ SPEC.loader.exec_module(lint)
 def gated(src: str) -> bool:
     """Run enclosing_guard against the single restart in `src`."""
     lines = src.splitlines()
-    hits = [i for i, l in enumerate(lines) if lint.RESTART.search(l)]
+    hits = [i for i, text in enumerate(lines) if lint.RESTART.search(text)]
     assert len(hits) == 1, f"fixture must contain exactly one restart, got {len(hits)}"
     return lint.enclosing_guard(lines, hits[0])
 

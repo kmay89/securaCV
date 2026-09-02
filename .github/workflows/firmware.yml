@@ -81,6 +81,12 @@ jobs:
   #   dir                — project dir holding platformio.ini
   #   build_envs         — envs compiled by the build job, in order
   #   check_env          — env analyzed by the pio-check job
+  #   release_envs       — the subset of build_envs the RELEASE workflows
+  #                        (firmware-release.yml, flasher-release.yml) build
+  #                        and publish as flasher/OTA products. lint.yml
+  #                        checks every env name those workflows type against
+  #                        it (firmware/scripts/flavor_envs.py); a product
+  #                        without it releases from its own dedicated steps.
   #   pip_extras         — extra pip packages (e.g. canary needs
   #                        intelhex: esptool 4.11.0 bundled by the
   #                        official espressif32 7.x platform imports it
@@ -591,6 +597,22 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_ble_scan_sync.sh
           firmware/scripts/check_ble_scan_sync.sh
+          chmod +x firmware/scripts/check_mesh_sync.sh
+          firmware/scripts/check_mesh_sync.sh
+
+      - name: Verify device_signature copies in canary-wap sketch dir match canonical source
+        # The Ed25519 MQTT-claim signer (+ whoami proof + enrollment card) is
+        # canonical at firmware/common/identity/ — compiled by canary-sense
+        # and canary-vision, host-tested in firmware/tests_host — and
+        # committed byte-identical next to the canary-wap sketch. It was the
+        # one staged family with NO guard, and it had forked in BOTH
+        # directions: the sketch grew the whoami proof, the canonical grew the
+        # `sense` canonical and null guards. This module is how Home
+        # Assistant tells a Canary from an impersonator with broker access;
+        # signature code drifting silently is the worst kind of drift.
+        run: |
+          chmod +x firmware/scripts/check_signature_sync.sh
+          firmware/scripts/check_signature_sync.sh
 
       - name: Verify the Canary Display Arduino sketch is in sync with the PlatformIO tree
         # The display Arduino sketch is GENERATED from the canonical PlatformIO
@@ -819,6 +841,41 @@ jobs:
 
       - name: Run host witness round-trip test
         run: /tmp/csi_roundtrip
+
+      # Three more host suites lived next to the two above and were never
+      # run by any workflow: the ESP-NOW probe scheduler, the multilink
+      # fusion module, and the empty-room baseline. Each compiled and passed
+      # the day this step was added — the gap was the wiring, not the tests.
+      - name: Build + run host probe scheduler test (csi_probe)
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter \
+              firmware/common/csi/csi_probe_test.cpp \
+              firmware/common/csi/src/csi_probe.cpp \
+              -I firmware/common/csi/src -o /tmp/csi_probe_test
+          /tmp/csi_probe_test
+      - name: Build + run host multilink fusion test (core.multilink_fusion)
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter \
+              firmware/common/csi/test_core_multilink_fusion.cpp \
+              firmware/common/csi/src/core_multilink_fusion.cpp \
+              firmware/common/csi/src/csi_event.cpp \
+              firmware/common/csi/src/csi_module.cpp \
+              firmware/common/csi/src/csi_bundler.cpp \
+              -I firmware/common/csi/src -o /tmp/csi_multilink_test
+          /tmp/csi_multilink_test
+      - name: Build + run host empty-room baseline test (meta.empty_room_baseline)
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter \
+              firmware/common/csi/test_meta_empty_room_baseline.cpp \
+              firmware/common/csi/src/meta_empty_room_baseline.cpp \
+              firmware/common/csi/src/csi_event.cpp \
+              firmware/common/csi/src/csi_module.cpp \
+              firmware/common/csi/src/csi_bundler.cpp \
+              -I firmware/common/csi/src -o /tmp/csi_empty_room_test
+          /tmp/csi_empty_room_test
 
   # ──────────────────────────────────────────────────────────────────
   # Mesh + Scout host test suites

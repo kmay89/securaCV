@@ -96,6 +96,7 @@ typedef struct {
   uint32_t frames_dropped_full;
   uint32_t windows_emitted;
   uint32_t windows_degraded;
+  uint32_t frames_dropped_short;  /* no L-LTF section (< 128 bytes) */
 } csi_stats_t;
 
 #ifdef __cplusplus

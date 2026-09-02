@@ -1,13 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the SecuraCV Flasher main window: open dialogs and external docs, and self-update. Deliberately NO shell permission: every espflash/rpiboot sidecar spawn happens Rust-side (launch_guard::spawn_tracked via ShellExt), which the webview capability system does not gate — so granting the webview shell:allow-execute (it used to, with args:true) only widened what an injected script could do, without being needed by anything. The frontend never calls plugin:shell.",
-  "windows": ["main"],
+  "description": "Permissions for the SecuraCV Flasher main window: open dialogs and external docs, and post notifications. Deliberately NO shell permission: every espflash/rpiboot sidecar spawn happens Rust-side (launch_guard::spawn_tracked via ShellExt), which the webview capability system does not gate \u2014 so granting the webview shell:allow-execute only widened what an injected script could do. The same rule now applies to updater:default and process:default: self-update and relaunch are driven from Rust (install_update), and the frontend only ever calls core / dialog / event / notification / app, so the webview grants match exactly what desktop/src/app.js uses.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "dialog:default",
-    "updater:default",
-    "process:default",
     "opener:default",
     "notification:default"
   ]

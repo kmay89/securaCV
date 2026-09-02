@@ -611,7 +611,13 @@ void handle_tz_set() {
 // LAN-open like every write here (/api/set, /api/tz): the glass mints no
 // bearer credential, the LAN is the trust boundary, and the worst a
 // caller can do is start a check for firmware the device then verifies
-// against its pinned Ed25519 release key.
+// against its pinned Ed25519 release key. What it is NOT open to is a web
+// page on another origin: a browser attaches Origin to every POST, so the
+// two kick routes refuse a cross-site Origin exactly as /api/set does. They
+// do not require the per-boot CSRF token, because their callers are native
+// (the desktop Flasher's "Update over the air" button, curl) and never load
+// /api/settings to learn it — and a caller with no Origin at all is not a
+// browser bound by the same-origin policy, so it is not this vector.
 
 // Shared answer for the two kick routes: 200 started / 409 busy / 500
 // refused — the same statuses and body shapes as the canary's handlers,
@@ -669,6 +675,10 @@ void handle_ota_status() {
 // POST /api/ota/check — fetch the manifest and compare versions, without
 // installing. Results land in /api/ota/status (poll while state=Checking).
 void handle_ota_check() {
+  if (origin_is_cross_site()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"origin\"}");
+    return;
+  }
   send_ota_kick(ota_web_check(), "Checking for updates...",
                 "ota_check_failed");
 }
@@ -677,6 +687,10 @@ void handle_ota_check() {
 // check first would make this 409). The device restarts into the new
 // firmware on success, with automatic rollback if it fails its probe.
 void handle_ota_install() {
+  if (origin_is_cross_site()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"origin\"}");
+    return;
+  }
   send_ota_kick(ota_web_install(),
                 "Installing the update. Your Canary will restart on its own.",
                 "ota_install_failed");
@@ -840,6 +854,16 @@ void handle_fleet() {
   // BLE beacon, and an unsigned whisper must not be republished as an HTTP
   // fact. Same task as the fleet model's writers (WebServer runs on the
   // loop task — see the snapshot note above), so no lock is needed.
+  // Who is asking decides how much the peer rows say. The document carries
+  // Access-Control-Allow-Origin: * so the Witness Wall can read it from a
+  // browser on another origin — which also means ANY web page a household
+  // member opens can read it. Liveness, product and hub state are fine for
+  // that audience (the LAN can see the device is up). Who is in which room
+  // and whether someone is breathing are not: those words ride only on
+  // requests with no Origin (native apps, the TV, curl) or a same-site
+  // Origin (the glass's own pages). No browser client in any repo renders
+  // them today, so nothing is lost; a drive-by page just stops learning it.
+  const bool coarse_only = origin_is_cross_site();
   {
     const auto& fleet = canary::fleet::the_fleet();
     size_t appended = 0;
@@ -854,7 +878,7 @@ void handle_fleet() {
       peer.online       = (w->link == canary::fleet::Link::Online) ? 1 : 0;
       peer.chain_ok     = 0;   // a display cannot verify a peer's chain
       peer.chain_height = -1;
-      if (peer.online) {
+      if (peer.online && !coarse_only) {
         if (w->sense_present && w->radar_presence != 0) {
           peer.presence  = (w->radar_presence == 2) ? "present" : "clear";
           peer.occupants = (w->radar_occupants >= 2) ? "2+"

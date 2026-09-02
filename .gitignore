@@ -95,3 +95,4 @@ canary-local/boards/*.src.step
 
 # Apple build output: staged Rust core slices, archives, exported .ipa.
 tvos/build/
+.mypy_cache/

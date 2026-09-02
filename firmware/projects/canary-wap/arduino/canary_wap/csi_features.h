@@ -61,6 +61,21 @@ void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
  */
 void finalize(csi_features_t* out, uint32_t frames_in_window);
 
+/* Keep the breathing envelope's time base honest across a supply gap.
+ * The Goertzel bank assumes one envelope sample per second (one per
+ * finalized window). When the HAL closes a window late — the loop stalled,
+ * the radio was quiet, power gating — the windows that never happened
+ * used to be skipped, so the ring silently compressed time and every bin
+ * drifted toward a faster rate. The HAL calls this with the number of
+ * whole windows that elapsed without being finalized (0 normally) and the
+ * ring holds its last sample that many times, so a 15-breaths-per-minute
+ * room still reads 15 after a two-second hiccup. Capped at the ring size;
+ * a longer gap simply restarts the spectrum from the held value. */
+void note_missed_windows(uint32_t missed);
+
+/* Envelope samples currently in the breathing ring (test introspection). */
+size_t envelope_len();
+
 /* Lightweight introspection — used by csi_hal conformance. */
 uint32_t current_frame_count();
 

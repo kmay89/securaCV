@@ -47,6 +47,7 @@
 #include <csi_hal.h>
 #include <csi_features.h>
 #include <csi_probe.h>
+#include <csi_traffic.h>
 #include <csi_types.h>
 #include <csi_module.h>
 #include <csi_event.h>
@@ -129,6 +130,7 @@ const char*                             g_api_token          = nullptr;
 /* Defined with the probe pump further down; handle_stream's supply
  * diagnostics need it first. */
 bool probe_running();
+bool traffic_pinging();
 
 /* Forward decl of the file-scope cv_session_validate trampoline (defined
  * just below the anonymous namespace, near session_validate_cookie). The
@@ -594,16 +596,17 @@ esp_err_t handle_stream(httpd_req_t* req) {
    * (fps fine, no motion) from "sensing starved of frames" (fps ≈ 0 —
    * no home WiFi beacons and no peer Canary probing). fps is the frame
    * count of the last finalized 1 s window ≡ frames/second. */
-  char supply[96];
+  char supply[112];
   {
     /* The never-got-a-frame sentinel UINT32_MAX intentionally prints as
      * -1 through the int32 cast; the dashboard treats any negative as
      * "no frames yet". */
     const uint32_t silent = csi_hal::get_ms_since_last_frame();
     snprintf(supply, sizeof(supply),
-      "\"supply\":{\"fps\":%u,\"probe\":%s,\"silent_ms\":%d}",
+      "\"supply\":{\"fps\":%u,\"probe\":%s,\"ping\":%s,\"silent_ms\":%d}",
       (unsigned)(g_have_latest_window ? g_latest_window.frames_in_window : 0),
       probe_running() ? "true" : "false",
+      traffic_pinging() ? "true" : "false",
       (int)(int32_t)silent);
   }
 
@@ -657,12 +660,12 @@ esp_err_t handle_stream(httpd_req_t* req) {
            i < IDX_DOPPLER_BASE + IDX_DOPPLER_COUNT; ++i) {
         m += abs((int)g_latest_window.v[i]);
       }
-      for (int i = IDX_BREATHING_BASE;
-           i < IDX_BREATHING_BASE + IDX_BREATHING_COUNT; ++i) {
-        b += abs((int)g_latest_window.v[i]);
-      }
+      /* Breathing is the PEAK bin, via the reducer core.presence and
+       * anomaly.baseline share (csi_types.h): a clean breath is one bin
+       * ≈40 and seven ≈0, so the 8-bin mean under-read the orb by ~8×. */
+      (void)b;
       const int32_t m_avg = m / IDX_DOPPLER_COUNT;
-      const int32_t b_avg = b / IDX_BREATHING_COUNT;
+      const int32_t b_avg = (int32_t)csi_breathing_peak(g_latest_window.v);
       motion    = (uint8_t)(m_avg > 100 ? 100 : m_avg);
       breathing = (uint8_t)(b_avg > 100 ? 100 : b_avg);
     }
@@ -2103,6 +2106,36 @@ void probe_pump() {
 
 bool probe_running() { return csi_probe::is_running() && !csi_probe::is_paused(); }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * ROUTER ECHO SUPPLY
+ *
+ * probe_pump() lights up OTHER Canaries; a device cannot receive its own
+ * transmissions, so a solo Canary on home Wi-Fi still lived on the AP's
+ * ~10 Hz beacons and every window read "degraded". csi_traffic pings the
+ * gateway at the HAL's target frame rate — each echo reply is a frame
+ * addressed to this station, so the reply rate IS the CSI frame rate (the
+ * same remedy espressif/esp-csi ships in its router-driven examples).
+ * 20 Hz × ~70 B is ~1.4 kB/s. It runs only while csi_hal is running AND the
+ * power gate allows CSI; the module polls the STA netif for link state and
+ * gateway itself, so nothing here touches association or channel.
+ * ────────────────────────────────────────────────────────────────────────── */
+constexpr uint16_t CSI_TRAFFIC_PING_HZ = 20;
+
+void traffic_pump(bool run_csi) {
+  static bool s_traffic_init = false;
+  if (!g_hal_ready) return;
+  if (!s_traffic_init) {
+    csi_traffic::TrafficConfig tc = csi_traffic::TrafficConfig::defaults();
+    tc.rate_hz = CSI_TRAFFIC_PING_HZ;
+    csi_traffic::init(tc);
+    s_traffic_init = true;
+  }
+  csi_traffic::set_enabled(run_csi && csi_hal::is_running());
+  csi_traffic::process();
+}
+
+bool traffic_pinging() { return csi_traffic::is_pinging(); }
+
 void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
   ++s_watchdog_consecutive;
   Serial.printf("[csi.watchdog] silent %ums, attempt %u (consecutive %u)\n",
@@ -2983,6 +3016,10 @@ void loop(bool run_csi) {
    * off, and it saves the probe TX too), and the boot self-test (which
    * would otherwise false-alarm "0 frames" while CSI is intentionally
    * disabled — deferring it means it runs once CSI is actually active). */
+  /* The echo supply is pumped BEFORE the gate so it can also stop when
+   * CSI is gated off; it stays idle while run_csi is false. */
+  traffic_pump(run_csi);
+
   if (!run_csi) return;
 
   csi_hal::process();

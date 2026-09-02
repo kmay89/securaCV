@@ -93,6 +93,11 @@ jobs:
       - name: Decide whether to publish
         id: plan
         shell: bash
+        env:
+          # Expressions stay out of the shell text (a `${{ }}` inside run: is
+          # interpolated before bash sees it — the code-injection shape CodeQL
+          # flags); the value arrives as an environment variable instead.
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           # All THREE version files must agree before we build a release out of
           # them. The first version of this check compared two of the three and
@@ -107,7 +112,7 @@ jobs:
           python3 desktop/scripts/release_notes.py check
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF_NAME}"; publish=true
-          elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
+          elif [[ "${DRY_RUN:-}" == "false" ]]; then
             # Publish the app's actual version (from tauri.conf.json), so the
             # "Run workflow" button cuts a real release, not a dev stub.
             ver=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
@@ -414,12 +419,25 @@ jobs:
         shell: bash
         env:
           SECRET_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBLISH_RUN: ${{ steps.plan.outputs.publish }}
         run: |
           set -euo pipefail
           if [ -n "${SECRET_KEY:-}" ]; then
             echo "Using repository signing key."
           else
-            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
+            # An ephemeral key is fine for a build-only smoke run. It is NOT
+            # fine for a publish: the updater manifest and the rolling
+            # *-latest pointer would advance with .sig files no installed
+            # Flasher can verify (its embedded pubkey is the repository key), so
+            # every existing install would see "update ready" and fail to
+            # apply it — self-update bricked fleet-wide until the next real
+            # publish. firmware-release.yml already refuses to publish without
+            # its OTA key; this is the same posture for the apps.
+            if [ "${PUBLISH_RUN:-}" = "true" ]; then
+              echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, and this run PUBLISHES. Refusing to publish an update the installed base cannot verify. Add the repository signing secret (desktop/README.md, 'real self-update signing') or run build-only."
+              exit 1
+            fi
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build-only run succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
             npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/flasher.key" --password ""
             # The Tauri private key is a single base64 line; $(cat) strips the
             # trailing newline so a plain assignment is safe (a heredoc here

@@ -46,7 +46,10 @@ def request(method: str, url: str, token: str, payload: dict | None = None):
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as res:
+        # 30 s like every other network helper in the tooling; without a
+        # timeout a stalled API connection hangs the job until its
+        # timeout-minutes circuit breaker fires.
+        with urllib.request.urlopen(req, timeout=30) as res:
             body = res.read()
             return res.status, (json.loads(body) if body else None)
     except urllib.error.HTTPError as err:
@@ -55,6 +58,11 @@ def request(method: str, url: str, token: str, payload: dict | None = None):
             return err.code, json.loads(body) if body else None
         except json.JSONDecodeError:
             return err.code, {"message": body.decode("utf-8", "replace")}
+    except (urllib.error.URLError, TimeoutError, OSError) as err:
+        # Network-level failure (DNS, reset, timeout): no HTTP status exists,
+        # so report it as a synthetic 599 with the reason, which the caller's
+        # non-2xx path already surfaces.
+        return 599, {"message": f"request failed: {err}"}
 
 
 def load_manifest() -> list[dict]:

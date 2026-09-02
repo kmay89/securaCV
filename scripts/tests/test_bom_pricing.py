@@ -13,7 +13,6 @@ CI:   .github/workflows/lint.yml (Repo Lints)
 """
 import importlib.util
 import json
-import sys
 import unittest
 import urllib.parse
 from pathlib import Path

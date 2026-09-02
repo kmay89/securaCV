@@ -14,9 +14,12 @@ own sketch.
 
 | Layer | What it does | File |
 | --- | --- | --- |
-| `csi_hal` | Wraps `esp_wifi_set_csi_rx_cb()`. Lock-free ring buffer between the WiFi task and the main loop. **Scrubs MAC / BSSID / FCS at the interrupt boundary** before any data is buffered. | `csi_hal.{h,cpp}` |
+| `csi_hal` | Wraps `esp_wifi_set_csi_rx_cb()`. Lock-free ring buffer between the WiFi task and the main loop. **Scrubs MAC / BSSID / FCS at the interrupt boundary** before any data is buffered, and canonicalizes each frame to 52 L-LTF tones on the way in. | `csi_hal.{h,cpp}` |
 | `csi_features` | Aggregates ~20 Hz CSI frames into one 32-dim `int8` feature vector per 1 s window. Subcarrier amplitude variance × 8, phase-difference Doppler × 4, breathing/micro-motion FFT 0.1–0.5 Hz × 8, RSSI stats × 4, frame-health × 4. | `csi_features.{h,cpp}` |
 | `csi_types` | Privacy invariants, capability flags, the `csi_features_t` contract. | `csi_types.h` |
+| `csi_subcarriers` | Reduces every frame — non-HT (128 B) or HT (256 B), 20 or 40 MHz — to the same 52 L-LTF data+pilot tones in frequency order, so a window never mixes tone counts and the twelve null tones stay out of the AGC mean. Header-only; detects the tone ordering from the frame's own null tones. | `csi_subcarriers.h` |
+| `csi_idf_compat` | The one place the ESP-IDF driver-config field names live: legacy `lltf_en`/`htltf_en`/… on ESP32/S3/C3, the `acquire_csi_*` bitfields on C6/C5/C61. Compile-tested against four IDF struct shapes. | `csi_idf_compat.h` |
+| `csi_traffic` | Frame supply for a solo device: pings the gateway at the HAL's target rate so every echo reply is a CSI frame addressed to us (a device cannot receive its own ESP-NOW probes). Same remedy as espressif/esp-csi's router examples. Policy host-tested. | `csi_traffic.{h,cpp}` |
 | `csi_module` | Tiny module-interface for layered sensing: `init` / `tick(features)` / `emit_event` / `on_event_dismissed` / `deinit`. The expansion path. | `csi_module.h` |
 | `csi_event` | The single privacy chokepoint. Tags every event with a class (`P0`/`P1`/`P2`), coarsens timestamps at emit time, strips fields not on the module's allow-list, and routes through the optional witness chain. | `csi_event.{h,cpp}` |
 | `csi_bundler` | Same-state events within a 10-minute sliding window collapse into one row with a duration. Stops the dashboard from flickering. | `csi_bundler.{h,cpp}` |
@@ -71,7 +74,7 @@ A complete example lives in `firmware/examples/csi_minimal/csi_minimal.ino`.
 | ESP32-S3 | ✅ Primary | XIAO ESP32-S3 Sense is the SecuraCV reference board. |
 | ESP32 (original) | ✅ | HT20 only on most variants. |
 | ESP32-C3 | ✅ | HT20 only. |
-| ESP32-C6 | ✅ | Uses the same single CSI path as every ESP32 here (HT-LTF; ~52 usable subcarriers on HT20 / ~108 on HT40; this HAL caps ingest at `CSI_MAX_SUBCARRIERS`=128). The C6's Wi-Fi-6 HE-LTF CSI is richer in principle, and ESP-IDF v5.5+ does expose C6 HE-LTF CSI acquisition (`acquire_csi_su`/`mu`/`dcm`/`beamformed` in `esp_wifi_he_types.h`) — but **this firmware** configures the legacy CSI fields and caps ingest at 128, so it does not acquire or ingest the HE-LTF path. The gap is this repo's HAL, not ESP-IDF; enabling the ~242-tone HE path is firmware work, not just picking a C6. No ESP32, C6 included, exposes IEEE 802.11bf sounding in ESP-IDF; the `CSI_CAP_SOUNDING_11BF` bit is reserved and is not set by `get_caps()` on any target. |
+| ESP32-C6 | ⚠️ compiles, bench-unverified | ESP-IDF 5.1+ gives the C6 (and C5/C61) a different `wifi_csi_config_t` — the `wifi_csi_acquire_config_t` bitfields — so the HAL as first written did not compile there at all, whatever the table said. `csi_idf_compat.h` now fills whichever shape the target exposes and is compile-tested against every IDF revision of both (`tests_host/test_csi_idf_compat.cpp`); the frame path is the same 52-tone L-LTF canonical set as every other part. **No C6 has run this HAL yet** — treat it as untested until a bench log says otherwise. HE-LTF (Wi-Fi 6) acquisition is deliberately left off: its tone count differs per PPDU type and needs its own map. No ESP32 exposes IEEE 802.11bf sounding in ESP-IDF; `CSI_CAP_SOUNDING_11BF` stays reserved. |
 | ESP32-S2 | ⚠️ | No CSI in stock IDF builds. |
 | ESP8266 | ❌ | No CSI support. |
 

@@ -220,12 +220,13 @@ extension FleetSnapshot.Device {
         name = (try? c.decode(String.self, forKey: .name)) ?? ""
         // Absent is not "online" — the cautious reading is the only safe one
         // for a presence claim we were never given, and it is the reading the
-        // phone's FleetSelfDevice already uses. Rust's normalizer defaults the
-        // other way (`default_online`), which is not a contradiction in the
-        // real path: the firmware's `_append_device` always writes the field,
-        // and Rust always re-serializes it, so neither default can fire on a
-        // body that actually crossed the wire. This one is the backstop for
-        // the day that stops being true.
+        // phone's FleetSelfDevice and Rust's normalizer (`default_online`,
+        // pinned by witness-core's tests/fixtures/fleet_contract_vectors.json)
+        // both use. In the real path the firmware's `_append_device` always
+        // writes the field and Rust always re-serializes it, so this default
+        // never fires on a body that crossed the wire; it is the backstop for
+        // the day that stops being true, and it must keep agreeing with the
+        // other two.
         online = (try? c.decode(Bool.self, forKey: .online)) ?? false
         chain = (try? c.decodeIfPresent(String.self, forKey: .chain)) ?? nil
         product = (try? c.decodeIfPresent(String.self, forKey: .product)) ?? nil
@@ -293,6 +294,22 @@ enum WitnessCore {
     }
 
     private struct CoreFailure: Decodable { let error: String }
+
+    /// The hostname a Bonjour advert may steer the Wall to, or nil when the
+    /// advert must be skipped. The rule lives in the core
+    /// (witness-core/src/host.rs) and mirrors the iPhone's
+    /// `DeviceAPI.isPrivate`: a bare label comes back `.local`-qualified, a
+    /// `.local` name of well-formed labels or a private IPv4 address comes
+    /// back as itself (lower-cased), and everything else — a public name, a
+    /// public address, a malformed label — is nil. Null from the core is the
+    /// answer here, not an allocation failure, so this does not throw.
+    static func normalizeSourceHost(_ raw: String) -> String? {
+        raw.withCString { (cRaw: UnsafePointer<CChar>) -> String? in
+            guard let out = scv_normalize_source_host(cRaw) else { return nil }
+            defer { scv_string_free(out) }
+            return String(cString: out)
+        }
+    }
 
     /// The only place a C string is owned. `body` returns a Rust-allocated
     /// `char *`; `defer` hands it back on every exit path, including the throw.

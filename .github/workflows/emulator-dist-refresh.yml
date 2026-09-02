@@ -12,8 +12,13 @@
 #
 # It only ever pushes to the branch it was dispatched on, and only when the
 # rebuild actually changed dist/. Note GitHub's recursion guard: a push
-# made with the default GITHUB_TOKEN does not retrigger workflows, so the
-# refreshed head may need one ordinary push (or re-run) to collect checks.
+# made with the default GITHUB_TOKEN does not retrigger workflows. To get
+# checks on the refreshed head (CLAUDE.md, "Generated files"): push a real
+# change under a path canary-local.yml / firmware.yml watch — a docs-only
+# commit runs nothing, and RE-RUNNING the failed job does NOT help (a re-run
+# checks out the original commit, which still has the stale dist/). Before
+# pushing a third time, check whether the bot's push parked runs at
+# `action_required` — that needs a human Approve, not another commit.
 
 name: Rebuild emulator dist (pinned emsdk)
 

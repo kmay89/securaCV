@@ -3,7 +3,9 @@
 A native **Mac & Linux** application that wraps the local-first
 [`canary-local`](../canary-local) Lab in a [Tauri](https://tauri.app) shell.
 It runs the real firmware emulator, 3D device cards, and fix-it flows
-entirely on your machine — **nothing phones home**, which is exactly the
+entirely on your machine — it **talks only to your own devices**; the one
+thing it fetches on its own is its signed update manifest from GitHub (15 s
+after launch, then every 6 h), which is exactly the
 point of a security product.
 
 > **Sibling app.** [`../desktop`](../desktop) is the **SecuraCV Flasher** — a

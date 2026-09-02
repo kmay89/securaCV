@@ -52,6 +52,44 @@ final class DeviceAPITests: XCTestCase {
         XCTAssertNil(DeviceAPI.ed25519Key(fromSPKIPEM: bogus))
     }
 
+    // ── the "nothing phones home" gate ──
+    // isPrivate is the ONLY thing between a pairing receipt / mDNS answer and an
+    // outbound request. Its first version dropped non-numeric labels while
+    // parsing, so "10.0.0.1.attacker.com" read as 10.0.0.1 and passed.
+    private func isPrivate(_ s: String) -> Bool {
+        guard let url = URL(string: s) else { return false }
+        return DeviceAPI.isPrivate(url)
+    }
+
+    func testIsPrivateAcceptsTheAddressesACanaryCanHave() {
+        for ok in ["http://192.168.1.7", "http://10.1.2.3:8080/api", "http://172.16.0.1",
+                   "http://172.31.255.255", "http://127.0.0.1", "http://169.254.10.20",
+                   "http://canary-a3f7.local", "http://Canary.LOCAL/api/fleet", "http://localhost:8080"] {
+            XCTAssertTrue(isPrivate(ok), "\(ok) is a private/local host and must pass")
+        }
+    }
+
+    func testIsPrivateRejectsPublicHostsAndLookalikes() {
+        for bad in ["http://8.8.8.8", "http://172.32.0.1", "http://172.15.0.1", "http://11.0.0.1",
+                    "http://10.0.0.1.attacker.com", "http://attacker.com.192.168.1.1",
+                    "http://192.168.1.1.x", "http://192.168.1", "http://192.168.1.256",
+                    "http://192.168.001.1234", "http://example.com", "https://securacv.com",
+                    "http://.local", "http://local", "http://192.168.1.7.local.evil.com"] {
+            XCTAssertFalse(isPrivate(bad), "\(bad) must NOT pass the private-host gate")
+        }
+    }
+
+    func testDiscoveredHostBecomesALocalURL() {
+        XCTAssertEqual(DeviceAPI.url(forDiscoveredHost: "canary-display-a1b2")?.absoluteString,
+                       "http://canary-display-a1b2.local")
+        XCTAssertEqual(DeviceAPI.url(forDiscoveredHost: " 192.168.1.5 ")?.absoluteString,
+                       "http://192.168.1.5")
+        XCTAssertEqual(DeviceAPI.url(forDiscoveredHost: "x.local")?.absoluteString, "http://x.local")
+        XCTAssertNil(DeviceAPI.url(forDiscoveredHost: "   "))
+        // And whatever discovery hands us still has to clear the gate.
+        XCTAssertTrue(DeviceAPI.isPrivate(DeviceAPI.url(forDiscoveredHost: "canary-a3f7")!))
+    }
+
     // ── the receipt's tolerance floor ──
     func testReceiptWithoutTokenThrows() {
         let json = Data(#"{"device_id":"canary-a3f7","base_url":"http://192.168.1.20"}"#.utf8)

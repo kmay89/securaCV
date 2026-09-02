@@ -7421,7 +7421,11 @@ static void identify_tick() {
 }
 
 static esp_err_t handle_identify(httpd_req_t* req) {
-  if (!api_auth_check_or_query(req, g_device.api_token_str)) return ESP_OK;
+  // Header (or session cookie) only. The ?token= form exists for the peek
+  // <img src> and vault-download navigations, which cannot set headers; a
+  // JSON POST from the dashboard can, and the kernel rejects query tokens
+  // outright — a token in a URL lands in router and proxy logs.
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   g_health.http_requests++;
 
   uint32_t duration_ms = 15000;  // default ~15s, like Hue's identify

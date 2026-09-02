@@ -140,7 +140,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | OTA | User-initiated only, signed binaries |
 | Cloud | No outbound connections |
 | mDNS | Local AP only |
-| HTTP | TLS only (no plaintext fallback) |
+| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only" |
 | Camera | Preview only (evidence is metadata, not video) |
 
 ### 8. Cryptographic Minimalism
@@ -179,7 +179,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Chain verify fail | Create tamper event, alert user, keep recording |
 | Auth failure | Lock out with exponential backoff |
 | TLS cert expired | Reject connection (no HTTP fallback) |
-| Firmware corrupt | Refuse to boot (secure boot) |
+| Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT enabled on default builds — see [Scope of this principle](#scope-of-this-principle)); the default tier relies on the OTA signature check before the image is written |
 | Watchdog trigger | Reboot, resume from last good state |
 | NVS corruption | Generate new identity (fresh start) |
 
@@ -346,9 +346,15 @@ verify the evidence but cannot forge new evidence or compromise the device.
 **Attack:** Device is confiscated by adversary with forensic capability.
 
 **Result:**
-- Secure boot prevents firmware replacement
-- Flash encryption prevents data extraction without device cooperation
-- Factory reset destroys all data (user can trigger before seizure)
+- **Default tier: FAIL.** Secure boot and flash encryption are an opt-in
+  secure-provisioning build (`firmware/provisioning/sdkconfig.defaults.secure`
+  ships them commented out; so does `canary-ota/sdkconfig.production`). On a
+  default Canary the flash — identity key included — is readable on a bench.
+  What that buys an attacker (forward forgery yes, rewriting anchored history
+  no) is stated in [SECURITY_MODEL.md](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
+- **Secure tier: PARTIAL PASS.** Secure boot prevents firmware replacement;
+  flash encryption prevents data extraction without device cooperation.
+- Factory reset destroys all data (user can trigger before seizure) — both tiers.
 
 **LIMITATION:** A sufficiently resourced adversary with physical access
 can potentially bypass ESP32 secure boot (active area of research).
@@ -395,8 +401,8 @@ the original chain state.
 
 **Result:** Acknowledged risk. Mitigated by:
 - No outbound connections (compromised chip has no exfiltration channel)
-- Secure boot (firmware integrity verified)
-- Flash encryption (data at rest protected)
+- Secure boot (firmware integrity verified) — opt-in secure-provisioning tier only
+- Flash encryption (data at rest protected) — opt-in secure-provisioning tier only
 - Future: open-source RISC-V silicon
 
 **DOCUMENTED LIMITATION:** Disclosed to users in SECURITY_MODEL.md.
@@ -444,8 +450,9 @@ Additionally, exponential backoff limits brute-force attempts.
 
 ### Hardware Trust
 - ESP32-S3 manufactured by Espressif (China-based) — acknowledged boundary
-- Mitigations: no outbound connections, secure boot, flash encryption,
-  eFuse locks, no Espressif cloud services used
+- Mitigations: no outbound connections, no Espressif cloud services used;
+  secure boot, flash encryption and eFuse locks on the opt-in
+  secure-provisioning tier (NOT on default builds)
 - Future: RISC-V based designs with open-source silicon
 
 ---

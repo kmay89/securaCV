@@ -71,12 +71,23 @@ enum PinnedKeyStore {
 
     /// Returns .pinned on first sight, .matches if identical, .changed if it
     /// differs from what we pinned — the caller must surface `.changed` loudly.
+    /// `.notPinned` means the Keychain refused the write: nothing is pinned,
+    /// the device stays at the "Signed" rung, and the next sight tries again.
+    /// This used to be swallowed (`try?`) and reported as `.pinned`, so a
+    /// failed pin looked like a successful one and the trust ladder stalled
+    /// one rung down with no signal anywhere.
     @discardableResult
     static func pin(_ key: Data, for deviceID: String) -> PinResult {
         if let existing = Self.key(for: deviceID) {
             return existing == key ? .matches : .changed(previous: existing)
         }
-        try? Keychain.set(key, account: deviceID, service: service)
+        do {
+            try Keychain.set(key, account: deviceID, service: service)
+        } catch {
+            NSLog("PinnedKeyStore: Keychain refused to pin %@ (%@); staying unpinned until the next sight",
+                  deviceID, String(describing: error))
+            return .notPinned(reason: String(describing: error))
+        }
         return .pinned
     }
 
@@ -85,5 +96,5 @@ enum PinnedKeyStore {
     /// never forgotten or replaced, which is what makes `.changed` meaningful.
     static func forget(_ deviceID: String) { Keychain.delete(account: deviceID, service: service) }
 
-    enum PinResult: Equatable { case pinned, matches, changed(previous: Data) }
+    enum PinResult: Equatable { case pinned, matches, changed(previous: Data), notPinned(reason: String) }
 }

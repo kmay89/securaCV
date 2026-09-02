@@ -12,6 +12,7 @@ Setup modes:
 from __future__ import annotations
 
 import asyncio
+import re
 import logging
 from datetime import timedelta
 from typing import Any
@@ -63,6 +64,20 @@ def mqtt_payload_within_cap(payload: Any) -> bool:
         return False
 
 
+# What a Canary actually puts in the device-id segment of its topics: the
+# firmware's device_pseudonym / hostname alphabet. Anything else on the wildcard
+# subscription is a hostile or misconfigured publisher, and before this gate it
+# minted a device-registry entry plus up to ~20 entities per topic segment,
+# unbounded (device_id was taken verbatim from the topic).
+DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def valid_device_id(device_id: Any) -> bool:
+    """True iff `device_id` is a topic segment a real Canary could publish."""
+    # fullmatch, not match: `$` would accept a trailing newline.
+    return isinstance(device_id, str) and DEVICE_ID_RE.fullmatch(device_id) is not None
+
+
 def parse_mqtt_json(payload: Any) -> dict[str, Any] | None:
     """Decode an MQTT payload into a JSON object, or None.
 
@@ -98,6 +113,18 @@ TIMELINE_CARD_FILENAME = LOVELACE_CARD_FILENAMES[0]
 TIMELINE_CARD_URL = f"/{DOMAIN}_www/{TIMELINE_CARD_FILENAME}"
 
 
+def _manifest_version() -> str:
+    """The integration version from manifest.json, for cache-busting the cards."""
+    try:
+        import json
+        from pathlib import Path
+
+        with open(Path(__file__).parent / "manifest.json", encoding="utf-8") as fh:
+            return str(json.load(fh).get("version", "0"))
+    except (OSError, ValueError):
+        return "0"
+
+
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Serve and auto-load the Lovelace cards. Never fatal.
 
@@ -131,7 +158,13 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
             from homeassistant.components.frontend import add_extra_js_url
 
-            add_extra_js_url(hass, card_url)
+            # `?v=<manifest version>`: browsers and the HA frontend's service
+            # worker cache extra_module_url scripts aggressively, so without a
+            # version query every integration update left users on the old card
+            # JS (cache_headers=False above only shapes the server headers).
+            # Same convention HACS uses for every frontend resource; the static
+            # path itself stays unversioned.
+            add_extra_js_url(hass, f"{card_url}?v={_manifest_version()}")
             registered_any = True
             _LOGGER.debug("SecuraCV card registered at %s", card_url)
         if not registered_any:
@@ -431,7 +464,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Type is inferred as `SecuraCVCoordinator | None` across this if/else;
         # within this branch it's known non-None, so the refresh call is safe.
         coordinator = SecuraCVCoordinator(hass, api)
-        await coordinator.async_config_entry_first_refresh()
+        if enable_mqtt:
+            # "Both" mode (the auto flow, hassio discovery and install.sh all
+            # create it): a kernel that is stopped, updating or still booting
+            # used to raise ConfigEntryNotReady here and take every Canary
+            # MQTT entity down with it, before a single subscription was
+            # made. A tolerant refresh lets the kernel entities report
+            # unavailable (last_update_success) and recover on the next poll
+            # while the Canaries keep working. Pure kernel mode keeps the
+            # strict first refresh: there is nothing else to serve.
+            await coordinator.async_refresh()
+        else:
+            await coordinator.async_config_entry_first_refresh()
     else:
         api = None
         coordinator = None
@@ -467,6 +511,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         #                       "pinned_fingerprint": str|None,
         #                       "received_fingerprint": str|None } }
         "verify": {},
+        # Per-device, per-kind high-water marks of the counters inside
+        # VERIFIED publishes (event_id / seq / chain length / counts total).
+        # A validly signed publish whose counter goes BACKWARDS is a replay
+        # of an older message and must not move entity state — the
+        # signatures alone cover no timestamp or nonce. Reset when a device
+        # is (re)pinned via TOFU. Shape: { device_id: { field: int } }
+        "replay": {},
         # Mismatches we've already surfaced as persistent_notification —
         # one entry per (device_id, fp) so we don't spam the user.
         "mismatch_notified": set(),
@@ -612,6 +663,8 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
             return
 
         device_id = parts[-2]
+        if not valid_device_id(device_id):
+            return
         entry_data = hass.data[DOMAIN].get(entry.entry_id)
         if not entry_data:
             return
@@ -723,6 +776,8 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         if len(parts) < 3:
             return
         device_id = parts[-2]
+        if not valid_device_id(device_id):
+            return
         entry_data = hass.data[DOMAIN].get(entry.entry_id)
         if not entry_data:
             return
@@ -741,15 +796,38 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
             # 64 chars but not hex — would raise later inside the pin task.
             return
         # async_pin needs the loop; schedule as a task so the @callback
-        # context returns synchronously.
-        hass.async_create_task(
-            trust_store.async_tofu_pin_if_unknown(device_id, pubkey_hex)
-        )
+        # context returns synchronously. A pin that actually lands is a new
+        # identity for this device_id (fresh flash, factory reset, a
+        # replacement board), whose counters start over — so its replay
+        # high-water marks start over with it, or every valid publish from
+        # the new key would read as a replay of the old one.
+        async def _pin_and_reset_replay() -> None:
+            pinned = await trust_store.async_tofu_pin_if_unknown(device_id, pubkey_hex)
+            if pinned is not None:
+                async_clear_replay_marks(hass, entry, device_id)
+
+        hass.async_create_task(_pin_and_reset_replay())
         _LOGGER.info(
             "TOFU-pinning Canary %s with pubkey %s…", device_id, pubkey_hex[:16]
         )
 
     return _callback
+
+
+@callback
+def async_clear_replay_marks(hass: HomeAssistant, entry: ConfigEntry, device_id: str) -> None:
+    """Forget a device's replay high-water marks.
+
+    Called on every path that changes which key a device_id answers to —
+    TOFU first sight, the operator's pin / rotate / unpin — because the
+    counters the replay gate compares (event_id, seq, chain length, totals)
+    belong to the key, and a new key starts them over. Without this the
+    replacement device's first publishes all read as replays of the old one
+    until its counters climb past the old high-water marks.
+    """
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if isinstance(entry_data, dict):
+        entry_data.setdefault("replay", {}).pop(device_id, None)
 
 
 @callback
@@ -770,6 +848,13 @@ def async_record_verify(
         "received_fingerprint": verdict.received_fingerprint,
         "detail": verdict.detail,
     }
+    if verdict.reason == "tofu_pin":
+        # A newly pinned device starts its counters over (fresh flash, factory
+        # reset); its replay high-water marks must start over with it. The
+        # verifiers do not return this reason today — the health hook and the
+        # options flow clear the marks themselves — but a future verifier
+        # that pins inline gets the same behavior for free.
+        async_clear_replay_marks(hass, entry, device_id)
     if verdict.reason == "mismatch":
         # Dedup by (device_id, received_fingerprint) so a steady stream
         # of mismatched publishes only notifies the user once. Cleared
@@ -810,3 +895,35 @@ def async_get_trust_store(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore
     if not entry_data:
         return None
     return entry_data.get("trust_store")
+
+
+def unsigned_trust_attrs(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str
+) -> dict[str, Any]:
+    """Trust slice for an entity moved by a topic the firmware never signs.
+
+    tamper / transport / mesh / chirp / health publishes carry no sig
+    envelope, so nothing was verified and nothing here may say otherwise:
+    `verified` is always False and `trust_reason` is "unsigned" — the same
+    verdict the verifiers return for a signed-kind payload that arrives
+    without its envelope, so a dashboard reads both the same way. The keys
+    match sensor.py's `_trust_attrs` exactly: an unsigned publish and a
+    verified one are told apart by the attribute's value, never by its
+    absence. `pinned_fingerprint` is the identity the device is enrolled
+    under (from its signed topics) when a pin exists, so the row still says
+    which Canary this is; there is no received fingerprint to show.
+    """
+    pinned: str | None = None
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if isinstance(entry_data, dict):
+        trust_store = entry_data.get("trust_store")
+        if isinstance(trust_store, TrustStore):
+            pin = trust_store.get(device_id)
+            if pin is not None:
+                pinned = pin.fingerprint_hex
+    return {
+        "verified": False,
+        "trust_reason": "unsigned",
+        "pinned_fingerprint": pinned,
+        "received_fingerprint": None,
+    }

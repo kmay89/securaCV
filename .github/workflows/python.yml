@@ -47,7 +47,10 @@ jobs:
           pip install -r requirements_test.txt
 
       - name: Ruff (lint)
-        run: ruff check custom_components/securacv
+        # The integration AND the repo tooling: canary-local/tools (the Lab's
+        # generators) and scripts/ (the lint gates) run on every PR but were
+        # never linted themselves — 82 findings at first run, all fixed.
+        run: ruff check custom_components/securacv canary-local/tools scripts
 
       - name: Mypy (type-check)
         run: mypy

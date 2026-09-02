@@ -32,6 +32,20 @@ on:
       # which is exactly the drift the fixture exists to prevent.
       - "viewer/fixtures/timeline/**"
       - ".github/workflows/ios-selfheal.yml"
+  # And main's post-lint compiler. The linters that gate iOS sources
+  # (lint_apple_parity.py, lint_apple_plists.py, lint_cloudkit_container.py,
+  # ios/scripts/check_app_icon.py — all in lint.yml's `scripts` job) run on
+  # every push to main, but nothing then compiled what they had just passed:
+  # main's iOS state between nightlies was whatever the last PR build said.
+  # This fires when "Repo Lints" completes on main; the job builds only when
+  # that run succeeded (a red lint already reports itself — compiling on top
+  # of it adds a second failure for one cause). Recursion is structurally
+  # impossible: lint.yml has no workflow_run trigger, and this workflow
+  # pushes nothing and dispatches nothing, so the chain ends here.
+  workflow_run:
+    workflows: ["Repo Lints"]
+    types: [completed]
+    branches: [main]
   schedule:
     # 08:41 UTC nightly — off the :00 fleet stampede, distinct from bom-pricing.
     - cron: "41 8 * * *"
@@ -55,15 +69,27 @@ jobs:
     # authored in Swift-less dev containers it is the first compiler — a
     # gated green no-op would defeat the protection.
     env:
-      RUN_BUILD: ${{ vars.ENABLE_IOS_BUILD == 'true' || github.event_name == 'pull_request' }}
+      RUN_BUILD: ${{ vars.ENABLE_IOS_BUILD == 'true' || github.event_name == 'pull_request' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+      LINT_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
     steps:
       - name: Gate notice
         if: env.RUN_BUILD != 'true'
         run: |
-          echo "::notice title=iOS self-heal skipped::Set repository variable ENABLE_IOS_BUILD=true to enable the nightly iOS build/test (PRs touching ios/** always build). Exiting green."
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            echo "::notice title=iOS self-heal skipped::Repo Lints concluded '${LINT_CONCLUSION}' on main — nothing to compile on top of a lint that did not pass. Exiting green."
+          else
+            echo "::notice title=iOS self-heal skipped::Set repository variable ENABLE_IOS_BUILD=true to enable the nightly iOS build/test (PRs touching ios/** always build; so does main after a green Repo Lints run). Exiting green."
+          fi
 
       - uses: actions/checkout@v7
         if: env.RUN_BUILD == 'true'
+        # On workflow_run this checks out main's CURRENT head, not the commit
+        # the lint run verified. The first version pinned `ref:` to that
+        # commit; CodeQL rates a checkout of a workflow_run's head_sha as
+        # untrusted code in a privileged context (the caches this job then
+        # warms are the default branch's), and it cannot see the `branches:
+        # [main]` filter that makes the two the same tree here. main's head is
+        # main either way; a newer main just means a fresher compile.
 
       # Store assets fail at `altool --validate-app`, minutes into a gated
       # publish nobody can run yet — so PR CI asserts them structurally here

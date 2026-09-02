@@ -1,0 +1,6 @@
+# Paths TruffleHog skips (regex, one per line). Generated wasm bundles are
+# base64 in minified JS and produce token-shaped false positives on every
+# rebuild; lockfiles carry legitimate long hashes.
+^canary-local/emulator/dist/
+Cargo\.lock$
+package-lock\.json$

@@ -238,3 +238,30 @@ Signing does **not** by itself change the macOS disk-write prompt from
 that's Apple's built-in helper. Rebranding it needs a **signed privileged helper**
 (`SMAppService`), which *builds on* this signing being in place. It's a separate,
 larger piece; do this first.
+
+---
+
+## The updater (minisign) key — shared by both apps
+
+Separate from the Apple signing above: every self-update artifact (the
+`.tar.gz` / `.AppImage` the in-app updater downloads) is signed with a
+**minisign** key that Tauri's updater plugin verifies against the public key
+embedded in the app.
+
+- **One key for both apps, by design.** `desktop/src-tauri/tauri.conf.json`
+  and `desktop-lab/src-tauri/tauri.conf.json` embed the same
+  `plugins.updater.pubkey`; `canary-local/tests/desktop_parity.test.js` pins
+  them equal so a rotation cannot land in one and not the other. The channel
+  separation (`flasher-latest` vs `lab-latest`) is by manifest URL, not by key.
+- **Secrets:** `TAURI_SIGNING_PRIVATE_KEY` (the private key file's contents)
+  and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Generate once with
+  `npx @tauri-apps/cli signer generate -w ~/.tauri/securacv.key`.
+- **Missing secret = no publish.** `desktop-flasher-release.yml` and
+  `desktop-release.yml` mint an ephemeral key for build-only runs and exit with
+  an error on a publish, for the same reason `firmware-release.yml` refuses to
+  publish without its OTA key: an update signed with a throwaway key bricks
+  self-update for every installed copy until the next real release.
+- **Rotation:** generate a new pair, update `pubkey` in BOTH config files in
+  the same commit, replace the two secrets, then publish. Installs that were
+  built with the old pubkey will not accept the first new release over
+  self-update — they need a manual download once. Say so in RELEASE_NOTES.md.

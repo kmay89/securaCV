@@ -28,6 +28,7 @@ use sha2::{Digest, Sha256};
 
 pub mod ffi;
 pub mod fleet;
+pub mod host;
 
 /// Domain separator for sealed-log entries. Must equal
 /// `DOMAIN_SEALED_LOG_ENTRY` in `src/crypto/signatures.rs`; `tests/vectors.rs`

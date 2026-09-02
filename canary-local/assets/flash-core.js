@@ -1197,7 +1197,7 @@ export function classifyFlashError(err) {
 
   // Integrity failure — checked BEFORE the generic network case so a checksum
   // message never reads as a download problem.
-  if (has("checksum", "sha-256", "sha256", "md5", "hash mismatch", "failed its"))
+  if (has("checksum", "sha-256", "sha256", "md5", "hash mismatch", "failed its", "signature", "signed by"))
     return { kind: "integrity", title: "The image failed its integrity check",
       hint: "Nothing was written. The download may have been corrupted, or the signed " +
         "release is mid-update — wait a moment and try again." };

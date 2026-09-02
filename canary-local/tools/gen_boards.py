@@ -205,14 +205,22 @@ def build_waveshare_4_3b():
     LEDG, LEDA, LEDR = (0.28, 0.72, 0.34), (0.86, 0.62, 0.18), (0.82, 0.24, 0.22)
     buckets = {}
 
-    def add(m, color): buckets.setdefault(color, []).append(m)
+    def add(m, color):
+        buckets.setdefault(color, []).append(m)
+
     def box(ext, c, color):
-        b = trimesh.creation.box(extents=ext); b.apply_translation(c); add(b, color)
+        b = trimesh.creation.box(extents=ext)
+        b.apply_translation(c)
+        add(b, color)
+
     def cyl(r, h, c, color, axis="y", n=24):
         m = trimesh.creation.cylinder(radius=r, height=h, sections=n)
-        if axis == "y":   m.apply_transform(rotation_matrix(np.pi / 2, [1, 0, 0]))
-        elif axis == "x": m.apply_transform(rotation_matrix(np.pi / 2, [0, 1, 0]))
-        m.apply_translation(c); add(m, color)
+        if axis == "y":
+            m.apply_transform(rotation_matrix(np.pi / 2, [1, 0, 0]))
+        elif axis == "x":
+            m.apply_transform(rotation_matrix(np.pi / 2, [0, 1, 0]))
+        m.apply_translation(c)
+        add(m, color)
 
     # ── case body: rounded prism, screen pocket + I/O holes cut with manifold ──
     body = _ws43b_prism_y(_ws43b_rrect(W, HT, 4.0), 0.0, TH)
@@ -222,7 +230,8 @@ def build_waveshare_4_3b():
     body = body.difference(cham, engine="manifold")
     GW, GH, GZ = 105.0, 58.0, 0.0                                # 4.3" glass, centered on the front
     pocket = _ws43b_prism_y(_ws43b_rrect(GW + 3, GH + 3, 3.0, 5), TH - 2.0, TH + 1)
-    pocket.apply_translation([0, 0, GZ]); body = body.difference(pocket, engine="manifold")
+    pocket.apply_translation([0, 0, GZ])
+    body = body.difference(pocket, engine="manifold")
     holes = [([6, 13.0, 4.2], [W/2 - 1, TH/2, 15]),              # TF slot (+X edge)
              ([6, 9.0, 4.5], [W/2 - 1, TH/2, 2]),                # USB-C
              ([6, 3.2, 3.2], [W/2 - 1, TH/2, -9]),               # BOOT
@@ -232,22 +241,26 @@ def build_waveshare_4_3b():
              ([6, 2.4, 2.4], [-W/2 + 1, TH/2, 4]),
              ([6, 9.0, 5.0], [-W/2 + 1, TH/2, -12])]             # power slide slot
     for ext, c in holes:
-        h = trimesh.creation.box(extents=ext); h.apply_translation(c)
+        h = trimesh.creation.box(extents=ext)
+        h.apply_translation(c)
         body = body.difference(h, engine="manifold")
     add(body, CASE)
 
     # ── screen: near-black bezel frame + glossy glass recessed in the pocket ──
     bez = _ws43b_prism_y(_ws43b_rrect(GW + 2.6, GH + 2.6, 3.0, 5), TH - 1.9, TH - 0.4)
-    bez.apply_translation([0, 0, GZ]); add(bez, BEZEL)
+    bez.apply_translation([0, 0, GZ])
+    add(bez, BEZEL)
     glass = _ws43b_prism_y(_ws43b_rrect(GW, GH, 2.4, 5), TH - 1.6, TH - 0.35)
-    glass.apply_translation([0, 0, GZ]); add(glass, GLASS)
+    glass.apply_translation([0, 0, GZ])
+    add(glass, GLASS)
 
     # ── green 16-way pluggable terminal on the REAR face (−Y), near the bottom
     #    (−Z) edge — opposite the screen, where the field wiring exits the back.
     #    The block protrudes −Y; screws + wire mouths face −Y. ──
     blkw = (len(WS43B_TERMS) - 1) * WS43B_PITCH + WS43B_PITCH + 3.0
     block = _ws43b_prism_y(_ws43b_rrect(blkw, 14.0, 1.2, 3), -12.0, 2.0)
-    block.apply_translation([0, 0, TZ]); add(block, GREEN)
+    block.apply_translation([0, 0, TZ])
+    add(block, GREEN)
     for i in range(len(WS43B_TERMS)):
         x = _ws43b_term_x(i)
         box([WS43B_PITCH - 0.6, 2.2, 3.2], [x, -11.4, TZ - 3.0], BEZEL)  # wire-entry mouth
@@ -257,19 +270,22 @@ def build_waveshare_4_3b():
     # ── I/O shells recessed in the +X edge holes ──
     box([2.4, 12.0, 3.4], [W/2 - 2.4, TH/2, 15], SILVER)   # TF card shell
     box([2.4, 8.2, 4.0], [W/2 - 2.4, TH/2, 2], SILVER)     # USB-C shell
-    for z in (-9, -16): cyl(1.3, 2.0, [W/2 - 2.4, TH/2, z], BTN, axis="x", n=18)
+    for z in (-9, -16):
+        cyl(1.3, 2.0, [W/2 - 2.4, TH/2, z], BTN, axis="x", n=18)
     # ── status LEDs + power slide (−X edge) ──
     for z, col in [(16, LEDG), (10, LEDA), (4, LEDR)]:
         cyl(1.0, 1.6, [-W/2 + 1.6, TH/2, z], col, axis="x", n=16)
     box([2.2, 4.0, 4.2], [-W/2 + 1.8, TH/2, -12], SILVER)  # switch actuator
 
     # ── two rear mounting bosses (top corners of the rear) ──
-    for x in (-46, 46): cyl(3.0, 1.4, [x, 0.7, HT/2 - 12], BEZEL, axis="y", n=20)
+    for x in (-46, 46):
+        cyl(3.0, 1.4, [x, 0.7, HT/2 - 12], BEZEL, axis="y", n=20)
     # ── stylised rear product label (the real unit carries a sticker here) —
     #    a plain rounded rectangle, no fabricated text/serial/barcode ──
     STICKER = (0.70, 0.70, 0.67)
     lbl = _ws43b_prism_y(_ws43b_rrect(46, 26, 2.0, 4), -0.6, 0.2)
-    lbl.apply_translation([0, 0, 6.0]); add(lbl, STICKER)
+    lbl.apply_translation([0, 0, 6.0])
+    add(lbl, STICKER)
 
     out = trimesh.Scene()
     for color, geoms in buckets.items():
