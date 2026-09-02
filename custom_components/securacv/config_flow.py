@@ -599,6 +599,16 @@ class SecuraCVOptionsFlow(OptionsFlow):
             menu_options=[PIN_ACTION_PIN, PIN_ACTION_ROTATE, PIN_ACTION_UNPIN],
         )
 
+    def _forget_replay_marks(self, device_id: str) -> None:
+        """Drop the replay high-water marks for a device whose key just
+        changed (pin / rotate / unpin). The signed counters the replay gate
+        compares belong to the key, so a new key starts them over — kept in
+        step with `async_clear_replay_marks` in __init__.py without
+        importing the package (the flow module is loaded on its own)."""
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+        if isinstance(entry_data, dict):
+            entry_data.setdefault("replay", {}).pop(device_id, None)
+
     async def async_step_pin(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -620,6 +630,10 @@ class SecuraCVOptionsFlow(OptionsFlow):
                     from .device_trust import PIN_SOURCE_MANUAL
                     await ts.async_pin(device_id, pubkey_hex,
                                        source=PIN_SOURCE_MANUAL)
+                    # A new key means new counters: forget the replay
+                    # high-water marks or the device's first publishes
+                    # under this key all read as replays of the old one.
+                    self._forget_replay_marks(device_id)
                     return self.async_create_entry(title="", data={})
 
         return self.async_show_form(
@@ -657,6 +671,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                     errors["device_id"] = "device_not_pinned"
                 else:
                     await ts.async_rotate(device_id, pubkey_hex)
+                    self._forget_replay_marks(device_id)
                     # Clear any stuck mismatch notification for this
                     # device so the operator's rotation takes effect
                     # immediately on the UI side.
@@ -700,6 +715,8 @@ class SecuraCVOptionsFlow(OptionsFlow):
                 elif not await ts.async_unpin(device_id):
                     errors["device_id"] = "device_not_pinned"
                 else:
+                    # Whatever key TOFU-pins next starts its counters over.
+                    self._forget_replay_marks(device_id)
                     # Mirror async_step_rotate: clear any stuck mismatch-
                     # notification dedup keys for this device. Without this,
                     # if a spoofed fp triggered a notification before the

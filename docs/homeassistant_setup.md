@@ -170,18 +170,60 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
 Within 30 seconds of the Canary connecting to MQTT:
 
 1. Go to **Settings > Devices & Services > SecuraCV**
-2. You should see your Canary device listed with sensors:
-   - **Witness Count** — Total witness records created
-   - **Chain Sequence** — Current chain sequence number
-   - **Uptime** — Device uptime
-   - **Free Heap** — Available memory
-   - **GPS Satellites** — Satellite count
-   - **Online** — Device connectivity (via MQTT LWT)
-   - **Chain Valid** — Witness chain integrity
-   - **Tamper Detected** — Tamper event status
-   - **GPS Fix** — GPS fix status
-   - **SD Card Healthy** — Storage health
-   - **Die Temperature** — Chip die temperature, whole degrees (silicon, not room)
+2. You should see your Canary device listed with the entities below. This
+   list is what the integration itself creates
+   (`custom_components/securacv/sensor.py` and `binary_sensor.py`); each
+   entity appears the first time its topic is seen, and every unique ID is
+   `securacv_canary_<device_id>_<suffix>` with the suffix shown in
+   parentheses. **Signed** means the publish carries the device's Ed25519
+   signature and the integration checks it against the pinned key
+   ([Step 6](#step-6-verify-per-device-pki-optional-but-recommended)),
+   stamping `verified` / `trust_reason` / `pinned_fingerprint` /
+   `received_fingerprint` attributes. Every other topic is **unsigned** — the
+   firmware puts no signature on it — and those entities carry the same four
+   attributes with `verified: false`, `trust_reason: unsigned`, so a
+   dashboard can tell an unsigned publish from a verified one.
+
+   Sensors:
+   - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
+   - **Chain Length** — hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)
+   - **Last Event** — latest witness event type, with zone, confidence, modality and attestation (`last_event`; signed `events` topic)
+   - **Health** — `healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version (`health_status`; `health` topic, unsigned)
+   - **GPS Fix** — GPS fix status, with satellites and HDOP (`gps_fix`; `health` topic, unsigned)
+   - **SD Wear Estimate** — estimated SD-card wear percent, only when the firmware reports its `sd` object (`sd_wear`; `health` topic, unsigned; diagnostic)
+   - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)
+
+   Binary sensors:
+   - **Online** — device connectivity, from the `status` topic (`online`; unsigned)
+   - **Chain Valid** — ON only when the device reports its chain intact and the chain publish verified against the pinned key; unknown until a chain publish has been checked (`chain_valid`; signed `chain` topic)
+   - **Tamper** — any tamper detected, from the `health` and `tamper` topics (`tamper`; unsigned)
+   - **Power Loss**, **SD Removed**, **SD Error**, **GPS Jamming**, **Unexpected Motion**, **Enclosure Open**, **GPIO Tamper**, **Watchdog Timeout**, **Unexpected Reboot**, **Memory Critical** — one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)
+   - **SD Replacement Recommended** — the device recommends replacing its SD card (`sd_replace`; `health` topic, unsigned)
+   - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)
+   - **WiFi AP**, **WiFi Station**, **MQTT**, **Bluetooth**, **Mesh Network**, **Chirp Network** — per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it — see the [transport catalog](#transport-catalog))
+   - **Mesh Connected** — Opera mesh peers present, with peer and relay counts (`mesh_connected`; `mesh` topic, unsigned)
+   - **Chirp Active** — Chirp community network enabled and ready, with the session emoji and alert counters (`chirp_active`; `chirp` topic, unsigned)
+
+   With a kernel configured, the integration also creates the kernel's own
+   device: SecuraCV Last Event, Storage Health, Storage Free, Storage Wear
+   Estimate, Storage Write Rate and SoC Temperature sensors, Online and
+   Storage Replacement Recommended binary sensors, and — when an adapter
+   stats URL is set — a SecuraCV Adapter Host diagnostic.
+
+   The Canary firmware also announces entities of its own through native
+   MQTT discovery (`homeassistant/*/securacv_*/config`, retained). Those
+   are created by the device, not by the integration, and carry no
+   verification attributes; where the two overlap (Witness Count, Chain
+   Valid, Online, GPS Fix) you will see both — see the `_2` row under
+   [Troubleshooting](#troubleshooting-mqtt-setup). The firmware's own set
+   includes:
+   - **Chain Sequence** — current chain sequence number
+   - **Uptime** — device uptime
+   - **Free Heap** — available memory
+   - **GPS Satellites** — satellite count
+   - **Tamper Detected** — tamper event status
+   - **SD Card Healthy** — storage health
+   - **Die Temperature** — chip die temperature, whole degrees (silicon, not room)
    - **Thermal Performance** — `normal` / `throttled` / `paused` (the adaptive-performance ladder)
    - **Thermal Advisory** — ON when any thermal advisory is active (too hot, saturation, sensor fault, cold)
 

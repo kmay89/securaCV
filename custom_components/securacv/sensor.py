@@ -44,7 +44,12 @@ from .const import (
     normalize_attestation,
 )
 from .device_trust import TrustStore
-from . import async_record_verify, parse_mqtt_json, valid_device_id
+from . import (
+    async_record_verify,
+    parse_mqtt_json,
+    unsigned_trust_attrs,
+    valid_device_id,
+)
 from .device_trust import TrustVerdict
 from .voice import record_canary_event
 from .watch_runtime import async_observe_event
@@ -170,7 +175,12 @@ def _trust_attrs(
 ) -> dict[str, Any]:
     """Return the verify-state slice that every signed-topic entity
     surfaces as part of extra_state_attributes. Keys are kept short
-    and JSON-friendly because they show up directly in HA's UI."""
+    and JSON-friendly because they show up directly in HA's UI.
+
+    Entities moved by a topic the firmware never signs (health, and the
+    binary_sensor tamper / transport / mesh / chirp family) stamp the
+    same keys via ``unsigned_trust_attrs`` in __init__.py instead, so an
+    unsigned publish and a verified one differ by value, not by absence."""
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     verify = entry_data.get("verify", {}).get(device_id)
     if not verify:
@@ -986,6 +996,9 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             "uptime_seconds": data.get("uptime", 0),
             "firmware_version": data.get("firmware_version", ""),
             "public_key": data.get("public_key", ""),
+            # Health is not signed: say so with the same slice the signed
+            # entities carry, rather than moving with no verdict at all.
+            **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
         }
         # Battery detail, when the firmware reports it.
         for key in (
@@ -1042,8 +1055,9 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
             # Firmware without SD reporting: leave the sensor untouched.
             return
         self._attr_native_value = wear
+        attrs: dict[str, Any] = {}
         if (sd := canary_sd(data)) is not None:
-            self._attr_extra_state_attributes = {
+            attrs = {
                 "mounted": sd.get("mounted"),
                 "usage_pct": sd.get("usage_pct"),
                 "writes": sd.get("writes"),
@@ -1051,6 +1065,8 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
                 "lifetime_kb": sd.get("lifetime_kb"),
                 "replace_recommended": sd.get("replace_recommended"),
             }
+        attrs.update(unsigned_trust_attrs(self.hass, self._entry, self._device_id))
+        self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
 
 
@@ -1081,6 +1097,7 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
             return
         gps = data.get("gps", {})
 
+        trust = unsigned_trust_attrs(self.hass, self._entry, self._device_id)
         if isinstance(gps, dict):
             self._attr_native_value = gps.get("fix_type", "no_fix")
             self._attr_extra_state_attributes = {
@@ -1088,9 +1105,14 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
                 "hdop": gps.get("hdop", 0),
                 "latitude": gps.get("latitude", ""),
                 "longitude": gps.get("longitude", ""),
+                **trust,
             }
         else:
             self._attr_native_value = str(gps) if gps else "no_fix"
+            self._attr_extra_state_attributes = {
+                **(getattr(self, "_attr_extra_state_attributes", None) or {}),
+                **trust,
+            }
         self.async_write_ha_state()
 
 
@@ -1197,5 +1219,6 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
         for key in ("frames", "frame_errors", "reboots"):
             if (val := radar.get(key)) is not None:
                 attrs[key] = val
-        self._attr_extra_state_attributes = attrs or None
+        attrs.update(unsigned_trust_attrs(self.hass, self._entry, self._device_id))
+        self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()

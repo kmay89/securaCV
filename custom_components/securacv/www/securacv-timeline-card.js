@@ -13,10 +13,14 @@
  *     `customElements` registry exists.
  *   - Honest verification semantics. A green ✓ is shown ONLY when the event's
  *     own signature actually verified (the `verified` attribute the integration
- *     sets after an Ed25519 check). "signed but unverified" and "logged via the
- *     kernel HTTP API" get weaker, distinct badges so the card never overclaims
- *     cryptographic proof it cannot back — consistent with the project's
- *     "documentation must not outrun the implementation" stance.
+ *     sets after an Ed25519 check). "signed but unverified", "unsigned" (there
+ *     was no signature to check — pre-PKI firmware, or a topic the firmware
+ *     never signs) and "logged via the kernel HTTP API" get weaker, distinct
+ *     badges so the card never overclaims cryptographic proof it cannot back —
+ *     and never calls a publish that was not checked a failure. Only a check
+ *     that ran and rejected the publish (key mismatch, replay) is "failed".
+ *     Consistent with the project's "documentation must not outrun the
+ *     implementation" stance.
  *   - Privacy by construction. The card only ever displays coarse claims that
  *     the entities already carry (event_type, zone, coarse time bucket,
  *     confidence). It invents no precise time and surfaces no identity data.
@@ -183,17 +187,29 @@
    * Returns { level, symbol, label, reason } where level is one of:
    *   "verified"   — signature checked and valid (strong green ✓)
    *   "signed"     — entry claims to be signed, no independent check available
+   *   "unsigned"   — the publish carried no signature at all (pre-PKI firmware,
+   *                  or a topic the firmware never signs); neutral, not a failure
    *   "logged"     — kernel HTTP path: present in the log, no per-event sig here
-   *   "failed"     — verification ran and failed / trust mismatch (⚠)
+   *   "failed"     — verification ran and rejected the publish: key mismatch,
+   *                  bad signature, replay (⚠)
    * The card intentionally distinguishes these by label (the source of truth, since theme
    * colors can vary) so only the "Signature verified" badge means a real check; "signed"
    * reuses the ✓ glyph with a "Signed (unverified)" label and a distinct theme color, and
    * is never shown as the verified badge.
+   *
+   * "unsigned" is deliberately NOT "failed": nothing was checked, so nothing failed. The
+   * integration's `trust_reason` vocabulary (device_trust.TrustVerdict) makes the split
+   * exact — "unsigned" means the sig envelope was absent, "no_pubkey" means it was present
+   * but no key is pinned yet, and every other false verdict ("mismatch", "replay") means a
+   * check ran and said no. The payload's own `signed` flag never outranks the verifier.
    */
   function resolveVerification(signals) {
     const s = signals || {};
     if (s.verified === true) {
       return { level: "verified", symbol: "✓", label: "Signature verified", reason: s.trustReason || "verified" };
+    }
+    if (s.verified === false && s.trustReason === "unsigned") {
+      return { level: "unsigned", symbol: "○", label: "Unsigned", reason: "unsigned" };
     }
     if (s.verified === false && s.trustReason && s.trustReason !== "no_pubkey") {
       return { level: "failed", symbol: "⚠", label: "Verification failed", reason: s.trustReason };
@@ -381,6 +397,7 @@
     .badge.verified { color: var(--success-color, #43a047); }
     .badge.signed { color: var(--primary-color, #03a9f4); }
     .badge.logged { color: var(--secondary-text-color); }
+    .badge.unsigned { color: var(--secondary-text-color); font-weight: 500; }
     .badge.failed { color: var(--error-color, #e53935); }
     .conf { font-size: 0.75rem; color: var(--secondary-text-color); }
     .empty { padding: 24px 4px; text-align: center; color: var(--secondary-text-color); }

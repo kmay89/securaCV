@@ -796,15 +796,38 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
             # 64 chars but not hex — would raise later inside the pin task.
             return
         # async_pin needs the loop; schedule as a task so the @callback
-        # context returns synchronously.
-        hass.async_create_task(
-            trust_store.async_tofu_pin_if_unknown(device_id, pubkey_hex)
-        )
+        # context returns synchronously. A pin that actually lands is a new
+        # identity for this device_id (fresh flash, factory reset, a
+        # replacement board), whose counters start over — so its replay
+        # high-water marks start over with it, or every valid publish from
+        # the new key would read as a replay of the old one.
+        async def _pin_and_reset_replay() -> None:
+            pinned = await trust_store.async_tofu_pin_if_unknown(device_id, pubkey_hex)
+            if pinned is not None:
+                async_clear_replay_marks(hass, entry, device_id)
+
+        hass.async_create_task(_pin_and_reset_replay())
         _LOGGER.info(
             "TOFU-pinning Canary %s with pubkey %s…", device_id, pubkey_hex[:16]
         )
 
     return _callback
+
+
+@callback
+def async_clear_replay_marks(hass: HomeAssistant, entry: ConfigEntry, device_id: str) -> None:
+    """Forget a device's replay high-water marks.
+
+    Called on every path that changes which key a device_id answers to —
+    TOFU first sight, the operator's pin / rotate / unpin — because the
+    counters the replay gate compares (event_id, seq, chain length, totals)
+    belong to the key, and a new key starts them over. Without this the
+    replacement device's first publishes all read as replays of the old one
+    until its counters climb past the old high-water marks.
+    """
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if isinstance(entry_data, dict):
+        entry_data.setdefault("replay", {}).pop(device_id, None)
 
 
 @callback
@@ -827,8 +850,11 @@ def async_record_verify(
     }
     if verdict.reason == "tofu_pin":
         # A newly pinned device starts its counters over (fresh flash, factory
-        # reset); its replay high-water marks must start over with it.
-        entry_data.setdefault("replay", {}).pop(device_id, None)
+        # reset); its replay high-water marks must start over with it. The
+        # verifiers do not return this reason today — the health hook and the
+        # options flow clear the marks themselves — but a future verifier
+        # that pins inline gets the same behavior for free.
+        async_clear_replay_marks(hass, entry, device_id)
     if verdict.reason == "mismatch":
         # Dedup by (device_id, received_fingerprint) so a steady stream
         # of mismatched publishes only notifies the user once. Cleared
@@ -869,3 +895,35 @@ def async_get_trust_store(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore
     if not entry_data:
         return None
     return entry_data.get("trust_store")
+
+
+def unsigned_trust_attrs(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str
+) -> dict[str, Any]:
+    """Trust slice for an entity moved by a topic the firmware never signs.
+
+    tamper / transport / mesh / chirp / health publishes carry no sig
+    envelope, so nothing was verified and nothing here may say otherwise:
+    `verified` is always False and `trust_reason` is "unsigned" — the same
+    verdict the verifiers return for a signed-kind payload that arrives
+    without its envelope, so a dashboard reads both the same way. The keys
+    match sensor.py's `_trust_attrs` exactly: an unsigned publish and a
+    verified one are told apart by the attribute's value, never by its
+    absence. `pinned_fingerprint` is the identity the device is enrolled
+    under (from its signed topics) when a pin exists, so the row still says
+    which Canary this is; there is no received fingerprint to show.
+    """
+    pinned: str | None = None
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if isinstance(entry_data, dict):
+        trust_store = entry_data.get("trust_store")
+        if isinstance(trust_store, TrustStore):
+            pin = trust_store.get(device_id)
+            if pin is not None:
+                pinned = pin.fingerprint_hex
+    return {
+        "verified": False,
+        "trust_reason": "unsigned",
+        "pinned_fingerprint": pinned,
+        "received_fingerprint": None,
+    }
