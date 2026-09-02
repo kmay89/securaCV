@@ -122,7 +122,7 @@ check is what keeps it from ever becoming a second opinion.
   ```sh
   rustup toolchain install nightly
   rustup component add rust-src --toolchain nightly
-  rustup target add aarch64-apple-tvos --toolchain nightly   # or -Z build-std
+  rustup component add rust-src --toolchain nightly   # tier-3 target: built with -Z build-std by scripts/build-witness-core.sh (there is no prebuilt std to `rustup target add`)
   ```
 
 ## Turn the pipeline on
@@ -139,7 +139,9 @@ The workflow stays a no-op until **both** are true — mirroring the iOS gate:
    | `APPLE_API_KEY_BASE64` | The App Store Connect `.p8` key, base64-encoded |
    | `APPLE_API_KEY` | The key ID (the `AuthKey_<ID>.p8` ID) |
    | `APPLE_API_ISSUER` | The App Store Connect issuer ID |
-   | `APPLE_DEVELOPMENT_TEAM` | Your Apple Developer team ID |
+   | `APPLE_DEVELOPMENT_TEAM` | Your Apple Developer team ID (`APPLE_TEAM_ID` is accepted as an alias) |
+   | `APPLE_CERTIFICATE` | Base64 of the Apple Distribution `.p12` — imported by tvos-release.yml's "Import signing certificate" step; the store export pins `signingCertificate: Apple Distribution` and needs this identity in the keychain |
+   | `APPLE_CERTIFICATE_PASSWORD` | The `.p12` password |
 
 Then ship the way everything else ships:
 

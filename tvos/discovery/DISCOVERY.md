@@ -25,7 +25,7 @@ GET /api/fleet        →  200 application/json
 }
 ```
 
-- Only `devices[].name` is required; `online` defaults to `true`. `chain`,
+- Only `devices[].name` is required; `online` defaults to `false` (a silent field is never a presence claim). `chain`,
   `product`, `hw`, and `hub` are optional and shown when present. A bare JSON
   array of devices is also accepted.
 - `hw` names the **board** the device compiled against (each pins header's

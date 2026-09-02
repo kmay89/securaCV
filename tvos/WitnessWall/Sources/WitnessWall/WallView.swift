@@ -199,10 +199,18 @@ struct WallView: View {
                 // report and is labeled as exactly that — the wire string
                 // must never wear this screen's authority.
                 if let report = model.report, report.ok {
+                    // "Verified" is reserved (AGENTS.md rule 4) for a signature
+                    // checked against a PINNED key. The Wall walks the chain
+                    // against the key the sealed-log document itself supplies —
+                    // it proves the log is internally consistent and signed by
+                    // one key, not that the key is the kernel's. Until the Wall
+                    // pins that key at first contact, the banner says exactly
+                    // that, and keeps the fleet's own timestamp labeled as the
+                    // fleet's report rather than this screen's verdict.
                     StatusBanner(
                         tone: .calm,
-                        title: "Verified through \(verifiedThrough)",
-                        detail: "Chain of \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries") checked on this Apple TV."
+                        title: "Chain intact: \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries")",
+                        detail: "Signatures checked on this Apple TV against the key the log supplied (not yet pinned). The fleet reports itself current through \(verifiedThrough)."
                     )
                 } else {
                     StatusBanner(

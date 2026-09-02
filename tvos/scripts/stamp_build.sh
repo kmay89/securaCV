@@ -10,7 +10,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REV="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
-FW_TRAIN="$(sed -n 's/^version *= *"\([0-9.]*\)".*/\1/p' ../Cargo.toml 2>/dev/null | head -1 || true)"
+# The firmware TRAIN, read from the firmware's own version define — not the
+# root Cargo.toml, which is the witness-kernel crate (0.7.x) and was what the
+# About panel showed under "firmware train" until this line was fixed.
+# scripts/lint_fw_version_sync.sh keeps every firmware copy of this string equal.
+FW_TRAIN="$(sed -n 's/^#define FIRMWARE_VERSION *"\([0-9.]*\)".*/\1/p' ../firmware/canary/include/canary_config.h 2>/dev/null | head -1 || true)"
 FW_TRAIN="${FW_TRAIN:-0.x}"
 
 echo "SECURACV_BUILD_REV=${REV}"

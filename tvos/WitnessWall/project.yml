@@ -58,7 +58,9 @@ targets:
       # Apple TV will not accept an archive without an app icon and top-shelf
       # art. The catalog is GENERATED and committed by
       # scripts/make_app_icon.py (tvOS icons are layered image stacks — ~20
-      # files); tvos.yml regenerates and fails if it drifts.
+      # files); tvos.yml runs check_app_icon.py — a STRUCTURAL check of sizes
+      # and Contents.json, not a byte-diff — so after editing make_app_icon.py
+      # you regenerate by hand and commit the result.
       - path: Support/Assets.xcassets
       # Shared with the iPhone app, compiled rather than copied, so the away
       # path cannot grow two dialects. WakePayload is the wake vocabulary

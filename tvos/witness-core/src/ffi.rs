@@ -182,7 +182,7 @@ mod tests {
         let out = unsafe { call(scv_parse_fleet, r#"[{"name":"Front Door"}]"#) };
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["devices"][0]["name"], "Front Door");
-        assert_eq!(v["devices"][0]["online"], true);
+        assert_eq!(v["devices"][0]["online"], false, "a silent `online` is not a presence claim");
     }
 
     #[test]

@@ -379,17 +379,39 @@ actor DeviceAPI {
         return URL(string: "http://\(name)")
     }
 
-    /// Only RFC-1918 / loopback / .local hosts are allowed to be contacted.
+    /// Only RFC-1918 / loopback / link-local / .local hosts are allowed to be
+    /// contacted. This is the app's "nothing phones home" gate: every base URL
+    /// (paired receipt, discovered host, nightlight, glass) passes through it.
+    ///
+    /// Every label must be a decimal octet and there must be exactly four.
+    /// The first version did `split(".").compactMap { Int($0) }`, which DROPPED
+    /// non-numeric labels — so `10.0.0.1.attacker.com` collapsed to 10.0.0.1
+    /// and a crafted pairing receipt could point the app at a public host.
     static func isPrivate(_ url: URL) -> Bool {
-        guard let host = url.host else { return false }
-        if host.hasSuffix(".local") || host == "localhost" { return true }
-        let parts = host.split(separator: ".").compactMap { Int($0) }
-        guard parts.count == 4 else { return false }
-        switch (parts[0], parts[1]) {
+        guard let rawHost = url.host, !rawHost.isEmpty else { return false }
+        let host = rawHost.lowercased()
+        if host == "localhost" { return true }
+        if host.hasSuffix(".local") {
+            // "<something>.local" only — never ".local" alone, never a host
+            // with an embedded scheme/at-sign that URL parsing let through.
+            return host.count > ".local".count && !host.contains("@") && !host.hasPrefix(".")
+        }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count == 4 else { return false }
+        var octets: [UInt8] = []
+        octets.reserveCapacity(4)
+        for label in labels {
+            guard !label.isEmpty, label.count <= 3,
+                  label.allSatisfy({ $0.isASCII && $0.isNumber }),
+                  let value = UInt8(label) else { return false }
+            octets.append(value)
+        }
+        switch (octets[0], octets[1]) {
         case (10, _): return true
         case (192, 168): return true
         case (172, 16...31): return true
         case (127, _): return true
+        case (169, 254): return true   // link-local: a Canary on a hotspot with no DHCP
         default: return false
         }
     }

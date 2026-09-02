@@ -16,8 +16,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A device that omits `online` is NOT claimed present. The phone's decoder
+/// and the Wall's Swift `Device` already defaulted to false ("absent is not a
+/// presence claim — never rendered as online"); this normalizer said true, so
+/// the two halves of the same app disagreed about the same silent field.
 fn default_online() -> bool {
-    true
+    false
 }
 
 /// One Canary, as the fleet endpoint describes it.
@@ -157,11 +161,13 @@ mod tests {
     }
 
     #[test]
-    fn only_name_is_required_and_online_defaults_true() {
+    fn only_name_is_required_and_online_defaults_false() {
+        // A silent field is never a presence claim — same rule as the Swift
+        // decoder and the phone (DeviceParityTests.testASilentFieldCostsTheDeviceNothing).
         let fleet = parse_fleet(r#"{"devices":[{"name":"Porch"}]}"#).unwrap();
-        assert!(fleet.devices[0].online, "online must default to true");
+        assert!(!fleet.devices[0].online, "online must default to false");
         assert_eq!(fleet.devices[0].chain, None);
-        assert_eq!(fleet.summary(), "1 Canary, all online");
+        assert!(fleet.summary().starts_with("0 of 1"), "{}", fleet.summary());
     }
 
     /// The bytes a display actually sends, verbatim from
@@ -206,7 +212,7 @@ mod tests {
     fn a_bare_array_of_devices_is_accepted() {
         let fleet = parse_fleet(r#"[{"name":"Front Door"},{"name":"Studio"}]"#).unwrap();
         assert_eq!(fleet.devices.len(), 2);
-        assert_eq!(fleet.summary(), "2 Canaries, all online");
+        assert_eq!(fleet.summary(), "0 of 2 Canaries online");
     }
 
     #[test]
