@@ -12,6 +12,7 @@ Setup modes:
 from __future__ import annotations
 
 import asyncio
+import re
 import logging
 from datetime import timedelta
 from typing import Any
@@ -63,6 +64,20 @@ def mqtt_payload_within_cap(payload: Any) -> bool:
         return False
 
 
+# What a Canary actually puts in the device-id segment of its topics: the
+# firmware's device_pseudonym / hostname alphabet. Anything else on the wildcard
+# subscription is a hostile or misconfigured publisher, and before this gate it
+# minted a device-registry entry plus up to ~20 entities per topic segment,
+# unbounded (device_id was taken verbatim from the topic).
+DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def valid_device_id(device_id: Any) -> bool:
+    """True iff `device_id` is a topic segment a real Canary could publish."""
+    # fullmatch, not match: `$` would accept a trailing newline.
+    return isinstance(device_id, str) and DEVICE_ID_RE.fullmatch(device_id) is not None
+
+
 def parse_mqtt_json(payload: Any) -> dict[str, Any] | None:
     """Decode an MQTT payload into a JSON object, or None.
 
@@ -98,6 +113,18 @@ TIMELINE_CARD_FILENAME = LOVELACE_CARD_FILENAMES[0]
 TIMELINE_CARD_URL = f"/{DOMAIN}_www/{TIMELINE_CARD_FILENAME}"
 
 
+def _manifest_version() -> str:
+    """The integration version from manifest.json, for cache-busting the cards."""
+    try:
+        import json
+        from pathlib import Path
+
+        with open(Path(__file__).parent / "manifest.json", encoding="utf-8") as fh:
+            return str(json.load(fh).get("version", "0"))
+    except (OSError, ValueError):
+        return "0"
+
+
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Serve and auto-load the Lovelace cards. Never fatal.
 
@@ -131,7 +158,13 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
             from homeassistant.components.frontend import add_extra_js_url
 
-            add_extra_js_url(hass, card_url)
+            # `?v=<manifest version>`: browsers and the HA frontend's service
+            # worker cache extra_module_url scripts aggressively, so without a
+            # version query every integration update left users on the old card
+            # JS (cache_headers=False above only shapes the server headers).
+            # Same convention HACS uses for every frontend resource; the static
+            # path itself stays unversioned.
+            add_extra_js_url(hass, f"{card_url}?v={_manifest_version()}")
             registered_any = True
             _LOGGER.debug("SecuraCV card registered at %s", card_url)
         if not registered_any:
@@ -431,7 +464,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Type is inferred as `SecuraCVCoordinator | None` across this if/else;
         # within this branch it's known non-None, so the refresh call is safe.
         coordinator = SecuraCVCoordinator(hass, api)
-        await coordinator.async_config_entry_first_refresh()
+        if enable_mqtt:
+            # "Both" mode (the auto flow, hassio discovery and install.sh all
+            # create it): a kernel that is stopped, updating or still booting
+            # used to raise ConfigEntryNotReady here and take every Canary
+            # MQTT entity down with it, before a single subscription was
+            # made. A tolerant refresh lets the kernel entities report
+            # unavailable (last_update_success) and recover on the next poll
+            # while the Canaries keep working. Pure kernel mode keeps the
+            # strict first refresh: there is nothing else to serve.
+            await coordinator.async_refresh()
+        else:
+            await coordinator.async_config_entry_first_refresh()
     else:
         api = None
         coordinator = None
@@ -467,6 +511,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         #                       "pinned_fingerprint": str|None,
         #                       "received_fingerprint": str|None } }
         "verify": {},
+        # Per-device, per-kind high-water marks of the counters inside
+        # VERIFIED publishes (event_id / seq / chain length / counts total).
+        # A validly signed publish whose counter goes BACKWARDS is a replay
+        # of an older message and must not move entity state — the
+        # signatures alone cover no timestamp or nonce. Reset when a device
+        # is (re)pinned via TOFU. Shape: { device_id: { field: int } }
+        "replay": {},
         # Mismatches we've already surfaced as persistent_notification —
         # one entry per (device_id, fp) so we don't spam the user.
         "mismatch_notified": set(),
@@ -612,6 +663,8 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
             return
 
         device_id = parts[-2]
+        if not valid_device_id(device_id):
+            return
         entry_data = hass.data[DOMAIN].get(entry.entry_id)
         if not entry_data:
             return
@@ -723,6 +776,8 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
         if len(parts) < 3:
             return
         device_id = parts[-2]
+        if not valid_device_id(device_id):
+            return
         entry_data = hass.data[DOMAIN].get(entry.entry_id)
         if not entry_data:
             return
@@ -770,6 +825,10 @@ def async_record_verify(
         "received_fingerprint": verdict.received_fingerprint,
         "detail": verdict.detail,
     }
+    if verdict.reason == "tofu_pin":
+        # A newly pinned device starts its counters over (fresh flash, factory
+        # reset); its replay high-water marks must start over with it.
+        entry_data.setdefault("replay", {}).pop(device_id, None)
     if verdict.reason == "mismatch":
         # Dedup by (device_id, received_fingerprint) so a steady stream
         # of mismatched publishes only notifies the user once. Cleared

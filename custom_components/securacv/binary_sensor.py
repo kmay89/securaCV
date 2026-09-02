@@ -63,7 +63,7 @@ from .const import (
     homekit_signals_for_event,
 )
 from homeassistant.helpers.event import async_call_later
-from . import mqtt_payload_within_cap, parse_mqtt_json
+from . import mqtt_payload_within_cap, parse_mqtt_json, valid_device_id
 from .health_metrics import (
     canary_sd_replace_recommended,
     replacement_recommended,
@@ -143,6 +143,8 @@ async def _setup_mqtt_binary_sensors(
 
         device_id = parts[-2]
         topic_type = parts[-1]
+        if not valid_device_id(device_id):
+            return
 
         if device_id not in entities_added:
             entities_added[device_id] = set()
