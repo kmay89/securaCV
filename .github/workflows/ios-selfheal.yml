@@ -83,11 +83,13 @@ jobs:
 
       - uses: actions/checkout@v7
         if: env.RUN_BUILD == 'true'
-        with:
-          # A workflow_run checks out the default branch's HEAD by default,
-          # which may already be past the commit the lint run verified; pin
-          # it to that commit. Every other trigger keeps its usual ref.
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        # On workflow_run this checks out main's CURRENT head, not the commit
+        # the lint run verified. The first version pinned `ref:` to that
+        # commit; CodeQL rates a checkout of a workflow_run's head_sha as
+        # untrusted code in a privileged context (the caches this job then
+        # warms are the default branch's), and it cannot see the `branches:
+        # [main]` filter that makes the two the same tree here. main's head is
+        # main either way; a newer main just means a fresher compile.
 
       # Store assets fail at `altool --validate-app`, minutes into a gated
       # publish nobody can run yet — so PR CI asserts them structurally here
