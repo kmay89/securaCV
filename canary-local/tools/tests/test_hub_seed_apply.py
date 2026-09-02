@@ -200,7 +200,8 @@ class OptionalFeatures(unittest.TestCase):
         self.assertEqual(rc, 2)
 
     def test_dry_run_with_pihole_narrates_it(self):
-        import contextlib, io
+        import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = hsa.main(["--dry-run", "--with", "pihole"])
@@ -208,7 +209,8 @@ class OptionalFeatures(unittest.TestCase):
         self.assertIn("pihole", buf.getvalue().lower())
 
     def test_dry_run_without_pihole_mentions_it_is_available(self):
-        import contextlib, io
+        import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = hsa.main(["--dry-run"])
@@ -218,7 +220,8 @@ class OptionalFeatures(unittest.TestCase):
     def test_dry_run_without_display_mentions_it_is_available(self):
         # Nobody can choose a feature they never hear about: a plain dry-run
         # must name the display option the same way it names Pi-hole.
-        import contextlib, io
+        import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = hsa.main(["--dry-run"])
@@ -226,7 +229,8 @@ class OptionalFeatures(unittest.TestCase):
         self.assertIn("--with display", buf.getvalue())
 
     def test_dry_run_with_display_narrates_it(self):
-        import contextlib, io
+        import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = hsa.main(["--dry-run", "--with", "display"])
@@ -748,7 +752,8 @@ class MqttLogin(unittest.TestCase):
         # text forever. CodeQL flags this class directly. Nothing is lost by
         # withholding it: the add-on holds `logins` in its own configuration, so
         # the operator reads it on demand from the one place that must have it.
-        import contextlib, io
+        import contextlib
+        import io
         client = FakeClient()
         action = hsa.Action(kind="mqtt_login", label="l", slug=MOSQUITTO_SUP,
                             friendly="mosquitto", username="canary")

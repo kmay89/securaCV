@@ -321,7 +321,7 @@ BANNER = [
 BOOT = [
     {"tag": "[PROV]", "text": "Provisioning device identity..."},
     {"tag": "[PROV]", "text": "Loaded existing keypair from NVS"},
-    {"tag": "[PROV]", "text": f"Public key fingerprint: 7f3a9c21"},
+    {"tag": "[PROV]", "text": "Public key fingerprint: 7f3a9c21"},
     {"tag": "[PROV]", "text": f"Device ID: {EX_ID}"},
     {"tag": "[PROV]", "text": "Boot count: 5"},
     {"tag": "[..]", "text": "Initializing camera for peek/preview..."},
@@ -673,7 +673,7 @@ for ln in lib_block.splitlines():
         ARD_LIBS.append(re.sub(r"\s+", " ", ln.strip()[2:]))
     elif ARD_LIBS and re.match(r"\s{4,}\S", ln) and not re.match(r"\s+-", ln):
         ARD_LIBS[-1] += " " + ln.strip()
-ARD_LIBS = [l.replace("**", "") for l in ARD_LIBS]
+ARD_LIBS = [lib.replace("**", "") for lib in ARD_LIBS]
 if len(ARD_LIBS) < 3:
     die(f"Arduino library list too short: {ARD_LIBS}")
 
@@ -702,7 +702,7 @@ for symptom, body in re.findall(r"<summary><strong>(.+?)</strong></summary>(.*?)
     fixes = [re.sub(r"\s+", " ", b.strip("- ").strip())
              for b in re.findall(r"^- .+", body, re.M)]
     for code in re.findall(r"```bash\n(.*?)```", body, re.S):
-        fixes.extend(l.strip() for l in code.splitlines() if l.strip() and not l.strip().startswith("#"))
+        fixes.extend(ln.strip() for ln in code.splitlines() if ln.strip() and not ln.strip().startswith("#"))
     TROUBLE.append({"symptom": symptom.strip(), "fixes": fixes})
 if len(TROUBLE) < 3:
     die(f"only {len(TROUBLE)} troubleshooting entries parsed")

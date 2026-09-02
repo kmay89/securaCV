@@ -351,7 +351,7 @@ if __name__ == "__main__":
 # sections, sbom/README.md), emit JSON, drift-gate in CI. The page can
 # then say "how to build it" without a second copy that rots.
 # ═════════════════════════════════════════════════════════════════════════
-import csv
+import csv  # noqa: E402  (section-local import, kept beside the generator it serves)
 
 BUILD_JSON = REPO / "canary-local/devices/build.json"
 HW = REPO / "docs/hardware"
@@ -846,7 +846,6 @@ def wap_packages(md: str, sets_by_id: dict):
         contents = re.sub(r"\*+", "", c[2]).strip()
         low = contents.lower()
         opts = {}
-        base = low.split("+")[0]
         if name == "battery_weather" and "battery_full" in low:
             # "battery_full + gasket seal + …" — inherit, then add
             opts = dict(pkgs[[p["id"] for p in pkgs].index("battery_full")]["options"])

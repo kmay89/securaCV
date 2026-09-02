@@ -37,8 +37,8 @@ survived only if a majority could not. The counts:
 | Findings reported | 138 |
 | Rated high | 27 |
 | Landed in the September PRs (first pass) | 78 |
-| Open list items landed in the same PR before merge | 31 |
-| Still open | 29 |
+| Open list items landed in the same PR before merge | 34 |
+| Still open | 26 |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -71,19 +71,21 @@ Each item names the file to start from.
 
 ### Landed before the PR merged
 
-The open list below is the one the audit produced. Thirty-one of its
+The open list below is the one the audit produced. Thirty-four of its
 sixty items landed in the same PR while it was in review, so the numbers
 are kept but the rows are marked **(landed)** and the reasoning stays for the
 record: 1 (kernel serves `/api/fleet`, self row only — aggregation is still
 open), 4 (the envelope ring holds its sample across a late window, so the
 time base survives a stall; a timestamped resample is the fuller fix if the
 bench shows drift remains), 10, 11 (peer wellbeing words omitted for
-cross-site origins; the wildcard itself stays because the Wall needs it), 14,
-15, 18, 19 (a full sealed-log document vector the kernel emits and the TV
+cross-site origins; the wildcard itself stays because the Wall needs it), 7
+(the desktop flasher recognizes every integrity keyword the browser does, and
+a parity test now holds the two tables together), 14, 15, 18, 19 (a full sealed-log document vector the kernel emits and the TV
 core walks), 20, 23 (the gate against `flavors.json`; deriving the release
 steps from it is still open), 24, 25, 32, 33, 39, 43, 45, 47, 48, 49
-(CI-backed rows; the `cargo doc` gate is still open), 50, 52, 53, 54, 55,
-56, 57, 58 (already true at HEAD), 59, 60, plus two the review of the PR
+(CI-backed rows; the `cargo doc` gate is still open), 36 (ruff over the
+tooling, 82 findings fixed), 40 (the nightly BOM snapshot lands as a PR),
+50, 52, 53, 54, 55, 56, 57, 58 (already true at HEAD), 59, 60, plus two the review of the PR
 itself found: the MQTT bridge's publish
 cursor now ignores export jitter, and the tvOS bundles carry a privacy
 manifest that the plist lint actually inspects.
@@ -98,7 +100,7 @@ manifest that the plist lint actually inspects.
 | 4 | **(landed, in part)** **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Timestamp each window and resample onto a fixed 1 Hz grid before the bin stage; expose the achieved cadence in `csi_stats_t`. | S |
 | 5 | **A TLS-enabled WAP is unreachable from the iOS app.** `URLSession.shared` never answers the server-trust challenge and the receipt's `tls_cert_fp` pin is discarded. | The one configuration that protects the router password in transit is the one the app cannot talk to. | A `URLSessionDelegate` that pins the receipt fingerprint (`ios/Sources/SecuraCV/Transport/DeviceAPI.swift`); reject on mismatch with a user-readable error. | M |
 | 6 | **On-phone chain verification targets the wrong API.** `DeviceAPI.witness()` fetches `/api/v1/witness` (the canary-vision Node reference), while the WAP serves `/api/witness` with a different record shape and no signature. | The app's headline trust feature cannot run against any firmware in this repo. | Pick one contract, put it in `spec/`, and make the WAP handler and the Swift decoder both conform; add a fixture test on each side. | M |
-| 7 | **Two flashers still disagree on Ed25519 refusals** in one direction: the browser now classifies them as integrity failures, but the desktop Flasher's diagnostic copy and recovery hint differ. | Half the users get the vague message (AGENTS.md rule 7). | Share the classification table as a JSON both frontends load (`canary-local/assets/flash-core.js`, `desktop/src/`). | S |
+| 7 | **(landed)** **Two flashers still disagree on Ed25519 refusals** in one direction: the browser now classifies them as integrity failures, but the desktop Flasher's diagnostic copy and recovery hint differ. | Half the users get the vague message (AGENTS.md rule 7). | Share the classification table as a JSON both frontends load (`canary-local/assets/flash-core.js`, `desktop/src/`). | S |
 | 8 | **Add-on image workflow has been red on `main` for six runs.** The aarch64 QEMU leg hits the 90-minute timeout and the verify-public gate misreads a 404. | Home Assistant OS users on Raspberry Pi get no add-on image. | Build arm64 on a native `ubuntu-24.04-arm` runner, split the matrix, and make the verify step distinguish "not yet public" from "missing". | M |
 
 ### P1 — security posture and trust claims

@@ -23,7 +23,6 @@ CI:   .github/workflows/lint.yml (Repo Lints)
 """
 import importlib.util
 import json
-import sys
 import unittest
 from pathlib import Path
 
@@ -139,8 +138,8 @@ class Verdict(unittest.TestCase):
         self.assertEqual(m["decision"]["state"], "UNRESOLVED")
         # And the price it declined to decide on really is above the crossover —
         # i.e. the refusal is about provenance, not about the arithmetic.
-        line = next(l for l in m["module_build_replaced"]["lines"]
-                    if l["mpn"] == self.dominant(m))
+        line = next(row for row in m["module_build_replaced"]["lines"]
+                    if row["mpn"] == self.dominant(m))
         self.assertEqual(line["price_at_qty"], 1)
         self.assertGreater(line["unit_usd"], m["decision"]["crossover_unit_usd"])
 

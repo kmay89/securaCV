@@ -18,6 +18,8 @@ on:
 permissions:
   contents: write
   issues: write
+  # the snapshot lands as a PR now (see the commit step), not a push to main
+  pull-requests: write
 
 concurrency:
   group: bom-pricing
@@ -29,7 +31,13 @@ jobs:
     # ~60 MPNs at polite pacing is a 2-5 minute run; 15 is the circuit breaker
     timeout-minutes: 15
     steps:
+      # FRESHNESS_PAT (optional; the same secret homeassistant-freshness.yml
+      # uses): a push made with the default GITHUB_TOKEN triggers no
+      # workflows, so without it the snapshot PR shows no checks of its own.
+      # The gate step below runs the same checks here either way.
       - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.FRESHNESS_PAT || github.token }}
 
       - name: Fetch distributor snapshot
         env:
@@ -52,15 +60,14 @@ jobs:
           python3 canary-local/tools/gen_enclosures.py
           python3 scripts/gen_board_design.py
 
-      # This job pushes straight to main with the default GITHUB_TOKEN, and a
-      # push made with that token triggers NO workflows (GitHub's recursion
-      # guard) — so nothing ever verified the commit it lands. Run the gates
-      # that consume the regenerated files HERE, before the push: the same
-      # checks lint.yml and canary-local.yml would have run on a PR. A red
-      # gate leaves the snapshot uncommitted and the run red, which is the
-      # honest outcome; the previous shape pushed first and let every PR
-      # opened afterwards inherit the failure.
-      - name: Gate the regenerated files before they reach main
+      # The snapshot used to be pushed straight to main with the default
+      # GITHUB_TOKEN, and a push made with that token triggers NO workflows
+      # (GitHub's recursion guard) — so nothing ever verified the commit it
+      # landed. It now lands as a PR (below), and the gates that consume the
+      # regenerated files still run HERE first: the same checks lint.yml and
+      # canary-local.yml run on any PR. A red gate leaves the snapshot
+      # unproposed and the run red, which is the honest outcome.
+      - name: Gate the regenerated files before they are proposed
         run: |
           set -euo pipefail
           python3 scripts/gen_board_design.py --check
@@ -68,7 +75,9 @@ jobs:
           python3 scripts/lint_board_design.py
           node --test canary-local/tests/build_it.test.js canary-local/tests/catalog.test.js canary-local/tests/workshop.test.js
 
-      - name: Commit the refreshed snapshot
+      - name: Propose the refreshed snapshot as a PR
+        env:
+          GH_TOKEN: ${{ secrets.FRESHNESS_PAT || github.token }}
         run: |
           if git diff --quiet -- docs/hardware/pricing.json canary-local/devices boards; then
             echo "snapshot unchanged — nothing to commit"
@@ -76,9 +85,31 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="bot/bom-pricing"
+          git checkout -B "$BRANCH"
           git add docs/hardware/pricing.json canary-local/devices boards
           git commit -m "bom: nightly supply-chain snapshot"
-          git push
+          git push -f origin "$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --title "BOM: nightly supply-chain snapshot" \
+              --body "Nightly distributor snapshot (Digi-Key + Mouser) and everything that rides on it — pricing.json, the Build-it catalog, the board design cost model. Gated by gen_board_design.py --check, lint_bom.py, lint_board_design.py and the catalog tests before this PR was opened. Force-pushed to the same branch each night while it stays open." \
+            || {
+              # Same fallback as homeassistant-freshness.yml: when the repo
+              # forbids Actions from opening PRs, deliver the branch as one
+              # deduplicated issue with the compare link instead of failing.
+              TITLE_PREFIX="BOM: nightly supply-chain snapshot"
+              TITLE="${TITLE_PREFIX} (needs a PR)"
+              OPEN=$(gh issue list --state open --search "\"${TITLE_PREFIX}\" in:title" --json number --jq '.[].number' | head -1)
+              LINK="https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1"
+              if [ -n "$OPEN" ]; then
+                gh issue comment "$OPEN" --body "Refreshed again on $(date -u +%Y-%m-%d): branch \`${BRANCH}\` was force-pushed with tonight's snapshot — [open the PR](${LINK})."
+              else
+                gh issue create --title "$TITLE" --body "The nightly supply-chain snapshot is pushed on branch [\`${BRANCH}\`](https://github.com/${GITHUB_REPOSITORY}/tree/${BRANCH}) and passed its gates, but this repo does not let Actions open pull requests, so a human has to: [open the PR](${LINK}). Enable *Allow GitHub Actions to create and approve pull requests* or add a \`FRESHNESS_PAT\` secret to make this automatic. Raised by \`bom-pricing.yml\`; reused while open."
+              fi
+              echo "::warning::PR creation refused; delivered the snapshot branch through an issue instead."
+            }
+          fi
 
       - name: Raise supply-chain exceptions as issues (deduplicated)
         env:

@@ -291,7 +291,7 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
     # (we pay a low-volume price for the thing we are dropping) and DOWNWARD
     # when they sit on the carrier side.
     unmatched_replaced = [a for a in absorbed if not a["volume_matched"]]
-    unmatched_carrier = [l for l in lines if not l["volume_matched"]]
+    unmatched_carrier = [row for row in lines if not row["volume_matched"]]
 
     # The one question this model can answer with no invented data at all:
     # how far can the dominant replaced part fall in price before the carrier
@@ -468,7 +468,7 @@ def build_cost_model(design: dict, pricing: dict) -> dict:
                     {a["mpn"] for a in unmatched_replaced}
                 ),
                 "carrier_side_mpns": sorted(
-                    {l["mpn"] for l in unmatched_carrier if l["provenance"] in VERIFIED}
+                    {row["mpn"] for row in unmatched_carrier if row["provenance"] in VERIFIED}
                 ),
             },
         },

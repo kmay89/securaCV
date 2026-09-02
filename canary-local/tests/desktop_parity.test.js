@@ -1964,3 +1964,32 @@ test("progressFromFrame reads espflash's bars and refuses everything else", () =
   // Degenerate frames must degrade to null, never a wrong number.
   assert.strictEqual(fn("[=========] 1024/0"), null);
 });
+
+// The two flashers share no UI code (CLAUDE.md, "two flashers, two
+// frontends"), so a user-facing diagnostic added to one must be added to the
+// other or half the users keep the vague version. classifyFlashError is the
+// diagnostic table; this pins that every integrity-refusal keyword the browser
+// recognizes — including the Ed25519 "signed by" wording — the desktop
+// recognizes too, and that the kinds and titles agree.
+test("classifyFlashError: the desktop recognizes every integrity keyword the browser does, with the same kinds and titles", () => {
+  const browser = read(join(CANARY, "assets/flash-core.js"));
+  const desktop = read(join(CANARY, "..", "desktop/src/app.js"));
+  const table = (src) => {
+    const out = {};
+    const re = /has\(([^)]*)\)[^\n]*\n\s*return \{ kind: "([a-z-]+)", title: "([^"]+)"/g;
+    for (const m of src.matchAll(re)) {
+      const words = [...m[1].matchAll(/"([^"]+)"/g)].map((w) => w[1]);
+      out[m[2]] = { title: m[3], words: new Set([...(out[m[2]]?.words || []), ...words]) };
+    }
+    return out;
+  };
+  const b = table(browser), d = table(desktop);
+  assert.ok(b.integrity && d.integrity, "both flashers classify an integrity failure");
+  for (const w of b.integrity.words) {
+    assert.ok(d.integrity.words.has(w), `desktop classifyFlashError lacks the browser's integrity keyword "${w}"`);
+  }
+  for (const kind of Object.keys(b)) {
+    assert.ok(d[kind], `desktop classifyFlashError has no "${kind}" kind`);
+    assert.equal(d[kind].title, b[kind].title, `title for "${kind}" differs between the flashers`);
+  }
+});
