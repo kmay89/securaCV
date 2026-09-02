@@ -732,6 +732,10 @@ int process() {
   const uint32_t now_ms = millis();
   if ((now_ms - s_window_start_ms) < CSI_WINDOW_MS) return 0;
 
+  /* A window that closes late stands for every whole window that elapsed
+   * meanwhile; the feature layer holds the breathing envelope across the gap
+   * so its one-sample-per-second time base survives a stall. */
+  features::note_missed_windows((now_ms - s_window_start_ms) / CSI_WINDOW_MS - 1u);
   csi_features_t feats = {};
   features::finalize(&feats, s_window_frames);
 

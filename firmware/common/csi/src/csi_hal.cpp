@@ -606,7 +606,12 @@ int process() {
     return 0;
   }
 
-  /* Close window and emit. */
+  /* Close window and emit. A window that closes late (loop stall, quiet
+   * radio, power gating) stands for every whole window that elapsed
+   * meanwhile; tell the feature layer so the breathing envelope keeps its
+   * one-sample-per-second time base instead of compressing the gap. */
+  const uint32_t missed = (now_ms - s_window_start_ms) / CSI_WINDOW_MS - 1u;
+  csi_features::note_missed_windows(missed);
   csi_features_t feats = {};
   csi_features::finalize(&feats, s_window_frames);
 

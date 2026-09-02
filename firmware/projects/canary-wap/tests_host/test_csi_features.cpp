@@ -238,12 +238,44 @@ static void test_reset_history_wipes_breathing() {
   printf("ok  reset_history wipes the breathing envelope\n");
 }
 
+// A late window stands for every window that elapsed meanwhile: the HAL
+// reports the gap and the envelope ring holds its last sample that many
+// times, so the Goertzel bank's one-sample-per-second time base survives a
+// stall instead of compressing it (which read as a faster breath rate).
+static void test_missed_windows_hold_the_envelope() {
+  csi_features::reset_history();
+  csi_features::reset();
+  int8_t iq[SC * 2];
+  memset(iq, 0, sizeof(iq));
+  for (int w = 0; w < 3; w++) {
+    for (int f = 0; f < 5; f++) csi_features::accumulate(iq, SC, -55, 6, 0);
+    csi_features_t out = {};
+    csi_features::finalize(&out, 5);
+    csi_features::reset();
+  }
+  assert(csi_features::envelope_len() == 3);
+  csi_features::note_missed_windows(0);
+  assert(csi_features::envelope_len() == 3);
+  csi_features::note_missed_windows(2);
+  assert(csi_features::envelope_len() == 5);
+  // A gap longer than the ring is capped at the ring: the spectrum restarts
+  // from the held value rather than wrapping the head past the tail.
+  csi_features::note_missed_windows(500);
+  assert(csi_features::envelope_len() == 64);
+  // An empty ring has nothing to hold.
+  csi_features::reset_history();
+  csi_features::note_missed_windows(4);
+  assert(csi_features::envelope_len() == 0);
+  std::printf("PASS test_missed_windows_hold_the_envelope\n");
+}
+
 int main() {
   test_static_channel_with_cfo_reads_empty();
   test_agc_flicker_reads_empty();
   test_motion_is_detected();
   test_breathing_bin_and_min_windows();
   test_reset_history_wipes_breathing();
+  test_missed_windows_hold_the_envelope();
   printf("test_csi_features: all tests passed\n");
   return 0;
 }
