@@ -91,7 +91,7 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
 | ESP32-S3 | ✅ Primary | XIAO ESP32-S3 Sense is the reference board. |
 | ESP32 | ✅ | HT20 only. |
 | ESP32-C3 | ✅ | HT20 only. |
-| ESP32-C6 | ✅ | Same CSI path as every ESP32 here (HT-LTF, ~52 usable subcarriers on HT20 / ~108 on HT40; HAL caps ingest at 128). ESP-IDF v5.5+ exposes C6 HE-LTF CSI acquisition, but this firmware configures the legacy CSI fields and does not acquire or ingest it — the limitation is this repo's HAL, not ESP-IDF. No ESP32 exposes IEEE 802.11bf sounding in ESP-IDF. |
+| ESP32-C6 | ⚠️ compiles, bench-unverified | ESP-IDF 5.1+ gives the C6 (and C5/C61) a different `wifi_csi_config_t` — the `wifi_csi_acquire_config_t` bitfields — so the HAL as first written did not compile there at all, whatever the table said. `csi_idf_compat.h` now fills whichever shape the target exposes and is compile-tested against every IDF revision of both (`tests_host/test_csi_idf_compat.cpp`); the frame path is the same 52-tone L-LTF canonical set as every other part. **No C6 has run this HAL yet** — treat it as untested until a bench log says otherwise. HE-LTF (Wi-Fi 6) acquisition is deliberately left off: its tone count differs per PPDU type and needs its own map. No ESP32 exposes IEEE 802.11bf sounding in ESP-IDF; `CSI_CAP_SOUNDING_11BF` stays reserved. |
 | ESP32-S2 | ⚠️ | No CSI in stock IDF builds. |
 | ESP8266 | ❌ | No CSI support. |
 

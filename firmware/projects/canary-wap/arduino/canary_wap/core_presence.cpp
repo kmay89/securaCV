@@ -95,7 +95,12 @@ const char* confidence_for(uint16_t windows_in_state, uint8_t magnitude) {
 State derive_target_state(uint8_t motion, uint8_t breathing, uint16_t streak) {
   /* Together = high motion + sustained — single antenna can't count, but the
    * feature variance signature widens noticeably with multiple movers. */
-  if (motion >= s_active_threshold + 20 && streak >= 5) return STATE_TOGETHER;
+  /* The gate must stay reachable: reduce_magnitude caps at 127, and the
+   * quiet preset's active threshold (90) plus the low-sensitivity offset
+   * (+20) plus this margin (+20) used to land at 140 — "together" could
+   * never fire on the quiet preset. Clamp the gate to 127. */
+  const int together_gate = (s_active_threshold + 20 > 127) ? 127 : (s_active_threshold + 20);
+  if (motion >= together_gate && streak >= 5) return STATE_TOGETHER;
   if (motion >= s_active_threshold)                     return STATE_ACTIVE;
   /* Breathing (Quiet) is gated by Pet Mode: small pets can't sustain a
    * human-band breathing peak for 30 s. */
@@ -177,7 +182,13 @@ void emit_state_change(State new_state, uint8_t motion, uint8_t breathing) {
                    | CSI_FIELD_DOMINANT_SIGNAL;
 
   strncpy(v.state_name, STATE_NAMES[new_state], sizeof(v.state_name) - 1);
-  const char* conf = confidence_for(0, motion >= breathing ? motion : breathing);
+  /* The streak at emit time: 0 on a fresh transition ("tentative"), then
+   * the periodic re-emits at 5 / 20 / 60 windows carry 5 / 20 / 60 so the
+   * bundler can promote the open row to "observed" / "confirmed". This used
+   * to pass a literal 0, which pinned every presence row at "tentative"
+   * forever and made the re-emit cadence pointless. */
+  const char* conf = confidence_for(s_windows_in_state,
+                                    motion >= breathing ? motion : breathing);
   strncpy(v.confidence, conf, sizeof(v.confidence) - 1);
   const char* dom = (motion >= breathing) ? "motion" : "breathing";
   if (new_state == STATE_EMPTY) dom = "none";
@@ -202,7 +213,13 @@ void on_tick(const csi_features_t* f) {
   if (!f) return;
 
   const uint8_t motion    = reduce_magnitude(f->v, IDX_DOPPLER_BASE, IDX_DOPPLER_BASE + 4);
-  const uint8_t breathing = reduce_magnitude(f->v, IDX_BREATHING_FFT_BASE, IDX_BREATHING_FFT_BASE + 8);
+  /* Breathing is a PEAK, not a mean: the extractor puts a clean breath into
+   * one Goertzel bin (≈40) and leaves the other seven near zero, so the
+   * 8-bin mean of a real breath is ≈5 and could never reach the 30-point
+   * "quiet" threshold — only broadband noise could. csi_breathing_peak()
+   * is the one reducer every consumer shares (anomaly.baseline, the
+   * dashboard stream) so the thresholds mean the same thing everywhere. */
+  const uint8_t breathing = csi_breathing_peak(f->v);
 
   /* Multipath shimmer rejection: large RSSI swing without Doppler is
    * a non-human artifact. Treat as empty so presence doesn't advance. */

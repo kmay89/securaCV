@@ -79,11 +79,21 @@ struct Config {
   uint16_t rate_hz;
 
   /* Aggregate Tx cap across all peers + idle broadcasts, in frames/sec.
-   * 200 Hz at 16-byte payload + 192 µs preamble at 1 Mbps is ~0.6 % of
-   * 2.4 GHz airtime — comfortably under the 2 % cap enforced by
-   * airtime_governor (#442). The mesh layer in PR 2 will additionally
-   * route every probe send through airtime_governor::try_reserve_routine()
-   * so the global cap also applies. */
+   *
+   * Honest airtime math (this comment used to claim 0.6 %, which counted
+   * only the preamble): ESP-NOW sends at the 1 Mbps long-preamble rate
+   * unless esp_wifi_config_espnow_rate() says otherwise, and nothing in
+   * this firmware does. One frame is then 192 µs PLCP + ~59 bytes of
+   * MAC/action-frame framing and a 16-byte payload (~470 µs) ≈ 0.66 ms
+   * on air. So a single peer at rate_hz=20 costs ~1.3 % of the 2.4 GHz
+   * channel, and the 200 Hz ceiling below — reached only when ten or
+   * more peers all draw their full 20 Hz — would cost ~13 %. That is
+   * well over airtime_governor's 2 % routine cap (#442), and probe sends
+   * are NOT yet routed through airtime_governor::try_reserve_routine();
+   * the governor only reports utilization (csi_integration.cpp reads
+   * airtime_pct_x100 to throttle the HAL). Until the mesh layer wires
+   * that reservation in, keep fleets small or lower this cap; 30 Hz is
+   * the value that fits the 2 % budget at 1 Mbps. */
   uint16_t aggregate_cap_hz;
 
   /* If true, when no peers are registered the probe falls back to ESP-NOW

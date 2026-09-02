@@ -1,8 +1,17 @@
 {
   "name": "securacv-csi",
-  "version": "0.2.0",
-  "description": "Privacy-preserving WiFi Channel State Information sensing for ESP32-S3. Captures CSI, scrubs identifiers at the interrupt boundary, and exports a 32-dim int8 feature vector at 1 Hz covering motion, breathing, RSSI stats, and frame-rate health. Includes a modular sensing pipeline, a privacy-class-tagged event chokepoint, and a 10-minute sliding-window event bundler.",
-  "keywords": ["csi", "wifi-sensing", "esp32", "esp32-s3", "presence", "breathing", "motion", "privacy"],
+  "version": "0.4.0",
+  "description": "Privacy-preserving WiFi Channel State Information sensing for ESP32-S3. Captures CSI on ESP32/S3/C3 and the C6/C5 Wi-Fi 6 parts (one config shim for both ESP-IDF struct shapes), canonicalizes every frame to the 52 L-LTF tones, keeps the frame supply up with a router echo source, scrubs identifiers at the interrupt boundary, and exports a 32-dim int8 feature vector at 1 Hz covering motion, breathing, RSSI stats, and frame-rate health. Includes a modular sensing pipeline, a privacy-class-tagged event chokepoint, and a 10-minute sliding-window event bundler.",
+  "keywords": [
+    "csi",
+    "wifi-sensing",
+    "esp32",
+    "esp32-s3",
+    "presence",
+    "breathing",
+    "motion",
+    "privacy"
+  ],
   "authors": [
     {
       "name": "SecuraCV Contributors",
@@ -10,21 +19,36 @@
     }
   ],
   "license": "MIT",
-  "frameworks": ["arduino", "espidf"],
-  "platforms": ["espressif32"],
+  "frameworks": [
+    "arduino",
+    "espidf"
+  ],
+  "platforms": [
+    "espressif32"
+  ],
   "headers": [
     "csi_hal.h",
     "csi_features.h",
     "csi_types.h",
+    "csi_subcarriers.h",
+    "csi_idf_compat.h",
     "csi_module.h",
     "csi_event.h",
     "csi_bundler.h",
+    "csi_witness_payload.h",
+    "csi_probe.h",
+    "csi_traffic.h",
+    "csi_mem.h",
     "core_presence.h",
     "core_breathing.h",
     "core_activity_ribbon.h",
+    "core_multilink_fusion.h",
     "meta_daily_summary.h",
+    "meta_quiet_hours.h",
+    "meta_empty_room_baseline.h",
     "anomaly_baseline.h",
-    "wifi_channel_activity.h"
+    "wifi_channel_activity.h",
+    "ble_events_module.h"
   ],
   "build": {
     "srcDir": "src",

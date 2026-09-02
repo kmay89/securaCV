@@ -178,7 +178,11 @@ void on_tick(const csi_features_t* f) {
   if (!f) return;
 
   const uint8_t motion    = reduce_band(f->v, IDX_DOPPLER_BASE,       IDX_DOPPLER_COUNT);
-  const uint8_t breathing = reduce_band(f->v, IDX_BREATHING_FFT_BASE, IDX_BREATHING_FFT_COUNT);
+  /* Peak, not mean — the shared reducer (csi_types.h): a real breath is one
+   * Goertzel bin ≈40 and seven near zero, so the 8-bin mean (≈5) could never
+   * reach min_breathing=50 and "unusual_breathing" only fired on broadband
+   * noise. */
+  const uint8_t breathing = csi_breathing_peak(f->v);
 
   /* Decay cooldown counters. */
   if (s_motion_cool    > 0) s_motion_cool--;

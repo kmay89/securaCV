@@ -24,7 +24,9 @@
  *   - Arduino IDE: a libraries/csi symlink next to the canary-wap sketch
  *     points here, so the IDE auto-discovers the library.
  *
- * See spec/canary_free_signals_v0.md (upcoming v1) for the threat model.
+ * Threat model and design record: docs/csi_wifi_sensing_research.md (the
+ * open-source landscape and what was adopted) and spec/invariants.md;
+ * spec/canary_free_signals_v0.md covers the non-CSI free signals.
  */
 
 #ifndef SECURACV_CSI_TYPES_H
@@ -45,7 +47,9 @@ extern "C" {
 /** Feature-vector width exported to the fusion head. int8, zero-mean. */
 #define CSI_FEATURE_DIM 32
 
-/** Maximum subcarriers we buffer per frame (HT20 legacy = 52, HT40 = 108). */
+/** Maximum subcarriers a slot can hold. The HAL canonicalizes every frame to
+ *  the 52 L-LTF data+pilot tones (csi_subcarriers.h), so in practice each
+ *  frame carries exactly 52; the headroom is for a future HE-LTF path. */
 #define CSI_MAX_SUBCARRIERS 128
 
 /** Window length for one feature vector, in milliseconds. */
@@ -92,6 +96,23 @@ typedef struct {
   uint8_t  caps_observed;      /* csi_cap_t bitmask of what this window used */
 } csi_features_t;
 
+/**
+ * The one breathing reducer. v[12..19] are eight Goertzel bins (0.10 +
+ * 0.05·i Hz); a clean breath lands in ONE bin (≈40 at a ±2-unit envelope)
+ * and leaves the rest near zero, so the meaningful scalar is the peak, not
+ * the mean — the mean of a real breath is ≈5 and never clears a 30-point
+ * threshold. Every consumer (core.presence, anomaly.baseline, the dashboard
+ * stream) calls this so "breathing = 40" means the same thing everywhere.
+ */
+static inline uint8_t csi_breathing_peak(const int8_t* v) {
+  uint8_t peak = 0;
+  for (int i = 12; i < 20; ++i) {
+    const int a = v[i] < 0 ? -(int)v[i] : (int)v[i];
+    if (a > peak) peak = (uint8_t)(a > 127 ? 127 : a);
+  }
+  return peak;
+}
+
 /* Compile-time size check. Use C++11 static_assert when available
  * (Arduino sketch is C++); fall back to C11 _Static_assert otherwise. */
 #ifdef __cplusplus
@@ -106,10 +127,16 @@ _Static_assert(sizeof(((csi_features_t*)0)->v) == CSI_FEATURE_DIM,
  * Configuration passed to csi_init().
  */
 typedef struct {
-  /** Target WiFi channel (1-13 at 2.4 GHz, 36-165 at 5 GHz). 0 = follow STA. */
+  /** ADVISORY ONLY. CSI rides the WiFi driver's existing AP/STA mode, so the
+   *  channel is whatever that mode negotiated; the HAL records this request
+   *  for diagnostics and does NOT push it into esp_wifi_set_channel() (that
+   *  would fight the AP/STA bring-up). Channel pinning for ESP-NOW probes is
+   *  csi_hal::set_channel_lock(). 0 = follow STA. */
   uint8_t  channel;
 
-  /** Bandwidth preference: 20 = HT20, 40 = HT40 (backend downgrades as needed). */
+  /** ADVISORY ONLY (see `channel`). Every frame is reduced to the 52 L-LTF
+   *  tones regardless of PPDU bandwidth; the observed bandwidth appears in
+   *  the feature vector at v[27]. */
   uint8_t  bandwidth_mhz;
 
   /** Maximum frames/sec to accept (rate-limits the callback; 0 = unlimited). */
@@ -193,6 +220,7 @@ typedef struct {
   uint32_t frames_dropped_full;  /* Dropped because ring was full. */
   uint32_t windows_emitted;      /* Feature vectors produced. */
   uint32_t windows_degraded;     /* Windows where frames_in_window < target. */
+  uint32_t frames_dropped_short; /* Dropped: no L-LTF section (< 128 bytes). */
 } csi_stats_t;
 
 bool csi_get_stats(csi_stats_t* out);

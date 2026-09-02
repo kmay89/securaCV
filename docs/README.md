@@ -187,7 +187,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [ESP-NOW mesh evaluation](mesh_esp_now_evaluation.md) · [ESP32 mesh sensing design](esp32_mesh_sensing_design.md)
 - [Meshtastic integration](meshtastic_integration.md) — witnesses on the property line
 - [Network coexistence](network_coexistence.md) — being a good neighbor on 2.4 GHz
-- [WiFi CSI sensing quickstart](csi_quickstart.md) · [CSI modules](csi_modules.md) · [CSI developer API](csi_developer_api.md)
+- [WiFi CSI sensing quickstart](csi_quickstart.md) · [CSI modules](csi_modules.md) · [CSI developer API](csi_developer_api.md) · [Wi-Fi sensing research: the open-source landscape and what we took from it](csi_wifi_sensing_research.md)
 - [mmWave radar design (MR60BHA2)](canary_sense_mr60bha2_design.md)
 - [Coarse mover-class from the Sense radar (design)](canary_sense_coarse_class_design.md) — the software-only "do it with what we have" upgrade: coarse large-vs-small mover class on the shipped 60 GHz radar, distilled from the BumbleBee micro-Doppler work, class-not-identity
 - [Canary Sentinel — multi-sensor fusion guardian (design + spec)](canary_sentinel_fusion_design.md) — the "near impossible to evade" doorway/window guardian: fuse physically independent channels (PIR + radar + WiFi CSI + WiFi/BLE + light + contact/tamper/vision), score corroboration across independent modalities, treat a blinded channel as suspicion (the ATM/fraud-detection posture); Lite/Standard/Heavy tiers, five presets, host-tested fusion core

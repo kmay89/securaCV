@@ -106,6 +106,16 @@ void csi_bundler_reset(void);
 size_t csi_bundler_open_count(void);
 
 /**
+ * True if an open bundle already exists for this (module, type, state) key —
+ * i.e. the next admit of the same key would MERGE into it rather than open a
+ * new one. csi_event_emit asks this before admitting so a same-state refresh
+ * does not consume a per-module hourly ceiling slot (only openings do).
+ */
+bool csi_bundler_has_open(const char* module_id,
+                          const char* type_name,
+                          const char* state_name);
+
+/**
  * Copy up to `max` currently OPEN bundles into `out`, newest activity first.
  * Safe to call from the HTTP server task: the slot table is mutex-guarded
  * (see csi_bundler.cpp's threading note), and each record is a consistent

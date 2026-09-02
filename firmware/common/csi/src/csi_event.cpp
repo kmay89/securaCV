@@ -484,7 +484,12 @@ uint32_t csi_event_emit(const char*               module_id,
   /* 5. Pre-account the emit against the per-module hourly ceiling. We
    *    increment first and roll back on rejection so that buffered emits
    *    (which only commit later via the bundler) still count toward the
-   *    same cap as direct commits. */
+   *    same cap as direct commits. A same-key REFRESH of a bundle that is
+   *    already open is the one exception (see the BUFFERED branch), so we
+   *    ask the bundler up front whether this admit would merge. */
+  const bool refreshes_open_bundle =
+      (v.present_fields & CSI_FIELD_STATE_NAME) && v.state_name[0] != '\0'
+      && csi_bundler_has_open(module_id, type_name, v.state_name);
   counter->buckets[5] += 1;
 
   /* 6. Bundling. The bundler buffers same-state events into a single open
@@ -494,8 +499,15 @@ uint32_t csi_event_emit(const char*               module_id,
       module_id, type_name, decl->privacy, &v, &event_id);
 
   if (outcome == CSI_BUNDLER_BUFFERED) {
-    /* Rolled into an open bundle (or just opened a new one). The bundle
-     * will commit later via close_slot()'s commit hooks. */
+    /* Rolled into an open bundle, or just opened a new one. An OPENING is
+     * a future committed row and keeps its ceiling slot. A REFRESH of a
+     * bundle that was already open produces no new row and must not
+     * consume one: core.presence re-emits its open state at 5 / 20 / every
+     * 60 windows to refresh duration and confidence, and with a 6/hour
+     * ceiling those refreshes exhausted the cap in ~3 minutes of sustained
+     * presence, after which the REAL state transitions were silently
+     * dropped. */
+    if (refreshes_open_bundle) counter->buckets[5] -= 1;
     csi_module_record_emission_(event_id, module_id);
     return event_id;
   }
