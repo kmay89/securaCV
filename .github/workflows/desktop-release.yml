@@ -134,7 +134,19 @@ jobs:
           if [ -n "${SECRET_KEY:-}" ]; then
             echo "Using repository signing key."
           else
-            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
+            # An ephemeral key is fine for a build-only smoke run. It is NOT
+            # fine for a publish: the updater manifest and the rolling
+            # *-latest pointer would advance with .sig files no installed
+            # Lab can verify (its embedded pubkey is the repository key), so
+            # every existing install would see "update ready" and fail to
+            # apply it — self-update bricked fleet-wide until the next real
+            # publish. firmware-release.yml already refuses to publish without
+            # its OTA key; this is the same posture for the apps.
+            if [ "${{ github.event_name == 'push' || inputs.publish }}" = "true" ]; then
+              echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, and this run PUBLISHES. Refusing to publish an update the installed base cannot verify. Add the repository signing secret (desktop/README.md, 'real self-update signing') or run build-only."
+              exit 1
+            fi
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build-only run succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
             npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/lab.key" --password ""
             # $(cat) strips the trailing newline; a heredoc fails when the file
             # lacks a final newline (the delimiter glues onto the key).
@@ -166,7 +178,7 @@ jobs:
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
           releaseName: "SecuraCV Lab v__VERSION__"
           releaseBody: |
-            The **SecuraCV Lab**, as a native app — local-first, nothing phones home.
+            The **SecuraCV Lab**, as a native app — local-first; it talks only to your own devices, and the one thing it fetches on its own is its signed update manifest.
 
             - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
@@ -339,7 +351,7 @@ jobs:
           tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
           releaseName: "SecuraCV Lab v__VERSION__"
           releaseBody: |
-            The **SecuraCV Lab**, as a native app — local-first, nothing phones home.
+            The **SecuraCV Lab**, as a native app — local-first; it talks only to your own devices, and the one thing it fetches on its own is its signed update manifest.
 
             - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
@@ -455,7 +467,7 @@ jobs:
             echo
             echo "---"
             echo
-            echo "The **SecuraCV Lab**, as a native app — local-first, nothing phones home."
+            echo "The **SecuraCV Lab**, as a native app — local-first; it talks only to your own devices, and the one thing it fetches on its own is its signed update manifest."
             echo
             echo "- **macOS**: download the \`.dmg\` (universal — Apple Silicon & Intel)."
             echo "- **Linux**: \`.AppImage\` (runs anywhere) or \`.deb\` (Debian/Ubuntu)."

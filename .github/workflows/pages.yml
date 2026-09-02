@@ -50,9 +50,13 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site/docs/hardware
-          cp -r canary-local _site/canary-local
+          cp -rL canary-local _site/canary-local  # -L: dereference symlinks (RELEASE_LESSONS principle 1, same as desktop-lab/scripts/stage-frontend.mjs)
+          # The page-logic tests (68 files incl. Playwright probes) are not
+          # site content; tools/ stays because the Lab pages link their own
+          # generators as "source" links.
+          rm -rf _site/canary-local/tests
           rm -rf _site/canary-local/emulator/third_party _site/canary-local/emulator/.build
-          cp -r docs/hardware/enclosure _site/docs/hardware/enclosure
+          cp -rL docs/hardware/enclosure _site/docs/hardware/enclosure
           # front door: / → the guide
           cat > _site/index.html <<'EOF'
           <!DOCTYPE html><meta charset="utf-8">

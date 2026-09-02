@@ -80,19 +80,24 @@ jobs:
         cache-dependency-path: canary-vision/package-lock.json
     - name: Install canary-vision deps
       working-directory: canary-vision
-      run: npm install --workspaces
-    - name: Envelope-bridge tests (build + shared-verifier reuse)
+      # npm ci against the committed lockfile (what setup-node caches on);
+      # `npm install` resolved fresh every run and could drift from the lock.
+      run: npm ci --workspaces --no-audit --no-fund
+    # ALL three suites, by glob. The previous four hand-listed files left 26
+    # of the 30 test files — including every one of the eleven security
+    # suites (auth, cors, host-validation, private-network-access, no-scan,
+    # no-fleet-sync, rate-limit, camera-peek, security-headers, token-expiry,
+    # webhook-url) — running in no workflow at all. A glob cannot forget a
+    # new file the way a list does; run-all.sh is the same set for a laptop.
+    - name: Security suites (auth, CORS, PNA, host validation, rate limit, headers, token expiry, webhook URL)
       working-directory: canary-vision
-      run: node --test tests/api/envelope-bridge.test.js
-    # The device-side witness-chain endpoint suites existed but no workflow
-    # ran them — the chain is the product, and its device API tests were the
-    # one chain surface without a CI gate.
-    - name: Witness-chain endpoint tests (device API)
+      run: node --test tests/security/*.test.js
+    - name: Device API suites (info, config, logs, peers, provision, reboot, update, webhook, envelope bridge, witness chain)
       working-directory: canary-vision
-      run: node --test tests/api/witness.test.js tests/api/witness-simulate.test.js
-    - name: SPA verified-timeline tests (in-app envelope rendering)
+      run: node --test tests/api/*.test.js
+    - name: SPA suites (verified timeline)
       working-directory: canary-vision
-      run: node --test tests/spa/verified-timeline.test.js
+      run: node --test tests/spa/*.test.js
 
   selftest-ui:
     runs-on: ubuntu-latest

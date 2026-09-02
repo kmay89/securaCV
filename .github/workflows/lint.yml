@@ -33,6 +33,12 @@ jobs:
         run: bash scripts/lint_feature_flags.sh
       - name: Version lockstep (kernel / integration / add-on)
         run: bash scripts/lint_version_sync.sh
+      - name: Firmware version lockstep (six version strings, one train)
+        # lint_version_sync.sh above never looked at firmware. The train is
+        # typed in six headers/sketches; drift used to surface only at release
+        # time, and for the display only as a warning that silently skipped
+        # its OTA manifest.
+        run: bash scripts/lint_fw_version_sync.sh
       - name: Desktop apps state ONE version (tauri.conf = package.json = Cargo.toml)
         # Each Tauri app carries its version in three files. tauri.conf.json
         # names the release TAG; Cargo.toml is what the running app shows the
@@ -150,6 +156,18 @@ jobs:
         # every device-rendering target's sources. Adding one for the phone
         # therefore forces a decision instead of a silent divergence.
         run: python3 scripts/lint_apple_parity.py
+      - name: Apple Info.plists and privacy manifests (ATS local networking, PrivacyInfo.xcprivacy)
+        # Two things App Store Connect / iOS enforce that no compiler does:
+        # ATS blocks cleartext to .local hosts unless NSAllowsLocalNetworking is
+        # declared (the tvOS plist had it, the iPhone's did not — every
+        # http://<canary>.local call was rejected on device), and every bundle
+        # that touches UserDefaults must ship a PrivacyInfo.xcprivacy or the
+        # upload is rejected by email after CI is green.
+        run: python3 scripts/lint_apple_plists.py
+      - name: App icon catalogs are complete (stdlib PNG header check)
+        # Runs on the macOS job too, but that one is gated behind
+        # ENABLE_IOS_BUILD; this is the every-PR Linux copy.
+        run: python3 ios/scripts/check_app_icon.py
       - name: Agent entrypoints match AGENTS.md
         # Every AI tool reads a different filename (GEMINI.md, QWEN.md,
         # copilot-instructions.md, .cursor/rules, .clinerules, .windsurfrules).

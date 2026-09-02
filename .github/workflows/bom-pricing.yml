@@ -52,6 +52,22 @@ jobs:
           python3 canary-local/tools/gen_enclosures.py
           python3 scripts/gen_board_design.py
 
+      # This job pushes straight to main with the default GITHUB_TOKEN, and a
+      # push made with that token triggers NO workflows (GitHub's recursion
+      # guard) — so nothing ever verified the commit it lands. Run the gates
+      # that consume the regenerated files HERE, before the push: the same
+      # checks lint.yml and canary-local.yml would have run on a PR. A red
+      # gate leaves the snapshot uncommitted and the run red, which is the
+      # honest outcome; the previous shape pushed first and let every PR
+      # opened afterwards inherit the failure.
+      - name: Gate the regenerated files before they reach main
+        run: |
+          set -euo pipefail
+          python3 scripts/gen_board_design.py --check
+          python3 scripts/lint_bom.py
+          python3 scripts/lint_board_design.py
+          node --test canary-local/tests/build_it.test.js canary-local/tests/catalog.test.js canary-local/tests/workshop.test.js
+
       - name: Commit the refreshed snapshot
         run: |
           if git diff --quiet -- docs/hardware/pricing.json canary-local/devices boards; then

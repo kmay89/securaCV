@@ -419,7 +419,19 @@ jobs:
           if [ -n "${SECRET_KEY:-}" ]; then
             echo "Using repository signing key."
           else
-            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
+            # An ephemeral key is fine for a build-only smoke run. It is NOT
+            # fine for a publish: the updater manifest and the rolling
+            # *-latest pointer would advance with .sig files no installed
+            # Flasher can verify (its embedded pubkey is the repository key), so
+            # every existing install would see "update ready" and fail to
+            # apply it — self-update bricked fleet-wide until the next real
+            # publish. firmware-release.yml already refuses to publish without
+            # its OTA key; this is the same posture for the apps.
+            if [ "${{ steps.plan.outputs.publish }}" = "true" ]; then
+              echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, and this run PUBLISHES. Refusing to publish an update the installed base cannot verify. Add the repository signing secret (desktop/README.md, 'real self-update signing') or run build-only."
+              exit 1
+            fi
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build-only run succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
             npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/flasher.key" --password ""
             # The Tauri private key is a single base64 line; $(cat) strips the
             # trailing newline so a plain assignment is safe (a heredoc here
