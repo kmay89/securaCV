@@ -132,7 +132,7 @@ Canaries are small, local witnesses that corroborate the kernel instead of trust
 | **Canary WAP** | WiFi-sensing presence, mesh experiments, beacon/chirp work, local dashboard. | [`firmware/projects/canary-wap/`](firmware/projects/canary-wap/) |
 | **Canary Sense** | MR60BHA2 60 GHz mmWave radar witness for presence, coarse occupancy, range bands, and wellbeing builds. | [`firmware/projects/canary-sense/`](firmware/projects/canary-sense/) |
 | **Canary Display** | Watch and wall display surfaces with calm status, QR onboarding concepts, Lab parity, and living-canary health cues. | [`firmware/projects/canary-display/`](firmware/projects/canary-display/) |
-| **Canary OTA** | Standalone signed-update engine work: manifest fetch, SHA-256 verify, A/B rollback building blocks. | [`firmware/projects/canary-ota/`](firmware/projects/canary-ota/) |
+| **Canary OTA** | The signed-update engine every active firmware consumes — Ed25519 release signature, SHA-256, A/B rollback, HA update entity — lives in [`firmware/common/ota/`](firmware/common/ota/) ([docs/firmware_ota.md](docs/firmware_ota.md)); `canary-ota/` is the historical ESP-IDF harness it was promoted from. | [`firmware/common/ota/`](firmware/common/ota/) |
 
 Build plans, BOMs, enclosure notes, and bench procedures are collected in [hardware docs](docs/hardware/README.md). Firmware capability status is tracked in [firmware features](firmware/FEATURES.md).
 

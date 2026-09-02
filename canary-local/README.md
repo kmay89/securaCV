@@ -135,7 +135,7 @@ What is *replaced* is exactly the silicon boundary, one shim per wire:
 | LEDC piezo tone | Web Audio | `shim/Arduino.h` + app |
 | NVS (Preferences) | in-memory map, mirrored to JS; preseed/wipe = provisioned vs first-boot; survives emulated reboots | `src/emu_support.cpp` |
 | millis()/time() | virtual clock — scenario can scale (×60 staleness demos) or stage the local hour | same (+ `--wrap=time`) |
-| WiFi STA supervisor | scenario switch with the firmware's honest semantics (boot timeout → reboot; 5-min outage → reboot) | `src/emu_net.cpp` |
+| WiFi STA supervisor | scenario switch with the firmware's honest semantics (boot timeout → boot completes and the loop owns the retry, never a reboot; an outage on a link that once worked → reboot after `WIFI_OUTAGE_REBOOT_MS`) | `src/emu_net.cpp` |
 | PubSubClient socket | scenario broker: retained rows, LWT, wildcard replay | `src/emu_mqtt.cpp` |
 | mDNS discovery / broker gossip | scenario referral (teaches the self-healing rebind) | `src/emu_net.cpp` |
 | esp_random / mbedtls SHA-256 | page entropy (seedable) / vetted compact SHA-256 | shims |

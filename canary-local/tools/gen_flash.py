@@ -761,16 +761,6 @@ HATCH_MOMENTS = {
             "Watch presence flip in Home Assistant.",
         ],
     },
-    "display": {
-        "kicker": "Display Canary hatched",
-        "title": "Watch the glass — it comes alive.",
-        "body": "This Canary SHOWS. The proof isn’t in a console: after the splash, its face comes up and walks you through first flight on the screen itself.",
-        "steps": [
-            "Keep it powered and watch the splash give way to the on-glass welcome.",
-            "Follow the wizard on the screen — WiFi (unless you baked it here), then meeting the fleet.",
-            "Tap the glass: it feels touch. The same face is running in the emulator on the fleet page, pixel for pixel.",
-        ],
-    },
     "sense-wellbeing": {
         "kicker": "Wellbeing Canary hatched",
         "title": "Your Sense Wellbeing Canary is listening with radar.",

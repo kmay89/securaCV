@@ -316,7 +316,7 @@ kits under the free "Works with SecuraCV" badge.
 | A first device, general purpose | **Canary WAP** |
 | Camera + person detection into Home Assistant | **Canary Vision** |
 | Presence/breathing care with no camera | **Canary Sense** |
-| A doorway that's very hard to sneak past | **Canary Sentinel** |
+| A doorway that's very hard to sneak past | **Canary Sentinel** — *not yet flashable*: the fusion core is host-tested, no released build; use a Canary Sense or Vision today |
 | A wall display for the household | **Canary Display** |
 | A kid's bedside clock + lamp with a companion | **The Nightlight** (the `nightlight` display flavor) |
 | Pool/spa water chemistry (pH, ORP, temp) | **Canary Pool** *(design-stage)* |

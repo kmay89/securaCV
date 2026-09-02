@@ -200,10 +200,10 @@ truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 | **Canary Vision** | Camera + on-device person detection, reports to Home Assistant. |
 | **Canary Sense** | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
 | **Canary Pool** | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
-| **Canary Sentinel** | Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. |
+| **Canary Sentinel** | *Phase 0 — fusion core host-tested, no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
 | **Canary Display** | The wall displays and dashes — the ambient surface a household actually looks at. |
 | **Canary OTA** | The signed pull-update path, with rollback. |
-| **Canary Fence Guard** | Boundary/perimeter variant. |
+| **Canary Fence Guard** | *Concept — nothing builds yet.* Boundary/perimeter variant. |
 | **The Tin Can** | Design-stage kids' wrist Canary on the AMOLED watch board: two kids "tie a string" and knock at each other, with **no voice, no text, no location, no cloud**. The refusal list *is* the design. |
 | **The Night Watch** | Phase-0 bedside clock on the same AMOLED watch board. Ships `GoDark` — genuinely off, which only AMOLED allows — under one rule that outranks the owner's preference: *silence is never rendered as safety*, so fleet trouble or a clock unsure of the time breaks blackout every time. |
 | **The Nightlight** | The kid-facing Canary Display flavor on the Waveshare ESP32-C3-LCD-1.47 pocket board (`canary-display-nightlight-c3`): a 7-segment clock over a lamp wash (warm Lantern orange · Rainbow · Moonbeam white), with the living canary visiting on the household's rhythm. The lamp is decor and never a status — this flavor never renders safety as light — and backlight duty is HAL-capped at 50% for heat (a `can't`, not a `won't`). Not **The Night Watch** (the AMOLED watch-board clock); this one lives in the [C3 pocket case](hardware/enclosure/README.md). |

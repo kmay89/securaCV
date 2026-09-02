@@ -30,9 +30,9 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`co_signing.md`](co_signing.md) | Draft v0.1 | Design note | ⚪ Design note — not yet a normative wire contract |
 | [`quorum_unseal_v2.md`](quorum_unseal_v2.md) | Draft v0.1 | Design specification | ⚪ Spec-only — the quorum/unseal v2 target design (threshold custody, ceremony, anchoring spine, disclosure surface); §3.1 quorum-gated policy mutation, §3.2 WYSIWYS approval, and §5 `court export` (event bundles) are implemented, the rest is direction |
 | [`witness_mesh_os_v0.md`](witness_mesh_os_v0.md) | Draft v0.1 | Positioning + pointers | ⚪ Positioning — capability map, defers to the normative specs |
-| [`beacon_channel_v0.md`](beacon_channel_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF beacon channel (firmware scaffolding; see flag report F-07) |
-| [`chirp_channel_v0.md`](chirp_channel_v0.md) | Draft v0.2 | Normative (intended) | 🟡 Draft — acoustic chirp channel (see F-07) |
-| [`canary_free_signals_v0.md`](canary_free_signals_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF/CSI presence signals (see F-07/F-08) |
+| [`beacon_channel_v0.md`](beacon_channel_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF beacon channel (firmware scaffolding; bench status in `docs/audit/mesh_and_chirp_audit_v1.md`) |
+| [`chirp_channel_v0.md`](chirp_channel_v0.md) | Draft v0.2 | Normative (intended) | 🟡 Draft — acoustic chirp channel (audit: `docs/audit/mesh_and_chirp_audit_v1.md`) |
+| [`canary_free_signals_v0.md`](canary_free_signals_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF presence signals (mesh fallbacks: flag report F-08; CSI itself is documented in `docs/csi_wifi_sensing_research.md`) |
 | [`canary_mesh_network_v0.md`](canary_mesh_network_v0.md) | Draft v0.2 | Normative (intended) | 🟡 Draft — ESP-NOW/BLE mesh (see F-08) |
 | [`gossip_replication_v0.md`](gossip_replication_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — mesh gossip replication (see F-08) |
 | [`beacon_cap_gateway_v0.md`](beacon_cap_gateway_v0.md) | Draft v0.1, **specification only** | Informational | ⚪ Spec-only — explicitly **not implemented** until a future release |

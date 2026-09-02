@@ -26,7 +26,7 @@ Edit this file, then run the generator — never edit a pointer file by hand.
 | Anything at all | The non-negotiables block below |
 | Wondering what a word means | [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — every proper noun in the project, defined once |
 | Answering a user's question about the project | [`docs/FAQ.md`](docs/FAQ.md) |
-| Looking for a doc | [`docs/README.md`](docs/README.md) — the CI-enforced map of all ~240 docs |
+| Looking for a doc | [`docs/README.md`](docs/README.md) — the CI-enforced map of every doc under `docs/` |
 | Wondering which directory is the real one | [`docs/CONSOLIDATION.md`](docs/CONSOLIDATION.md) — the tree map |
 | Writing code | [`docs/FLIGHT_RULES.md`](docs/FLIGHT_RULES.md) — the engineering constitution |
 | Shipping or releasing | [`docs/RELEASE_BUTTONS.md`](docs/RELEASE_BUTTONS.md), then [`.github/RELEASE_LESSONS.md`](.github/RELEASE_LESSONS.md) |
@@ -62,7 +62,8 @@ is an explicit owner opt-in on that satellite and is honestly a `won't`, not a
 `can't`: a false wake transiently transcribes a few seconds of room audio,
 which is why command transcripts are never retained, sealed, or exported. The
 full five-rule contract is in `docs/research/whisper_local_voice.md`. `ObjectClass`
-is `Person | Vehicle | Animal | Package` — never `Face` or `LicensePlate`. This
+is `Person | Vehicle | Animal | Package` (plus `Unknown`, for a detection the
+backend could not class) — never `Face` or `LicensePlate`. This
 is Invariant II (`spec/invariants.md`) and it is a rejected PR, not a config flag.
 
 **2. Never widen the raw-frame escape hatch.** `RawFrame.data` stays private: no
@@ -229,7 +230,7 @@ Only path to raw bytes: `export_for_vault()` with `BreakGlassToken`.
 
 ### Invariant II: No Identity Substrate  
 No face embeddings, plate strings, person re-ID vectors, demographic estimates.
-`ObjectClass` enum: `Person`, `Vehicle`, `Animal`, `Package` — NOT `Face`, `LicensePlate`.
+`ObjectClass` enum: `Person`, `Vehicle`, `Animal`, `Package`, `Unknown` (could not class) — NOT `Face`, `LicensePlate`.
 
 ### Invariant III: Metadata Minimization
 Timestamps coarsened to 10-minute buckets. Zone IDs are local only. Correlation tokens are single-use.
