@@ -10,13 +10,24 @@ against the sprawl becoming a maintenance nightmare.
 
 | Tree | Files | What it is | Duplicate? |
 | --- | --- | --- | --- |
-| `src/` | ~110 | **The witness kernel** — the real Rust daemon (`witnessd`) and its ~20 binaries (`src/bin/`; the exact roster is the `[[bin]]` entries in `Cargo.toml`). This is the product. | No — canonical |
-| `kernel/` | ~2 | **Docs only** — `architecture.md` etc., the constitutional reference CONTRIBUTING points at. Not code. | No — rename candidate (see below) |
-| `privacy_witness_kernel/` | ~12 | **The Home Assistant add-on** — packaging wrapper that ships the kernel as a HACS/add-on. Not a second kernel. | No |
-| `desktop/` | ~43 | **Hub & flasher** — the Tauri hub app and `hub-io`/`hub-core` Rust crates (provisioning, flashing). | No |
-| `desktop-lab/` | ~25 | **The Lab desktop app** — a Tauri shell around `canary-local` (the browser Lab), for Mac/Linux. Different app, different job. | No |
-| `firmware/canary/` | ~140 | **Active firmware** (PlatformIO, `seeed_xiao_esp32s3`). ~88% feature parity per `firmware/FEATURES.md`. | No — canonical |
-| `firmware/projects/canary-wap/` | ~280 | **The WAP variant** — Arduino compatibility lane **plus** a PlatformIO lane that FEATURES.md flags as ~40% skeleton. | Partial — see decision 1 |
+| `src/` | 111 | **The witness kernel** — the real Rust daemon (`witnessd`) and its binaries (`src/bin/`; the exact roster is the `[[bin]]` entries in `Cargo.toml`). This is the product. | No — canonical |
+| `kernel/` | 2 | **Docs only** — `architecture.md` etc., the constitutional reference CONTRIBUTING points at. Not code. | No — rename candidate (see below) |
+| `privacy_witness_kernel/` | 12 | **The Home Assistant add-on** — packaging wrapper that ships the kernel as a HACS/add-on. Not a second kernel. | No |
+| `desktop/` | 92 | **Hub & flasher** — the Tauri Flasher app and the `hub-io`/`hub-core` Rust crates (provisioning, flashing, hub image writing). | No |
+| `desktop-lab/` | 30 | **The Lab desktop app** — a Tauri shell around `canary-local` (the browser Lab), for Mac/Linux. Different app, different job. | No |
+| `firmware/canary/` | 141 | **Active firmware** (PlatformIO, `seeed_xiao_esp32s3`) and the shared `lib/` the other trees pull from. | No — canonical |
+| `firmware/projects/canary-wap/` | 267 | **The WAP variant** — Arduino compatibility lane **plus** a PlatformIO lane that FEATURES.md flags as a skeleton. Carries sketch copies of `common/csi`, mesh and signature code, kept byte-identical by the sync checks in `firmware/scripts/`. | Partial — see decision 1 |
+| `firmware/projects/canary-display/` | 423 | **Canary Display** — the wall displays and dashes (the Nightstand Line, the Nightlight, the watch face); the most actively released product and the source the WASM emulator compiles. | No |
+| `firmware/projects/canary-vision/` | 52 | **Canary Vision** — camera + on-device person detection, reports to Home Assistant. Specialized lane per the variant audit. | No |
+| `firmware/projects/canary-sense/` | 34 | **Canary Sense** — presence and breathing radar (60 GHz MR60BHA2), no camera. | No |
+| `firmware/projects/canary-ota/` | 16 | **The retired standalone OTA harness** (ESP-IDF). Signed updates ship from `firmware/common/ota/` now; this tree is kept for the tooling under `tools/`. | Superseded — see README OTA row |
+| `firmware/projects/canary-tincan/` | 14 | **Canary Tincan** — the two-can acoustic-link experiment; host-tested core, Arduino sketch. | No |
+| `firmware/projects/canary-companion/` | 9 | **Canary Companion** — host-tested headers for the companion-device contract; no board build. | No |
+| `firmware/projects/canary-sentinel/` | 7 | **Canary Sentinel** — *Phase 0*: multi-sensor fusion core, host-tested, no released build. | No |
+| `firmware/projects/canary-fence-guard/` | 3 | **Canary Fence Guard** — *concept*; nothing builds yet. | No |
+
+File counts are `git ls-files <tree> | wc -l` on 2026-09-02; they will drift,
+the rows will not.
 
 **Rule of thumb for newcomers:** the product is `src/` (kernel) + `firmware/canary/`
 (device). Everything else is a wrapper, a variant, or docs.

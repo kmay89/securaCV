@@ -9,13 +9,18 @@ This checklist is based on a repository audit focused on:
 
 Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMWARE_VARIANT_AUDIT.md) (canonical-path and rot-risk analysis).
 
-## 0) Current Snapshot (from this audit)
+## 0) Where the toolchain checks actually run
 
-- [x] Regression guard script runs and passes with warnings (`firmware/scripts/regression_check.sh`).
-- [ ] PlatformIO CLI available in CI/dev shell (`pio` missing in this environment).
-- [ ] Arduino CLI available in CI/dev shell (`arduino-cli` missing in this environment).
-- [ ] Witness-kernel full tests passing in this environment (`cargo test` currently blocked by missing `libseccomp`).
-- [ ] HA/Frigate/MQTT pipeline verification runnable in this environment (`docker compose` missing).
+The first version of this list recorded which tools were missing from the
+audit *environment*. Those boxes could never be checked from inside the
+repo, so they were replaced with the CI jobs that run each tool on every PR
+(status is the job's, not a shell's):
+
+- [x] Regression guard — `firmware/scripts/regression_check.sh` in `.github/workflows/firmware.yml`.
+- [x] PlatformIO CLI — `firmware.yml` and `firmware-release.yml` install it and build every env in `flavors.json`.
+- [x] Arduino CLI — the `setup-arduino-esp32` composite action, used by `firmware.yml` (compile gate on `arduino/canary_wap/canary_wap.ino`) and `firmware-release.yml`.
+- [x] Witness-kernel full tests — `.github/workflows/rust.yml` installs `libseccomp` and runs `cargo test`; `fuzz.yml` and `detect-eval.yml` do the same for their targets.
+- [x] HA/Frigate/MQTT pipeline — `docker-sidecar.yml` builds and smoke-tests the sidecar image; the end-to-end `verify_pipeline.sh` acceptance run is still manual (see §6).
 
 ---
 
@@ -108,10 +113,10 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
 
 ## 3) Arduino-first compile and quality gate
 
-- [ ] **Codify Arduino build matrix in CI**
-  - Board targets: XIAO ESP32-S3 Sense + fallback ESP32S3 Dev Module profile.
-  - Profiles: minimal/dev/full.
-  - Include compile-only gate for `arduino/canary_wap/canary_wap.ino`.
+- [x] **Codify Arduino build matrix in CI** — `firmware.yml` compiles
+  `arduino/canary_wap/canary_wap.ino` through the `setup-arduino-esp32`
+  composite action on every PR; `firmware-release.yml` publishes from the same
+  matrix. Profiles are the `CANARY_PROFILE_*` defines the sketch reads.
 
 - [ ] **Stabilize Arduino dependency pinning**
   - Lock tested ESP32 core version and library versions in docs + CI scripts.
@@ -121,9 +126,9 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
   - Break monolithic PROGMEM UI into chunked assets (html/css/js) to reduce compile/link risk.
   - Add memory-size budget checks during build.
 
-- [ ] **Add static analysis pass that actually runs in CI**
-  - Install `cppcheck` and run nontrivial ruleset for firmware directories.
-  - Fail build on high-confidence defects.
+- [x] **Add static analysis pass that actually runs in CI** — `cppcheck` runs
+  in `firmware.yml` and `csi_module_disable_matrix.yml` and fails the job on
+  its findings.
 
 ---
 
@@ -137,23 +142,27 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
   - Keep `dev`, `release`, `dev_ha`, `release_ha`, `minimal` envs green.
   - Add size, RAM, and boot-time budgets per environment.
 
-- [ ] **Release artifacts and SBOM**
-  - Emit firmware binaries + checksums + signed manifest.
-  - Add dependency inventory for enterprise procurement/security review.
+- [x] **Release artifacts** — `firmware-release.yml` emits binaries, checksums
+  and the Ed25519-signed manifest (refusing to publish without the key).
+- [ ] **SBOM** — `.github/workflows/sbom.yml` generates the Rust and Node
+  inventories; the firmware SBOM is still a hand-written component list that
+  no longer matches the build files it cites (`docs/IMPROVEMENT_ROADMAP.md`
+  item 35).
 
 ---
 
 ## 5) Witness-kernel backbone readiness
 
-- [ ] **Fix host dependency gap for CI/test runners**
-  - Provide reproducible environment with `libseccomp` for full test/link success.
-  - Add containerized test target so contributors get consistent outcomes.
+- [x] **Fix host dependency gap for CI/test runners** — `rust.yml`, `fuzz.yml`
+  and `detect-eval.yml` install `libseccomp-dev` before building; the
+  `Dockerfile` at the repo root is the containerized target.
 
-- [ ] **Required kernel quality gates in CI**
-  - `cargo test`
-  - `cargo clippy --all-targets --all-features -- -D warnings`
-  - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
-  - Feature gate checks from AGENTS policy (`--no-default-features`, `--features backend-tract`).
+- [ ] **Required kernel quality gates in CI** (`rust.yml`)
+  - [x] `cargo test`
+  - [x] `cargo clippy --all-targets -- -D warnings`
+  - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
+  - [x] `--no-default-features` build (note: `Cargo.toml` defines no `default` feature, so this is the same build as the default one)
+  - [x] `--features backend-tract` build
 
 - [ ] **Backend audit trail**
   - Document audit results for each enabled detector backend.
@@ -186,9 +195,9 @@ Reference baseline inventory: [`firmware/FIRMWARE_VARIANT_AUDIT.md`](../../FIRMW
 ## 7) Suggested acceptance criteria (Definition of Done)
 
 - [ ] Nontechnical user can unbox device and complete setup in <10 minutes with only phone browser.
-- [ ] Arduino build path compiles in CI for documented profiles.
-- [ ] PlatformIO release environments compile and pass smoke tests.
-- [ ] Witness-kernel tests/clippy/doc pass in reproducible CI image.
+- [x] Arduino build path compiles in CI for documented profiles.
+- [x] PlatformIO release environments compile (smoke tests on hardware are still manual — `docs/V1_BENCH_TEST_RUNBOOK.md`).
+- [x] Witness-kernel tests/clippy pass in CI (`rust.yml`); the doc gate is tracked above.
 - [ ] HA+Frigate+MQTT verification script passes end-to-end.
 - [ ] Security/privacy regression checks return zero critical warnings for release builds.
 

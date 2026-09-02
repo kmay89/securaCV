@@ -18,7 +18,7 @@ The desktop apps wrap the web Lab in a WebView, which is right for *reusing* the
 Lab. This app instead goes native because it needs things a WebView fights:
 **Dynamic Island / Live Activities**, **CoreBluetooth** (iOS Safari has no Web
 Bluetooth — the device's own PWA has to send people to Bluefy; native erases
-that), **HomeKit**, **Secure Enclave** key custody, **AirPlay** + mic/speaker,
+that), **HomeKit**, **Keychain** key custody, **AirPlay** + mic/speaker,
 and reliable **background notifications**. These are the exact capabilities the
 `desktop-lab` `native_capabilities()` seam marks as "Phase 2." This is Phase 2.
 
@@ -32,8 +32,9 @@ and reliable **background notifications**. These are the exact capabilities the
   `/api/v1/config` schema; state mirrors `fleet_model.h`; unknown fields are
   forward-compatible. New firmware features light up **without an App Store
   update**.
-- **Frozen OS primitives only** — Network.framework, CoreBluetooth, Keychain /
-  Secure Enclave, CloudKit, UserNotifications, ActivityKit, CryptoKit. The
+- **Frozen OS primitives only** — Network.framework, CoreBluetooth, Keychain
+  (generic-password items today; Secure Enclave-backed keys are a roadmap item,
+  not a shipped one), CloudKit, UserNotifications, ActivityKit, CryptoKit. The
   load-bearing frameworks are a decade stable; the churn is at the fashionable
   edges we avoid.
 - **Nightly self-heal** (`.github/workflows/ios-selfheal.yml`) rebuilds + tests
