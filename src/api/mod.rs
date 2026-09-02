@@ -784,6 +784,18 @@ fn handle_connection(
             write_json_response(&mut stream, 200, r#"{"status":"ok"}"#)?;
             return Ok(());
         }
+        // `/api/fleet` is the coarse, UNAUTHENTICATED fleet-presence contract
+        // every networked Canary answers (tvos/discovery/DISCOVERY.md) — the
+        // Witness Wall and the Flasher's post-flash discovery read it from a
+        // browser on another origin, so it carries CORS and answers the
+        // preflight. It says nothing an observer on the LAN could not already
+        // see (the kernel is up; its own chain verdict, if one was computed);
+        // no event, zone, or key material — those stay behind the token.
+        ("OPTIONS", "/api/fleet") => {
+            write_response_with_headers(&mut stream, 204, "application/json", b"", FLEET_CORS)?;
+            return Ok(());
+        }
+        ("GET", "/api/fleet") => {}
         // `/status` (storage health) is token-gated like `/events`: storage
         // metrics are operational metadata and stay behind the capability
         // token (Invariant III posture — only `/health` liveness is open).
@@ -817,7 +829,8 @@ fn handle_connection(
         | (_, "/verify")
         | (_, "/status")
         | (_, "/export/bundle")
-        | (_, "/api/sealed-log") => {
+        | (_, "/api/sealed-log")
+        | (_, "/api/fleet") => {
             write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
             return Ok(());
         }
@@ -835,6 +848,16 @@ fn handle_connection(
             retry_after
         );
         write_json_response(&mut stream, 429, &body)?;
+        return Ok(());
+    }
+
+    if request.path == "/api/fleet" {
+        // Rate-limited like every route past /health, but no token: this is
+        // the anyone-who-asks surface, and it is served before the token
+        // machinery so an unauthenticated poll never counts as an auth
+        // failure against the caller's address.
+        let body = fleet_document(last_verify.as_ref());
+        write_response_with_headers(&mut stream, 200, "application/json", body.as_bytes(), FLEET_CORS)?;
         return Ok(());
     }
 
@@ -1194,8 +1217,54 @@ fn write_response<S: Write>(
     content_type: &str,
     body: &[u8],
 ) -> Result<()> {
+    write_response_with_headers(stream, status, content_type, body, &[])
+}
+
+/// The CORS headers `/api/fleet` (and only `/api/fleet`) carries — the
+/// contract's "CORS is the whole trick": a browser page on another origin
+/// cannot read the fleet document without them. Every other route stays
+/// same-origin-only on purpose (the capability token must never be readable
+/// by a cross-origin script, so nothing that requires it may be CORS-open).
+const FLEET_CORS: &[(&str, &str)] = &[
+    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Methods", "GET, OPTIONS"),
+    ("Access-Control-Allow-Headers", "accept"),
+];
+
+/// The `/api/fleet` body: the kernel reporting itself as one fleet member in
+/// the shape `firmware/common/fleet_selfreport/fleet_selfreport.h` writes for
+/// a Canary. `chain` is the kernel's LAST computed verdict (`/verify`, or the
+/// boot verify witnessd records) and is omitted when none has run — a silent
+/// key is never a claim (DISCOVERY.md). `verified_through` is "now", exactly
+/// what firmware sends: it is the device's self-report, and the Wall labels
+/// it as reported rather than as something the Wall measured.
+fn fleet_document(last_verify: Option<&VerifyReport>) -> String {
+    let mut me = serde_json::Map::new();
+    me.insert("name".into(), serde_json::Value::from("Witness kernel"));
+    me.insert("online".into(), serde_json::Value::from(true));
+    me.insert("product".into(), serde_json::Value::from("witness-kernel"));
+    if let Some(report) = last_verify {
+        let chain = if report.chain_valid { "ok" } else { "degraded" };
+        me.insert("chain".into(), serde_json::Value::from(chain));
+    }
+    let doc = serde_json::json!({
+        "kernel": "witness-kernel",
+        "verified_through": "now",
+        "devices": [serde_json::Value::Object(me)],
+    });
+    doc.to_string()
+}
+
+fn write_response_with_headers<S: Write>(
+    stream: &mut S,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+    extra_headers: &[(&str, &str)],
+) -> Result<()> {
     let status_line = match status {
         200 => "HTTP/1.1 200 OK",
+        204 => "HTTP/1.1 204 No Content",
         400 => "HTTP/1.1 400 Bad Request",
         401 => "HTTP/1.1 401 Unauthorized",
         403 => "HTTP/1.1 403 Forbidden",
@@ -1214,10 +1283,14 @@ fn write_response<S: Write>(
          X-Frame-Options: DENY\r\n\
          Referrer-Policy: no-referrer\r\n\
          Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n\
-         \r\n",
+         {extra}\r\n",
         status_line = status_line,
         content_type = content_type,
-        len = body.len()
+        len = body.len(),
+        extra = extra_headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect::<String>()
     );
     stream.write_all(header.as_bytes())?;
     stream.write_all(body)?;
@@ -1524,6 +1597,53 @@ mod tests {
             verified += 1;
         }
         Ok(verified)
+    }
+
+    #[test]
+    fn fleet_is_open_cors_enabled_and_never_claims_a_chain_it_did_not_verify() -> Result<()> {
+        let api = SealedLogTestApi::spawn(|kernel, cfg| seal_event(kernel, cfg, "zone:a"))?;
+
+        // No token, and readable from another origin: the contract's two rules.
+        let (headers, body) = api.get("/api/fleet", false)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        assert!(
+            headers.contains("Access-Control-Allow-Origin: *"),
+            "headers: {headers}"
+        );
+        let doc: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(doc["kernel"], "witness-kernel");
+        let devices = doc["devices"].as_array().expect("devices array");
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0]["name"], "Witness kernel");
+        assert_eq!(devices[0]["online"], true);
+        assert_eq!(devices[0]["product"], "witness-kernel");
+        // No /verify has run on this server: the chain key must be ABSENT,
+        // not "ok" — a silent key is never a presence claim.
+        assert!(devices[0].get("chain").is_none(), "body: {body}");
+        // Nothing token-gated leaks through the open surface.
+        for forbidden in ["verifying_key", "entries", "zone", "correlation_token"] {
+            assert!(!body.contains(forbidden), "{forbidden} in body: {body}");
+        }
+
+        // After a verify pass the verdict rides along.
+        let (headers, _) = api.request("POST", "/verify", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let (_, body) = api.get("/api/fleet", false)?;
+        let doc: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(doc["devices"][0]["chain"], "ok", "body: {body}");
+
+        // The preflight a browser sends first, and the method the contract
+        // does not allow.
+        let (headers, _) = api.request("OPTIONS", "/api/fleet", false)?;
+        assert!(headers.contains("204 No Content"), "headers: {headers}");
+        assert!(headers.contains("Access-Control-Allow-Methods: GET, OPTIONS"), "headers: {headers}");
+        let (headers, _) = api.request("POST", "/api/fleet", false)?;
+        assert!(headers.contains("405 Method Not Allowed"), "headers: {headers}");
+
+        // Every other route stays same-origin: no CORS header escapes.
+        let (headers, _) = api.get("/api/sealed-log", true)?;
+        assert!(!headers.contains("Access-Control-Allow-Origin"), "headers: {headers}");
+        Ok(())
     }
 
     #[test]
