@@ -36,8 +36,9 @@ survived only if a majority could not. The counts:
 |---|---|
 | Findings reported | 138 |
 | Rated high | 27 |
-| Landed in the September PRs | 78 |
-| Still open (this document) | 60 |
+| Landed in the September PRs (first pass) | 78 |
+| Open list items landed in the same PR before merge | 27 |
+| Still open | 33 |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -68,11 +69,26 @@ Priority is by consequence to a user, then by how much of the project the fix
 unblocks. Effort is `S` (an afternoon), `M` (a few days), `L` (a milestone).
 Each item names the file to start from.
 
+### Landed before the PR merged
+
+The open list below is the one the audit produced. Twenty-seven of its
+sixty items landed in the same PR while it was in review, so the numbers
+are kept but the rows are marked **(landed)** and the reasoning stays for the
+record: 1 (kernel serves `/api/fleet`, self row only — aggregation is still
+open), 10, 11 (peer wellbeing words omitted for cross-site origins; the
+wildcard itself stays because the Wall needs it), 15, 18, 20, 23 (the gate
+against `flavors.json`; deriving the release steps from it is still open),
+24, 25, 32, 33, 39, 43, 45, 47, 48, 49 (CI-backed rows; the `cargo doc`
+gate is still open), 50, 52, 53, 54, 55, 56, 58 (already true at HEAD), 59,
+60, plus two the review of the PR itself found: the MQTT bridge's publish
+cursor now ignores export jitter, and the tvOS bundles carry a privacy
+manifest that the plist lint actually inspects.
+
 ### P0 — wrong evidence or a broken promise a user would hit
 
 | # | Item | Why it matters | Fix | Effort |
 |---|---|---|---|---|
-| 1 | **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Serve `GET /api/fleet` from `src/api/mod.rs` with the same document the firmware boards serve (`firmware/common/fleet_selfreport/`), and add the anti-drift vector for it. | M |
+| 1 | **(landed, in part)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Serve `GET /api/fleet` from `src/api/mod.rs` with the same document the firmware boards serve (`firmware/common/fleet_selfreport/`), and add the anti-drift vector for it. | M |
 | 2 | **CSI mixes every transmitter into one window.** Neighbor-AP beacons, peer Canaries' ESP-NOW probes and router echoes all land in the same 64-frame window; per-subcarrier variance across alternating links reads as motion. | The presence detector's false-positive floor is set by the neighborhood's Wi-Fi, not by the room. | Filter `rx_cb` on the transmitter address: accept the associated BSSID (and, when the probe layer is up, registered peers) and count the rest under a new `frames_dropped_foreign` stat. `csi_hal.cpp` already has `info->mac`. | S |
 | 3 | **Breathing envelope is raw magnitude the driver's AGC removes.** The host test passes because synthetic frames have no automatic scaling. | `quiet` presence and `unusual_breathing` will not fire on a real device. | Normalize each frame by its own mean magnitude before the Goertzel stage (`csi_features.cpp`), or read the per-frame scale the HE `val_scale_cfg` path exposes; then re-run `test_csi_features` with a scaled fixture. | S |
 | 4 | **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Timestamp each window and resample onto a fixed 1 Hz grid before the bin stage; expose the achieved cadence in `csi_stats_t`. | S |
@@ -86,17 +102,17 @@ Each item names the file to start from.
 | # | Item | Why it matters | Fix | Effort |
 |---|---|---|---|---|
 | 9 | **BLE OTA bypasses the anti-downgrade floor and has no product binding.** Documented as deliberate for rescue, but nothing else enforces it. | A paired phone can push an older signed image with a known bug. | Carry the floor and product id in the BLE manifest and check them in `firmware/common/ota/`; keep a break-glass override that logs. | M |
-| 10 | **`glass_web` OTA check/install skip the Origin+CSRF guard** the comment says they share. | A LAN web page can start an update on a display. | Route both handlers through the existing write guard in `net/glass_web.cpp`. | S |
-| 11 | **`/api/fleet` is served with `Access-Control-Allow-Origin: *`** and now carries per-peer presence, occupant count and breathing state. | Any drive-by web page on the LAN can read who is home. | Drop the wildcard; the Wall and Lab talk to it from known origins, and the fleet contract can list them. | S |
+| 10 | **(landed)** **`glass_web` OTA check/install skip the Origin+CSRF guard** the comment says they share. | A LAN web page can start an update on a display. | Route both handlers through the existing write guard in `net/glass_web.cpp`. | S |
+| 11 | **(landed, in part)** **`/api/fleet` is served with `Access-Control-Allow-Origin: *`** and now carries per-peer presence, occupant count and breathing state. | Any drive-by web page on the LAN can read who is home. | Drop the wildcard; the Wall and Lab talk to it from known origins, and the fleet contract can list them. | S |
 | 12 | **Headless MQTT variants (display/sense/vision) have no TLS option** while canary-wap does; the gap is undocumented. | A broker credential crosses the LAN in the clear on three of four products. | Port the WAP's `mqtt_mgr` TLS branch into `firmware/common/network/`, and say so in `FIRMWARE_VARIANT_AUDIT.md` until it lands. | M |
 | 13 | **Fleet Wi-Fi rollout sends the router password over cleartext HTTP** without telling the user, while the BLE rescue path is bonded. | The user believes the app is the safe path. | Prefer BLE when bonded; otherwise show the disclosure once and require the TLS receipt (item 5). | S |
 | 14 | **`PinnedKeyStore.pin` swallows the Keychain error**, so a failed pin leaves the device permanently "Signed" with no signal. | The trust ladder silently stalls one rung down. | Surface the error and retry on next launch. | S |
-| 15 | **The Wall's mDNS TXT `host` is used unvalidated as a URL host** and discovered sources are never pruned. | A hostile advertiser steers the TV to any host, forever. | Validate against the same private-host rules the iOS app now uses; expire sources not seen for 30 days. | S |
+| 15 | **(landed)** **The Wall's mDNS TXT `host` is used unvalidated as a URL host** and discovered sources are never pruned. | A hostile advertiser steers the TV to any host, forever. | Validate against the same private-host rules the iOS app now uses; expire sources not seen for 30 days. | S |
 | 16 | **Lab CSP exists on `flash.html` only**; the other 24 pages, including the webcam and microphone benches, have none. | The benches that touch the camera and mic are the least protected pages. | Generate the meta CSP from the Lab manifest so every page carries it; a test asserts presence. | M |
 | 17 | **Any LAN host can enable the display's only outbound egress (`wx_direct`)** and store a coarse location via unauthenticated `/api/set`. | Zero-phone-home is a principle a neighbor can flip. | Put `/api/set` behind the bearer token and gate `wx_direct` on a physical-button confirmation. | S |
-| 18 | **canary-wap accepts the bearer token as a URL query parameter** on `POST /api/identify`; the kernel rejects that. | Tokens land in router and proxy logs. | Header only, like the kernel. | S |
+| 18 | **(landed)** **canary-wap accepts the bearer token as a URL query parameter** on `POST /api/identify`; the kernel rejects that. | Tokens land in router and proxy logs. | Header only, like the kernel. | S |
 | 19 | **Anti-drift vectors pin only `domain_separated_hash`**; `hash_entry`, the Ed25519 path and the document shape are never checked against kernel-produced bytes. | The Wall and the kernel can disagree on what a valid chain is with no test going red. | Emit a golden document from `cargo test` into `spec/` and load it in the Swift and Rust tests. | S |
-| 20 | **Witness Wall "Verified through <time>" stitches the TV's verdict to a timestamp the fleet self-reported** (firmware sends "now"). | The banner asserts a time the TV did not measure. | Show the TV's own receipt time; label the device time as reported. | S |
+| 20 | **(landed)** **Witness Wall "Verified through <time>" stitches the TV's verdict to a timestamp the fleet self-reported** (firmware sends "now"). | The banner asserts a time the TV did not measure. | Show the TV's own receipt time; label the device time as reported. | S |
 
 ### P2 — cohesion: one source of truth per fact
 
@@ -104,17 +120,17 @@ Each item names the file to start from.
 |---|---|---|---|---|
 | 21 | **The device package** — see §4. Firmware envs, emulator flavor, enclosure CAD, glTF model, fleet figures, flasher catalog and website copy are joined by hand. | Every new device is five hand-edits and three drift gates away from consistent. | One parametric manifest per device that the generators consume. | L |
 | 22 | **Two CSI HAL implementations** (`firmware/canary/lib/securacv_csi` vs `firmware/common/csi`) plus the sketch copy; the September pass synced them by hand. | Three copies of the most intricate driver in the project. | Make `securacv_csi` a thin include of `common/csi`; extend `check_csi_sync.sh` to fail on any body divergence meanwhile. | M |
-| 23 | **Display env list is typed twice** (`firmware-release.yml` vs `flasher-release.yml`) with no gate against `flavors.json`; the AMOLED was missing from every dev publish. | A flavor can ship from one button and not the other. | Both workflows read the matrix from `flavors.json` via one script. | S |
-| 24 | **`FEATURES.md` parity dashboard and `build_matrix.json` omit canary-display**, the most actively released product. | The parity doctrine's own dashboard does not list the flagship. | Add the display lane and let `lint_build_matrix.py` require every `flavors.json` product. | S |
-| 25 | **Vendored `device_signature` in the canary-wap sketch has diverged** from `common/`; mesh copies now have a guard, this one does not. | Signature code drifting silently is the worst kind. | Add the pair to `check_mesh_sync.sh` or a sibling and resync. | S |
+| 23 | **(landed, in part)** **Display env list is typed twice** (`firmware-release.yml` vs `flasher-release.yml`) with no gate against `flavors.json`; the AMOLED was missing from every dev publish. | A flavor can ship from one button and not the other. | Both workflows read the matrix from `flavors.json` via one script. | S |
+| 24 | **(landed)** **`FEATURES.md` parity dashboard and `build_matrix.json` omit canary-display**, the most actively released product. | The parity doctrine's own dashboard does not list the flagship. | Add the display lane and let `lint_build_matrix.py` require every `flavors.json` product. | S |
+| 25 | **(landed)** **Vendored `device_signature` in the canary-wap sketch has diverged** from `common/`; mesh copies now have a guard, this one does not. | Signature code drifting silently is the worst kind. | Add the pair to `check_mesh_sync.sh` or a sibling and resync. | S |
 | 26 | **Emulator `emu_net.cpp` re-implements the Wi-Fi retry decision** instead of calling `wifi_join_policy.h`. | The emulator can diverge from the firmware it exists to preview. | Include the shared header; delete the copy. | S |
 | 27 | **Website mirrors `verify_core.js`, `kernel-status.json` and `onboarding-spec.json` by hand**; only the CAD carry is automated. | The verify page can check a chain format the kernel no longer writes. | Extend the weekly carry job to those three files with a byte gate. | S |
 | 28 | **Monorepo → HACS mirror is detect-only.** The new weekly check raises an issue; nothing pushes. | Users on HACS lag the monorepo by up to a week plus a human. | A monorepo workflow that opens the mirror PR on any change under `custom_components/securacv`. | S |
 | 29 | **Dead legacy headers in `firmware/common/` share names with live sketch modules**; `csi_hal.cpp`'s `__has_include` probe depends on which one wins. | Include order decides behavior. | Delete the dead headers; the probe becomes a plain include. | S |
 | 30 | **The two Arduino platform lines are pinned differently across ini files.** | A board builds against two toolchains depending on the entry point. | One `[platform]` section in a shared ini, extended everywhere. | S |
 | 31 | **`die()` is defined eleven times with three behaviors** across `canary-local/tools`, `_warn()` twice, the repo-root discovery line 36 times. | Tooling scripts disagree on exit codes. | One `_tooling.py`; ruff over `canary-local/tools` and `scripts/` (item 36) will then find the rest. | S |
-| 32 | **Website still calls the wiring bench "The Playground"** in twelve places while the glossary now says Test bench. | Two names for one thing across two repos. | Rename the pages; the glossary term already exists. | S |
-| 33 | **The Wall's two `online` defaults are now consistent (false) but `DISCOVERY.md` and the firmware normalizer still describe true.** | Contract doc contradicts both implementations. | Update the contract and add the field to the anti-drift vector. | S |
+| 32 | **(landed)** **Website still calls the wiring bench "The Playground"** in twelve places while the glossary now says Test bench. | Two names for one thing across two repos. | Rename the pages; the glossary term already exists. | S |
+| 33 | **(landed)** **The Wall's two `online` defaults are now consistent (false) but `DISCOVERY.md` and the firmware normalizer still describe true.** | Contract doc contradicts both implementations. | Update the contract and add the field to the anti-drift vector. | S |
 
 ### P3 — CI, release and tooling hygiene
 
@@ -125,33 +141,33 @@ Each item names the file to start from.
 | 36 | **ruff covers only `custom_components`**; the 100+ tooling scripts are unlinted (106 findings at first run). | Add `canary-local/tools` and `scripts` to the ruff step; fix in one sweep. | S |
 | 37 | **Tooling Python is unpinned**; half the workflows run whatever `ubuntu-latest` ships while `pyproject` targets 3.11. | `setup-python` with the pyproject version, everywhere. | S |
 | 38 | **Toolchain setup is hand-rolled** (PlatformIO ×15, emsdk ×2, libseccomp ×9, issue-dedup ×3) despite CI.md's composite-action rule. | Four composite actions; CI.md rule R9 to require them. | M |
-| 39 | **`gen_qr.py` output is committed with no `--check`** and runs in no workflow. | Add the flag and a line in `lint.yml`. | S |
+| 39 | **(landed)** **`gen_qr.py` output is committed with no `--check`** and runs in no workflow. | Add the flag and a line in `lint.yml`. | S |
 | 40 | **`bom-pricing` still pushes to `main`** (now gated, still with the default token so zero CI runs on the commit). | Open a PR instead, or use the freshness PAT. | S |
 | 41 | **CI.md's concurrency pattern evicts the pending `main` run** when merges land faster than the build. | Separate group for `main` with `cancel-in-progress: false`. | S |
 | 42 | **Four dispatch-only release buttons** have not run in 60+ days and overlap "Update everything". | Retire or fold in; `RELEASE_BUTTONS.md` shrinks. | S |
-| 43 | **CI never boots 3 of the 5 display flavors** in the emulator; the boot probe hardcodes the watch artifact. | Loop the probe over every `dist/*.meta.json`. | S |
+| 43 | **(landed)** **CI never boots 3 of the 5 display flavors** in the emulator; the boot probe hardcodes the watch artifact. | Loop the probe over every `dist/*.meta.json`. | S |
 | 44 | **Desktop Flasher release resolves `@tauri-apps/cli ^2` at release time** with no lockfile. | Commit `desktop/package-lock.json`; Dependabot then covers it. | S |
-| 45 | **`pages.yml` publishes Python generators and shell scripts** as public static files. | Stage an allowlist of web roots (the tests tree is already dropped). | S |
+| 45 | **(landed)** **`pages.yml` publishes Python generators and shell scripts** as public static files. | Stage an allowlist of web roots (the tests tree is already dropped). | S |
 | 46 | **`dist/*.meta.json` stamps a commit unreachable from `main`** (rebuild bot ran on the PR branch). | Stamp the merge-base or omit the sha; the drift check already ignores it. | S |
-| 47 | **`ios-selfheal` is not triggered by the linters that gate iOS sources.** | Add `workflow_run` on `lint.yml`. | S |
+| 47 | **(landed)** **`ios-selfheal` is not triggered by the linters that gate iOS sources.** | Add `workflow_run` on `lint.yml`. | S |
 
 ### P4 — docs and copy that still say the wrong thing
 
 | # | Item | Fix |
 |---|---|---|
-| 48 | `CONSOLIDATION.md` tree map: counts off, seven firmware product trees missing. | Regenerate the table from `ls`; add the seven rows. |
-| 49 | `ENTERPRISE_READINESS_TODO` has unchecked items CI already does, and environment-snapshot items that can never be checked. | Prune; link the CI job for each checked row. |
-| 50 | `docs/homeassistant_setup.md` lists entities the integration does not create and misnames the ones it does. | Regenerate the entity table from `sensor.py`/`binary_sensor.py`. |
+| 48 | (landed) `CONSOLIDATION.md` tree map: counts off, seven firmware product trees missing. | Regenerate the table from `ls`; add the seven rows. |
+| 49 | (landed, in part) `ENTERPRISE_READINESS_TODO` has unchecked items CI already does, and environment-snapshot items that can never be checked. | Prune; link the CI job for each checked row. |
+| 50 | (landed) `docs/homeassistant_setup.md` lists entities the integration does not create and misnames the ones it does. | Regenerate the entity table from `sensor.py`/`binary_sensor.py`. |
 | 51 | Mirror README says HACS reads the icon from `brand/`; it does not, and `brand/` ships into every user's config. | Move brand assets to the HACS brands repo; delete from the mirror. |
-| 52 | Timeline card shows "Verification failed" for merely unsigned (pre-PKI) publishes. | Distinct "unsigned" state in `www/securacv-timeline-card.js`. |
-| 53 | Tamper, transport, mesh and chirp entities move on unsigned publishes with no trust attribute. | Attach the same `trust` attribute the signed entities carry. |
-| 54 | Options flow and the TOFU health hook have no tests. | Add to `tests/`; the mirror check will carry them. |
-| 55 | `install.sh` installs from an unverified moving-branch tarball and ships tests into `/config`. | Pin to a release tag, verify a checksum, exclude `tests/`. |
-| 56 | iOS README claims Secure Enclave key custody; the Keychain layer stores generic-password items. | Either adopt `kSecAttrTokenIDSecureEnclave` or say Keychain. |
+| 52 | (landed) Timeline card shows "Verification failed" for merely unsigned (pre-PKI) publishes. | Distinct "unsigned" state in `www/securacv-timeline-card.js`. |
+| 53 | (landed) Tamper, transport, mesh and chirp entities move on unsigned publishes with no trust attribute. | Attach the same `trust` attribute the signed entities carry. |
+| 54 | (landed) Options flow and the TOFU health hook have no tests. | Add to `tests/`; the mirror check will carry them. |
+| 55 | (landed) `install.sh` installs from an unverified moving-branch tarball and ships tests into `/config`. | Pin to a release tag, verify a checksum, exclude `tests/`. |
+| 56 | (landed) iOS README claims Secure Enclave key custody; the Keychain layer stores generic-password items. | Either adopt `kSecAttrTokenIDSecureEnclave` or say Keychain. |
 | 57 | The Notification Service Extension sets `.critical` for tamper wakes without checking the entitlement. | Fall back to `.timeSensitive` like `AlertCenter`. |
-| 58 | Desktop README says the Flasher builds for Windows; no target exists. | Remove the claim or add the target. |
-| 59 | `docs/LAYOUT.md` on the website says GitHub Pages; `_headers` and `_redirects` only work on a Netlify-style host. | State the real host; the CSP/HSTS story depends on it. |
-| 60 | No skip-to-content link on any website page; the primary nav is JS-rendered. | One link before the header in the shared template. |
+| 58 | (landed) Desktop README says the Flasher builds for Windows; no target exists. | Remove the claim or add the target. |
+| 59 | (landed) `docs/LAYOUT.md` on the website says GitHub Pages; `_headers` and `_redirects` only work on a Netlify-style host. | State the real host; the CSP/HSTS story depends on it. |
+| 60 | (landed) No skip-to-content link on any website page; the primary nav is JS-rendered. | One link before the header in the shared template. |
 
 ---
 
