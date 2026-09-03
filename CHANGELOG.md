@@ -76,6 +76,34 @@
   the rebuild bot's PR-branch commit; the committed stamps update on the next
   bot rebuild.
 
+### Wi-Fi sensing: the breathing envelope keeps time, and gain cannot fake a breath
+
+- **The breathing envelope is fed on a fixed 1 Hz grid.** The Goertzel bank
+  assumed one envelope sample per second, but windows are loop-driven: their
+  cadence wanders with CPU load and gaps were skipped, so the reported
+  breaths-per-minute was a function of loop latency. Every window close now
+  carries its timestamp and `csi_features` resamples onto a one-second grid —
+  a close inside the previous slot is averaged into it, a gap is bridged with
+  held copies — and `csi_stats_t` reports `windows_held`, `windows_merged`
+  and `window_period_ms` (appended; both status endpoints surface them).
+- **The envelope is gain-invariant.** It was raw received power, which the
+  front-end AGC re-gains per packet, so every gain step landed as a
+  broadband transient and the host fixture only "saw" breathing because its
+  gain modulation had no AGC to remove it. It is now each subcarrier band's
+  share of the per-frame-normalized row, which per-packet gain cannot move;
+  the bank runs per band and each bin keeps its strongest band. Host tests
+  drive a 0.25 Hz breath through a simulated AGC into the right bin, read
+  zero through 80 s of ±30 % gain flicker, and keep 12 BPM in its bin at
+  700 ms and 1300 ms window cadences. Synthetic frames only; no bench
+  numbers, and the docs say so. The three copies (common, the canary-wap
+  sketch mirror, the embedded extractor) moved together.
+- **Six dead `firmware/common/` headers are gone** (`core/log.h`,
+  `core/version.h`, `health/health_log.h`, `network/mesh_network.h`,
+  `rf_presence/rf_presence.h`, `web/web_ui.h`). No build reached them, and
+  they shadowed live sketch modules by basename — the dead `health_log.h`
+  declared a C API the CSI macros could not have compiled against had the
+  include probe ever resolved to it.
+
 ### Tooling: one `die()`, one platform pin, one lockfile
 
 - **`canary-local/tools/_tooling.py` is the single definition of `die()`,

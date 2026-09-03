@@ -38,7 +38,8 @@ survived only if a majority could not. The counts:
 | Rated high | 27 |
 | Landed in the September PRs (first pass) | 78 |
 | Open list items landed in the same PR before merge | 34 |
-| Still open | 26 |
+| Landed in the follow-up wave (PR #1635, mirror #9, website #184) | 13 in full, 2 in part |
+| Still open | 15 in full, 17 in part |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -90,14 +91,30 @@ itself found: the MQTT bridge's publish
 cursor now ignores export jitter, and the tvOS bundles carry a privacy
 manifest that the plist lint actually inspects.
 
+### Landed in the follow-up wave
+
+A second pass on 2026-09-03 (monorepo PR #1635, mirror PR #9, website PR
+#184) took the rows that need no hardware and no Apple toolchain, one
+package per worktree, each reviewed adversarially before it was merged.
+Landed in full: 3, 4, 8, 16, 17, 27, 28, 29, 31, 37, 41, 44, 46. Landed in part: 21 (the device
+package's wave 1, the manifests and the linter that proves their joins;
+waves 2 and 3 in §4 are open) and 30 (the platform pin lives once, as a pure
+refactor; the decision about the version spread is documented in
+`firmware/PLATFORMS.md` and still open). Each row below says what actually
+shipped and where it deviates from the row's original proposal. What is
+left — 15 rows in full and 17 in part — is hardware-bound
+(items 2, 22 and the §5 bench steps), Apple-toolchain-bound (5, 6, 13), a
+maintainer decision (30's version spread, 42, 51), or a larger refactor
+(12, 26, 34, 35, 38).
+
 ### P0 — wrong evidence or a broken promise a user would hit
 
 | # | Item | Why it matters | Fix | Effort |
 |---|---|---|---|---|
 | 1 | **(landed, in part)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Serve `GET /api/fleet` from `src/api/mod.rs` with the same document the firmware boards serve (`firmware/common/fleet_selfreport/`), and add the anti-drift vector for it. | M |
 | 2 | **CSI mixes every transmitter into one window.** Neighbor-AP beacons, peer Canaries' ESP-NOW probes and router echoes all land in the same 64-frame window; per-subcarrier variance across alternating links reads as motion. | The presence detector's false-positive floor is set by the neighborhood's Wi-Fi, not by the room. | Filter `rx_cb` on the transmitter address: accept the associated BSSID (and, when the probe layer is up, registered peers) and count the rest under a new `frames_dropped_foreign` stat. `csi_hal.cpp` already has `info->mac`. | S |
-| 3 | **Breathing envelope is raw magnitude the driver's AGC removes.** The host test passes because synthetic frames have no automatic scaling. | `quiet` presence and `unusual_breathing` will not fire on a real device. | Normalize each frame by its own mean magnitude before the Goertzel stage (`csi_features.cpp`), or read the per-frame scale the HE `val_scale_cfg` path exposes; then re-run `test_csi_features` with a scaled fixture. | S |
-| 4 | **(landed, in part)** **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Timestamp each window and resample onto a fixed 1 Hz grid before the bin stage; expose the achieved cadence in `csi_stats_t`. | S |
+| 3 | **(landed)** **Breathing envelope is raw magnitude the driver's AGC removes.** The host test passes because synthetic frames have no automatic scaling. | `quiet` presence and `unusual_breathing` will not fire on a real device. | Landed: the envelope is now each subcarrier band's share of the per-frame-normalized row (four rotation bands, the Goertzel bank run per band, each bin keeping its strongest band), which per-packet gain cannot move; the host tests drive a 0.25 Hz breath through a simulated per-packet AGC into bin 3 and read zero in every bin through 80 s of ±30 % gain flicker. Host-tested on synthetic frames only — the bench pass (§5 step 3) is still what turns this into a claim about a room. | S |
+| 4 | **(landed)** **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Landed: every window close carries its timestamp and the envelope is resampled onto a fixed 1 Hz grid (a close inside the previous slot is averaged into it, a gap is bridged with held copies), and `csi_stats_t` reports `windows_held`, `windows_merged` and `window_period_ms` (appended, both status endpoints surface them). Host tests: 700 ms and 1300 ms cadences both keep 12 BPM in bin 2 with the counters reporting the real pace; a 3 s stall holds two copies. The three copies (common, the sketch mirror, the embedded extractor) moved together. | S |
 | 5 | **A TLS-enabled WAP is unreachable from the iOS app.** `URLSession.shared` never answers the server-trust challenge and the receipt's `tls_cert_fp` pin is discarded. | The one configuration that protects the router password in transit is the one the app cannot talk to. | A `URLSessionDelegate` that pins the receipt fingerprint (`ios/Sources/SecuraCV/Transport/DeviceAPI.swift`); reject on mismatch with a user-readable error. | M |
 | 6 | **On-phone chain verification targets the wrong API.** `DeviceAPI.witness()` fetches `/api/v1/witness` (the canary-vision Node reference), while the WAP serves `/api/witness` with a different record shape and no signature. | The app's headline trust feature cannot run against any firmware in this repo. | Pick one contract, put it in `spec/`, and make the WAP handler and the Swift decoder both conform; add a fixture test on each side. | M |
 | 7 | **(landed)** **Two flashers still disagree on Ed25519 refusals** in one direction: the browser now classifies them as integrity failures, but the desktop Flasher's diagnostic copy and recovery hint differ. | Half the users get the vague message (AGENTS.md rule 7). | Share the classification table as a JSON both frontends load (`canary-local/assets/flash-core.js`, `desktop/src/`). | S |
@@ -132,7 +149,7 @@ manifest that the plist lint actually inspects.
 | 26 | **Emulator `emu_net.cpp` re-implements the Wi-Fi retry decision** instead of calling `wifi_join_policy.h`. | The emulator can diverge from the firmware it exists to preview. | Include the shared header; delete the copy. | S |
 | 27 | **(landed)** **Website mirrors `verify_core.js`, `kernel-status.json` and `onboarding-spec.json` by hand**; only the CAD carry is automated. | The verify page can check a chain format the kernel no longer writes. | Landed, with two corrections to this row: the verify-core mirror is `tv/vendor/verify_core.js` plus its fixtures (not `js/verify.js`, which is website-authored), and `onboarding-spec.json` is website-authored except its `builds` block. `scripts/carry_to_site.py --site <checkout>` refreshes all three byte-reproducibly (the `builds` block from `build_matrix.json`, `kernel-status.json` via `tools/gen_kernel_status.py --site`, the verifier and fixtures with their provenance file); the website's weekly carry job runs it next to the CAD carry and opens a PR only when bytes moved, and the site pins the carried bytes. Its first run landed the predicted drift: the `/checkup` build matrix was four products behind. | S |
 | 28 | **(landed)** **Monorepo → HACS mirror is detect-only.** The new weekly check raises an issue; nothing pushes. | Users on HACS lag the monorepo by up to a week plus a human. | Landed: `homeassistant-mirror.yml` pushes `custom_components/securacv/` (and `conftest.py`) to the mirror as a PR on `bot/mirror-sync` on every `main` change, proving the copy exact with the mirror's own check. It needs a `MIRROR_PAT` secret (fine-grained, contents + pull-requests write on the mirror); without it the run stays green and raises one deduplicated issue saying so. | S |
-| 29 | **Dead legacy headers in `firmware/common/` share names with live sketch modules**; `csi_hal.cpp`'s `__has_include` probe depends on which one wins. | Include order decides behavior. | Delete the dead headers; the probe becomes a plain include. | S |
+| 29 | **(landed)** **Dead legacy headers in `firmware/common/` share names with live sketch modules**; `csi_hal.cpp`'s `__has_include` probe depends on which one wins. | Include order decides behavior. | Landed: six unbuilt scaffold headers (`core/log.h`, `core/version.h`, `health/health_log.h`, `network/mesh_network.h`, `rf_presence/rf_presence.h`, `web/web_ui.h`) are gone — no build, manifest, Makefile or `build.sh` reached them, and the hazard was real: the dead `health_log.h` declared a C API, not the namespace the CSI macros use, so the probe resolving to it would not have compiled. The probe itself stays, because `examples/csi_minimal` consumes `common/csi` with no host logger. | S |
 | 30 | **(landed as a refactor; the decision stays open)** **The two Arduino platform lines are pinned differently across ini files.** | A board builds against two toolchains depending on the entry point. | Landed: `firmware/envs/platformio/platforms.ini` is the one source for the espressif32 / pioarduino platform pin (five sections, one per distinct literal, each saying who uses it and why); every env interpolates it, `firmware/scripts/lint_platform_pins.py` rejects a literal anywhere else, and `pio project config` resolves every env to the same string as before, so no pin value moved. What stays open is the decision `firmware/PLATFORMS.md` documents: canary floats on `^7.0.0` while the S3/C3 line pins `6.9.0`, the secure env's `^6.5.0` probably resolves to the same bytes under another spelling, and canary-ota's exact `6.5.0` may just be the version current when the project started. Any of those is a build-behavior change that needs a build per env. | S |
 | 31 | **(landed)** **`die()` is defined eleven times with three behaviors** across `canary-local/tools`, `_warn()` twice, the repo-root discovery line 36 times. | Tooling scripts disagree on exit codes. | Landed: `canary-local/tools/_tooling.py` is the single definition of `die(msg, code=1)`, `warn(msg)` and `repo_root()`; the ten `die()` copies the grep actually found, both `_warn()` copies and seventeen repo-root lines are gone, and every generator imports it. `die` has one behavior: `<prog>: ERROR: <msg>` on stderr, a `::error::` annotation under GitHub Actions, exit 1 unless the caller says otherwise. `hub_seed_apply.py` stays self-contained because it is embedded and hash-pinned. | S |
 | 32 | **(landed)** **Website still calls the wiring bench "The Playground"** in twelve places while the glossary now says Test bench. | Two names for one thing across two repos. | Rename the pages; the glossary term already exists. | S |
@@ -263,7 +280,7 @@ it did not make it *validated*. The path from here, in order:
 
 1. **Transmitter filtering** (P0 item 2) — without it nothing downstream can
    be tuned against a real room.
-2. **AGC-aware envelope and fixed-cadence Goertzel** (items 3 and 4).
+2. **AGC-aware envelope and fixed-cadence Goertzel** (items 3 and 4) — **landed** in the follow-up wave, host-tested on synthetic frames; step 3 is what makes it a claim about a room.
 3. **Bench pass on three boards** — S3, C3 and C6 (the HE path is compile-only
    today), following [`csi_quickstart.md`](csi_quickstart.md), with the
    `supply` object confirming which traffic source fed each window. Record
