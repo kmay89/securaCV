@@ -110,6 +110,13 @@ final class FleetStore: ObservableObject {
         ble.onUrgentSnapshot = { [weak self] _ in
             Task { await self?.refreshOnce() }
         }
+        // The connectionless twin: a tamper or alert CHIRP used to wait out
+        // the 20-second cycle the GATT NOTIFY path above bypasses — the one
+        // signal built for when Wi-Fi and broker are down was the slowest
+        // thing in the app. Same answer: re-fold NOW.
+        ble.onUrgentChirp = { [weak self] _ in
+            Task { await self?.refreshOnce() }
+        }
 
         // Someone who installs this app ONLY to help watch a relative's fleet
         // pairs nothing, so the launch-time "you have devices, let's ask about
@@ -867,6 +874,7 @@ final class FleetStore: ObservableObject {
             TimelineEvent(id: "\(ref.id)#e\(row.id)",
                           deviceID: ref.id, deviceName: ref.name, zone: "",
                           headline: EventVocabulary.headline(forWire: row.type,
+                                                             state: row.state,
                                                              zone: "", deviceName: ref.name),
                           severity: EventVocabulary.severity(forWire: row.type),
                           badge: .unknown,
@@ -885,6 +893,7 @@ final class FleetStore: ObservableObject {
         // way, so history stays honestly colored.
         if let head = rows.first, let headDate = dates.first {
             w.lastEvent = EventVocabulary.headline(forWire: head.type,
+                                                   state: head.state,
                                                    zone: "", deviceName: ref.name)
             w.lastEventAt = headDate
             w.lastEventSeverity = rows.filter(\.isOpen)

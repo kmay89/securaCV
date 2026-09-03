@@ -152,6 +152,13 @@ final class BLEConsole: NSObject, ObservableObject {
     /// to run NOW instead of at the next poll. Wired by FleetStore.
     var onUrgentSnapshot: ((String) -> Void)?
 
+    /// Same contract for the connectionless cry: a tamper or alert CHIRP is
+    /// the fastest off-grid signal a Canary has, and it used to wait out the
+    /// 20-second poll the GATT NOTIFY path bypasses. Fired once per parsed
+    /// tamper/alert chirp; heartbeat/witness/boot stay poll-paced (they are
+    /// liveness, not cries). Wired by FleetStore.
+    var onUrgentChirp: ((UUID) -> Void)?
+
     /// One credentials write in flight at a time — the firmware rate-limits
     /// to one per 5 s anyway, and a second concurrent write could only
     /// steal the first one's answer.
@@ -248,6 +255,11 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
                     localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
                 )
             } else if let chirp = ChirpAdvert.parse(manufacturerData: mfg) {
+                // A repeated chirp (the 2 s broadcast window, duplicates on)
+                // must not re-fire the urgent path every advert: urgency is
+                // for the FIRST hearing of this cry, so fire only when the
+                // kind is new for this peripheral's current sighting.
+                let previous = chirpSightings[peripheral.identifier]
                 chirpSightings[peripheral.identifier] = ChirpSighting(
                     chirp: chirp,
                     rssiDBM: RSSI.intValue,
@@ -255,6 +267,10 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
                     peripheralID: peripheral.identifier,
                     localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
                 )
+                if (chirp.kind == .tamper || chirp.kind == .alert),
+                   previous?.chirp.kind != chirp.kind {
+                    onUrgentChirp?(peripheral.identifier)
+                }
             }
         }
 

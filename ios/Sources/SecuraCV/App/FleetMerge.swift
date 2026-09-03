@@ -159,6 +159,20 @@ enum FleetMerge {
         // ledger's one-alert-per-condition rule already governs how loudly
         // this may repeat.
         if sighting.chirp.kind == .tamper { w.tamper = true }
+
+        // An ALERT chirp is the cry the whole broadcast channel exists for —
+        // the display in the next room raises Alert for it, and this fold
+        // used to hear it and say nothing. It raises the row's live level
+        // the same way an open event does: severity that never DOWNGRADES a
+        // louder story already on the row, a headline for the status line,
+        // and the existing one-alert-per-condition ledger governing repeats.
+        // Heartbeat/witness/boot chirps stay liveness-only — they are proof
+        // of life, not cries.
+        if sighting.chirp.kind == .alert, w.lastEventSeverity < .alert {
+            w.lastEvent = "Alert broadcast heard"
+            w.lastEventAt = sighting.lastHeard
+            w.lastEventSeverity = .alert
+        }
     }
 
     /// A Canary we have only ever heard chirp — same provisional posture as
@@ -260,6 +274,12 @@ enum FleetMerge {
         if let p = row.radarPresent { w.radarPresent = p }
         if let o = row.radarOccupants { w.radarOccupants = o }
         if let b = row.breathing { w.breathingLock = b }
+        // Stamp when the words arrived, so the detail view can say how
+        // fresh the claim is instead of presenting a relayed reading as
+        // the present tense forever.
+        if row.radarPresent != nil || row.radarOccupants != nil || row.breathing != nil {
+            w.wellbeingAt = heardAt
+        }
 
         // The seeing claim is identity-grade — "your camera saw a person"
         // attached to the wrong named row is exactly the lie the attach()

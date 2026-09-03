@@ -88,6 +88,13 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
     var radarPresent: Bool? = nil        // nil unknown / false clear / true present
     var radarOccupants: Int? = nil       // 0 / 1 / 2 (=2+)
     var breathingLock: Bool? = nil
+    /// When any of the three wellbeing words above was last heard — the
+    /// data path's freshness (this app's poll of /api/fleet or the demo
+    /// seed), not a witnessed-world event time, so it keeps operational
+    /// precision like the link-health stamps. nil on rows written before
+    /// the field existed (they decode unchanged) — the detail view then
+    /// simply shows no provenance line rather than inventing one.
+    var wellbeingAt: Date? = nil
     var tempC: Double? = nil
     var humidityPct: Int? = nil
 

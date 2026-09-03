@@ -264,6 +264,19 @@ enum EventVocabulary {
         return zone.isEmpty ? base : "\(base) · \(zone)"
     }
 
+    /// The per-kind tamper story, when the row carries one. A "tamper" row's
+    /// `state` is the kind word (the system.integrity vocabulary: power_loss,
+    /// watchdog, …), so a surface can say "Power was cut" instead of the
+    /// generic label. An unknown kind word falls back to the plain headline —
+    /// calm default, never a guess — and every other wire passes through.
+    static func headline(forWire wire: String, state: String,
+                         zone: String, deviceName: String) -> String {
+        if wire == "tamper", let kind = TamperKind(wire: state) {
+            return zone.isEmpty ? kind.narration : "\(kind.narration) · \(zone)"
+        }
+        return headline(forWire: wire, zone: zone, deviceName: deviceName)
+    }
+
     /// "solar_flare_detected" → "Solar flare detected" — the honest fallback
     /// for vocabulary from a newer fleet than this app.
     static func prettified(_ wire: String) -> String {

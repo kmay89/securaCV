@@ -134,13 +134,55 @@ final class HomeKitBridge: ObservableObject {
     /// `requestAccess()`, so launch, tests, and previews never wake HomeKit
     /// (the CloudKit lesson from RELEASE_LESSONS (ab), applied here first).
     static let shared = HomeKitBridge()
-    init() {}
+
+    /// Where consent lives between launches — the `authoredIDsKey` idiom:
+    /// the master opt-in as a bool, the per-signal set as sorted raw ids.
+    static let enabledKey = "homekit_enabled_v1"
+    static let enabledSignalsKey = "homekit_enabled_signals_v1"
+
+    /// The store consent persists in. Injectable so tests can hand the
+    /// bridge a throwaway suite; `.shared` always reads the app's own.
+    private let defaults: UserDefaults
+
+    /// Restores persisted consent — turning the integration on and granting
+    /// a class-scoped signal are decisions, and decisions survive a relaunch.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        isEnabled = defaults.bool(forKey: Self.enabledKey)
+        enabledSignals = Self.restoredSignals(
+            from: defaults.stringArray(forKey: Self.enabledSignalsKey))
+    }
 
     @Published private(set) var authorized = false
-    @Published var isEnabled = false        // opt-in; off by default
+
+    /// The master switch — opt-in, off by default and off when nothing is
+    /// stored. Written through on every flip; the settings toggle binds
+    /// straight to this, so the write-through lives on the property itself.
+    @Published var isEnabled = false {
+        didSet { defaults.set(isEnabled, forKey: Self.enabledKey) }
+    }
 
     /// Per-signal consent. Class-scoped signals start off — the dumb-PIR bar.
-    @Published private(set) var enabledSignals: Set<HomeSignal> = HomeSignal.defaultEnabled
+    /// Every change writes through, as sorted raw ids.
+    @Published private(set) var enabledSignals: Set<HomeSignal> = HomeSignal.defaultEnabled {
+        didSet {
+            defaults.set(enabledSignals.map(\.rawValue).sorted(),
+                         forKey: Self.enabledSignalsKey)
+        }
+    }
+
+    /// Rebuild the consent set from what a store held. Tolerant, per the
+    /// house decoder rule: ids this build doesn't know (a newer app wrote
+    /// them, or the plist was doctored) drop silently. And `.tamper` is
+    /// re-inserted whatever the store says — the store must not be a quieter
+    /// way around the refusal in `setSignal`. `nil` (nothing stored, or the
+    /// wrong type under the key) means the defaults, untouched.
+    static func restoredSignals(from stored: [String]?) -> Set<HomeSignal> {
+        guard let stored else { return HomeSignal.defaultEnabled }
+        var signals = Set(stored.compactMap(HomeSignal.init(rawValue:)))
+        signals.insert(.tamper)
+        return signals
+    }
 
     /// Whether any home this account can see has a connected home hub.
     /// Read from `HMHomeManager` after authorization; false until known —
@@ -163,7 +205,9 @@ final class HomeKitBridge: ObservableObject {
     private var delegateShim: HomeManagerShim?
     #endif
 
-    /// Turn a signal's projection on or off.
+    /// Turn a signal's projection on or off. The change persists — the set
+    /// writes through as it mutates, so consent given today is still given
+    /// after tomorrow's relaunch.
     ///
     /// Tamper cannot be turned off: a witness that reports its own tampering
     /// must not be able to do so invisibly to a home the owner already chose
@@ -296,17 +340,22 @@ final class HomeKitBridge: ObservableObject {
         #endif
     }
 
-    /// Accessories in the primary home carrying a characteristic this
-    /// signal projects to — the concrete things an automation can trigger
-    /// on. Names only; the HomeKit objects never leave the bridge.
+    /// Accessories in the primary home this signal's automation could bind
+    /// to — judged by the same (service name, characteristic type) selector
+    /// the writer uses, so the picker never offers an accessory `author`
+    /// would then refuse. Names only; the HomeKit objects never leave the
+    /// bridge.
     func automationSources(for signal: HomeSignal) -> [String] {
         #if canImport(HomeKit)
         guard let home = manager?.primaryHome else { return [] }
-        let wanted = signal.hmCharacteristicTypeID
         return home.accessories.filter { accessory in
-            accessory.services.contains { service in
-                service.characteristics.contains { $0.characteristicType == wanted }
+            let pairs = accessory.services.flatMap { service in
+                service.characteristics.map {
+                    ServiceCharacteristic(serviceName: service.name,
+                                          characteristicType: $0.characteristicType)
+                }
             }
+            return signal.automationBindingIndex(in: pairs) != nil
         }
         .map(\.name)
         #else
@@ -334,13 +383,27 @@ final class HomeKitBridge: ObservableObject {
         guard let home = manager?.primaryHome else {
             throw HomeAuthorError.noHome
         }
-        guard let accessory = home.accessories.first(where: { $0.name == plan.accessoryName }),
-              let characteristic = accessory.services
-                  .flatMap(\.characteristics)
-                  .first(where: { $0.characteristicType == plan.signal.hmCharacteristicTypeID })
+        guard let accessory = home.accessories.first(where: { $0.name == plan.accessoryName })
         else {
             throw HomeAuthorError.accessoryGone
         }
+        // Bind by (service name, characteristic type), never type alone: on
+        // a bridged Canary, "Person" and plain "Motion" are the SAME HAP
+        // characteristic type on different services, and only the service
+        // name the hub's bridge minted tells them apart. The pure selector
+        // picks the service this signal may honestly ride — or nothing,
+        // which is an answer too, never a fallback to any-motion.
+        let flat = accessory.services.flatMap { service in
+            service.characteristics.map { (service: service, characteristic: $0) }
+        }
+        let pairs = flat.map {
+            ServiceCharacteristic(serviceName: $0.service.name,
+                                  characteristicType: $0.characteristic.characteristicType)
+        }
+        guard let bindAt = plan.signal.automationBindingIndex(in: pairs) else {
+            throw HomeAuthorError.signalNotPublished(plan.signal)
+        }
+        let characteristic = flat[bindAt].characteristic
         guard let scene = home.actionSets.first(where: { $0.uniqueIdentifier == plan.sceneID })
         else {
             throw HomeAuthorError.sceneGone

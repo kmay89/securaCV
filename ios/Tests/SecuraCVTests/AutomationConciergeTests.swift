@@ -111,4 +111,61 @@ final class AutomationConciergeTests: XCTestCase {
             XCTAssertFalse(signal.hmCharacteristicTypeID.isEmpty)
         }
     }
+
+    // ── binding: the service name is the class ──
+
+    private func motionPair(_ service: String) -> ServiceCharacteristic {
+        ServiceCharacteristic(serviceName: service,
+                              characteristicType: HomeSignal.motion.hmCharacteristicTypeID)
+    }
+
+    func testServiceNamesMirrorTheHAPBridge() {
+        // Pinned to service_name() in src/bridge/hap/accessory.rs — the one
+        // place those strings are minted. If the bridge renames a service,
+        // this table (and this test) moves with it.
+        XCTAssertEqual(HomeSignal.motion.bridgeServiceName, "Motion")
+        XCTAssertEqual(HomeSignal.motionPerson.bridgeServiceName, "Person")
+        XCTAssertEqual(HomeSignal.motionVehicle.bridgeServiceName, "Vehicle")
+        XCTAssertEqual(HomeSignal.motionAnimal.bridgeServiceName, "Animal")
+        XCTAssertEqual(HomeSignal.motionPackage.bridgeServiceName, "Package")
+        XCTAssertEqual(HomeSignal.classServiceNames,
+                       ["Person", "Vehicle", "Animal", "Package"])
+    }
+
+    func testAClassSignalBindsOnlyItsNamedService() {
+        // A bridged Canary listing plain Motion first and the class service
+        // later: first-of-type would grab Motion; the selector must not.
+        let pairs = [
+            motionPair("Motion"),
+            ServiceCharacteristic(
+                serviceName: "Tamper",
+                characteristicType: HomeSignal.tamper.hmCharacteristicTypeID),
+            motionPair("Person"),
+        ]
+        XCTAssertEqual(HomeSignal.motionPerson.automationBindingIndex(in: pairs), 2,
+                       "Motion (person) rides the Person service, never the first motion tile")
+        XCTAssertNil(HomeSignal.motionVehicle.automationBindingIndex(in: pairs),
+                     "another class's service is not this class's service")
+    }
+
+    func testAMissingClassServiceIsARefusalNotAFallback() {
+        let pairs = [motionPair("Motion")]
+        XCTAssertNil(HomeSignal.motionPerson.automationBindingIndex(in: pairs),
+                     "no Person service, no binding — plain motion is not an honest stand-in")
+        // And the writer's refusal reads as one plain sentence.
+        XCTAssertFalse(HomeAuthorError.signalNotPublished(.motionPerson).line.isEmpty)
+    }
+
+    func testPlainMotionPrefersTheUnscopedService() {
+        // Person listed first: plain motion skips past it, so the two
+        // automations stay two different automations.
+        XCTAssertEqual(HomeSignal.motion.automationBindingIndex(
+            in: [motionPair("Person"), motionPair("Motion")]), 1)
+        // Only class services carry the type: first-of-type stands, the
+        // pre-class behavior.
+        XCTAssertEqual(HomeSignal.motion.automationBindingIndex(
+            in: [motionPair("Person")]), 0)
+        // Nothing carries the type at all: nil — the writer's same refusal.
+        XCTAssertNil(HomeSignal.motion.automationBindingIndex(in: []))
+    }
 }

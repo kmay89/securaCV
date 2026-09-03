@@ -23,6 +23,7 @@ extension WristSnapshot {
                          linkRaw: w.link.rawValue,
                          badgeRaw: w.badge.rawValue,
                          tamper: w.tamper,
+                         tamperNarration: w.tamperKind.isEmpty ? nil : w.tamperKind,
                          lastEventHeadline: w.lastEvent.isEmpty ? nil : w.lastEvent,
                          lastEventBucket: w.lastEventAt.map(FleetStore.bucket),
                          batteryPct: w.batteryPct,

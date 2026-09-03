@@ -179,7 +179,18 @@ struct DeviceDetailView: View {
                 } header: {
                     Text("Wellbeing")
                 } footer: {
-                    Text("As the radar reports it — coarse by design: presence, a count that tops out at 2+, a breathing rhythm yes/no. No camera, no identity, and vitals never enter the sealed log.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("As the radar last reported it — coarse by design: presence, a count that tops out at 2+, a breathing rhythm yes/no. No camera, no identity, and vitals never enter the sealed log.")
+                        // Provenance: these words arrive relayed (a display
+                        // repeating the sense device's retained broker claim,
+                        // or a poll of the device itself), so say when they
+                        // were heard rather than presenting them as a live
+                        // feed. Rows from before the stamp existed show
+                        // nothing — never an invented freshness.
+                        if let at = liveWitness.wellbeingAt {
+                            Text("Heard \(at, format: .relative(presentation: .named)) — a relayed reading, not a live feed.")
+                        }
+                    }
                 }
             }
 
