@@ -404,18 +404,23 @@ jobs:
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DBUILD_PROFILE_DEV -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
-      - name: Compile firmware (MINIMAL profile, claimed C3 target)
+      - name: Compile firmware (FULL profile, claimed C3 target)
         run: |
           # build_config.h offers HARDWARE_XIAO_ESP32C3 as a first-class
-          # target and BUILD_PROFILE_MINIMAL as a first-class profile; no
-          # workflow compiled either. MINIMAL+C3 is the smallest honest
-          # claim-check for both at once: single-core RISC-V, no PSRAM,
-          # crypto + GPS only. The C3 FQBN carries no PSRAM {build.defines}
-          # to re-add, and the PSRAM #error guard binds FULL+S3 only.
+          # target and no workflow ever compiled ANY profile for it — yet
+          # check_route_budget.py models FULL/XIAO_ESP32C3 as a supported
+          # combination. This leg makes that claim compile: single-core
+          # RISC-V, no PSRAM (the #error guard binds FULL+S3 only), camera
+          # auto-disabled via HW_HAS_CAMERA, BLE 5.0 real. The C3 FQBN
+          # carries no PSRAM {build.defines} to re-add.
+          # (BUILD_PROFILE_MINIMAL is still compiled by nobody: the sketch
+          # fences the HTTP server's *startup*, not its thousands of handler
+          # lines, so a no-WiFi/no-HTTP/no-SD build needs a fencing repair
+          # far wider than a CI leg — a declared gap, not an oversight.)
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32C3 \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DBUILD_PROFILE_MINIMAL -DHARDWARE_XIAO_ESP32C3" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DHARDWARE_XIAO_ESP32C3" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
   build-arduino-cli-display:

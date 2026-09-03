@@ -1489,12 +1489,18 @@
   CI actually builds — the compiler cannot warn about a branch it never
   enters.
 - **Fix:** `firmware.yml` grew compile-only legs for `BUILD_PROFILE_DEV`
-  (S3) and `BUILD_PROFILE_MINIMAL` on the claimed `XIAO_ESP32C3` FQBN, so
-  every offered profile and both claimed chips compile on every PR.
+  (S3) and `BUILD_PROFILE_FULL` on the claimed `XIAO_ESP32C3` FQBN — the
+  combination `check_route_budget.py` already models. The DEV leg's first
+  run immediately caught twelve mesh auth wrappers defined outside the
+  `FEATURE_MESH_NETWORK` fence their handlers and registrations live in:
+  years of invisible rot, found in the first hour of coverage.
 - **Regression check:** The legs themselves ("Compile firmware (DEV profile
-  gate)" / "(MINIMAL profile, claimed C3 target)" in `firmware.yml`). When
+  gate)" / "(FULL profile, claimed C3 target)" in `firmware.yml`). When
   `build_config.h` gains a new profile or hardware target, add its leg in
   the same change — an unbuilt configuration is a false promise.
+  `BUILD_PROFILE_MINIMAL` is still compiled by nobody and is a declared
+  gap: the sketch fences the HTTP server's startup, not its handler
+  bodies, so a no-WiFi/no-HTTP/no-SD build needs a fencing repair first.
 - **Date learned:** 2026-09
 
 ## How to Add an Entry

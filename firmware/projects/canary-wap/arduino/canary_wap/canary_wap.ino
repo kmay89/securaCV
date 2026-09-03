@@ -7693,6 +7693,11 @@ static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
 // pair_token_valid. The dashboard's secureFetch already supplies the
 // Bearer token on every call (web_ui.h:3063-3170), so wrapping mirrors
 // the same plumbing-only fix as #435 for the WiFi-mgmt handlers.
+// Fenced like the handlers and registrations they bridge: with the mesh
+// off (DEV/MINIMAL profiles) the wrapped handle_mesh_* symbols don't
+// exist, and an unfenced wrapper is a build break the FULL-only CI of
+// the time never saw (the CAMERA_PEEK block below always had it right).
+#if FEATURE_MESH_NETWORK
 static esp_err_t handle_mesh_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_status(req);
@@ -7741,6 +7746,7 @@ static esp_err_t handle_mesh_name_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_name(req);
 }
+#endif // FEATURE_MESH_NETWORK
 
 #if FEATURE_CAMERA_PEEK
 static esp_err_t handle_peek_stream_auth(httpd_req_t* req) {
