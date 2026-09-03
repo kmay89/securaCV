@@ -11394,37 +11394,38 @@
      "params": [
       {
        "name": "glyph_show",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the bird into the face that prints against the bed — the finish test every case A-surface actually takes"
       },
       {
        "name": "glyph_h",
        "default": "34.0",
-       "comment": "NOMINAL height (mark_span units) — draws about"
+       "comment": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this  // [24:1:40]"
       },
       {
        "name": "glyph_rib",
        "default": "0.7",
-       "comment": "stroke width, in mm. THE number this station tests:"
+       "comment": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print  // [0.42:0.02:1.2]"
       },
       {
        "name": "glyph_depth",
        "default": "0.5",
-       "comment": "= label_depth's sibling; one bridged layer closes it"
+       "comment": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up  // [0.2:0.1:1.2]"
       },
       {
        "name": "glyph_dx",
        "default": "-26.5",
-       "comment": "the clear rectangle on the bed face: left of the"
+       "comment": "bird center, mm from the plate center across the plate  // [-40:0.5:40]"
       },
       {
        "name": "glyph_dy",
        "default": "12.0",
-       "comment": "PORT through-hole, above the keyhole pockets"
+       "comment": "bird center, mm from the plate center up the plate  // [-30:0.5:30]"
       }
      ]
     },
     {
-     "name": "Quality",
+     "name": "Hidden",
      "note": "",
      "params": [
       {
