@@ -73,20 +73,43 @@ Coarse-bucketed list of events from the in-memory ring (backed by the
 witness chain for persistence). Reads through the existing
 `witness_chain` export path — no new persistence layer.
 
+Every key appears on every row — clients decode one shape. Open bundles
+(still collecting) are serialized ahead of the committed ring rows:
+
 ```json
 {
   "events": [
     {
-      "id": 4012,
+      "id": 4013,
       "module": "core.presence",
       "type": "presence_changed",
       "category": "event",
       "state": "active",
       "confidence": "confirmed",
-      "duration_sec": 1080,
-      "bundled_count": 12,
+      "motion": 61,
+      "breathing": 0,
+      "bpm": 0,
+      "duration_sec": 0,
+      "bundled": 3,
       "time_bucket": 78,
-      "dismissed": 0
+      "dismissed": 0,
+      "open": 1
+    },
+    {
+      "id": 4012,
+      "module": "core.presence",
+      "type": "presence_changed",
+      "category": "event",
+      "state": "empty",
+      "confidence": "confirmed",
+      "motion": 0,
+      "breathing": 0,
+      "bpm": 0,
+      "duration_sec": 1080,
+      "bundled": 12,
+      "time_bucket": 74,
+      "dismissed": 0,
+      "open": 0
     }
   ]
 }
@@ -94,8 +117,9 @@ witness chain for persistence). Reads through the existing
 
 | Field | Notes |
 | --- | --- |
-| `time_bucket` | 10-minute bucket (0..143). No finer-grain timestamp ever. |
-| `bundled_count` | how many raw observations the bundler collapsed into this row |
+| `time_bucket` | 10-minute bucket (0..143). No finer-grain timestamp ever. Derived from the device's monotonic clock plus a clock offset once one is synced (`csi_event_set_clock_offset_minutes`); before a sync it is boot-relative — consistent within a session, not aligned to the wall-clock day. |
+| `bundled` | how many raw observations the bundler collapsed into this row |
+| `open` | `1` while the bundle is still collecting — the device's own present tense, serialized ahead of the ring; `0` for a committed ring row, which is history. Record vs siren: only an open row may drive live severity; a closed row must never latch it. |
 | `state`, `confidence`, ... | fields the originating module's manifest permits |
 
 ### `POST /api/events/dismiss`
@@ -316,9 +340,9 @@ is wired into the chokepoint via `csi_event_set_quiet_window(start_min,
 end_min, enabled)`. While the configured window is active, the chokepoint
 suppresses non-anomaly emits and increments an internal hold counter
 instead. At the first emit AFTER the window closes (or when the user
-disables Quiet Hours mid-window), the chokepoint synthesises one
+disables Quiet Hours mid-window), the chokepoint synthesizes one
 `held_summary` row through the registered `meta.quiet_hours` module.
-The summary's `note` is `"quiet_hours"` and `bundled_count` reflects
+The summary's `note` is `"quiet_hours"` and `bundled` reflects
 the number of suppressed events. **Anomaly events (`CSI_CATEGORY_ANOMALY`)
 always pass through** — the night-time category is precisely when
 unusual activity matters most.

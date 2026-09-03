@@ -388,6 +388,36 @@ jobs:
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+      - name: Compile firmware (DEV profile gate)
+        run: |
+          # BUILD_PROFILE_DEV (WiFi + HTTP + SD, no mesh/BLE) was compiled by
+          # nobody: flavors.json's PlatformIO envs and both legs above are all
+          # FULL on S3, so any #if the profile gates could rot invisibly —
+          # and one did (a tamper-module include landed inside a FULL-only
+          # block; only review caught it). Compile-only: the gate is "every
+          # offered profile still builds", not a new artifact. PSRAM stays on
+          # (the S3 board's real configuration); the #error guard itself only
+          # binds FULL.
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DBUILD_PROFILE_DEV -DBOARD_HAS_PSRAM" \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
+      - name: Compile firmware (MINIMAL profile, claimed C3 target)
+        run: |
+          # build_config.h offers HARDWARE_XIAO_ESP32C3 as a first-class
+          # target and BUILD_PROFILE_MINIMAL as a first-class profile; no
+          # workflow compiled either. MINIMAL+C3 is the smallest honest
+          # claim-check for both at once: single-core RISC-V, no PSRAM,
+          # crypto + GPS only. The C3 FQBN carries no PSRAM {build.defines}
+          # to re-add, and the PSRAM #error guard binds FULL+S3 only.
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32C3 \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DBUILD_PROFILE_MINIMAL -DHARDWARE_XIAO_ESP32C3" \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
   build-arduino-cli-display:
     name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }}, core ${{ matrix.core.name }})
     runs-on: ubuntu-latest
