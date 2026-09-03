@@ -1440,6 +1440,40 @@
 
 ---
 
+## Network API: what a LAN token does and does not prove
+
+### A per-boot token any LAN host can read is not authentication for an egress switch
+- **What happened:** The display's `POST /api/set` guarded every knob the same
+  way: an Origin allowlist plus a per-boot CSRF token that `GET /api/settings`
+  hands to the page. That stops a cross-site browser, which is what the guard
+  was built for. It does not stop a host already on the home Wi-Fi, which can
+  read the token from `/api/settings` and post it back — and among the knobs
+  behind that guard were `wx_direct`, the glass's one opt-in outbound path,
+  and `wx_loc`, the coarse location that fetch carries. Zero phone-home was a
+  principle a neighbor on the same network could flip.
+- **Root cause:** One write guard for two different classes of setting. Comfort
+  knobs (brightness, look, night behavior, `/api/tz`) can live behind
+  "the LAN is the trust boundary". A setting that opens an outbound connection
+  or stores a location cannot, because the LAN *is* the party the guard has to
+  keep out, and the glass mints no credential that would tell an owner's phone
+  from any other host.
+- **Fix:** A key-class table (`include/canary/net/settings_policy.h`, Arduino-free,
+  host-tested) names the on-glass-only keys; `handle_settings_set` refuses them
+  for every caller, token or not, with `403 {"ok":false,"err":"on_glass_only"}`
+  before the Origin/CSRF gate is consulted. The switch stays where it already
+  was: on the glass (settings → weather → fetch itself). `/api/settings` serves
+  the class under `on_glass` so no client draws a control that would fail, and
+  serves the location-derived facts only to same-site callers. Deliberately
+  not a bearer token and not a button-confirm: the first would mint a
+  credential the glass has no way to hand out, the second needs a UI change
+  and the emulator-dist rebuild that comes with it.
+- **Regression check:** `tests_host/test_settings_policy.cpp` pins the class
+  (every egress and location key true, every comfort knob false, unknown
+  false) and runs in `firmware.yml`. When adding a settings key, decide its
+  class first: if it opens a connection or stores a place, it goes in the
+  table, and the web page shows it read-only with the on-glass path.
+- **Date learned:** 2026-09
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
