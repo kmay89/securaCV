@@ -112,6 +112,12 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
   `docs/hardware/enclosure/gen_builder_manifest.py --site <website-checkout>`
   (the site pins them by sha256; its weekly "Update everything" carry job
   catches a forgotten refresh, but a week is a long time to serve stale CAD)
+- Changed `firmware/build_matrix.json`, a kernel-status tile in
+  `tools/gen_kernel_status.py`, `viewer/verify_core.js` or an envelope
+  fixture? Same idea, other tool:
+  `python3 scripts/carry_to_site.py --site <website-checkout>` stamps the
+  /checkup build matrix, the landing page's kernel-status grid and the
+  Witness Wall's vendored verifier (the same weekly job runs it)
 - Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
   `test`, `refactor`, `chore`
 
