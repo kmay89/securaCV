@@ -321,7 +321,7 @@ UI work:
 
 ## 6. Logging & observability plan
 
-- **Firmware health log** (`common/health/health_log.h`): new events under
+- **Firmware health log** (the project's `include/canary/log.h`): new events under
   `HEALTH_CAT_SENSOR` — radar UART timeout, frame CRC failure, radar reboot
   detected, vitals-lock acquired/lost; severities per existing convention.
 - **Sealed log**: presence/tamper claims only (per §2 table), standard

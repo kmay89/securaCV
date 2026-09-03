@@ -13,7 +13,7 @@ question it is marked `[BENCH]`.
 Product family: **Canary Sentinel Lite / Standard / Heavy**
 Fusion core: `firmware/common/fusion/` · Project: `firmware/projects/canary-sentinel`
 Companion sensors reused wholesale: `common/sensors/mmwave_mr60` (radar),
-`common/csi` (WiFi sensing), `common/rf_presence` + `common/bluetooth` (RF/BLE),
+`common/csi` (WiFi sensing), canary-wap's `rf_presence` + `common/bluetooth` (RF/BLE),
 `common/sensors/bh1750` (light), `common/identity` + `common/witness` (trust).
 
 ---
@@ -130,7 +130,7 @@ composition layer may publish is the coarse `FusionResult`:
 - `range` — near / mid / far (only if radar supplies it)
 - `modality_bits` — *which classes* corroborated, never which device
 
-No MAC is ever stored (RF/BLE are aggregate counts; `common/rf_presence`
+No MAC is ever stored (RF/BLE are aggregate counts; canary-wap's `rf_presence`
 guarantees this). No distance in centimeters, no per-target track, no imagery,
 no vitals leave the device. Every published transition is Ed25519-signed over a
 `sentinel` v1 canonical and hash-chained, reusing `common/identity` and
@@ -201,7 +201,7 @@ adapter, and give it a weight in a preset. The fusion core doesn't change.
 | **PIR** | GPIO (board pin) | motion pulse → `Strong`; recent-but-settled → `Weak` | cheap, zero-emission, dark-capable; first-alert |
 | **Radar** | `common/sensors/mmwave_mr60` | presence+count → `Strong`; edge → `Weak`; UART stalled → `Denied` | still-body + breathing; feeds `range`/`occupancy` |
 | **WiFi CSI** | `common/csi` | motion/breathing core → `Strong`/`Weak` | device-free; the anti-"leave-your-phone" channel |
-| **WiFi RF** | `common/rf_presence` | device-count over threshold → `Weak`/`Strong` | aggregate only, no MAC; corroboration not primary |
+| **WiFi RF** | canary-wap `rf_presence` | device-count over threshold → `Weak`/`Strong` | aggregate only, no MAC; corroboration not primary |
 | **BLE** | `common/bluetooth` + `rf_presence` | device-count over threshold → `Weak`/`Strong` | same class as WiFi-RF (carried radio) |
 | **Ambient light** | `common/sensors/bh1750` | threshold/shadow delta → `Weak`; sensor blinded → `Denied` | tamper corroboration; cheap |
 | **Contact** | reed on GPIO (Heavy) | door open → `Strong` | the opening itself |

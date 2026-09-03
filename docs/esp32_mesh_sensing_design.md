@@ -110,7 +110,7 @@ Hub failover is the only intentionally new state machine; the rest extend existi
 ### Modified files
 - `firmware/common/csi/src/csi_hal.{h,cpp}` — add `csi_set_channel_lock(uint8_t channel)`, a `csi_watchdog_tick()` hook, and the active-probe send entry point (a one-liner that calls into `csi_probe`).
 - `firmware/common/csi/src/csi_types.h` — add `CSI_FIELD_LINK_ID`, `CSI_FIELD_FUSION_AGREE_COUNT` for the new module's allow-list; the int8 32-byte feature contract is unchanged.
-- `firmware/common/network/mesh_network.h` — add `mesh_set_role()`, `mesh_set_channel_lock()`, `mesh_broadcast_features()`, `MESH_MSG_CSI_FEATURES`, `MESH_MSG_CHANNEL_LOCK`, `MESH_MSG_BEACON_EVENT`. Backwards compatible (additive only).
+- `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.h` — add `mesh_set_role()`, `mesh_set_channel_lock()`, `mesh_broadcast_features()`, `MESH_MSG_CSI_FEATURES`, `MESH_MSG_CHANNEL_LOCK`, `MESH_MSG_BEACON_EVENT`. Backwards compatible (additive only).
 - `firmware/canary/platformio.ini` — flip `FEATURE_MESH_NETWORK=1` in `[env:dev]` and `[env:release]`; add `FEATURE_BLE_SCAN=0` flag; add `securacv_mesh` and (gated) `securacv_ble_scan` to lib deps.
 - `firmware/canary/sdkconfig.defaults` — leave `CONFIG_BT_ENABLED=n` as-is; the BLE Scout build sets the override in its own env in `platformio.ini` only.
 - `firmware/canary/CONSOLIDATION.md` — expand Phase 4 to spell out the probe + fusion deliverables (currently only says "fill in stub bodies").
