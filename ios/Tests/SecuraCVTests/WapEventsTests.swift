@@ -209,8 +209,14 @@ final class WapEventsTests: XCTestCase {
         XCTAssertEqual(printed,
                        ["id", "module", "type", "category", "state", "confidence",
                         "motion", "breathing", "bpm", "duration_sec", "bundled",
-                        "time_bucket", "dismissed", "open"],
-                       "the serializer's row keys drifted from WapEventRow — reconcile both")
+                        "time_bucket", "dismissed", "open",
+                        // Not row keys: the standing-tamper envelope printed
+                        // after the rows ("tamper":{"kind":…}). Tamper rows
+                        // seal the moment they commit, so this field IS the
+                        // wire's present tense — losing it would orphan the
+                        // phone's level-triggered tamper latch again.
+                        "tamper", "kind"],
+                       "the serializer's keys drifted from WapEvents.swift — reconcile both")
 
         // The live half's load-bearing call: open bundles must actually be
         // serialized (snapshot, not flush — flushing from the handler would
