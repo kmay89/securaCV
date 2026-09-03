@@ -173,10 +173,23 @@ cataloged in
   address (the same mDNS name `canary/net/hostname.h` registers). Plus:
   ack attribution ("acked · kitchen-dash"), room comfort lines, an
   emergency contact on the dash during unacked alarms, glance-first wake,
-  a cleaning-mode touch lockout, and a read-only **Settings → network**
-  page on the dash family (wifi · signal in a word · hub link · the
-  `.local` address, refreshed ~1 Hz —
-  [doc](../../../docs/hardware/display_settings.md)).
+  a cleaning-mode touch lockout, and a read-only **Settings → Wi-Fi**
+  page (network · signal in a word · hub link · the `.local` address,
+  refreshed ~1 Hz) on every touch flavor —
+  [doc](../../../docs/hardware/display_settings.md).
+
+- **The settings panel** ([doc](../../../docs/hardware/display_settings.md)):
+  one settings tree on every touch glass, in the grammar every phone
+  taught — a navigation bar, grouped rows with a footer per group, a
+  chevron where a tap opens an editor, a switch where the decision is
+  on/off, a check where it is one-of-few, a slider where the screen is the
+  preview, hour wheels for quiet hours, confirm pages for every destructive
+  act. It lays itself out from the live canvas (the round puck, both
+  portrait sticks, the dash sheet and its column) and scrolls with
+  momentum, so nothing is ever packed to fit. Input is LVGL-native while
+  it is open; the faces' gesture policy is untouched. Doorways: the
+  watch's last page (hold), the portrait faces' gear corner (day), the
+  dash's transparency sheet.
 
 ## Build
 
