@@ -59,7 +59,7 @@ bh_w = 21.5;
 bh_h = 15.0;
 
 /* [Antenna] — SMA bulkhead on the TOP wall */
-sma_d = 6.5;
+sma_d = 6.8;         // 1/4-36 SMA thread is Ø6.35: 6.8 with the D-flat at 5.7 (was 6.5/5.9 — 0.075 a side, under FDM hole shrink)
 
 /* [Solar roof] — bracket rails take a small 6V panel. MEASURE yours */
 pan_w = 70.0;        // panel width
@@ -76,7 +76,7 @@ wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // the catalog trio — core_tol_*(), canary_core_lib
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
-usb_w = 10.5;  usb_h = 6.5;   // service USB opening, bottom wall (plug when deployed)
+usb_w = 12.0;  usb_h = 6.5;   // service USB opening, bottom wall (plug when deployed); 12 clears a boot
 clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;   // snap_boardclip defaults — canary_snap_lib runs the strain budget as an assert
 standoff_h = 3.0;
 lid_edge = 0.8;  lid_edge2 = 0.0;
@@ -101,6 +101,9 @@ wall_eff = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;
 pd = post_d;
 post_corner = pd + 1.5;
 clip_stack = clip_clear + clip_t;
+// a 2.0 pan seat in a 2.0 lid is a through-hole the head falls through: the
+// lid carries a pad under each head and the posts shorten by the same
+head_pad = max(0, screw_head_h + 1.0 - lid_t);
 
 // two columns: LoRa board | battery holder (both vertical, USB/leads down)
 col_lb = lb_w + 2*(clip_stack + board_clear) + 0.5;
@@ -116,7 +119,7 @@ lb_cx = -inner_x/2 + post_corner + col_lb/2;
 bh_cx =  inner_x/2 - post_corner - col_bh/2;
 lb_cy = -inner_y/2 + board_clear + lb_l/2;
 bh_cy = -inner_y/2 + board_clear + bh_l/2;
-usb_zc = floor_t + standoff_h + pcb_t + usb_h/2;
+usb_zc = floor_t + standoff_h + pcb_t + port_usbc_shell_h()/2;   // on the connector AXIS, not PCB-top + h/2
 
 skirt_gap = tol_slide + 0.2;
 plate_x = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
@@ -184,7 +187,7 @@ module body() {
                 rotate([-90, 0, 0]) translate([0, 0, -wall_eff*2])
                     linear_extrude(wall_eff*4) intersection() {
                         circle(d = sma_d);
-                        translate([-sma_d/2, -sma_d/2]) square([sma_d - 0.6, sma_d]);
+                        translate([-sma_d/2, -sma_d/2]) square([5.7 + (sma_d - 5.7)/2, sma_d]);   // D-flat: 5.7 across the flat
                     }
             // service USB, bottom wall (silicone plug when deployed):
             // 45°-chamfered top corners halve the unsupported bridge in the
@@ -212,7 +215,7 @@ module body() {
         // posts + gussets
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
                 for (p = posts) {
                     sx = sign(p[0]); sy = sign(p[1]);
                     hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
@@ -243,14 +246,17 @@ module body() {
 module lid() {
     union() {
         difference() {
-            // the plate with the catalog's two-stage soft edge — canary_core_lib
-            // (this also wires up the previously inert lid_edge2 knob)
-            soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
-            // flat counterbores: the BOM's PAN-head screws seat flush — the
-            // canary_core_lib seat, per the Vision's print-validated lesson
-            // (a cone this shallow left the head standing on the show face)
-            for (p = post_xy())
-                cb_flat_cut(p[0], p[1], lid_t, screw_d + 2*tol_hole,
+            union() {
+                // the plate with the catalog's two-stage soft edge — canary_core_lib
+                // (this also wires up the previously inert lid_edge2 knob)
+                soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
+                if (head_pad > 0) for (p = post_xy())   // the 1.0 mm floor under each pan head
+                    translate([p[0], p[1], -head_pad]) cylinder(d = screw_head_d + 2*tol_hole + 3.2, h = head_pad + 0.1);
+            }
+            // flat counterbores: the BOM's PAN-head screws seat flush on the pad's
+            // floor — the canary_core_lib seat, per the Vision's lesson
+            for (p = post_xy()) translate([0, 0, -head_pad])
+                cb_flat_cut(p[0], p[1], lid_t + head_pad, screw_d + 2*tol_hole,
                             screw_head_d + 2*tol_hole, screw_head_h);
             // panel-lead gland hole (fit an M8 cable gland or silicone-seal)
             translate([bh_cx, inner_y/2 - 8, -1]) cylinder(d = 8.2, h = lid_t + 2);
@@ -287,35 +293,36 @@ module lid() {
     }
 }
 
-// solar roof: angled panel rails on a mast that screws to the lid's posts
-// (swap the two TOP lid screws for M2 x 12 through the roof feet)
+// solar roof: an AWNING — the panel bed roots at the pod's top wall and
+// descends outward over the lid at roof_ang from horizontal, so the panel
+// faces UP and OUT (+Y is up the pole, +Z is away from it: the panel's normal
+// is (0, cos, sin)). The v0.1 transform pointed it 60° BELOW horizontal — the
+// pod's reason to exist faced the ground. The bed's far (lower) end carries
+// the stop the panel rests against under gravity; the panel slides in from
+// the root end before the roof goes on. Screws to the lid's top posts (swap
+// the two TOP lid screws for M2 x 12 through the roof feet).
 module roof() {
-    ph = pan_l * sin(roof_ang) + 14;
+    bed_l = pan_l * 0.75;
     difference() {
         union() {
             // two feet matching the top lid-screw posts
             for (p = [post_xy()[0], post_xy()[1]])
                 translate([p[0], p[1], 0]) cylinder(d = 8, h = 3);
-            // A-frame: angled panel bed with side rails
-            translate([0, inner_y/2 - 2, 0]) rotate([90 - roof_ang, 0, 0]) translate([0, 0, -2]) {
-                translate([-pan_w/2 - 3, 0, 0]) cube([pan_w + 6, pan_l * 0.75, 2]);       // bed
+            translate([0, inner_y/2 - 2, 0]) rotate([90 + roof_ang, 0, 0]) mirror([0, 0, 1]) translate([0, 0, -2]) {
+                translate([-pan_w/2 - 3, 0, 0]) cube([pan_w + 6, bed_l, 2]);                // bed
                 for (s = [1, -1]) translate([s*(pan_w/2 + tol_slide) + (s < 0 ? -3 : 0), 0, 2 - 0.01])
-                    cube([3, pan_l * 0.75, pan_t + 2]);                                     // side rails
+                    cube([3, bed_l, pan_t + 2]);                                              // side rails
                 for (s = [1, -1]) translate([s*(pan_w/2 - 1.2) + (s < 0 ? -1.8 : 0), 0, 2 + pan_t + 0.2])
-                    cube([1.8, pan_l * 0.75, 1.4]);   // retaining lips: 1.2 mm OVER the panel edge,
-                                                      // rooted in the rails (were floating outboard)
-                // lower stop: a ridge ON TOP of the bed's low end that the panel
-                // butts against (the old below-bed wedge poked past the foot
-                // plane into the lid and detached when cropped)
-                translate([-pan_w/2 - 3, 0, 2 - 0.01]) cube([pan_w + 6, 3, pan_t + 2.01]);
+                    cube([1.8, bed_l, 1.4]);   // retaining lips: 1.2 mm OVER the panel edge, rooted in the rails
+                // stop at the FAR (lower, outboard) end: gravity pulls the panel onto it
+                translate([-pan_w/2 - 3, bed_l - 3, 2 - 0.01]) cube([pan_w + 6, 3, pan_t + 2.01]);
             }
-            // struts from the feet up INTO the panel bed's underside — the
-            // apex must embed in the bed plane or the whole panel load path
-            // runs through the 2 mm lower stop
+            // struts from the feet up INTO the bed's underside, 12 mm along it
+            // from the root (bed point (0, 12, 0) -> world (0, inner_y/2 - 2 - 12 cos(a), 12 sin(a)))
             for (p = [post_xy()[0], post_xy()[1]])
                 hull() {
                     translate([p[0], p[1], 0]) cylinder(d = 8, h = 3);
-                    translate([p[0]*0.8, inner_y/2 + 6, 8]) cylinder(d = 8, h = 3);
+                    translate([p[0]*0.8, inner_y/2 - 2 - 12*sin(roof_ang), 12*cos(roof_ang) - 2.5]) cylinder(d = 8, h = 3);
                 }
         }
         for (p = [post_xy()[0], post_xy()[1]]) {

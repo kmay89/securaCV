@@ -65,7 +65,10 @@ from pathlib import Path
 #  holes in it. So SRC moves because the sources really did move, REV follows
 #  because the two are not allowed to disagree, and the 7" plate printed under
 #  .10f is dimensionally identical to the one printed under .10e.
-STAMP_REV = "2026.10f"
+#  .10g: the 2026-09 assembly review — the legacy bezel's window margin
+#  (win_margin 0.6 -> 1.0), the side-port label landing on its own wall, the
+#  zero-count loop guards, and the panel record's microSD note.
+STAMP_REV = "2026.10g"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"

@@ -22,6 +22,9 @@ wart_h = 36.0;       // height
 wart_d = 26.0;       // protrusion from the wall plate (collar grips this)
 collar_t = 2.4;      // collar wall
 collar_d = 14.0;     // collar depth along the wart (leave the plug face clear)
+plug_room = 8.0;     // pocket behind the stud face for a RIGHT-ANGLE USB-A plug's body: the
+                     // case hangs flush on that face, so a plug standing proud of it had
+                     // nowhere to go (0 = plain 3 mm face, cable through the window)
 grip_lip = 1.2;      // inward LOCATING lip at the collar front (clearance-sized: it
                      // locates the wart, retention is friction — print the collar in
                      // TPU, or shrink the lip opening ~1 mm for a true snap grip)
@@ -50,7 +53,7 @@ module tstud(yc, zbase) {
 }
 
 module cradle() {
-    face_t = 3.0;                                     // stud-carrying face plate
+    face_t = 3.0 + plug_room;                         // stud-carrying face plate (+ the plug chamber)
     union() {
         difference() {
             // collar + face, printed face-down (studs up)
@@ -65,9 +68,14 @@ module cradle() {
             // wart face sits against the plate; grip lip hooks its front corners
             translate([0, 0, face_t + grip_lip])
                 linear_extrude(collar_d) rrect2d(iw + 1.2, ih + 1.2, 3);
-            // cable window through the face (USB-C plug + boot pass sideways)
-            translate([0, -ih/2 + 8, -0.1]) linear_extrude(face_t + grip_lip + 0.2)
-                rrect2d(16, 9, 3);
+            // plug chamber: a blind pocket from the wart side, plug_room deep, for a
+            // right-angle plug's body (22 x 14), leaving 3 mm of stud face; the
+            // cable leaves through a slot in the chamber's bottom wall
+            if (plug_room > 0) {
+                translate([0, -ih/2 + 8, 3.0]) linear_extrude(plug_room + grip_lip + 0.2) rrect2d(22, 14, 3);
+                translate([0, -ih/2 - collar_t - 1, 3.0]) linear_extrude(plug_room - 1.0) rrect2d(9, 2*(collar_t + 1 + 8 - 7), 2);
+            } else
+                translate([0, -ih/2 + 8, -0.1]) linear_extrude(face_t + grip_lip + 0.2) rrect2d(18, 10, 3);
             // side split so the collar can flex over the wart (print PETG/TPU)
             translate([iw/2 - 2, -1.25, face_t + 2]) cube([collar_t + 4, 2.5, collar_d]);
         }

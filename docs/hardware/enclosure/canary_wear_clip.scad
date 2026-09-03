@@ -41,7 +41,8 @@ nub_h     = 1.2;     // grip nub at the leaf tip
 
 /* [MOLLE plate] */
 mp_w = 55.0;  mp_l = 90.0;  mp_t = 3.0;
-slot_w = 27.0;  slot_h = 3.5;  slot_pitch = 25.4;   // PALS grid: rows on 1" (25.4 mm) centers
+slot_w = 27.0;  slot_h = 3.5;  slot_pitch = 38.1;   // PALS grid: 1" webbing rows spaced 1" apart = 38.1 mm
+                                                     // center-to-center (25.4 let only one row pass)
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -50,6 +51,8 @@ echo(str("Canary wear clip v0.1-dev — stud_gap ", stud_gap, "  (IN DEVELOPMENT
 assert(belt_gap >= 3.0, "belt_gap < 3 mm won't take a belt");
 assert(stud_gap + stud_head + 4 <= plate_l, "studs don't fit the clip plate — grow plate_l");
 assert(stud_gap + stud_head + 4 <= mp_l, "studs don't fit the MOLLE plate");
+assert(abs(stud_gap/2 - slot_pitch) > stud_head/2 + slot_h/2 + 0.6 && stud_gap/2 > slot_h/2 + stud_head/2 + 0.6,
+       "a MOLLE slot runs under a stud head — move stud_gap or slot_pitch");
 // The belt leaf is a designed spring on repeated duty (every clip-on cams the
 // grip nub over the belt), so it documents itself against the cycle budget.
 // Printed on its side the flex stays in-plane with the layers — roughly twice

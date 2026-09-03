@@ -44,19 +44,20 @@ cam_w = 25.0;  cam_h = 24.0;
 cam_hole_x = 21.0;  cam_hole_y = 12.5;  cam_post_d = 3.6;  cam_post_h = 4.0;  cam_screw_d = 1.6;
 lens_dx = 0.0;  lens_dy = 2.5;
 cam_ap_d = 10.0;  cam_disc_d = 14.0;  cam_disc_t = 1.0;
-v_stack_sock = 11.5;   // brd_stack_sock_unmeasured(), canary_board_lib — the roomier legacy
-                       // guess the Vision build keeps (bench-measured 6.5 = brd_stack_sock_measured)
+v_stack_sock = 6.5;    // brd_stack_sock_measured(), canary_board_lib — the XIAO ports are DERIVED
+                       // from this, so the unmeasured 11.5 put them in the floor
 v_front_h = 5.0;
-v_usb_drop = 10.0;   // XIAO port below the module port (see Vision case)
+xiao_w = 17.8;         // the measured XIAO — sets the corner pins that catch the module under it
+xiao_below = 5.5;      // air under a stacked XIAO's USB face: shell + half a plug overmold + clearance
 
 /* [Sense stack] — MR60BHA2 carrier + stacked XIAO C6. MEASURE */
 sm_l = 44.0;  sm_w = 36.0;   // brd_l/brd_w("mr60"), canary_board_lib
-s_stack_sock = 11.5;         // brd_stack_sock_unmeasured() — same decision as v_stack_sock
+s_stack_sock = 6.5;          // brd_stack_sock_measured() — same decision as v_stack_sock
 s_front_h = 3.5;
 ant_h = 1.2;
 radome_t = 1.5;   // ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); AVOID 0.7–1.1 mm
 rad_win_x = 24.0;  rad_win_y = 24.0;  rad_dx = 0.0;  rad_dy = 6.0;
-s_usb_z = 4.0;       // C6 USB center above the floor
+s_usb_z = 0.0;       // extra lift of the C6 port relative to its DERIVED axis (a measured correction)
 lux_d = 3.5;  lux_dx = -13.0;  lux_dy = -14.0;
 lp_d = 3.0;   lp_dx = 13.0;   lp_dy = -14.0;
 
@@ -65,7 +66,7 @@ pcb_t = 1.0;  board_clear = 0.6;  cav_extra = 1.0;
 wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_r = 3.0;
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // the catalog trio — core_tol_*(), canary_core_lib
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
-usb_w = 10.5;  usb_h = 6.5;
+usb_w = 12.0;  usb_h = 6.5;   // 12: clears rugged cable boots (the WAP's validated opening)
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
 clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;   // snap_boardclip defaults — canary_snap_lib runs the strain budget as an assert
 lid_edge = 0.8;  lid_edge2 = 0.0;
@@ -92,15 +93,18 @@ e_seal = opt_seal;
 wall_eff = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;
 pd = post_d;  post_corner = pd + 1.5;
 clip_stack = clip_clear + clip_t;
-v_standoff = v_stack_sock + 1.5;
-s_standoff = s_stack_sock + 1.5;
+v_standoff = v_stack_sock + xiao_below;
+s_standoff = s_stack_sock + xiao_below;
+// pan-head seat: a 2.0 seat in a 2.0 front is a through-hole, so the front
+// carries a pad under each head and the posts shorten by the same
+head_pad = max(0, screw_head_h + 1.0 - lid_t);
 
 col_v = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5);
 col_s = sm_w + 2*(clip_stack + board_clear) + 0.5;
 inner_x = col_v + 3 + col_s + 2*post_corner;
 inner_y = max(board_clear + vm_l + 2 + cam_h + 3, board_clear + sm_l + 8);
 cav_d = max(v_standoff + pcb_t + v_front_h, s_standoff + pcb_t + s_front_h,
-            v_standoff + pcb_t + usb_h) + cav_extra;   // keep the Vision USB opening fully inside the wall
+            v_standoff + pcb_t + port_usbc_shell_h()/2 + usb_h/2 + 0.5) + cav_extra;   // keep the Vision USB opening fully inside the wall
 
 out_x = inner_x + 2*wall_eff;
 out_y = inner_y + 2*wall_eff;
@@ -113,7 +117,14 @@ cam_cy = vm_cy + vm_l/2 + 2 + cam_h/2;
 sm_cy  = -inner_y/2 + board_clear + sm_l/2;
 lens_x = v_cx + lens_dx;  lens_y = cam_cy + lens_dy;
 rad_cx = s_cx + rad_dx;   rad_cy = sm_cy + rad_dy;
-v_usb_zc = floor_t + v_standoff + pcb_t + usb_h/2;
+// USB openings center on the connector AXIS (shell/2 above the board): the
+// module's port on top of the module, the two XIAO ports hanging off the XIAO
+// faces stack_sock below each carrier
+v_usb_zc = floor_t + v_standoff + pcb_t + port_usbc_shell_h()/2;
+v_usb_lo = floor_t + v_standoff - v_stack_sock - port_usbc_shell_h()/2;
+s_usb_zc = floor_t + s_standoff - s_stack_sock - port_usbc_shell_h()/2 + s_usb_z;
+assert(v_usb_zc - v_usb_lo >= usb_h + 1.2, "the Vision module and XIAO USB openings merge — no web between them");
+assert(min(v_usb_lo, s_usb_zc) - usb_h/2 >= floor_t + 0.6, "a XIAO USB opening breaches the floor — raise xiao_below");
 rad_gap = cav_d - s_standoff - pcb_t - ant_h + (lid_t - radome_t);  // true gap even when the Vision stack sets cav_d
 
 mount_extra = opt_mount ? kh_extra : 0;
@@ -167,6 +178,16 @@ module edgeclip(px, py, ang, soff) {
         snap_boardclip(0, 0, 1, floor_t, floor_t + soff + pcb_t,
                        clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
 }
+module rails_half(cx, cy, w, l, soff) {   // rails beside the camera-end half only
+    for (s = [1, -1]) {
+        rail_l = l/2 - 4;
+        difference() {
+            translate([cx + s*(w/2 - 1.5) - 1.5, cy + 2, floor_t]) cube([3, rail_l, soff]);
+            translate([cx + s*(w/2 - 1.5), cy + 2 + rail_l/2, floor_t + soff/2]) cube([5, clip_w + 2, soff + 1], center = true);
+        }
+        edgeclip(cx + s*w/2, cy + 2 + rail_l/2, s > 0 ? 0 : 180, soff);
+    }
+}
 module rails(cx, cy, w, l, soff) {
     for (s = [1, -1]) {
         difference() {
@@ -200,8 +221,7 @@ module back() {
             // bridge in the upright-printed wall and keep any droop out of the
             // plug envelope — canary_port_lib (the WAP's print-validated
             // profile; these walls used to bridge a flat top)
-            for (pz = [[v_cx, v_usb_zc], [v_cx, v_usb_zc - v_usb_drop],
-                       [s_cx, floor_t + s_usb_z]])
+            for (pz = [[v_cx, v_usb_zc], [v_cx, v_usb_lo], [s_cx, s_usb_zc]])
                 translate([pz[0], -out_y/2 + wall_eff*1.5, pz[1]])
                     rotate([90, 0, 0]) linear_extrude(wall_eff*3)
                         port_bridge_profile2d(usb_w, usb_h);
@@ -211,7 +231,7 @@ module back() {
         }
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
                 for (p = posts) {
                     sx = sign(p[0]); sy = sign(p[1]);
                     hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
@@ -222,7 +242,16 @@ module back() {
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2]) cylinder(d = screw_d, h = cav_d);
         }
-        rails(v_cx, vm_cy, vm_w, vm_l, v_standoff);
+        // Vision column: rails on the TOP HALF only — the stacked XIAO (17.8 wide
+        // under the 20 mm module) hangs beneath the lower half, so full-length
+        // rails ran straight through it (the Vision case's fix, ported); two
+        // corner pins catch the module's lower edge outboard of the XIAO
+        rails_half(v_cx, vm_cy, vm_w, vm_l, v_standoff);
+        for (s = [1, -1])
+            translate([v_cx + s*(xiao_w/2 + 1.1), vm_cy - vm_l/2 + 1.2, floor_t])
+                cylinder(d = 2.0, h = v_standoff);
+        // Sense column: the 36 mm carrier overhangs its 17.8 XIAO by 9 a side —
+        // full-length rails at the carrier's edges clear it
         rails(s_cx, sm_cy, sm_w, sm_l, s_standoff);
     }
 }
@@ -230,9 +259,13 @@ module back() {
 module front() {
     union() {
         difference() {
-            // the plate with the catalog's two-stage soft edge — canary_core_lib
-            // (this also wires up the previously inert lid_edge2 knob)
-            soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
+            union() {
+                // the plate with the catalog's two-stage soft edge — canary_core_lib
+                // (this also wires up the previously inert lid_edge2 knob)
+                soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
+                if (head_pad > 0) for (p = post_xy())   // the floor under each pan head
+                    translate([p[0], p[1], -head_pad]) cylinder(d = screw_head_d + 2*tol_hole + 3.2, h = head_pad + 0.1);
+            }
             // lens + disc seat + lead-in
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
@@ -247,8 +280,8 @@ module front() {
             // flat counterbores: the BOM's PAN-head screws seat flush — the
             // canary_core_lib seat, per the Vision's print-validated lesson
             // (a cone this shallow left the head standing on the show face)
-            for (p = post_xy())
-                cb_flat_cut(p[0], p[1], lid_t, screw_d + 2*tol_hole,
+            for (p = post_xy()) translate([0, 0, -head_pad])
+                cb_flat_cut(p[0], p[1], lid_t + head_pad, screw_d + 2*tol_hole,
                             screw_head_d + 2*tol_hole, screw_head_h);
             // the house wordmark (opt_mark), debossed on the show face by the
             // first-layer machinery — canary_mark_lib owns the word and its

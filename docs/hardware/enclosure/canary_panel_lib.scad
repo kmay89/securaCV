@@ -111,7 +111,7 @@ function panel_db() = [
     [5.0, 11.0, 6.9],                     // standoff, comp_h, stud length
     [126.20, 65.65, 1.5, 0.9],            // m3 span + pattern offset
     [ ["USB-C",   "bottom", 0.0,   11.0, 9.0, 3.2, 1.4, "power and flashing"],
-      ["microSD", "back",   35.65, -26.0, 15.0, 11.0, 0.0, "card slides toward +x"],
+      ["microSD", "back",   35.65, -26.0, 15.0, 11.0, 0.0, "card slides toward -y (down, out of the socket)"],
       ["BOOT",    "top",   -12.5,  8.0,  4.0, 3.0, 0.0, "hold at power-up to flash"],
       ["RESET",   "top",    12.5,  8.0,  4.0, 3.0, 0.0, "restart"] ],
     "",

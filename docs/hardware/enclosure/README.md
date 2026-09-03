@@ -290,7 +290,7 @@ size the mounting.
 
 ---
 
-# Canary WAP — Enclosure (v0.7)
+# Canary WAP — Enclosure (v0.8)
 
 Parametric, printable case for the Canary WAP (XIAO ESP32-S3 Sense), documented
 in §6.6 of the [Peripheral Build Plan](../canary_peripheral_build_plan.md).
@@ -326,9 +326,9 @@ The three committed example presets:
 
 | Preset | Outer size (rendered) | What's on it |
 |--------|----------------------|--------------|
-| **battery_full** | **104.7 × 39 × 17.2 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
-| **compact_plain** | **33.7 × 36.6 × 13.7 mm** | plain board (no camera), buzzer + LED, USB-powered |
-| **battery_weather** | **107.1 × 41.4 × 20.2 mm** | battery_full **+ gasket seal + drip-edge lid + keyhole mounts** |
+| **battery_full** | **104.5 × 39 × 17.9 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
+| **compact_plain** | **33.7 × 36.6 × 15.05 mm** | plain board (no camera), buzzer + LED, USB-powered |
+| **battery_weather** | **106.9 × 41.4 × 21.25 mm** | battery_full **+ gasket seal + drip-edge lid + keyhole mounts + weep** |
 
 > Corner posts always sit in **true corners beside the board** — that's why even
 > the compact case isn't as tiny as the bare-board reference. The board is always
@@ -343,7 +343,7 @@ The three committed example presets:
 | **Source** | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) (configurator) |
 | **Example STLs** | [`..._battery_base/lid.stl`](./canary_wap_enclosure_battery_base.stl), [`..._compact_base/lid.stl`](./canary_wap_enclosure_compact_base.stl), [`..._weather_base/lid/gasket.stl`](./canary_wap_enclosure_weather_base.stl) |
 | **Clip test coupon** | [`..._clip_coupon.stl`](./canary_wap_enclosure_clip_coupon.stl) — print first to tune the snap fit |
-| **Fasteners** | 4 × **M2** self-tapping screws (8–10 mm) into the corner posts |
+| **Fasteners** | 4 × **M2** flat-head self-tapping screws into the corner posts — max length is echoed at render (10 mm compact, 13 mm battery: the pilot is blind). `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`) |
 
 ## Print tolerances (tune once for your printer)
 
@@ -374,8 +374,9 @@ the four corner screws can't clamp the long spans like a molded box can.
 
 What `opt_seal = true` adds:
 
-- **Perimeter gasket groove** in the base rim (walls auto-thicken to host it)
-  and a matching **printable TPU gasket** (`part = "gasket"`). The gasket stands
+- **Perimeter gasket groove** in the base rim (walls auto-thicken to 4.0 mm to
+  host it with a 1.2 mm cheek each side) and a matching **printable TPU gasket**
+  (`part = "gasket"`). The gasket stands
   0.3 mm proud and squeezes ~20 % under the lid screws (the ring prints 0.5
   narrower than the groove — ~86 % fill — so the incompressible TPU has room
   to flow instead of propping the lid open).
@@ -384,7 +385,20 @@ What `opt_seal = true` adds:
 - **USB plug recess**: a shallow recess frames the USB-C opening so a flanged
   silicone dust plug seats flush (fit one for deployment; remove to charge/flash).
 - **Rim headroom guarantee**: the cavity auto-grows so the gasket path stays
-  continuous above the USB opening.
+  continuous above the USB opening (and, in every mode, so at least
+  `usb_web` = 1.5 mm of wall stands over the opening — the v0.7 compact case
+  shipped a 0.65 mm bridge there).
+- **Weep** (`opt_weep`, on in the weather preset): a Ø2 drain through the
+  USB wall at the floor corner — the low point when hung USB-down — angled
+  downward, so condensate leaves and driven rain does not enter.
+- **Sealed screw heads** (`head_seal`, off by default): the corner posts stand
+  INSIDE the gasket line, so a bare screw is a drip path down its thread onto
+  the post and into the cavity. `head_seal = true` cuts an O-ring gland under
+  each head (a standard 2 × 1 ring for M2; needs `screw_head = "pan"`) and
+  the head squeezes it 25 %.
+- **USB drip awning** (`usb_hood`): for a case that stands sideways or on a
+  desk rather than hanging USB-down — a 45° awning over the opening that
+  prints with the wall. Exclusive with the plug recess.
 
 To finish the seal you also need to:
 
@@ -404,7 +418,15 @@ slow (~25 mm/s). It's a 1.1 mm-wide ring — print it alone, brim optional.
 
 **Assembly order with the seal:** board + battery in, gasket into the groove,
 lid on (lip nests inside the gasket ring), then the 4 screws in two passes
-(snug diagonally, then final quarter-turns) so the squeeze is even.
+(snug diagonally, then final quarter-turns) so the squeeze is even. With
+`head_seal`, drop an O-ring into each gland before the screw.
+
+**Drop resistance:** `batt_hold` (default on) drops two ribs from the lid over
+the battery bay, resting `batt_h` above the floor so the cell cannot bounce
+(it sat under ~8 mm of free air) while the swelling allowance in `batt_h`
+stays; the tamper pocket now sizes the cavity against the Sense expansion
+board under it (`mag_under`), and the camera window is asserted against
+`cam_fov` so a corner never vignettes.
 
 ## Mounting (`opt_mount`)
 
@@ -805,6 +827,19 @@ cutout or bay and **resizes the box**. Added the **clip test coupon**.
 **two transverse ribs**; **lid lip notched at the USB end** so the cable
 plug/overmold can't jam it.
 
+**v0.8 — assembly review (2026-09):** the board standoff rises 3.0 → 3.5 so
+the snap-clip beam (4.7 mm) keeps the MEASURED 17.8 mm XIAO under the 4.5 %
+insertion-strain budget (the gate only ever saw the drawn 17.5 board — 5.5 %
+on the real one, and the library now counts the difference); the
+standoff-to-post tie ribs no longer root under the −X clips (a rib there cut
+the beam to 1.2 mm, ~50 % strain); every mode guarantees `usb_web` over the
+USB opening; corner posts fuse into the walls; battery ribs reach the walls;
+the GPS rim keeps a printable wall and fuses to the bay rib; anti-lift
+knockouts sit under the battery bay; heat-set bores cut 0.3 under the knurl;
+vent holes 1.0 × 10 (the outdoor insect rule). New knobs: `screw_size`,
+`screw_head`, `head_seal`, `opt_weep`, `usb_hood`, `batt_hold`, `clip_dx`,
+`ant_z`, `cam_fov`, `mag_under`. Every WAP STL is re-cut.
+
 **v0.7.2 — finish & printability (family-wide):** `$fa/$fs` curve quality
 (smooth large radii), teardropped hinge bores on the Vision mounts, two-stage
 soft face edges (`lid_edge2`), cosmetic lead-in rims on the doorbell seats,
@@ -854,7 +889,7 @@ section for the material table, security-build slicing spec and mass budget.
 
 ---
 
-# Canary Vision — Enclosure (v0.2)
+# Canary Vision — Enclosure (v0.4)
 
 Parametric camera unit for the Canary Vision stack — **OV5647 camera**
 (Pi-cam v1.3 form factor) + **Grove Vision AI V2** (40 × 20 mm) + a selectable
@@ -863,8 +898,8 @@ Parametric camera unit for the Canary Vision stack — **OV5647 camera**
 
 | `host` | Build | Case |
 |--------|-------|------|
-| **`xiao`** (default) | XIAO ESP32-C3/S3 **seated in the module's stacking socket** — recommended, zero wiring | compact single column, ≈ **47 × 59 × 24 mm**; the bottom wall carries **both USB-C ports** (module *model port* above, XIAO *firmware port* below) |
-| `devkit` | ESP32-C3-DevKitM-1 joined by the **Grove I2C cable** | two columns, ≈ 80 × 61 × 18 mm |
+| **`xiao`** (default) | XIAO ESP32-C3/S3 **seated in the module's stacking socket** — recommended, zero wiring | compact single column, ≈ **43 × 75 × 23 mm**; the bottom wall carries **both USB-C ports** (module *model port* above, XIAO *firmware port* below — both DERIVED from the seated stack) |
+| `devkit` | ESP32-C3-DevKitM-1 joined by the **Grove I2C cable** | two columns, ≈ 75 × 76 × 18.5 mm |
 
 The front face carries the lens aperture (recessed clear-disc seat + optional
 rain hood) and the LED light pipe; the back shell carries the boards and the
@@ -923,8 +958,22 @@ pressure equalisation, and treat the result as **rain/splash-resistant
 `host` is independent of the preset — any combination works. `part` = `back` /
 `front` / `all` / `gasket` / `bracket` / `knob`. Committed STLs:
 `xiao_indoor`, `xiao_weather` (+ gasket) and `devkit_indoor`; other combos
-render via the Customizer or CLI. Outer sizes: xiao ≈ **47 × 59 × 24 mm**
-(weather ≈ 49 × 60 × 30), devkit ≈ 80 × 61 × 18 (+20 mm prongs on all).
+render via the Customizer or CLI. Outer sizes: xiao ≈ **43 × 75 × 23 mm**
+(weather ≈ 47 × 79 × 30), devkit ≈ 75 × 76 × 18.5 (+20 mm prongs on all).
+
+**v0.4 (2026-09 assembly review)** — every Vision STL is re-cut, for cause:
+the front's pan-head seat was as deep as the front (a Ø4.6 through-hole the
+Ø4 head fell through — the screws clamped nothing), so a pad inside now
+carries a 1.0 mm floor under each head; the USB openings center on the
+connector AXIS (1.6 mm of every cable boot landed in the wall); the XIAO's
+port is derived from the seated stack (the registry's measured 6.5) with
+`xiao_below` = 5.5 mm of air under the XIAO for a plug's overmold (it had
+1.5); the hinge fins reach the bed in the weather preset (they floated 3 mm
+over the keyhole slab); the Pi-cam lens holder gets the post height it needs
+(`cam_lens_h`); seal cheeks are 1.2 mm; and `opt_weep`, `seal_mid_posts`,
+`head_seal`, `screw_size` / `screw_head`, `hinge_clear` and `cam_fov` are new.
+**A hooded front (`opt_hood`, the weather preset) exports FACE-UP** — the hood
+stands 9 mm off the show face, so it cannot print face-down.
 
 ## Assembly
 
@@ -951,11 +1000,15 @@ render via the Customizer or CLI. Outer sizes: xiao ≈ **47 × 59 × 24 mm**
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
 | `host` | `"xiao"` | `"devkit"` for the Grove-cabled DevKitM-1 build |
-| `stack_sock_h` | 11.5 | *(xiao)* module underside → XIAO underside when seated — **measure the stack** |
-| `xiao_usb_drop` | 10.0 | *(xiao)* XIAO port center below the module port center — **measure** |
+| `stack_sock_h` | 6.5 | *(xiao)* module underside → XIAO underside when seated (the registry's bench measurement) — **measure the stack**: the XIAO port is derived from it |
+| `xiao_below` | 5.5 | *(xiao)* air under the XIAO's USB face: its shell (3.3) + half a plug overmold + clearance |
+| `xiao_usb_z` / `usb_z` | 0 / 0 | measured corrections to the two derived port heights (both echoed at render) |
 | `usb_dx` / `xiao_usb_dx` | 0 / 0 | Port offsets along the bottom wall — measure if either port is off-center |
 | `dk_l/dk_w`, `vm_l/vm_w`, `cam_w/cam_h` | 39×25.4 / 40×20 / 25×24 | **Measure your boards** — DevKit revisions differ |
-| `standoff_h` | 3.0 | *(devkit)* **raise to ~10 if your DevKit has soldered pin headers** |
+| `standoff_h` | 3.5 | *(devkit)* **raise to ~10 if your DevKit has soldered pin headers** (3.5 keeps the clip beam under the strain budget) |
+| `cam_lens_h` / `cam_lens_sq` | 5.5 / 8.5 | the Pi-cam lens holder — the posts grow so it sits behind the front (measure yours) |
+| `screw_size` / `screw_head` / `head_seal` | m2 / pan / off | fastener from the catalog registry; `head_seal` rings each head with an O-ring in seal mode |
+| `opt_weep` / `seal_mid_posts` | preset / off | Ø2 drain at the bottom wall (on in `vision_weather`); an extra screw post per long wall for gasket squeeze |
 | `lens_dx/dy` | 0 / 2.5 | Lens center offset from the camera-board center — measure |
 | `cam_hole_x/y` | 21 / 12.5 | Pi-cam v1.3 mounting grid |
 | `lp/vent/mag_dx/dy` | — | Front-face feature offsets **from the module center** (valid for both hosts) |
@@ -972,16 +1025,17 @@ the fin round-overs self-supporting). Gasket in TPU 90–95A.
 > hinge dimensions target GoPro compatibility but are printed parts: print the
 > `bracket` + `knob` first and check the prong fit, then the shells. For the
 > xiao host, **measure your seated stack first** (`stack_sock_h`,
-> `xiao_usb_drop`, `xiao_usb_dx`) — socket and header heights vary between
-> suppliers, and the two USB openings must land on your actual ports.
+> `xiao_usb_dx`, `usb_dx`) — socket and header heights vary between
+> suppliers, and the two USB openings must land on your actual ports (the
+> render echoes both derived heights).
 
 ---
 
-# Canary Vision — Doorbell (v0.2)
+# Canary Vision — Doorbell (v0.4)
 
 The stacked-XIAO Vision build in a **video-doorbell form factor**
 ([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a slim
-vertical pill, **32.6 × 114 × 24 mm** — the Ring Wired is 98 × 46 × 22, the
+vertical pill, **34 × 116 × 26 mm** — the Ring Wired is 98 × 46 × 22, the
 Wyze 93 × 41 × 22 — with the OV5647 behind a sealed disc at the top, the
 module + stacked XIAO in the middle, and a **12 mm illuminated momentary
 button** (short body, IP65, wired to the multifunction input; its LED ring
@@ -989,7 +1043,17 @@ replaces the light pipe) at the bottom. **v0.2** sizes the board bay to the
 measured Grove Vision AI V2 footprint (40 × 20 mm, mounted vertically — the
 v0.1 bay assumed a 25 × 25 square the module never was): the side rails now run
 the module's top half only so the 17.8 mm-wide XIAO clears as it hangs beneath,
-and the T-studs moved out to ±34 mm so they clear the taller cable well.
+and the T-studs sit at ±40 mm, clear of the cable well. **v0.4 (2026-09
+assembly review):** the face's pan-head seat left one layer under each head
+(pads inside now carry 1.0 mm); the weep was BLIND (cut through the 2 mm
+floor of a 5 mm back) and is now a Ø2 bore through the bottom wall beside the
+plate's foot; the plate's studs park at the pocket's slot end (they stopped
+3.5 mm short, half of each head over the pass hole); the cable oval sits
+wholly in the well (it reached under the XIAO with 1.5 mm of headroom) and
+the XIAO gets `xiao_below` = 5.5 mm for a plug; the lens holder gets the post
+height it needs; the bottom posts clear a 14 AF button nut (asserted); and
+`seal_mid_posts` (on — four corner screws cannot hold a gasket over 97 mm of
+2.2 mm face), `head_seal` and `screw_size` are new. Every doorbell STL is re-cut.
 
 ![doorbell — body, face, plate and gasket](./preview_doorbell.png)
 
@@ -1016,10 +1080,10 @@ rating; a porch or doorway soffit is its natural habitat.
 **Assembly:** camera to the face posts + bond the disc → **stick an adhesive
 GORE/ePTFE membrane patch over the vent cluster on the face's INNER side**
 (the default face has the vent holes — without the membrane they defeat the
-seal; a Ø1.5 weep at the cavity's low point drains any condensate) → seat
+seal; the Ø2 weep through the bottom wall drains any condensate) → seat
 the XIAO in the module (**USB-Cs same direction!**) and click the stack into
 the rails → mount the button through the face, wire button/LED to the XIAO →
-gasket in the groove, face on, 4 × M2 (black-oxide looks best) → plate on
+gasket in the groove, face on, 6 × M2 pan heads (black-oxide looks best) → plate on
 the frame, cable through, hang the body on the studs, drive the security
 screw.
 
@@ -1027,7 +1091,9 @@ screw.
 |-------|--------:|---------------------|
 | `plate_wedge` / `plate_wedge_x` | 0 / 0 | wedge the plate vertically and/or left-right (corner installs) |
 | `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity) |
-| `stack_sock_h`, `lens_dx/dy` | 11.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
+| `stack_sock_h`, `xiao_below`, `lens_dx/dy` | 6.5 / 5.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
+| `btn_nut_ac` | 16.2 | the button's panel nut across corners — asserted against the bottom posts |
+| `opt_weep`, `seal_mid_posts`, `head_seal` | on / on / off | drain, mid-wall clamp posts, O-ring under each face screw |
 | `usb_exit_*` | 12×7 oval | cable exit size/position (guarded against the stud pocket) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
 | `opt_vent` | **true** | vent/sound cluster on the face — **an adhesive GORE/ePTFE membrane over it (inner face) is REQUIRED**: unmembraned holes defeat the seal; a membraned vent is what stops day/night thermal cycling from pumping moist air past it |
@@ -1039,14 +1105,25 @@ screw.
 
 ---
 
-# Canary Sense — RADOME enclosure (v0.1)
+# Canary Sense — RADOME enclosure (v0.2)
 
 Housing for the **canary-sense mmWave witness**
 ([design doc](../../canary_sense_mr60bha2_design.md)): the Seeed **MR60BHA2**
 60 GHz radar carrier with a **stacked XIAO ESP32-C6**, ceiling- or
 wall-mounted (bedside ≤ 1.5 m for the wellbeing/breathing channel). Outer
-≈ **58 × 57 × 22.5 mm** + prongs; reuses the Vision case's GoPro hinge,
+≈ **57 × 58 × 21.5 mm** + prongs; reuses the Vision case's GoPro hinge,
 blind keyholes, bracket and knob (print those from the Vision file).
+
+**v0.2 (2026-09 assembly review)** — both Sense STLs are re-cut: the front's
+pan-head seat was a through-hole (pads inside now carry a 1.0 mm floor); the
+carrier gets +Y end stops (it could slide 8 mm and take the antenna out from
+under its window); the rib ring and lip no longer overhang the carrier's
+bottom edge; the XIAO port is derived from the seated stack (measured 6.5 +
+`xiao_below`); the tamper magnet's default spot moved OUT of the radome
+window; the hinge fins reach the bed under a keyhole slab; every face
+feature is asserted ≥ 1 mm clear of the window; `radome_t` refuses the
+quarter-wave band; `opt_weep`, `seal_mid_posts`, `head_seal`, `screw_size`
+are new; the USB opening clears a 12 mm boot.
 
 ![canary-sense — back, radome front, bracket and knob](./preview_sense.png)
 
@@ -1059,20 +1136,22 @@ and all features auto-clear it.
 Use **unfilled PETG/ASA only** — carbon-filled filament, foil labels or paint
 with metallic pigment in front of the antenna will blind the radar. The
 **antenna-to-radome air gap is computed and asserted** (`rad_gap`, echoed at
-render; ≈ 4.3 mm at defaults, ≥ 2.5 enforced — raise `cav_extra` for more)
+render; ≈ 3.8 mm at defaults, ≥ 3.0 enforced — raise `cav_extra` for more)
 from your measured `ant_h` (the AiP package top above the PCB). MEASURE the
 antenna-zone position (`rad_dx/dy`) on your carrier revision.
 
 Also on the face, outside the window: a **light pipe** for the onboard WS2812
 and a small **aperture for the BH1750 lux sensor** (it needs to see room
 light; glue a clear disc behind it when sealing). The stacked XIAO's USB-C
-exits the bottom wall (`xiao_usb_z` — measure the seated stack).
+exits the bottom wall at a height DERIVED from the seated stack
+(`stack_sock_h` + `xiao_below`; `xiao_usb_z` is a measured correction).
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
 | `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
-| `vm_l/vm_w`, `stack_sock_h`, `xiao_usb_z` | 44×36 / 11.5 / 4.0 | carrier + seated-stack dimensions — **measure** |
+| `vm_l/vm_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |
+| `screw_size` / `screw_head` / `head_seal` | m2 / pan / off | fastener from the catalog registry; O-ring under each head in seal mode |
 | `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board center |
 | `opt_seal`, `mount_style` | off / hinge | same systems as the Vision case |
 | `radar` | `"bha2"` | `"fda2"` = the MR60**FDA2** fall-detection sibling: same carrier family and radome physics, but **ceiling-mount it** (keyholes), 2.4–3.1 m, facing straight down over the fall zone — and re-verify `rad_dx/dy` on that carrier |

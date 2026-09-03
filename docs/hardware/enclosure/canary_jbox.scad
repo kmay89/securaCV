@@ -18,6 +18,7 @@
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
+use <canary_port_lib.scad>   // connector standards — the USB slot centers on the shell axis
 use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 
@@ -36,7 +37,8 @@ board_l = 21.0;  board_w = 17.5;  board_h = 1.2;  board_clear = 0.6;
                      // 21 x 17.5 spec — brd_l/brd_w("xiao"), canary_board_lib; a
                      // real board mics 17.8 (brd_xiao_w_measured()) and the clips'
                      // clip_clear absorbs the difference, so the spec default stands
-stack_h = 8.0;   standoff_h = 3.0;
+stack_h = 8.0;   standoff_h = 3.5;   // 3.5: the clip beam (standoff + PCB) keeps the measured
+                                     // 17.8 board under the 4.5 % strain budget (3.0 ran 5.5 %)
 
 /* [Shell] */
 wall_t = 2.2;  floor_t = 2.2;  lid_t = 2.4;
@@ -95,7 +97,8 @@ function post_xy() = [
 module boardclip(cx, sy) {
     snap_boardclip(cx, sy * board_w/2, sy,
                    floor_t, floor_t + standoff_h + board_h,
-                   clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
+                   clip_w, clip_t, clip_hook, clip_hook_h, clip_clear,
+                   over = (brd_xiao_w_measured() - board_w)/2);
 }
 
 module body() {
@@ -116,7 +119,9 @@ module body() {
             // USB pass-through slot, low on the -X short wall: route a pigtail
             // through it (a plug cannot reach the recessed connector) and dress
             // the cable as conduit. Sheltered mounting only - the slot is open.
-            translate([-out_l/2, 0, floor_t + standoff_h + board_h + usb_h/2])
+            // centered on the connector AXIS (shell/2 above the PCB), not PCB-top + h/2:
+            // the pigtail's lower half landed in the wall
+            translate([-out_l/2, 0, floor_t + standoff_h + board_h + port_usbc_shell_h()/2])
                 cube([wall_t*3, usb_w, usb_h], center = true);
         }
         // posts + board clips (compact-WAP idiom)

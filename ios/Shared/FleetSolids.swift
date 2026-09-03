@@ -248,13 +248,13 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [52, 34, 84], r: 9.36, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-sense": FleetMassing(
-    id: "device.canary-sense", rev: "112abb6d", ghost: false,
-    envelope: [57.2, 27.95, 77.097],
+    id: "device.canary-sense", rev: "1fb6d5ed", ghost: false,
+    envelope: [57.2, 26.95, 78.697],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 20.5, 77.09732818603516], r: 2, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 20.45, 20.497352600097656], size: [57.199981689453125, 6.05, 56.5999755859375], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "radome", axis: "y", at: [16.599990844726562, 26.45, 36.797340393066406], size: [24, 0.9, 24], r: 1.5, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [28.599990844726562, 27.349999999999998, 26.497352600097656], size: [], r: 2, h: 0.6, fullDetailOnly: true),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 19.5, 78.69733428955078], r: 2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 19.45, 20.497352600097656], size: [57.199981689453125, 6.05, 58.199981689453125], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "radome", axis: "y", at: [16.599990844726562, 25.45, 37.59734344482422], size: [24, 0.9, 24], r: 1.5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [28.599990844726562, 26.349999999999998, 26.497352600097656], size: [], r: 2, h: 0.6, fullDetailOnly: true),
   ]),
   "device.canary-vehicle": FleetMassing(
     id: "device.canary-vehicle", rev: "389ea1ca", ghost: false,
@@ -269,32 +269,32 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [44, 22, 66], r: 7.92, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-vision": FleetMassing(
-    id: "device.canary-vision", rev: "421d34f1", ghost: false,
-    envelope: [43.2, 29.35, 94.097],
+    id: "device.canary-vision", rev: "a032db11", ghost: false,
+    envelope: [43.2, 30.53, 95.097],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [43.199981689453125, 22, 94.09732818603516], r: 2, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 21.95, 20.497352600097656], size: [43.199981689453125, 6.05, 73.5999755859375], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [21.599990844726562, 27.95, 80.09732818603516], size: [], r: 5.5, h: 1.4, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [21.599990844726562, 27.95, 28.497352600097656], size: [], r: 1.8, h: 0.5, fullDetailOnly: true),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [43.199981689453125, 21.3799991607666, 95.09732818603516], r: 2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 21.3299991607666, 20.497352600097656], size: [43.199981689453125, 7.850000190734863, 74.5999755859375], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [21.599990844726562, 29.129999351501464, 81.09732818603516], size: [], r: 5.5, h: 1.4, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [21.599990844726562, 29.129999351501464, 28.497352600097656], size: [], r: 1.8, h: 0.5, fullDetailOnly: true),
   ]),
   "device.canary-vision-devkit": FleetMassing(
-    id: "device.canary-vision-devkit", rev: "996e322d", ghost: false,
-    envelope: [74.8, 23.35, 96.497],
+    id: "device.canary-vision-devkit", rev: "8137e8a1", ghost: false,
+    envelope: [74.8, 25.65, 96.497],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [74.79998779296875, 16, 96.49734115600586], r: 2, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 15.95, 20.49734115600586], size: [74.79998779296875, 6.05, 76], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [37.399993896484375, 21.95, 82.49734115600586], size: [], r: 5.5, h: 1.4, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [37.399993896484375, 21.95, 28.49734115600586], size: [], r: 1.8, h: 0.5, fullDetailOnly: true),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [74.79998779296875, 16.5, 96.49734115600586], r: 2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 16.45, 20.49734115600586], size: [74.79998779296875, 7.850000190734863, 76], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [37.399993896484375, 24.250000190734863, 82.49734115600586], size: [], r: 5.5, h: 1.4, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [37.399993896484375, 24.250000190734863, 28.49734115600586], size: [], r: 1.8, h: 0.5, fullDetailOnly: true),
   ]),
   "device.canary-vision-doorbell": FleetMassing(
-    id: "device.canary-vision-doorbell", rev: "bb33e209", ghost: false,
-    envelope: [36.6, 43.55, 118],
+    id: "device.canary-vision-doorbell", rev: "52ba0b9e", ghost: false,
+    envelope: [38.2, 47.55, 119.6],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [2, 0, 0], size: [32.5999755859375, 14, 118], r: 8, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [2, 13.95, 2], size: [32.5999755859375, 21.849999237060548, 114], r: 12, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "dark", axis: "y", at: [0, 35.74999923706055, 0], size: [36.5999755859375, 6.24999961853027, 118], r: 12, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [18.29998779296875, 41.94999885559082, 94], size: [], r: 6, h: 1.4, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [18.29998779296875, 41.94999885559082, 24], size: [], r: 6, h: 1.6, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [2, 0, 0], size: [34.199981689453125, 14, 119.5999870300293], r: 8, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [2, 13.95, 2.0000057220458984], size: [34.199981689453125, 24.05, 115.5999755859375], r: 12, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "dark", axis: "y", at: [0, 37.95, 0.0000057220458984375], size: [38.199981689453125, 8.049999809265135, 119.5999755859375], r: 12, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [19.099990844726562, 45.94999980926514, 95.5999870300293], size: [], r: 6, h: 1.4, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [19.099990844726562, 45.94999980926514, 24], size: [], r: 6, h: 1.6, fullDetailOnly: false),
   ]),
   "device.canary-vision-lite": FleetMassing(
     id: "device.canary-vision-lite", rev: "e1732477", ghost: true,
@@ -309,58 +309,58 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [46, 46, 62], r: 8.28, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-wap": FleetMassing(
-    id: "device.canary-wap", rev: "5fab1e20", ghost: false,
-    envelope: [33.7, 18.25, 36.6],
+    id: "device.canary-wap", rev: "d54f315c", ghost: false,
+    envelope: [33.7, 19.6, 36.6],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [33.699981689453125, 11.699999809265137, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 11.649999809265136, 0], size: [33.699981689453125, 6.05, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [16.849990844726562, 17.649999809265136, 18.29998779296875], size: [], r: 2.2, h: 0.6, fullDetailOnly: true),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [33.699981689453125, 13.049999237060547, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 12.999999237060546, 0], size: [33.699981689453125, 6.05, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [16.849990844726562, 18.999999237060546, 18.29998779296875], size: [], r: 2.2, h: 0.6, fullDetailOnly: true),
   ]),
   "part.doorbell.body": FleetMassing(
-    id: "part.doorbell.body", rev: "af045762", ghost: false,
-    envelope: [32.6, 21.8, 114],
+    id: "part.doorbell.body", rev: "ba87f0bb", ghost: false,
+    envelope: [34.2, 24, 115.6],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [32.5999755859375, 21.799999237060547, 114], r: 12, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [34.199981689453125, 24, 115.5999755859375], r: 12, h: 0, fullDetailOnly: false),
   ]),
   "part.doorbell.face": FleetMassing(
-    id: "part.doorbell.face", rev: "5a3db2a0", ghost: false,
-    envelope: [36.6, 7.65, 118],
+    id: "part.doorbell.face", rev: "15907b73", ghost: false,
+    envelope: [38.2, 9.45, 119.6],
     solids: [
-      FleetSolid(kind: .box, material: "dark", axis: "y", at: [0, 0, 0], size: [36.5999755859375, 6.199999618530271, 118], r: 12, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [18.29998779296875, 6.24999961853027, 96], size: [], r: 6, h: 1.2, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [18.29998779296875, 6.24999961853027, 22], size: [], r: 6, h: 1.4, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "dark", axis: "y", at: [0, 0, 0], size: [38.199981689453125, 7.999999809265134, 119.5999755859375], r: 12, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [19.099990844726562, 8.049999809265135, 97.5999755859375], size: [], r: 6, h: 1.2, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [19.099990844726562, 8.049999809265135, 22], size: [], r: 6, h: 1.4, fullDetailOnly: false),
   ]),
   "part.doorbell.gasket": FleetMassing(
-    id: "part.doorbell.gasket", rev: "15c22622", ghost: false,
-    envelope: [30.5, 1.5, 111.9],
+    id: "part.doorbell.gasket", rev: "da9d1172", ghost: false,
+    envelope: [31.3, 1.5, 112.7],
     solids: [
-      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [30.5, 1.5, 111.89999389648438], r: 11, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [31.29998779296875, 1.5, 112.69998168945312], r: 11, h: 0, fullDetailOnly: false),
   ]),
   "part.doorbell.plate": FleetMassing(
-    id: "part.doorbell.plate", rev: "612f9087", ghost: false,
-    envelope: [32.6, 14, 118],
+    id: "part.doorbell.plate", rev: "11d233bb", ghost: false,
+    envelope: [34.2, 14, 119.6],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [32.5999755859375, 14, 118], r: 8, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [34.199981689453125, 14, 119.5999870300293], r: 8, h: 0, fullDetailOnly: false),
   ]),
   "part.sense.back": FleetMassing(
-    id: "part.sense.back", rev: "244879b1", ghost: false,
-    envelope: [57.2, 21.15, 77.097],
+    id: "part.sense.back", rev: "53262d61", ghost: false,
+    envelope: [57.2, 20.15, 78.697],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 20.5, 77.09732818603516], r: 0, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "dark", axis: "y", at: [28.599990844726562, 20.55, 70.09732818603516], size: [], r: 3.2, h: 0.6, fullDetailOnly: true),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 19.5, 78.69733428955078], r: 0, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "dark", axis: "y", at: [28.599990844726562, 19.55, 71.69733428955078], size: [], r: 3.2, h: 0.6, fullDetailOnly: true),
   ]),
   "part.sense.front": FleetMassing(
-    id: "part.sense.front", rev: "56bc7c4f", ghost: false,
-    envelope: [57.2, 6.95, 56.6],
+    id: "part.sense.front", rev: "512c1cf5", ghost: false,
+    envelope: [57.2, 6.95, 58.2],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 6, 56.5999755859375], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "radome", axis: "y", at: [16.599990844726562, 6.05, 16.29998779296875], size: [24, 0.9, 24], r: 1.5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [57.199981689453125, 6, 58.199981689453125], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "radome", axis: "y", at: [16.599990844726562, 6.05, 17.099990844726562], size: [24, 0.9, 24], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   "part.vision.back": FleetMassing(
-    id: "part.vision.back", rev: "1d1de5d2", ghost: false,
-    envelope: [43.2, 22, 94.097],
+    id: "part.vision.back", rev: "2162bb83", ghost: false,
+    envelope: [43.2, 21.38, 95.097],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [43.199981689453125, 22, 94.09732818603516], r: 2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [43.199981689453125, 21.3799991607666, 95.09732818603516], r: 2, h: 0, fullDetailOnly: false),
   ]),
   "part.vision.bracket": FleetMassing(
     id: "part.vision.bracket", rev: "3b17d115", ghost: false,
@@ -370,18 +370,18 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell2", axis: "y", at: [14.72, 0, 14.229999999999999], size: [16.56, 24.5, 19.72], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.vision.front": FleetMassing(
-    id: "part.vision.front", rev: "8fe07ad7", ghost: false,
-    envelope: [43.2, 7.25, 73.6],
+    id: "part.vision.front", rev: "891013ab", ghost: false,
+    envelope: [43.2, 9.05, 74.6],
     solids: [
-      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [43.199981689453125, 6, 73.5999755859375], r: 3, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [21.599990844726562, 6.05, 59.5999755859375], size: [], r: 5.5, h: 1.2, fullDetailOnly: false),
-      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [21.599990844726562, 6.05, 8], size: [], r: 1.8, h: 0.5, fullDetailOnly: true),
+      FleetSolid(kind: .box, material: "shell", axis: "y", at: [0, 0, 0], size: [43.199981689453125, 7.800000190734863, 74.5999755859375], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "lens", axis: "y", at: [21.599990844726562, 7.850000190734863, 60.5999755859375], size: [], r: 5.5, h: 1.2, fullDetailOnly: false),
+      FleetSolid(kind: .disc, material: "accent", axis: "y", at: [21.599990844726562, 7.850000190734863, 8], size: [], r: 1.8, h: 0.5, fullDetailOnly: true),
   ]),
   "part.vision.gasket": FleetMassing(
-    id: "part.vision.gasket", rev: "d444bc47", ghost: false,
-    envelope: [43.5, 1.5, 73.9],
+    id: "part.vision.gasket", rev: "f4e12258", ghost: false,
+    envelope: [44.3, 1.5, 75.7],
     solids: [
-      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [43.5, 1.5, 73.89999389648438], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [44.29998779296875, 1.5, 75.69998168945312], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.vision.knob": FleetMassing(
     id: "part.vision.knob", rev: "10526bcd", ghost: false,
@@ -390,22 +390,22 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .cyl, material: "dark", axis: "y", at: [10.852633476257324, 0, 10.852633476257324], size: [], r: 10.852633476257324, h: 8, fullDetailOnly: false),
   ]),
   "part.wap.base": FleetMassing(
-    id: "part.wap.base", rev: "d64c230c", ghost: false,
-    envelope: [33.7, 11.7, 36.6],
+    id: "part.wap.base", rev: "a8045876", ghost: false,
+    envelope: [33.7, 13.05, 36.6],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [33.699981689453125, 11.699999809265137, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [33.699981689453125, 13.049999237060547, 36.5999755859375], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.battery-base": FleetMassing(
-    id: "part.wap.battery-base", rev: "022b743d", ghost: false,
-    envelope: [104.7, 15.2, 39],
+    id: "part.wap.battery-base", rev: "5fe9b81b", ghost: false,
+    envelope: [104.5, 15.9, 39],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [104.69998168945312, 15.199999809265137, 39], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [104.5, 15.899999618530273, 39], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.gasket": FleetMassing(
-    id: "part.wap.gasket", rev: "782b3c29", ghost: false,
-    envelope: [105, 1.5, 39.3],
+    id: "part.wap.gasket", rev: "1a346654", ghost: false,
+    envelope: [104.8, 1.5, 39.3],
     solids: [
-      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [105, 1.5, 39.29998779296875], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [104.79998779296875, 1.5, 39.29998779296875], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.lid": FleetMassing(
     id: "part.wap.lid", rev: "01ef2e35", ghost: false,
@@ -421,17 +421,17 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [24, 8, 18], r: 1, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.weather-shield": FleetMassing(
-    id: "part.wap.weather-shield", rev: "105d8bc6", ghost: false,
-    envelope: [119.1, 7.6, 53.4],
+    id: "part.wap.weather-shield", rev: "b37755fd", ghost: false,
+    envelope: [118.9, 7.6, 53.4],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [119.0999755859375, 7.59999942779541, 53.399993896484375], r: 5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [118.89999389648438, 7.59999942779541, 53.399993896484375], r: 5, h: 0, fullDetailOnly: false),
   ]),
   "tool.fit-coupon": FleetMassing(
-    id: "tool.fit-coupon", rev: "de8f6d15", ghost: false,
-    envelope: [26, 7.4, 26],
+    id: "tool.fit-coupon", rev: "8b3335bd", ghost: false,
+    envelope: [26, 7.9, 26],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [26, 4.069996643066407, 26], r: 2, h: 0, fullDetailOnly: false),
-      FleetSolid(kind: .box, material: "accent", axis: "y", at: [5.2, 4.019996643066407, 6.5], size: [15.6, 3.3799972534179688, 13], r: 1.5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [26, 4.344996643066406, 26], r: 2, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "accent", axis: "y", at: [5.2, 4.294996643066407, 6.5], size: [15.6, 3.604997253417969, 13], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   ]
 }

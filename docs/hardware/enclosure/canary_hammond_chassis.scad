@@ -54,7 +54,10 @@ stack_sock_h = 11.5;                          // seated-XIAO stack height (modul
                                               // validated as a roomier cavity, never
                                               // confirmed as a stack height — MEASURE
 pcb_t = 1.0;                                  // brd_t("grove_v2") / brd_t("mr60")
-standoff_h = 3.0;
+standoff_h = 3.5;    // 3.5: the WAP-stack clip beam is standoff + PCB, and at 4.7 mm the measured
+                     // 17.8 XIAO inserts under the 4.5 % strain budget (4.2 ran 5.5 %)
+xiao_w = 17.8;       // the measured XIAO (brd_xiao_w_measured) — sets the vision stack's corner pins
+xiao_below = 5.5;    // air under a stacked XIAO's USB face (shell + half a plug overmold + clearance)
 
 /* [Board snap clips] */
 clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
@@ -70,7 +73,7 @@ $fa = 3; $fs = 0.4;
 b_l  = (stack == "wap") ? wap_l : (stack == "vision") ? vm_l : sm_l;
 b_w  = (stack == "wap") ? wap_w : (stack == "vision") ? vm_w : sm_w;
 b_t  = (stack == "wap") ? wap_pcb : pcb_t;
-soff = (stack == "wap") ? standoff_h : stack_sock_h + 1.5;
+soff = (stack == "wap") ? standoff_h : stack_sock_h + xiao_below;
 assert(b_w + 6 < plate_w && b_l + 6 < plate_l, "board exceeds the plate — grow plate_l/w");
 assert(boss_dx/2 + 1 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_l/2 && boss_dy/2 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_w/2,
        "boss slots too close to the plate edge (need >= 2 mm web) — grow plate_l/plate_w");
@@ -86,7 +89,8 @@ echo(str("Canary Hammond chassis v0.2-dev — plate ", plate_l, "x", plate_w,
 module edgeclip(px, py, ang) {
     translate([px, py, 0]) rotate([0, 0, ang - 90])
         snap_boardclip(0, 0, 1, plate_t, plate_t + soff + b_t,
-                       clip_w, clip_t, clip_hook, clip_hook_h, clip_clear);
+                       clip_w, clip_t, clip_hook, clip_hook_h, clip_clear,
+                       over = (stack == "wap") ? (brd_xiao_w_measured() - wap_w)/2 : 0);
 }
 
 module plate() {
@@ -106,15 +110,23 @@ module plate() {
                 translate([sx*(plate_l/2 - 14), (i - 1)*18, -0.1])
                     linear_extrude(plate_t + 0.2) rrect2d(10, 10, 3);
         }
-        // rails (notched at the clips) + clips — same cradle idiom as the cases
+        // rails (notched at the clips) + clips — same cradle idiom as the cases.
+        // The vision stack's rails run beside the TOP HALF only: the 17.8 XIAO
+        // hangs under the lower half of the 20 mm module, and full-length rails
+        // ran through it (the Vision case's fix); corner pins catch the low edge
         for (s = [1, -1]) {
+            half = (stack == "vision");
+            rl = half ? b_l/2 - 4 : b_l - 1;
+            y0 = half ? 2 : -(b_l - 1)/2;
+            cyc = half ? 2 + rl/2 : 0;
             difference() {
-                translate([s*(b_w/2 - 1.5) - 1.5, -(b_l - 1)/2, plate_t - 0.01])
-                    cube([3, b_l - 1, soff + 0.01]);
-                translate([s*(b_w/2 - 1.5), 0, plate_t + soff/2])
+                translate([s*(b_w/2 - 1.5) - 1.5, y0, plate_t - 0.01])
+                    cube([3, rl, soff + 0.01]);
+                translate([s*(b_w/2 - 1.5), cyc, plate_t + soff/2])
                     cube([5, clip_w + 2, soff + 1], center = true);
             }
-            edgeclip(s*b_w/2, 0, s > 0 ? 0 : 180);
+            edgeclip(s*b_w/2, cyc, s > 0 ? 0 : 180);
+            if (half) translate([s*(xiao_w/2 + 1.1), -b_l/2 + 1.2, plate_t - 0.01]) cylinder(d = 2.0, h = soff + 0.01);
         }
     }
 }

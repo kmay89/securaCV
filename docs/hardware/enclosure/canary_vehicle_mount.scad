@@ -51,7 +51,8 @@ face_h   = 50.0;     // front face height
 face_t   = 4.0;
 prong_l  = 22.0;     // reach onto the louver blade
 prong_t  = 2.4;
-louver_gap = 2.8;    // louver BLADE thickness + play — MEASURE your vents
+louver_gap = 2.2;    // louver BLADE thickness + play — MEASURE your vents (blades run 1.5-2.0; at
+                     // 2.8 a thin blade passed with no deflection and the clip hung on its hook alone)
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

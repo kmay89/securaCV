@@ -46,10 +46,10 @@
 //    frame — ONE-PIECE drop-in case, the layout a fitting reference print
 //            validated: the slab enters face-first through the front opening,
 //            the board hangs on the panel's OWN white M3 standoffs, and
-//            4x M3x8-10 from the back thread into those standoffs — the
+//            4x M3x8 from the back thread into those standoffs — the
 //            screws, not a ledge, set the glass glass_guard below the
-//            front rim — currently 0, i.e. a FLUSH face (raise
-//            glass_guard to trade flush for a drop-protection recess).
+//            front rim — -0.2 today, i.e. the glass stands 0.2 PROUD of
+//            the rim (raise glass_guard to trade that for a recess).
 //            BOOT/RESET window in the top wall with debossed labels; gill
 //            vents down each side wall; top-wall exhaust; back grille;
 //            a microSD access opening through the BACK PLATE covering the
@@ -428,14 +428,23 @@ m3_oy = pnl_m3_oy(PANEL);         // FRONT view, panel mounted NATIVE (buttons a
                      // at all — and why a panel can't be flipped inside a
                      // case drawn for the other orientation.
 m3_pilot = 2.7;      // self-tap pilot for M3 into printed bosses
+                     // frame screw LENGTH: the head seats on the plate, then
+                     // frame_boss_h of boss, then the panel's standoff_len stud
+                     // — M3 x 8 engages 5.0 of the 6.9 mm stud; x10 reaches
+                     // 7.0 and bottoms in a blind stud. Say "M3 x 8"; x10 only
+                     // with through-threaded standoffs
 
 /* [Screen] */
 bez_lip = 3.0;       // MINIMUM acceptable overlap of the lip onto the glass border.
                      // The real overlap is derived from the glass/AA borders and
                      // win_margin below; the assert fires if it drops under this.
-win_margin = 0.6;    // window opened this much beyond the active area on each
+win_margin = 1.0;    // window opened this much beyond the active area on each
                      // side, so print tolerance + panel placement can't eat
-                     // visible pixels (the lip pays for it out of the border)
+                     // visible pixels (the lip pays for it out of the border).
+                     // Was 0.6: after the pocket's tol_slide float (0.25) and a
+                     // typical ±0.2 XY print error that left 0.15 mm before the
+                     // bezel edge covered pixels, while the lip had 10 mm to
+                     // spare — 1.0 spends 0.4 of that spare on the picture
 
 /* [Connectors] */
 // openings, offsets from the board center along their wall.
@@ -2117,6 +2126,30 @@ assert(!mount_keyholes || (khm_dx + khm_head_d/2 + khm_pad_w + 1.5 < fr_xi/2
        && khm_y - khm_head_d/2 - khm_pad_w > 2),
        "frame: a keyhole (or its doubler pad) runs off the back plate (the bottom pair mirrors the top, so one bound covers all four)");
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
+// count knobs that feed `for (i = [0 : n - 1])`: at n = 0 OpenSCAD 2021.01
+// iterates {0, -1} AND prints a DEPRECATED warning, which the render gate
+// reads as a failure; ledge_slope_n = 0 divides the staircase by zero. Say
+// so here, in the knob's own words, instead of in a CI log
+assert(vent_rows >= 1 && vent_cols >= 1, "vent_rows / vent_cols must be at least 1 (use plate_grille=false to drop the grille)");
+assert(vent_top_n >= 1 && vent_bottom_n >= 1 && vent_side_n >= 1,
+       "vent_top_n / vent_bottom_n / vent_side_n must be at least 1");
+assert(frame_vent_flank_n >= 1, "frame_vent_flank_n must be at least 1");
+assert(edge_vent_n >= 1, "edge_vent_n must be at least 1");
+assert(ledge_slope_n >= 1, "ledge_slope_n must be at least 1 (it divides the staircase)");
+// the frame chains its depth through standoff_len only, so it never asks
+// whether the tallest REAR component (comp_h, the registry's one MEASURE
+// number) clears the plate. With the record as written it does not: the
+// component ceiling sits comp_h above the PCB back while the plate's inner
+// face is fz_plate. A reference print closed, so the record is the likelier
+// error — but a number that has never met calipers is not a number to move
+// the validated frame by, so this is a CHECK, not an assert, until it has
+frame_comp_ceiling = glass_guard + glass_t + pcb_standoff + pcb_t + comp_h;
+if (frame_comp_ceiling + 0.5 > fz_plate)
+    echo(str("CHECK: the registry's comp_h (", comp_h, " mm) puts the tallest rear component ",
+             round((frame_comp_ceiling + 0.5 - fz_plate)*100)/100,
+             " mm INTO the back plate (ceiling ", frame_comp_ceiling, " vs plate ", fz_plate,
+             "). A reference print closed, so MEASURE comp_h and correct the panel record; ",
+             "if it really is that tall, raise frame_boss_h by the difference."));
 assert(!mount_keyholes || fz_plate - khm_pad_t >= fz_boss + 0.5,
        "frame: keyhole doubler pads reach into the component band behind the board — thin khm_pad_t");
 // the adhesive rails must own their columns outright: clear of the SD mouth
@@ -2725,7 +2758,7 @@ echo(str("  frame: ", fr_xo, " x ", fr_yo, " x ", fr_depth,
          plate_fillet, "; adhesive ledge face ", ledge_z,
          " mm behind the front (bare-glass ",
          "border ", glass_edge_t, " + adhesive ", adh_t,
-         "); 4x M3x8-10 from the back into the panel standoffs (boss face at ",
+         "); 4x M3x8 from the back into the panel standoffs (boss face at ",
          fz_boss, ", head seat at ", fz_plate, ")"));
 echo(str("  frame mounting: 4x keyhole, ", back_t + khm_pad_t,
          " mm bearing under each screw head (", back_t, " plate + ", khm_pad_t,
@@ -3168,7 +3201,7 @@ module gauge() {
 //  4 screws pull the panel's standoffs onto the boss faces, and that stack —
 //  glass_t + pcb_standoff + pcb_t + standoff_len — is exactly what sets the
 //  glass glass_guard below the front rim. Get standoff_len right or the
-//  glass face is off by the same error. glass_guard is 0 today (flush).
+//  glass face is off by the same error. glass_guard is -0.2 today (proud).
 // ----------------------------------------------------------------------------
 module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // FEATHER BARB — the house pattern motif, and the reason it is a motif at all
@@ -3910,11 +3943,14 @@ module frame() {
                 rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                     text(port_lbl_a, size = 3.6, font = label_font,
                          halign = "left", valign = "center");
+        // (after the ±90° swing the wall in play is the ±x one, so its skin is
+        // at fr_xo/2 — fr_yo/2 put the label 41 mm inside the cavity, unseen
+        // only because port_lbl_b ships empty)
         if (port_labels && side_exit != "none")
             rotate([0, 0, side_exit == "right" ? 90 : -90])
                 translate([(side_exit == "right" ? 1 : -1)
                                *(side_dy + usb_open_w/2 + grom_lip + 3.5),
-                           -fr_yo/2 + label_depth, usb_z])
+                           -fr_xo/2 + label_depth, usb_z])
                     rotate([90, 0, 0]) linear_extrude(label_depth + 0.2)
                         text(port_lbl_b, size = 3.6, font = label_font,
                              halign = "left", valign = "center");
@@ -4059,7 +4095,7 @@ module frame() {
 
 // One corner of the frame, cut from the real geometry by intersection — the
 // (+x,+y) corner, chosen because it contains a boss AND a wall keyhole. Assemble
-// it on the panel's corner with one M3x8-10: the glass corner proves glass_r,
+// it on the panel's corner with one M3x8: the glass corner proves glass_r,
 // the screw only threads home if the m3 offsets have the right SIGNS, and the
 // glass sits exactly glass_guard below the rim only if standoff_len is right.
 // READ THE PASS CRITERION OFF glass_guard, not off memory. It is NEGATIVE

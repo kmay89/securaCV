@@ -1421,32 +1421,32 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 57.2,
-    "d": 27.95,
-    "h": 77.097
+    "d": 26.95,
+    "h": 78.697
    },
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3240,
+     "triangles": 3168,
      "mm": [
       57.2,
-      77.097,
-      20.5
+      78.697,
+      19.5
      ]
     },
     {
      "file": "canary_sense_front.stl",
-     "triangles": 1932,
+     "triangles": 2580,
      "mm": [
       57.2,
-      56.6,
+      58.2,
       6
      ]
     }
    ],
    "drift_guard": null,
    "solids": 4,
-   "rev": "112abb6d",
+   "rev": "1fb6d5ed",
    "svg": "canary-local/figures/device.canary-sense.svg",
    "glyph": "canary-local/figures/device.canary-sense.glyph.svg"
   },
@@ -1580,32 +1580,32 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 43.2,
-    "d": 29.35,
-    "h": 94.097
+    "d": 30.53,
+    "h": 95.097
    },
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_back.stl",
-     "triangles": 3392,
+     "triangles": 3292,
      "mm": [
       43.2,
-      94.097,
-      22
+      95.097,
+      21.38
      ]
     },
     {
      "file": "canary_vision_enclosure_xiao_indoor_front.stl",
-     "triangles": 3108,
+     "triangles": 3688,
      "mm": [
       43.2,
-      73.6,
-      6
+      74.6,
+      7.8
      ]
     }
    ],
    "drift_guard": null,
    "solids": 4,
-   "rev": "421d34f1",
+   "rev": "a032db11",
    "svg": "canary-local/figures/device.canary-vision.svg",
    "glyph": "canary-local/figures/device.canary-vision.glyph.svg"
   },
@@ -1673,32 +1673,32 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 74.8,
-    "d": 23.35,
+    "d": 25.65,
     "h": 96.497
    },
    "traced_to": [
     {
      "file": "canary_vision_enclosure_devkit_indoor_back.stl",
-     "triangles": 3672,
+     "triangles": 3568,
      "mm": [
       74.8,
       96.497,
-      16
+      16.5
      ]
     },
     {
      "file": "canary_vision_enclosure_devkit_indoor_front.stl",
-     "triangles": 3108,
+     "triangles": 3688,
      "mm": [
       74.8,
       76,
-      6
+      7.8
      ]
     }
    ],
    "drift_guard": null,
    "solids": 4,
-   "rev": "996e322d",
+   "rev": "8137e8a1",
    "svg": "canary-local/figures/device.canary-vision-devkit.svg",
    "glyph": "canary-local/figures/device.canary-vision-devkit.glyph.svg"
   },
@@ -1766,42 +1766,42 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 36.6,
-    "d": 43.55,
-    "h": 118
+    "w": 38.2,
+    "d": 47.55,
+    "h": 119.6
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_plate.stl",
-     "triangles": 3660,
+     "triangles": 3668,
      "mm": [
-      32.6,
-      118,
+      34.2,
+      119.6,
       14
      ]
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5084,
+     "triangles": 5652,
      "mm": [
-      32.6,
-      114,
-      21.8
+      34.2,
+      115.6,
+      24
      ]
     },
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 8408,
+     "triangles": 10264,
      "mm": [
-      36.6,
-      118,
-      6.2
+      38.2,
+      119.6,
+      8
      ]
     }
    ],
    "drift_guard": null,
    "solids": 5,
-   "rev": "bb33e209",
+   "rev": "52ba0b9e",
    "svg": "canary-local/figures/device.canary-vision-doorbell.svg",
    "glyph": "canary-local/figures/device.canary-vision-doorbell.glyph.svg"
   },
@@ -1926,22 +1926,22 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 33.7,
-    "d": 18.25,
+    "d": 19.6,
     "h": 36.6
    },
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_base.stl",
-     "triangles": 1808,
+     "triangles": 1736,
      "mm": [
       33.7,
       36.6,
-      11.7
+      13.05
      ]
     },
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 3240,
+     "triangles": 3152,
      "mm": [
       33.7,
       36.6,
@@ -1951,7 +1951,7 @@
    ],
    "drift_guard": null,
    "solids": 3,
-   "rev": "5fab1e20",
+   "rev": "d54f315c",
    "svg": "canary-local/figures/device.canary-wap.svg",
    "glyph": "canary-local/figures/device.canary-wap.glyph.svg"
   },
@@ -2017,18 +2017,18 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 32.6,
-    "d": 21.8,
-    "h": 114
+    "w": 34.2,
+    "d": 24,
+    "h": 115.6
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5084,
+     "triangles": 5652,
      "mm": [
-      32.6,
-      114,
-      21.8
+      34.2,
+      115.6,
+      24
      ]
     }
    ],
@@ -2037,7 +2037,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "af045762",
+   "rev": "ba87f0bb",
    "svg": "canary-local/figures/part.doorbell.body.svg",
    "glyph": "canary-local/figures/part.doorbell.body.glyph.svg"
   },
@@ -2103,18 +2103,18 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 36.6,
-    "d": 7.65,
-    "h": 118
+    "w": 38.2,
+    "d": 9.45,
+    "h": 119.6
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 8408,
+     "triangles": 10264,
      "mm": [
-      36.6,
-      118,
-      6.2
+      38.2,
+      119.6,
+      8
      ]
     }
    ],
@@ -2123,7 +2123,7 @@
     "depth_tol_mm": 4
    },
    "solids": 3,
-   "rev": "5a3db2a0",
+   "rev": "15907b73",
    "svg": "canary-local/figures/part.doorbell.face.svg",
    "glyph": "canary-local/figures/part.doorbell.face.glyph.svg"
   },
@@ -2189,17 +2189,17 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 30.5,
+    "w": 31.3,
     "d": 1.5,
-    "h": 111.9
+    "h": 112.7
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_gasket.stl",
      "triangles": 1488,
      "mm": [
-      30.5,
-      111.9,
+      31.3,
+      112.7,
       1.5
      ]
     }
@@ -2209,7 +2209,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "15c22622",
+   "rev": "da9d1172",
    "svg": "canary-local/figures/part.doorbell.gasket.svg",
    "glyph": "canary-local/figures/part.doorbell.gasket.glyph.svg"
   },
@@ -2275,17 +2275,17 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 32.6,
+    "w": 34.2,
     "d": 14,
-    "h": 118
+    "h": 119.6
    },
    "traced_to": [
     {
      "file": "canary_vision_doorbell_plate.stl",
-     "triangles": 3660,
+     "triangles": 3668,
      "mm": [
-      32.6,
-      118,
+      34.2,
+      119.6,
       14
      ]
     }
@@ -2295,7 +2295,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "612f9087",
+   "rev": "11d233bb",
    "svg": "canary-local/figures/part.doorbell.plate.svg",
    "glyph": "canary-local/figures/part.doorbell.plate.glyph.svg"
   },
@@ -2343,17 +2343,17 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 57.2,
-    "d": 21.15,
-    "h": 77.097
+    "d": 20.15,
+    "h": 78.697
    },
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3240,
+     "triangles": 3168,
      "mm": [
       57.2,
-      77.097,
-      20.5
+      78.697,
+      19.5
      ]
     }
    ],
@@ -2362,7 +2362,7 @@
     "depth_tol_mm": 4
    },
    "solids": 2,
-   "rev": "244879b1",
+   "rev": "53262d61",
    "svg": "canary-local/figures/part.sense.back.svg",
    "glyph": "canary-local/figures/part.sense.back.glyph.svg"
   },
@@ -2411,15 +2411,15 @@
    "envelope_mm": {
     "w": 57.2,
     "d": 6.95,
-    "h": 56.6
+    "h": 58.2
    },
    "traced_to": [
     {
      "file": "canary_sense_front.stl",
-     "triangles": 1932,
+     "triangles": 2580,
      "mm": [
       57.2,
-      56.6,
+      58.2,
       6
      ]
     }
@@ -2429,7 +2429,7 @@
     "depth_tol_mm": 4
    },
    "solids": 2,
-   "rev": "56bc7c4f",
+   "rev": "512c1cf5",
    "svg": "canary-local/figures/part.sense.front.svg",
    "glyph": "canary-local/figures/part.sense.front.glyph.svg"
   },
@@ -2496,17 +2496,17 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 43.2,
-    "d": 22,
-    "h": 94.097
+    "d": 21.38,
+    "h": 95.097
    },
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_back.stl",
-     "triangles": 3392,
+     "triangles": 3292,
      "mm": [
       43.2,
-      94.097,
-      22
+      95.097,
+      21.38
      ]
     }
    ],
@@ -2515,7 +2515,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "1d1de5d2",
+   "rev": "2162bb83",
    "svg": "canary-local/figures/part.vision.back.svg",
    "glyph": "canary-local/figures/part.vision.back.glyph.svg"
   },
@@ -2588,7 +2588,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_bracket.stl",
-     "triangles": 6044,
+     "triangles": 5156,
      "mm": [
       46,
       34,
@@ -2668,17 +2668,17 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 43.2,
-    "d": 7.25,
-    "h": 73.6
+    "d": 9.05,
+    "h": 74.6
    },
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_front.stl",
-     "triangles": 3108,
+     "triangles": 3688,
      "mm": [
       43.2,
-      73.6,
-      6
+      74.6,
+      7.8
      ]
     }
    ],
@@ -2687,7 +2687,7 @@
     "depth_tol_mm": 4
    },
    "solids": 3,
-   "rev": "8fe07ad7",
+   "rev": "891013ab",
    "svg": "canary-local/figures/part.vision.front.svg",
    "glyph": "canary-local/figures/part.vision.front.glyph.svg"
   },
@@ -2753,17 +2753,17 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 43.5,
+    "w": 44.3,
     "d": 1.5,
-    "h": 73.9
+    "h": 75.7
    },
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_weather_gasket.stl",
-     "triangles": 288,
+     "triangles": 240,
      "mm": [
-      43.5,
-      73.9,
+      44.3,
+      75.7,
       1.5
      ]
     }
@@ -2773,7 +2773,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "d444bc47",
+   "rev": "f4e12258",
    "svg": "canary-local/figures/part.vision.gasket.svg",
    "glyph": "canary-local/figures/part.vision.gasket.glyph.svg"
   },
@@ -2917,17 +2917,17 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 33.7,
-    "d": 11.7,
+    "d": 13.05,
     "h": 36.6
    },
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_base.stl",
-     "triangles": 1808,
+     "triangles": 1736,
      "mm": [
       33.7,
       36.6,
-      11.7
+      13.05
      ]
     }
    ],
@@ -2936,7 +2936,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "d64c230c",
+   "rev": "a8045876",
    "svg": "canary-local/figures/part.wap.base.svg",
    "glyph": "canary-local/figures/part.wap.base.glyph.svg"
   },
@@ -2993,18 +2993,18 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 104.7,
-    "d": 15.2,
+    "w": 104.5,
+    "d": 15.9,
     "h": 39
    },
    "traced_to": [
     {
      "file": "canary_wap_enclosure_battery_base.stl",
-     "triangles": 2040,
+     "triangles": 1904,
      "mm": [
-      104.7,
+      104.5,
       39,
-      15.2
+      15.9
      ]
     }
    ],
@@ -3013,7 +3013,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "022b743d",
+   "rev": "5fe9b81b",
    "svg": "canary-local/figures/part.wap.battery-base.svg",
    "glyph": "canary-local/figures/part.wap.battery-base.glyph.svg"
   },
@@ -3070,7 +3070,7 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 105,
+    "w": 104.8,
     "d": 1.5,
     "h": 39.3
    },
@@ -3079,7 +3079,7 @@
      "file": "canary_wap_enclosure_weather_gasket.stl",
      "triangles": 288,
      "mm": [
-      105,
+      104.8,
       39.3,
       1.5
      ]
@@ -3090,7 +3090,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "782b3c29",
+   "rev": "1a346654",
    "svg": "canary-local/figures/part.wap.gasket.svg",
    "glyph": "canary-local/figures/part.wap.gasket.glyph.svg"
   },
@@ -3154,7 +3154,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 3240,
+     "triangles": 3152,
      "mm": [
       33.7,
       36.6,
@@ -3301,7 +3301,7 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 119.1,
+    "w": 118.9,
     "d": 7.6,
     "h": 53.4
    },
@@ -3310,7 +3310,7 @@
      "file": "canary_wap_enclosure_weather_shield.stl",
      "triangles": 3396,
      "mm": [
-      119.1,
+      118.9,
       53.4,
       7.6
      ]
@@ -3321,7 +3321,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "105d8bc6",
+   "rev": "b37755fd",
    "svg": "canary-local/figures/part.wap.weather-shield.svg",
    "glyph": "canary-local/figures/part.wap.weather-shield.glyph.svg"
   },
@@ -3436,7 +3436,7 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 26,
-    "d": 7.4,
+    "d": 7.9,
     "h": 26
    },
    "traced_to": [
@@ -3446,7 +3446,7 @@
      "mm": [
       26,
       26,
-      7.4
+      7.9
      ]
     }
    ],
@@ -3455,7 +3455,7 @@
     "depth_tol_mm": 4
    },
    "solids": 2,
-   "rev": "de8f6d15",
+   "rev": "8b3335bd",
    "svg": "canary-local/figures/tool.fit-coupon.svg",
    "glyph": "canary-local/figures/tool.fit-coupon.glyph.svg"
   }

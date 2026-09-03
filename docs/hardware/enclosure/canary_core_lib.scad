@@ -160,6 +160,156 @@ module foot_chamfer_ring(l, w, r, cham, z0 = 0) {
 }
 
 // ---------------------------------------------------------------------------
+//  Screw registry — ONE table for the fasteners the catalog closes with.
+//  Every case used to carry its own screw_d / screw_head_d / screw_head_h
+//  trio, all typed for M2 and all silently wrong the day someone wanted an
+//  M2.5 or M3 (a Ø1.6 pilot under an M3 self-tapper splits a Ø5 post). A
+//  case now exposes `screw_size` and READS the numbers here; the M2 row is
+//  the catalog's print-validated set, so a case whose knobs still say M2
+//  renders the same mesh it always did.
+//
+//  Columns: [id, nominal, self-tap PILOT (PETG), CLEARANCE hole,
+//            pan head Ø, pan seat depth, flat head Ø, flat (90°) seat depth,
+//            heat-set insert BORE, insert length, O-ring [ID, section]]
+//    pilot     — 0.8 x nominal, the bite that neither strips nor splits
+//                (the catalog's 1.6 for M2 is exactly this rule)
+//    clearance — ISO 273 fine series
+//    pan       — ISO 7045 dk, seat = head k + 0.4 sink (flush, never proud)
+//    flat      — ISO 7046 dk, seat = head k (a 90° cone seats a flat head
+//                on its cone, not on the floor — cs_cone90_cut draws it)
+//    insert    — the BORE (not the knurl OD): CNC Kitchen / Ruthex short
+//                series, ~0.3 mm under the knurl so the brass bites
+//    o-ring    — a standard ring whose ID rides the shank: the head-seal
+//                gland (cb_oring_cut) sizes itself from this
+// ---------------------------------------------------------------------------
+SCR_REGISTRY = [
+    ["m2",   2.0, 1.6, 2.2, 4.0, 2.0, 4.0, 1.2, 3.2, 4.0, [2.0, 1.0]],
+    ["m2.5", 2.5, 2.0, 2.8, 5.0, 2.4, 4.7, 1.5, 3.6, 5.7, [2.5, 1.0]],
+    ["m3",   3.0, 2.5, 3.4, 5.6, 2.4, 6.0, 1.65, 4.0, 5.7, [3.0, 1.0]],
+];
+function _scr_find(id, i = 0) =
+    i >= len(SCR_REGISTRY)
+        ? assert(false, str("screw registry: unknown size \"", id,
+                            "\" — the catalog knows m2, m2.5 and m3")) undef
+        : SCR_REGISTRY[i][0] == id ? SCR_REGISTRY[i] : _scr_find(id, i + 1);
+function scr_nominal(id)  = _scr_find(id)[1];
+function scr_pilot(id)    = _scr_find(id)[2];
+function scr_clear(id)    = _scr_find(id)[3];
+function scr_pan_d(id)    = _scr_find(id)[4];
+function scr_pan_h(id)    = _scr_find(id)[5];
+function scr_flat_d(id)   = _scr_find(id)[6];
+function scr_flat_h(id)   = _scr_find(id)[7];
+function scr_insert_d(id) = _scr_find(id)[8];
+function scr_insert_h(id) = _scr_find(id)[9];
+function scr_oring_id(id) = _scr_find(id)[10][0];
+function scr_oring_cs(id) = _scr_find(id)[10][1];
+// the thinnest post that carries a self-tapped pilot: 1.5 mm of wall each
+// side of the pilot (the catalog's Ø5 post around the Ø1.6 M2 pilot has 1.7)
+function scr_post_min(id) = scr_pilot(id) + 3.0;
+
+// ---------------------------------------------------------------------------
+//  O-ring head seal — the gland that makes a lid screw stop being a leak.
+//  Every sealed Canary puts its corner screws INSIDE the gasket line (the
+//  posts stand in the cavity corners), so water on the show face runs down
+//  the screw thread onto the post top and into the cavity. A gasket
+//  cannot fix that; a ring under the head can. This cuts a flat-floored
+//  gland around the through-hole: a standard O-ring (ID = shank, section
+//  cs) sits in it and the head squeezes it ~25 % — the standard face-seal
+//  squeeze — against the floor. The gland is sized so the ring's OD is
+//  captured (radial constraint) and the head still clears the gland wall.
+//  Use PAN heads with it (a flat head's cone would push the ring out).
+//  z0 = show face; cuts DOWN into a plate of thickness t.
+//    cs    — ring section;  id_r — ring inner diameter
+//    head  — the screw head's Ø (asserted to cover ≥ 85 % of the section)
+// ---------------------------------------------------------------------------
+function oring_gland_d(id_r, cs)  = id_r + 2*cs + 0.3;     // ring OD + radial room
+function oring_gland_h(cs)        = 0.75*cs;               // 25 % squeeze
+module cb_oring_cut(x, y, t, d_screw, id_r, cs, head) {
+    gd = oring_gland_d(id_r, cs); gh = oring_gland_h(cs);
+    assert(head >= id_r + 2*cs*0.85,
+           str("cb_oring_cut: a ", head, " mm head covers under 85 % of a ",
+               id_r, "x", cs, " O-ring's section — use a larger head or a smaller ring"));
+    assert(gh + 0.8 <= t, "cb_oring_cut: the plate is too thin to keep a floor under the gland");
+    translate([x, y, -0.1])      cylinder(d = d_screw, h = t + 0.2);
+    translate([x, y, t - gh])    cylinder(d = gd,      h = gh + 0.1);
+}
+
+// ---------------------------------------------------------------------------
+//  Weep hole — a sealed box that breathes still condenses, and the water has
+//  to leave. Ø2.0 is the catalog's weep: small enough that driven rain does
+//  not enter against the air cushion behind it, large enough that a drop
+//  actually leaves through 3-5 mm of wall (the doorbell's first Ø1.5 was a
+//  capillary that held its water — and was blind besides). Cut it at the
+//  cavity's LOWEST point in the MOUNTED orientation, angled 30° downward
+//  and outward so a drip has a path and a splash does not. Subtract from
+//  the shell. Axis: the hole leaves through a wall whose outward normal is
+//  `dir` ("+x","-x","+y","-y") or through the floor ("-z"); (x, y, z) is
+//  the point on the cavity face where it starts.
+// ---------------------------------------------------------------------------
+function weep_d() = 2.0;
+module weep_cut(x, y, z, dir, wall, d = weep_d(), tilt = 30) {
+    L = wall + 2 + (wall + 2)*tan(tilt);
+    rot = dir == "+x" ? [0, 90 + tilt, 0] : dir == "-x" ? [0, -90 - tilt, 0]
+        : dir == "+y" ? [-90 - tilt, 0, 0] : dir == "-y" ? [90 + tilt, 0, 0]
+        : dir == "-z" ? [180, 0, 0]
+        : assert(false, "weep_cut: dir is one of +x -x +y -y -z") [0, 0, 0];
+    translate([x, y, z]) rotate(rot) translate([0, 0, -1]) cylinder(d = d, h = L);
+}
+
+// ---------------------------------------------------------------------------
+//  Port hood — an eyebrow over a wall opening. A connector in a wall that
+//  faces sideways or up takes rain straight in; a solid awning standing
+//  proud of the wall turns a stream into a drip that falls clear of the
+//  plug. The section is a wedge whose UNDERSIDE rises at 45° from the wall
+//  (self-supporting when the wall prints upright — a flat-bottomed eyebrow
+//  is a bridge to nowhere) and whose top slopes back down toward the tip
+//  so water leaves at the drip edge, not at the wall. Optional cheeks (side
+//  plates, 45°-chamfered underneath for the same reason) shed sideways
+//  splash. ADD to the shell, in the wall's own frame: the opening is
+//  centered at the origin, +y is up, +z is OUT of the wall.
+//    w, h  — the opening;  reach — how far the drip edge stands off the wall
+//    drop  — how far below the opening's top the cheeks come down (0 = none)
+// ---------------------------------------------------------------------------
+module port_hood(w, h, reach, drop = 0, embed = 0.5) {
+    assert(reach >= 2.0, "port_hood: a hood shorter than 2 mm sheds nothing");
+    assert(embed > 0, "port_hood: the root must embed into the wall — a shared face is not a join");
+    W   = w + 2*1.6 + 1.0;          // 0.5 side clearance to the opening + a cheek each side
+    top = h/2 + 0.5;                // the awning's root clears the opening's top edge
+    s   = reach/2;                  // top-surface fall from the wall to the drip edge (~27°)
+    // awning: root block buried `embed` into the wall, then wall/low -> tip
+    // (45° underside) -> wall/high (top sloping outward)
+    translate([-W/2, 0, 0]) rotate([90, 0, 90]) linear_extrude(W)
+        polygon([[top, -embed], [top, 0], [top + reach, reach],
+                 [top + reach + s, 0], [top + reach + s, -embed]]);
+    // cheeks: a plate each side, 45° under-chamfer so the first layer has a root
+    if (drop > 0) for (sx = [-1, 1]) {
+        d = max(drop, reach + 0.5);
+        translate([sx*(W/2 - 0.8) - 0.8, 0, 0]) rotate([90, 0, 90]) linear_extrude(1.6)
+            polygon([[top - d, -embed], [top - d, 0], [top - d + reach, reach],
+                     [top + reach, reach], [top + reach + s, 0], [top + reach + s, -embed]]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Wall rib — a vertical stiffener fused to the inside of a shell wall.
+//  A 2 mm PETG wall longer than ~60 mm oil-cans under a thumb and rings
+//  when dropped; a rib the height of the cavity every 25-30 mm takes the
+//  panel's first bending mode out for a few tenths of a gram. Triangular
+//  in section toward the cavity (a 45° gusset from the floor) so it prints
+//  without support and does not become a component keep-out at board
+//  height. ADD inside the cavity, in the wall's frame: the rib stands on
+//  the floor (z = 0) against a wall whose inner face is the plane y = 0
+//  with the cavity toward -y.
+//    h — rib height (the cavity height, or less to stay under a board)
+//    w — rib width along the wall;  reach — how far it projects at the root
+// ---------------------------------------------------------------------------
+module wall_rib(h, w = 1.6, reach = 2.0) {
+    assert(w >= core_min_wall(), "wall_rib: rib width below the structural floor");
+    translate([-w/2, 0, 0]) rotate([90, 0, 90])
+        linear_extrude(w) polygon([[0, 0], [-reach, 0], [0, h]]);   // wedge: full reach at the floor, zero at the top
+}
+
+// ---------------------------------------------------------------------------
 //  Self-check — geometric identities the modules above promise. Call once
 //  from an adopter (the fit coupon does); `use<>` does not run top-level
 //  statements, so a bare `use` cannot run these for you.
@@ -173,5 +323,18 @@ module core_selfcheck() {
            "core: a sliding fit must be looser than a press fit");
     assert(core_tol_hole() > core_tol_slide(),
            "core: a clearance hole must be looser than a sliding fit");
+    // the screw registry: the M2 row IS the catalog's print-validated trio
+    assert(scr_pilot("m2") == 1.6 && scr_flat_d("m2") == 4.0 && scr_flat_h("m2") == 1.2,
+           "core: the M2 row must stay the WAP's validated 1.6 / 4.0 / 1.2 — every released mesh reads it");
+    assert(scr_pan_d("m2") == 4.0 && scr_pan_h("m2") == 2.0,
+           "core: the M2 pan seat must stay the Vision's validated 4.0 / 2.0");
+    for (r = SCR_REGISTRY) {
+        assert(len(r) == 11, str("core: screw record \"", r[0], "\" malformed"));
+        assert(r[2] < r[1] && r[1] < r[3], str("core: \"", r[0], "\": pilot < nominal < clearance, or the screw either strips or jams"));
+        assert(r[8] > r[1] && r[4] > r[3] && r[6] > r[3],
+               str("core: \"", r[0], "\": the insert bore and both heads must pass the screw"));
+        assert(abs(r[2] - 0.8*r[1]) < 0.11, str("core: \"", r[0], "\": self-tap pilot is 0.8 x nominal"));
+    }
+    assert(oring_gland_h(1.0) == 0.75, "core: the O-ring gland squeezes 25 %");
     echo("canary_core_lib: self-check OK");
 }

@@ -12,13 +12,24 @@
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. The DIN
 //     clip is a printed spring — PETG minimum, verify engagement on your rail.
+//
+//  2026-09-03 assembly review: the cover's four corner posts stood 2.7 mm
+//  INSIDE the Pi's footprint (fused into its standoffs, through the board's
+//  plane) — the board could not go in. The cover now screws down the Pi's own
+//  hole grid, the standard Pi-case stack: M2.5 screws through the cover into
+//  female standoffs (11 mm bare, 16 mm with a HAT) seated in the tray's
+//  standoffs. The DIN clip is its own part (part="clip"): integral, it hung
+//  9 mm under the floor and printed in neither orientation; it screws to the
+//  floor with two M3s and prints rail-side down. Its lands now ride the
+//  rail's flange FACES (they stood outboard of the rail and bore on nothing),
+//  and the port faces open from the standoff line, not 0.5 mm off the floor.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // beam-strain arithmetic — the DIN leaf is a snap fit
 
 /* [What to render] */
-part = "all";        // ["tray","cover","all"]
+part = "all";        // ["tray","cover","clip","all"]
 
 /* [Board] — Raspberry Pi 5 */
 pi_l = 85.0;         // X
@@ -32,13 +43,15 @@ standoff_h = 6.0;    // clearance under the board (PoE HAT pins / SD access)
 hat_h = 22.0;        // headroom above the PCB (HAT/M.2 + fan)
 
 /* [Shell] */
-wall_t = 2.0;  floor_t = 2.5;  lid_t = 2.0;  corner_r = 3.0;   // wall_t: catalog default shell — core_wall(), canary_core_lib
+wall_t = 2.0;  floor_t = 3.0;  lid_t = 2.0;  corner_r = 3.0;   // wall_t: catalog default shell — core_wall(), canary_core_lib
+                                                                // floor 3.0: the clip screws' cone seats leave a 1.35 web
 board_clear = 1.0;
 tol_slide = 0.20;  tol_hole = 0.30;   // catalog defaults — core_tol_*(), canary_core_lib
 screw_d = 2.2;       // M2.5 self-tap into the standoffs
 screw_head_d = 5.0;
-lid_screw_d = 2.6;   // M3 self-tap into corner posts
-post_d = 7.0;
+lid_screw_d = 2.8;   // M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into F-F
+                     // standoffs (no corner posts — they stood inside the Pi footprint)
+clip_screw_d = 3.4;  // M3 clearance through the floor into the clip's lands (self-tap 2.6 there)
 lid_edge = 0.8;
 
 /* [DIN rail] — 35 mm top-hat (EN 50022) */
@@ -60,6 +73,7 @@ inner_w = pi_w + 2*board_clear;
 out_l = inner_l + 2*wall_t;
 out_w = inner_w + 2*wall_t;
 tray_h = floor_t + standoff_h + pcb_t + 6;     // tray walls stop above the PCB
+clip_screws = [[-6.5, 23.5], [6.5, 23.5], [-6.5, -23.5], [6.5, -23.5]];   // M3s, floor -> clip lands (between the vent slots)
 total_h = floor_t + standoff_h + pcb_t + hat_h + lid_t;
 echo(str("Canary hub (Pi 5, DIN) v0.1-dev — ", out_l, " x ", out_w, " x ", total_h,
          " mm  (IN DEVELOPMENT)"));
@@ -82,7 +96,10 @@ function holes() = [
 module din_clip() {
     cw  = 42;                                   // clip block width along the rail
     gap = 1.6;                                  // land face -> lip top: clears 1.3 mm flange metal
-    hz  = -6 - gap - 1.6;                       // hook plates' bottom z
+    lh  = 9.5;                                  // land height: the TS35 rail's 7.5 mm crown stands
+                                                // between the lands toward the tray — 6 mm of land
+                                                // put it 1.5 mm into the floor
+    hz  = -lh - gap - 1.6;                      // hook plates' bottom z
     // The leaf is a printed spring, so the snap doctrine applies: beam
     // arithmetic from canary_snap_lib, CYCLE budget (a rail latch is worked
     // on every install/remove). Real numbers: 1.8 mm arm flexing 1.0 mm of
@@ -95,9 +112,14 @@ module din_clip() {
                " % exceeds the ", round(snap_budget_cycle()*1000)/10,
                " % cycle budget — lengthen or thin the arm; do not deepen the hook"));
     translate([-cw/2, 0, 0]) {
-        // riser lands OUTSIDE the rail span — the rail seats between them
-        translate([0,  din_w/2 + din_t, -6]) cube([cw, 9, 6.01]);
-        translate([0, -din_w/2 - din_t - 9, -6]) cube([cw, 9, 6.01]);
+        // riser lands: they ride the rail's flange FACES (from 4 mm inboard of each
+        // flange edge outward) — outboard only, they bore on nothing and the clip
+        // had ~4.6 mm of play toward the panel
+        translate([0,  din_w/2 - 4, -lh]) cube([cw, 4 + din_t + 9, lh + 0.01]);
+        translate([0, -din_w/2 - din_t - 9, -lh]) cube([cw, 4 + din_t + 9, lh + 0.01]);
+        // bridges tying the two lands into ONE part across the rail channel, at
+        // both ends, in the 1.5 mm above the crown (the tray floor used to do this)
+        for (x = [0, cw - 3]) translate([x, -din_w/2 - din_t - 9, -1.5]) cube([3, din_w + 2*din_t + 18, 1.51]);
         // fixed hook, full width, over the TOP flange: drop plate + inward lip
         translate([0, din_w/2 + din_t, hz]) cube([cw, 1.8, gap + 3.21]);
         translate([0, din_w/2 - din_lip, hz]) cube([cw, din_lip + din_t + 1.8, 1.6]);
@@ -105,7 +127,18 @@ module din_clip() {
         translate([0, -din_w/2 - din_t - 5, hz]) cube([5, 5, gap + 3.21]);          // root (ties to the land)
         translate([5 - 0.01, -din_w/2 - 2.4, hz]) cube([cw - 5, 1.8, 1.6]);         // leaf arm
         translate([cw*0.55, -din_w/2 - 2.0, hz]) cube([8, din_lip + 2.0, 1.6]);     // hook behind the flange
+        // 45° lead-in on the hook's flange-facing edge: the strain claim assumes a cam
+        translate([cw*0.55, -din_w/2 - 2.0, hz]) rotate([0, 0, 0])
+            hull() { cube([8, 0.01, 1.6]); translate([0, -1.0, 0]) cube([8, 0.01, 0.01]); }
         translate([cw - 4, -din_w/2 - 7, hz]) cube([4, 6.5, 1.6]);                  // release tab
+    }
+}
+// the clip as a PART: rail side down on the bed (lips and leaf on the plate,
+// lands on top), M3 self-tap pilots up into the lands
+module clip() {
+    difference() {
+        rotate([180, 0, 0]) din_clip();
+        for (c = clip_screws) translate([c[0], c[1], 9.5 - 6.1]) cylinder(d = 2.6, h = 7);
     }
 }
 
@@ -114,31 +147,26 @@ module tray() {
         difference() {
             rrect(out_l, out_w, corner_r, tray_h);
             translate([0, 0, floor_t]) rrect(inner_l, inner_w, max(0.1, corner_r - wall_t), tray_h);
-            // port faces fully open above the standoff line on both short walls
-            for (s = [1, -1]) translate([s*(inner_l/2 + wall_t/2), 0, floor_t + standoff_h])
+            // port faces fully open ABOVE the standoff line on both short walls
+            // (a centered cube reached 0.55 mm off the floor and notched the floor edge)
+            for (s = [1, -1]) translate([s*(inner_l/2 + wall_t/2), 0, floor_t + standoff_h + tray_h/2])
                 cube([wall_t*2, inner_w - 6, tray_h], center = true);
             // USB/eth face also open on one long wall (Pi 5 ports are on one long edge)
-            translate([0, -(inner_w/2 + wall_t/2), floor_t + standoff_h])
+            translate([0, -(inner_w/2 + wall_t/2), floor_t + standoff_h + tray_h/2])
                 cube([inner_l - 10, wall_t*2, tray_h], center = true);
+            // clip screws through the floor: 90° cone seats for M3 flat heads (canary_core_lib)
+            if (din) for (c = clip_screws) cs_cone90_cut(c[0], c[1], floor_t, clip_screw_d, 1.65);
             // floor vent slots
             for (x = [-inner_l/2 + 8 : vent_slot_p : inner_l/2 - 8])
                 translate([x, 0, -0.1]) linear_extrude(floor_t + 0.2)
                     rrect2d(vent_slot_w, inner_w - 16, 1);
         }
-        // Pi standoffs (M2.5 self-tap)
+        // Pi standoffs (M2.5 self-tap), Ø6 — inside the Pi 5's Ø6.2 keep-out ring
         for (h = holes()) translate([h[0], h[1], floor_t])
             difference() {
-                cylinder(d = 7, h = standoff_h);
+                cylinder(d = 6, h = standoff_h);
                 translate([0, 0, 1]) cylinder(d = screw_d, h = standoff_h + 1);
             }
-        // cover posts at the corners
-        for (sx = [1, -1], sy = [1, -1])
-            translate([sx*(inner_l/2 - post_d/2 - 0.2), sy*(inner_w/2 - post_d/2 - 0.2), floor_t])
-                difference() {
-                    cylinder(d = post_d, h = tray_h - floor_t);
-                    translate([0, 0, 2]) cylinder(d = lid_screw_d, h = tray_h);
-                }
-        if (din) din_clip();
     }
 }
 
@@ -172,23 +200,25 @@ module cover() {
                     cube([6, inner_w - 6, 30], center = true);
             translate([0, -(out_w/2 + 2), total_h - 26 + 15])
                 cube([inner_l - 10, 6, 30], center = true);
-            // lid screw tubes' holes
-            for (sx = [1, -1], sy = [1, -1])
-                translate([sx*(inner_l/2 - post_d/2 - 0.2), sy*(inner_w/2 - post_d/2 - 0.2), -0.1]) {
-                    cylinder(d = lid_screw_d + 2*tol_hole, h = lid_t + ch + 1);
-                    translate([0, 0, 0.1]) cylinder(d1 = screw_head_d + 1, d2 = lid_screw_d + 2*tol_hole, h = 1.2);
-                }
+            // cover screws on the Pi's hole grid: through-holes + flat pan-head seats
+            // (a cone under a pan head bears on its rim — canary_core_lib)
+            // (the cover is modeled print-side down: z = 0 is the OUTER face, so
+            // the seat is cut from that face — cut from z = lid_t it sat under
+            // the tubes' roots and set them adrift)
+            for (h = holes()) translate([h[0], h[1], lid_t]) mirror([0, 0, 1])
+                cb_flat_cut(0, 0, lid_t, lid_screw_d, screw_head_d + 0.6, 1.2);
         }
-        // internal screw tubes guiding the long M3s down to the posts
-        for (sx = [1, -1], sy = [1, -1])
-            translate([sx*(inner_l/2 - post_d/2 - 0.2), sy*(inner_w/2 - post_d/2 - 0.2), lid_t - 0.01])
+        // screw tubes guiding the long M2.5s down to the standoffs on the Pi grid
+        for (h = holes())
+            translate([h[0], h[1], lid_t - 0.01])
                 difference() {
-                    cylinder(d = lid_screw_d + 2*tol_hole + 2.4, h = ch - 2);
-                    translate([0, 0, -1]) cylinder(d = lid_screw_d + 2*tol_hole, h = ch + 2);
+                    cylinder(d = lid_screw_d + 2.4, h = ch - 2);
+                    translate([0, 0, -1]) cylinder(d = lid_screw_d, h = ch + 2);
                 }
     }
 }
 
 if      (part == "tray")  tray();
 else if (part == "cover") cover();
-else { tray(); translate([out_l + 20, 0, 0]) cover(); }
+else if (part == "clip")  { assert(din, "the clip needs din=true"); clip(); }
+else { tray(); translate([out_l + 20, 0, 0]) cover(); if (din) translate([0, -(out_w + 30), 0]) clip(); }

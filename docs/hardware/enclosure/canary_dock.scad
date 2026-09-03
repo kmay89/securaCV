@@ -46,37 +46,38 @@ $fa = 3; $fs = 0.4;
 
 pocket_d = variant == "sense" ? pocket_sense : pocket_bare;
 bw = n_bays * bay_pitch + 10;
-bh = board_l * cos(recline) + 14;
+bh = 2 + board_l*cos(recline) + 2;   // bays start 2 above the base; the USB end sits 2 under the top
+front_setback = (bh - 4)*tan(recline);   // the front face leans back with the bays
 echo(str("Canary provisioning dock v0.1-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
 
 // (rrect2d comes from canary_core_lib — the local copy is gone)
 
+// The bays are reclined `recline` from VERTICAL, anchored at the base and open
+// at the top (USB end up), and the block's front face is cut parallel to them.
+// The v0.1 transform extruded the pockets from the top rear, downward and
+// forward against a 49° face: four ~10 mm troughs a board lay flat in.
 module dock() {
     difference() {
-        // wedge block: tall back, low front (bays recline against it)
+        // wedge block: full-depth base slab, then a body whose front leans back
         hull() {
             translate([-bw/2, -base_d/2, 0]) cube([bw, base_d, 4]);
-            translate([-bw/2, base_d/2 - 8, 0]) cube([bw, 8, bh]);
+            translate([-bw/2, -base_d/2 + front_setback, 0]) cube([bw, base_d - front_setback, bh]);
         }
-        // reclined bays
         for (i = [0 : n_bays - 1]) {
             bx = -bw/2 + 5 + bay_pitch/2 + i*bay_pitch;
-            translate([bx, base_d/2 - 4, bh - 2]) rotate([recline + 90, 0, 0]) {
-                // board pocket (open at the top for the USB end)
-                translate([0, 0, -1]) linear_extrude(board_l + 4)
+            // bay pocket: 3 mm of front wall at the base, reclined with the face
+            translate([bx, -base_d/2 + 3 + pocket_d/2 + 2*tan(recline), 2]) rotate([-recline, 0, 0]) {
+                translate([0, 0, -0.01]) linear_extrude(board_l + 6)
                     rrect2d(board_w + 2*tol_slide, pocket_d, 1.5);
-                // thumb cutout at the pocket front
+                // thumb cutout through the front wall at a third of the board's height
                 translate([0, -pocket_d/2, board_l*0.35]) rotate([90, 0, 0])
-                    translate([0, 0, -6]) cylinder(d = thumb_d, h = 12);
+                    translate([0, 0, -1]) cylinder(d = thumb_d, h = 14);
             }
-            // bay number, debossed into the RECLINED front face — the face is a
-            // slope from (y=-base_d/2, z=4) to (y=base_d/2-8, z=bh), so the cut
-            // must sit on that plane (a vertical cut at the base floated ~7 mm
-            // in front of the surface and printed docks had no numbers)
-            translate([bx,
-                       -base_d/2 + (bh*0.35 - 4)*(base_d - 8)/(bh - 4),
-                       bh*0.35])
-                rotate([atan2(bh - 4, base_d - 8), 0, 0])
+            // bay number, debossed into the reclined front face: the face passes
+            // through (y = -base_d/2, z = 4) at 90 - recline from horizontal
+            // (at 0.72 of the height: the thumb cutout owns the lower third)
+            translate([bx, -base_d/2 + (bh*0.72 - 4)*tan(recline), bh*0.72])
+                rotate([90 - recline, 0, 0])
                     translate([0, 0, -label_depth]) linear_extrude(label_depth + 1)
                         text(str(i + 1), size = 7, font = label_font, halign = "center", valign = "center");
         }
@@ -87,5 +88,7 @@ module dock() {
             translate([sx*(bw/2 - 8), sy*(base_d/2 - 6), -0.1]) cylinder(d = 8, h = 0.8);
     }
 }
+assert(-base_d/2 + 3 + pocket_d + 2*tan(recline) + (bh - 2)*tan(recline) < base_d/2 - 8,
+       "a bay's back runs into the cable channel — shallower recline or a deeper base_d");
 
 dock();

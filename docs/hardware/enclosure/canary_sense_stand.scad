@@ -24,7 +24,10 @@ part = "all";        // ["base","ballast_lid","all"]
 /* [Stand] */
 base_d   = 92.0;     // base disc diameter
 base_t   = 12.0;     // base thickness
-stalk_h  = 55.0;     // stalk height to the hinge axis region
+stalk_h  = 70.0;     // stalk height to the hinge axis region — 70, not 55: hung plumb (radome
+                     // horizontal, the bedside pose) the case's far edge swings case_reach below
+                     // the axis and needs the base clear; asserted below
+case_reach = 70.0;   // the Sense case's far bottom edge from its hinge axis (out_y/2 + hinge_off + ... = 69.6)
 stalk_d  = 16.0;     // stalk diameter
 stalk_tilt = 12;     // stalk lean (degrees, toward the front)  // [0:2:20]
 
@@ -52,6 +55,8 @@ tol_hole  = 0.30;    // catalog default — core_tol_hole(), canary_core_lib
 $fa = 3; $fs = 0.4;
 
 hinge_hole = hinge_bolt_d + 0.4;
+assert(base_t - 2 + stalk_h*cos(stalk_tilt) + 7.5 >= base_t + case_reach + 2,
+       "the case hung plumb hits the base — raise stalk_h (axis must clear base_t + case_reach + 2)");
 assert(bal_r + bal_d/2 < base_d/2 - 3, "ballast ring exceeds the base — shrink bal_r/bal_d");
 echo(str("Canary Sense bedside stand v0.1-dev — base ", base_d, " mm, head axis at ~",
          base_t - 2 + stalk_h*cos(stalk_tilt) + head_off, " mm  (IN DEVELOPMENT)"));
