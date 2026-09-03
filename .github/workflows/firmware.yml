@@ -417,8 +417,14 @@ jobs:
           # fences the HTTP server's *startup*, not its thousands of handler
           # lines, so a no-WiFi/no-HTTP/no-SD build needs a fencing repair
           # far wider than a CI leg — a declared gap, not an oversight.)
+          # PartitionScheme=huge_app (3 MB app, no OTA): this leg is a
+          # compile/link VALIDITY gate, and FULL (~1.98 MB) cannot fit the
+          # C3 default layout's 1.25 MB app slot. That size reality is
+          # honest and real — a shippable C3 FULL needs a partition/feature
+          # decision that belongs to a release wave, not to this gate — but
+          # "the code is valid for the chip" must not be held hostage to it.
           arduino-cli compile \
-            --fqbn esp32:esp32:XIAO_ESP32C3 \
+            --fqbn esp32:esp32:XIAO_ESP32C3:PartitionScheme=huge_app \
             --libraries firmware/common \
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DHARDWARE_XIAO_ESP32C3" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
