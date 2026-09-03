@@ -39,7 +39,7 @@ survived only if a majority could not. The counts:
 | Landed in the September PRs (first pass) | 78 |
 | Open list items landed in the same PR before merge | 34 |
 | Landed in the follow-up wave (PR #1635, mirror #9, website #184) | 13 in full, 2 in part |
-| Still open | 15 in full, 17 in part |
+| Still open | 15 in full, 6 in part |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -102,7 +102,7 @@ waves 2 and 3 in §4 are open) and 30 (the platform pin lives once, as a pure
 refactor; the decision about the version spread is documented in
 `firmware/PLATFORMS.md` and still open). Each row below says what actually
 shipped and where it deviates from the row's original proposal. What is
-left — 15 rows in full and 17 in part — is hardware-bound
+left — 15 rows in full and 6 in part — is hardware-bound
 (items 2, 22 and the §5 bench steps), Apple-toolchain-bound (5, 6, 13), a
 maintainer decision (30's version spread, 42, 51), or a larger refactor
 (12, 26, 34, 35, 38).
