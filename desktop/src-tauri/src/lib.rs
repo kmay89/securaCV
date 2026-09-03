@@ -542,6 +542,9 @@ async fn witness_discover(bases: Vec<String>) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
         .timeout(std::time::Duration::from_secs(2))
+        // Same local-first transport policy as fleet.rs's device calls: the
+        // URL is gated, the connection needs .no_proxy() too.
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     for base in &bases {
