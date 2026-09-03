@@ -188,6 +188,20 @@ SCRIPT_RE = re.compile(r"<script\b([^>]*)>([\s\S]*?)</script\s*>", re.IGNORECASE
 STYLE_RE = re.compile(r"<style\b([^>]*)>([\s\S]*?)</style\s*>", re.IGNORECASE)
 TAG_RE = re.compile(r"<[a-zA-Z][^>]*>")
 INLINE_ATTR_RE = re.compile(r"""\s(style|on[a-z]+)\s*=""", re.IGNORECASE)
+
+
+def strip_all(pattern, text):
+    """Remove every match and keep going until nothing changes.
+
+    One pass is not a sanitizer: "<!<!---->--" loses one comment and keeps
+    "<!--", and a nested "<scr<script></script>ipt>" re-forms a script tag.
+    The census below must not be fooled by either, so it strips to a fixed
+    point (CodeQL incomplete-multi-character-sanitization)."""
+    while True:
+        stripped = pattern.sub("", text)
+        if stripped == text:
+            return text
+        text = stripped
 CHARSET_RE = re.compile(r"^(?P<indent>[ \t]*)<meta charset=[^>]*>[ \t]*\n", re.MULTILINE)
 CSP_META_RE = re.compile(
     r"""^[ \t]*<meta\s+http-equiv=["']Content-Security-Policy["'][^>]*>[ \t]*\n""",
@@ -248,7 +262,7 @@ BUNDLE_RE = re.compile(r"canary-(?:display-[a-z0-9]+|vision-core|wap-audio)\.js\
 
 
 def references_wasm(page):
-    html = COMMENT_RE.sub("", (LAB / page).read_bytes().decode("utf-8"))
+    html = strip_all(COMMENT_RE, (LAB / page).read_bytes().decode("utf-8"))
     if BUNDLE_RE.search(html):
         return True
     return any(
@@ -277,7 +291,7 @@ IFRAME_JS_RE = re.compile(r"""\bh\(\s*["']iframe["']|createElement\(\s*["']ifram
 
 
 def frames_pages(page):
-    html = COMMENT_RE.sub("", (LAB / page).read_bytes().decode("utf-8"))
+    html = strip_all(COMMENT_RE, (LAB / page).read_bytes().decode("utf-8"))
     if "<iframe" in html:
         return True
     return any(
@@ -312,9 +326,9 @@ def scan_inline(page, html):
     scripts = [m.group(2) for m in SCRIPT_RE.finditer(html) if not re.search(r"\ssrc\s*=", m.group(1))]
     styles = [m.group(2) for m in STYLE_RE.finditer(html)]
     # Attributes: look only at tags, outside comments and outside script/style bodies.
-    markup = COMMENT_RE.sub("", html)
-    markup = SCRIPT_RE.sub("", markup)
-    markup = STYLE_RE.sub("", markup)
+    markup = strip_all(COMMENT_RE, html)
+    markup = strip_all(SCRIPT_RE, markup)
+    markup = strip_all(STYLE_RE, markup)
     bad_attrs = []
     for tag in TAG_RE.findall(markup):
         for attr in INLINE_ATTR_RE.findall(tag):
