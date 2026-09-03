@@ -45,10 +45,10 @@ bez_lip = 2.5;       // bezel overlap onto the glass edge
 /* [USB / terminals] — positions along the BOTTOM wall, from panel center */
 usb_dx   = 0.0;      // USB-C slot center offset — MEASURE
 usb_w    = 12.0;  usb_h = 6.5;
-term_open = false;   // also open the CAN/RS485 terminal zone (a parting-line
-                     // notch to the rear rim — the back plate closes it)
-term_dx  = -30.0;  term_w = 24.0;  term_h = 8.0;   // term_h = the connector zone's
-                     // height; the notch must clear it (asserted), the plate covers the rest
+term_open = false;   // also open the CAN/RS485 terminal zone (a parting-line notch to the rear rim; the back plate closes it)
+// term_h is the connector zone's height: the notch must clear it (asserted
+// below), and the back plate covers everything above it
+term_dx  = -30.0;  term_w = 24.0;  term_h = 8.0;
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog trio — canary_core_lib core_tol_*()

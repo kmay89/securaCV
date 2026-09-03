@@ -50,9 +50,9 @@ hole_off_y = 3.5;
 pcb_t = 1.4;
 standoff_h = 6.0;    // clearance under the board (PoE HAT pins / SD access)
 hat_h = 22.0;        // headroom above the PCB (HAT/M.2 + fan)
-standoff_ff = 11.0;  // the F-F brass standoffs on the Pi's hole grid: 11 bare,
-                     // 16 with a HAT. The cover's guide tubes SEAT on their
-                     // tops — this number is the cover's Z datum, so measure it
+// The cover's guide tubes SEAT on the F-F standoff tops, making this number
+// the cover's Z datum — measure the standoffs actually fitted.
+standoff_ff = 11.0;  // F-F brass standoffs on the Pi's hole grid: 11 bare, 16 with a HAT
 
 /* [Shell] */
 wall_t = 2.0;  floor_t = 3.0;  lid_t = 2.0;  corner_r = 3.0;   // wall_t: catalog default shell — core_wall(), canary_core_lib

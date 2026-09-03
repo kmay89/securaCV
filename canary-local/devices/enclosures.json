@@ -5565,7 +5565,7 @@
       {
        "name": "standoff_ff",
        "default": "11.0",
-       "comment": "the F-F brass standoffs on the Pi's hole grid: 11 bare,"
+       "comment": "F-F brass standoffs on the Pi's hole grid: 11 bare, 16 with a HAT"
       }
      ]
     },
@@ -6666,7 +6666,7 @@
       {
        "name": "term_open",
        "default": "false",
-       "comment": "also open the CAN/RS485 terminal zone (a parting-line"
+       "comment": "also open the CAN/RS485 terminal zone (a parting-line notch to the rear rim; the back plate closes it)"
       }
      ]
     },

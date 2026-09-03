@@ -477,7 +477,7 @@
     {
      "id": "term_open",
      "type": "bool",
-     "label": "also open the CAN/RS485 terminal zone (a parting-line",
+     "label": "also open the CAN/RS485 terminal zone (a parting-line notch to the rear rim; the back plate closes it)",
      "consequence": "",
      "audience": "user",
      "default": false
