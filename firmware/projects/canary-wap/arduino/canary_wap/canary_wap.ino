@@ -6650,6 +6650,20 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   // until this Canary has met a believable clock; see birth_day.h.
   self.born_day   = g_device.born_day;
   self.born_exact = g_device.born_exact ? 1 : 0;
+  // Where this device stands with its hub — the same derivation the Help
+  // Desk QR trusts (handle_help_qr): no broker configured means standalone
+  // (NONE — the state that needs a person), a configured broker splits on
+  // the live link. The WAP is the device family the hub story exists FOR,
+  // and until this line its self row never said — so the app's hub
+  // guidance could light for a display and never for a WAP.
+  {
+    csi_mqtt::Config mcfg;
+    if (csi_mqtt::config_load(&mcfg) && mcfg.enabled && mcfg.host[0] != '\0') {
+      self.hub = csi_mqtt::connected() ? FSR_HUB_OK : FSR_HUB_DOWN;
+    } else {
+      self.hub = FSR_HUB_NONE;
+    }
+  }
   // Sized by the shared macro for the WORST case: a stored 32-byte name of
   // all-escaping bytes (the rename path bounds length, not content) expands
   // 6x and is written twice — a smaller fixed buffer would truncate that
