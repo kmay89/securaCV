@@ -20,10 +20,13 @@ Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
 **Honest about the one thing it fetches.**
 
-- The network claim is now exact: the Lab talks only to your own devices,
-  and the one thing it fetches on its own is its signed update manifest
-  from GitHub (15 s after launch, then every 6 h). The old "nothing phones
-  home" line predated the self-updater and overclaimed.
+- The network claim is now exact, on every surface: the Lab talks only to
+  your own devices, and the one thing it fetches on its own is its update
+  manifest from GitHub (15 s after launch, then every 6 h) — every update
+  it offers is signature-verified before install. The old "nothing phones
+  home" line predated the self-updater and overclaimed; the DMG
+  installer's background image carried the same words and is regenerated
+  without them.
 - The main window's grant list no longer includes updater, dialog, or
   process: the self-update flow (manifest check, native confirm dialog,
   relaunch) runs entirely from Rust, so those plugins are out of an

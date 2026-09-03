@@ -44,7 +44,7 @@
     ],
     "category": "Utility",
     "shortDescription": "The local-first Canary workshop.",
-    "longDescription": "Meet your Canary before you meet your Canary. The SecuraCV Lab runs the real firmware, live 3D device cards, and symptom-first fix-it flows entirely on your own machine. Local-first: it talks only to your own devices, and the one thing it fetches on its own is its signed update manifest.",
+    "longDescription": "Meet your Canary before you meet your Canary. The SecuraCV Lab runs the real firmware, live 3D device cards, and symptom-first fix-it flows entirely on your own machine. Local-first: it talks only to your own devices, and the one thing it fetches on its own is its update manifest, and every update it offers is signature-verified before install.",
     "linux": {
       "deb": {
         "depends": [
