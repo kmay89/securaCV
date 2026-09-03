@@ -31,6 +31,7 @@
 #include "canary_mark.h"
 #include "character.h"
 #include "look_state.h"
+#include "settings_ui.h"
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 #include "lantern.h"
 #include "hallway.h"
@@ -96,6 +97,14 @@ lv_obj_t* s_chip[ROWS] = {nullptr};
 lv_obj_t* s_name[ROWS] = {nullptr};
 lv_obj_t* s_more = nullptr;        // "+N more"
 lv_obj_t* s_glance = nullptr;      // count + link honesty
+#if defined(FEATURE_TOUCH) && FEATURE_TOUCH
+// The settings doorway, top-right by day (touch glass only). This face used
+// to have NO touch path to the settings panel at all — the Touch-1.69 and
+// the AMOLED carried the whole panel and no way to open it.
+lv_obj_t* s_gear = nullptr;
+constexpr int GEAR_W = BIG ? 150 : 60;   // the hit zone: a thumb, not a cursor
+constexpr int GEAR_H = BIG ? 56 : 40;
+#endif
 
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
 // ── The lamp's glass ──
@@ -253,6 +262,17 @@ void portrait_ui_create() {
   lv_obj_align(s_glance, LV_ALIGN_BOTTOM_MID, 0, -14);
   lv_label_set_text(s_glance, "");
 
+#if defined(FEATURE_TOUCH) && FEATURE_TOUCH
+  // ── The settings doorway ──
+  // A quiet gear in the top-right corner, clear of the bird (108 px wide,
+  // centered). The big glass spells it out; the 240 stick keeps the glyph.
+  // Day only — update() hides it after dark, when the glass is a lamp.
+  s_gear = mk_label(scr, BIG ? font_caption() : font_label(), col_faint());
+  lv_label_set_text(s_gear, BIG ? LV_SYMBOL_SETTINGS " settings"
+                                : LV_SYMBOL_SETTINGS);
+  lv_obj_align(s_gear, LV_ALIGN_TOP_RIGHT, BIG ? -16 : -12, BIG ? 14 : 12);
+#endif
+
 #if defined(FEATURE_LANTERN) && FEATURE_LANTERN
   // ── The lantern overlay ──
   // Created last so it covers the face: on these small boards the screen IS
@@ -295,6 +315,16 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
   const bool night = st.night;
   const Sev worst = fleet.worst(now);
   const int count = fleet.count();
+
+#if defined(FEATURE_TOUCH) && FEATURE_TOUCH
+  // The doorway keeps daylight hours: after dark the column is a clock and
+  // a lamp, and a stray tap must stay the peek it already was.
+  if (s_gear) {
+    if (night) lv_obj_add_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
+    else       lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_color(s_gear, col_faint(), 0);
+  }
+#endif
 
   // The bird wears the mood the engine chose this pass.
   canary_mark_mood(st.bird);
@@ -443,6 +473,21 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
     }
   }
 #endif
+}
+
+bool portrait_ui_handle_tap(int16_t x, int16_t y) {
+#if defined(FEATURE_TOUCH) && FEATURE_TOUCH
+  // The gear corner, day only. The hit zone is deliberately larger than the
+  // glyph — a thumb, not a cursor.
+  if (s_gear && !character_night() && x >= SCR_W - GEAR_W && y <= GEAR_H) {
+    settings_ui_open();
+    return true;
+  }
+#else
+  (void)x;
+  (void)y;
+#endif
+  return false;
 }
 
 void portrait_ui_ack_hold(bool /*active*/) {

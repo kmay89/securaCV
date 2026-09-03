@@ -217,6 +217,34 @@ inline void rotation_map_touch(uint8_t rot, int native_w, int native_h,
   }
 }
 
+// The point to HAND an LVGL 9 pointer device so that LVGL's own indev
+// rotation (lv_display_rotate_point, in NATIVE panel dims: 90° -> (h-1-y, x),
+// 180° -> (w-1-x, h-1-y), 270° -> (y, w-1-x)) returns exactly the logical
+// point the HAL already un-rotated. Its exact inverse — so a tap fed to the
+// settings panel lands where the finger is on every quarter turn, whatever
+// LVGL does to it on the way in. Identity at rotation 0.
+inline void rotation_to_lvgl_indev(uint8_t rot, int native_w, int native_h,
+                                   int lx, int ly, int* out_x, int* out_y) {
+  switch (rot & 3) {
+    case ROT_PORTRAIT:       // LVGL: x' = h-1-y, y' = x  ->  x = y', y = h-1-x'
+      *out_x = ly;
+      *out_y = native_h - 1 - lx;
+      break;
+    case ROT_LANDSCAPE_INV:  // an involution
+      *out_x = native_w - 1 - lx;
+      *out_y = native_h - 1 - ly;
+      break;
+    case ROT_PORTRAIT_INV:   // LVGL: x' = y, y' = w-1-x  ->  x = w-1-y', y = x'
+      *out_x = native_w - 1 - ly;
+      *out_y = lx;
+      break;
+    default:
+      *out_x = lx;
+      *out_y = ly;
+      break;
+  }
+}
+
 // ── Standalone-weather location (host-testable) ──────────────────────────
 
 // The app sends the coarse location as ONE integer so the store can never

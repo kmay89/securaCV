@@ -106,7 +106,8 @@ ORIENT_SRC = test_orientation.cpp
 
 # Display settings geometry (canary/glass_settings.h): the 7"/dash orientation
 # helpers (logical dims, the touch un-rotation round-tripped against the
-# forward render rotation) and the rendered brightness scrim (clamp + the
+# forward render rotation, the LVGL 9 pointer feed inverted against LVGL's
+# own indev rotation) and the rendered brightness scrim (clamp + the
 # monotone opacity curve). Pure inline logic — no LVGL, no board.
 DISPSET_BIN = test_display_settings
 DISPSET_SRC = test_display_settings.cpp
