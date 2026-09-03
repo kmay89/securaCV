@@ -554,8 +554,9 @@ jobs:
           ./build.sh all
       - name: Dist drift check (committed artifacts match this tree's sources)
         run: |
-          # meta.json embeds the checkout sha, which legitimately differs on
-          # a PR merge ref — the drift gate is the code bundles themselves.
+          # meta.json carries a git stamp (the merge-base with origin/main,
+          # see build.sh) that legitimately differs on a PR merge ref and in
+          # this shallow checkout — the drift gate is the code bundles.
           if ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
             echo "── first differing bytes per artifact (diagnosis) ──"
             for f in canary-local/emulator/dist/*.js; do
