@@ -29,10 +29,11 @@ Run:  python3 canary-local/tools/gen_operator.py
 
 import json
 import re
-import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import die, repo_root
+
+REPO = repo_root()
 CLI_RS = REPO / "src/break_glass/cli.rs"
 CORE_RS = REPO / "src/break_glass/core.rs"
 RFC = REPO / "docs/design/vault_operator_ux_v1_1.md"
@@ -48,13 +49,6 @@ def read(path: Path) -> str:
             die(f"source missing: {path.relative_to(REPO)}")
         _CACHE[path] = path.read_text(encoding="utf-8", errors="replace")
     return _CACHE[path]
-
-
-def die(msg: str) -> None:
-    print(f"gen_operator.py: ERROR: {msg}", file=sys.stderr)
-    print("  the Operator's Bench page is drift-gated against the break-glass CLI;"
-          " a source moved.", file=sys.stderr)
-    sys.exit(1)
 
 
 def must(path: Path, needle: str, label: str) -> None:

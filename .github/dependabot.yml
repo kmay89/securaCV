@@ -129,9 +129,24 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  # Shipped desktop Lab UI (desktop-lab/package-lock.json). desktop/ has no
-  # committed package-lock.json, so it has no npm entry here (nothing to audit
-  # or update); add one if a lockfile is ever committed there.
+  # Shipped desktop Flasher (desktop/package-lock.json) and Lab
+  # (desktop-lab/package-lock.json) UIs. Each lockfile pins only
+  # @tauri-apps/cli — the tool that builds the bundle — so a bump here changes
+  # the toolchain the release workflow runs, which is exactly why it should
+  # arrive as a reviewable PR instead of being resolved fresh on the runner
+  # (.github/RELEASE_LESSONS.md, 2026-09-03).
+  - package-ecosystem: "npm"
+    directory: "/desktop"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: "npm"
     directory: "/desktop-lab"
     schedule:

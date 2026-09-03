@@ -27,7 +27,6 @@ import json
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 import cascadio
 import numpy as np
@@ -37,7 +36,9 @@ from trimesh.transformations import rotation_matrix
 from trimesh.visual import TextureVisuals
 from trimesh.visual.material import PBRMaterial
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import repo_root
+
+REPO = repo_root()
 CFG = REPO / "boards" / "boards.config.json"
 VENDOR = REPO / "boards" / "vendor"
 OUT_GLB_DIR = REPO / "canary-local" / "boards"

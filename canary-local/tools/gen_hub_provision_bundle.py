@@ -53,10 +53,11 @@ import argparse
 import hashlib
 import json
 import shutil
-import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import die, repo_root
+
+REPO = repo_root()
 OUT_JSON = REPO / "canary-local/devices/hub_provision_bundle.json"
 
 # Where, on the card's boot partition, the bundle lands. Namespaced under our own
@@ -82,10 +83,6 @@ SOURCES = [
 ]
 
 RUNNER_NAME = "provision.sh"
-
-
-def die(msg: str) -> None:
-    sys.exit(f"gen_hub_provision_bundle.py: {msg}")
 
 
 def sha256_of(path: Path) -> str:

@@ -33,9 +33,10 @@ import re
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-CANARY_LOCAL = HERE.parent
-REPO = CANARY_LOCAL.parent
+from _tooling import die, repo_root
+
+REPO = repo_root()
+CANARY_LOCAL = REPO / "canary-local"
 
 REPO_SLUG = "kmay89/securaCV"
 # Firmware ships in its OWN tagged release, fw-v<train>, and the flasher pins its
@@ -804,11 +805,6 @@ def hatch_kind(product_id: str, provisioning: str) -> str:
     if "vision" in product_id:
         return "vision"
     return provisioning
-
-
-def die(msg: str) -> None:
-    print(f"gen_flash.py: {msg}", file=sys.stderr)
-    raise SystemExit(1)
 
 
 # ── about & legal: parsed, never typed ──────────────────────────────────────

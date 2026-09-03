@@ -47,10 +47,11 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import die, repo_root
+
+REPO = repo_root()
 OUT_JSON = REPO / "canary-local/devices/hub_image.json"
 PINS_JSON = REPO / "canary-local/devices/hub_image_pins.json"
 
@@ -113,11 +114,6 @@ EXCLUDED_BOARDS = [
         "why": "same image as the 4 GB+ Pi 4, but the payload needs the memory — not a supported hub",
     },
 ]
-
-
-def die(msg: str) -> None:
-    """Fail closed and loud: better a red build than a catalog that quietly lies."""
-    sys.exit(f"gen_hub_image.py: {msg}")
 
 
 def load_ha_json() -> dict:
