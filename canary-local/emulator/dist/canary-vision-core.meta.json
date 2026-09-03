@@ -1,6 +1,6 @@
 {
   "flavor": "vision-core",
   "fw_version": "2.4.15",
-  "git": "8982d44a",
+  "git": "a2c58648",
   "source": "firmware/projects/canary-vision"
 }
