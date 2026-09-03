@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "c22a04aaf919d9b33178b9ca792becbcf761d8ca882bd6c7321acaa9a1d367ac",
+      "sha256": "a84917acd5e8e64bf53526f7f7ed2ebfac68b84184f15d2f0bf97097b6b6f919",
       "groups": [
         {
           "name": "What to render",
@@ -443,11 +443,11 @@
             {
               "name": "lid_edge2",
               "type": "number",
-              "default": 0.0,
+              "default": 0.8,
               "min": 0,
               "step": 0.1,
               "max": 1.5,
-              "desc": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover"
+              "desc": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
             },
             {
               "name": "opt_mark",
@@ -1191,7 +1191,7 @@
         }
       },
       "units": {},
-      "sha256": "14bd8ff2a0cabbbdf934ce2bb057ea5303f6f7ac24a586508f72d4c559ceba9c",
+      "sha256": "f7f6fb4c7ea0e74c30d4d736332956f81c24f69fbe6e6d97c9f2314045700f42",
       "groups": [
         {
           "name": "What to render",
@@ -2059,11 +2059,11 @@
             {
               "name": "lid_edge2",
               "type": "number",
-              "default": 0.0,
+              "default": 0.8,
               "min": 0,
               "step": 0.1,
               "max": 1.5,
-              "desc": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover"
+              "desc": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
             },
             {
               "name": "label_text",
@@ -3059,7 +3059,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "185ffaa41f422bcd8dc67e394d0774afe71fd267d0c85c85e1beb2c749691605",
+      "sha256": "854715be4f9e9971fae4bf3786e9f888a8546bf0e85bf9bfcd5ea38847b21f3b",
       "groups": [
         {
           "name": "What to render",
@@ -3752,7 +3752,11 @@
             {
               "name": "lid_edge2",
               "type": "number",
-              "default": 0.0
+              "default": 0.8,
+              "min": 0,
+              "step": 0.1,
+              "max": 1.5,
+              "desc": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
             },
             {
               "name": "opt_mark",

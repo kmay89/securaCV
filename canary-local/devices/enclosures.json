@@ -917,8 +917,8 @@
       },
       {
        "name": "lid_edge2",
-       "default": "0.0",
-       "comment": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]"
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
       },
       {
        "name": "opt_mark",
@@ -2391,8 +2391,8 @@
       },
       {
        "name": "lid_edge2",
-       "default": "0.0",
-       "comment": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]"
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
       },
       {
        "name": "label_text",
@@ -3967,7 +3967,8 @@
       },
       {
        "name": "lid_edge2",
-       "default": "0.0"
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
       },
       {
        "name": "opt_mark",
@@ -5075,6 +5076,16 @@
        "default": "3.0"
       },
       {
+       "name": "lid_edge",
+       "default": "0.8",
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+      },
+      {
+       "name": "lid_edge2",
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+      },
+      {
        "name": "foot_cham",
        "default": "0.5"
       }
@@ -5316,6 +5327,16 @@
      "name": "Shared",
      "note": "",
      "params": [
+      {
+       "name": "lid_edge",
+       "default": "0.8",
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+      },
+      {
+       "name": "lid_edge2",
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+      },
       {
        "name": "opt_mount",
        "default": "true",

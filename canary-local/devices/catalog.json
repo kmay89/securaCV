@@ -399,7 +399,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 41,
+   "engineering_param_count": 43,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1015,7 +1015,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 45,
+   "engineering_param_count": 47,
    "alternatives": [
     "field_case",
     "hammond_chassis"
