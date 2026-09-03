@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>What a listening Canary hears — the Dash's ears · canary.local</title>
   <meta name="description" content="See exactly what the mic-bearing Canary Dash (Waveshare 4.3C) does and does NOT do with sound. This bench runs the real firmware decision core — the adaptive noise floor, the NFPA-72 T3 / UL-2034 T4 alarm cadences, the sensitivity presets, and the opt-in wake-on-sound — ported 1:1 to JavaScript and drift-locked against the firmware header in CI. Play a smoke alarm, a doorbell, or a door close, or run it on your own microphone. Only one loudness number ever crosses the privacy barrier per frame — the audio is averaged to it and erased; nothing is recorded, stored, or sent. A demonstration of how the detector behaves — not a life-safety device." />

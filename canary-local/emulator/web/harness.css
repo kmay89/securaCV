@@ -1,0 +1,9 @@
+/* harness.css — lifted out of emulator/web/harness.html so the page can carry a strict Content-Security-Policy
+   (style-src 'self', no inline <style>; see canary-local/tools/gen_csp.py). */
+body { background: #101014; color: #ddd; font: 14px/1.4 monospace; margin: 20px; }
+#glass { image-rendering: pixelated; background: #000; }
+.round { border-radius: 50%; }
+#row { display: flex; gap: 24px; align-items: flex-start; }
+#serial { width: 640px; height: 480px; overflow-y: scroll; white-space: pre-wrap;
+          background: #05050a; border: 1px solid #333; padding: 8px; font-size: 11px; }
+button { margin: 2px; }

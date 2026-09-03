@@ -222,6 +222,7 @@ jobs:
           node --test canary-local/tests/mode.test.js
           node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
+          node --test canary-local/tests/csp.test.js
       - name: Witness Wall emulator copies in sync (Flasher <-> Lab)
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
@@ -264,6 +265,15 @@ jobs:
         # assert they reproduce. A hatch.json edit that isn't regenerated
         # would ship a Canary with two names, so it fails here first.
         run: node canary-local/tools/hatchery/gen_hatch_swift.mjs --check
+      - name: Lab CSP drift (every page's Content-Security-Policy is generated from one policy table)
+        # tools/gen_csp.py writes the <meta> CSP into every canary-local page
+        # (and the emulator harness) from BASE + SHARED + PAGES, a reason per
+        # source. --check re-derives and names each page whose line disagrees.
+        # It also refuses any inline script, <style> block, style= attribute or
+        # on*= handler the table does not hash, so a page loosened to make an
+        # inline work fails here, before it can ship. tests/csp.test.js mirrors
+        # the rules; the browser probe runs in the wasm job below.
+        run: python3 canary-local/tools/gen_csp.py --check
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -512,6 +522,11 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Boot probe — COMMITTED artifacts (what a bare checkout serves)
         run: node canary-local/tests/boot_probe.mjs
+      - name: CSP probe — every Lab page loads under its policy with zero violations
+        # Opens every canary-local page and the harness per flavor in Chromium
+        # with a securitypolicyviolation listener installed in every frame; a
+        # single violation, page error or console error fails it.
+        run: node canary-local/tests/csp_probe.mjs
       - name: Flash probe — flasher page boots on both branches (serial + no-serial)
         run: node canary-local/tests/flash_probe.mjs
       - name: Workshop probe — the configurator drives the real catalog

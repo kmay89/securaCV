@@ -214,6 +214,17 @@ button:disabled { opacity: 0.35; cursor: default; }
   .cta-row { flex-direction: column; align-items: stretch; max-width: 340px; }
   .cta { justify-content: center; padding: 12px 18px; }
 }
+/* ── hero "jump to the live part" row (vault.html, operator.html) ──
+   Classes, not style= attributes: every Lab page carries a CSP whose
+   style-src has no 'unsafe-inline' (canary-local/tools/gen_csp.py). */
+.jump-row { margin: 14px 0 2px; }
+.jump-btn {
+  display: inline-block; padding: 9px 17px; border: 1px solid var(--canary);
+  border-radius: 12px; color: #151204; background: var(--canary);
+  font-weight: 650; text-decoration: none;
+}
+.jump-btn:hover { text-decoration: none; }
+.jump-hint { color: var(--faint); font-size: 12.5px; margin-left: 8px; }
 
 /* ── enclosure lab ── */
 .enclab .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
