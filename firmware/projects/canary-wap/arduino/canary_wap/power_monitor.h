@@ -130,7 +130,11 @@ namespace power_monitor {
 // CONSTANTS
 // ────────────────────────────────────────────────────────────────────────────
 
-static constexpr uint8_t  ADC_GPIO            = 1;      // GPIO 1 (A0/D0)
+#if defined(HARDWARE_XIAO_ESP32C3)
+static constexpr uint8_t  ADC_GPIO            = 2;      // GPIO 2 (A0/D0 on XIAO ESP32-C3)
+#else
+static constexpr uint8_t  ADC_GPIO            = 1;      // GPIO 1 (A0/D0 on XIAO ESP32-S3)
+#endif
 static constexpr float    DIVIDER_RATIO       = 2.0f;
 static constexpr uint16_t CAPACITY_MAH        = 3000;
 static constexpr uint32_t SAMPLE_INTERVAL_MS  = 1000;
@@ -217,6 +221,20 @@ inline void log_msg(LogLevel lvl, const char* msg, const char* detail = nullptr)
 // ────────────────────────────────────────────────────────────────────────────
 
 inline adc1_channel_t gpio_to_adc1_channel(uint8_t gpio) {
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+  // ESP32-C3: ADC1 spans GPIO 0-4 → channel 0-4 and the legacy enum STOPS
+  // at CHANNEL_4, so the S3 arm below would not even compile on this chip
+  // — the gate is the chip target, not the board name.
+  switch (gpio) {
+    case 0:  return ADC1_CHANNEL_0;
+    case 1:  return ADC1_CHANNEL_1;
+    case 2:  return ADC1_CHANNEL_2;
+    case 3:  return ADC1_CHANNEL_3;
+    case 4:  return ADC1_CHANNEL_4;
+    default: return ADC1_CHANNEL_0;
+  }
+#else
+  // ESP32-S3: ADC1 spans GPIO 1-10 → channel 0-9.
   switch (gpio) {
     case 1:  return ADC1_CHANNEL_0;
     case 2:  return ADC1_CHANNEL_1;
@@ -230,6 +248,7 @@ inline adc1_channel_t gpio_to_adc1_channel(uint8_t gpio) {
     case 10: return ADC1_CHANNEL_9;
     default: return ADC1_CHANNEL_0;
   }
+#endif
 }
 
 // ────────────────────────────────────────────────────────────────────────────
