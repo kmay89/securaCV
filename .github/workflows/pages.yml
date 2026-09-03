@@ -41,6 +41,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - name: "Pages enabled? (one-time fix: Settings → Pages → Source = GitHub Actions)"
         uses: actions/configure-pages@v6
         with:

@@ -23,7 +23,9 @@ permissions:
 # A new push to a PR branch supersedes the in-flight render; main is never
 # canceled (full signal per main commit).
 concurrency:
-  group: enclosure-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: enclosure-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -39,6 +41,9 @@ jobs:
         working-directory: docs/hardware/enclosure
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Web-builder manifest is in sync with the sources
         run: python3 gen_builder_manifest.py --check

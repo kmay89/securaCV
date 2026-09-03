@@ -42,7 +42,9 @@ env:
 # for the previous head, so review-fix pushes don't queue duplicate full
 # builds. Pushes to main are never canceled (full signal per main commit).
 concurrency:
-  group: rust-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: rust-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # These jobs only read the repo; no write scopes needed.
@@ -283,6 +285,9 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version-file: pyproject.toml
     # The public "Implementation status" grid in docs/witness-kernel.html is a
     # computed artifact: tools/gen_kernel_status.py inspects the source and
     # stamps each tile done/wip/planned. Re-run it and fail if the committed

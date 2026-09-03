@@ -28,7 +28,9 @@ env:
   CARGO_TERM_COLOR: always
 
 concurrency:
-  group: detect-eval-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: detect-eval-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Read-only; the only output is an uploaded report artifact.

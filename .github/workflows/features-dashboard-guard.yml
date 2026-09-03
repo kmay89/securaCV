@@ -20,10 +20,11 @@ permissions:
   contents: read
 
 # PR-only workflow (incl. rapid-fire `edited` events on body tweaks); only
-# the latest run matters.
+# the latest run matters. The house condition (CI.md R3) is always true on a
+# pull_request-only trigger — same spelling as everywhere else on purpose.
 concurrency:
   group: features-guard-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   guard:

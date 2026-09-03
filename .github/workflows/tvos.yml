@@ -59,7 +59,9 @@ permissions:
 # Superseded PR runs are canceled; main is never canceled (repo convention —
 # full signal per main commit).
 concurrency:
-  group: tvos-ci-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: tvos-ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -72,6 +74,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master

@@ -165,7 +165,9 @@ permissions:
 # (the wasm job is one of the most expensive in the repo). Pushes to main
 # are never canceled — full signal per main commit.
 concurrency:
-  group: canary-local-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: canary-local-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -175,6 +177,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - uses: actions/setup-node@v7
         with:
           node-version: "22"

@@ -4,6 +4,16 @@
 # here yet. CI runs: ruff check, mypy, and the integration pytest suite.
 # See docs/review/03-feature-flags-and-hygiene.md (HY-04/05).
 
+# Not a distributable package — this table exists so CI can read ONE floor
+# for the repo's Python tooling: every workflow job that runs python3 / pip /
+# ruff / mypy / pytest sets up its interpreter with
+# `actions/setup-python` + `python-version-file: pyproject.toml`, which
+# resolves the newest release satisfying this range instead of whatever the
+# runner image happens to ship (.github/CI.md, R9). Raise the floor here and
+# every job follows.
+[project]
+requires-python = ">=3.11"
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
