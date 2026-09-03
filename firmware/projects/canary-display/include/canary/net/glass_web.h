@@ -9,8 +9,10 @@
 //
 // Posture: LAN-only, same trust stance as the sensor dashboard. The
 // settings it exposes are the glass's own comfort controls (brightness,
-// quiet hours, palette); witness data stays read-only. Nothing here ever
-// leaves the home network.
+// quiet hours, palette); witness data stays read-only, and the two keys
+// that would open a network path or store a location (wx_direct, wx_loc)
+// are refused from the network entirely — on-glass only, see
+// net/settings_policy.h. Nothing here ever leaves the home network.
 #pragma once
 #include <stdint.h>
 #include "canary/fleet/fleet_instance.h"
