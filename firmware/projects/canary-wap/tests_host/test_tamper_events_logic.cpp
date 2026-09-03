@@ -178,6 +178,36 @@ static void test_constant_absent_feed_never_emits_sd_kinds() {
   fresh();
   for (int i = 0; i < 50; ++i) tamper_events_watch(0, 0, 0, SD_ABSENT);
   CHECK(ring_count() == 0);
+  CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+}
+
+static void test_the_standing_condition_speaks_the_present_tense() {
+  /* Rows seal instantly, so /api/events/today's envelope carries the
+   * standing condition explicitly (tamper_events_active_kind). The rules:
+   * nothing to confess = ""; a boot kind stands for the whole boot; an SD
+   * kind stands until recovery and OUTRANKS the boot kind while it does;
+   * recovery clears only the SD story — how the boot began stays true. */
+  fresh();
+  CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+
+  tamper_events_watch(1, 1, 0, SD_MOUNTED);            /* watchdog boot */
+  CHECK(std::strcmp(tamper_events_active_kind(), "watchdog") == 0);
+  tamper_events_watch(1, 1, 0, SD_MOUNTED);            /* still standing */
+  CHECK(std::strcmp(tamper_events_active_kind(), "watchdog") == 0);
+
+  tamper_events_watch(1, 1, 0, SD_ABSENT);             /* card removed */
+  CHECK(std::strcmp(tamper_events_active_kind(), "sd_remove") == 0);
+
+  tamper_events_watch(1, 1, 0, SD_MOUNTED);            /* card back */
+  CHECK(std::strcmp(tamper_events_active_kind(), "watchdog") == 0);
+
+  /* A clean boot with an SD story: recovery leaves nothing standing. */
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  tamper_events_watch(0, 0, 0, SD_ERROR);
+  CHECK(std::strcmp(tamper_events_active_kind(), "sd_error") == 0);
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
 }
 
 int main() {
@@ -190,6 +220,7 @@ int main() {
   test_mounted_to_error_is_sd_error();
   test_recovery_is_not_a_tamper();
   test_constant_absent_feed_never_emits_sd_kinds();
+  test_the_standing_condition_speaks_the_present_tense();
 
   if (g_failures == 0) {
     std::printf("test_tamper_events_logic: ALL tamper watcher tests PASSED\n");

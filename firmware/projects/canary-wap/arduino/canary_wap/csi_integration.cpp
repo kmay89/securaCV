@@ -798,7 +798,25 @@ esp_err_t handle_events_today(httpd_req_t* req) {
   for (size_t i = 0; i < nopen; ++i) emit_row(&open_rows[i], 1u);
   for (size_t i = 0; i < n; ++i)     emit_row(&buffer[i], 0u);
 
-  httpd_resp_send_chunk(req, "]}", 2);
+  /* The present tense, explicitly. Tamper rows are sealed-and-closed the
+   * moment they commit (durability over bundling), so a client can no
+   * longer read "still standing" off an open bundle — this envelope field
+   * carries the standing condition instead. Absent means the device has
+   * nothing to confess (never an empty object): boot kinds stand for the
+   * boot, SD kinds clear on recovery (tamper_events_module.h). */
+  const char* active = tamper_events_active_kind();
+  if (active && active[0]) {
+    char tail[64];
+    const int tn = snprintf(tail, sizeof(tail),
+                            "],\"tamper\":{\"kind\":\"%s\"}}", active);
+    if (tn > 0 && (size_t)tn < sizeof(tail)) {
+      httpd_resp_send_chunk(req, tail, tn);
+    } else {
+      httpd_resp_send_chunk(req, "]}", 2);
+    }
+  } else {
+    httpd_resp_send_chunk(req, "]}", 2);
+  }
   httpd_resp_send_chunk(req, nullptr, 0);
   return ESP_OK;
 }

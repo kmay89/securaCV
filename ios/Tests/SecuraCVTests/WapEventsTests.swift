@@ -374,4 +374,26 @@ final class WapEventsTests: XCTestCase {
                           "handle_stream no longer prints \"\(key)\" — WapStream reads it")
         }
     }
+
+    /// The standing-tamper envelope: tamper rows seal the moment they commit
+    /// (durability over bundling), so the wire says the present tense
+    /// outright — and its ABSENCE decodes as calm (nil), never as a claim.
+    func testStandingTamperEnvelopeDecodesAndAbsenceIsCalm() throws {
+        let withTamper = #"{"events":[],"tamper":{"kind":"power_loss"}}"#
+        let feed = try JSONDecoder().decode(WapEventsToday.self,
+                                            from: Data(withTamper.utf8))
+        XCTAssertEqual(feed.tamper?.kind, "power_loss")
+        XCTAssertEqual(TamperKind(wire: feed.tamper?.kind ?? "")?.narration,
+                       "Power was cut")
+
+        // Absent field (every pre-envelope firmware) → nil, not a claim.
+        let calm = try JSONDecoder().decode(WapEventsToday.self,
+                                            from: Data(#"{"events":[]}"#.utf8))
+        XCTAssertNil(calm.tamper)
+
+        // A stranger's shape under the key never sinks the feed.
+        let odd = try JSONDecoder().decode(WapEventsToday.self,
+                                           from: Data(#"{"events":[],"tamper":{"kind":7}}"#.utf8))
+        XCTAssertEqual(odd.tamper?.kind, "")
+    }
 }

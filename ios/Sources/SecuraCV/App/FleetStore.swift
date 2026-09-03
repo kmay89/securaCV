@@ -867,7 +867,8 @@ final class FleetStore: ObservableObject {
         // named occurrences only (Wire/WapEvents.swift). TrustBadge stays
         // .unknown throughout: nothing on this wire is Ed25519-checked
         // against the pinned key, and "verified" means exactly that check.
-        let rows = ((try? await api.wapEventsToday()) ?? [])
+        let feed = (try? await api.wapEventsToday()) ?? WapEventsToday()
+        let rows = feed.events
             .filter { !$0.isDismissed && $0.isNamedOccurrence }
         let dates = WapEventRow.anchoredDates(for: rows, fetchedAt: Date())
         let events = zip(rows, dates).map { row, date in
@@ -900,16 +901,23 @@ final class FleetStore: ObservableObject {
                 .map(\.liveSeverity)
                 .max() ?? head.liveSeverity
         }
-        // The tamper story, narrated per kind (system.integrity): an OPEN
-        // "tamper" bundle is the device's own present tense, so it may set
-        // the level-triggered flag — and the flag self-clears, because this
-        // witness is rebuilt from current open state on every poll and the
-        // open flag drops when the bundle closes. A CLOSED tamper row is
-        // history: the timeline keeps it, the flag must not (record vs
-        // siren, the same rule liveSeverity encodes). An unknown kind word
+        // The tamper story, narrated per kind (system.integrity). Tamper
+        // rows are sealed-and-closed the moment they commit (durability
+        // over bundling — a power-loss record cannot wait out a RAM
+        // buffer), so "still standing" is no longer readable off an open
+        // bundle: the wire says it outright in the envelope's tamper.kind
+        // (boot kinds stand for the boot, SD kinds clear on recovery,
+        // absent = nothing to confess). The flag stays level-triggered and
+        // self-clears, because this witness is rebuilt on every poll. An
+        // OPEN tamper bundle — should a future firmware hold one — still
+        // latches; a CLOSED row is history and must not (record vs siren,
+        // the same rule liveSeverity encodes). An unknown kind word
         // narrates as the bare "Tamper detected" — calm default, never a
         // guess.
-        if let live = rows.first(where: { $0.isOpen && $0.type == "tamper" }) {
+        if let standing = feed.tamper, !standing.kind.isEmpty {
+            w.tamper = true
+            w.tamperKind = TamperKind(wire: standing.kind)?.narration ?? ""
+        } else if let live = rows.first(where: { $0.isOpen && $0.type == "tamper" }) {
             w.tamper = true
             w.tamperKind = TamperKind(wire: live.state)?.narration ?? ""
         }

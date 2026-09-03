@@ -59,6 +59,18 @@ const csi_module_t* tamper_events_module(void);
 void tamper_events_watch(int reset_was_crash, int reset_was_watchdog,
                          int reset_was_brownout, uint8_t sd_state);
 
+/* The tamper condition standing RIGHT NOW, as a kind word — or "" when the
+ * device has nothing to confess. Level state for wires that need the
+ * present tense (the /api/events/today envelope): every tamper row is
+ * sealed-and-closed the moment it commits (durability over bundling), so
+ * a reader can no longer infer "still standing" from an open bundle.
+ * Boot kinds stand for the whole boot — "this boot began with a crash"
+ * stays true until the next one. SD kinds clear on recovery: the card
+ * coming back ends that condition. When both stand, the SD story speaks
+ * (newer news, actionable); the boot story resurfaces once the card is
+ * back. */
+const char* tamper_events_active_kind(void);
+
 /* Tests / diagnostics only: forget boot/SD memory so transitions replay. */
 void tamper_events_reset(void);
 

@@ -122,6 +122,17 @@ Every key appears on every row — clients decode one shape. Open bundles
 | `open` | `1` while the bundle is still collecting — the device's own present tense, serialized ahead of the ring; `0` for a committed ring row, which is history. Record vs siren: only an open row may drive live severity; a closed row must never latch it. |
 | `state`, `confidence`, ... | fields the originating module's manifest permits |
 
+One envelope field exists beside `events`, because one module's rows are
+never open: **`"tamper":{"kind":"<word>"}`** carries the standing
+`system.integrity` condition. Tamper rows are sealed-and-closed the moment
+they commit (a power-loss record cannot wait out a RAM buffer), so "still
+standing" cannot be read off an open row — the device says it outright
+instead. Boot kinds stand for the whole boot; SD kinds stand until the card
+recovers (and outrank a standing boot kind while they do). **Absent means
+nothing to confess** — a client must treat the missing field as calm, never
+as unknown-tamper, and may drive its level-triggered tamper flag from this
+field exactly as it would from an open row.
+
 ### `POST /api/events/dismiss`
 
 Tells the ring "the user marked this row as 'that was nothing.'" Local-only.

@@ -67,6 +67,12 @@ bool    g_boot_reported   = false;
 uint8_t g_boot_attempts   = 0;
 bool    g_sd_adopted      = false;
 uint8_t g_sd_prev         = kSdAbsent;
+/* The standing conditions (see tamper_events_active_kind in the header).
+ * Two levels, because they end differently: the boot story stands for the
+ * whole boot, the SD story ends when the card comes back — and recovery
+ * of the card must not erase how the boot began. */
+char    g_boot_kind[24]   = "";
+char    g_sd_kind[24]     = "";
 
 uint32_t emit_kind(const char* kind) {
   csi_event_values_t v;
@@ -84,6 +90,11 @@ uint32_t emit_kind(const char* kind) {
    * is precisely the one that would destroy a two-minute buffer. */
   if (id != 0u) csi_bundler_flush_key("system.integrity", "tamper", kind);
   return id;
+}
+
+void remember_kind(char (&slot)[24], const char* kind) {
+  strncpy(slot, kind, sizeof(slot) - 1);
+  slot[sizeof(slot) - 1] = '\0';
 }
 
 }  /* namespace */
@@ -107,7 +118,10 @@ void tamper_events_watch(int reset_was_crash, int reset_was_watchdog,
                          : reset_was_brownout ? "power_loss"
                                               : "unexpected_reboot";
       ++g_boot_attempts;
-      if (emit_kind(kind) != 0u) g_boot_reported = true;
+      if (emit_kind(kind) != 0u) {
+        g_boot_reported = true;
+        remember_kind(g_boot_kind, kind);   /* stands for the whole boot */
+      }
     }
   }
 
@@ -120,14 +134,24 @@ void tamper_events_watch(int reset_was_crash, int reset_was_watchdog,
   }
   if (sd_state != g_sd_prev) {
     if (g_sd_prev == kSdMounted && sd_state == kSdError) {
-      (void)emit_kind("sd_error");
+      if (emit_kind("sd_error") != 0u) remember_kind(g_sd_kind, "sd_error");
     } else if (g_sd_prev == kSdMounted && sd_state == kSdAbsent) {
-      (void)emit_kind("sd_remove");
+      if (emit_kind("sd_remove") != 0u) remember_kind(g_sd_kind, "sd_remove");
+    } else if (sd_state == kSdMounted) {
+      /* MOUNTED after either is recovery, not a tamper — and it ENDS the
+       * standing SD story: the wire's present tense drops it on the next
+       * poll. The boot kind, if one stands, stays: the card coming back
+       * says nothing about how the boot began. */
+      g_sd_kind[0] = '\0';
     }
-    /* MOUNTED after either is recovery, not a tamper: the bundler's quiet
-     * gap closes the open bundle and the phone's flag drops on its own. */
     g_sd_prev = sd_state;
   }
+}
+
+const char* tamper_events_active_kind(void) {
+  /* The SD story speaks first when both stand — it is the newer news and
+   * the actionable one; the boot story resurfaces once the card is back. */
+  return g_sd_kind[0] ? g_sd_kind : g_boot_kind;
 }
 
 void tamper_events_reset(void) {
@@ -135,6 +159,8 @@ void tamper_events_reset(void) {
   g_boot_attempts = 0;
   g_sd_adopted = false;
   g_sd_prev = kSdAbsent;
+  g_boot_kind[0] = '\0';
+  g_sd_kind[0] = '\0';
 }
 
 }  /* extern "C" */

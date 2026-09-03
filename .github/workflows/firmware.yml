@@ -543,6 +543,16 @@ jobs:
           chmod +x firmware/scripts/check_csi_sync.sh
           firmware/scripts/check_csi_sync.sh
 
+      - name: Verify gzipped web assets match their source HTML
+        # The dashboard/settings/companion pages ship as pre-gzipped byte
+        # arrays (web_assets_gz.h); the editable raw literals are compiled
+        # OUT via CANARY_WEB_ASSETS_GZIPPED. So an HTML edit without the
+        # regen ships a repo that shows the new page while every device
+        # serves the old one — and nothing else notices. This gate makes
+        # that class of drift a red build instead of a silent lie.
+        run: |
+          python3 firmware/projects/canary-wap/arduino/canary_wap/gen_web_assets_gz.py --check
+
       - name: Verify power-logic copy in canary-wap sketch dir matches canonical source
         # Same committed-copy pattern: the battery decision logic lives
         # at firmware/common/power/power_logic.h (canonical, host-tested)

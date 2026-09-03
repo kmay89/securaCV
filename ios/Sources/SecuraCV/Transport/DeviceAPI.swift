@@ -150,9 +150,8 @@ actor DeviceAPI {
     /// first, then committed ring rows newest-first, ≤72 rows, Bearer-gated;
     /// Wire/WapEvents.swift documents the row). An empty array is normal —
     /// the ring is RAM-only and empties on reboot.
-    func wapEventsToday() async throws -> [WapEventRow] {
-        let today: WapEventsToday = try await get("/api/events/today")
-        return today.events
+    func wapEventsToday() async throws -> WapEventsToday {
+        try await get("/api/events/today")
     }
 
     /// `GET /api/csi/stream` — the 1 Hz sensing snapshot (a plain GET, not
