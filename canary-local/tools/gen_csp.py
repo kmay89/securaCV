@@ -30,6 +30,15 @@ from a Tauri webview. This tool is the ONE place that policy is written:
     load from a file). Any other inline script, any <style> block, any
     style="…" attribute and any on*= handler fails the run: move it into the
     page's assets/<page>.js / .css instead of loosening the policy.
+  * SRCDOC_STYLES covers the one document a page renders that is not ours to
+    edit: wap.html shows the firmware's real captive-portal page, verbatim,
+    in an <iframe srcdoc> — and a srcdoc document INHERITS the embedder's
+    policy (about:srcdoc is never fetched, so frame-src does not apply, but
+    every other directive does). Its <style> block is hashed here from the
+    generated data it ships in (devices/wap.json, written by gen_wap.py from
+    the firmware source), so the pin follows the firmware; the tool refuses
+    the row if that document ever grows an inline script, a style= attribute
+    or an on*= handler, which no hash can cover.
 
 The tool then rewrites exactly one CSP <meta> line per page, right after the
 <meta charset> line, idempotently. Run it after editing a page or this table:
@@ -58,6 +67,7 @@ tests/csp_probe.mjs loads every page in Chromium and fails on any violation.
 """
 import base64
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -151,6 +161,20 @@ INLINE_SCRIPT_OK = {
 # on purpose: every block has moved into a stylesheet. The mechanism stays so
 # a future exception is a table entry with a reason, not an 'unsafe-inline'.
 INLINE_STYLE_OK = {}
+
+# Documents a page renders in an <iframe srcdoc>, whose <style> blocks are
+# hashed into the page's style-src (the frame inherits this policy). Each
+# entry: page -> (JSON file under canary-local/, key path to the HTML, reason).
+SRCDOC_STYLES = {
+    "wap.html": (
+        "devices/wap.json",
+        ("captive", "html"),
+        "the firmware's captive-portal landing page (canary-wap captive_probe.h), rendered "
+        "verbatim in a sandboxed <iframe srcdoc> by wap-ui.js; the frame inherits this policy, "
+        "and the page is the device's, not the Lab's — so its one <style> block is pinned by "
+        "hash from devices/wap.json rather than rewritten.",
+    ),
+}
 
 FORBIDDEN_SOURCES = {"'unsafe-inline'", "'unsafe-eval'", "'unsafe-hashes'", "*"}
 
@@ -260,6 +284,26 @@ def frames_pages(page):
     )
 
 
+def srcdoc_style_hashes(page):
+    """style-src hashes for the srcdoc document a page renders, if any."""
+    if page not in SRCDOC_STYLES:
+        return []
+    rel, keys, _reason = SRCDOC_STYLES[page]
+    doc = json.loads((LAB / rel).read_text())
+    for k in keys:
+        doc = doc[k]
+    scripts, styles, bad_attrs = scan_inline(f"{page} srcdoc ({rel})", doc)
+    if scripts or bad_attrs:
+        fail(
+            f"{page}: the srcdoc document in {rel} carries "
+            f"{len(scripts)} inline script(s) and {len(bad_attrs)} inline attribute(s) — "
+            "a hash covers a <style> block only; that document cannot be framed under this policy"
+        )
+    if not styles:
+        fail(f"{page}: SRCDOC_STYLES names {rel} but its document has no <style> block — drop the entry")
+    return [sha256_source(body) for body in styles]
+
+
 def scan_inline(page, html):
     """Inline scripts, style blocks, and offending attributes in a page."""
     scripts = [m.group(2) for m in SCRIPT_RE.finditer(html) if not re.search(r"\ssrc\s*=", m.group(1))]
@@ -324,6 +368,7 @@ def policy_for(page, html):
         add("style-src", [sha256_source(body) for body in styles])
     elif page in INLINE_STYLE_OK:
         fail(f"{page}: INLINE_STYLE_OK names it but it has no inline <style> — drop the entry")
+    add("style-src", srcdoc_style_hashes(page))
 
     # The table must describe the page it names — both directions.
     has_wasm = "'wasm-unsafe-eval'" in directives["script-src"]
@@ -376,6 +421,8 @@ def explain():
             print(f"  + script-src 'sha256-…' (inline script)\n      {INLINE_SCRIPT_OK[page]}")
         if page in INLINE_STYLE_OK:
             print(f"  + style-src 'sha256-…' (inline style)\n      {INLINE_STYLE_OK[page]}")
+        if page in SRCDOC_STYLES:
+            print(f"  + style-src 'sha256-…' (srcdoc <style>)\n      {SRCDOC_STYLES[page][2]}")
 
 
 def main(argv):
@@ -384,7 +431,7 @@ def main(argv):
         explain()
         return 0
     pages = lab_pages()
-    for key in list(PAGES) + list(INLINE_SCRIPT_OK) + list(INLINE_STYLE_OK):
+    for key in list(PAGES) + list(INLINE_SCRIPT_OK) + list(INLINE_STYLE_OK) + list(SRCDOC_STYLES):
         if key not in pages:
             fail(f"the policy table names {key}, which is not a Lab page")
     stale = []

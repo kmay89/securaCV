@@ -11,6 +11,10 @@
 //   · a page reaches the release-fetching modules without → "signed-release hosts"
 //     the hosts (fails behind a click, off the probe's path)
 //   · a directive nobody needs quietly appears             → "trimmed, not granted"
+//   · the firmware's captive page (a srcdoc frame, which    → "wap.html's style-src pins"
+//     inherits the policy) changes and its hash goes stale
+//   · a module creates a <style> element (inline style the  → "no module writes style="
+//     load-time probe never sees — fleet.html's toggle did)
 //   · a module writes a style= attribute the probe never  → "no module writes style="
 //     happens to exercise
 //   · flash.html's hand-written policy quietly widens     → "flash.html is no weaker"
@@ -153,6 +157,8 @@ test("no first-party module writes a style= attribute", () => {
       const src = stripJsComments(read(join(dir, f)));
       assert.doesNotMatch(src, /setAttribute\(\s*["']style["']/,
         `${f}: setAttribute("style") — use el.style.cssText / setProperty (CSSOM is allowed, the attribute is not)`);
+      assert.doesNotMatch(src, /createElement\(\s*["']style["']\s*\)/,
+        `${f}: creates a <style> element — that is inline style under style-src 'self'; put the rules in a stylesheet`);
       assert.doesNotMatch(src, /\sstyle=["'`]/,
         `${f}: a style= attribute inside a markup string — a class, or set it through the CSSOM after insertion`);
     }
@@ -240,6 +246,29 @@ test("directives no page needs are trimmed, not granted: no blob:, no worker-src
       assert.doesNotMatch(stripJsComments(read(join(dir, f))), /\bnew\s+(?:Shared)?Worker\s*\(/,
         `${f}: spawns a Worker — the page that loads it needs a worker-src row in gen_csp.py`);
     }
+  }
+});
+
+test("wap.html's style-src pins the firmware's captive page (a srcdoc frame) — and nothing else does", () => {
+  // wap-ui.js shows the device's real captive-portal HTML in an <iframe
+  // srcdoc>; a srcdoc document inherits the embedder's policy, so its one
+  // <style> block is hashed from devices/wap.json (gen_wap.py writes it from
+  // the firmware source — the pin follows the firmware). No hash can cover a
+  // style= attribute, an on*= handler or an inline <script> there, so that
+  // document must carry none.
+  const captive = JSON.parse(read(join(ROOT, "devices/wap.json"))).captive.html;
+  const blocks = [...captive.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]);
+  assert.strictEqual(blocks.length, 1, "the captive page carries one <style> block");
+  assert.deepStrictEqual(parse(policyOf("wap.html")).get("style-src"), ["'self'", sha256(blocks[0])],
+    "wap.html style-src must be 'self' plus the captive page's <style> hash (rerun gen_csp.py after gen_wap.py)");
+  for (const tag of markupOf(captive).match(/<[a-zA-Z][^>]*>/g) || []) {
+    assert.doesNotMatch(tag, /\s(?:on[a-z]+|style)\s*=/i, `captive page: ${tag.slice(0, 80)} — no hash can allow it`);
+  }
+  assert.doesNotMatch(captive, /<script\b(?![^>]*\ssrc=)/i, "the captive page has no inline script");
+  // Every other page's style-src is exactly 'self'.
+  for (const page of PAGES) {
+    if (page === "wap.html") continue;
+    assert.deepStrictEqual(parse(policyOf(page)).get("style-src"), ["'self'"], `${page}: style-src`);
   }
 });
 

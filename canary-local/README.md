@@ -907,9 +907,13 @@ The rules, which the generator enforces rather than documents:
   become classes; `onclick=` becomes `addEventListener` in the module; a
   dynamic style is set through the CSSOM (`el.style.cssText`,
   `style.setProperty`), which the policy allows — `setAttribute("style")` and a
-  `style=` inside an `innerHTML` string are what it blocks. The hyperscript
+  `style=` inside an `innerHTML` string are what it blocks — and so is a
+  `<style>` element created from a script (the fleet page's sound toggle used
+  to do that; its rules are in `canary-local.css` now). The hyperscript
   helpers in `lab-nav.js`, `lab-shell.js`, `lab-settings.js`, `senselab-ui.js`
-  and `site-map.js` already route a `style:` key that way.
+  and `site-map.js` already route a `style:` key that way. Mind that an
+  `<iframe srcdoc>` **inherits** the page's policy: whatever it renders must
+  pass the same rules.
 - **A source is a table entry with a reason.** The base policy is the floor
   (`default-src 'none'`, same-origin code, `object-src` / `base-uri` /
   `form-action 'none'`); everything a page needs beyond it is a row in
@@ -922,11 +926,17 @@ The rules, which the generator enforces rather than documents:
   for `frame-src` and the page's iframes, and for the release hosts and the
   modules that fetch a release (`flash.js`, `we2-flash.js`), which would
   otherwise fail behind a click where the browser probe never looks.
-- **The one inline script is hashed, on purpose.** `flash.html`'s import map
-  (the SRI pins for the vendored flasher engines) cannot be an external file,
-  so it is the single entry in `INLINE_SCRIPT_OK` and its `'sha256-…'` is
-  computed from the page's own bytes on every run. Any other inline
-  `<script>` or `<style>` fails the generator instead of getting a hash.
+- **Two hashes, both computed from bytes, on purpose.** `flash.html`'s
+  import map (the SRI pins for the vendored flasher engines) cannot be an
+  external file, so it is the single entry in `INLINE_SCRIPT_OK` and its
+  `'sha256-…'` is computed from the page's own bytes on every run. And
+  `wap.html` shows the firmware's real captive-portal page verbatim in a
+  `srcdoc` frame — the device's document, not the Lab's — so its one
+  `<style>` block is hashed from `devices/wap.json` (`SRCDOC_STYLES`; the
+  pin follows the firmware through `gen_wap.py`, so regenerate WAP data
+  first, then the policy). Any other inline `<script>` or `<style>` fails
+  the generator instead of getting a hash, and the generator refuses the
+  srcdoc row if that document ever grows a script, a `style=` or an `on*=`.
 - **No LAN allowlist, by design.** No page fetches a Canary or a hub from
   the document; discovery rides the native side of the desktop Lab
   (`witness-host.js` → `invoke`), so `connect-src` is `'self'` plus the Tauri

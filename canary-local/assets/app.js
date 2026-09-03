@@ -376,14 +376,9 @@ async function buildDisplaySheet(ctx, side, stage) {
   // (boot, alerts, the touch you make), but the room is yours.
   (() => {
     if (document.getElementById("canary-sound-toggle")) return;
-    const st = document.createElement("style");
-    st.textContent = "#canary-sound-toggle{position:fixed;right:14px;bottom:14px;z-index:60;width:40px;height:40px;"
-      + "border-radius:50%;border:1px solid rgba(140,140,150,.4);background:rgba(20,20,24,.72);color:#f2f2f2;"
-      + "font-size:17px;cursor:pointer;display:grid;place-items:center;backdrop-filter:blur(6px);"
-      + "box-shadow:0 4px 14px rgba(0,0,0,.3);transition:transform .15s,border-color .15s}"
-      + "#canary-sound-toggle:hover{transform:translateY(-1px);border-color:#e9b44c}"
-      + "#canary-sound-toggle:focus-visible{outline:2px solid #e9b44c;outline-offset:2px}";
-    document.head.append(st);
+    // Its rules live in canary-local.css (#canary-sound-toggle). They used to
+    // be a <style> element created here — which is inline style, and the
+    // page's CSP has no 'unsafe-inline' (canary-local/tools/gen_csp.py).
     const btn = el("button", null);
     btn.id = "canary-sound-toggle";
     btn.type = "button";
