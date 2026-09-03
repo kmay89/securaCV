@@ -402,10 +402,16 @@ everything else on these boards):
   `net/wx_direct.cpp`: three gates (owner opt-in, stored coarse location, no hub ever
   configured), anonymous Open-Meteo HTTPS with a pinned root CA, feeding
   `bedside_on_weather` the exact retained-blob JSON a hub would publish — so the weather
-  lines, tomorrow line and advisories behave identically either way. The app stores the
-  location as a ~11 km grid point (typed place, geocoded on the phone — never the phone's
-  own fix). Disclosed in `docs/security/SECURITY_MODEL.md`; request shape pinned by
-  `tests_host/test_wx_core.cpp`.
+  lines, tomorrow line and advisories behave identically either way. The opt-in is
+  on-glass only: `/api/set` refuses `wx_direct` and `wx_loc` for every caller with
+  `403 on_glass_only` (`net/settings_policy.h`, host-tested; the mirror page shows them as
+  read-only rows pointing at settings → weather → fetch itself), so a host on the LAN
+  cannot flip the glass's one opt-in outbound path or plant a location. That also closed
+  the app's typed-place location path, and no on-glass location entry exists yet — a
+  fresh device's second gate stays unsatisfied until one lands, and the weather page's own
+  "set a coarse location from the app" caption is stale until the next emulator-dist
+  rebuild carries a `settings_ui.cpp` fix (compile-tested). Disclosed in
+  `docs/security/SECURITY_MODEL.md`; request shape pinned by `tests_host/test_wx_core.cpp`.
 
 **Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
 - **A WASM twin for the Nightstand 7.** It shares the 7" glass with dash7 but not its face, so

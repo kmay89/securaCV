@@ -15,9 +15,13 @@ on:
         options: [debugging, release-testing, app-store-connect]
         default: debugging
 
+# Dispatch-only, and a dispatch normally runs on main: a bare `true` here made
+# a second click cancel the first build mid-export. Queue instead (CI.md R3):
+# nothing is learned from a canceled build, and an app-store-connect export
+# must never be killed halfway.
 concurrency:
   group: ios-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read

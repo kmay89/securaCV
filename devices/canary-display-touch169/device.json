@@ -1,0 +1,37 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-touch169",
+  "name": "Canary Nightstand Touch",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 16,
+    "board_id": "waveshare-esp32s3-touch-lcd169",
+    "envs": [
+      "canary-display-touch169"
+    ]
+  },
+  "peripherals": [
+    "display",
+    "touch",
+    "rtc",
+    "imu",
+    "battery",
+    "backlight_pwm",
+    "buzzer"
+  ],
+  "figure": "device.canary-display-touch169",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_s3_touch169.scad",
+    "enclosure_sets": [
+      "1-69-touch-watch-display-puck"
+    ]
+  },
+  "emulator": {
+    "flavor": "touch169"
+  },
+  "flasher": {
+    "product": "securacv-canary-display-touch169"
+  }
+}

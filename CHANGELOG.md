@@ -2,6 +2,144 @@
 
 ## [Unreleased]
 
+### Display: the LAN write API can no longer switch on the glass's one opt-in outbound path
+
+- **`wx_direct` and `wx_loc` are on-glass only.** The display's `POST /api/set`
+  refused cross-site browsers (Origin allowlist + per-boot CSRF token) but not
+  a host already on the home WiFi, which could read the token from
+  `GET /api/settings` and switch on the standalone-weather fetch — the one
+  outbound path a setting opens — or plant a coarse location for it. Both keys
+  are now refused for every caller, token or not, with
+  `403 {"ok":false,"err":"on_glass_only"}` and one Warn line, before the
+  Origin/CSRF gate is consulted; the switch lives on the glass (settings →
+  weather → fetch itself). The key class is one host-tested table
+  (`canary/net/settings_policy.h`) that the handler enforces and
+  `/api/settings` serves under `on_glass`, so no client draws a switch that
+  would fail; the mirror page shows the pair as read-only rows pointing at the
+  glass, and reports whether a location is stored only to callers that are
+  not cross-site. Every other knob (brightness, night behavior, the look, the
+  lamp, `/api/tz`) is unchanged. Honest status: this also closed the phone
+  app's only way to store a location, and the glass has no on-glass location
+  entry yet, so a fresh device's standalone forecast stays idle until one
+  lands. Compile-tested, not bench-tested.
+
+### One manifest per device, and the joins it makes checkable
+
+- **`devices/<slug>/device.json` describes each of the 19 devices the repo
+  builds** — the board and its PlatformIO envs, the fleet figure, the
+  enclosure CAD, the emulator flavor, the flasher product and the website
+  page — validated by one JSON Schema and by `scripts/lint_device_manifests.py`
+  in `lint.yml`. The linter proves every join against the files that own the
+  fact today: each env exists in its family's PlatformIO config and every
+  `flavors.json` env is claimed exactly once (or listed in
+  `devices/unclaimed.json` with a reason), the emulator flavor has a committed
+  dist artifact, the figure exists and its confidence is read from the ladder
+  rather than typed, the flasher product exists with the same chip, and every
+  `build_matrix.json` product has a manifest. Nothing consumes the manifests
+  yet; this is wave 1 of the device package (`docs/IMPROVEMENT_ROADMAP.md` §4).
+
+### Every Lab page carries a Content-Security-Policy
+
+- **`canary-local/tools/gen_csp.py` writes the policy for all 26 Lab pages and
+  the emulator harness from one table** — a strict floor (`default-src 'none'`,
+  same-origin scripts and styles, no `unsafe-*` anywhere) plus per-page rows
+  that each carry a reason (`'wasm-unsafe-eval'` for the pages that boot the
+  emulator, `frame-src` for the two that frame it, the flasher's release
+  hosts). Inline scripts and styles moved into files; the two that cannot
+  move — the flasher's import map and the firmware's captive page that
+  `wap.html` embeds — are hashed from their bytes, so a firmware change to the
+  captive page is `gen_wap.py` then `gen_csp.py`. `tests/csp.test.js` pins the
+  policies, `tests/csp_probe.mjs` loads every page in Chromium and fails on any
+  violation, and `gen_csp.py --check` joins the drift gate. Before this only
+  `flash.html` had a policy; the webcam and microphone benches had none.
+
+### CI: pinned Python, no evicted main runs, a native aarch64 add-on build, a mirror that pushes
+
+- **Every job that runs Python sets it up from `pyproject.toml`**
+  (`requires-python = ">=3.11"`), and rule R9 in `.github/CI.md` is enforced
+  by `ci_policy_check.py`.
+- **A merge burst no longer evicts the pending `main` run**: test workflows key
+  their concurrency group on the commit for pushes to `main` and on the PR for
+  pull requests; publishers keep their per-ref group under a documented
+  exemption; the checker enforces both halves.
+- **The add-on image builds aarch64 on a native `ubuntu-24.04-arm` runner**
+  instead of under QEMU, which had been hitting the 90-minute timeout on
+  `main`. `verify_published_image.sh` now cross-probes GHCR with the workflow
+  token, so it can say whether a package is private (a one-time visibility
+  flip by the owner) or a tag was never pushed — the 30 August failure was the
+  former, and the anonymous probe alone could not tell.
+- **`homeassistant-mirror.yml` pushes `custom_components/securacv/` to the HACS
+  mirror as a PR on every `main` change**, proving the copy exact with the
+  mirror's own check. It needs a `MIRROR_PAT` secret; without one the run stays
+  green and raises one deduplicated issue.
+- **`dist/*.meta.json` stamps the merge-base with `origin/main`** rather than
+  the rebuild bot's PR-branch commit; the committed stamps update on the next
+  bot rebuild.
+
+### Wi-Fi sensing: the breathing envelope keeps time, and gain cannot fake a breath
+
+- **The breathing envelope is fed on a fixed 1 Hz grid.** The Goertzel bank
+  assumed one envelope sample per second, but windows are loop-driven: their
+  cadence wanders with CPU load and gaps were skipped, so the reported
+  breaths-per-minute was a function of loop latency. Every window close now
+  carries its timestamp and `csi_features` resamples onto a one-second grid —
+  a close inside the previous slot is averaged into it, a gap is bridged with
+  held copies — and `csi_stats_t` reports `windows_held`, `windows_merged`
+  and `window_period_ms` (appended; both status endpoints surface them).
+- **The envelope is gain-invariant.** It was raw received power, which the
+  front-end AGC re-gains per packet, so every gain step landed as a
+  broadband transient and the host fixture only "saw" breathing because its
+  gain modulation had no AGC to remove it. It is now each subcarrier band's
+  share of the per-frame-normalized row, which per-packet gain cannot move;
+  the bank runs per band and each bin keeps its strongest band. Host tests
+  drive a 0.25 Hz breath through a simulated AGC into the right bin, read
+  zero through 80 s of ±30 % gain flicker, and keep 12 BPM in its bin at
+  700 ms and 1300 ms window cadences. Synthetic frames only; no bench
+  numbers, and the docs say so. The three copies (common, the canary-wap
+  sketch mirror, the embedded extractor) moved together.
+- **Six dead `firmware/common/` headers are gone** (`core/log.h`,
+  `core/version.h`, `health/health_log.h`, `network/mesh_network.h`,
+  `rf_presence/rf_presence.h`, `web/web_ui.h`). No build reached them, and
+  they shadowed live sketch modules by basename — the dead `health_log.h`
+  declared a C API the CSI macros could not have compiled against had the
+  include probe ever resolved to it.
+
+### Tooling: one `die()`, one platform pin, one lockfile
+
+- **`canary-local/tools/_tooling.py` is the single definition of `die()`,
+  `warn()` and `repo_root()`** for the Lab's generators. The ten `die()`
+  copies (three behaviors between them), both `_warn()` copies and the
+  seventeen hand-typed repo-root lines are gone. `die` now always prints
+  `<generator>: ERROR: <message>` to stderr, emits a `::error::` annotation
+  under GitHub Actions, and exits 1 unless the caller asks for another code.
+  `hub_seed_apply.py` stays self-contained because it is embedded in the
+  hub-io crate and hash-pinned.
+- **The espressif32 / pioarduino platform pin lives once, in
+  `firmware/envs/platformio/platforms.ini`.** Five sections, one per distinct
+  literal the ini files carried, each saying who uses it and why; every env
+  interpolates its section, and `firmware/scripts/lint_platform_pins.py`
+  (in `lint.yml`) rejects a literal anywhere else. No pin value changed —
+  `pio project config` resolves every env to the same string as before — and
+  `firmware/PLATFORMS.md` documents the version spread that is still an open
+  maintainer decision rather than quietly settling it.
+- **`desktop/package-lock.json` is committed** and the Flasher release
+  workflow installs with `npm ci`; the audit workflow and Dependabot cover it.
+  Both Tauri apps now pin the same `@tauri-apps/cli` release.
+
+### The website's carries are generated, not hand-mirrored
+
+- **`scripts/carry_to_site.py --site <checkout>` refreshes everything the
+  website carries from this repo**: the `/checkup` build matrix (the `builds`
+  block of the website's `onboarding-spec.json`, projected from
+  `firmware/build_matrix.json`), `kernel-status.json` (via
+  `tools/gen_kernel_status.py --site`, with the evidence sentences now keyed by
+  tile and status in the generator), and the TV verifier
+  (`tv/vendor/verify_core.js`, its fixtures and their provenance file). The
+  website's weekly carry job runs it next to the CAD carry and opens a PR only
+  when bytes moved. Its first run showed the `/checkup` matrix four products
+  behind. `onboarding-spec.json` itself stays website-authored; only that one
+  block is stamped.
+
 ## [2.4.15] - 2026-09-03
 
 ### The timeline of a day becomes an instrument

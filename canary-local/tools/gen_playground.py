@@ -30,7 +30,9 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from _tooling import repo_root
+
+ROOT = repo_root()
 PINS_H = ROOT / "firmware/boards/waveshare-esp32s3-lcd43b/pins/pins.h"
 VERSION_H = ROOT / "firmware/projects/canary-display/arduino/canary_display/version.h"
 OUT = ROOT / "canary-local/devices/playground.json"

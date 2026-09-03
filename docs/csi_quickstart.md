@@ -109,6 +109,14 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
 - **Pets** trigger motion, not presence. The Pet Mode toggle uses the
   fact that small pets breathe outside the human Goertzel band, so
   sustained breathing only fires for people.
+- **The breathing rate is host-tested, not bench-tested.** The envelope
+  is gain-invariant (band shares of the AGC-normalized frame) and is
+  resampled onto a fixed 1 Hz grid from each window's close timestamp,
+  so it survives the receiver's per-packet AGC and a loop that runs
+  early, late or stalls — on synthetic frames. No device has produced a
+  bench log for the breathing path yet; `csi_stats_t`'s `windows_held`,
+  `windows_merged` and `window_period_ms` show how far a real loop's
+  cadence was from the grid.
 
 The dashboard's `?` affordance opens a "What it can / can't see" sheet
 that shows users the same seams.

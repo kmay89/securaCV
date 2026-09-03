@@ -57,6 +57,9 @@ function h(tag, attrs, ...kids) {
     if (v == null || v === false) continue;
     if (k === "class") n.className = v;
     else if (k === "html") n.innerHTML = v;
+    // CSSOM, never a style= attribute: the pages carry a CSP whose style-src
+    // has no 'unsafe-inline', and setAttribute("style") is what it blocks.
+    else if (k === "style") n.style.cssText = v;
     else if (k.startsWith("on")) n.addEventListener(k.slice(2).toLowerCase(), v);
     else n.setAttribute(k, v === true ? "" : v);
   }

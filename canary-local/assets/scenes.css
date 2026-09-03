@@ -1,0 +1,92 @@
+/* scenes.css — lifted out of scenes.html so the page can carry a strict Content-Security-Policy
+   (style-src 'self', no inline <style>; see canary-local/tools/gen_csp.py). */
+/* scene-specific layout, on top of the House's own dress */
+/* Parts of the room that a scene switches on and off (fields, marker glyphs).
+   A class rather than style="display:none": the page's CSP allows no inline
+   styles, and scenes.js toggles the same class. */
+.scene-off { display: none; }
+/* the fields' staggered entrances — were style="animation-delay" attributes */
+.field-radar .ripple-2 { animation-delay: 1.3s; }
+.field-radar .ripple-3 { animation-delay: 2.6s; }
+.field-wifi .cone-2 { animation-delay: .5s; }
+.field-wifi .cone-3 { animation-delay: 1s; }
+.field-breath .cone-2 { animation-delay: 1.2s; }
+.scenes-main { max-width: 900px; margin: 22px auto 70px; padding: 0 24px; }
+.scene-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 2px 12px; }
+.scene-tab { appearance: none; font: inherit; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--edge); background: var(--surface); color: var(--muted);
+  border-radius: 999px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 8px; }
+.scene-tab .n { font-variant-numeric: tabular-nums; color: var(--faint); }
+.scene-tab.on { color: #151204; background: var(--canary); border-color: var(--canary); font-weight: 650; }
+.scene-tab.on .n { color: rgba(21,18,4,.6); }
+.scene-tab.soon { cursor: default; border-style: dashed; }
+.scene-tab.soon .tag { font-size: 10px; color: #6fd6c3; border: 1px dashed rgba(111,214,195,.5);
+  border-radius: 999px; padding: 0 6px; }
+
+.scene-head { margin: 0 2px 12px; }
+.scene-head h2 { margin: 0; font-size: 22px; }
+.scene-head .zoom { font-size: 12px; color: var(--faint); font-family: inherit;
+  display: inline-flex; align-items: center; gap: 6px; }
+.scene-head p { margin: 6px 0 0; color: var(--muted); max-width: 62ch; font-size: 14px; }
+
+.scene-stage { position: relative; }
+#scene-svg { display: block; width: 100%; height: auto; }
+
+/* the in-scene chip ("someone is here" / "a person"), drawn in SVG so it tracks the room */
+.scene-chip { opacity: 0; }
+.scene-chip.show { animation: sceneChip 3.4s ease-out forwards; }
+.scene-chip rect { fill: rgba(10,10,12,.92); stroke: rgba(255,212,79,.6); stroke-width: 1; }
+.scene-chip text { fill: var(--text); font: 600 13px/1 -apple-system, "Segoe UI", sans-serif; }
+@keyframes sceneChip { 0% { opacity: 0; transform: translateY(8px); } 10% { opacity: 1; transform: translateY(0); }
+  82% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
+.scene-chip { transform-box: fill-box; transform-origin: center; }
+
+/* the payoff — what actually left the room */
+.payoff { margin-top: 14px; border: 1px solid var(--edge); border-radius: 14px;
+  background: linear-gradient(180deg, var(--surface-2), #101012); padding: 0 16px;
+  max-height: 0; opacity: 0; overflow: hidden;
+  transition: max-height .5s ease, opacity .5s ease, padding .5s ease; }
+.payoff.show { max-height: 900px; opacity: 1; padding: 16px; }
+.payoff h3 { margin: 0; font-size: 15px; }
+.payoff .claim { margin: 10px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px; color: var(--canary); background: #0a0a0c; border: 1px solid var(--edge);
+  border-radius: 8px; padding: 8px 10px; word-break: break-word; }
+.payoff .never { margin: 10px 0 0; color: var(--muted); font-size: 13.5px; }
+.payoff .never b { color: var(--text); }
+
+.scene-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 2px 0; }
+.scene-note { color: var(--faint); font-size: 12.5px; margin: 10px 2px 0; }
+
+/* the live signature row inside the payoff */
+.sig-row { display: flex; align-items: baseline; gap: 10px; margin: 10px 0 0; flex-wrap: wrap; }
+.sig-status { font-size: 12.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
+.sig-status.ok { color: #8fd3a8; border-color: rgba(143,211,168,.5); background: rgba(143,211,168,.08); }
+.sig-status.bad { color: #ff8f8f; border-color: rgba(255,143,143,.55); background: rgba(255,143,143,.10); }
+.sig-val { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--faint);
+  word-break: break-word; }
+
+/* the interactive "beat" — forge it (presence) / grab the picture (vision) */
+.beat { display: flex; align-items: center; gap: 12px; margin: 12px 0 0; flex-wrap: wrap; }
+.beat-btn { appearance: none; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
+  border: 1px solid rgba(255,143,143,.5); background: rgba(255,143,143,.07); color: #ffb0b0;
+  border-radius: 999px; padding: 5px 13px; }
+.beat-btn:hover { background: rgba(255,143,143,.13); }
+.beat-btn.grab { border-color: rgba(255,212,79,.55); background: rgba(255,212,79,.08); color: var(--canary); }
+.beat-btn.grab:hover { background: rgba(255,212,79,.14); }
+.beat-note { color: var(--muted); font-size: 12.5px; }
+
+/* the vision "grab the picture" packet reveal */
+.wire { margin: 10px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+  color: var(--muted); background: #0a0a0c; border: 1px dashed var(--edge); border-radius: 8px;
+  padding: 10px 12px; white-space: pre; overflow-x: auto; }
+
+/* the breathing scene's wellbeing readout (published, unsigned metadata) */
+.vitals { margin: 9px 0 0; font-size: 13px; color: #8fd3a8; }
+.vitals.off { color: var(--faint); }
+.vitals b { color: var(--text); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-chip.show { animation: none; opacity: 1; }
+  .payoff { transition: none; }
+}

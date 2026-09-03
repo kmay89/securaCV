@@ -197,6 +197,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed composition rules, [VARIANT_
 
 Install: [VS Code Extension](https://platformio.org/install/ide?install=vscode) or `pip install platformio`
 
+Which `espressif32` / pioarduino platform each env builds on — and the one
+file that pins it, `envs/platformio/platforms.ini` — is in
+[PLATFORMS.md](PLATFORMS.md).
+
 ```bash
 cd firmware/projects/canary-wap
 pio run              # Build

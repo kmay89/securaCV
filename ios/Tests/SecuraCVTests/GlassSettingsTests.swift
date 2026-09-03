@@ -90,6 +90,12 @@ final class GlassSettingsTests: XCTestCase {
             "bright_pct", "character", "clock_style",
             // The hub-less standalone-weather pair: the opt-in toggle, and
             // the coarse location as ONE combined integer (atomic store).
+            // Since the display's on-glass-only key class landed, the firmware
+            // REFUSES both from the LAN (403 on_glass_only) and reports them
+            // read-only under `on_glass`; they stay in this list only until the
+            // weather sheet is reworked to read that block (roadmap item 17
+            // follow-up), and against current firmware the sheet never shows
+            // them because the top-level `wx_direct` key is no longer served.
             "wx_direct", "wx_loc",
         ]
         var s = GlassSettings()

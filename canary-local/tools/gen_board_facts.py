@@ -49,7 +49,9 @@ import urllib.error
 import urllib.request
 from html.parser import HTMLParser
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+from _tooling import repo_root
+
+REPO_ROOT = repo_root()
 SNAPSHOT = REPO_ROOT / "canary-local/devices/board_facts.json"
 SCHEMA = "securacv-board-facts-1"
 

@@ -1,0 +1,24 @@
+/* index-redirect.css — lifted out of index.html so the page can carry a strict Content-Security-Policy
+   (style-src 'self', no inline <style>; see canary-local/tools/gen_csp.py). */
+/* ── "still on SecuraCV" bar ─────────────────────────────────────────────
+   This page declares no custom properties, so the bar carries its own
+   literals rather than falling back to the dark Quiet Glass palette on a
+   light page. Values match the page's own #fafaf9 / #52525b. */
+.scv-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px;
+  background: #ffffff; border-bottom: 1px solid #e6e6e3;
+  font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif;
+  color: #6b6b73;
+}
+.scv-bar a { color: #0b0b0c; text-decoration: none; font-weight: 600; }
+.scv-bar a:hover { color: #2563eb; text-decoration: underline; }
+.scv-bar .scv-home { color: #2563eb; }
+.scv-bar .scv-sep { color: #9a9aa2; }
+.scv-bar .scv-where { margin-left: auto; color: #6b6b73; font-weight: 500; }
+@media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
+
+    body{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Inter",sans-serif;margin:0;
+      display:grid;place-items:center;min-height:100vh;background:#fafaf9;color:#52525b;letter-spacing:-.01em;}
+    a{color:#2563eb;font-weight:600;text-decoration:none;}
+    p{font-size:15px;}

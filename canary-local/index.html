@@ -2,49 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>canary.local — the Lab</title>
   <meta name="description" content="The SecuraCV Lab — meet your Canary before you meet your Canary. Works offline; nothing phones anywhere." />
   <link rel="canonical" href="lab.html" />
+  <link rel="stylesheet" href="assets/index-redirect.css" />
   <!-- The Lab's front door is now the adaptive shell (lab.html): the isometric
        workshop as Overview, the six-stage build line around it. Redirect there. -->
   <meta http-equiv="refresh" content="0; url=lab.html" />
-  <script>
-    // Device deep-links (index.html#<device-id>) historically opened a card
-    // sheet on this page; that page is now fleet.html, so forward a simple id
-    // hash there. Everything else goes to the shell. The hash is validated
-    // against a strict pattern, so only a bare id is ever appended to a fixed
-    // same-page path — no untrusted value controls the destination.
-    (function () {
-      var h = location.hash;
-      if (h && /^#[\w-]+$/.test(h)) location.replace("fleet.html" + h);
-      else location.replace("lab.html");
-    })();
-  </script>
-  <style>
-/* ── "still on SecuraCV" bar ─────────────────────────────────────────────
-   This page declares no custom properties, so the bar carries its own
-   literals rather than falling back to the dark Quiet Glass palette on a
-   light page. Values match the page's own #fafaf9 / #52525b. */
-.scv-bar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 16px;
-  background: #ffffff; border-bottom: 1px solid #e6e6e3;
-  font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif;
-  color: #6b6b73;
-}
-.scv-bar a { color: #0b0b0c; text-decoration: none; font-weight: 600; }
-.scv-bar a:hover { color: #2563eb; text-decoration: underline; }
-.scv-bar .scv-home { color: #2563eb; }
-.scv-bar .scv-sep { color: #9a9aa2; }
-.scv-bar .scv-where { margin-left: auto; color: #6b6b73; font-weight: 500; }
-@media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
-
-    body{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Inter",sans-serif;margin:0;
-      display:grid;place-items:center;min-height:100vh;background:#fafaf9;color:#52525b;letter-spacing:-.01em;}
-    a{color:#2563eb;font-weight:600;text-decoration:none;}
-    p{font-size:15px;}
-  </style>
+  <script src="assets/index-redirect.js"></script>
 </head>
 <body>
 <!-- These pages are served from a different origin than securacv.com. This

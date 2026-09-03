@@ -2538,6 +2538,11 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   st["frames_dropped_full"] = stats.frames_dropped_full;
   st["windows_emitted"]     = stats.windows_emitted;
   st["windows_degraded"]    = stats.windows_degraded;
+  // Breathing-envelope cadence: how far the loop's real window pace was
+  // from the 1 Hz grid the feature layer resamples onto.
+  st["windows_held"]        = stats.windows_held;
+  st["windows_merged"]      = stats.windows_merged;
+  st["window_period_ms"]    = stats.window_period_ms;
 #endif // FEATURE_CSI
 
 #if FEATURE_ACOUSTIC_EVENTS

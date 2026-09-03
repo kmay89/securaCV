@@ -52,6 +52,8 @@ const RUN = ONLY ? [ONLY] : FLAVORS;
 const SERVABLE = new Map();
 for (const rel of [
   "canary-local/emulator/web/harness.html",
+  "canary-local/emulator/web/harness.js",
+  "canary-local/emulator/web/harness.css",
   "canary-local/emulator/web/emu-shell.js",
   ...FLAVORS.map((f) => `canary-local/emulator/dist/canary-display-${f}.js`),
 ]) {

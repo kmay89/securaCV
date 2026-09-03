@@ -1,0 +1,31 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-nightstand-c6",
+  "name": "Canary Nightstand C6",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-C6",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "waveshare-esp32c6-lcd147",
+    "envs": [
+      "canary-display-nightstand-c6"
+    ]
+  },
+  "peripherals": [
+    "sd_card",
+    "thread_zigbee",
+    "display",
+    "rgbled",
+    "backlight_pwm"
+  ],
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_c6_display.scad",
+    "enclosure_sets": [
+      "c6-display-pocket-case"
+    ]
+  },
+  "flasher": {
+    "product": "securacv-canary-display-nightstand-c6"
+  }
+}

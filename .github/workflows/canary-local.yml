@@ -165,7 +165,9 @@ permissions:
 # (the wasm job is one of the most expensive in the repo). Pushes to main
 # are never canceled — full signal per main commit.
 concurrency:
-  group: canary-local-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: canary-local-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -175,6 +177,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -222,6 +227,7 @@ jobs:
           node --test canary-local/tests/mode.test.js
           node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
+          node --test canary-local/tests/csp.test.js
       - name: Witness Wall emulator copies in sync (Flasher <-> Lab)
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
@@ -264,6 +270,15 @@ jobs:
         # assert they reproduce. A hatch.json edit that isn't regenerated
         # would ship a Canary with two names, so it fails here first.
         run: node canary-local/tools/hatchery/gen_hatch_swift.mjs --check
+      - name: Lab CSP drift (every page's Content-Security-Policy is generated from one policy table)
+        # tools/gen_csp.py writes the <meta> CSP into every canary-local page
+        # (and the emulator harness) from BASE + SHARED + PAGES, a reason per
+        # source. --check re-derives and names each page whose line disagrees.
+        # It also refuses any inline script, <style> block, style= attribute or
+        # on*= handler the table does not hash, so a page loosened to make an
+        # inline work fails here, before it can ship. tests/csp.test.js mirrors
+        # the rules; the browser probe runs in the wasm job below.
+        run: python3 canary-local/tools/gen_csp.py --check
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -512,6 +527,11 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Boot probe — COMMITTED artifacts (what a bare checkout serves)
         run: node canary-local/tests/boot_probe.mjs
+      - name: CSP probe — every Lab page loads under its policy with zero violations
+        # Opens every canary-local page and the harness per flavor in Chromium
+        # with a securitypolicyviolation listener installed in every frame; a
+        # single violation, page error or console error fails it.
+        run: node canary-local/tests/csp_probe.mjs
       - name: Flash probe — flasher page boots on both branches (serial + no-serial)
         run: node canary-local/tests/flash_probe.mjs
       - name: Workshop probe — the configurator drives the real catalog
@@ -549,8 +569,9 @@ jobs:
           ./build.sh all
       - name: Dist drift check (committed artifacts match this tree's sources)
         run: |
-          # meta.json embeds the checkout sha, which legitimately differs on
-          # a PR merge ref — the drift gate is the code bundles themselves.
+          # meta.json carries a git stamp (the merge-base with origin/main,
+          # see build.sh) that legitimately differs on a PR merge ref and in
+          # this shallow checkout — the drift gate is the code bundles.
           if ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
             echo "── first differing bytes per artifact (diagnosis) ──"
             for f in canary-local/emulator/dist/*.js; do

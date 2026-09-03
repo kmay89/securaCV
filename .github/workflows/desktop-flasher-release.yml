@@ -89,6 +89,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Decide whether to publish
         id: plan
@@ -162,10 +165,16 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
 
       - name: Install Tauri CLI
+        # `npm ci`, never `npm install`: desktop/package-lock.json pins the
+        # @tauri-apps/cli this bundle is built with, so two builds of one tag
+        # use one tool and a CLI bump arrives as a Dependabot PR, not on the
+        # release runner (.github/RELEASE_LESSONS.md, 2026-09-03).
         working-directory: desktop
-        run: npm install
+        run: npm ci
 
       # ── the bundled flash engine ───────────────────────────────────────────
       # Fetch the prebuilt espflash for each arch and drop it where Tauri looks
@@ -748,6 +757,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Resolve tag + version
         id: plan

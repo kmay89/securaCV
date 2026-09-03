@@ -186,6 +186,28 @@ plainly rather than hiding:
   settings. It does not — and is not meant to — stop a direct-LAN host that
   reads the page and its token itself; that is the same boundary the reads sit
   on. See the write-guard note in `glass_web.cpp`.
+- **Two keys are not writable from the network at all.** `wx_direct` (the
+  standalone-weather opt-in — the display's one *opt-in* outbound path; SNTP
+  and the daily signed update check are always-on and carry no location) and
+  `wx_loc` (the coarse location that fetch would carry) are refused by
+  `/api/set` with `403 {"ok":false,"err":"on_glass_only"}` for every caller,
+  token or not, before the Origin/CSRF gate is even consulted, and each
+  refusal is one Warn line in the log. The Origin+CSRF guard above stops a
+  drive-by page but not a host already on the LAN, and "zero phone-home" must
+  not be a principle a neighbor can flip. The opt-in lives on the glass
+  (settings → weather → fetch itself). Everything else `/api/set` and
+  `/api/tz` accept — brightness, night behavior, the look, the lamp, the
+  zone — stays an ordinary knob behind Origin+CSRF; `tz` is a clock rule that
+  never leaves the device, not a stored place. The key class is one
+  host-tested table (`include/canary/net/settings_policy.h`,
+  `tests_host/test_settings_policy.cpp`) that the handler enforces and
+  `/api/settings` serves under `on_glass` so a client never draws a switch
+  that would 403; the mirror page renders those as read-only rows pointing at
+  the glass. The block carries the on/off state for every caller, and the two
+  location-derived facts (whether a grid point is stored, the fetcher's
+  verdict) only on requests that are not cross-site — the same rule
+  `/api/fleet` applies to presence. No route serves the stored grid point.
+  Compile-tested; not yet exercised on bench hardware.
 - **The display↔broker MQTT link is plaintext by default.** `mqtt_mgr.cpp`
   connects over TCP 1883 with a plain `WiFiClient` (no TLS), so a LAN sniffer
   can see the MQTT username/password and every retained status/health/chain and

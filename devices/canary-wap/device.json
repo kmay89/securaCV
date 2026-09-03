@@ -1,0 +1,37 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-wap",
+  "name": "Canary WAP",
+  "family": "canary-wap",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 8,
+    "board_id": "xiao-esp32s3-sense",
+    "envs": [
+      "canary-wap-default",
+      "canary-wap-usbdrive"
+    ]
+  },
+  "peripherals": [
+    "camera",
+    "microphone",
+    "sd_card",
+    "gnss_uart",
+    "tamper_input"
+  ],
+  "figure": "device.canary-wap",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_wap_enclosure.scad",
+    "enclosure_sets": [
+      "wap-compact",
+      "wap-battery",
+      "wap-weather",
+      "wap-clip-coupon",
+      "thermal-outdoor-kit"
+    ]
+  },
+  "flasher": {
+    "product": "securacv-canary-wap"
+  }
+}

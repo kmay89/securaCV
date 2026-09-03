@@ -44,6 +44,26 @@ ARDUINOJSON_VER="7.4.1"
 ARDUINOLIBS_COMMIT="37a76b8f7516568e1c575b6dc9268da1ccaac6b6"
 EMSCRIPTEN_VERSION="6.0.3"
 
+# The git stamp written into dist/*.meta.json. NOT the checkout sha: the
+# pinned-emsdk rebuild bot (.github/workflows/emulator-dist-refresh.yml) runs
+# on PR branches, and after a squash-merge a PR-branch sha is unreachable
+# from main — so the committed stamp named a commit nobody could check out.
+# Stamp the newest MAIN commit these bytes descend from instead: the
+# merge-base of HEAD and origin/main. On main itself that is HEAD; on a
+# branch it is the fork point, which survives the squash. Falls back to HEAD
+# when there is no origin/main to measure against (a fork whose upstream
+# remote has another name, a shallow clone with no common history) and to
+# "dev" outside git. Committed values move on the next bot rebuild — the
+# drift gate compares the bundles and deliberately ignores meta.json.
+stamp_sha() {
+  local base=""
+  if git -C "$REPO_ROOT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    base="$(git -C "$REPO_ROOT" merge-base HEAD origin/main 2>/dev/null || true)"
+  fi
+  git -C "$REPO_ROOT" rev-parse --short "${base:-HEAD}" 2>/dev/null || echo dev
+}
+GIT_SHA="$(stamp_sha)"
+
 FLAVOR="${1:-watch}"
 if [[ "$FLAVOR" == "all" ]]; then
   "$0" watch
@@ -143,7 +163,6 @@ if [[ "$FLAVOR" == "vision" ]]; then
     -o "$DIST/$OUT_BASE.js"
 
   FW_VERSION="$(sed -n 's/.*CANARY_FW_VERSION "\(.*\)".*/\1/p' "$VISION_PROJ/include/canary/version.h")"
-  GIT_SHA="$(git -C "$FW/.." rev-parse --short HEAD 2>/dev/null || echo dev)"
   cat > "$DIST/$OUT_BASE.meta.json" <<EOF
 {
   "flavor": "vision-core",
@@ -225,7 +244,6 @@ if [[ "$FLAVOR" == "audio" ]]; then
     -o "$DIST/$OUT_BASE.js"
 
   FW_VERSION="$(sed -n 's/.*FIRMWARE_VERSION *= *"\(.*\)".*/\1/p' "$FW/projects/canary-wap/arduino/canary_wap/canary_wap.ino" | head -1)"
-  GIT_SHA="$(git -C "$FW/.." rev-parse --short HEAD 2>/dev/null || echo dev)"
   cat > "$DIST/$OUT_BASE.meta.json" <<EOF
 {
   "flavor": "wap-audio",
@@ -438,7 +456,7 @@ compile() {
 
 echo "── compiling LVGL ($LVGL_TAG) ──"
 for f in "${LVGL_SRCS[@]}"; do compile "$f" c; done
-echo "── compiling firmware (canary-display/$FLAVOR @ $(git -C "$FW/.." rev-parse --short HEAD 2>/dev/null || echo dev)) ──"
+echo "── compiling firmware (canary-display/$FLAVOR @ $GIT_SHA) ──"
 for f in "${FIRMWARE_SRCS[@]}"; do compile "$f" cpp; done
 echo "── compiling Crypto (Ed25519) ──"
 for f in "${CRYPTO_SRCS[@]}"; do compile "$f" cpp; done
@@ -464,7 +482,6 @@ em++ "${OBJS[@]}" \
 
 # Build stamp for the page footer: which firmware these bytes are.
 FW_VERSION="$(sed -n 's/.*CANARY_FW_VERSION "\(.*\)".*/\1/p' "$PROJ/include/canary/version.h")"
-GIT_SHA="$(git -C "$FW/.." rev-parse --short HEAD 2>/dev/null || echo dev)"
 cat > "$DIST/$OUT_BASE.meta.json" <<EOF
 {
   "flavor": "$FLAVOR",

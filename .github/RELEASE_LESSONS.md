@@ -2337,3 +2337,30 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   the OUTPUT SET against the last shipped release — warnings scroll away,
   a missing product id in a set comparison does not. When adding such a
   gate, feed it a doctored manifest once and watch it go red (rule (x)).
+
+### 2026-09-03 — the Flasher's build tool was resolved fresh on every release runner
+
+- **Symptom:** `desktop/` had no committed `package-lock.json`. The Flasher
+  release workflow ran `npm install`, so each run took whatever
+  `@tauri-apps/cli@^2` resolved to that day: two builds of the same tag could
+  bundle with different CLI versions, and a CLI regression would have arrived
+  on the release path with no diff to point at. Because there was no
+  lockfile, `npm audit` (audit.yml) and Dependabot both skipped `desktop/` —
+  each said so in a comment. The Lab (`desktop-lab/`) already had its lockfile
+  and `npm ci`; the Flasher was the odd one out.
+- **Fix:** `desktop/package-lock.json` is committed, generated with
+  `npm install --package-lock-only --ignore-scripts`. That form records every
+  platform's optional `@tauri-apps/cli-*` binary (darwin arm64/x64, linux,
+  win32), so a lockfile made on Linux installs on the macOS runners too.
+  `desktop-flasher-release.yml` runs `npm ci` with the npm cache keyed on the
+  lockfile, `audit.yml` audits it alongside canary-vision and desktop-lab, and
+  dependabot.yml has an npm entry for `/desktop`. `desktop/` is already in the
+  Flasher target's `watch:` list, so a Dependabot bump of the lockfile shows
+  the Flasher as ahead in the release plan — the same way a
+  `desktop/src-tauri/Cargo.lock` bump does today.
+- **Applies to:** every Tauri target. "Pin-or-log every upstream ref" covers
+  the tool that builds the bundle, not only what goes into it: a
+  `package.json` with a caret range and no lockfile is an unpinned upstream
+  ref on the release path. When adding an app target, check that its install
+  step is `npm ci` against a committed lockfile, and that the lockfile is in
+  audit.yml's matrix and paths and in dependabot.yml.

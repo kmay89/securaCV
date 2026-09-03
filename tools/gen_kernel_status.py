@@ -18,8 +18,18 @@ Status rules (grounded in the tree):
   planned — no implementing code (or a different mechanism entirely)
 
 Run:  python3 tools/gen_kernel_status.py
+      python3 tools/gen_kernel_status.py --site DIR   # also write the website's
+                                                     # kernel-status.json carry
+
+The --site carry (DIR = a securacv_website checkout) writes the same verdicts,
+plus a one-line evidence note per tile, as kernel-status.json — the file the
+website's tests/kernel-status.test.mjs pins its landing-page grid against. It
+carries no date and no commit sha, so the same tree always produces the same
+bytes; scripts/carry_to_site.py calls write_site() for the weekly carry job.
 """
 
+import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -208,19 +218,149 @@ REVEAL = [
     "reveal reveal-delay-3", "reveal reveal-delay-3", "reveal reveal-delay-4",
 ]
 
+# What each verdict rests on, in one sentence, per tile AND per status — the
+# website's kernel-status.json carries this next to the verdict so a reader can
+# go and look. Keyed by status because the evidence for "wip" is a different
+# fact from the evidence for "done"; every status a detector can return has a
+# line, so a flipped verdict never ships with a stale sentence.
+EVIDENCE = {
+    "Frame isolation types": {
+        "done": "src/frame.rs: RawFrame keeps its bytes private — no Clone, no byte getter — "
+                "and export_for_vault() is the one path out, behind a BreakGlassToken.",
+        "wip": "src/frame.rs still has RawFrame, export_for_vault() and BreakGlassToken, but "
+               "the type grew a raw-export hole (Clone, AsRef<[u8]>, Deref/Borrow, or a public "
+               "byte getter) — the type-level guarantee is broken until it is closed.",
+        "planned": "src/frame.rs is missing RawFrame, export_for_vault() or BreakGlassToken — "
+                   "the isolation machinery is not in the tree.",
+    },
+    "Hash-chained event log": {
+        "done": "src/log/mod.rs: hash_entry() chains every entry; src/bin/log_verify.rs "
+                "re-walks the chain.",
+        "planned": "src/log/mod.rs has no hash_entry(), or src/bin/log_verify.rs is missing — "
+                   "nothing chains the log and nothing re-walks it.",
+    },
+    "Break-glass quorum": {
+        "done": "src/break_glass/core.rs: QuorumPolicy and count_valid_distinct_approvals() — "
+                "n distinct trustees, counted once each.",
+        "planned": "src/break_glass/core.rs lacks QuorumPolicy or the distinct-trustee count "
+                   "(count_valid_distinct_approvals, trustees_used.len() >= policy.n).",
+    },
+    "Event contract enforcement": {
+        "done": "src/lib.rs: ContractEnforcer, against the shape written down in "
+                "spec/event_contract.md.",
+        "planned": "No ContractEnforcer in src/lib.rs, or spec/event_contract.md is missing — "
+                   "the contract is not enforced in code.",
+    },
+    "Cryptographic signatures": {
+        "done": "src/crypto/signatures.rs: sign_with_domain() / verify_with_domain() over "
+                "ed25519-dalek, domain-separated, with room for a PQ signature alongside.",
+        "planned": "ed25519-dalek is not a Cargo dependency, or src/crypto/signatures.rs lacks "
+                   "sign_with_domain() / verify_with_domain().",
+    },
+    "Encrypted vault envelopes": {
+        "done": "src/vault/crypto.rs: seal_v2() with ChaCha20-Poly1305; src/vault/format.rs "
+                "writes the VLT2 envelope; witnessd seals frames through seal_frame().",
+        "planned": "One of the three is missing: seal_v2() with ChaCha20-Poly1305 in "
+                   "src/vault/crypto.rs, the VLT2 magic in src/vault/format.rs, or "
+                   "seal_frame() in src/bin/witnessd.rs.",
+    },
+    "RTSP video ingestion": {
+        "done": "src/ingest/rtsp.rs has real decoders and one of rtsp-ffmpeg / rtsp-gstreamer "
+                "is in Cargo.toml's default features — a plain build ingests RTSP.",
+        "wip": "src/ingest/rtsp.rs has real decoders, but behind the rtsp-ffmpeg / "
+               "rtsp-gstreamer cargo features — neither is in the default build, so a plain "
+               "build still gets the synthetic source.",
+        "planned": "src/ingest/rtsp.rs has no rtsp-ffmpeg / rtsp-gstreamer feature-gated "
+                   "decoder — only the synthetic source exists.",
+    },
+    "WASM module sandboxing": {
+        "done": "A wasm runtime (wasmtime / wasmer / wasmi) is a Cargo dependency and "
+                "src/module_runtime wires it into the sandbox.",
+        "wip": "A wasm runtime (wasmtime / wasmer / wasmi) is a Cargo dependency, but "
+               "src/module_runtime does not wire it into the sandbox yet.",
+        "planned": "No wasm runtime is a dependency. The sandbox that ships today is a "
+                   "different mechanism: forked, seccomp-restricted child processes "
+                   "(src/module_runtime/sandbox.rs).",
+    },
+}
+
+SITE_COMMENT = (
+    "GENERATED by securaCV tools/gen_kernel_status.py --site (run by "
+    "scripts/carry_to_site.py) — do not edit by hand. Implementation status of the witness "
+    "kernel, as shown by the Status grid on the landing page. Each verdict is DERIVED from "
+    "the kernel source (structs, functions, cargo features) by the same generator that "
+    "stamps docs/witness-kernel.html upstream, where CI git-diffs the result, so neither "
+    "page can overstate the tree. tests/kernel-status.test.mjs pins index.html against "
+    "this file — labels, order and glyphs alike. To update, re-run the carry; never "
+    "hand-write a status."
+)
+SITE_SOURCE = "https://github.com/kmay89/securaCV/blob/main/tools/gen_kernel_status.py"
+SITE_RULES = {
+    "done": "the implementing code is present AND on the default build path",
+    "wip": "the code exists but is behind a non-default cargo feature",
+    "planned": "no implementing code, or a different mechanism entirely",
+}
+
 # --------------------------------------------------------------------------- #
 
-def main():
-    if not PAGE.exists():
-        die(f"page missing: {PAGE.relative_to(REPO)}")
+def compute():
+    """[(label, status, authored_index)] in authored order."""
     if not exists("Cargo.toml") or not exists("src/lib.rs"):
         die("kernel sources not found (Cargo.toml / src/lib.rs) — run from the repo root")
+    return [(label, fn(), i) for i, (label, fn) in enumerate(TILES)]
 
-    computed = [(label, fn(), i) for i, (label, fn) in enumerate(TILES)]
-    ordered = sorted(computed, key=lambda t: (RANK[t[1]], t[2]))
+
+def ordered(computed):
+    """The emit order: done → wip → planned, authored order within a status."""
+    return sorted(computed, key=lambda t: (RANK[t[1]], t[2]))
+
+
+def evidence_for(label: str, status: str) -> str:
+    try:
+        return EVIDENCE[label][status]
+    except KeyError:
+        die(f"no evidence sentence for tile {label!r} with status {status!r} — add one to "
+            "EVIDENCE so the website never carries a verdict without its reason")
+
+
+def site_document(computed=None) -> dict:
+    """The website's kernel-status.json: verdicts + evidence, no date, no sha."""
+    computed = compute() if computed is None else computed
+    return {
+        "_comment": SITE_COMMENT,
+        "source": SITE_SOURCE,
+        "rules": dict(SITE_RULES),
+        "glyphs": dict(GLYPH),
+        "tiles": [
+            {"label": label, "status": status, "evidence": evidence_for(label, status)}
+            for label, status, _i in ordered(computed)
+        ],
+    }
+
+
+def write_site(site: Path) -> Path:
+    if not (site / "js").is_dir():
+        die(f"{site} does not look like the website checkout")
+    out = site / "kernel-status.json"
+    out.write_text(json.dumps(site_document(), indent=2, ensure_ascii=False) + "\n",
+                   encoding="utf-8")
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    ap.add_argument("--site", metavar="DIR", type=Path,
+                    help="also write the website's kernel-status.json carry into checkout DIR")
+    args = ap.parse_args()
+
+    if not PAGE.exists():
+        die(f"page missing: {PAGE.relative_to(REPO)}")
+
+    computed = compute()
+    emit = ordered(computed)
 
     items = []
-    for pos, (label, status, _idx) in enumerate(ordered):
+    for pos, (label, status, _idx) in enumerate(emit):
         items.append(
             f'          <div class="status-item {REVEAL[pos]}">\n'
             f'            <div class="status-icon {status}">{GLYPH[status]}</div>\n'
@@ -241,8 +381,11 @@ def main():
         tally[s] = tally.get(s, 0) + 1
     print("stamped docs/witness-kernel.html status grid: "
           + ", ".join(f"{tally.get(k, 0)} {k}" for k in ("done", "wip", "planned")))
-    for label, status, _i in ordered:
+    for label, status, _i in emit:
         print(f"  {GLYPH[status]} {label}  ({status})")
+
+    if args.site:
+        print(f"wrote {write_site(args.site.resolve())}")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>The Board Room — every board, as the real thing · canary.local</title>
   <meta name="description" content="ECAD-grade 3D viewer for every Canary board: the vendor's actual CAD with pin flags hung on the real pad geometry, plus LEGO-style wiring views that land every wire on the exact pad the firmware names. Works offline; nothing phones anywhere." />
@@ -67,12 +68,6 @@
     </p>
   </footer>
 
-  <script type="module">
-    import { buildBoardRoom } from "./assets/board-room.js";
-    const mount = document.getElementById("boardroom");
-    const grab = (p) => fetch(p).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    Promise.all([grab("devices/boards.json"), grab("devices/wiring.json")])
-      .then(([boards, wiring]) => buildBoardRoom(mount, boards, wiring));
-  </script>
+  <script type="module" src="assets/boards.js"></script>
 </body>
 </html>
