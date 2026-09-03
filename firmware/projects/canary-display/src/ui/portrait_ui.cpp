@@ -318,10 +318,14 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
 
 #if defined(FEATURE_TOUCH) && FEATURE_TOUCH
   // The doorway keeps daylight hours: after dark the column is a clock and
-  // a lamp, and a stray tap must stay the peek it already was.
+  // a lamp, and a stray tap must stay the peek it already was. Keyed on the
+  // same predicate portrait_ui_handle_tap refuses on — the theme's night
+  // flag, which is quiet hours — not st.night, which is the LOOK (quiet
+  // hours AND red shift) and would leave a dead gear on the glass whenever
+  // red shift is off (Codex P2).
   if (s_gear) {
-    if (night) lv_obj_add_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
-    else       lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
+    if (character_night()) lv_obj_add_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
+    else                   lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_text_color(s_gear, col_faint(), 0);
   }
 #endif

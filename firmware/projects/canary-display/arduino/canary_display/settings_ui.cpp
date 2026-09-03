@@ -1921,7 +1921,17 @@ void dispatch(int raw) {
         // re-apply so the glass doesn't keep wearing a Character the
         // blob no longer holds until the next boot.
         character_apply((Character)settings().character);
+#ifdef CD_FLAVOR_DASH
+        // ...and in orientation: the defaults hold landscape, so a panel
+        // opened on a turned glass must turn back NOW and re-measure its
+        // canvas, or the root rebuilds into the old 480x800 frame and the
+        // render tick's rotation tracker (which never relayouts an open
+        // panel) leaves it there until the next navigation (Codex P2).
+        lvgl_port_set_rotation(settings().rotation);
+        layout_host();
+#else
         restyle_open_surface();
+#endif
       }
       build(Page::Root);
       return;
