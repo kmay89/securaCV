@@ -48,6 +48,7 @@ main_queue_ok:
   - docker-sidecar.yml        # same, the Frigate sidecar image
   - pages.yml                 # a deploy: only the newest content is worth publishing
   - labels.yml                # idempotent label sync; order is irrelevant, parallel runs are noise
+  - homeassistant-mirror.yml  # force-pushes one branch in the HACS mirror; two at once would race
 
 # R9: jobs allowed to run Python on the runner image's interpreter without an
 # actions/setup-python step. Entries are `<workflow>.yml:<job>`, each with a

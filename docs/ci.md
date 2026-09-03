@@ -17,7 +17,7 @@ the per-gate detail for the rest lives next to each gate.
 | **Lab / emulator drift** | `canary-local.yml`, `emulator-dist-refresh.yml` | Firmware → WASM boots in a browser; the "Dist drift check" byte-compares the committed `canary-local/emulator/dist/` bundles, and the page-logic tests catch a stale `fw_version` stamp. The full stale-dist playbook is in [`CLAUDE.md`](../CLAUDE.md) ("Generated files"). |
 | **Container images** | `container-images.yml`, `docker-sidecar.yml`, `addon-image.yml` | Detailed in the next section. |
 | **Apps & release** | `desktop-*.yml`, `ios-*.yml`, `tvos*.yml`, `mac-apps-release.yml`, `flasher-release.yml`, `firmware-release*.yml`, `release-*.yml` | The build/publish pipelines. Operator's guide: [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md); lessons: [`.github/RELEASE_LESSONS.md`](../.github/RELEASE_LESSONS.md); targets are declared in `.github/release-targets.yml`, not in workflow YAML. |
-| **Freshness & guards** | `board-facts-freshness.yml`, `homeassistant-freshness.yml`, `features-dashboard-guard.yml`, `release-latest-guard.yml`, `workflows-lint.yml` | Scheduled and structural checks that fail when generated or pinned facts drift from their sources. |
+| **Freshness & guards** | `board-facts-freshness.yml`, `homeassistant-freshness.yml`, `homeassistant-mirror.yml`, `features-dashboard-guard.yml`, `release-latest-guard.yml`, `workflows-lint.yml` | Scheduled and structural checks that fail when generated or pinned facts drift from their sources; `homeassistant-mirror.yml` is the one that *pushes* — every main change under `custom_components/securacv/` becomes a PR in the HACS mirror (needs the `MIRROR_PAT` secret; without it the run stays green and raises one issue). |
 
 ## Container build validation
 
