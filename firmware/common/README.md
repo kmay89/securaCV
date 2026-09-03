@@ -6,11 +6,10 @@ Board-agnostic firmware logic shared across projects.
 
 ```
 common/
-├── core/           # Core types, utilities, logging
+├── core/           # Core types, utilities
 │   ├── types.h     # Common data structures
-│   ├── log.h       # Logging infrastructure
 │   ├── ring_buffer.h  # Ring buffer implementation
-│   └── version.h   # Version information
+│   └── feature_sanity.h  # FEATURE_* vs HAS_* compile-time cross-check
 ├── hal/            # Hardware Abstraction Layer
 │   ├── hal.h       # Main HAL header
 │   ├── hal_gpio.h  # GPIO interface
@@ -30,21 +29,28 @@ common/
 ├── storage/        # Unified storage
 │   └── storage.h
 ├── network/        # Network modules
-│   └── mesh_network.h
+│   ├── provision_core.h
+│   ├── wifi_join_policy.h
+│   └── setup_portal*.{h,cpp}
 ├── bluetooth/      # BLE management
 │   └── bluetooth_mgr.h
-├── rf_presence/    # Privacy-preserving RF presence
-│   └── rf_presence.h
 ├── chirp/          # Community witness network
 │   └── chirp_channel.h
-├── health/         # Health logging with categories
-│   └── health_log.h
+├── health/         # Boot policy + serial test console
+│   ├── boot_policy.h
+│   └── test_console.h
 ├── encoding/       # Data encoding
 │   └── cbor.h
-└── web/            # HTTP server and UI
-    ├── http_server.h
-    └── web_ui.h
+└── web/            # HTTP server
+    └── http_server.h
 ```
+
+Not here on purpose: the health log, mesh network, RF presence and web UI
+live next to the canary-wap sketch (`firmware/projects/canary-wap/arduino/
+canary_wap/{health_log,mesh_network,rf_presence,web_ui}.h`) and the PIO
+tree's logger is `include/canary/log.h` per project. Unbuilt `common/`
+scaffolds that shared those names were deleted (roadmap item 29) so an
+include path can never pick the wrong one.
 
 ## Design Principles
 

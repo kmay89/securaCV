@@ -104,7 +104,7 @@ inline void log(LogLevel level, LogCategory category, const char* message, const
 
 // Variadic log function for printf-style formatted messages
 // Uses a stack buffer to format the message before logging
-// Buffer size of 128 matches health_log_entry_t.message in common/health/health_log.h
+// Buffer size of 128 matches the health log entry's message field
 inline void logf(LogLevel level, LogCategory category, const char* fmt, ...) {
   char buffer[128];
   va_list args;
