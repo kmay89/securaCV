@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Through Canary eyes — your webcam, its firmware · canary.local</title>
   <meta name="description" content="Point your webcam at the room and watch the Canary Vision presence engine — the real firmware's detection filter, voxel tracker and presence FSM, compiled to WebAssembly — decide presence, dwell and events from boxes alone. The browser stages motion boxes at the same sensor boundary the camera module occupies on hardware; no pixel ever crosses it. Frames are examined locally and discarded, never recorded, stored, or sent anywhere. A demonstration of how the presence engine behaves — not a security device." />

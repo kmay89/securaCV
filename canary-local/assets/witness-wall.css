@@ -1,0 +1,10 @@
+/* witness-wall.css — lifted out of witness-wall.html so the page can carry a strict Content-Security-Policy
+   (style-src 'self', no inline <style>; see canary-local/tools/gen_csp.py). */
+/* The bench is the emulator itself — this page is a thin host. */
+.wall-host { max-width: 1100px; margin: 0 auto; padding: 12px 16px 40px; }
+.wall-host .back { font-size: 13px; }
+.wall-host h1 { margin: 8px 0 2px; font-size: 1.5rem; }
+.wall-host .sub { margin: 0 0 10px; color: var(--muted, #667); font-size: .95rem; }
+.wall-scan { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted, #667); padding: 2px 2px 8px; min-height: 18px; }
+.wall-scan.live { color: #0d9488; }
+.wall-frame { width: 100%; min-height: 78vh; border: 0; border-radius: 12px; display: block; background: transparent; }

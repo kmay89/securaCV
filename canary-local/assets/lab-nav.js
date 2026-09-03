@@ -34,6 +34,9 @@ function h(tag, attrs, ...kids) {
   if (attrs) for (const [k, v] of Object.entries(attrs)) {
     if (v == null || v === false) continue;
     if (k === "class") n.className = v;
+    // CSSOM, never a style= attribute: every page carries a CSP whose style-src
+    // has no 'unsafe-inline', and setAttribute("style") is what it blocks.
+    else if (k === "style") n.style.cssText = v;
     else n.setAttribute(k, v === true ? "" : v);
   }
   for (const c of kids.flat()) {

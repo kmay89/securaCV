@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>The Vault — sealed evidence & break-glass by quorum · canary.local</title>
   <meta name="description" content="What a vault, a sealed record, and a quorum actually are in SecuraCV — explained with the docs and the code standing behind every claim. Watch a frame get sealed (ephemeral X25519 → HKDF → ChaCha20-Poly1305, byte-exact SVLT header), then break glass yourself: real N-of-M Ed25519 trustee approvals in your browser, counted exactly like the kernel. Parsed from the code, drift-checked in CI. Works offline." />
@@ -40,9 +41,9 @@
       so the device can't read it back, that no one can open alone — it takes a
       <strong>quorum</strong>. Here's what those three words mean, with the code behind them.
     </p>
-    <p style="margin:14px 0 2px">
-      <a href="#quorum" style="display:inline-block;padding:9px 17px;border:1px solid var(--canary);border-radius:12px;color:#151204;background:var(--canary);font-weight:650;text-decoration:none;">↓ Break the glass yourself</a>
-      <span style="color:var(--faint);font-size:12.5px;margin-left:8px">the live demo — real Ed25519, in your browser</span>
+    <p class="jump-row">
+      <a href="#quorum" class="jump-btn">↓ Break the glass yourself</a>
+      <span class="jump-hint">the live demo — real Ed25519, in your browser</span>
     </p>
     <p class="fineprint">
       <a href="lab.html">← the Lab</a> ·

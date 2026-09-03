@@ -1,0 +1,14 @@
+/* site-map.js — lifted out of site-map.html so the page can carry a strict Content-Security-Policy
+   (script-src 'self', no inline, no hashes to re-pin on every edit; the policy table is
+   canary-local/tools/gen_csp.py). Same code, same load order — only the file moved. */
+const h=(t,a,...k)=>{const n=document.createElement(t);for(const [x,v] of Object.entries(a||{})){if(v==null)continue;if(x==='class')n.className=v;else if(x==='style')n.style.cssText=v;/* CSSOM, not a style= attribute: the page's CSP has no 'unsafe-inline' */else n.setAttribute(x,v)};for(const c of k.flat()){if(c==null)continue;n.append(c.nodeType?c:document.createTextNode(String(c)))}return n};
+const siteHref=(href)=>href&&href.startsWith('/')?'https://securacv.com'+href:href;
+const ext=(href)=>/^https?:/.test(href||'')?{target:'_blank',rel:'noopener noreferrer'}:{};
+const benches=(s)=>s.tracks?s.tracks.flatMap(t=>t.benches.map(b=>({...b,track:t.label}))):s.benches;
+const manifest=await fetch('build-line.json',{cache:'no-cache'}).then(r=>r.json());
+const root=document.getElementById('map');
+root.append(h('section',{class:'rail'},...manifest.stages.map(s=>h('a',{class:'bench',href:'#stage-'+s.id,style:`--stage-accent:${s.accent}`},h('b',{},`${s.n}. ${s.name}`),h('p',{},s.verb)))));
+for(const s of manifest.stages){root.append(h('section',{class:'stage',id:'stage-'+s.id,style:`--stage-accent:${s.accent}`},h('div',{class:'stage-head',style:`color:${s.accent}`},h('span',{class:'num'},s.n),h('h2',{},`${s.name}: ${s.verb}`)),h('div',{class:'stage-body'},...benches(s).map(b=>h('a',{class:'bench',href:b.lab},h('b',{},b.noun,b.real?h('span',{class:'pill'},'real'):null),h('p',{},b.desc||''),b.track?h('p',{},b.track):null,b.depths?h('div',{class:'depths'},...b.depths.map(d=>h('a',{href:d.lab},`↳ ${d.label}`))):null)),s.site?h('div',{class:'sitehand'},h('span',{class:'pill'},'site handoffs'),...s.site.map(x=>h('a',{href:siteHref(x.href),...ext(siteHref(x.href))},x.noun))):null)))}
+root.append(h('section',{class:'docs'},...manifest.htmlDocumentation.groups.map(g=>h('div',{class:'docgroup'},h('h2',{},g.label),...g.items.map(i=>h('a',{class:'doc',href:i.href,...ext(i.href)},h('b',{},i.noun),h('p',{},i.purpose)))))));
+root.append(h('section',{class:'redirects'},h('h2',{},'Redirects and old names'),h('p',{},'Old slugs continue to resolve to canonical benches, so bookmarks do not rot.'),h('div',{class:'redirectgrid'},...Object.entries(manifest.redirects||{}).map(([from,to])=>h('a',{href:'lab.html#'+to},from+' → '+to)))));
+root.append(h('section',{class:'navbox'},h('h2',{},'Global site navigation'),h('div',{class:'navlinks'},...manifest.siteNav.map(n=>h('a',{href:siteHref(n.href),...ext(siteHref(n.href))},n.label)),...manifest.footerNav.map(n=>h('a',{href:siteHref(n.href),...ext(siteHref(n.href))},n.label)))));

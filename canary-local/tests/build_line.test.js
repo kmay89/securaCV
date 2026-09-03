@@ -181,10 +181,12 @@ test("the Lab's own site map page is in the manifest it renders", () => {
 
 // ── the room's offline slug map matches the manifest ────────────────────────
 
-test("room.html's FILE2SLUG fallback covers every bench and depth page", () => {
-  const room = read(join(ROOT, "room.html"));
+test("the room's FILE2SLUG fallback (assets/room.js) covers every bench and depth page", () => {
+  // The room's script is an external file (the page carries a no-inline-script
+  // CSP), so the offline slug map is read from there.
+  const room = read(join(ROOT, "assets/room.js"));
   const m = room.match(/var FILE2SLUG = \{([^}]*)\}/);
-  assert.ok(m, "room.html lost its FILE2SLUG fallback map");
+  assert.ok(m, "assets/room.js lost its FILE2SLUG fallback map");
   const map = {};
   for (const pair of m[1].matchAll(/'([^']+)':'([^']+)'/g)) map[pair[1]] = pair[2];
 
@@ -196,7 +198,7 @@ test("room.html's FILE2SLUG fallback covers every bench and depth page", () => {
   for (const [file, slug] of Object.entries(expect)) {
     assert.strictEqual(
       map[file], slug,
-      `room.html FILE2SLUG: "${file}" should map to "${slug}" (got "${map[file]}") — ` +
+      `room.js FILE2SLUG: "${file}" should map to "${slug}" (got "${map[file]}") — ` +
         `the offline fallback must route every bench page the manifest routes`,
     );
   }

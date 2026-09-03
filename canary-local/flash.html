@@ -2,27 +2,34 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EktR3SFf0lLCbyovl7Zr3tGJNxikCFvtZ3djuXGsas0='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://github.com https://*.githubusercontent.com http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <!--
     Supply-chain hardening (see docs/browser_flasher.md § Trust model): a strict
     Content-Security-Policy so only this site's own vendored code can run, and
     the page can only fetch firmware from our signed GitHub releases.
+    THE POLICY LINE ABOVE IS GENERATED — by canary-local/tools/gen_csp.py, from
+    the one policy table every Lab page shares; this page's additions and the
+    reason for each live there, and CI regenerates and diffs the line. Edit the
+    table, not the line. What it says:
       · script-src / style-src 'self' — no inline, no eval; every module is
         same-origin and vendored (esptool-js, md5, ed25519, qrcode).
       · the 'sha256-…' pins the inline import map below, which carries the
-        Subresource-Integrity hashes for those vendored modules.
+        Subresource-Integrity hashes for those vendored modules. It is the one
+        inline script in the Lab: browsers do not load an import map from a file.
       · connect-src — our signed release host + its asset CDN, plus loopback
         (localhost / 127.0.0.1) for a same-machine manifest server. That is the
         exact set the ?manifest= override accepts (flash-core.js), so the code
         guard and this policy agree; broader private/LAN hosts can't be spelled
         as a static CSP allowlist, so those self-host same-origin or use a local
-        file.
+        file. ipc: / http://ipc.localhost are the desktop Lab's Tauri IPC
+        origins (every Lab page carries them; dead letters in a browser).
       · base-uri / object-src / form-action 'none' — no <base> rewrite of our
         relative asset paths, no plugins, no form posts.
     frame-ancestors is omitted on purpose: it is ignored in a <meta> CSP, and
     the OS/browser serial chooser can't be spoofed from inside a frame anyway.
-    tests/flash.test.js is the drift gate for the 'sha256-…' and the SRI hashes.
+    tests/flash.test.js is the drift gate for the 'sha256-…' and the SRI hashes;
+    tests/csp.test.js + gen_csp.py --check guard the policy line itself.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EktR3SFf0lLCbyovl7Zr3tGJNxikCFvtZ3djuXGsas0='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://github.com https://*.githubusercontent.com http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>The Canary Nursery — flash &amp; first flight · canary.local</title>
   <meta name="description" content="Flash SecuraCV Canary firmware straight from a Chromium browser over USB-C — no Arduino, no PlatformIO, no terminal. It detects your ESP32 chip, backs the board up automatically before writing, flashes a signed release image, and verifies it against the chip's own checksum. It's a triage bench too: a read-only health check reports firmware slots, update history, crash dumps and witness-chain state, and a built-in serial monitor talks to the firmware's console. Built so you can't pick the wrong image and can't brick the board: the ESP32's bootloader is mask ROM. Works offline; the flashing engine is served from this site, nothing phones anywhere." />

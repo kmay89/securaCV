@@ -348,7 +348,11 @@ own code is honest — so a second layer hardens the page itself, the way a
 world-class installer guards its own supply chain.
 
 - **A strict Content-Security-Policy** (a `<meta http-equiv>` in `flash.html`,
-  since GitHub Pages can't set response headers). `default-src 'none'` denies
+  since GitHub Pages can't set response headers). The line is **generated** by
+  [`canary-local/tools/gen_csp.py`](../canary-local/tools/gen_csp.py) from the
+  one policy table every Lab page shares — the flasher's additions (release
+  hosts, loopback, the import-map hash) are rows there with a reason each, and
+  CI regenerates and diffs it (`canary-local/README.md` § 9). `default-src 'none'` denies
   everything by default; `script-src 'self'` / `style-src 'self'` allow only
   this site's own code with **no inline and no `eval`** — the vendored engines
   use neither (verified in CI), so the policy needs no `'unsafe-*'` escape.
@@ -563,7 +567,8 @@ fully offline posture the OTA engine also offers.
 
 | Path | Role |
 |---|---|
-| `canary-local/flash.html` | the page shell (hero + `<main>` + module script); carries the strict CSP + the SRI import map |
+| `canary-local/flash.html` | the page shell (hero + `<main>` + module script); carries the SRI import map and the generated CSP line |
+| `canary-local/tools/gen_csp.py` | writes every Lab page's CSP `<meta>` from one policy table (drift-gated) |
 | `canary-local/assets/flash.js` | the renderer + esptool-js glue (the theater) |
 | `canary-local/assets/flash-core.js` | DOM-free core: chip guard, image parsers, manifest logic, BLE console contract + snapshot parser (tested) |
 | `canary-local/assets/flash.css` | styles, on the Lab's design tokens |
@@ -585,6 +590,10 @@ fully offline posture the OTA engine also offers.
   if a vendored import isn't pinned).
 - **Drift:** CI runs `gen_flash.py` and diffs `flash.json`; a board change in
   firmware that isn't regenerated is a red X.
+- **Policy:** `node --test canary-local/tests/csp.test.js` pins the page's CSP
+  to the generated table (and proves it is no weaker than the hand-written
+  policy it replaced); `canary-local/tests/csp_probe.mjs` loads it in Chromium
+  and fails on any `securitypolicyviolation`.
 - **Bench (real board):** plug into Chrome, flash a variant, pull the cable
   mid-write to prove it recovers, then reflash and watch it boot.
 - **Bluetooth check:** the UUID contract, availability gate, and snapshot
