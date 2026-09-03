@@ -288,7 +288,8 @@ behind it all — where strength comes from, fits, finish, durability — see
 
 **Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
 1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
-≈ 34 g/pair, WAP weather ≈ 57 g/pair + 0.6 g gasket; Vision xiao ≈ 31 g/pair
+≈ 34 g/pair, WAP weather ≈ 68 g/pair + 0.6 g gasket (the 2026-09 audit grew
+the seal-mode walls to true 1.2 mm gasket cheeks); Vision xiao ≈ 31 g/pair
 (weather ≈ 51 g), Vision devkit ≈ 42 g/pair, bracket ≈ 10 g, knob ≈ 3 g.
 Even the heaviest full kit stays under ~75 g — wall anchors, not weight,
 size the mounting.
@@ -333,7 +334,7 @@ The three committed example presets:
 |--------|----------------------|--------------|
 | **battery_full** | **104.5 × 39 × 17.9 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
 | **compact_plain** | **33.7 × 36.6 × 15.05 mm** | plain board (no camera), buzzer + LED, USB-powered |
-| **battery_weather** | **106.9 × 41.4 × 21.25 mm** | battery_full **+ gasket seal + drip-edge lid + keyhole mounts + weep** |
+| **battery_weather** | **108.5 × 43 × 21.25 mm** | battery_full **+ gasket seal + drip-edge lid + keyhole mounts + weep** |
 
 > Corner posts always sit in **true corners beside the board** — that's why even
 > the compact case isn't as tiny as the bare-board reference. The board is always

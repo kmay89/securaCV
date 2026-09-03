@@ -41,8 +41,27 @@ function port_usba_shell_w()   = 12.00;  // series-A shell width — USB 2.0 sta
 function port_usba_shell_h()   = 4.50;   // series-A shell height — the standard
 function port_usbc_shell_w()   = 8.94;   // USB-C receptacle shell, nominal
 function port_usbc_shell_h()   = 3.26;
+// The PLUG side of the same standard. A shell-sized opening in a wall the
+// receptacle sits behind is a cable blocker: the overmold stops at the outer
+// face and the shell latches on whatever is left. Any wall standing between
+// the outer face and the receptacle face must open to the OVERMOLD envelope,
+// not the shell — the Type-C spec's maximum overmold is the envelope a
+// compliant cable may fill, so it is the envelope the case must pass.
+function port_usbc_overmold_w() = 12.35; // Type-C spec max plug overmold width
+function port_usbc_overmold_h() = 6.5;   // ...and height
+function port_usbc_insertion()  = 6.5;   // Type-C mated insertion depth: what the
+                                         // shell must enter for the latch to take
 function port_insertion_min()  = 11.0;   // series-A insertion-length floor (mm)
-function port_bridge_cham()    = 2.5;    // the WAP top-corner chamfer size
+function port_bridge_cham()    = 2.5;    // the WAP top-corner chamfer size (minimum)
+// The residual FLAT the chamfers may leave. The WAP's print-validated opening
+// is 12.0 wide with 2.5 chamfers = a 7.0 mm bridge; that is the widest flat
+// this catalog has printed clean, so it is the ceiling. The chamfer used to
+// be a constant, which bounded nothing: the dash display's 24 mm terminal
+// opening went through the same call and left a 19.0 mm bridge.
+function port_flat_span_max()  = 7.0;
+// The chamfer a given width needs to stay inside that ceiling — the WAP's own
+// 2.5 for every opening up to 12.0, growing with the width past it.
+function port_bridge_cham_for(w) = max(port_bridge_cham(), (w - port_flat_span_max())/2);
 
 // ---------------------------------------------------------------------------
 //  2D opening profiles — in the wall's plane, opening center at the origin.
@@ -69,13 +88,26 @@ module port_usba_rect2d(w, h, r = 0.35) {
 
 // The WAP's bridge-safe opening: rectangle with 45°-chamfered TOP corners
 // (+y is the wall's up). cham = 0 degenerates to the plain rectangle.
-module port_bridge_profile2d(w, h, cham = port_bridge_cham()) {
-    assert(cham >= 0 && 2*cham < w && cham < h,
-           "port_bridge_profile2d: chamfer must fit the opening");
-    if (cham > 0)
+// The default chamfer SCALES with the width (port_bridge_cham_for), so a wide
+// opening grows its chamfers instead of its bridge; the assert makes the
+// ceiling hard for explicit chamfers too. An opening too short to host the
+// chamfer it needs (cham >= h) fails here by design — that geometry has no
+// bridge-safe form at 45°, and the honest fixes are a taller opening, a
+// splitting mullion, or running the cut open to a parting line the mating
+// part covers (the dash terminal does the last).
+module port_bridge_profile2d(w, h, cham = undef) {
+    c = is_undef(cham) ? port_bridge_cham_for(w) : cham;
+    assert(c >= 0 && 2*c < w && c < h,
+           str("port_bridge_profile2d: a ", w, " x ", h, " opening cannot host its ",
+               c, " chamfers — too wide for its height to bridge safely at 45 "));
+    assert(w - 2*c <= port_flat_span_max() + 1e-9,
+           str("port_bridge_profile2d: ", w - 2*c, " mm of flat bridge survives the ",
+               "chamfers — the print-validated ceiling is ", port_flat_span_max(),
+               " mm. Let the chamfer default scale, or split the opening."));
+    if (c > 0)
         polygon([[-w/2, -h/2], [w/2, -h/2],
-                 [w/2, h/2 - cham], [w/2 - cham, h/2],
-                 [-w/2 + cham, h/2], [-w/2, h/2 - cham]]);
+                 [w/2, h/2 - c], [w/2 - c, h/2],
+                 [-w/2 + c, h/2], [-w/2, h/2 - c]]);
     else
         square([w, h], center = true);
 }
@@ -104,5 +136,15 @@ module port_selfcheck() {
            "port: the insertion floor is the two files' shared 11.0");
     assert(port_bridge_cham() == 2.5,
            "port: the bridge chamfer is the WAP's print-validated 2.5");
+    assert(port_flat_span_max() == 7.0,
+           "port: the flat ceiling is the WAP's own 12.0 - 2*2.5");
+    // the scaled chamfer must reproduce the WAP's opening EXACTLY (that
+    // geometry is print-validated; the scaling exists for wider openings)
+    assert(port_bridge_cham_for(12.0) == port_bridge_cham(),
+           "port: the scaled chamfer must leave the validated 12.0 opening alone");
+    assert(port_bridge_cham_for(20.0) == 6.5,
+           "port: a 20 mm opening must grow its chamfers to hold the 7.0 flat");
+    assert(port_usbc_overmold_w() == 12.35 && port_usbc_overmold_h() == 6.5,
+           "port: the plug overmold envelope is the Type-C spec maximum — not a knob");
     echo("canary_port_lib: self-check OK");
 }

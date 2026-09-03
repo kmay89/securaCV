@@ -48,6 +48,23 @@ function core_tol_press()  = 0.10;  // press fits: magnets, light pipes
 function core_tol_hole()   = 0.30;  // clearance holes: lid screws
 
 // ---------------------------------------------------------------------------
+//  Gasket groove fill — the seal-mode arithmetic that lived in a comment.
+//
+//  TPU is incompressible: the squeezed ring does not shrink, it FLOWS. So the
+//  uncompressed ring's cross-section over the groove's is the number that
+//  decides whether the lid closes — past ~1.0 the gasket props the lid open
+//  and the screws bow the spans instead of sealing them. The catalog ring
+//  prints `shrink` narrower than its groove and stands `proud` above it:
+//  ~86 % fill at the house numbers (1.6 / 1.2 / 0.3 / 0.5). The ceiling holds
+//  5 % under solid for the over-extrusion a real TPU print carries; a
+//  `gasket_w` of 2.5 reaches exactly 1.0 and is the config this gate exists
+//  to refuse.
+// ---------------------------------------------------------------------------
+function core_gasket_fill(gw, groove, proud, shrink = 0.5) =
+    ((gw - shrink) * (groove + proud)) / (gw * groove);
+function core_gasket_fill_max() = 0.95;
+
+// ---------------------------------------------------------------------------
 //  THE HOUSE LOOK — the five constants that decide whether two Canary parts
 //  read as one product line.
 //
@@ -563,6 +580,12 @@ module core_selfcheck() {
            "core: the reveal must not cut the catalog wall below the structural floor");
     assert(abs(core_floor_cove() - core_min_web()) < 1e-9,
            "core: the floor cove's default leg is the two-extrusion web floor");
+    // gasket fill: the house numbers give the README's ~86 %, the ceiling
+    // refuses the 2.5 that reaches solid and jacks the lid open
+    assert(abs(core_gasket_fill(1.6, 1.2, 0.3) - 0.859375) < 1e-6,
+           "core: the house gasket must stay ~86 % fill");
+    assert(core_gasket_fill(2.5, 1.2, 0.3) > core_gasket_fill_max(),
+           "core: a gasket_w of 2.5 fills the groove solid and must trip the ceiling");
     // the promoted preset selector
     assert(core_pre("b", 9, ["a", "b"], [1, 2]) == 2, "core: core_pre picks the named preset");
     assert(core_pre("custom", 9, ["a", "b"], [1, 2]) == 9, "core: core_pre falls through to the custom value");

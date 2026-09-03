@@ -1502,8 +1502,7 @@
      "params": [
       {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 1.6) : wall_t",
-       "comment": ">=0.8 mm cheek each side of the groove"
+       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t"
       },
       {
        "name": "scr_d",
@@ -5390,7 +5389,7 @@
       },
       {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 1.6) : wall_t"
+       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t"
       },
       {
        "name": "clip_stack",
@@ -5562,6 +5561,11 @@
        "name": "hat_h",
        "default": "22.0",
        "comment": "headroom above the PCB (HAT/M.2 + fan)"
+      },
+      {
+       "name": "standoff_ff",
+       "default": "11.0",
+       "comment": "the F-F brass standoffs on the Pi's hole grid: 11 bare,"
       }
      ]
     },
@@ -5677,6 +5681,10 @@
       {
        "name": "total_h",
        "default": "floor_t + standoff_h + pcb_t + hat_h + lid_t"
+      },
+      {
+       "name": "tube_h",
+       "default": "hat_h - standoff_ff"
       }
      ]
     }
@@ -6658,7 +6666,7 @@
       {
        "name": "term_open",
        "default": "false",
-       "comment": "also open the CAN/RS485 terminal zone"
+       "comment": "also open the CAN/RS485 terminal zone (a parting-line"
       }
      ]
     },
@@ -10718,16 +10726,15 @@
        "name": "back_stack",
        "default": "4.5",
        "comment": "tallest thing behind the PCB (USB-C / JST / buzzer) — MEASURE"
-      }
-     ]
-    },
-    {
-     "name": "USB-C",
-     "note": "on the BOTTOM (−Y) edge, centered on the PCB thickness",
-     "params": [
+      },
       {
        "name": "opt_usb",
        "default": "true"
+      },
+      {
+       "name": "usb_dx",
+       "default": "0.0",
+       "comment": "channel center along the bottom edge — MEASURE"
       }
      ]
     },
@@ -10947,6 +10954,24 @@
       {
        "name": "z_btn",
        "default": "(btn_side == \"back\" ? z_pcb_back + btn_dz : z_pcb_front - btn_dz)"
+      },
+      {
+       "name": "usb_reach",
+       "default": "wall + tol_slide + ohang_y",
+       "comment": "how far the receptacle hides"
+      },
+      {
+       "name": "usb_ch_w",
+       "default": "port_usbc_overmold_w() + 2*tol_hole",
+       "comment": "channel envelope"
+      },
+      {
+       "name": "usb_ch_h",
+       "default": "port_usbc_overmold_h() + 2*tol_hole"
+      },
+      {
+       "name": "plate_relief",
+       "default": "max(0, z_usb + usb_ch_h/2 - bez_h)"
       },
       {
        "name": "kh_pad_wall",

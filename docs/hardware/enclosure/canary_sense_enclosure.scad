@@ -333,6 +333,10 @@ assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y + 2*abs(rad_dy) <= 
 assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
 assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lip");
+assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
+       str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
+           " % of its groove - past ", round(100*core_gasket_fill_max()),
+           " % the incompressible gasket props the lid open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(!e_seal || skirt_h < base_d, "skirt_h must be shorter than the back shell");
 assert(mount_extra == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocket too deep");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of range");

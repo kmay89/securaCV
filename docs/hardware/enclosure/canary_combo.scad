@@ -91,7 +91,13 @@ $fa = 3; $fs = 0.4;
 
 // ----------------------------------------------------------------------------
 e_seal = opt_seal;
-wall_eff = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;
+// 1.2 mm cheek each side of the groove (2*core_min_wall) — this file carried
+// the WAP's 0.8-cheek fork; the cheeks are the seal path's walls
+wall_eff = e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t;
+assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
+       str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
+           " % of its groove - past ", round(100*core_gasket_fill_max()),
+           " % the incompressible gasket props the lid open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 pd = post_d;  post_corner = pd + 1.5;
 clip_stack = clip_clear + clip_t;
 v_standoff = v_stack_sock + xiao_below;

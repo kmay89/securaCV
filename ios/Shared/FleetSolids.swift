@@ -402,10 +402,10 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [104.5, 15.899999618530273, 39], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.gasket": FleetMassing(
-    id: "part.wap.gasket", rev: "1a346654", ghost: false,
-    envelope: [104.8, 1.5, 39.3],
+    id: "part.wap.gasket", rev: "b101ba12", ghost: false,
+    envelope: [105.6, 1.5, 40.1],
     solids: [
-      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [104.79998779296875, 1.5, 39.29998779296875], r: 3, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "gasket", axis: "y", at: [0, 0, 0], size: [105.60000610351562, 1.5, 40.100006103515625], r: 3, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.lid": FleetMassing(
     id: "part.wap.lid", rev: "01ef2e35", ghost: false,
@@ -421,10 +421,10 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [24, 8, 18], r: 1, h: 0, fullDetailOnly: false),
   ]),
   "part.wap.weather-shield": FleetMassing(
-    id: "part.wap.weather-shield", rev: "b37755fd", ghost: false,
-    envelope: [118.9, 7.6, 53.4],
+    id: "part.wap.weather-shield", rev: "de6d1547", ghost: false,
+    envelope: [120.5, 7.6, 55],
     solids: [
-      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [118.89999389648438, 7.59999942779541, 53.399993896484375], r: 5, h: 0, fullDetailOnly: false),
+      FleetSolid(kind: .box, material: "shell2", axis: "y", at: [0, 0, 0], size: [120.5, 7.59999942779541, 55], r: 5, h: 0, fullDetailOnly: false),
   ]),
   "tool.fit-coupon": FleetMassing(
     id: "tool.fit-coupon", rev: "8b3335bd", ghost: false,
