@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Display: the LAN write API can no longer switch on the glass's one opt-in outbound path
+
+- **`wx_direct` and `wx_loc` are on-glass only.** The display's `POST /api/set`
+  refused cross-site browsers (Origin allowlist + per-boot CSRF token) but not
+  a host already on the home WiFi, which could read the token from
+  `GET /api/settings` and switch on the standalone-weather fetch — the one
+  outbound path a setting opens — or plant a coarse location for it. Both keys
+  are now refused for every caller, token or not, with
+  `403 {"ok":false,"err":"on_glass_only"}` and one Warn line, before the
+  Origin/CSRF gate is consulted; the switch lives on the glass (settings →
+  weather → fetch itself). The key class is one host-tested table
+  (`canary/net/settings_policy.h`) that the handler enforces and
+  `/api/settings` serves under `on_glass`, so no client draws a switch that
+  would fail; the mirror page shows the pair as read-only rows pointing at the
+  glass, and reports whether a location is stored only to callers that are
+  not cross-site. Every other knob (brightness, night behavior, the look, the
+  lamp, `/api/tz`) is unchanged. Honest status: this also closed the phone
+  app's only way to store a location, and the glass has no on-glass location
+  entry yet, so a fresh device's standalone forecast stays idle until one
+  lands. Compile-tested, not bench-tested.
+
 ### Wi-Fi sensing that a solo Canary can actually run
 
 - **The CSI HAL compiles on the ESP32-C6 / C5 it always claimed to support.**
