@@ -25,3 +25,4 @@ test_csi_idf_compat_legacy5x
 test_csi_idf_compat_he51
 test_csi_idf_compat_he55
 test_csi_traffic
+test_tamper_events_logic

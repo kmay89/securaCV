@@ -25,6 +25,7 @@
 #include "wifi_channel_activity.h"
 #include "core_multilink_fusion.h"
 #include "meta_empty_room_baseline.h"
+#include "tamper_events_module.h"
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
 #include "ble_scout.h"
@@ -466,6 +467,12 @@ extern "C" bool securacv_csi_modules_init(void) {
   csi_module_register(core_multilink_fusion_module());
   /* Scheduled 10-min empty-room baseline calibration (PR 4a). */
   csi_module_register(meta_empty_room_baseline_module());
+  /* system.integrity — per-kind tamper narration (watchdog / power_loss /
+   * unexpected_reboot) through the chokepoint, same module the canary-wap
+   * sketch registers. Unconditional: every board has a reset reason, and
+   * a board without an SD state machine simply never sees SD transitions.
+   * Fed from main.cpp's loop() via securacv_csi_modules_tamper_watch(). */
+  csi_module_register(tamper_events_module());
 
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
   /* BLE Scout — paired-beacon room-attribution (PR 5b). Lives in
@@ -552,6 +559,19 @@ extern "C" void securacv_csi_modules_feed(const void* features_blob) {
    * bundler buffers same-state observations and commits one row per
    * window; this call is what makes the long tail land. */
   csi_event_flush_bundles();
+}
+
+extern "C" void securacv_csi_modules_tamper_watch(int reset_was_crash,
+                                                  int reset_was_watchdog,
+                                                  int reset_was_brownout,
+                                                  uint8_t sd_state) {
+  /* Pass-through, deliberately NOT gated on s_initialized: the watcher is
+   * designed to be called before registration (bounded retry inside the
+   * module — an emit before the module exists is silently dropped by the
+   * chokepoint), and gating here would eat the boot story on a build
+   * where CSI init runs late or fails. */
+  tamper_events_watch(reset_was_crash, reset_was_watchdog,
+                      reset_was_brownout, sd_state);
 }
 
 extern "C" void securacv_csi_modules_deinit(void) {

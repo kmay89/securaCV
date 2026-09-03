@@ -1599,6 +1599,40 @@ void loop() {
   csi::process();
 #endif
 
+  // Tamper narration (system.integrity): feed the watcher the boot's reset
+  // classification once per loop. The module owns every transition rule and
+  // emits through the chokepoint (tamper_events_module, reached via the
+  // csi_modules_integration bridge — including it here directly would
+  // collide the two csi_features_t typedefs); this call is a data feed,
+  // never a policy site. Deliberately OUTSIDE the CSI power/degrade gates
+  // above: integrity events are the one story that must survive battery
+  // saver. On builds where the CSI pipeline never initializes, the
+  // module's bounded retry gives up quietly.
+  //
+  // sd_state: this lane has no SD state machine — storage mounts once at
+  // boot (storage_init) and never re-probes, unmounts, or errors out at
+  // runtime — so we feed the module's pinned ABSENT (0) constant rather
+  // than inventing a detector: the watcher adopts it on the first call and
+  // never emits an SD kind. The sd_error/sd_remove stories stay exclusive
+  // to hosts with a real hot-swap state machine (canary-wap).
+  {
+    static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
+    // Same crash set as canary-wap's hardware_state.h reset_is_crash():
+    // panic, the three watchdogs, brownout. A user toggling power, pressing
+    // reset, or our own ESP.restart() is a clean boot with nothing to
+    // confess.
+    const bool rst_watchdog = (s_boot_rst == ESP_RST_INT_WDT ||
+                               s_boot_rst == ESP_RST_TASK_WDT ||
+                               s_boot_rst == ESP_RST_WDT);
+    const bool rst_brownout = (s_boot_rst == ESP_RST_BROWNOUT);
+    const bool rst_crash = (s_boot_rst == ESP_RST_PANIC) ||
+                           rst_watchdog || rst_brownout;
+    securacv_csi_modules_tamper_watch(rst_crash ? 1 : 0,
+                                      rst_watchdog ? 1 : 0,
+                                      rst_brownout ? 1 : 0,
+                                      /*sd_state: pinned ABSENT*/ 0u);
+  }
+
 #if FEATURE_ACOUSTIC_EVENTS
   #if FEATURE_POWER_POLICY
   if (pf->acoustic)
