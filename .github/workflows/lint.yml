@@ -14,7 +14,9 @@ permissions:
 # flag declarations repo-wide — kept unfiltered on purpose, but stale PR runs
 # are still canceled when a new head arrives.
 concurrency:
-  group: repo-lints-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: repo-lints-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -24,6 +26,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       # Conformance + hygiene lints that previously had no CI gate.
       - name: CAP-mapping conformance
         run: bash scripts/lint_cap_mapping.sh

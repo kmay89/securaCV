@@ -17,7 +17,14 @@ an exemption must be visible and reviewable, with a comment saying why):
       `concurrency` group (supersede stale PR runs; queue — never
       cancel — release publishes); a workflow that fires on tag pushes
       or release events must not set a bare `cancel-in-progress: true`
-      (a run canceled mid-publish leaves half-uploaded assets)
+      (a run canceled mid-publish leaves half-uploaded assets); a
+      workflow that tests branch pushes gives each commit its own group
+      (`github.sha` in the group name) — `cancel-in-progress: false`
+      only protects the RUNNING run, GitHub keeps one PENDING run per
+      group, and a third arrival evicts the one waiting, so with a
+      shared per-ref group a main commit can go unverified while merely
+      looking queued (publishers that must run in order are listed in
+      `main_queue_ok`)
   R4  every action ref is pinned to a tag or SHA — never a mutable
       branch ref (@main/@master) or a floating docker :latest
   R5  pull_request workflows are path-filtered so unrelated PRs don't
@@ -32,6 +39,15 @@ an exemption must be visible and reviewable, with a comment saying why):
       comment naming the tag it was resolved from — a tag is a mutable
       ref the owner can move under a release run; Dependabot updates
       SHA pins and their comments together
+  R9  a job whose `run:` blocks invoke Python (python3 / pip / ruff /
+      mypy / pytest, in command position) has an actions/setup-python
+      step — the runner image's interpreter is whatever `ubuntu-latest`
+      ships this month, and the packages that happen to be preinstalled
+      there are not on a setup-python interpreter; pyproject.toml's
+      `requires-python` is the one floor (`python-version-file:
+      pyproject.toml`), and a job that needs a specific interpreter says
+      why next to its explicit `python-version` (exemptions:
+      `system_python_ok`, `<workflow>.yml:<job>`)
 """
 
 from __future__ import annotations
@@ -56,6 +72,18 @@ MUTABLE_REFS = {"main", "master", "latest", "HEAD"}
 FIRST_PARTY_OWNERS = {"actions", "github"}
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+# R9: a `run:` block that puts one of these in COMMAND position needs an
+# actions/setup-python step in the same job. Command position only — the word
+# in a comment, an echo, a heredoc string or a path does not count.
+PYTHON_COMMANDS = {"python", "python3", "pip", "pip3", "ruff", "mypy", "pytest"}
+# Shell words that stand in front of the real command without being it.
+_COMMAND_PREFIX_WORDS = {"if", "elif", "while", "until", "then", "do", "else",
+                         "!", "time", "exec", "sudo", "nice", "env", "command",
+                         "xargs", "nohup"}
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# Points where a new command can start inside one line.
+_COMMAND_BOUNDARY_RE = re.compile(r"\|\||&&|;|\||\$\(|\(|`")
 
 # R8 (comment half): a `uses:` line pinned to a 40-hex SHA, with whatever
 # follows the SHA captured so the trailing comment can be checked.
@@ -85,6 +113,64 @@ def norm_list(v) -> list[str]:
     if isinstance(v, str):
         return [v]
     return list(v)
+
+
+def python_command_in(run: str) -> str | None:
+    """The first Python-ish command a `run:` block invokes, or None.
+
+    Walks each line's command positions: after `&&`, `||`, `;`, a pipe, a
+    `$(` or `(`, skipping shell keywords (`if`, `time`, `sudo`, ...) and
+    `VAR=value` prefixes. `echo "run python3 ..."` and a `# python3 ...`
+    comment therefore do not count; `python3 -m pip ...`, `pip install`,
+    `if ! python3 x.py; then` and `ver=$(python3 -c ...)` do.
+    """
+    for line in run.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        for segment in _COMMAND_BOUNDARY_RE.split(stripped):
+            words = segment.split()
+            while words and (words[0] in _COMMAND_PREFIX_WORDS
+                             or _ASSIGNMENT_RE.match(words[0])):
+                words.pop(0)
+            if not words:
+                continue
+            if words[0].rsplit("/", 1)[-1] in PYTHON_COMMANDS:
+                return words[0]
+    return None
+
+
+def check_python_setup(label: str, jobs: dict, policy: dict) -> list[str]:
+    """R9: every job that runs Python sets up its own interpreter."""
+    problems = []
+    exempt = set(policy.get("system_python_ok") or [])
+    for job, spec in jobs.items():
+        spec = spec or {}
+        if "uses" in spec or f"{label}:{job}" in exempt:
+            continue
+        steps = [s or {} for s in (spec.get("steps") or [])]
+        if any(str(s.get("uses", "")).startswith("actions/setup-python@") for s in steps):
+            continue
+        offender = None
+        for s in steps:
+            if s.get("shell") == "python":
+                offender = "shell: python"
+                break
+            offender = python_command_in(str(s.get("run") or ""))
+            if offender:
+                break
+        if offender:
+            problems.append(
+                f"{label}: R9 — job `{job}` runs `{offender}` on the runner "
+                f"image's Python (no actions/setup-python step). Add "
+                f"`actions/setup-python@v7` with `python-version-file: "
+                f"pyproject.toml` right after checkout — the image's "
+                f"interpreter moves with the image, and packages preinstalled "
+                f"there (PyYAML) are not on a setup-python interpreter, so "
+                f"`pip install` what the job imports. Or exempt "
+                f"`{label}:{job}` in system_python_ok with a reason."
+            )
+    return problems
 
 
 def check_workflow(path: str, policy: dict) -> list[str]:
@@ -201,6 +287,31 @@ def check_workflow(path: str, policy: dict) -> list[str]:
             f"branch_cancel_ok with a reason."
         )
 
+    # R3 (eviction half) — `cancel-in-progress: false` promises only not to
+    # cancel the RUNNING run. GitHub keeps at most one PENDING run per group,
+    # so with a shared per-ref group and commits landing faster than the build
+    # takes, each new commit evicts the one waiting behind it — a merged
+    # commit whose build never ran, reading as housekeeping ("canceled"). The
+    # display build hit this for real (firmware.yml's comment has the story):
+    # the run verifying a fix to a red main was evicted by the next two
+    # merges. So a workflow that runs on branch pushes gives each commit its
+    # own group by putting github.sha in the group name. Publishers whose runs
+    # must land IN ORDER (GHCR tags, Pages, label sync) keep one group per ref
+    # and are listed in main_queue_ok with a reason — a superseded publish is
+    # replaced by a newer one, which is fine; a superseded test is a gap.
+    if (fires_on_branch and isinstance(conc, dict)
+            and name not in set(policy.get("main_queue_ok") or [])
+            and "github.sha" not in str(conc.get("group", ""))):
+        problems.append(
+            f"{name}: R3 — runs on branch pushes with a shared per-ref "
+            f"concurrency group, so a burst of merges evicts the pending main "
+            f"run (GitHub queues one run per group). Give each commit its own "
+            f"group: `group: <name>-${{{{ github.ref }}}}-${{{{ "
+            f"github.event_name == 'pull_request' && 'pr' || github.sha }}}}` "
+            f"(the firmware.yml pattern), or — only for a publisher that must "
+            f"run in order — exempt in main_queue_ok with a reason."
+        )
+
     # R4/R8 — pinned action refs, in workflows AND composite actions (collected
     # by caller passing composite files through this same function is not
     # needed; see check_action_pins()).
@@ -245,6 +356,9 @@ def check_workflow(path: str, policy: dict) -> list[str]:
                 f"`{own}`, so edits to this workflow won't run it. Add its "
                 f"own path to the list."
             )
+
+    # R9 — a job that runs Python sets up its own interpreter
+    problems.extend(check_python_setup(name, jobs, policy))
 
     return problems
 

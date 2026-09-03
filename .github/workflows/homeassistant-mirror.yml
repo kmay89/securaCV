@@ -1,0 +1,170 @@
+# The HACS mirror's PUSH half — monorepo → kmay89/securacv-homeassistant.
+#
+# The Home Assistant integration reaches HACS users from a separate repository
+# (securacv-homeassistant) as a byte-for-byte copy of custom_components/securacv/
+# here, plus a brand/ folder only HACS wants. That repository's
+# mirror-freshness.yml only DETECTS drift (weekly, and on its own PRs) and
+# raises an issue; nothing pushed, so a fix merged here reached HACS users a
+# week and a human later. This workflow is the push: on every main commit that
+# touches the carried set it copies the set into a checkout of the mirror,
+# PROVES the copy exact with the mirror's own check_mirror_sync.py, and opens
+# (or refreshes) ONE pull request there on branch bot/mirror-sync. The
+# mirror's tests.yml, hassfest and mirror-freshness gates run on that PR before
+# it can merge; nothing lands on the mirror's main from here directly.
+#
+# The carried set — keep it in step with the mirror's check_mirror_sync.py,
+# which is what proves the copy exact:
+#   custom_components/securacv/**   minus brand/ (mirror-only) and caches
+#   conftest.py                      the root Home Assistant stubs the tests import
+# Mirror-owned, never written from here: README.md, LICENSE, hacs.json,
+# .gitignore, .github/**, custom_components/securacv/brand/, and
+# requirements_test.txt — Dependabot bumps that file in BOTH repos and the
+# mirror's pins lead, so copying ours would downgrade them.
+#
+# MIRROR_PAT — repository secret, REQUIRED for the push. A fine-grained
+# personal access token scoped to kmay89/securacv-homeassistant only, with
+# Contents: read and write, Pull requests: read and write, Issues: read and
+# write. The default GITHUB_TOKEN cannot reach another repository. Without the
+# secret the run stays GREEN: it raises one deduplicated issue here saying the
+# mirror was not refreshed (and which commit it missed) and exits with a
+# warning — a missing secret is a setup gap, not a broken main.
+
+name: homeassistant mirror
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'custom_components/securacv/**'
+      - 'conftest.py'
+      - '.github/workflows/homeassistant-mirror.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # the no-secret fallback raises a deduplicated issue in THIS repo
+  issues: write
+
+# Two syncs racing would fight over the mirror's bot/mirror-sync branch —
+# queue them, never cancel one mid-push (CI.md R3, publisher half).
+concurrency:
+  group: homeassistant-mirror
+  cancel-in-progress: false
+
+env:
+  MIRROR_REPO: kmay89/securacv-homeassistant
+  MIRROR_BRANCH: bot/mirror-sync
+
+jobs:
+  sync:
+    name: custom_components/securacv → kmay89/securacv-homeassistant
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Gate — is MIRROR_PAT configured?
+        id: gate
+        env:
+          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$MIRROR_PAT" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          # Same deduplicated-issue fallback as homeassistant-freshness.yml:
+          # one open issue, reused with a comment per missed commit, so the
+          # gap is visible where humans look instead of in a log nobody reads.
+          TITLE_PREFIX="HACS mirror not refreshed"
+          TITLE="${TITLE_PREFIX}: MIRROR_PAT is not configured"
+          COMMIT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          OPEN=$(gh issue list --state open --search "\"${TITLE_PREFIX}\" in:title" --json number --jq '.[].number' | head -1)
+          if [ -n "$OPEN" ]; then
+            gh issue comment "$OPEN" --body "Missed again on $(date -u +%Y-%m-%d): ${COMMIT_URL} touched the carried set and was not pushed to \`${MIRROR_REPO}\` (no \`MIRROR_PAT\`)."
+          else
+            gh issue create --title "$TITLE" --body "$(printf '%s\n' \
+              "A commit touched \`custom_components/securacv/\` (or \`conftest.py\`) but the HACS mirror was not refreshed: ${COMMIT_URL}." \
+              "" \
+              "\`homeassistant-mirror.yml\` pushes the carried set to [\`${MIRROR_REPO}\`](https://github.com/${MIRROR_REPO}) as a PR on \`${MIRROR_BRANCH}\`, and needs a repository secret \`MIRROR_PAT\`: a fine-grained personal access token scoped to that repository with Contents, Pull requests and Issues read and write. Until it exists, HACS users only get what someone copies over by hand, and the mirror's weekly \`mirror-freshness.yml\` will keep reporting the drift." \
+              "" \
+              "Raised by \`homeassistant-mirror.yml\`; this issue is reused while it stays open.")"
+          fi
+          echo "::warning::MIRROR_PAT is not configured — the HACS mirror was NOT refreshed for ${GITHUB_SHA}. Add the secret (see the workflow header); this run is green on purpose."
+
+      - name: Check out the mirror
+        if: steps.gate.outputs.configured == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.MIRROR_REPO }}
+          ref: main
+          token: ${{ secrets.MIRROR_PAT }}
+          path: _mirror
+
+      - name: Copy the carried set into the mirror
+        if: steps.gate.outputs.configured == 'true'
+        run: |
+          # rsync --delete keeps the mirror's tree an exact image of ours, and
+          # an --exclude protects the receiving side too: brand/ (mirror-only)
+          # is neither copied nor deleted.
+          rsync -a --delete \
+            --exclude='/brand/' --exclude='__pycache__/' --exclude='.pytest_cache/' \
+            custom_components/securacv/ _mirror/custom_components/securacv/
+          cp conftest.py _mirror/conftest.py
+
+      - name: Prove the copy exact (the mirror's own check)
+        if: steps.gate.outputs.configured == 'true'
+        # The same script the mirror's mirror-freshness.yml runs, pointed at
+        # this checkout: if it passes here it passes on the PR it produces.
+        run: python3 _mirror/.github/scripts/check_mirror_sync.py --source "$GITHUB_WORKSPACE"
+
+      - name: Open (or refresh) the mirror PR
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_PAT }}
+        working-directory: _mirror
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "mirror already matches ${GITHUB_SHA} — nothing to push"
+            exit 0
+          fi
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$MIRROR_BRANCH"
+          git add -A custom_components/securacv conftest.py
+          git commit \
+            -m "chore: sync the integration from kmay89/securaCV@${SHORT_SHA}" \
+            -m "Carried set copied byte-for-byte from ${SOURCE_URL} by homeassistant-mirror.yml and proven exact with check_mirror_sync.py before this commit was made."
+          git push -f origin "$MIRROR_BRANCH"
+          if [ -n "$(gh pr list --repo "$MIRROR_REPO" --head "$MIRROR_BRANCH" --state open --json number --jq '.[].number')" ]; then
+            echo "open PR on ${MIRROR_BRANCH} refreshed by the force-push"
+            exit 0
+          fi
+          gh pr create --repo "$MIRROR_REPO" --head "$MIRROR_BRANCH" --base main \
+            --title "Sync the integration from kmay89/securaCV@${SHORT_SHA}" \
+            --body "$(printf '%s\n' \
+              "Automated mirror of \`custom_components/securacv/\` (+ \`conftest.py\`) from ${SOURCE_URL}, copied byte-for-byte and proven exact with \`check_mirror_sync.py\` before the commit was made. \`brand/\` and \`requirements_test.txt\` are mirror-owned and untouched." \
+              "" \
+              "Opened by the monorepo's \`homeassistant-mirror.yml\`; further monorepo commits force-push this branch until it merges.")" \
+          || {
+              # PR creation refused (a token without pull-request scope, or the
+              # mirror's Actions settings) — the branch is pushed, so deliver it
+              # as one deduplicated issue with the compare link, the way
+              # homeassistant-freshness.yml does, and stay green.
+              TITLE_PREFIX="HACS mirror sync pushed, needs a PR"
+              TITLE="${TITLE_PREFIX} (${MIRROR_BRANCH})"
+              COMPARE="https://github.com/${MIRROR_REPO}/compare/main...${MIRROR_BRANCH}?expand=1"
+              OPEN=$(gh issue list --repo "$MIRROR_REPO" --state open --search "\"${TITLE_PREFIX}\" in:title" --json number --jq '.[].number' | head -1)
+              if [ -n "$OPEN" ]; then
+                gh issue comment "$OPEN" --repo "$MIRROR_REPO" --body "Refreshed again on $(date -u +%Y-%m-%d) from ${SOURCE_URL} — [open the PR](${COMPARE})."
+              else
+                gh issue create --repo "$MIRROR_REPO" --title "$TITLE" --body "The monorepo pushed a byte-exact copy of the integration to branch [\`${MIRROR_BRANCH}\`](https://github.com/${MIRROR_REPO}/tree/${MIRROR_BRANCH}) (source: ${SOURCE_URL}) but could not open a pull request with \`MIRROR_PAT\`. A human has to: [open the PR](${COMPARE}). Give the token Pull requests: read and write to make this automatic. Raised by the monorepo's \`homeassistant-mirror.yml\`; this issue is reused while it stays open."
+              fi
+              echo "::warning::PR creation refused in ${MIRROR_REPO}; the branch is pushed and an issue carries the compare link."
+            }

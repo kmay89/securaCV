@@ -494,6 +494,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Verify CSI library copies in canary-wap sketch dir match canonical source
         # The Arduino IDE only sees files inside the sketch folder and globally
@@ -648,6 +651,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Run regression checks
         run: |
@@ -896,6 +902,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Build + run all mesh + ble_scan host tests
         # Each test links the minimum source set it needs. ble_scout.cpp

@@ -41,6 +41,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
+          # Full commit graph (blobs on demand): build.sh stamps each
+          # dist/*.meta.json with the merge-base of HEAD and origin/main, so
+          # the stamp names a commit that is still reachable from main after
+          # this branch is squash-merged. A depth-1 checkout has no common
+          # history to measure and would fall back to the branch sha — the
+          # exact stamp this exists to stop committing.
+          fetch-depth: 0
+          filter: blob:none
+
+      # The stamp's reference point. fetch-depth: 0 already brings every
+      # branch, but the stamp's correctness rides on this ref existing, so
+      # fetch it by name rather than by side effect.
+      - name: Fetch origin/main (the commit the dist stamp is measured against)
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          echo "stamp will name $(git rev-parse --short "$(git merge-base HEAD origin/main)") (merge-base of HEAD and origin/main)"
 
       - uses: actions/setup-node@v7
         with:

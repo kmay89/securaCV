@@ -8,8 +8,13 @@ name: Add-on image
 # docker/build-push-action with `context: .` rather than the stock
 # home-assistant/builder action (which builds from the add-on directory).
 #
+# - Each arch builds NATIVELY on a runner of its own architecture: amd64 on
+#   ubuntu-latest, aarch64 on ubuntu-24.04-arm. The aarch64 leg used to run
+#   under QEMU on an x86 runner and hit the 90-minute timeout on main six runs
+#   in a row (a Rust build under emulation is an order of magnitude slower),
+#   so Raspberry Pi users got no image at all. There is no QEMU step any more.
 # - On pull requests: build amd64 only, no push — validates that the image builds.
-# - On push to main / version tags: build amd64 + aarch64 and push to GHCR using
+# - On push to main / version tags: build both arches and push to GHCR using
 #   the `{arch}-addon-<slug>` naming the Supervisor expects (see config.yaml `image:`),
 #   then run the `verify-public` gate to confirm every published arch is actually
 #   anonymously pullable (i.e. the GHCR packages are public) — a green build alone
@@ -41,32 +46,44 @@ permissions:
 
 # Cancel superseded PR validation builds only. Never cancel main/tag runs:
 # those push multi-tag images to GHCR, and killing one mid-publish could
-# leave :latest and :<version> pointing at different builds.
+# leave :latest and :<version> pointing at different builds. Publishes share
+# one group per ref on purpose (CI.md R3, publisher half — main_queue_ok):
+# they queue in order, so :latest always ends on the newest commit.
 concurrency:
   group: addon-image-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # Native builds: amd64 has taken ~12 minutes with a warm layer cache, and
+    # the arm runner is the same class of machine. 60 is the circuit breaker
+    # (R2: 2-3x healthy, with headroom for a cold cache) — tighten once a few
+    # native aarch64 runs have shown their steady state.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
             platform: linux/amd64
+            runner: ubuntu-latest
           - arch: aarch64
             platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
 
-      # The aarch64 build runs under QEMU (slow). Skip it on pull requests and
-      # validate amd64 only; the full multi-arch push happens on main / tags.
+      # One native leg is enough signal for a pull request; the second arch
+      # (and the multi-arch push) happens on main / tags.
       - name: Decide whether to build this arch
         id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ matrix.arch }}" != "amd64" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$ARCH" != "amd64" ]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -75,15 +92,14 @@ jobs:
       - name: Resolve image name and version
         if: steps.gate.outputs.run == 'true'
         id: meta
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          ARCH: ${{ matrix.arch }}
         run: |
           version=$(grep -E '^version:' privacy_witness_kernel/config.yaml | head -1 | sed -E 's/version:[[:space:]]*//; s/"//g' | tr -d "'")
-          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          owner_lc=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${owner}/${{ matrix.arch }}-addon-privacy_witness_kernel" >> "$GITHUB_OUTPUT"
-
-      - name: Set up QEMU
-        if: steps.gate.outputs.run == 'true' && matrix.arch != 'amd64'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+          echo "image=ghcr.io/${owner_lc}/${ARCH}-addon-privacy_witness_kernel" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.run == 'true'
@@ -129,7 +145,14 @@ jobs:
     # visibility is flipped (a one-time, owner-only action). This gate turns a
     # silent "installs on amd64 but not on a Raspberry Pi" regression into a red
     # build. Push / tags only — pull requests don't publish, so there's nothing to
-    # verify. The script probes anonymously and needs no registry credentials.
+    # verify.
+    #
+    # The script probes anonymously AND, with this workflow's own token, once
+    # more authenticated: GHCR answers 404 to anonymous callers for a PRIVATE
+    # package exactly as for a tag that was never pushed, and this gate once
+    # printed "tag MISSING" on a run that had pushed both arches fine. The
+    # script's exit code says which case it hit; the step turns that into an
+    # annotation so the fix is readable from the checks tab.
     name: Verify publicly installable
     needs: build
     if: github.event_name != 'pull_request'
@@ -137,5 +160,34 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - name: Verify published images are publicly pullable
-        run: privacy_witness_kernel/verify_published_image.sh
+        env:
+          # The top-level packages:write includes read; the token only ever
+          # fetches manifests here. It is what lets the script tell PRIVATE
+          # (pushed, visibility never flipped) from NOT PUSHED.
+          GHCR_PROBE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_PROBE_USER: ${{ github.actor }}
+        run: |
+          set +e
+          privacy_witness_kernel/verify_published_image.sh
+          rc=$?
+          set -e
+          case "$rc" in
+            0) verdict="PUBLIC — every declared arch is anonymously pullable"
+               echo "::notice title=Add-on image::${verdict}" ;;
+            3) verdict="PRIVATE — pushed, but the GHCR package is not public; flip its visibility once (runbook in the log)"
+               echo "::error title=Add-on image not installable::${verdict}" ;;
+            4) verdict="NOT PUSHED — a declared arch/tag is missing from GHCR even to an authenticated pull; check this run's build legs"
+               echo "::error title=Add-on image not installable::${verdict}" ;;
+            *) verdict="UNDETERMINED (exit ${rc}) — see the log"
+               echo "::error title=Add-on image not installable::${verdict}" ;;
+          esac
+          {
+            echo "### Add-on image: public pullability"
+            echo
+            echo "- verdict: ${verdict}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
