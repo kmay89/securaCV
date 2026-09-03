@@ -912,7 +912,7 @@ jobs:
         run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # On a tag push this is the pushed tag; on the one-click path it
           # creates this tag. target_commitish pins the created tag to the
@@ -1010,7 +1010,7 @@ jobs:
       # releases/download/fw-dev-latest/manifest-<product>.json.
       - name: Mirror channel manifests to the rolling dev release
         if: steps.ver.outputs.prerelease == 'true'
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: fw-dev-latest
           name: Canary Firmware — dev channel (rolling)
