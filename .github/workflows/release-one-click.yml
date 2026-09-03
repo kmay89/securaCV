@@ -93,6 +93,9 @@ jobs:
           # Tags: the app-version preflight below asks "has this version already
           # been released?", which is a question about tags.
           fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Preflight — refuse a firmware release that cannot be signed
         # This button means "do exactly this", so unlike the master button (which

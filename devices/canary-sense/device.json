@@ -1,0 +1,40 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-sense",
+  "name": "Canary Sense",
+  "family": "canary-sense",
+  "board": {
+    "mcu": "ESP32-C6",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "xiao-esp32c6-mr60",
+    "envs": [
+      "canary-sense-default",
+      "canary-sense-wellbeing"
+    ]
+  },
+  "peripherals": [
+    "ieee802154",
+    "mmwave_radar",
+    "ambient_light",
+    "rgb_led"
+  ],
+  "figure": "device.canary-sense",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_sense_enclosure.scad",
+    "enclosure_sets": [
+      "sense-radome",
+      "sense-bedside-stand",
+      "sense-in-wall-plate"
+    ]
+  },
+  "flasher": {
+    "product": "securacv-canary-sense",
+    "variants": [
+      "securacv-canary-sense-wellbeing"
+    ]
+  },
+  "site": {
+    "model": "models/canary-sense.glb"
+  }
+}

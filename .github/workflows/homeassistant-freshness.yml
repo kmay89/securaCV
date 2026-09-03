@@ -57,6 +57,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           token: ${{ secrets.FRESHNESS_PAT || github.token }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - name: Refresh upstream snapshot
         env:
           # for the generator's GitHub-releases fallback (the primary
@@ -144,6 +147,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - name: Re-verify the committed hub image pins on both channels
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,29 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-vision-devkit",
+  "name": "Canary Vision · ESP32-C3 DevKit",
+  "family": "canary-vision",
+  "board": {
+    "mcu": "ESP32-C3",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "esp32-c3",
+    "envs": [
+      "canary-vision-default"
+    ]
+  },
+  "peripherals": [
+    "vision_ai"
+  ],
+  "figure": "device.canary-vision-devkit",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_vision_enclosure.scad",
+    "enclosure_sets": [
+      "vision-devkit-indoor",
+      "vision-mount-kit"
+    ]
+  },
+  "flasher": {
+    "product": "securacv-canary-vision"
+  }
+}

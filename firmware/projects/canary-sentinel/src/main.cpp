@@ -177,7 +177,7 @@ static void read_light(uint32_t now) {
 
 // WiFi-RF, BLE and CSI ride the onboard radio and share the same
 // privacy-preserving, MAC-free counting/feature paths canary-wap proves
-// (common/rf_presence, common/bluetooth, common/csi). Their scan/feature
+// (canary-wap's rf_presence, common/bluetooth, common/csi). Their scan/feature
 // callbacks call the adapters below; the wiring is Phase 1 (see README). The
 // call sites are shown so the composition is complete and reviewable:
 //

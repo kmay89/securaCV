@@ -1,0 +1,31 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-nightlight-c3",
+  "name": "Canary Nightlight",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-C3",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "waveshare-esp32c3-lcd147",
+    "envs": [
+      "canary-display-nightlight-c3"
+    ]
+  },
+  "peripherals": [
+    "sd_card",
+    "display",
+    "imu",
+    "backlight_pwm"
+  ],
+  "figure": "device.canary-nightlight",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_c3_lcd147.scad",
+    "enclosure_sets": [
+      "c3-pocket-display-case"
+    ]
+  },
+  "flasher": {
+    "product": "securacv-canary-display-nightlight-c3"
+  }
+}

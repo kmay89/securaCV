@@ -99,9 +99,9 @@ This means:
 #### The display line's disclosed exceptions
 
 The Canary displays (Dash / Nightstand / Watch Station) join the home
-WiFi to render the fleet, and carry exactly three disclosed outbound
-paths — all anonymous-commons queries, none carrying identifiers, and
-none required for the device to function:
+WiFi to render the fleet, and carry exactly four disclosed outbound
+paths — all anonymous queries, none carrying identifiers, and none
+required for the device to function:
 
 1. **Time (SNTP)** — always on when networked: UTC from two public time
    sources (`pool.ntp.org`, `time.nist.gov`). This is what keeps a
@@ -109,16 +109,36 @@ none required for the device to function:
 2. **Timezone lookup** — compile-time opt-in only (`CD_TZ_WEB_LOOKUP` in
    `secrets.h`); off in every shipped image. Without it the zone comes
    from configuration or the app.
-3. **Standalone weather** — runtime opt-in, off by default, and gated
-   three ways (`firmware/.../net/wx_direct.h`): the owner must switch it
-   on, must store a location, and **no hub may ever have been
-   configured**. A home with a hub keeps the hub as its single egress
-   point — the fetcher never becomes a fallback when that hub is down.
-   The query is an anonymous HTTPS forecast request (Open-Meteo, pinned
-   root CA) over a location the phone coarsens to a 0.1° grid (~11 km)
-   before the device ever stores it; the exact request shape is pinned by
-   a host test (`tests_host/test_wx_core.cpp`) so it cannot quietly grow
-   an identifier. The device never republishes the stored grid point.
+3. **Standalone weather** — the one *opt-in* path: runtime opt-in, off
+   by default, and gated three ways (`firmware/.../net/wx_direct.h`): the
+   owner must switch it on **on the glass itself**, a coarse location must
+   be stored, and **no hub may ever have been configured**. A home with a
+   hub keeps the hub as its single egress point — the fetcher never
+   becomes a fallback when that hub is down. The switch is a hand on the
+   glass, not a network call: the display's LAN write API (`POST /api/set`)
+   refuses `wx_direct` and `wx_loc` for every caller, token or not, with
+   `403 {"ok":false,"err":"on_glass_only"}` (one host-tested table,
+   `net/settings_policy.h`), so a host on the home WiFi cannot flip the
+   device's one opt-in outbound path or plant a location for it. `GET
+   /api/settings` reports the opt-in's on/off to any caller, and whether a
+   location is stored only to callers that are not cross-site. The query
+   is an anonymous HTTPS forecast request (Open-Meteo, pinned root CA) over
+   a 0.1° grid point (~11 km); the exact request shape is pinned by a host
+   test (`tests_host/test_wx_core.cpp`) so it cannot quietly grow an
+   identifier. The device never serves or republishes the stored grid
+   point. Honest status: closing the network path also closed the only
+   way a location was ever stored (the phone app posted `wx_loc`), and
+   this firmware has no on-glass location entry yet — so on a fresh
+   device the second gate stays unsatisfied and the fetcher stays idle
+   until one lands. A grid point stored by an earlier build keeps working;
+   a settings reset clears it. Compile-tested, not yet bench-tested.
+4. **Signed update checks** — a daily, jittered HTTPS GET of a small
+   signed JSON manifest from the release host (`docs/firmware_ota.md`;
+   the desktop Flasher can also ask the glass to run one over the LAN).
+   No identifiers ride on it, and nothing is installed until the manifest
+   verifies against the pinned Ed25519 release key. No setting turns this
+   on or off from the network, and it carries no location. Disclosed on
+   the glass's own network page (`docs/hardware/display_settings.md`).
 
 ### No Tracking Identifiers
 

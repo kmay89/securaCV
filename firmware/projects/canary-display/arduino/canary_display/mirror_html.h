@@ -133,6 +133,26 @@ here stays inside your home network.</p>
   <p class="sub" id="tzsub"></p>
   <p class="sub">Changes apply on the glass right away, exactly as if you
   had set them there.</p>
+  <!-- The standalone-weather pair is READ-ONLY here, by design. The device
+       refuses wx_direct and wx_loc from the network for every caller
+       (net/settings_policy.h) so nobody on the WiFi can switch on the one
+       thing this glass would ever fetch, or plant a location for it. These
+       rows show the state and say where the switch lives; they appear only
+       when the device serves the `on_glass` block (a build that carries the
+       standalone forecast). No control here — a control would only 403. -->
+  <div id="wx_rows" style="display:none;border-top:1px solid var(--edge);
+    margin-top:8px;padding-top:4px">
+  <label>Weather, fetched by the glass itself <span class="sub"
+    id="wx_state"></span></label>
+  <label>Coarse weather location <span class="sub" id="wx_loc"></span></label>
+  <p class="sub">Set this on the glass: <b style="color:var(--tx)">settings
+  &rarr; weather &rarr; fetch itself</b>. This page shows it and cannot change
+  it &mdash; the display refuses that switch, and a location, from anything on
+  your network, so no one on your WiFi can turn on the one thing it would ever
+  fetch. A location cannot be stored from here either; this firmware has no
+  on-glass entry for one yet. A stored location is a ~11 km grid point and is
+  never shown here.</p>
+  </div>
 </div>
 
 <h2>About this device</h2>
@@ -286,7 +306,18 @@ else if(s.tz==="UTC0"){$("tzsub").textContent=
 // bright_pct dims by scrim, and its day_pct would be a dead control.
 if(s.bright_pct!==undefined){$("day_row").style.display="none";
 $("bright_row").style.display="";
-if(s.bright_min_pct!==undefined)$("bright_pct").min=s.bright_min_pct}});
+if(s.bright_min_pct!==undefined)$("bright_pct").min=s.bright_min_pct}
+// The on-glass-only block (standalone weather): shown, never sent. The
+// words for wx_status are the glass's own settings row, so the page and the
+// wall agree on what state the forecast is in. The location-derived fields
+// (wx_status, wx_loc_set) are served only to non-cross-site callers, so a
+// response without them says nothing about a location rather than guessing.
+if(s.on_glass){var g=s.on_glass;$("wx_rows").style.display="";
+var WX=["off","on \u2022 needs a location","idle \u2022 your hub provides weather",
+"on","on \u2022 last fetch failed, retrying"];
+$("wx_state").textContent=WX[g.wx_status]||(g.wx_direct?"on":"off");
+$("wx_loc").textContent=g.wx_loc_set===undefined?"\u2014":
+(g.wx_loc_set?"stored (a ~11 km grid point)":"not stored")}});
 // live mirror
 function pad(n){return(n<10?"0":"")+n}
 function tick(){fetch("/api/glass").then(function(r){return r.json()})

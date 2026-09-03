@@ -7,16 +7,9 @@
      /canary-local/emulator/web/harness.html?flavor=watch -->
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>canary.local — emulator harness</title>
-  <style>
-    body { background: #101014; color: #ddd; font: 14px/1.4 monospace; margin: 20px; }
-    #glass { image-rendering: pixelated; background: #000; }
-    .round { border-radius: 50%; }
-    #row { display: flex; gap: 24px; align-items: flex-start; }
-    #serial { width: 640px; height: 480px; overflow-y: scroll; white-space: pre-wrap;
-              background: #05050a; border: 1px solid #333; padding: 8px; font-size: 11px; }
-    button { margin: 2px; }
-  </style>
+  <link rel="stylesheet" href="harness.css" />
 </head>
 <body>
   <h3>canary.local emulator harness</h3>
@@ -24,90 +17,21 @@
     <div>
       <canvas id="glass" width="240" height="240"></canvas>
       <div id="controls">
-        <button onclick="__emu.setWifi(false)">wifi down</button>
-        <button onclick="__emu.setWifi(true)">wifi up</button>
-        <button onclick="__emu.setBroker(false)">broker down</button>
-        <button onclick="__emu.setBroker(true)">broker up</button>
-        <button onclick="__emu.setTimeScale(60)">time ×60</button>
-        <button onclick="__emu.setTimeScale(1)">time ×1</button>
+        <!-- data-emu names the emulator call, data-arg its argument; harness.js
+             delegates the clicks. No onclick= — the page carries the same
+             no-inline-script CSP as the product pages. -->
+        <button data-emu="wifi" data-arg="0">wifi down</button>
+        <button data-emu="wifi" data-arg="1">wifi up</button>
+        <button data-emu="broker" data-arg="0">broker down</button>
+        <button data-emu="broker" data-arg="1">broker up</button>
+        <button data-emu="time" data-arg="60">time ×60</button>
+        <button data-emu="time" data-arg="1">time ×1</button>
       </div>
       <div id="status"></div>
     </div>
     <div id="serial"></div>
   </div>
 
-  <script type="module">
-    import { CanaryEmulator, demoFleet } from "./emu-shell.js";
-
-    // Which glass boots is a query parameter, not a hard-coded script tag:
-    // ?flavor=watch (the default) | dash | nightstand | touch169 | amoled241,
-    // each a committed dist/canary-display-<flavor>.js exporting
-    // createCanaryEmu<Flavor>. The boot probe walks every flavor this way, so
-    // a display CI never booted cannot ship broken.
-    // Allowlist, not sanitization: the query value only ever SELECTS one of
-    // these entries; no user-controlled string reaches a script URL or a
-    // global name. Add a flavor here when a new dist bundle is committed.
-    const FLAVORS = {
-      watch:     { src: "../dist/canary-display-watch.js",     factory: "createCanaryEmuWatch" },
-      dash:      { src: "../dist/canary-display-dash.js",      factory: "createCanaryEmuDash" },
-      nightstand:{ src: "../dist/canary-display-nightstand.js",factory: "createCanaryEmuNightstand" },
-      touch169:  { src: "../dist/canary-display-touch169.js",  factory: "createCanaryEmuTouch169" },
-      amoled241: { src: "../dist/canary-display-amoled241.js", factory: "createCanaryEmuAmoled241" },
-    };
-    const q = new URLSearchParams(location.search);
-    const wanted = (q.get("flavor") || "watch").toLowerCase();
-    const entry = Object.hasOwn(FLAVORS, wanted) ? FLAVORS[wanted] : null;
-    if (!entry) throw new Error("unknown flavor; known: " + Object.keys(FLAVORS).join(", "));
-    const flavor = wanted;
-    await new Promise((resolve, reject) => {
-      const tag = document.createElement("script");
-      tag.src = entry.src;
-      tag.onload = resolve;
-      tag.onerror = () => reject(new Error("dist bundle failed to load for " + flavor));
-      document.head.appendChild(tag);
-    });
-    const factory = window[entry.factory];
-    if (typeof factory !== "function") throw new Error("dist bundle for " + flavor + " exports no factory");
-
-    const serial = document.getElementById("serial");
-    const state = { booted: false, flushes: 0, serialText: "", mqtt: [], flavor };
-    window.__state = state;
-
-    const emu = new CanaryEmulator(factory, {
-      canvas: document.getElementById("glass"),
-      onSerial: (t) => {
-        state.serialText += t;
-        serial.textContent = state.serialText.slice(-20000);
-        serial.scrollTop = serial.scrollHeight;
-      },
-      onDisplayReady: (w, h, round) => {
-        if (round) document.getElementById("glass").classList.add("round");
-      },
-      onFrame: () => { state.flushes++; },
-      onMqtt: (m) => { state.mqtt.push(m); },
-      onBacklight: (glow) => {
-        document.getElementById("glass").style.filter = `brightness(${Math.max(0.05, glow)})`;
-      },
-      onNetEvent: (k, d) => { state.mqtt.push({ dir: "net", topic: k, payload: d }); },
-      onReboot: () => location.reload(),
-    });
-    window.__emu = emu;
-
-    await emu.start({
-      provisioned: q.get("provisioned") !== "0",
-      firstMeeting: q.get("meet") === "1",
-      seed: 1234,
-    });
-    if (q.get("hour") !== null) emu.setLocalHour(Number(q.get("hour")));
-    state.booted = true;
-
-    const fleet = demoFleet();
-    window.__fleet = fleet;
-    for (const w of fleet) await emu.addWitness(w);
-    emu.startFleetHeartbeat(15000);
-
-    document.getElementById("status").textContent = "booted; fleet staged";
-    window.__ready = true;
-  </script>
+  <script type="module" src="harness.js"></script>
 </body>
 </html>

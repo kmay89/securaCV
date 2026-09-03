@@ -127,7 +127,7 @@ envs/platformio/canary-sentinel.ini
 ## Phase 1 (the wiring that turns Phase 0 into a witness)
 
 Wire the four onboard channels (PIR is already live; add WiFi-RF/CSI + BLE via
-`common/rf_presence` / `common/csi` / `common/bluetooth`), then light up
+canary-wap's `rf_presence` / `common/csi` / `common/bluetooth`), then light up
 `emit_claim()` into the shared signed witness + MQTT/HA + pull-OTA stack
 canary-sense proves, add the HA discovery entity set, and land the flavor in
 `firmware/flavors.json` once the C6 device build is bench-green.

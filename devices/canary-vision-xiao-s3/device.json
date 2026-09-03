@@ -1,0 +1,30 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-vision-xiao-s3",
+  "name": "Canary Vision · XIAO S3",
+  "family": "canary-vision",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 8,
+    "board_id": "xiao-esp32s3",
+    "envs": [
+      "canary-vision-xiao-s3"
+    ]
+  },
+  "peripherals": [
+    "vision_ai"
+  ],
+  "figure": "device.canary-vision",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_vision_enclosure.scad",
+    "enclosure_sets": [
+      "vision-xiao-indoor",
+      "vision-xiao-weather",
+      "vision-mount-kit"
+    ]
+  },
+  "flasher": {
+    "product": "securacv-canary-vision-xiao-s3"
+  }
+}

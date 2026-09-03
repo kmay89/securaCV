@@ -20,10 +20,13 @@ permissions:
   contents: read
   pull-requests: write
 
-# Supersede stale reviews when a new commit arrives on the same PR.
+# Supersede stale reviews when a new commit arrives on the same PR. This
+# workflow only ever runs on pull_request, so the house condition (CI.md R3)
+# is always true here — spelled the same way everywhere so a grep for a bare
+# `cancel-in-progress: true` finds only the exemptions.
 concurrency:
   group: canary-reviewer-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   review:

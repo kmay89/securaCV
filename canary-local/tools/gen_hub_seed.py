@@ -31,10 +31,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import die, repo_root
+
+REPO = repo_root()
 OUT_JSON = REPO / "canary-local/devices/hub_seed.json"
 HUB_IMAGE_JSON = REPO / "canary-local/devices/hub_image.json"
 FRIGATE_CONFIG = REPO / "homeassistant/frigate/config.yaml"
@@ -82,10 +82,6 @@ PIHOLE_SLUG = "pihole"
 # last move to the user.
 KIOSK_REPO = "https://github.com/puterboy/HAOS-kiosk"
 KIOSK_SLUG = "haoskiosk"
-
-
-def die(msg: str) -> None:
-    sys.exit(f"gen_hub_seed.py: {msg}")
 
 
 def repo_hash(url: str) -> str:

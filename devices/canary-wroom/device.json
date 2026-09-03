@@ -1,0 +1,22 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-wroom",
+  "name": "Canary · ESP32 DevKit",
+  "family": "canary",
+  "board": {
+    "mcu": "ESP32",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "esp32-wroom-devkit",
+    "envs": [
+      "esp32-wroom"
+    ]
+  },
+  "peripherals": [
+    "gnss_uart",
+    "tamper_input"
+  ],
+  "flasher": {
+    "product": "securacv-canary-wroom"
+  }
+}

@@ -606,14 +606,14 @@ int process() {
     return 0;
   }
 
-  /* Close window and emit. A window that closes late (loop stall, quiet
-   * radio, power gating) stands for every whole window that elapsed
-   * meanwhile; tell the feature layer so the breathing envelope keeps its
-   * one-sample-per-second time base instead of compressing the gap. */
-  const uint32_t missed = (now_ms - s_window_start_ms) / CSI_WINDOW_MS - 1u;
-  csi_features::note_missed_windows(missed);
+  /* Close window and emit. The close carries its timestamp: the feature
+   * layer resamples the breathing envelope onto a fixed 1 Hz grid from it
+   * (holds the last sample across a late close — loop stall, quiet radio,
+   * power gating — and averages early closes that land in one slot), so
+   * the Goertzel bank's one-sample-per-second time base is the clock's,
+   * not the loop's. get_stats() reports how far apart the two were. */
   csi_features_t feats = {};
-  csi_features::finalize(&feats, s_window_frames);
+  csi_features::finalize(&feats, s_window_frames, now_ms);
 
   if (s_window_frames < (uint32_t)(s_cfg.max_frame_rate_hz / 2)) {
     s_windows_degraded.fetch_add(1, std::memory_order_relaxed);
@@ -656,6 +656,11 @@ bool get_stats(csi_stats_t* out) {
   out->windows_emitted     = s_windows_emitted.load(std::memory_order_relaxed);
   out->windows_degraded    = s_windows_degraded.load(std::memory_order_relaxed);
   out->frames_dropped_short = s_frames_dropped_short.load(std::memory_order_relaxed);
+  /* Envelope-grid cadence: plain aligned 32-bit reads of loop-task
+   * counters kept by the feature layer. Diagnostics only. */
+  out->windows_held     = csi_features::held_windows();
+  out->windows_merged   = csi_features::merged_windows();
+  out->window_period_ms = csi_features::window_period_ms();
   return true;
 }
 

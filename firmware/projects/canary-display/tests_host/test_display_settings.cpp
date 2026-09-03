@@ -115,9 +115,51 @@ static void test_names() {
         "270 name");
 }
 
+// ── The LVGL 9 pointer feed inverts LVGL's own indev rotation ────────────
+// LVGL 9 rotates every pointer sample by the display rotation itself
+// (lv_display_rotate_point, quoted here from lvgl v9.5 as the independent
+// oracle — NATIVE dims, not the rotated ones). The settings panel is fed
+// the HAL's already-logical point, so lvgl_port hands LVGL
+// rotation_to_lvgl_indev(logical) and LVGL's rotation must return the
+// logical point unchanged, at every quarter turn, across the whole panel.
+static void lvgl9_rotate_point(uint8_t rot, int hor_res, int ver_res,
+                               int* x, int* y) {
+  const int ox = *x, oy = *y;
+  switch (rot & 3) {
+    case ROT_PORTRAIT:      *x = ver_res - oy - 1; *y = ox;               break;
+    case ROT_LANDSCAPE_INV: *x = hor_res - ox - 1; *y = ver_res - oy - 1; break;
+    case ROT_PORTRAIT_INV:  *x = oy;               *y = hor_res - ox - 1; break;
+    default: break;
+  }
+}
+
+static void test_lvgl_indev_feed() {
+  const int PW = 800, PH = 480;
+  for (uint8_t rot = 0; rot < 4; rot++) {
+    int LW = 0, LH = 0;
+    rotation_logical_dims(rot, PW, PH, &LW, &LH);
+    for (int lx = 0; lx < LW; lx += 19) {
+      for (int ly = 0; ly < LH; ly += 11) {
+        int fx = 0, fy = 0;
+        rotation_to_lvgl_indev(rot, PW, PH, lx, ly, &fx, &fy);
+        CHECK(fx >= 0 && fx < PW && fy >= 0 && fy < PH,
+              "the fed point lies inside the native panel");
+        lvgl9_rotate_point(rot, PW, PH, &fx, &fy);
+        CHECK(fx == lx && fy == ly,
+              "LVGL's own rotation returns the logical point unchanged");
+      }
+    }
+  }
+  // Rotation 0 is the identity — the fed point IS the logical point.
+  int x = 0, y = 0;
+  rotation_to_lvgl_indev(ROT_LANDSCAPE, PW, PH, 123, 45, &x, &y);
+  CHECK(x == 123 && y == 45, "landscape feeds the point through untouched");
+}
+
 int main() {
   test_dims();
   test_touch_roundtrip();
+  test_lvgl_indev_feed();
   test_touch_corners();
   test_brightness();
   test_names();

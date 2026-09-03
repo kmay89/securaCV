@@ -121,11 +121,14 @@ namespace features {
   static constexpr size_t AMP_BANDS   = 8;
   static constexpr size_t DOP_BANDS   = 4;
   static constexpr size_t BREATH_BINS = 8;
-  /* Cross-window breathing envelope ring: one mean-amplitude sample per
-   * finalized window (1 Hz). 64 windows ≈ 6–28 breath cycles. Bins are
-   * meaningless below ~2 cycles of the slowest target, hence the floor. */
+  /* Cross-window breathing envelope ring: one row per second on a fixed
+   * 1 Hz grid. 64 rows ≈ 6–28 breath cycles. Bins are meaningless below
+   * ~2 cycles of the slowest target, hence the floor. */
   static constexpr size_t BREATH_RING        = 64;
   static constexpr size_t BREATH_MIN_WINDOWS = 24;
+  /* Envelope bands: each ring row holds one band-share sample per band
+   * (the 4 rotation bands, dop_band_of). */
+  static constexpr size_t ENV_BANDS = DOP_BANDS;
   /* Per-frame amplitude normalization target (AGC removal). */
   static constexpr int32_t AMP_NORM_MEAN = 64;
 
@@ -143,12 +146,32 @@ namespace features {
   static int32_t  s_doppler_sum[DOP_BANDS];
   static uint32_t s_doppler_mag_sum[DOP_BANDS];
 
-  /* Cross-window breathing envelope (survives per-window reset(); wiped
-   * by reset_history() when sensing stops — privacy contract). */
-  static int16_t  s_env_ring[BREATH_RING];
+  /* Cross-window breathing envelope: per grid second, each band's mean
+   * AGC-normalized amplitude — its SHARE of the frame, which per-packet
+   * gain cannot move and a breath's frequency-selective re-weighting
+   * does. Survives per-window reset(); wiped by reset_history() when
+   * sensing stops — privacy contract. Mirrors csi_features.cpp in
+   * firmware/common/csi (this library carries its own copy of the
+   * extractor; roadmap item 22 is the consolidation). */
+  static int16_t  s_env_ring[BREATH_RING][ENV_BANDS];
   static uint16_t s_env_ring_head = 0;
   static uint16_t s_env_ring_len  = 0;
-  static int32_t  s_env_sum = 0;   /* per-window raw row-mean accumulator */
+  static int32_t  s_env_band_sum[ENV_BANDS];  /* per-window accumulators */
+
+  /* The 1 Hz grid the ring is fed on: start of the newest row's slot, and
+   * the running sum / count of real windows averaged into that row
+   * (n == 0: the row is a held copy a real window replaces). */
+  static bool     s_grid_valid    = false;
+  static uint32_t s_grid_slot_ms  = 0;
+  static uint32_t s_last_close_ms = 0;
+  static int32_t  s_slot_sum[ENV_BANDS];
+  static uint16_t s_slot_n = 0;
+  /* Cadence bookkeeping for csi_stats_t. Never cleared: no envelope
+   * shape in them, only how far the loop strayed from 1 Hz. */
+  static uint32_t s_windows_held   = 0;
+  static uint32_t s_windows_merged = 0;
+  static uint64_t s_period_sum_ms  = 0;
+  static uint32_t s_period_n       = 0;
 
   /* RSSI running stats. */
   static int32_t  s_rssi_sum = 0;
@@ -208,7 +231,7 @@ namespace features {
       s_doppler_sum[i] = 0;
       s_doppler_mag_sum[i] = 0;
     }
-    s_env_sum = 0;
+    memset(s_env_band_sum, 0, sizeof(s_env_band_sum));
     s_rssi_sum = 0;
     s_rssi_sq_sum = 0;
     s_rssi_max = -127;
@@ -229,23 +252,111 @@ namespace features {
     memset(s_env_ring, 0, sizeof(s_env_ring));
     s_env_ring_head = 0;
     s_env_ring_len  = 0;
+    memset(s_slot_sum, 0, sizeof(s_slot_sum));
+    s_slot_n        = 0;
+    s_grid_valid    = false;
+    s_grid_slot_ms  = 0;
+    s_last_close_ms = 0;
   }
 
-  /* A window that closed late stood for `missed` whole windows: hold the
-   * last envelope sample that many times so the 1 Hz time base the
-   * breathing bins assume survives a stall. Mirrors csi_features.cpp in
-   * firmware/common/csi (this library carries its own copy of the
-   * extractor; roadmap item 22 is the consolidation). */
-  static void note_missed_windows(uint32_t missed) {
-    if (missed == 0 || s_env_ring_len == 0) return;   /* nothing to hold */
-    if (missed > BREATH_RING) missed = BREATH_RING;
+  static uint32_t held_windows()     { return s_windows_held; }
+  static uint32_t merged_windows()   { return s_windows_merged; }
+  static uint32_t window_period_ms() {
+    return s_period_n ? (uint32_t)(s_period_sum_ms / s_period_n) : 0;
+  }
+
+  /* ── Envelope ring primitives ── */
+
+  static void ring_push(const int16_t row[ENV_BANDS]) {
+    memcpy(s_env_ring[s_env_ring_head], row, sizeof(int16_t) * ENV_BANDS);
+    s_env_ring_head = (uint16_t)((s_env_ring_head + 1) % BREATH_RING);
+    if (s_env_ring_len < BREATH_RING) s_env_ring_len++;
+  }
+
+  static void ring_overwrite_newest(const int16_t row[ENV_BANDS]) {
     const size_t last = (s_env_ring_head + BREATH_RING - 1) % BREATH_RING;
-    const int16_t held = s_env_ring[last];
-    for (uint32_t i = 0; i < missed; i++) {
-      s_env_ring[s_env_ring_head] = held;
-      s_env_ring_head = (uint16_t)((s_env_ring_head + 1) % BREATH_RING);
-      if (s_env_ring_len < BREATH_RING) s_env_ring_len++;
+    memcpy(s_env_ring[last], row, sizeof(int16_t) * ENV_BANDS);
+  }
+
+  /* Zero-order hold across seconds no window covered. Capped at the ring
+   * size: a longer gap restarts the spectrum from the held value. */
+  static void ring_hold(uint32_t n) {
+    if (n == 0 || s_env_ring_len == 0) return;   /* nothing to hold */
+    if (n > BREATH_RING) n = BREATH_RING;
+    int16_t held[ENV_BANDS];
+    const size_t last = (s_env_ring_head + BREATH_RING - 1) % BREATH_RING;
+    memcpy(held, s_env_ring[last], sizeof(held));
+    for (uint32_t i = 0; i < n; i++) ring_push(held);
+    s_windows_held += n;
+  }
+
+  static inline int32_t div_round_u(int32_t num, int32_t den) {
+    return den > 0 ? (num + den / 2) / den : 0;
+  }
+
+  /* A millis() difference that reads "negative" after unsigned wrap is a
+   * clock that ran backwards, treated as no time elapsed. */
+  static inline bool elapsed_is_sane(uint32_t d) { return d < 0x80000000u; }
+
+  static void note_close_time(uint32_t close_ms) {
+    const uint32_t d = close_ms - s_last_close_ms;
+    if (elapsed_is_sane(d)) { s_period_sum_ms += d; s_period_n++; }
+    s_last_close_ms = close_ms;
+  }
+
+  static void slot_start(const int16_t row[ENV_BANDS]) {
+    for (size_t b = 0; b < ENV_BANDS; b++) s_slot_sum[b] = row[b];
+    s_slot_n = 1;
+  }
+
+  /* Feed one window's envelope row onto the 1 Hz grid at its close time:
+   * a close inside the newest slot is averaged in (early window); a close
+   * past it first holds the previous row across the skipped slots (late
+   * window). One row per second is then true by construction. */
+  static void grid_feed(const int16_t row[ENV_BANDS], uint32_t close_ms) {
+    if (!s_grid_valid) {
+      ring_push(row);
+      slot_start(row);
+      s_grid_slot_ms  = close_ms;
+      s_last_close_ms = close_ms;
+      s_grid_valid    = true;
+      return;
     }
+    note_close_time(close_ms);
+    const uint32_t elapsed = close_ms - s_grid_slot_ms;
+    const uint32_t slots = elapsed_is_sane(elapsed) ? elapsed / CSI_WINDOW_MS : 0;
+    if (slots == 0) {
+      if (s_slot_n == 0) {
+        slot_start(row);
+        ring_overwrite_newest(row);
+      } else {
+        int16_t avg[ENV_BANDS] = {0};
+        s_slot_n++;
+        for (size_t b = 0; b < ENV_BANDS; b++) {
+          s_slot_sum[b] += row[b];
+          avg[b] = (int16_t)div_round_u(s_slot_sum[b], s_slot_n);
+        }
+        ring_overwrite_newest(avg);
+        s_windows_merged++;
+      }
+      return;
+    }
+    ring_hold(slots - 1);
+    ring_push(row);
+    slot_start(row);
+    s_grid_slot_ms += slots * CSI_WINDOW_MS;
+  }
+
+  /* A close with no frames: nothing to push, but the seconds passed. */
+  static void grid_feed_empty(uint32_t close_ms) {
+    if (!s_grid_valid) return;
+    note_close_time(close_ms);
+    const uint32_t elapsed = close_ms - s_grid_slot_ms;
+    const uint32_t slots = elapsed_is_sane(elapsed) ? elapsed / CSI_WINDOW_MS : 0;
+    if (slots == 0) return;
+    ring_hold(slots);
+    s_slot_n = 0;
+    s_grid_slot_ms += slots * CSI_WINDOW_MS;
   }
 
   static void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
@@ -259,22 +370,23 @@ namespace features {
     const size_t N = s_sc_count;
 
     /* 1. Amplitude history — AGC-normalized (mean pinned to AMP_NORM_MEAN
-     * dividing by the high-precision raw_sum, rounded). The raw mean also
-     * feeds the breathing envelope, which the normalized rows can't carry
-     * (their mean is pinned by construction). */
+     * dividing by the high-precision raw_sum, rounded). The breathing
+     * envelope is each band's share of the normalized row: per-packet
+     * gain moves none of the shares, a breath's frequency-selective
+     * re-weighting moves them against each other. */
     int16_t* row = s_amp_hist[s_frame_count];
     int32_t  raw_sum = 0;
     for (size_t k = 0; k < N; k++) {
       row[k] = magnitude(iq[2*k], iq[2*k + 1]);
       raw_sum += row[k];
     }
-    s_env_sum += raw_sum / (int32_t)N;
     const int32_t denom = raw_sum > 0 ? raw_sum : 1;
     const int32_t numer_scale = AMP_NORM_MEAN * (int32_t)N;
     for (size_t k = 0; k < N; k++) {
       int32_t a = ((int32_t)row[k] * numer_scale + denom / 2) / denom;
       if (a > 0x7FFF) a = 0x7FFF;
       row[k] = (int16_t)a;
+      s_env_band_sum[dop_band_of(k, N)] += a;
     }
 
     /* 2. CFO-corrected band rotation. Per band b: C_b = Σ z·conj(z_prev);
@@ -385,45 +497,55 @@ namespace features {
     const size_t n = s_env_ring_len;
     if (n < BREATH_MIN_WINDOWS) return;
 
-    int32_t env[BREATH_RING];
-    int32_t mean = 0;
-    for (size_t j = 0; j < n; j++) {
-      const size_t idx = (s_env_ring_head + BREATH_RING - n + j) % BREATH_RING;
-      env[j] = s_env_ring[idx];
-      mean  += env[j];
-    }
-    mean /= (int32_t)n;
-    for (size_t j = 0; j < n; j++) env[j] -= mean;
-
-    /* 2·cos(2π·f/fs) × 256 at fs = 1 window/s for f = 0.10 + 0.05·i Hz. */
+    /* 2·cos(2π·f/fs) × 256 at fs = 1 row/s for f = 0.10 + 0.05·i Hz. */
     static const int16_t TWO_COS_OMEGA_Q8[BREATH_BINS] = {
       414, 301, 158, 0, -158, -301, -414, -487
     };
 
-    for (size_t i = 0; i < BREATH_BINS; i++) {
-      int64_t s_prev = 0, s_prev2 = 0;
-      const int32_t coef_q8 = TWO_COS_OMEGA_Q8[i];
+    /* The bank runs once per band and each bin keeps its strongest band:
+     * whichever band a breath re-weights carries it, and independent
+     * noise in the other bands cannot add to it. */
+    int32_t env[BREATH_RING];
+    for (size_t b = 0; b < ENV_BANDS; b++) {
+      int32_t mean = 0;
       for (size_t j = 0; j < n; j++) {
-        const int64_t s = (int64_t)env[j] + ((coef_q8 * s_prev) >> 8) - s_prev2;
-        s_prev2 = s_prev;
-        s_prev  = s;
+        const size_t idx = (s_env_ring_head + BREATH_RING - n + j) % BREATH_RING;
+        env[j] = s_env_ring[idx][b];
+        mean  += env[j];
       }
-      int64_t mag2 = s_prev * s_prev
-                   + s_prev2 * s_prev2
-                   - ((coef_q8 * s_prev * s_prev2) >> 8);
-      if (mag2 < 0) mag2 = 0;
-      /* Ring noise (σ≈1) ⇒ mag² ≈ 64 ⇒ 0; ±2-unit envelope ⇒ ≈40;
-       * floored at 0 so |abs| consumers never mistake silence for signal. */
-      int32_t log2_mag2 = 0;
-      int64_t m = mag2;
-      while (m > 1) { m >>= 1; log2_mag2++; }
-      int32_t score = (log2_mag2 - 8) * 10;
-      if (score < 0) score = 0;
-      out[i] = clip_i8(score);
+      mean /= (int32_t)n;
+      for (size_t j = 0; j < n; j++) env[j] -= mean;
+
+      for (size_t i = 0; i < BREATH_BINS; i++) {
+        int64_t s_prev = 0, s_prev2 = 0;
+        const int32_t coef_q8 = TWO_COS_OMEGA_Q8[i];
+        for (size_t j = 0; j < n; j++) {
+          const int64_t s = (int64_t)env[j] + ((coef_q8 * s_prev) >> 8) - s_prev2;
+          s_prev2 = s_prev;
+          s_prev  = s;
+        }
+        int64_t mag2 = s_prev * s_prev
+                     + s_prev2 * s_prev2
+                     - ((coef_q8 * s_prev * s_prev2) >> 8);
+        if (mag2 < 0) mag2 = 0;
+        /* Ring noise (σ≈1) ⇒ mag² ≈ 64 ⇒ 0; ±2-unit share swing ⇒ ≈40;
+         * floored at 0 so |abs| consumers never mistake silence for signal. */
+        int32_t log2_mag2 = 0;
+        int64_t m = mag2;
+        while (m > 1) { m >>= 1; log2_mag2++; }
+        int32_t score = (log2_mag2 - 8) * 10;
+        if (score < 0) score = 0;
+        const int8_t s8 = clip_i8(score);
+        if (s8 > out[i]) out[i] = s8;
+      }
     }
   }
 
-  static void finalize(csi_features_t* out, uint32_t frames_in_window) {
+  /* `close_ms` is the window's close time: the envelope ring is fed on a
+   * fixed 1 Hz grid keyed by it (see grid_feed), so the breathing bins'
+   * one-sample-per-second time base is the clock's, not the loop's. */
+  static void finalize(csi_features_t* out, uint32_t frames_in_window,
+                       uint32_t close_ms) {
     if (out == nullptr) return;
     memset(out, 0, sizeof(*out));
 
@@ -431,15 +553,24 @@ namespace features {
     int8_t dop[DOP_BANDS]      = {0};
     int8_t breath[BREATH_BINS] = {0};
 
-    /* Append this window's mean raw envelope to the breathing ring before
-     * running the filter bank. No-frame windows push nothing — a supply
-     * gap must not inject a fake step into the spectrum. */
+    /* Feed this window's envelope row (per-band mean of normalized
+     * amplitude) to the ring before running the filter bank. A window
+     * with no frames has no row; the grid still advances with held
+     * copies so a supply gap keeps the time base without injecting a
+     * fake step into the spectrum. */
     if (s_frame_count > 0) {
-      int32_t env = s_env_sum / (int32_t)s_frame_count;
-      if (env > 0x7FFF) env = 0x7FFF;
-      s_env_ring[s_env_ring_head] = (int16_t)env;
-      s_env_ring_head = (uint16_t)((s_env_ring_head + 1) % BREATH_RING);
-      if (s_env_ring_len < BREATH_RING) s_env_ring_len++;
+      int16_t row[ENV_BANDS];
+      int32_t band_n[ENV_BANDS] = {0};
+      for (size_t k = 0; k < s_sc_count; k++) band_n[dop_band_of(k, s_sc_count)]++;
+      for (size_t b = 0; b < ENV_BANDS; b++) {
+        int32_t env = div_round_u(s_env_band_sum[b],
+                                  band_n[b] * (int32_t)s_frame_count);
+        if (env > 0x7FFF) env = 0x7FFF;
+        row[b] = (int16_t)env;
+      }
+      grid_feed(row, close_ms);
+    } else {
+      grid_feed_empty(close_ms);
     }
 
     compute_amp_variance(amp);
@@ -749,12 +880,12 @@ int process() {
   const uint32_t now_ms = millis();
   if ((now_ms - s_window_start_ms) < CSI_WINDOW_MS) return 0;
 
-  /* A window that closes late stands for every whole window that elapsed
-   * meanwhile; the feature layer holds the breathing envelope across the gap
-   * so its one-sample-per-second time base survives a stall. */
-  features::note_missed_windows((now_ms - s_window_start_ms) / CSI_WINDOW_MS - 1u);
+  /* The close carries its timestamp: the feature layer resamples the
+   * breathing envelope onto a fixed 1 Hz grid from it (holds across a late
+   * close, averages early closes that land in one slot), so the Goertzel
+   * bank's time base is the clock's, not the loop's. */
   csi_features_t feats = {};
-  features::finalize(&feats, s_window_frames);
+  features::finalize(&feats, s_window_frames, now_ms);
 
   if (s_window_frames < (uint32_t)(s_cfg.max_frame_rate_hz / 2)) {
     s_windows_degraded.fetch_add(1, std::memory_order_relaxed);
@@ -796,6 +927,11 @@ bool get_stats(csi_stats_t* out) {
   out->windows_emitted     = s_windows_emitted.load(std::memory_order_relaxed);
   out->windows_degraded    = s_windows_degraded.load(std::memory_order_relaxed);
   out->frames_dropped_short = s_frames_dropped_short.load(std::memory_order_relaxed);
+  /* Envelope-grid cadence: plain aligned 32-bit reads of loop-task
+   * counters kept by the feature layer. Diagnostics only. */
+  out->windows_held     = features::held_windows();
+  out->windows_merged   = features::merged_windows();
+  out->window_period_ms = features::window_period_ms();
   return true;
 }
 

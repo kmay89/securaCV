@@ -73,7 +73,7 @@ inline Vote csi_vote(bool motion_confirmed, bool motion_observed) {
 
 /**
  * Aggregate device-count channels (WiFi-RF, BLE). Privacy-preserving: the
- * caller passes only a COUNT (never a MAC), from common/rf_presence.
+ * caller passes only a COUNT (never a MAC), from canary-wap's rf_presence.
  *  @param device_count   unique devices seen this window.
  *  @param weak_threshold  >= this many -> Weak.
  *  @param strong_threshold>= this many -> Strong (a phone right at the door).

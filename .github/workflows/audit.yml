@@ -31,6 +31,8 @@ on:
       - 'tvos/witness-core/Cargo.lock'
       - 'desktop-lab/package.json'
       - 'desktop-lab/package-lock.json'
+      - 'desktop/package.json'
+      - 'desktop/package-lock.json'
       - '.github/workflows/audit.yml'
       # The ignore list must re-run the gate it suppresses. Without this,
       # a PR that only edits .cargo/audit.toml skips this workflow, and a
@@ -130,10 +132,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # canary-vision (fleet UI / device-api) and the shipped desktop Lab
-        # (desktop-lab) each have their own package-lock.json. desktop/ has NO
-        # package-lock.json committed, so it can't be `npm ci`-audited here.
-        dir: [canary-vision, desktop-lab]
+        # canary-vision (fleet UI / device-api), the shipped desktop Lab
+        # (desktop-lab) and the shipped desktop Flasher (desktop) each have
+        # their own package-lock.json. The two desktop lockfiles pin only
+        # @tauri-apps/cli, the tool that builds the bundle — an advisory in it
+        # sits on the release path, so it gates like the rest.
+        dir: [canary-vision, desktop-lab, desktop]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

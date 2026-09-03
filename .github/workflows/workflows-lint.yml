@@ -38,7 +38,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: workflows-lint-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: workflows-lint-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -60,6 +62,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - name: Install PyYAML
         run: python3 -m pip install --quiet pyyaml
       - name: Enforce the CI ground rules on every workflow

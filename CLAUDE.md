@@ -70,6 +70,13 @@ The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
 the Apple Home quickstart's signal table is a privacy promise, so a stale one
 is a false statement rather than merely old).
 
+Two of them are chained, and the order matters: `gen_csp.py` (every Lab page's
+Content-Security-Policy, from one policy table) hashes the firmware's captive
+page as `wap.html` embeds it, and it reads that page from
+`canary-local/devices/wap.json`. So a change to the captive-portal HTML is
+`gen_wap.py` **then** `gen_csp.py`; running only the first leaves
+`gen_csp.py --check` red with a message that names the second.
+
 **The recipe above does not find the twenty-first, and it can't:** the WASM
 emulator's `canary-local/emulator/dist/*.js` is generated and committed like
 the rest, but its generator is a compiler and its *inputs are firmware
@@ -110,7 +117,8 @@ bump/edit → ./setup.sh regen → dispatch the dist rebuild → pull it
 
 **Two different gates catch a stale dist, and only one of them is the drift
 check.** `canary-local.yml`'s "Dist drift check" compares the BUNDLE bytes and
-deliberately ignores `meta.json` (it carries the checkout sha). The version
+deliberately ignores `meta.json` (it carries the git stamp — the merge-base
+with `origin/main`, see `build.sh`). The version
 stamp is caught somewhere else entirely — `canary_local.test.js` ("artifact fw
 (x) matches registry train (y)") and `vision.test.js` ("Vision generated data
 is stale against its firmware core") — which run in the **page logic tests**

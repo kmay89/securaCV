@@ -307,6 +307,16 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   `bash desktop/scripts/set-desktop-signing-secrets.sh`.
   Note `ENABLE_MACOS_SIGNING` must be exactly `true` or the desktop apps build
   **unsigned and still go green** — the release body states which you got.
+- **Minting `MIRROR_PAT`.** HACS users install the integration from the mirror
+  repository `kmay89/securacv-homeassistant`, and
+  `.github/workflows/homeassistant-mirror.yml` pushes every main change under
+  `custom_components/securacv/` there as a PR — but only with a fine-grained
+  personal access token for that one repository (Contents, Pull requests and
+  Issues: read and write) in the `MIRROR_PAT` secret; the default token cannot
+  reach another repository. Without it the run stays green and raises one
+  issue per gap (*"HACS mirror not refreshed"*), and the mirror's weekly
+  freshness check keeps reporting the drift. The token is a human's to make;
+  the workflow header says exactly what to scope it to.
 - **Publishing the Lab's release.** It's created as a **draft** on purpose, so
   the build can be looked at before it goes public — but a draft reaches
   nobody. It has no git tag, its assets have no public URLs, and `lab-latest`

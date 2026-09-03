@@ -1,0 +1,34 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-nightstand-s3",
+  "name": "Canary Nightstand",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 16,
+    "board_id": "waveshare-esp32s3-lcd147",
+    "envs": [
+      "canary-display-nightstand-s3"
+    ]
+  },
+  "peripherals": [
+    "sd_card",
+    "display",
+    "rgbled",
+    "backlight_pwm"
+  ],
+  "figure": "device.canary-display-nightstand",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_s3_lcd147.scad",
+    "enclosure_sets": [
+      "s3-hallway-stick-case"
+    ]
+  },
+  "emulator": {
+    "flavor": "nightstand"
+  },
+  "flasher": {
+    "product": "securacv-canary-display-nightstand-s3"
+  }
+}

@@ -15,7 +15,7 @@ own sketch.
 | Layer | What it does | File |
 | --- | --- | --- |
 | `csi_hal` | Wraps `esp_wifi_set_csi_rx_cb()`. Lock-free ring buffer between the WiFi task and the main loop. **Scrubs MAC / BSSID / FCS at the interrupt boundary** before any data is buffered, and canonicalizes each frame to 52 L-LTF tones on the way in. | `csi_hal.{h,cpp}` |
-| `csi_features` | Aggregates ~20 Hz CSI frames into one 32-dim `int8` feature vector per 1 s window. Subcarrier amplitude variance × 8, phase-difference Doppler × 4, breathing/micro-motion FFT 0.1–0.5 Hz × 8, RSSI stats × 4, frame-health × 4. | `csi_features.{h,cpp}` |
+| `csi_features` | Aggregates ~20 Hz CSI frames into one 32-dim `int8` feature vector per 1 s window. Subcarrier amplitude variance × 8, phase-difference Doppler × 4, breathing Goertzel bins 0.10–0.45 Hz × 8 over a cross-window envelope (gain-invariant band shares, resampled onto a fixed 1 Hz grid from each window's close time), RSSI stats × 4, frame-health × 4. | `csi_features.{h,cpp}` |
 | `csi_types` | Privacy invariants, capability flags, the `csi_features_t` contract. | `csi_types.h` |
 | `csi_subcarriers` | Reduces every frame — non-HT (128 B) or HT (256 B), 20 or 40 MHz — to the same 52 L-LTF data+pilot tones in frequency order, so a window never mixes tone counts and the twelve null tones stay out of the AGC mean. Header-only; detects the tone ordering from the frame's own null tones. | `csi_subcarriers.h` |
 | `csi_idf_compat` | The one place the ESP-IDF driver-config field names live: legacy `lltf_en`/`htltf_en`/… on ESP32/S3/C3, the `acquire_csi_*` bitfields on C6/C5/C61. Compile-tested against four IDF struct shapes. | `csi_idf_compat.h` |

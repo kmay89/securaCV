@@ -28,7 +28,9 @@ const el = (tag, cls, text) => {
 };
 const svgel = (tag, attrs = {}) => {
   const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  // `style` goes through the CSSOM: the page's CSP has no 'unsafe-inline' for
+  // styles, and setAttribute("style") is exactly what that blocks.
+  for (const [k, v] of Object.entries(attrs)) k === "style" ? (n.style.cssText = v) : n.setAttribute(k, v);
   return n;
 };
 const fmt = (x, d = 1) => (Math.round(x * 10 ** d) / 10 ** d).toFixed(d);

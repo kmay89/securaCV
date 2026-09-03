@@ -635,6 +635,24 @@ static void handle_touch(uint32_t now) {
   if (modal_settings || modal_commission) {
     s_modal_had_touch = true;
     g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+    if (modal_settings) {
+      // The settings panel is LVGL-native: it takes every sample (rows
+      // click, lists scroll, switches flip, sliders drag) and runs its own
+      // exits — the stationary long-press and the idle timeout. Only the
+      // press bookkeeping stays here, so a close under a held finger still
+      // parks the remainder of that touch (the guard above).
+      if (s.touched && !g_touch_down) {
+        g_touch_down = true;
+        g_touch_down_ms = now;
+        g_touch_x = s.x;
+        g_touch_y = s.y;
+        g_longpress_fired = false;
+      } else if (!s.touched && g_touch_down) {
+        g_touch_down = false;
+      }
+      canary::ui::settings_ui_handle_touch(s.touched, s.x, s.y, now);
+      return;
+    }
     if (s.touched && !g_touch_down) {
       g_touch_down = true;
       g_touch_down_ms = now;
@@ -644,18 +662,11 @@ static void handle_touch(uint32_t now) {
     } else if (s.touched && g_touch_down && !g_longpress_fired &&
                (int32_t)(now - g_touch_down_ms) >= (int32_t)CD_LONGPRESS_MS) {
       g_longpress_fired = true;
-      if (modal_settings) canary::ui::settings_ui_close();
-      else canary::ui::commission_ui_close();
+      canary::ui::commission_ui_close();
     } else if (!s.touched && g_touch_down) {
       g_touch_down = false;
-      if (!g_longpress_fired) {
-        // Re-check which surface is live: a settings tap may have handed
-        // off to commissioning within this very gesture.
-        if (canary::ui::settings_ui_active())
-          canary::ui::settings_ui_handle_tap(g_touch_x, g_touch_y);
-        else if (canary::ui::commission_ui_active())
-          canary::ui::commission_ui_handle_tap(g_touch_x, g_touch_y);
-      }
+      if (!g_longpress_fired && canary::ui::commission_ui_active())
+        canary::ui::commission_ui_handle_tap(g_touch_x, g_touch_y);
     }
     return;
   }
@@ -798,6 +809,17 @@ static void handle_touch(uint32_t now) {
       // big fact (the halo hero), never mid-rotation on a detail page —
       // the distance-tiered pattern, keyed on the wake edge.
       g_page = 0;
+    }
+#endif
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_NIGHTLIGHT) && \
+    defined(FEATURE_TOUCH) && FEATURE_TOUCH
+    // The portrait face's own tap grammar on touch glass (the Touch-1.69,
+    // the AMOLED): the settings gear, by day. A tap it doesn't claim stays
+    // the wake it was — and after dark the lantern below gets every tap.
+    if (was_awake && g_display_ok &&
+        canary::ui::portrait_ui_handle_tap(g_touch_x, g_touch_y)) {
+      fleet.mark_dirty();
+      return;
     }
 #endif
 #if defined(CD_FLAVOR_NIGHTSTAND) && defined(FEATURE_LANTERN) && FEATURE_LANTERN

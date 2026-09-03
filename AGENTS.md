@@ -140,6 +140,12 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
   `docs/hardware/enclosure/gen_builder_manifest.py --site <website-checkout>`
   (the site pins them by sha256; its weekly "Update everything" carry job
   catches a forgotten refresh, but a week is a long time to serve stale CAD)
+- Changed `firmware/build_matrix.json`, a kernel-status tile in
+  `tools/gen_kernel_status.py`, `viewer/verify_core.js` or an envelope
+  fixture? Same idea, other tool:
+  `python3 scripts/carry_to_site.py --site <website-checkout>` stamps the
+  /checkup build matrix, the landing page's kernel-status grid and the
+  Witness Wall's vendored verifier (the same weekly job runs it)
 - Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
   `test`, `refactor`, `chore`
 
@@ -163,6 +169,7 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 | What a word means | `docs/GLOSSARY.md` |
 | What a *thing* looks like | `canary-local/devices/figures.json` + `canary-local/figures/*.svg` — one isometric figure per device, part, board and tool, generated from the committed CAD. Spec: `docs/design/FLEET_FIGURES.md` |
 | Whether something is real or still an idea | the same ledger's `confidence` — derived from evidence on disk (committed STLs · firmware config · released catalog variant), never hand-typed |
+| One device, every fact joined — board, envs, emulator twin, figure, CAD, flasher product | `devices/<slug>/device.json` — one manifest per Canary, holding only the ids the seven other files use; `scripts/lint_device_manifests.py` proves every join. How-to: `devices/README.md` |
 | Which tree is the real one | `docs/CONSOLIDATION.md` |
 | Machine-readable vocabularies | `spec/witness_dictionary.json` |
 | Which build has which feature | `firmware/build_matrix.json` (generated truth), not `firmware/FEATURES.md` (narrative, can lag) |
@@ -181,6 +188,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/gen_agent_entrypoints.py --check` | Vendor agent files match this file's brief block |
 | `scripts/lint_no_impersonation.sh` | No red, no reserved emergency tones, no official-alert phrasing |
 | `scripts/lint_build_matrix.py` | `build_matrix.json` matches `platformio.ini` + `canary_config.h` |
+| `scripts/lint_device_manifests.py` | Every `devices/<slug>/device.json` validates and its env / board / figure / flasher / emulator / CAD joins hold; every `flavors.json` build env is claimed or explained |
 | `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
 | `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
 | `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |

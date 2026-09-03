@@ -42,9 +42,10 @@ import re
 import sys
 import urllib.request
 from datetime import date
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import repo_root, warn
+
+REPO = repo_root()
 OUT_JSON = REPO / "canary-local/devices/homeassistant.json"
 DOC = REPO / "docs/homeassistant_setup.md"
 MANIFEST = REPO / "custom_components/securacv/manifest.json"
@@ -372,12 +373,6 @@ def _get_json(url, headers=None):
         return json.load(r)
 
 
-def _warn(msg):
-    print(f"gen_homeassistant: {msg}", file=sys.stderr)
-    if os.environ.get("GITHUB_ACTIONS"):
-        print(f"::warning::gen_homeassistant: {msg}")
-
-
 def _snapshot(haos, ha, source):
     if not re.match(r"^\d", str(ha)) or not re.match(r"^\d", str(haos)):
         raise ValueError(f"unexpected shapes: ha={ha!r} haos={haos!r}")
@@ -403,7 +398,7 @@ def refresh_upstream(prev):
         haos = hassos.get("rpi4-64") or hassos.get("ota") or next(iter(hassos.values()))
         return _snapshot(haos, ha, UPSTREAM_FEED)
     except Exception as e:  # noqa: BLE001 — fall through to the releases API
-        _warn(f"version feed failed ({e}); trying the GitHub releases API")
+        warn(f"version feed failed ({e}); trying the GitHub releases API")
     try:
         tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         auth = {"Authorization": f"Bearer {tok}"} if tok else {}
@@ -412,8 +407,8 @@ def refresh_upstream(prev):
         ha = _get_json(gh.format("core"), auth)["tag_name"].lstrip("v")
         return _snapshot(haos, ha, "https://api.github.com/repos/home-assistant (releases)")
     except Exception as e:  # noqa: BLE001 — the whole point is to survive
-        _warn(f"upstream refresh failed on both sources ({e}); keeping "
-              f"previous snapshot from {prev.get('fetched_at')}")
+        warn(f"upstream refresh failed on both sources ({e}); keeping "
+             f"previous snapshot from {prev.get('fetched_at')}")
         return prev
 
 

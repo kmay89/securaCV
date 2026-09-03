@@ -34,7 +34,7 @@ rewrite):
 | `Ed25519::generate/derive/sign/verify` (`<Ed25519.h>`) | `crypto_generate_keypair()` / `crypto_sign()` / `crypto_verify()` (`securacv_crypto`) | `generate`+`derive` collapse into one keypair call. |
 | `mbedtls_sha256_*` (`<mbedtls/sha256.h>`) | `sha256_domain(domain, data, n, out)` (`securacv_crypto`) | domain-separated hash wrapper. |
 | `nvs_get_u8` / `nvs_set_u8` (`nvs_store.h`) | `NvsManager` (`securacv_crypto`) or `hal_nvs_*` (`hal/hal_storage.h`) | persists `relay_enabled`, `urgency_filter`. |
-| `health_log()` + `SCV_LOG_*` / `SCV_CAT_*` (`health_log.h`) | `health_log()` in `firmware/common/health/health_log.h`; `SCV_LOG_*`→`HEALTH_LOG_*`, add `HEALTH_CAT_CHIRP` | integration hook wired in `firmware/canary/src/main.cpp`. |
+| `health_log()` + `SCV_LOG_*` / `SCV_CAT_*` (`health_log.h`) | `log_health()` in `firmware/canary/lib/securacv_witness/src/securacv_witness.h` (levels from `log_level.h`); add a chirp category | integration hook wired in `firmware/canary/src/main.cpp`. |
 | `airtime_governor::try_reserve_routine()` (`airtime_governor.h`) | **no ACTIVE equivalent yet** | thin shim returning `true` for slice 1, or port the governor in a later slice. |
 | `esp_fill_random()`, `millis()`, `time()`, `localtime()` | same (ESP-IDF / Arduino built-ins) | — |
 | `FEATURE_CHIRP` | already `-DFEATURE_CHIRP=1` in `firmware/canary/platformio.ini` `[env:full]` (currently inert) | PlatformIO LDF auto-discovers `lib/securacv_chirp/`. |

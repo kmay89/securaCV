@@ -14,7 +14,9 @@ permissions:
 # flag declarations repo-wide — kept unfiltered on purpose, but stale PR runs
 # are still canceled when a new head arrives.
 concurrency:
-  group: repo-lints-${{ github.ref }}
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: repo-lints-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -24,6 +26,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       # Conformance + hygiene lints that previously had no CI gate.
       - name: CAP-mapping conformance
         run: bash scripts/lint_cap_mapping.sh
@@ -178,6 +183,27 @@ jobs:
         run: python3 scripts/gen_agent_entrypoints.py --check
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
+      - name: Device manifests join the seven device schemas
+        # devices/<slug>/device.json is the one place that says THIS env,
+        # THIS pins header, THIS emulator flavor, THIS figure, THIS case and
+        # THIS flasher product are the same Canary. flavors.json, build_matrix,
+        # boards.json, build.sh + dist, figures.json, enclosures.json and
+        # flash.json each stay the source of their own fact; this proves the
+        # manifests agree with all of them, that every build env and flasher
+        # product is claimed by exactly one device, and that the confidence
+        # ladder is read from figures.json rather than typed. Nothing consumes
+        # the manifests yet (roadmap §4 wave 1), so this is the only gate that
+        # can catch a stale join.
+        run: python3 scripts/lint_device_manifests.py
+      - name: One home for the espressif32 / pioarduino platform pin
+        # The same pioarduino release URL was typed in six .ini files and the
+        # official espressif32 pin in three more, each trusting a "bump in
+        # lockstep" comment. The pins now live once, in
+        # firmware/envs/platformio/platforms.ini, and every env interpolates
+        # them; this rejects a literal anywhere else, a reference to a section
+        # that is not there, and a section no env uses. The table and the open
+        # question about the version spread: firmware/PLATFORMS.md.
+        run: python3 firmware/scripts/lint_platform_pins.py
       - name: Display env names in workflows exist in flavors.json
         # The release workflows (firmware-release.yml, flasher-release.yml)
         # build the Canary Display board envs from lists typed into each by

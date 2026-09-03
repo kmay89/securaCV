@@ -27,10 +27,11 @@ Run:  python3 canary-local/tools/gen_vault.py
 
 import json
 import re
-import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import die, repo_root
+
+REPO = repo_root()
 CORE_RS = REPO / "src/break_glass/core.rs"
 SIGS_RS = REPO / "src/crypto/signatures.rs"
 VCRYPTO_RS = REPO / "src/vault/crypto.rs"
@@ -55,12 +56,6 @@ def read(path: Path) -> str:
             die(f"source missing: {path.relative_to(REPO)}")
         _CACHE[path] = path.read_text(encoding="utf-8", errors="replace")
     return _CACHE[path]
-
-
-def die(msg: str) -> None:
-    print(f"gen_vault.py: ERROR: {msg}", file=sys.stderr)
-    print("  the Vault page is drift-gated against the code/specs; a source moved.", file=sys.stderr)
-    sys.exit(1)
 
 
 def must(path: Path, needle: str, label: str) -> None:

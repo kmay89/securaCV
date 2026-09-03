@@ -41,10 +41,11 @@ Run:  python3 canary-local/tools/gen_sense.py
 
 import json
 import re
-import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import die, repo_root
+
+REPO = repo_root()
 PRJ = REPO / "firmware/projects/canary-sense"
 MAIN_CPP = PRJ / "src/main.cpp"
 WIFI_CPP = PRJ / "src/net/wifi_mgr.cpp"
@@ -84,12 +85,6 @@ def read(path: Path) -> str:
             die(f"source missing: {path.relative_to(REPO)}")
         _CACHE[path] = path.read_text(encoding="utf-8", errors="replace")
     return _CACHE[path]
-
-
-def die(msg: str) -> None:
-    print(f"gen_sense.py: ERROR: {msg}", file=sys.stderr)
-    print("  the Sense page is drift-gated against the firmware; a source moved.", file=sys.stderr)
-    sys.exit(1)
 
 
 def must(path: Path, needle: str, label: str) -> None:

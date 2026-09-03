@@ -52,12 +52,14 @@ fi
 # ── Check: Key files exist ──────────────────────────────────────
 echo "── File structure ──"
 
+# The live web UI is the canary-wap sketch's web_ui.h (checked by the
+# size gate below); the unbuilt common/web/web_ui.h scaffold that used to
+# be listed here was deleted as a dead duplicate (roadmap item 29).
 REQUIRED_FILES=(
   "canary/src/main.cpp"
   "canary/include/canary_config.h"
   "canary/include/log_level.h"
   "canary/platformio.ini"
-  "common/web/web_ui.h"
   "common/web/http_server.h"
 )
 

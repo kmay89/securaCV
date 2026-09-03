@@ -47,7 +47,9 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import repo_root, warn
+
+REPO = repo_root()
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gen_hub_image  # noqa: E402 — the catalog generator is the board/URL source of truth
@@ -62,12 +64,6 @@ RELEASE_API = "https://api.github.com/repos/home-assistant/operating-system/rele
 USER_AGENT = "securaCV-freshness/1.0 (+https://github.com/kmay89/securaCV)"
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-
-
-def _warn(msg: str) -> None:
-    print(f"pin_hub_image: {msg}", file=sys.stderr)
-    if os.environ.get("GITHUB_ACTIONS"):
-        print(f"::warning::pin_hub_image: {msg}")
 
 
 def _error(msg: str) -> None:
@@ -132,7 +128,7 @@ def downloaded_sha256(image_url: str) -> str | None:
             for chunk in iter(lambda: r.read(1024 * 1024), b""):
                 hasher.update(chunk)
     except Exception as e:  # noqa: BLE001 — degrade to unpinned, never to a guess
-        _warn(f"could not download {image_url} to hash it ({e})")
+        warn(f"could not download {image_url} to hash it ({e})")
         return None
     return hasher.hexdigest()
 
@@ -147,7 +143,7 @@ def github_digests(version: str) -> dict[str, str]:
     try:
         release = json.loads(_fetch(RELEASE_API.format(version=version), auth))
     except Exception as e:  # noqa: BLE001 — the ceremony degrades, --verify alarms
-        _warn(f"could not read the GitHub release for {version} ({e})")
+        warn(f"could not read the GitHub release for {version} ({e})")
         return {}
     out = {}
     for asset in release.get("assets", []):
@@ -178,7 +174,7 @@ def fetch_agreed_pins(version: str) -> dict[str, dict] | None:
         url = f"{gen_hub_image.HAOS_RELEASE}/{version}/{asset}"
         hashed = downloaded_sha256(url)
         if not hashed:
-            _warn(f"{board['id']}: could not hash the download — not pinning")
+            warn(f"{board['id']}: could not hash the download — not pinning")
             return None
         api = digests.get(asset)
         if api and api != hashed:
@@ -188,7 +184,7 @@ def fetch_agreed_pins(version: str) -> dict[str, dict] | None:
             )
             return None
         if not api:
-            _warn(
+            warn(
                 f"{board['id']}: GitHub published no asset digest for {asset} — pinning the "
                 "verified download on its own (single-sourced)"
             )
@@ -230,9 +226,9 @@ def ceremony() -> int:
     pins = fetch_agreed_pins(version)
     if pins is None:
         if prev.get("haos_version") == version:
-            _warn(f"ceremony could not double-source HAOS {version}; keeping the existing pins verbatim")
+            warn(f"ceremony could not double-source HAOS {version}; keeping the existing pins verbatim")
         else:
-            _warn(
+            warn(
                 f"ceremony could not verify HAOS {version} and the committed pins cover "
                 f"{prev.get('haos_version') or 'nothing'} — the catalog stays unpinned. Home "
                 "Assistant publishes no checksum to fall back on, so the writer cannot verify an "

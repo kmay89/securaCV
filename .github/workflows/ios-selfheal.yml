@@ -90,6 +90,10 @@ jobs:
         # warms are the default branch's), and it cannot see the `branches:
         # [main]` filter that makes the two the same tree here. main's head is
         # main either way; a newer main just means a fresher compile.
+      - uses: actions/setup-python@v7
+        if: env.RUN_BUILD == 'true'
+        with:
+          python-version-file: pyproject.toml
 
       # Store assets fail at `altool --validate-app`, minutes into a gated
       # publish nobody can run yet — so PR CI asserts them structurally here

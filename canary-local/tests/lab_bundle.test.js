@@ -53,10 +53,16 @@ function walk(dir, out = []) {
 // href in a data file like build-line.json, is relative to the page that loads
 // it, and every Lab page sits at canary-local/'s top level. Only markup
 // resolves against its own location.
+// The one script that is NOT loaded by a top-level page: emulator/web/harness.js
+// belongs to emulator/web/harness.html alone (lifted out of it so the harness
+// carries the same no-inline-script CSP as the product pages), so its bundle
+// paths ("../dist/…") resolve against that page's directory, one level down.
+const OWN_PAGE_DIR = { "emulator/web/harness.js": "canary-local/emulator/web" };
 const docBase = (file) => {
   const rel = relative(CANARY, file).split(sep).join("/");
   const isDocument = /\.html?$/.test(rel);
-  return isDocument ? posix.dirname("canary-local/" + rel) : "canary-local";
+  if (isDocument) return posix.dirname("canary-local/" + rel);
+  return OWN_PAGE_DIR[rel] || "canary-local";
 };
 
 // Module specifiers are the exception: `import … from "../emulator/…"` resolves

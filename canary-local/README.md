@@ -872,9 +872,93 @@ fails on byte drift.
   cores; the probe walks first boot in headless Chromium (power on → the phone
   catches the SoftAP → the firmware's captive HTML → the wizard reaches online
   → retained MQTT + all 24 discovery entities land → a smoke cadence alarms).
+- `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
+  Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
+  `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /
+  frame grants against what the page actually loads; the probe opens every
+  page (and the harness per flavor) in headless Chromium with a
+  `securitypolicyviolation` listener in every frame and fails on one violation.
 - `tests/vault.test.js` + `tests/vault_probe.mjs` — the Vault explainer (§4j):
   the honesty test pins the quorum constants, the three signing domains, the
   `VLT2`/`SVLT` magics and Invariants I & V to their source **and runs a real
   Ed25519 approval round-trip**; the probe drives the seal walk, the tamper
   toggle, and a real 2-of-3 break-glass with every guardrail (forge → denied,
   single-use → refused, reused key can't fill two slots).
+
+## 9. Content-Security-Policy: one table, every page
+
+Every page in this directory (and `emulator/web/harness.html`) carries a
+`Content-Security-Policy` `<meta>` on the line after `<meta charset>`. GitHub
+Pages cannot set response headers and the desktop Lab serves the same files
+from a Tauri webview, so the policy rides in the page — and it is **generated**:
+
+```bash
+python3 canary-local/tools/gen_csp.py            # rewrite every page's policy line
+python3 canary-local/tools/gen_csp.py --check    # the CI drift gate
+python3 canary-local/tools/gen_csp.py --explain  # every page, every source, its reason
+```
+
+The rules, which the generator enforces rather than documents:
+
+- **No inline scripts, no inline styles.** `script-src 'self'; style-src 'self'`
+  on every page, never `'unsafe-inline'`, never `'unsafe-eval'` — the tool
+  refuses to write either. A page's behavior lives in `assets/<page>.js`, its
+  look in `assets/<page>.css` (or the shared sheets). `style="…"` attributes
+  become classes; `onclick=` becomes `addEventListener` in the module; a
+  dynamic style is set through the CSSOM (`el.style.cssText`,
+  `style.setProperty`), which the policy allows — `setAttribute("style")` and a
+  `style=` inside an `innerHTML` string are what it blocks — and so is a
+  `<style>` element created from a script (the fleet page's sound toggle used
+  to do that; its rules are in `canary-local.css` now). The hyperscript
+  helpers in `lab-nav.js`, `lab-shell.js`, `lab-settings.js`, `senselab-ui.js`
+  and `site-map.js` already route a `style:` key that way. Mind that an
+  `<iframe srcdoc>` **inherits** the page's policy: whatever it renders must
+  pass the same rules.
+- **A source is a table entry with a reason.** The base policy is the floor
+  (`default-src 'none'`, same-origin code, `object-src` / `base-uri` /
+  `form-action 'none'`); everything a page needs beyond it is a row in
+  `PAGES` inside `gen_csp.py` naming the directive, the sources and *why*:
+  `'wasm-unsafe-eval'` for the pages that boot the firmware wasm,
+  `frame-src 'self'` for the two pages that frame another, the flasher's
+  signed release hosts and loopback. The tool cross-checks the grants against
+  the page, both ways — a page that loads `emulator/dist/` without the wasm
+  row fails, and so does a row whose page no longer loads it; the same holds
+  for `frame-src` and the page's iframes, and for the release hosts and the
+  modules that fetch a release (`flash.js`, `we2-flash.js`), which would
+  otherwise fail behind a click where the browser probe never looks.
+- **Two hashes, both computed from bytes, on purpose.** `flash.html`'s
+  import map (the SRI pins for the vendored flasher engines) cannot be an
+  external file, so it is the single entry in `INLINE_SCRIPT_OK` and its
+  `'sha256-…'` is computed from the page's own bytes on every run. And
+  `wap.html` shows the firmware's real captive-portal page verbatim in a
+  `srcdoc` frame — the device's document, not the Lab's — so its one
+  `<style>` block is hashed from `devices/wap.json` (`SRCDOC_STYLES`; the
+  pin follows the firmware through `gen_wap.py`, so regenerate WAP data
+  first, then the policy). Any other inline `<script>` or `<style>` fails
+  the generator instead of getting a hash, and the generator refuses the
+  srcdoc row if that document ever grows a script, a `style=` or an `on*=`.
+- **No LAN allowlist, by design.** No page fetches a Canary or a hub from
+  the document; discovery rides the native side of the desktop Lab
+  (`witness-host.js` → `invoke`), so `connect-src` is `'self'` plus the Tauri
+  IPC origins (`ipc:`, `http://ipc.localhost` — dead letters in a browser)
+  and, on the flasher only, the signed release hosts. A scheme source such as
+  `http:` would be a table entry with a reason, and today there is none.
+- **Unused directives are trimmed, not granted.** The floor could carry
+  `blob:` in `img-src`, a `worker-src` and a `media-src`; no page needs them
+  (the benches synthesize audio, the eyes bench's `<video>` takes a
+  `MediaStream`, downloads hand a `blob:` to `<a download>` — none of which
+  CSP governs), so no page carries them. The generator refuses a page whose
+  modules spawn a `Worker` without a row saying why, and `tests/csp.test.js`
+  pins the absence so a grant is a visible diff.
+
+Two gates hold it: `tests/csp.test.js` (page-logic job — one meta per page,
+`--check` passes, no `unsafe-*`, no inline handlers or styles, the wasm and
+frame grants match the pages, `flash.html` no weaker than the hand-written
+policy it replaced, the desktop Lab's own policy agrees) and
+`tests/csp_probe.mjs` (the wasm job — every page and the harness per flavor
+in Chromium, zero `securitypolicyviolation` events, zero page errors).
+
+Not covered here, deliberately: `witness/witness.html` is vendored
+byte-for-byte from the website repo and `voice/index.html` is written by
+`gen_voice_preview.mjs`; each is its own document in an iframe or a generated
+tree, and each would carry its policy from its own generator.

@@ -151,7 +151,11 @@ used by the glue and pinned by `test_usb_onboard_logic.cpp::test_onboarding_cont
 The website mirrors the same values in `securacv_website/onboarding-spec.json`
 (with `provenance` back to these symbols) and pins them in
 `tests/plugin-facts.test.mjs`. Change a value on either side and that side's CI
-fails with a message to update the other — neither can rot silently.
+fails with a message to update the other — neither can rot silently. One block
+of that file is not hand-mirrored at all: its `builds` object is stamped from
+`firmware/build_matrix.json` by `scripts/carry_to_site.py --site
+<website-checkout>` (the website's weekly carry job runs it), so the /checkup
+firmware-type selector follows the build matrix without anyone retyping it.
 
 ## Files
 
