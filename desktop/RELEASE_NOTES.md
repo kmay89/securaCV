@@ -17,6 +17,28 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.11.9 — 2026-09-03
+
+**The 2.4.15 firmware catalog is baked in — and the app finally says its
+own name.**
+
+- Firmware 2.4.15 in the picker carries the Wi-Fi sensing overhaul: every
+  CSI frame is normalized to the same 52 tones (mixed router-beacon formats
+  no longer read as phantom motion), a solo Canary keeps itself supplied
+  with frames by pinging your gateway, and the ESP32-C6/C5 builds the docs
+  always claimed now actually compile.
+- One honest name per surface: the window, splash, and About panel say
+  **SecuraCV Flasher**. A separate SecuraCV Lab app ships from this repo,
+  and this app calling itself "the Lab" made "open the Lab" ambiguous.
+- The family, from the bench: About and Explore now show the other windows
+  onto your fleet — the iPhone & Apple Watch app, the SecuraCV Lab desktop
+  app, and the Apple TV Witness Wall — with honest availability copy, from
+  one source.
+- The embedded Witness Wall never chimes from a hidden page: only a TV
+  someone can actually see gets to make a sound.
+- Tightened webview permissions: self-update and relaunch are driven from
+  Rust, so the window's own grant list no longer includes them.
+
 ## 0.11.8 — 2026-08-23
 
 **If your 2.41″ AMOLED stayed dark after flashing — this release carries

@@ -93,7 +93,7 @@ def main():
     img.paste(mascot, (gx, cy - mh // 2), mascot)
     d.text((gx + mw + gap - tl, cy - (tb - tt) / 2 - tt), title, font=title_f, fill=TEXT)
 
-    center(d, W // 2, 72 * S, "Your Canary workshop — local-first, nothing phones home.",
+    center(d, W // 2, 72 * S, "Your Canary workshop — local-first, talks only to your own devices.",
            font("DejaVuSans.ttf", 13), MUTED)
     center(d, W // 2, 108 * S, "Drag the app into Applications  →",
            font("DejaVuSans-Bold.ttf", 15), CANARY)
