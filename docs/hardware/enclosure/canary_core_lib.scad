@@ -48,6 +48,86 @@ function core_tol_press()  = 0.10;  // press fits: magnets, light pipes
 function core_tol_hole()   = 0.30;  // clearance holes: lid screws
 
 // ---------------------------------------------------------------------------
+//  THE HOUSE LOOK — the five constants that decide whether two Canary parts
+//  read as one product line.
+//
+//  This block exists because the doctrine four lines above ("Functions, not
+//  constants: `use<>` carries functions across, so one number has one home")
+//  had only ever been applied to the process floors and the tolerance trio.
+//  The LOOK was still typed into eleven-to-twenty files each, and it had
+//  drifted exactly the way a typed copy drifts:
+//
+//    * the face edge is drawn six different ways across eleven files, at five
+//      magnitudes, and one file (the DIN hub) declares the knob and never
+//      reads it — a Customizer that advertises a softened edge on a part that
+//      prints a raw square slab;
+//    * the second stage — the thing that makes the edge read as a roundover
+//      instead of a bevel, and which the README sells as the family finish —
+//      is switched OFF on five of its six adopters, so the cue appears on one
+//      released show face out of eight;
+//    * the foot chamfer reaches four shells and fifteen sit on a raw
+//      first-layer corner;
+//    * the corner radius is 3.0 in nine files and then 3.2 in one with no
+//      reason given, and a bare literal 4 in the wallplate whose whole job is
+//      to make Sense units look like a set.
+//
+//  A part may still depart from these — the j-box is deliberately squarer at
+//  2.0 and the doorbell is deliberately a 12 mm pill — but a departure now
+//  has to type its own number AND say why, which makes an un-reasoned outlier
+//  visible as the one thing that neither reads the function nor explains
+//  itself.
+// ---------------------------------------------------------------------------
+function core_face_edge()  = 0.8;   // first (45°) stage of the show-face edge
+function core_face_edge2() = 0.8;   // second (~66°) stage — ON is the house look
+function core_foot_cham()  = 0.5;   // 45° relief on a shell's bottom edge
+function core_corner_r()   = 3.0;   // outside corner radius of a shell
+
+// ---------------------------------------------------------------------------
+//  Cavity corner radius — the inside vertical corner of a shell.
+//
+//  Every case used to cut its cavity with `max(0.1, corner_r - wall)`. That
+//  clamp guards a negative radius, but it is SILENT: the moment a wall grows
+//  past the outside radius it hands back a 0.1 mm internal radius — a
+//  knife-edge notch running the full cavity height at all four corners,
+//  exactly where a corner drop concentrates. Seal mode is what triggers it,
+//  because seal mode thickens the wall to host the gasket groove while
+//  corner_r stays put, so the case MEANT to live outdoors and take the fall
+//  off a wall was the one whose inside corners were square. Two released
+//  meshes shipped in that state and a probe measured them at the clamp floor.
+//
+//  The floor is the two-extrusion web — the smallest radius the process
+//  actually renders AS a radius rather than as a tool mark. It is deliberately
+//  not the structural wall (1.2): the point is to stop the silent collapse to
+//  a knife edge, not to move cavity corners that were already sane. A case at
+//  corner_r 3.0 on a 2.0 wall keeps its true 1.0 mm radius and does not move;
+//  only the shells that had fallen to the old 0.1 clamp change.
+//
+//  When the outside radius is the thing that has to grow, an adopter should
+//  say so — core_cav_r_tight() reports that the floor is doing the work, and
+//  core_cav_r_want() is the corner_r that would give a true radius instead.
+// ---------------------------------------------------------------------------
+function core_cav_r(corner_r, wall)       = max(core_min_web(), corner_r - wall);
+function core_cav_r_tight(corner_r, wall) = (corner_r - wall) < core_min_web();
+function core_cav_r_want(wall)            = wall + core_min_web();
+
+// ---------------------------------------------------------------------------
+//  The preset selector — `_pre()`, promoted.
+//
+//  Two files had grown this privately and identically: a preset name picks one
+//  of a list of values, and "custom" falls through to the user's own checkbox.
+//  It is the whole mechanism behind the plain-language cascade, and every
+//  assert downstream already reads the resulting `e_*` flags rather than the
+//  raw `opt_*` ones — so a file that has no preset today can gain one purely
+//  additively. One implementation, so all of them can.
+//    sel    — the chosen preset name
+//    custom — the value to use when nothing matches (the user's own knob)
+//    keys   — the preset names, in order;  vals — the value for each
+// ---------------------------------------------------------------------------
+function core_pre(sel, custom, keys, vals) =
+    let (i = search([sel], keys)[0])
+    (i == undef || i == [] ) ? custom : vals[i];
+
+// ---------------------------------------------------------------------------
 //  2D primitives
 // ---------------------------------------------------------------------------
 module rrect2d(l, w, r) {                        // rounded rectangle (2D)
@@ -156,6 +236,81 @@ module foot_chamfer_ring(l, w, r, cham, z0 = 0) {
                 rrect(l - 2*cham, w - 2*cham, max(0.1, r - cham), 0.01);
             translate([0, 0, z0 + cham]) rrect(l, w, r, 0.01);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Inner cove — the mate to foot_chamfer_ring, and the half of that edge that
+//  is actually loaded in tension.
+//
+//  foot_chamfer_ring blunts the OUTSIDE bottom edge. The INSIDE one — where
+//  the wall's first layers meet the floor plate — was left as a 90° re-entrant
+//  notch running the whole cavity perimeter in every released shell (four
+//  probes, four matched controls, no fillet material within 1 mm of any of
+//  them). In a flat-printed box dropped on a corner the floor plate hinges
+//  about that notch and the crack runs one layer boundary. The README concedes
+//  the direction — interlayer strength is 50-70 % of in-plane, "the bottom
+//  edge ... gets a 45° foot_cham chamfer" — and then relieves only the half
+//  that is in compression.
+//
+//  A 45° cove and not a true radius, for the reason soft_edge_plate is a taper
+//  by construction: 45° prints as a self-supporting ramp off the first layers,
+//  and a true radius has an overhang at the top of the arc.
+//
+//  ADD to the shell (union). Cavity footprint l x w, cavity corner radius r,
+//  cove leg `fil`, cavity floor at z0. The cove eats cavity width, so an
+//  adopter must check it against whatever stands closest to the wall.
+// ---------------------------------------------------------------------------
+function core_floor_cove() = 0.8;         // default leg: two extrusions
+
+module inner_cove_ring(l, w, r, fil, z0 = 0) {
+    if (fil > 0) difference() {
+        // a fil-tall band standing on the floor, out to the cavity wall
+        translate([0, 0, z0]) rrect(l, w, r, fil);
+        // ...minus the 45° ramp, so what is left is the cove itself
+        hull() {
+            translate([0, 0, z0 - 0.01])
+                rrect(l - 2*fil, w - 2*fil, max(0.1, r - fil), 0.01);
+            translate([0, 0, z0 + fil]) rrect(l, w, r, 0.01);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Seam reveal — a shadow line under a parting line.
+//
+//  Five of the eight released variants have their lid and base at EXACTLY the
+//  same outer footprint (measured off the committed meshes: identical half-
+//  widths to three decimals). That is a raw butt joint on a show surface, so
+//  every layer mismatch, corner-radius tolerance and first-layer squish
+//  difference between two separate prints reads as a step in what is supposed
+//  to be one continuous surface. It is the tell that separates a printed box
+//  from a molded product.
+//
+//  The three variants that DO have a designed seam get it as a side effect of
+//  the drip skirt, which exists for water — so the parts mounted high and seen
+//  from below got the good seam and the ones that sit on a desk at eye level
+//  got the raw one. This is the fix for the second group: a shallow groove cut
+//  just below the seam, so the joint falls in a shadow instead of on the skin.
+//  It costs a few tenths of a millimeter, changes no fit and touches no
+//  interface.
+//
+//  SUBTRACT from the base, at the seam plane z_seam.
+// ---------------------------------------------------------------------------
+//  Depth is at least one full extrusion, or the slicer's outer perimeter just
+//  rounds the groove away and the line never appears in the print. Height is
+//  greater than depth on purpose: a groove taller than it is deep reads as a
+//  LINE, while one deeper than it is tall reads as a chamfer and merely moves
+//  the problem. 0.6 into a 2.0 mm wall leaves 1.4 — still above the structural
+//  wall floor.
+function core_reveal_d() = 0.6;     // depth into the wall
+function core_reveal_h() = 0.8;     // height of the groove: what the eye reads
+
+module seam_reveal_cut(l, w, r, z_seam,
+                       d = core_reveal_d(), h = core_reveal_h()) {
+    translate([0, 0, z_seam - h]) difference() {
+        rrect(l + 1, w + 1, r, h);
+        rrect(l - 2*d, w - 2*d, max(0.1, r - d), h);
     }
 }
 
@@ -291,23 +446,18 @@ module port_hood(w, h, reach, drop = 0, embed = 0.5) {
 }
 
 // ---------------------------------------------------------------------------
-//  Wall rib — a vertical stiffener fused to the inside of a shell wall.
-//  A 2 mm PETG wall longer than ~60 mm oil-cans under a thumb and rings
-//  when dropped; a rib the height of the cavity every 25-30 mm takes the
-//  panel's first bending mode out for a few tenths of a gram. Triangular
-//  in section toward the cavity (a 45° gusset from the floor) so it prints
-//  without support and does not become a component keep-out at board
-//  height. ADD inside the cavity, in the wall's frame: the rib stands on
-//  the floor (z = 0) against a wall whose inner face is the plane y = 0
-//  with the cavity toward -y.
-//    h — rib height (the cavity height, or less to stay under a board)
-//    w — rib width along the wall;  reach — how far it projects at the root
+//  Wall rib — MOVED to canary_rib_lib.scad.
+//
+//  It lived here for its whole life with the rule in its docstring ("a 2 mm
+//  PETG wall longer than ~60 mm oil-cans under a thumb and rings when
+//  dropped") and ZERO adopters in 44 files, while released shells ran 70.6 to
+//  107.6 mm of bare wall. A rule nothing reads is not a rule, and a rib
+//  system has an interface contract of its own — a thickness ceiling, a
+//  slenderness ceiling, a span limit — which by this file's own header is
+//  what belongs in its own library rather than in core.
+//
+//      use <canary_rib_lib.scad>   // wall_rib, and the asserts that bind it
 // ---------------------------------------------------------------------------
-module wall_rib(h, w = 1.6, reach = 2.0) {
-    assert(w >= core_min_wall(), "wall_rib: rib width below the structural floor");
-    translate([-w/2, 0, 0]) rotate([90, 0, 90])
-        linear_extrude(w) polygon([[0, 0], [-reach, 0], [0, h]]);   // wedge: full reach at the floor, zero at the top
-}
 
 // ---------------------------------------------------------------------------
 //  Self-check — geometric identities the modules above promise. Call once
@@ -336,5 +486,33 @@ module core_selfcheck() {
         assert(abs(r[2] - 0.8*r[1]) < 0.11, str("core: \"", r[0], "\": self-tap pilot is 0.8 x nominal"));
     }
     assert(oring_gland_h(1.0) == 0.75, "core: the O-ring gland squeezes 25 %");
+    // the house look: the second stage is what makes the edge read as a
+    // roundover rather than a bevel, and it spent its life defaulted off
+    assert(core_face_edge() > 0 && core_face_edge2() > 0,
+           "core: the house face edge is TWO stages — see soft_edge_plate");
+    assert(core_face_edge() + core_face_edge2() < core_wall(),
+           "core: the two edge stages must fit inside the catalog's face");
+    assert(core_foot_cham() > 0 && core_corner_r() > 0,
+           "core: the foot chamfer and the corner radius are house constants");
+    // the cavity corner may never return to the silent 0.1 knife-edge: the
+    // released weather shells shipped at exactly that clamp floor
+    assert(core_cav_r(3.0, 4.0) == core_min_web(),
+           "core: a wall thicker than the corner radius floors the cavity corner at the web, not at an epsilon");
+    assert(core_cav_r(3.0, 2.0) == 1.0,
+           "core: where the arithmetic is positive the cavity corner is still corner_r - wall, and does not move");
+    assert(core_cav_r_tight(3.0, 4.0) && !core_cav_r_tight(3.0, 2.0),
+           "core: the tight-corner report must fire exactly when the floor is doing the work");
+    // a reveal shallower than two extrusions prints as a blur, not a line
+    assert(core_reveal_d() >= core_extrusion(),
+           "core: a seam reveal shallower than one extrusion is rounded away by the outer perimeter and never prints");
+    assert(core_reveal_h() > core_reveal_d(),
+           "core: a reveal deeper than it is tall reads as a chamfer, not a line");
+    assert(core_wall() - core_reveal_d() >= core_min_wall(),
+           "core: the reveal must not cut the catalog wall below the structural floor");
+    assert(abs(core_floor_cove() - core_min_web()) < 1e-9,
+           "core: the floor cove's default leg is the two-extrusion web floor");
+    // the promoted preset selector
+    assert(core_pre("b", 9, ["a", "b"], [1, 2]) == 2, "core: core_pre picks the named preset");
+    assert(core_pre("custom", 9, ["a", "b"], [1, 2]) == 9, "core: core_pre falls through to the custom value");
     echo("canary_core_lib: self-check OK");
 }
