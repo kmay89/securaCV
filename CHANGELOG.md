@@ -9,9 +9,10 @@
 - **Scrub timeline in the evidence viewer.** Every day renders as a
   minimap-style strip you can scrub: one column per 10-minute bucket,
   worst-first ink, declared gaps drawn as their own marks and never folded
-  away. Landing on a bucket spotlights its rows (dims, never hides); a lens
-  names the worst record under the pointer; buckets are detents you feel on
-  every input — keyboard, wheel, drag, and touch (#1604, #1624, #1625).
+  away. Landing on a bucket lights its rows — pure addition, nothing else
+  dims or hides; a lens names the worst record under the pointer; and
+  notable marks turn gently magnetic when the pointer's own bucket is
+  empty, so nothing occupied gets harder to reach (#1604, #1624, #1625).
 - **The Seismograph.** The viewer restyled to two structural hairlines,
   whisper-gray chrome, and family-hue washes — gorgeous without a single
   honesty trade: counts, gap declarations, and worst-first color all
