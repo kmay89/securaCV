@@ -76,6 +76,28 @@
   the rebuild bot's PR-branch commit; the committed stamps update on the next
   bot rebuild.
 
+### Tooling: one `die()`, one platform pin, one lockfile
+
+- **`canary-local/tools/_tooling.py` is the single definition of `die()`,
+  `warn()` and `repo_root()`** for the Lab's generators. The ten `die()`
+  copies (three behaviors between them), both `_warn()` copies and the
+  seventeen hand-typed repo-root lines are gone. `die` now always prints
+  `<generator>: ERROR: <message>` to stderr, emits a `::error::` annotation
+  under GitHub Actions, and exits 1 unless the caller asks for another code.
+  `hub_seed_apply.py` stays self-contained because it is embedded in the
+  hub-io crate and hash-pinned.
+- **The espressif32 / pioarduino platform pin lives once, in
+  `firmware/envs/platformio/platforms.ini`.** Five sections, one per distinct
+  literal the ini files carried, each saying who uses it and why; every env
+  interpolates its section, and `firmware/scripts/lint_platform_pins.py`
+  (in `lint.yml`) rejects a literal anywhere else. No pin value changed —
+  `pio project config` resolves every env to the same string as before — and
+  `firmware/PLATFORMS.md` documents the version spread that is still an open
+  maintainer decision rather than quietly settling it.
+- **`desktop/package-lock.json` is committed** and the Flasher release
+  workflow installs with `npm ci`; the audit workflow and Dependabot cover it.
+  Both Tauri apps now pin the same `@tauri-apps/cli` release.
+
 ### The website's carries are generated, not hand-mirrored
 
 - **`scripts/carry_to_site.py --site <checkout>` refreshes everything the
