@@ -33,8 +33,12 @@ before changes to an image or the crate it packages can merge:
   compose files, runs a full end-to-end test against a live broker, and
   publishes to GHCR on main/tags.
 - **Home Assistant add-on** (`privacy_witness_kernel/Dockerfile`):
-  `.github/workflows/addon-image.yml` builds amd64 (+ aarch64 on main/tags),
-  publishes to GHCR, and verifies every declared arch is anonymously pullable.
+  `.github/workflows/addon-image.yml` builds amd64 (+ aarch64 on main/tags,
+  each natively on a runner of its own architecture — no QEMU), publishes to
+  GHCR, and verifies every declared arch is anonymously pullable. The verify
+  gate cross-probes with the workflow's own token so it can say *which* way
+  an arch is uninstallable: a package nobody made public (exit 3), a tag the
+  build never pushed (exit 4), or undetermined (exit 1).
 
 To reproduce the witnessd build locally:
 
