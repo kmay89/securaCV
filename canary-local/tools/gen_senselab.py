@@ -30,10 +30,11 @@ Run:  python3 canary-local/tools/gen_senselab.py
 
 import json
 import re
-import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import die, repo_root
+
+REPO = repo_root()
 FW = REPO / "firmware"
 MR60_H = FW / "common/sensors/mmwave_mr60/mr60_uart.h"
 PRESENCE_H = FW / "common/sensors/mmwave_mr60/mr60_presence.h"
@@ -67,12 +68,6 @@ def read(path: Path) -> str:
             die(f"source missing: {path.relative_to(REPO)}")
         _CACHE[path] = path.read_text(encoding="utf-8", errors="replace")
     return _CACHE[path]
-
-
-def die(msg: str) -> None:
-    print(f"gen_senselab.py: ERROR: {msg}", file=sys.stderr)
-    print("  the Sense Lab is drift-gated against the firmware; a source moved.", file=sys.stderr)
-    sys.exit(1)
 
 
 def must(path: Path, needle: str, label: str) -> None:

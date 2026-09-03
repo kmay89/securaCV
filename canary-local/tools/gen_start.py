@@ -33,9 +33,10 @@ CI:   regenerates and diffs (drift gate) alongside the other canary-local
 import json
 import re
 import sys
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import repo_root
+
+REPO = repo_root()
 OUT_JSON = REPO / "canary-local/devices/start.json"
 HUB_JSON = REPO / "canary-local/devices/homeassistant.json"
 REGISTRY = REPO / "canary-local/devices/registry.json"

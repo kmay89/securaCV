@@ -26,7 +26,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _tooling import repo_root
+
+REPO = repo_root()
 ENC = REPO / "docs/hardware/enclosure"
 OUT_JSON = REPO / "canary-local/devices/enclosures.json"
 PREVIEW_DIR = REPO / "canary-local/enclosures/preview"
