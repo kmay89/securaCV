@@ -221,7 +221,7 @@ def lab_pages():
 def module_graph(page):
     """Every first-party module a page's <script src> tags pull in, statically."""
     path = LAB / page
-    html = path.read_text()
+    html = path.read_bytes().decode("utf-8")
     queue = [(path.parent / s).resolve() for s in re.findall(r'<script\b[^>]*\ssrc="([^"]+)"', html)]
     seen = []
     while queue:
@@ -231,7 +231,7 @@ def module_graph(page):
         seen.append(f)
         if "emulator/dist/" in f.as_posix():
             continue  # the compiled bundles: nothing to follow
-        src = f.read_text(errors="replace")
+        src = f.read_text(encoding="utf-8", errors="replace")
         for pattern in JS_IMPORT_RES:
             for m in pattern.finditer(src):
                 if m.group(1).startswith("."):
@@ -245,11 +245,11 @@ BUNDLE_RE = re.compile(r"canary-(?:display-[a-z0-9]+|vision-core|wap-audio)\.js\
 
 
 def references_wasm(page):
-    html = COMMENT_RE.sub("", (LAB / page).read_text())
+    html = COMMENT_RE.sub("", (LAB / page).read_bytes().decode("utf-8"))
     if BUNDLE_RE.search(html):
         return True
     return any(
-        BUNDLE_RE.search(strip_js_comments(f.read_text(errors="replace")))
+        BUNDLE_RE.search(strip_js_comments(f.read_text(encoding="utf-8", errors="replace")))
         for f in module_graph(page)
         if "emulator/dist/" not in f.as_posix()
     )
@@ -264,7 +264,7 @@ WORKER_RE = re.compile(r"\bnew\s+(?:Shared)?Worker\s*\(")
 
 def spawns_worker(page):
     return any(
-        WORKER_RE.search(strip_js_comments(f.read_text(errors="replace")))
+        WORKER_RE.search(strip_js_comments(f.read_text(encoding="utf-8", errors="replace")))
         for f in module_graph(page)
         if "emulator/dist/" not in f.as_posix()
     )
@@ -274,11 +274,11 @@ IFRAME_JS_RE = re.compile(r"""\bh\(\s*["']iframe["']|createElement\(\s*["']ifram
 
 
 def frames_pages(page):
-    html = COMMENT_RE.sub("", (LAB / page).read_text())
+    html = COMMENT_RE.sub("", (LAB / page).read_bytes().decode("utf-8"))
     if "<iframe" in html:
         return True
     return any(
-        IFRAME_JS_RE.search(strip_js_comments(f.read_text(errors="replace")))
+        IFRAME_JS_RE.search(strip_js_comments(f.read_text(encoding="utf-8", errors="replace")))
         for f in module_graph(page)
         if "emulator/dist/" not in f.as_posix()
     )
@@ -289,7 +289,7 @@ def srcdoc_style_hashes(page):
     if page not in SRCDOC_STYLES:
         return []
     rel, keys, _reason = SRCDOC_STYLES[page]
-    doc = json.loads((LAB / rel).read_text())
+    doc = json.loads((LAB / rel).read_text(encoding="utf-8"))
     for k in keys:
         doc = doc[k]
     scripts, styles, bad_attrs = scan_inline(f"{page} srcdoc ({rel})", doc)
@@ -411,7 +411,7 @@ def render(page, html):
 
 def explain():
     for page in lab_pages():
-        html = (LAB / page).read_text()
+        html = (LAB / page).read_bytes().decode("utf-8")
         print(f"\n{page}")
         print(f"  {policy_for(page, html)}")
         for directive, sources, reason in SHARED + PAGES.get(page, []):
@@ -437,12 +437,12 @@ def main(argv):
     stale = []
     for page in pages:
         path = LAB / page
-        before = path.read_text()
+        before = path.read_bytes().decode("utf-8")
         after = render(page, before)
         if after != before:
             stale.append(page)
             if not check:
-                path.write_text(after)
+                path.write_bytes(after.encode("utf-8"))
     if check:
         if stale:
             for page in stale:

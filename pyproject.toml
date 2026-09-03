@@ -12,7 +12,11 @@
 # runner image happens to ship (.github/CI.md, R9). Raise the floor here and
 # every job follows.
 [project]
-requires-python = ">=3.11"
+# The interpreters the tooling has actually run on: 3.11 locally, 3.12 on the
+# ubuntu-24.04 image. setup-python (python-version-file: pyproject.toml) picks
+# the newest release INSIDE this range, so the ceiling is what keeps CI on an
+# interpreter the tests have seen; widen it after a green run on the new one.
+requires-python = ">=3.11,<3.13"
 
 [tool.ruff]
 target-version = "py311"
