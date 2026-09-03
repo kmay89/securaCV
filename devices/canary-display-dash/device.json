@@ -1,0 +1,51 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-dash",
+  "name": "Canary Dash",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 16,
+    "board_id": "waveshare-esp32s3-lcd43",
+    "variants": [
+      "waveshare-esp32s3-lcd43b",
+      "waveshare-esp32s3-lcd43c"
+    ],
+    "envs": [
+      "canary-display-dash",
+      "canary-display-dash-ble5",
+      "canary-display-dash-b",
+      "canary-display-dash-rs485",
+      "canary-display-dash-can",
+      "canary-display-dash-vault",
+      "canary-display-dash-sd",
+      "canary-display-dash-rtc",
+      "canary-display-dash-espnow",
+      "canary-display-dash-modes",
+      "canary-display-dash-mic"
+    ]
+  },
+  "peripherals": [
+    "sd_card",
+    "display",
+    "touch",
+    "can_rs485"
+  ],
+  "figure": "device.canary-display-dash",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_dash_display.scad",
+    "enclosure_sets": [
+      "dashboard-display-case"
+    ]
+  },
+  "emulator": {
+    "flavor": "dash"
+  },
+  "flasher": {
+    "product": "securacv-canary-display-dash",
+    "variants": [
+      "securacv-canary-display-dash-modes"
+    ]
+  }
+}

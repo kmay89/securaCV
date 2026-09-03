@@ -1,0 +1,24 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-freenove-s3",
+  "name": "Canary · Freenove S3",
+  "family": "canary",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 16,
+    "board_id": "freenove-esp32s3-cam",
+    "envs": [
+      "freenove-s3"
+    ]
+  },
+  "peripherals": [
+    "camera",
+    "sd_card",
+    "gnss_uart",
+    "tamper_input"
+  ],
+  "flasher": {
+    "product": "securacv-canary-freenove-s3"
+  }
+}

@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kmay89/securaCV/devices/device.schema.json",
+  "title": "SecuraCV device manifest",
+  "description": "One manifest per Canary device (devices/<slug>/device.json). It JOINS facts that already live in seven other schemas — it does not restate them. Every key here is cross-checked against its source of truth by scripts/lint_device_manifests.py, and the confidence-ladder verdict is NEVER typed here: it is derived from canary-local/devices/figures.json evidence and printed by the linter. A key whose value is unknown is omitted, not guessed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "name", "family", "board"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only; relative path to this schema."
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Directory name under devices/. Where a build_matrix.json product or a flash.json product (minus its securacv- prefix) names this hardware, the slug is that id."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human product name as the flasher catalog shows it."
+    },
+    "family": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "The firmware product this device is built from: a `name` in firmware/flavors.json (canary, canary-wap, canary-vision, canary-display, canary-sense)."
+    },
+    "board": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mcu", "board_id", "envs"],
+      "properties": {
+        "mcu": {
+          "type": "string",
+          "enum": ["ESP32", "ESP32-S3", "ESP32-C3", "ESP32-C6"],
+          "description": "esptool's chip identity string — the same vocabulary as flash.json `chips` and boards.json `mcu`."
+        },
+        "psram_mb": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "boards.json psram_mb for board_id (0 = none)."
+        },
+        "flash_mb": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "boards.json flash_mb for board_id."
+        },
+        "board_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "The firmware/boards/<id>/ registry row (boards.json id) whose pins/pins.h describes this hardware."
+        },
+        "variants": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "description": "Other boards.json ids that are SKU variants of the same panel module, whose pins headers some of this device's envs compile against (the Dash 4.3 / 4.3B / 4.3C). Peripherals are still proven against board_id only."
+        },
+        "envs": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$" },
+          "description": "Every PlatformIO [env:NAME] of the family that targets this hardware: the flavors.json build_envs it claims plus any env build_matrix.json / flash.json names as the shipped image."
+        }
+      }
+    },
+    "peripherals": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+      "description": "Lower-cased HAS_<NAME> capability flags the board_id pins header sets to 1 (camera, microphone, sd_card, display, touch, rtc, battery, mmwave_radar, ...). Only what the header proves; connectivity intrinsics (wifi, ble, usb_cdc, psram) are not listed."
+    },
+    "figure": {
+      "type": "string",
+      "pattern": "^device\\.[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "The canary-local/devices/figures.json figure id (role `device`) that draws this hardware. Its `confidence` is the ladder verdict for this device — read it there; never copy it here."
+    },
+    "cad": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scad"],
+      "properties": {
+        "scad": {
+          "type": "string",
+          "pattern": "^docs/hardware/enclosure/[a-z0-9_]+\\.scad$",
+          "description": "The primary OpenSCAD source of this device's enclosure."
+        },
+        "enclosure_sets": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "description": "canary-local/devices/enclosures.json `sets[].id` entries printable for this hardware; `scad` must be the source of at least one of them."
+        }
+      }
+    },
+    "emulator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["flavor"],
+      "properties": {
+        "flavor": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+$",
+          "description": "canary-local/emulator/build.sh flavor whose dist/canary-display-<flavor>.js is this device's firmware compiled to WebAssembly. Only flavors in build.sh's allowlist; only canary-display devices have one today."
+        }
+      }
+    },
+    "flasher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product"],
+      "properties": {
+        "product": {
+          "type": "string",
+          "pattern": "^securacv-[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "The canary-local/devices/flash.json `products[].id` the browser flasher offers for this hardware."
+        },
+        "variants": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^securacv-[a-z0-9]+(-[a-z0-9]+)*$" },
+          "description": "Further flash.json products that install onto this same hardware (a wellbeing build, a modes build). Every flash.json product is claimed by exactly one manifest, as product or variant."
+        }
+      }
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+\\.html$",
+          "description": "Website (securacv_website) page for this device. Lives in another repository: the linter checks the shape only."
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^models/[a-z0-9-]+\\.glb$",
+          "description": "Website glTF model for the AR viewer. Lives in another repository: the linter checks the shape only."
+        }
+      }
+    }
+  }
+}

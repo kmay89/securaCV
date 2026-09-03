@@ -1,0 +1,22 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-esp32cam",
+  "name": "Canary · ESP32-CAM",
+  "family": "canary",
+  "board": {
+    "mcu": "ESP32",
+    "psram_mb": 4,
+    "flash_mb": 4,
+    "board_id": "esp32cam-ai-thinker",
+    "envs": [
+      "esp32cam"
+    ]
+  },
+  "peripherals": [
+    "camera",
+    "sd_card"
+  ],
+  "flasher": {
+    "product": "securacv-canary-esp32cam"
+  }
+}

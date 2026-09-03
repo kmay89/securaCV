@@ -1,0 +1,32 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-amoled241",
+  "name": "Canary Glance AMOLED",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 16,
+    "board_id": "waveshare-esp32s3-amoled241",
+    "envs": [
+      "canary-display-amoled241"
+    ]
+  },
+  "peripherals": [
+    "sd_card",
+    "display",
+    "amoled",
+    "touch",
+    "rtc",
+    "imu",
+    "io_expander",
+    "battery"
+  ],
+  "figure": "device.canary-display-amoled241",
+  "emulator": {
+    "flavor": "amoled241"
+  },
+  "flasher": {
+    "product": "securacv-canary-display-amoled241"
+  }
+}

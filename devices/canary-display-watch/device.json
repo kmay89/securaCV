@@ -1,0 +1,40 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-watch",
+  "name": "Canary Watch Station",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 8,
+    "board_id": "xiao-esp32s3-round",
+    "envs": [
+      "canary-display-watch",
+      "canary-display-watch-modes"
+    ]
+  },
+  "peripherals": [
+    "sd_card",
+    "display",
+    "touch",
+    "rtc",
+    "battery",
+    "backlight_pwm"
+  ],
+  "figure": "device.canary-display-watch",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_watch_station.scad",
+    "enclosure_sets": [
+      "watch-station"
+    ]
+  },
+  "emulator": {
+    "flavor": "watch"
+  },
+  "flasher": {
+    "product": "securacv-canary-display-watch"
+  },
+  "site": {
+    "model": "models/canary-watch.glb"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-display-dash7",
+  "name": "Canary Dash 7",
+  "family": "canary-display",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 16,
+    "board_id": "waveshare-esp32s3-lcd7",
+    "envs": [
+      "canary-display-dash7"
+    ]
+  },
+  "peripherals": [
+    "sd_card",
+    "display",
+    "touch",
+    "can_rs485"
+  ],
+  "figure": "device.canary-display-dash7",
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_s3_lcd7.scad",
+    "enclosure_sets": [
+      "7-touch-dashboard-case"
+    ]
+  },
+  "flasher": {
+    "product": "securacv-canary-display-dash7"
+  }
+}

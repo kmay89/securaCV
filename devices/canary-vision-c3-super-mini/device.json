@@ -1,0 +1,21 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-vision-c3-super-mini",
+  "name": "Canary Vision · C3 Super Mini",
+  "family": "canary-vision",
+  "board": {
+    "mcu": "ESP32-C3",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "esp32c3-super-mini",
+    "envs": [
+      "canary-vision-c3-super-mini"
+    ]
+  },
+  "peripherals": [
+    "vision_ai"
+  ],
+  "flasher": {
+    "product": "securacv-canary-vision-c3-super-mini"
+  }
+}

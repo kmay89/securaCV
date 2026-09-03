@@ -1,0 +1,28 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary",
+  "name": "Canary",
+  "family": "canary",
+  "board": {
+    "mcu": "ESP32-S3",
+    "psram_mb": 8,
+    "flash_mb": 8,
+    "board_id": "xiao-esp32s3-sense",
+    "envs": [
+      "dev",
+      "release",
+      "release_ha",
+      "full"
+    ]
+  },
+  "peripherals": [
+    "camera",
+    "microphone",
+    "sd_card",
+    "gnss_uart",
+    "tamper_input"
+  ],
+  "flasher": {
+    "product": "securacv-canary"
+  }
+}

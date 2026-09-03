@@ -1,0 +1,9 @@
+{
+  "$doc": "firmware/flavors.json build_envs that no device manifest claims, each with the reason. scripts/lint_device_manifests.py requires every build env to be claimed by exactly one devices/<slug>/device.json OR listed here; an entry here that a manifest also claims, or that flavors.json no longer builds, is an error.",
+  "envs": [
+    {
+      "env": "canary-display-playground",
+      "reason": "build-only: the Lab's dev playground image (FEATURE_PLAYGROUND) on the Dash 4.3B pins; CI compiles it, no product ships it and no flasher catalog entry exists (firmware/envs/platformio/canary-display.ini)."
+    }
+  ]
+}
