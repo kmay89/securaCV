@@ -8,9 +8,15 @@
  * edit could flip the adoption order and compile clean on every CI leg.
  *
  * Driven through the REAL chokepoint (csi_event + csi_module + csi_bundler,
- * CSI_TEST_HOST_BUILD), not a stub: a tamper emit is state-bearing, so it
- * lands in an OPEN bundle — exactly what /api/events/today serves live —
- * and that is where these tests read it back (csi_bundler_snapshot_open).
+ * CSI_TEST_HOST_BUILD), not a stub. A tamper emit is state-bearing, which
+ * would normally only OPEN a RAM bundle — so the module force-closes it at
+ * once (csi_bundler_flush_key): the failure a tamper records is exactly the
+ * one that would erase a two-minute buffer. These tests observe
+ * csi_event_on_committed — the weak host hook this file overrides, and the
+ * exact boundary where the real firmware persists a row (ring, event log,
+ * MQTT) — so the sealed-immediately behavior is itself under test: after
+ * any accepted emit the commit hook must already have fired, with nothing
+ * left open in the bundler.
  *
  * Build & run: via this directory's Makefile (mirrors the CI contract).
  */
@@ -20,6 +26,26 @@
 #include "csi_event.h"
 #include "csi_bundler.h"
 #include "tamper_events_module.h"
+
+/* Strong override of the weak host commit hook: record every row that
+ * reaches persistence, newest last. This is the durability ledger the
+ * assertions read. */
+static char   g_committed[16][32];
+static size_t g_ncommitted = 0;
+
+extern "C" void csi_event_on_committed(uint32_t /*event_id*/,
+                                       const char* /*module_id*/,
+                                       const char* /*type_name*/,
+                                       csi_event_category_t /*category*/,
+                                       csi_privacy_class_t /*privacy*/,
+                                       const csi_event_values_t* v) {
+  if (g_ncommitted < 16) {
+    strncpy(g_committed[g_ncommitted], v->state_name,
+            sizeof(g_committed[0]) - 1);
+    g_committed[g_ncommitted][sizeof(g_committed[0]) - 1] = '\0';
+  }
+  g_ncommitted++;
+}
 
 static int g_failures = 0;
 #define CHECK(cond)                                                      \
@@ -40,83 +66,15 @@ static void fresh() {
   csi_bundler_reset();
   tamper_events_reset();
   csi_module_register(tamper_events_module());
+  g_ncommitted = 0;
 }
 
-/* The newest open bundle's state word, or "" when nothing is open. */
-static const char* open_kind() {
-  static csi_event_record_t rec[4];
-  const size_t n = csi_bundler_snapshot_open(rec, 4);
-  return n ? rec[0].values.state_name : "";
-}
+/* Rows that reached the persistence hook since fresh(). */
+static size_t ring_count() { return g_ncommitted; }
 
-static void test_clean_boot_confesses_nothing() {
-  fresh();
-  tamper_events_watch(/*crash*/ 0, /*wdt*/ 0, /*brownout*/ 0, SD_ABSENT);
-  tamper_events_watch(0, 0, 0, SD_ABSENT);
-  CHECK(csi_bundler_open_count() == 0);
-}
-
-static void test_boot_precedence_watchdog_over_brownout_over_panic() {
-  fresh();
-  tamper_events_watch(1, 1, 1, SD_ABSENT);   /* wdt outranks everything */
-  CHECK(std::strcmp(open_kind(), "watchdog") == 0);
-
-  fresh();
-  tamper_events_watch(1, 0, 1, SD_ABSENT);   /* brownout next */
-  CHECK(std::strcmp(open_kind(), "power_loss") == 0);
-
-  fresh();
-  tamper_events_watch(1, 0, 0, SD_ABSENT);   /* bare crash = panic */
-  CHECK(std::strcmp(open_kind(), "unexpected_reboot") == 0);
-}
-
-static void test_one_boot_story_per_boot() {
-  fresh();
-  tamper_events_watch(1, 1, 0, SD_ABSENT);
-  csi_bundler_flush_all();
-  CHECK(csi_bundler_open_count() == 0);
-  /* Later loops with the same (latched) reset facts add nothing. */
-  tamper_events_watch(1, 1, 0, SD_ABSENT);
-  tamper_events_watch(1, 1, 0, SD_ABSENT);
-  CHECK(csi_bundler_open_count() == 0);
-}
-
-static void test_first_call_adopts_sd_state_silently() {
-  /* Booting WITH a mounted card: adoption, never a claim. */
-  fresh();
-  tamper_events_watch(0, 0, 0, SD_MOUNTED);
-  CHECK(csi_bundler_open_count() == 0);
-  /* And a later removal from that adopted state IS the story. */
-  tamper_events_watch(0, 0, 0, SD_ABSENT);
-  CHECK(std::strcmp(open_kind(), "sd_remove") == 0);
-}
-
-static void test_mounted_to_error_is_sd_error() {
-  fresh();
-  tamper_events_watch(0, 0, 0, SD_MOUNTED);
-  tamper_events_watch(0, 0, 0, SD_ERROR);
-  CHECK(std::strcmp(open_kind(), "sd_error") == 0);
-}
-
-static void test_recovery_is_not_a_tamper() {
-  fresh();
-  tamper_events_watch(0, 0, 0, SD_MOUNTED);
-  tamper_events_watch(0, 0, 0, SD_ERROR);
-  csi_bundler_flush_all();
-  /* ERROR -> MOUNTED is the card coming back: silence. */
-  tamper_events_watch(0, 0, 0, SD_MOUNTED);
-  CHECK(csi_bundler_open_count() == 0);
-  /* And the recovered state is the new baseline for the next transition. */
-  tamper_events_watch(0, 0, 0, SD_ABSENT);
-  CHECK(std::strcmp(open_kind(), "sd_remove") == 0);
-}
-
-static void test_constant_absent_feed_never_emits_sd_kinds() {
-  /* A host with no SD state machine (the active PIO lane) feeds ABSENT
-   * forever — the watcher adopts it and never invents a detector. */
-  fresh();
-  for (int i = 0; i < 50; ++i) tamper_events_watch(0, 0, 0, SD_ABSENT);
-  CHECK(csi_bundler_open_count() == 0);
+/* The newest PERSISTED row's state word, or "" when nothing committed. */
+static const char* last_kind() {
+  return g_ncommitted ? g_committed[g_ncommitted - 1] : "";
 }
 
 static void test_boot_story_survives_a_pre_registration_race() {
@@ -129,17 +87,104 @@ static void test_boot_story_survives_a_pre_registration_race() {
   csi_event_test_reset();
   csi_bundler_reset();
   tamper_events_reset();
+  g_ncommitted = 0;
   tamper_events_watch(1, 0, 0, SD_ABSENT);       /* dropped: unregistered */
-  CHECK(csi_bundler_open_count() == 0);
+  CHECK(ring_count() == 0);
   csi_module_register(tamper_events_module());
   tamper_events_watch(1, 0, 0, SD_ABSENT);       /* retried: accepted */
-  CHECK(std::strcmp(open_kind(), "unexpected_reboot") == 0);
+  CHECK(std::strcmp(last_kind(), "unexpected_reboot") == 0);
+}
+
+static void test_clean_boot_confesses_nothing() {
+  fresh();
+  tamper_events_watch(/*crash*/ 0, /*wdt*/ 0, /*brownout*/ 0, SD_ABSENT);
+  tamper_events_watch(0, 0, 0, SD_ABSENT);
+  CHECK(ring_count() == 0);
+  CHECK(csi_bundler_open_count() == 0);
+}
+
+static void test_boot_precedence_watchdog_over_brownout_over_panic() {
+  fresh();
+  tamper_events_watch(1, 1, 1, SD_ABSENT);   /* wdt outranks everything */
+  CHECK(std::strcmp(last_kind(), "watchdog") == 0);
+
+  fresh();
+  tamper_events_watch(1, 0, 1, SD_ABSENT);   /* brownout next */
+  CHECK(std::strcmp(last_kind(), "power_loss") == 0);
+
+  fresh();
+  tamper_events_watch(1, 0, 0, SD_ABSENT);   /* bare crash = panic */
+  CHECK(std::strcmp(last_kind(), "unexpected_reboot") == 0);
+}
+
+static void test_a_tamper_is_sealed_before_the_next_power_loss() {
+  /* THE DURABILITY PIN. A state-bearing admit only opens a RAM bundle,
+   * and the bundler's gap window is two minutes — a crash loop would
+   * erase a buffered boot story before it ever reached the chain. The
+   * module force-closes its bundle on every accepted emit: the row must
+   * have crossed the persistence hook at once, with nothing left open. */
+  fresh();
+  tamper_events_watch(1, 1, 0, SD_ABSENT);
+  CHECK(ring_count() == 1);
+  CHECK(csi_bundler_open_count() == 0);
+  CHECK(std::strcmp(last_kind(), "watchdog") == 0);
+}
+
+static void test_one_boot_story_per_boot() {
+  fresh();
+  tamper_events_watch(1, 1, 0, SD_ABSENT);
+  CHECK(ring_count() == 1);
+  /* Later loops with the same (latched) reset facts add nothing. */
+  tamper_events_watch(1, 1, 0, SD_ABSENT);
+  tamper_events_watch(1, 1, 0, SD_ABSENT);
+  CHECK(ring_count() == 1);
+}
+
+static void test_first_call_adopts_sd_state_silently() {
+  /* Booting WITH a mounted card: adoption, never a claim. */
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  CHECK(ring_count() == 0);
+  /* And a later removal from that adopted state IS the story. */
+  tamper_events_watch(0, 0, 0, SD_ABSENT);
+  CHECK(std::strcmp(last_kind(), "sd_remove") == 0);
+  CHECK(csi_bundler_open_count() == 0);   /* sealed, like every kind */
+}
+
+static void test_mounted_to_error_is_sd_error() {
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  tamper_events_watch(0, 0, 0, SD_ERROR);
+  CHECK(std::strcmp(last_kind(), "sd_error") == 0);
+}
+
+static void test_recovery_is_not_a_tamper() {
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  tamper_events_watch(0, 0, 0, SD_ERROR);
+  CHECK(ring_count() == 1);
+  /* ERROR -> MOUNTED is the card coming back: silence. */
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  CHECK(ring_count() == 1);
+  /* And the recovered state is the new baseline for the next transition. */
+  tamper_events_watch(0, 0, 0, SD_ABSENT);
+  CHECK(ring_count() == 2);
+  CHECK(std::strcmp(last_kind(), "sd_remove") == 0);
+}
+
+static void test_constant_absent_feed_never_emits_sd_kinds() {
+  /* A host with no SD state machine (the active PIO lane) feeds ABSENT
+   * forever — the watcher adopts it and never invents a detector. */
+  fresh();
+  for (int i = 0; i < 50; ++i) tamper_events_watch(0, 0, 0, SD_ABSENT);
+  CHECK(ring_count() == 0);
 }
 
 int main() {
   test_boot_story_survives_a_pre_registration_race();  /* first, by contract */
   test_clean_boot_confesses_nothing();
   test_boot_precedence_watchdog_over_brownout_over_panic();
+  test_a_tamper_is_sealed_before_the_next_power_loss();
   test_one_boot_story_per_boot();
   test_first_call_adopts_sd_state_silently();
   test_mounted_to_error_is_sd_error();

@@ -299,6 +299,18 @@ final class HomeKitBridge: ObservableObject {
         return accessoryNames.contains { $0.contains(needle) }
     }
 
+    /// Resume a past launch's consent. Restoring `isEnabled` alone would
+    /// leave `manager` nil and `authorized` false until the user re-tapped
+    /// the settings toggle — accessory standing and the concierge dark on
+    /// every launch despite granted access. Called from the app's launch
+    /// task, never from init: the lazy-manager rule stands (tests and
+    /// previews construct bridges and wake nothing), and the persisted
+    /// opt-in IS the explicit user decision this wake runs downstream of.
+    /// For an already-authorized app the OS shows no prompt.
+    func resumeIfEnabled() {
+        if isEnabled { requestAccess() }
+    }
+
     /// Ask iOS for Home access. The OS shows its consent prompt on the first
     /// real HomeKit touch; state lands via the delegate — `authorized` is
     /// only ever set from what the framework reported, never assumed.

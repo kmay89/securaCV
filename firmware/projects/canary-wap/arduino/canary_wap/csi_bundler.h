@@ -96,6 +96,18 @@ void csi_bundler_tick(void);
 void csi_bundler_flush_all(void);
 
 /**
+ * Force-close ONE open bundle by its exact (module, type, state) key, if it
+ * is open, committing it through the same hooks as every other close. For
+ * one-shot records that must not wait out the gap window: a reset story has
+ * to reach the witness chain NOW, because the very failure it records — the
+ * next crash or power loss — would erase a buffered bundle. No-op when
+ * nothing matches.
+ */
+void csi_bundler_flush_key(const char* module_id,
+                           const char* type_name,
+                           const char* state_name);
+
+/**
  * Reset all bundler state. Tests only.
  */
 void csi_bundler_reset(void);

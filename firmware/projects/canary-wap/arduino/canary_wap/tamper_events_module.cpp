@@ -5,6 +5,8 @@
 
 #include "tamper_events_module.h"
 
+#include "csi_bundler.h"
+
 #include <string.h>
 
 namespace {
@@ -14,15 +16,18 @@ namespace {
  * text) and the coarse time bucket. Nothing else exists to leak: no
  * counts, no addresses, no timings finer than the bucket.
  *
- * State-bearing on purpose: the bundler keys on (module,type,state_name),
- * so a storm of one kind (an SD card flapping between error and mounted)
- * folds into ONE open bundle — the phone sees "SD card failing · ongoing"
- * instead of forty rows — while a DIFFERENT kind opens its own bundle,
- * because "the card failed" and "the box rebooted" are different stories.
+ * State-bearing so the kind rides `state` down every existing rail — but
+ * a tamper must not LINGER in an open bundle: the bundler's gap window is
+ * two minutes, and the exact failure this event records (another crash,
+ * another power cut) would erase a buffered bundle before it ever reached
+ * the signed chain. So emit_kind() force-closes its bundle immediately
+ * (csi_bundler_flush_key): every tamper is sealed the moment it is
+ * accepted. The anti-noise mechanism is the watcher itself — it emits
+ * only on transitions and one boot story per boot — not the fold.
  *
  * Ceiling 12/h: the acoustic module's per-life-safety-type budget. Real
- * tampers are rare; a source that could exceed this is a flapping card,
- * which the bundler already folds. */
+ * tampers are rare; the only source that could exceed it is a flapping
+ * card, and the ceiling is exactly the guard for that. */
 const csi_event_decl_t EVENTS[] = {
   {
     /* type_name */                "tamper",
@@ -73,7 +78,12 @@ uint32_t emit_kind(const char* kind) {
   v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
   strncpy(v.state_name, kind, sizeof(v.state_name) - 1);
   v.state_name[sizeof(v.state_name) - 1] = '\0';
-  return csi_event_emit("system.integrity", "tamper", &v);
+  const uint32_t id = csi_event_emit("system.integrity", "tamper", &v);
+  /* Durability over bundling: a state-bearing admit only OPENS a bundle,
+   * and an open bundle is RAM. Seal it now — the failure being recorded
+   * is precisely the one that would destroy a two-minute buffer. */
+  if (id != 0u) csi_bundler_flush_key("system.integrity", "tamper", kind);
+  return id;
 }
 
 }  /* namespace */

@@ -7,10 +7,12 @@
  * sd_error, watchdog, unexpected_reboot, …) — and no WAP firmware ever
  * emitted one: tamper reached the wire only as a bare flag. This module
  * gives the kinds a producer, THROUGH the chokepoint, so a tamper rides the
- * same rails as every other event: the ring, /api/events/today (open
- * bundles first), /api/csi/stream, the Ed25519 witness chain, the SD event
- * log, and csi_mqtt's HA republish — zero serializer edits, the kind rides
- * `state`.
+ * same rails as every other event: the ring, /api/events/today,
+ * /api/csi/stream, the Ed25519 witness chain, the SD event log, and
+ * csi_mqtt's HA republish — zero serializer edits, the kind rides `state`.
+ * Sealed IMMEDIATELY: every accepted emit force-closes its bundle
+ * (csi_bundler_flush_key), because a record whose subject is "the power
+ * just failed" cannot afford the bundler's two-minute RAM buffer.
  *
  * DOCTRINE (const.py's own): emit ONLY kinds this hardware can truly
  * detect. No Canary lane ships an accelerometer, an enclosure switch, a

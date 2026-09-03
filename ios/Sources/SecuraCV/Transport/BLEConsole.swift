@@ -256,10 +256,18 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
                 )
             } else if let chirp = ChirpAdvert.parse(manufacturerData: mfg) {
                 // A repeated chirp (the 2 s broadcast window, duplicates on)
-                // must not re-fire the urgent path every advert: urgency is
-                // for the FIRST hearing of this cry, so fire only when the
-                // kind is new for this peripheral's current sighting.
+                // must not re-fire the urgent path every advert — but a NEW
+                // cry must, even of the same kind: sightings live well past
+                // the broadcast, so dedup by kind alone would swallow a
+                // second distinct alert for as long as the first is
+                // remembered. Suppress only a same-kind repeat still inside
+                // one broadcast window (2 s, with margin for scan latency);
+                // anything later is a fresh cry, heard fresh.
                 let previous = chirpSightings[peripheral.identifier]
+                let isSameBurst = previous.map {
+                    $0.chirp.kind == chirp.kind
+                        && Date().timeIntervalSince($0.lastHeard) < 10
+                } ?? false
                 chirpSightings[peripheral.identifier] = ChirpSighting(
                     chirp: chirp,
                     rssiDBM: RSSI.intValue,
@@ -267,8 +275,7 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
                     peripheralID: peripheral.identifier,
                     localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
                 )
-                if (chirp.kind == .tamper || chirp.kind == .alert),
-                   previous?.chirp.kind != chirp.kind {
+                if (chirp.kind == .tamper || chirp.kind == .alert), !isSameBurst {
                     onUrgentChirp?(peripheral.identifier)
                 }
             }
