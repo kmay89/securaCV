@@ -52,7 +52,8 @@ screw_head_d = 5.0;
 lid_screw_d = 2.8;   // M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into F-F
                      // standoffs (no corner posts — they stood inside the Pi footprint)
 clip_screw_d = 3.4;  // M3 clearance through the floor into the clip's lands (self-tap 2.6 there)
-lid_edge = 0.8;
+lid_edge  = 0.8;   // first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()  // [0:0.1:1.5]
+lid_edge2 = 0.8;   // second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]
 
 /* [DIN rail] — 35 mm top-hat (EN 50022) */
 din = true;
@@ -177,7 +178,16 @@ module cover() {
     union() {
         difference() {
             union() {
-                rrect(out_l + 2*tol_slide + 3.2, out_w + 2*tol_slide + 3.2, corner_r + 1.6, lid_t);
+                // The cover is modeled print-side down (z = 0 is the OUTER
+                // face), so the house soft edge is flipped onto that face.
+                // This file declared lid_edge and never read it: one
+                // occurrence in 224 lines, the declaration. The Customizer
+                // advertised a softened edge and the part printed a raw
+                // square slab.
+                translate([0, 0, lid_t]) scale([1, 1, -1])
+                    soft_edge_plate(out_l + 2*tol_slide + 3.2,
+                                    out_w + 2*tol_slide + 3.2,
+                                    corner_r + 1.6, lid_t, lid_edge, lid_edge2);
                 translate([0, 0, lid_t - 0.01]) linear_extrude(ch)
                     difference() {
                         rrect2d(out_l + 2*tol_slide + 3.2, out_w + 2*tol_slide + 3.2, corner_r + 1.6);

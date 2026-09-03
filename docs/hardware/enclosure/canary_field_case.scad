@@ -9,7 +9,7 @@
 //
 //  Why this can honestly aim at IP67 where the other cases can't:
 //    - ZERO external penetrations except the bonded lens disc and a Ø3 mm
-//      vent hole backed by an adhesive ePTFE membrane (equalises pressure
+//      vent hole backed by an adhesive ePTFE membrane (equalizes pressure
 //      so thermal cycling can't pump moisture past the seal). No external
 //      USB: open the case to charge/flash — the biggest leak path deleted.
 //    - A real Ø1.5 mm O-ring CORD in a machined-style groove on the body

@@ -78,7 +78,7 @@ preset = "custom";    // ["custom","vision_indoor","vision_weather"]
 /* [Options (applied when preset = custom)] */
 opt_led    = true;    // status LED        -> light-pipe port on the front
 opt_buzzer = false;   // piezo buzzer      -> shares the vent cluster (firmware: unpopulated on Vision)
-opt_vent   = false;   // GORE vent cluster -> pressure equalisation (recommended with opt_seal)
+opt_vent   = false;   // GORE vent cluster -> pressure equalization (recommended with opt_seal)
 opt_tamper = false;   // reed/Hall + magnet -> magnet pocket on the front underside
 opt_hood   = false;   // rain/glare hood over the lens window
 opt_seal   = false;   // perimeter TPU gasket + drip-edge front + USB plug recess (splash-resistant, NOT immersion)
@@ -269,7 +269,7 @@ clip_clear  = 0.25;
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
 lid_edge    = 0.8;   // 45° chamfer around the front's top edge  // [0:0.1:1.5]
-lid_edge2   = 0.0;   // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
+lid_edge2   = 0.8;   // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 label_text  = "";    // debossed front label ("" = off; needs the font installed)
 label_size  = 5.0;
 label_depth = 0.5;

@@ -211,7 +211,7 @@ usb_cov_dep   = 1.0;
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
 lid_edge    = 0.8;
-lid_edge2   = 0.0;
+lid_edge2   = 0.8;   // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 // The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
 // it), gated by the mark library's measured type metrics; the radome rule
 // binds it like

@@ -119,7 +119,7 @@ tab_cb_h    = 1.0;    // counterbore depth
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
 lid_edge    = 0.8;    // 45° chamfer around the lid's top edge (0 = sharp slab)  // [0:0.1:1.5]
-lid_edge2   = 0.0;    // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
+lid_edge2   = 0.8;    // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 // The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
 // and size it) and is gated by the mark library's measured type metrics, so a
 // size that would print as a smudge or run off the lid is refused before a
@@ -730,7 +730,7 @@ module vent_cluster(x, y) {
         // recessed seat for the adhesive GORE vent on the OUTER face
         translate([0, 0, lid_t - vent_pad_depth])
             cylinder(d = vent_pad_d, h = vent_pad_depth + 1);
-        // ring of through-holes for sound + pressure equalisation
+        // ring of through-holes for sound + pressure equalization
         for (i = [0 : vent_holes - 1])
             rotate([0, 0, i * 360 / vent_holes])
                 translate([vent_ring_d/2, 0, -1])

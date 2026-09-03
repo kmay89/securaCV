@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "1f9f554eb5d00d46bf67c8b02df465f389eeb99dcfc56b37582f7b9270c2df09",
+      "sha256": "c22a04aaf919d9b33178b9ca792becbcf761d8ca882bd6c7321acaa9a1d367ac",
       "groups": [
         {
           "name": "What to render",
@@ -1191,7 +1191,7 @@
         }
       },
       "units": {},
-      "sha256": "ca24ae27387e5baacea51b0440b1a279a243914d81ce5c4bc24804190a0c56cc",
+      "sha256": "14bd8ff2a0cabbbdf934ce2bb057ea5303f6f7ac24a586508f72d4c559ceba9c",
       "groups": [
         {
           "name": "What to render",
@@ -1247,7 +1247,7 @@
               "name": "opt_vent",
               "type": "bool",
               "default": false,
-              "desc": "GORE vent cluster -> pressure equalisation (recommended with opt_seal)"
+              "desc": "GORE vent cluster -> pressure equalization (recommended with opt_seal)"
             },
             {
               "name": "opt_tamper",

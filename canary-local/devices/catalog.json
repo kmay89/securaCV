@@ -758,7 +758,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 27,
+   "engineering_param_count": 28,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2416,7 +2416,7 @@
      "id": "opt_vent",
      "type": "bool",
      "label": "GORE vent cluster",
-     "consequence": "pressure equalisation (recommended with opt_seal)",
+     "consequence": "pressure equalization (recommended with opt_seal)",
      "audience": "user",
      "default": false
     },

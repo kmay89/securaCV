@@ -29,7 +29,7 @@ with home test protocols mapped to the real standards.
 internally — use light colors or the [solar shield](./README.md#weather-mode-opt_seal)
 outdoors. Sealed cases also *need* a vent membrane: a 40 °C day/night swing
 pumps air (and eventually moisture) past any static seal unless pressure can
-equalise through ePTFE.
+equalize through ePTFE.
 
 ## 2. The process ceiling (what FDM can and can't deliver)
 

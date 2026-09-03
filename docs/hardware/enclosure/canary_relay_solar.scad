@@ -79,7 +79,8 @@ gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skir
 usb_w = 12.0;  usb_h = 6.5;   // service USB opening, bottom wall (plug when deployed); 12 clears a boot
 clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;   // snap_boardclip defaults — canary_snap_lib runs the strain budget as an assert
 standoff_h = 3.0;
-lid_edge = 0.8;  lid_edge2 = 0.0;
+lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
+lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 foot_cham = 0.5;
 
 /* [Aesthetics] */
@@ -203,14 +204,16 @@ module body() {
             // pole strap channels, cut only within the added back slab (seal-safe)
             for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4 - strap_w/2, -strap_t - 0.1])
                 cube([out_x + 2, strap_w, strap_t + 0.1]);
-            // bottom-edge chamfer
-            if (foot_cham > 0) difference() {
-                translate([0, 0, -strap_t - 0.01]) rrect(out_x + 0.1, out_y + 0.1, corner_r, foot_cham + 0.01);
-                hull() {
-                    translate([0, 0, -strap_t]) rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
-                    translate([0, 0, -strap_t + foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
-                }
-            }
+            // bottom-edge chamfer — the LIBRARY's ring (canary_core_lib), not
+            // a local re-draw of it. This was a hand copy of foot_chamfer_ring
+            // in a file that already imports the library, structurally
+            // identical and differing only in the cutter's outer envelope
+            // (+0.1 here, +0.04 there), which lands outside the part either
+            // way. So it rendered the SAME mesh — which is exactly what made
+            // it dangerous: a fork that currently agrees is one nothing will
+            // notice when the library's ring changes and this copy does not.
+            if (foot_cham > 0)
+                foot_chamfer_ring(out_x, out_y, corner_r, foot_cham, -strap_t);
         }
         // posts + gussets
         difference() {

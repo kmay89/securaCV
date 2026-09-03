@@ -1705,7 +1705,7 @@
       {
        "name": "opt_vent",
        "default": "false",
-       "comment": "GORE vent cluster -> pressure equalisation (recommended with opt_seal)"
+       "comment": "GORE vent cluster -> pressure equalization (recommended with opt_seal)"
       },
       {
        "name": "opt_tamper",
@@ -5573,7 +5573,13 @@
       },
       {
        "name": "lid_edge",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()  // [0:0.1:1.5]"
+      },
+      {
+       "name": "lid_edge2",
+       "default": "0.8",
+       "comment": "second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]"
       }
      ]
     },

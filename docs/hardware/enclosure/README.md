@@ -52,6 +52,7 @@ the website's carried copies after a CAD change.
 - [Which printer to buy or support](./printer_selection.md) — what these parts actually demand, upfront vs running vs maintenance cost, and the decision
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
+- [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
 - Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
 
 ## The complete file map
@@ -237,9 +238,13 @@ behind the GORE seat.
 **Finish & printability details** (built into the models): curve quality is
 driven by `$fa/$fs`, so large radii (the doorbell pill, the hood) come out
 smooth instead of visibly faceted; horizontal hinge bores are **teardropped**
-so their crowns print without sag; visible faces support a **two-stage soft
-edge** (`lid_edge` + `lid_edge2` — default on for the doorbell face) that
-approximates a roundover while still printing face-down without support.
+so their crowns print without sag; visible faces carry a **two-stage soft
+edge** (`lid_edge` + `lid_edge2`, both defaulting to the house numbers in
+`canary_core_lib`) that approximates a roundover while still printing
+face-down without support. The second stage is what makes the edge read as a
+roundover rather than a plain bevel, and it is on by default on every case —
+it used to be off on five of its six adopters, which is why the family cue
+reached one released show face out of eight.
 For the nicest faces, print them on a **textured PEI plate** (the visible
 surface is the first layer) and set the slicer's **seam position to the rear
 edge** of each part.
@@ -406,7 +411,7 @@ To finish the seal you also need to:
    the recessed seat on the lid face with **neutral-cure silicone** (acid-cure
    attacks polycarbonate). Run the bead full-circle.
 2. **Buzzer vent**: stick an **adhesive GORE-type membrane vent** over the
-   recessed seat on the *outside* of the lid — it passes sound and equalises
+   recessed seat on the *outside* of the lid — it passes sound and equalizes
    pressure while blocking water.
 3. **Light pipe**: bed the pipe in a drop of the same silicone.
 4. **Antenna** (if fitted): use a gasketed bulkhead or seal the hole with silicone.
@@ -945,7 +950,7 @@ camera-specific items:
 
 Mount it **USB-down** (the hinge makes this natural) so the only wall opening
 faces the ground, fit a **GORE vent** over the `opt_vent` cluster for
-pressure equalisation, and treat the result as **rain/splash-resistant
+pressure equalization, and treat the result as **rain/splash-resistant
 (~IP54)** — for harsh exposure use the Hammond ENC1 path (build plan §9).
 
 ## Presets & parts
