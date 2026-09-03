@@ -178,6 +178,18 @@ jobs:
         run: python3 scripts/gen_agent_entrypoints.py --check
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
+      - name: Device manifests join the seven device schemas
+        # devices/<slug>/device.json is the one place that says THIS env,
+        # THIS pins header, THIS emulator flavor, THIS figure, THIS case and
+        # THIS flasher product are the same Canary. flavors.json, build_matrix,
+        # boards.json, build.sh + dist, figures.json, enclosures.json and
+        # flash.json each stay the source of their own fact; this proves the
+        # manifests agree with all of them, that every build env and flasher
+        # product is claimed by exactly one device, and that the confidence
+        # ladder is read from figures.json rather than typed. Nothing consumes
+        # the manifests yet (roadmap §4 wave 1), so this is the only gate that
+        # can catch a stale join.
+        run: python3 scripts/lint_device_manifests.py
       - name: Display env names in workflows exist in flavors.json
         # The release workflows (firmware-release.yml, flasher-release.yml)
         # build the Canary Display board envs from lists typed into each by
