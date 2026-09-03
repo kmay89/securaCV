@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "94c8567f926825b9eb7d516a83426c44259a4825315925776a992118769e8b8b",
+      "sha256": "1f9f554eb5d00d46bf67c8b02df465f389eeb99dcfc56b37582f7b9270c2df09",
       "groups": [
         {
           "name": "What to render",
@@ -1082,22 +1082,12 @@
               "desc": "extra lip travel per side for the MEASURED board (brd_xiao_w_measured() 17.8"
             }
           ]
-        },
-        {
-          "name": "Quality",
-          "params": [
-            {
-              "name": "board_cy",
-              "type": "number",
-              "default": 0
-            }
-          ]
         }
       ],
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "2a500e967ec3925299b64b488261aa78a65b44d680ab5697db9ce7f1abafdcdf"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1201,7 +1191,7 @@
         }
       },
       "units": {},
-      "sha256": "73f79044dde748708cb3ac59f4ede90f424d42c56aa21b29f48a4131f561ee32",
+      "sha256": "ca24ae27387e5baacea51b0440b1a279a243914d81ce5c4bc24804190a0c56cc",
       "groups": [
         {
           "name": "What to render",
@@ -2145,7 +2135,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "2a500e967ec3925299b64b488261aa78a65b44d680ab5697db9ce7f1abafdcdf"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2223,7 +2213,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "4b524d5411f6064ee2f84e0ce3699ddcbd53bd6a9d5df5cc9881cc5bf5517e16",
+      "sha256": "16c4732a1734574e6209330203be2152ece01448147b8a34e9b6c61be71c01df",
       "groups": [
         {
           "name": "What to render",
@@ -2972,27 +2962,12 @@
               "default": 0.25
             }
           ]
-        },
-        {
-          "name": "Quality",
-          "params": [
-            {
-              "name": "vm_cx",
-              "type": "number",
-              "default": 0
-            },
-            {
-              "name": "cam_cx",
-              "type": "number",
-              "default": 0
-            }
-          ]
         }
       ],
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "2a500e967ec3925299b64b488261aa78a65b44d680ab5697db9ce7f1abafdcdf"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3069,9 +3044,7 @@
         "mount_style": "Mount style",
         "radome_t": "Radome thickness"
       },
-      "hints": {
-        "radome_t": "The membrane the beam passes through: 1.0 mm is the proven default; 1.5 mm is a half-wave wall (also low-loss) if you want a tougher face."
-      },
+      "hints": {},
       "choices": {
         "radar": {
           "bha2": "MR60BHA2 — breathing & presence (wall or bedside)",
@@ -3086,7 +3059,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "4f1fc125e3085594d4a6392364dbe440943771e5a6f2793cb2e7d52ea8a7f61d",
+      "sha256": "185ffaa41f422bcd8dc67e394d0774afe71fd267d0c85c85e1beb2c749691605",
       "groups": [
         {
           "name": "What to render",
@@ -3859,22 +3832,12 @@
               "desc": "beam face to carrier edge (a fit — tune on the coupon)"
             }
           ]
-        },
-        {
-          "name": "Quality",
-          "params": [
-            {
-              "name": "vm_cx",
-              "type": "number",
-              "default": 0
-            }
-          ]
         }
       ],
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "2a500e967ec3925299b64b488261aa78a65b44d680ab5697db9ce7f1abafdcdf"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3915,7 +3878,7 @@
         "tol_press",
         "tol_hole",
         "kh_click",
-        "emblem_rib"
+        "glyph_rib"
       ],
       "preset_param": null,
       "preset_controls": [],
@@ -3937,18 +3900,19 @@
         "tol_press": "Press fits",
         "tol_hole": "Screw holes",
         "kh_click": "Keyhole click",
-        "emblem_h": "Emblem height",
-        "emblem_rib": "Emblem stroke",
-        "emblem_crown": "Emblem crown"
+        "glyph_show": "Bird on the bed face",
+        "glyph_h": "Bird height",
+        "glyph_rib": "Bird stroke",
+        "glyph_depth": "Bird deboss depth"
       },
       "hints": {
         "tol_slide": "Parts that slide or snap: lid lips, board clips, keyholes. Loose station → smaller number.",
         "tol_press": "Parts pushed in to stay: magnets, light pipes. They should seat firmly by thumb.",
         "tol_hole": "Self-tapping M2 pilots: threads should bite without splitting the post.",
         "kh_click": "The keyhole retention bump. Mate won't slide past it → smaller number; slides back off too easily → bigger. 0 removes the click.",
-        "emblem_h": "How tall the embossed Canary prints. At the default 15.8 mm it spans 15.4 mm — the clear air between the two wordmarks. 0 removes the station.",
-        "emblem_rib": "No part of the mark is drawn narrower than this, so one number decides the whole emblem. Blobbed and closed up → smaller; broken or missing → bigger. Below 0.4 mm is thinner than one extrusion.",
-        "emblem_crown": "Domes the tops of the strokes instead of leaving them flat slabs, so the mark catches light like metal. 0 is a flat top; keep it under half the stroke or the crown pinches the strokes off."
+        "glyph_show": "Debosses the Canary into the face that prints against the bed. Every case A-surface in this catalog prints face-down, so this is the station that tells you what your plate and first layer do to a visible surface.",
+        "glyph_rib": "The stroke width the bird is drawn at, and the number this station tests. Blobbed and closed up → smaller; broken or missing → bigger. No feature is drawn thinner than this, so one number decides the whole mark.",
+        "glyph_depth": "How deep the bird is sunk. Too shallow and one bridged layer closes it back up; this is the same depth every case label uses, so what happens here happens on your case."
       },
       "choices": {},
       "units": {
@@ -3956,11 +3920,10 @@
         "tol_press": "mm",
         "tol_hole": "mm",
         "kh_click": "mm",
-        "emblem_h": "mm",
-        "emblem_rib": "mm",
-        "emblem_crown": "mm"
+        "glyph_rib": "mm",
+        "glyph_depth": "mm"
       },
-      "sha256": "04b57e1b0aa8740a137045b05d5795faab74619b08f1d1ee188496632423c349",
+      "sha256": "d8e072e0a10ad94711a205eb909b03a57cd3eaf72da1f642e5f73ed4755b731c",
       "groups": [
         {
           "name": "What to render",
@@ -4234,52 +4197,53 @@
             {
               "name": "glyph_show",
               "type": "bool",
-              "default": true
+              "default": true,
+              "desc": "deboss the bird into the face that prints against the bed — the finish test every case A-surface actually takes"
             },
             {
               "name": "glyph_h",
               "type": "number",
               "default": 34.0,
-              "desc": "NOMINAL height (mark_span units) — draws about"
+              "min": 24,
+              "step": 1,
+              "max": 40,
+              "desc": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this"
             },
             {
               "name": "glyph_rib",
               "type": "number",
               "default": 0.7,
-              "desc": "stroke width, in mm. THE number this station tests:"
+              "min": 0.42,
+              "step": 0.02,
+              "max": 1.2,
+              "desc": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print"
             },
             {
               "name": "glyph_depth",
               "type": "number",
               "default": 0.5,
-              "desc": "= label_depth's sibling; one bridged layer closes it"
+              "min": 0.2,
+              "step": 0.1,
+              "max": 1.2,
+              "desc": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up"
             },
             {
               "name": "glyph_dx",
               "type": "number",
               "default": -26.5,
-              "desc": "the clear rectangle on the bed face: left of the"
+              "min": -40,
+              "step": 0.5,
+              "max": 40,
+              "desc": "bird center, mm from the plate center across the plate"
             },
             {
               "name": "glyph_dy",
               "type": "number",
               "default": 12.0,
-              "desc": "PORT through-hole, above the keyhole pockets"
-            }
-          ]
-        },
-        {
-          "name": "Quality",
-          "params": [
-            {
-              "name": "bw",
-              "type": "number",
-              "default": 90
-            },
-            {
-              "name": "bh",
-              "type": "number",
-              "default": 68
+              "min": -30,
+              "step": 0.5,
+              "max": 30,
+              "desc": "bird center, mm from the plate center up the plate"
             }
           ]
         }
@@ -4291,7 +4255,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "2a500e967ec3925299b64b488261aa78a65b44d680ab5697db9ce7f1abafdcdf"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",

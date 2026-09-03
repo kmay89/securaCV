@@ -345,6 +345,19 @@ cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_pos
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
 base_d = floor_t + cav_d;
+// ASSEMBLED-FIT PROBE for canary_case_fitcheck.scad. It lives HERE, next to
+// the geometry, for two reasons: it reads this file's own derived datum
+// instead of duplicating the arithmetic it is checking, and its name is
+// unique — every case in this catalog calls its halves front()/back(), so a
+// single fit-check file that `use`d them all would silently resolve to
+// whichever was parsed last and check the wrong case.
+//
+// MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
+// interference: coplanar faces intersect to a zero-volume patch that CGAL
+// reports as non-2-manifold, which is a dirty render, not a pass.
+module vision_fitcheck(lift = 0.1) {
+    intersection() { translate([0, 0, base_d + lift]) front(); back(); }
+}
 
 cam_cx = has_dk ? -inner_x/2 + post_corner + col_cam/2 : 0;
 dk_cx  =  inner_x/2 - post_corner - col_dk/2;                 // devkit host only
@@ -697,7 +710,15 @@ module front() {
                 // pan-head pads: the floor under each head that the 2.0 front
                 // cannot spare (a seat as deep as the plate is a hole)
                 if (head_pad > 0) for (p = post_xy())
-                    translate([p[0], p[1], -head_pad]) cylinder(d = head_d + 2*tol_hole + 3.2, h = head_pad + 0.1);
+                // pan-head pads: the floor under each head the front cannot
+                // spare — CROPPED to the cavity (canary_core_lib). Drawn as a
+                // bare cylinder the pad overhung its post and landed on the
+                // shell wall rim, holding the front proud so the lip never
+                // entered the cavity and the screws clamped nothing.
+                    cb_head_pad(p[0], p[1], head_pad,
+                                cb_pad_d(head_d, tol_hole),
+                                inner_x, inner_y, core_cav_r(corner_r, wall_eff),
+                                head_d + 2*tol_hole);
             }
             // lens aperture + recessed clear-disc seat
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);

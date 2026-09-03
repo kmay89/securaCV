@@ -356,6 +356,19 @@ cav_h    = max(cav_h_min, standoff_h + board_h + usb_h + usb_z + usb_over);
 out_l  = inner_l + 2*wall_eff;
 out_w  = inner_w + 2*wall_eff;
 base_h = floor_t + cav_h;
+// ASSEMBLED-FIT PROBE for canary_case_fitcheck.scad. It lives HERE, next to
+// the geometry, for two reasons: it reads this file's own derived datum
+// instead of duplicating the arithmetic it is checking, and its name is
+// unique — every case in this catalog calls its halves front()/back(), so a
+// single fit-check file that `use`d them all would silently resolve to
+// whichever was parsed last and check the wrong case.
+//
+// MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
+// interference: coplanar faces intersect to a zero-volume patch that CGAL
+// reports as non-2-manifold, which is a dirty render, not a pass.
+module wap_fitcheck(lift = 0.1) {
+    intersection() { translate([0, 0, base_h + lift]) lid(); base(); }
+}
 
 pcb_z    = floor_t + standoff_h;                // absolute z of PCB underside
 board_cx = -inner_l/2 + board_clear + board_l/2 + 0.5;   // USB-biased (0.5 = positioning margin, not a fit)
@@ -748,7 +761,15 @@ module lid() {
                 // (z < 0 is inside the case; the plate's cuts below are measured
                 // from the pad's underside, so the seat floor lands 1.0 above it)
                 if (head_pad > 0) for (p = post_xy())
-                    translate([p[0], p[1], -head_pad]) cylinder(d = head_d + 2*tol_hole + 3.2, h = head_pad + 0.1);
+                // pan-head pads: the floor under each head the front cannot
+                // spare — CROPPED to the cavity (canary_core_lib). Drawn as a
+                // bare cylinder the pad overhung its post and landed on the
+                // shell wall rim, holding the front proud so the lip never
+                // entered the cavity and the screws clamped nothing.
+                    cb_head_pad(p[0], p[1], head_pad,
+                                cb_pad_d(head_d, tol_hole),
+                                inner_l, inner_w, core_cav_r(corner_r, wall_eff),
+                                head_d + 2*tol_hole);
             }
 
             if (e_camera) {

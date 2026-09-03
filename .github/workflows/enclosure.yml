@@ -75,6 +75,53 @@ jobs:
           # (Benign CGAL cache statistics lines are not matched by these patterns.)
           ! grep -E 'ERROR|WARNING|Object isn.t a valid 2-manifold' render.log
 
+      # Every released case, assembled and intersected. The mesh checks below
+      # cannot see this class of defect at all: the pan-head pad that shipped
+      # in all four cases overhung its post into the shell wall, holding each
+      # front 1.0 mm proud so the lip never entered the cavity and the screws
+      # clamped nothing — and every one of those parts was a watertight,
+      # single-part, warning-free mesh. Only putting the halves together finds
+      # it, which is what the 7" case has had a gate for and these did not.
+      #
+      # A PASSING check exits NON-ZERO (OpenSCAD returns non-zero whenever it
+      # has nothing to export, which for an empty-expected gate IS success), so
+      # this never joins the run and the test with &&, never judges by exit
+      # status, and demands the empty MARKER rather than inferring a pass from
+      # an absent file — a run killed by a timeout leaves the same nothing
+      # behind as a clean pass.
+      - name: Released cases actually close (assembled fit check)
+        run: |
+          status=0
+          chk() {
+            label=$1; shift
+            rm -f /tmp/fc.stl
+            out=$(openscad --export-format binstl -o /tmp/fc.stl "$@" \
+                  canary_case_fitcheck.scad 2>&1) || true
+            if printf '%s' "$out" | grep -qE 'ERROR|WARNING'; then
+              echo "::error::$label — dirty render, nothing was verified"; status=1
+            elif [ -f /tmp/fc.stl ]; then
+              echo "::error::$label — the case does not close: the two halves intersect"
+              admesh /tmp/fc.stl 2>/dev/null | grep -E 'Number of parts|Volume' || true
+              status=1
+            elif printf '%s' "$out" | grep -q 'Current top level object is empty'; then
+              echo "ok: $label closes"
+            else
+              echo "::error::$label — no file and no empty marker; did it evaluate at all?"; status=1
+            fi
+          }
+          chk sense          -D 'check="sense"'
+          chk vision_indoor  -D 'check="vision_indoor"'  -D 'host="xiao"'   -D 'preset="vision_indoor"'
+          chk vision_weather -D 'check="vision_weather"' -D 'host="xiao"'   -D 'preset="vision_weather"'
+          chk vision_devkit  -D 'check="vision_devkit"'  -D 'host="devkit"' -D 'preset="vision_indoor"'
+          chk doorbell       -D 'check="doorbell"'
+          chk wap_battery    -D 'check="wap_battery"'  -D 'preset="battery_full"'
+          chk wap_compact    -D 'check="wap_compact"'  -D 'preset="compact_plain"'
+          chk wap_weather    -D 'check="wap_weather"'  -D 'preset="battery_weather"'
+          # the pan head is one Customizer click away and puts the pad back in
+          # the wall on a case whose default head is flat — so it is gated too
+          chk wap_pan        -D 'check="wap_pan"'      -D 'preset="battery_full"' -D 'screw_head="pan"'
+          exit $status
+
       - name: Verify STLs are watertight, with the expected number of parts
         run: |
           status=0

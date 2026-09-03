@@ -270,6 +270,19 @@ rad_gap = (vm_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - rado
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
 base_d = floor_t + cav_d;
+// ASSEMBLED-FIT PROBE for canary_case_fitcheck.scad. It lives HERE, next to
+// the geometry, for two reasons: it reads this file's own derived datum
+// instead of duplicating the arithmetic it is checking, and its name is
+// unique — every case in this catalog calls its halves front()/back(), so a
+// single fit-check file that `use`d them all would silently resolve to
+// whichever was parsed last and check the wrong case.
+//
+// MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
+// interference: coplanar faces intersect to a zero-volume patch that CGAL
+// reports as non-2-manifold, which is a dirty render, not a pass.
+module sense_fitcheck(lift = 0.1) {
+    intersection() { translate([0, 0, base_d + lift]) front(); back(); }
+}
 
 vm_cx  = 0;
 vm_cy  = -inner_y/2 + bot_margin + vm_l/2;
@@ -518,9 +531,17 @@ module front() {
             union() {
                 // the plate with the catalog's two-stage soft edge — canary_core_lib
                 soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
-                // pan-head pads: the 1.0 mm floor under each head the 2.0 front cannot spare
+                // pan-head pads: the 1.0 mm floor under each head the 2.0 front
+                // cannot spare — CROPPED to the cavity (canary_core_lib). Drawn
+                // as a bare Ø7.8 cylinder it overhung its Ø5.0 post by 1.4 mm
+                // all round, 1.6 mm of that landed on the shell wall rim, and
+                // the front rested 1.0 mm proud: lip out of the cavity, screws
+                // clamping nothing, gasket uncompressed. Probed at 50.04 mm3.
                 if (head_pad > 0) for (p = post_xy())
-                    translate([p[0], p[1], -head_pad]) cylinder(d = head_d + 2*tol_hole + 3.2, h = head_pad + 0.1);
+                    cb_head_pad(p[0], p[1], head_pad,
+                                cb_pad_d(head_d, tol_hole),
+                                inner_x, inner_y, core_cav_r(corner_r, wall_eff),
+                                head_d + 2*tol_hole);
             }
             // RADOME window: blind thinning from the INSIDE, leaving a flat
             // uniform radome_t membrane. Rounded corners avoid stress risers.

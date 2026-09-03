@@ -259,6 +259,19 @@ cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra, btn_body_l - lid_t +
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
 base_d = floor_t + cav_d;
+// ASSEMBLED-FIT PROBE for canary_case_fitcheck.scad. It lives HERE, next to
+// the geometry, for two reasons: it reads this file's own derived datum
+// instead of duplicating the arithmetic it is checking, and its name is
+// unique — every case in this catalog calls its halves front()/back(), so a
+// single fit-check file that `use`d them all would silently resolve to
+// whichever was parsed last and check the wrong case.
+//
+// MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
+// interference: coplanar faces intersect to a zero-volume patch that CGAL
+// reports as non-2-manifold, which is a dirty render, not a pass.
+module doorbell_fitcheck(lift = 0.1) {
+    intersection() { translate([0, 0, base_d + lift]) face(); body(); }
+}
 rr     = min(db_r, out_x/2 - 0.1);          // pill radius, clamped to the width
 
 btn_cy  = -inner_y/2 + zone_btn/2;
@@ -458,7 +471,15 @@ module face() {
                 soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
                 // pan-head pads: the 1.0 mm floor under each head the 2.2 face cannot spare
                 if (head_pad > 0) for (p = post_xy())
-                    translate([p[0], p[1], -head_pad]) cylinder(d = head_d + 2*tol_hole + 3.2, h = head_pad + 0.1);
+                // pan-head pads: the floor under each head the front cannot
+                // spare — CROPPED to the cavity (canary_core_lib). Drawn as a
+                // bare cylinder the pad overhung its post and landed on the
+                // shell wall rim, holding the front proud so the lip never
+                // entered the cavity and the screws clamped nothing.
+                    cb_head_pad(p[0], p[1], head_pad,
+                                cb_pad_d(head_d, tol_hole),
+                                inner_x, inner_y, core_cav_r(rr, wall_eff),
+                                head_d + 2*tol_hole);
             }
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             if (cam_disc_t > 0 && cam_disc_d > 0) {

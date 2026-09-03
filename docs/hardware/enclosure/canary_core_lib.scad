@@ -183,6 +183,58 @@ module cb_flat_cut(x, y, t, d_screw, d_head, h_head) {
     translate([x, y, t - h_head])  cylinder(d = d_head,  h = h_head + 0.1);
 }
 
+// ---------------------------------------------------------------------------
+//  Head pad — the boss on the INSIDE of a show face that gives a pan head a
+//  floor to bear on when the face is thinner than the seat is deep.
+//
+//  The pad itself was the right answer to a real bug (a seat as deep as the
+//  plate is a through-hole the head falls through). What went wrong is that it
+//  was drawn as a bare cylinder Ø(head + 2*tol + 3.2) — Ø7.8 on M2 pan — while
+//  the corner post it lands on is Ø5.0 and is deliberately pushed 0.2 INTO the
+//  cavity wall. So the pad overhung its post by 1.4 mm all round, 1.6 mm of
+//  that landed in solid shell wall, and the front rested on four pads standing
+//  on the wall rim: the lip never entered the cavity, the screws never clamped
+//  and on a sealed build the gasket never compressed. Probed on the released
+//  Sense the interference is 50.04 mm3 in four parts, and the front sits
+//  exactly `pad` proud.
+//
+//  It is invisible in every single-part render and admesh cannot see it — it
+//  is only findable by putting the two parts together, which is what
+//  canary_s3_lcd7_fitcheck.scad exists for and what these cases had none of.
+//
+//  So the pad is CROPPED to the cavity it descends into. That keeps the whole
+//  flat floor where the head actually bears (it needs Ø(head + 2*tol), not
+//  Ø+3.2) and deletes only the collar that was never over a post.
+//    x, y            — screw center;  h — pad height below the face's inner plane
+//    d_pad           — cb_pad_d(...)
+//    cl, cw, cr      — the cavity footprint the pad must stay inside
+// ---------------------------------------------------------------------------
+function cb_pad_d(d_head, tol) = d_head + 2*tol + 3.2;
+
+//  Does the head still get a COMPLETE floor once the pad is cropped? `inset`
+//  is the distance from the screw center to the nearest cavity wall.
+function cb_pad_seat_ok(inset, d_seat) = inset >= d_seat/2 - 1e-9;
+
+//  Pass d_seat (the counterbore diameter) and the crop is CHECKED, not just
+//  done: cropping must not eat the floor the head bears on. The inset tested
+//  is to the straight edges, which is what binds at every geometry in this
+//  catalog — a post tucked far enough into a corner for the corner ARC to bind
+//  instead would need its own check, and would be a post that no longer sits
+//  where these cases put theirs.
+module cb_head_pad(x, y, h, d_pad, cl, cw, cr, d_seat = 0) {
+    if (h > 0) {
+        assert(d_seat == 0 || cb_pad_seat_ok(min(cl/2 - abs(x), cw/2 - abs(y)), d_seat),
+               str("cb_head_pad: cropping the pad to the cavity leaves the ",
+                   d_seat, " mm head seat without a complete floor — the screw ",
+                   "center is only ", min(cl/2 - abs(x), cw/2 - abs(y)),
+                   " mm from the cavity wall. Move the post inboard."));
+        intersection() {
+            translate([x, y, -h]) cylinder(d = d_pad, h = h + 0.1);
+            translate([0, 0, -h - 0.1]) rrect(cl, cw, cr, h + 0.3);
+        }
+    }
+}
+
 module cs_cone90_cut(x, y, t, d_screw, h_head) {
     translate([x, y, -0.1]) cylinder(d = d_screw, h = t + 0.2);
     translate([x, y, t - h_head])

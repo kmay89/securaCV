@@ -126,27 +126,31 @@ emblem_crown = 0.15;
 // lands on the one test this catalog most needs: EVERY case A-surface
 // prints face-down, so the first layers against the textured plate ARE the
 // visible finish. If the beak, the eye ring and the notepad spiral come off
-// the plate crisp, your first layer is dialled for every case in the set.
+// the plate crisp, your first layer is dialed in for every case in the set.
 // A deboss (not an emboss) so the coupon still sits flat on its own face.
 // These knobs existed and NOTHING READ THEM. The station was described in this
 // file's header, given six parameters and a paragraph of reasoning, and never
 // cut — so the coupon has been shipping without the one test its own header
 // calls "the one that matters most". It is wired up now, with the redrawn mark.
-glyph_show  = true;
-glyph_h     = 34.0;   // NOMINAL height (mark_span units) — draws about
-                      // 30 x 32 mm, which is what the reserved rectangle on
-                      // the bed face was always sized for
-glyph_rib   = 0.7;    // stroke width, in mm. THE number this station tests:
-                      // the mark is MONOLINE, so no part of it is narrower
-                      // than this — if the rib survives, the mark survives.
-                      // Below ~0.42 it is thinner than one extrusion
-glyph_depth = 0.5;    // = label_depth's sibling; one bridged layer closes it
-glyph_dx    = -26.5;  // the clear rectangle on the bed face: left of the
-glyph_dy    = 12.0;   // PORT through-hole, above the keyhole pockets
+// A note on the numbers below, since the Customizer only ever shows the ONE
+// line trailing an assignment: glyph_h is in mark_span units, not millimeters,
+// and 34 draws about 30 x 32 mm — the size the reserved rectangle on the bed
+// face was always cut for. glyph_dx/glyph_dy place that rectangle: left of the
+// PORT through-hole and above the keyhole pockets.
+glyph_show  = true;   // deboss the bird into the face that prints against the bed — the finish test every case A-surface actually takes
+glyph_h     = 34.0;   // bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this  // [24:1:40]
+glyph_rib   = 0.7;    // stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print  // [0.42:0.02:1.2]
+glyph_depth = 0.5;    // how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up  // [0.2:0.1:1.2]
+glyph_dx    = -26.5;  // bird center, mm from the plate center across the plate  // [-40:0.5:40]
+glyph_dy    = 12.0;   // bird center, mm from the plate center up the plate  // [-30:0.5:30]
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
+/* [Hidden] */
+// Everything past here is DERIVED, not a knob. Without this closer the next
+// literal assignment falls into the group above it and the Customizer offers
+// the coupon's own plate size to the user under the heading "Quality".
 bw = 90; bh = 68;
 echo(str("Canary fit coupon v0.3-dev — base ", bw, "x", bh, "  (IN DEVELOPMENT)"));
 if (emblem_h > 0) {

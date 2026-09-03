@@ -264,7 +264,15 @@ module front() {
                 // (this also wires up the previously inert lid_edge2 knob)
                 soft_edge_plate(plate_x, plate_y, plate_r, lid_t, lid_edge, lid_edge2);
                 if (head_pad > 0) for (p = post_xy())   // the floor under each pan head
-                    translate([p[0], p[1], -head_pad]) cylinder(d = screw_head_d + 2*tol_hole + 3.2, h = head_pad + 0.1);
+                // pan-head pads: the floor under each head the front cannot
+                // spare — CROPPED to the cavity (canary_core_lib). Drawn as a
+                // bare cylinder the pad overhung its post and landed on the
+                // shell wall rim, holding the front proud so the lip never
+                // entered the cavity and the screws clamped nothing.
+                    cb_head_pad(p[0], p[1], head_pad,
+                                cb_pad_d(screw_head_d, tol_hole),
+                                inner_x, inner_y, core_cav_r(corner_r, wall_eff),
+                                screw_head_d + 2*tol_hole);
             }
             // lens + disc seat + lead-in
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);

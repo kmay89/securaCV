@@ -44,6 +44,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / "builder_manifest.json"
 
+# Numbers appearing in curated hint prose — see the truth gate in
+# build_manifest(). Matches a bare decimal, optionally followed by a unit,
+# and deliberately not a number embedded in an identifier.
+HINT_NUM = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*(?:mm|°|%)?")
+
 # ---------------------------------------------------------------------------
 # Curation: which cases the web builder offers, and which parameters are
 # front-and-center ("simple") vs. tucked into the Advanced accordion.
@@ -299,11 +304,15 @@ CURATED = [
             "opt_seal": "Weather seal", "opt_mount": "Mounting",
             "mount_style": "Mount style", "radome_t": "Radome thickness",
         },
-        "hints": {
-            "radome_t": "The membrane the beam passes through: 1.0 mm is "
-                        "the proven default; 1.5 mm is a half-wave wall "
-                        "(also low-loss) if you want a tougher face.",
-        },
+        # radome_t deliberately carries NO hint. It used to, and the hint said
+        # "1.0 mm is the proven default" beside a control whose own slider
+        # starts at 1.3 and whose model asserts >= 1.3, because 0.7-1.1 is the
+        # quarter-wave band that reflects ~20 % of the beam back into the
+        # antenna. A first timer who followed the hint got an aborted render;
+        # one who trusted it over the assert would have thinned the wall in a
+        # slicer and built a radar that quietly does not work. The source
+        # comment is better than the hint was and is already shown.
+        "hints": {},
         "choices": {
             "radar": {
                 "bha2": "MR60BHA2 — breathing & presence (wall or bedside)",
@@ -339,8 +348,14 @@ CURATED = [
                       "edge tongue tests the lid-lip channel; the "
                       "Strip is the TPU gasket-squeeze test. Adjust the "
                       "three tolerances and reprint until stations fit.",
+        # glyph_rib, not emblem_rib. The EMBLEM station was retired
+        # (emblem_h = 0) and the builder went on promoting its stroke knob to
+        # the front page — a control that moves no geometry, with a hint
+        # telling a newcomer how to react to a print they will never get,
+        # while the GLYPH station the coupon's own header calls "the one that
+        # matters most" had no label, no hint and no place in the simple list.
         "simple": ["part", "tol_slide", "tol_press", "tol_hole", "kh_click",
-                   "emblem_rib"],
+                   "glyph_rib"],
         "preset_param": None,
         "preset_controls": [],
         "part_labels": {
@@ -366,9 +381,10 @@ CURATED = [
             "part": "Part to print", "tol_slide": "Sliding fits",
             "tol_press": "Press fits", "tol_hole": "Screw holes",
             "kh_click": "Keyhole click",
-            "emblem_h": "Emblem height",
-            "emblem_rib": "Emblem stroke",
-            "emblem_crown": "Emblem crown",
+            "glyph_show": "Bird on the bed face",
+            "glyph_h": "Bird height",
+            "glyph_rib": "Bird stroke",
+            "glyph_depth": "Bird deboss depth",
         },
         "hints": {
             "tol_slide": "Parts that slide or snap: lid lips, board clips, "
@@ -380,22 +396,24 @@ CURATED = [
             "kh_click": "The keyhole retention bump. Mate won't slide past "
                         "it → smaller number; slides back off too easily → "
                         "bigger. 0 removes the click.",
-            "emblem_h": "How tall the embossed Canary prints. At the default "
-                        "15.8 mm it spans 15.4 mm — the clear air between the two "
-                        "wordmarks. 0 removes the station.",
-            "emblem_rib": "No part of the mark is drawn narrower than this, "
-                          "so one number decides the whole emblem. Blobbed "
-                          "and closed up → smaller; broken or missing → "
-                          "bigger. Below 0.4 mm is thinner than one extrusion.",
-            "emblem_crown": "Domes the tops of the strokes instead of leaving "
-                            "them flat slabs, so the mark catches light like "
-                            "metal. 0 is a flat top; keep it under half the "
-                            "stroke or the crown pinches the strokes off.",
+            "glyph_show": "Debosses the Canary into the face that prints "
+                          "against the bed. Every case A-surface in this "
+                          "catalog prints face-down, so this is the station "
+                          "that tells you what your plate and first layer do "
+                          "to a visible surface.",
+            "glyph_rib": "The stroke width the bird is drawn at, and the "
+                         "number this station tests. Blobbed and closed up → "
+                         "smaller; broken or missing → bigger. No feature is "
+                         "drawn thinner than this, so one number decides the "
+                         "whole mark.",
+            "glyph_depth": "How deep the bird is sunk. Too shallow and one "
+                           "bridged layer closes it back up; this is the same "
+                           "depth every case label uses, so what happens here "
+                           "happens on your case.",
         },
         "choices": {},
         "units": {"tol_slide": "mm", "tol_press": "mm", "tol_hole": "mm",
-                  "kh_click": "mm", "emblem_h": "mm", "emblem_rib": "mm",
-                  "emblem_crown": "mm"},
+                  "kh_click": "mm", "glyph_rib": "mm", "glyph_depth": "mm"},
     },
 ]
 
@@ -555,6 +573,31 @@ def build_manifest() -> dict:
                 if name not in by_name:
                     sys.exit(f"{spec['file']}: {field} names unknown "
                              f"parameter '{name}'")
+        # A hint may not restate a number the source owns. The checks above
+        # only ever asserted that microcopy NAMES real things — so a hint
+        # could name only real parameters and still lie about every one of
+        # them, which is exactly what happened: the Sense's radome hint sold
+        # "1.0 mm is the proven default" beside a slider that starts at 1.3,
+        # for the one control where the wrong number is a radar that quietly
+        # does not work. Prose is free to explain; numbers belong to the .scad.
+        for name, text in spec["hints"].items():
+            p = by_name[name]
+            if p.get("type") != "number":
+                continue
+            said = {float(x) for x in HINT_NUM.findall(text)}
+            # The source owns its default, its slider bounds, AND any number
+            # its own comment states — a documented sentinel like "0 = no
+            # click" is the source speaking, not the hint inventing.
+            owned = {float(p[k]) for k in ("default", "min", "max", "step")
+                     if isinstance(p.get(k), (int, float))}
+            owned |= {float(x) for x in HINT_NUM.findall(p.get("desc") or "")}
+            lying = said - owned
+            if lying:
+                sys.exit(
+                    f"{spec['file']}: the hint for '{name}' names "
+                    f"{sorted(lying)}, which is not its default/min/step/max "
+                    f"{sorted(owned)} — a hint may not restate a number the "
+                    f"source owns. Delete the number, or fix the source.")
         for name, mapping in spec["choices"].items():
             opts = by_name.get(name, {}).get("options")
             if not opts:
