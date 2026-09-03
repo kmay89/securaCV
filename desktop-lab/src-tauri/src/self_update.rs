@@ -4,7 +4,7 @@
 // Shape copied from the Flasher (desktop/src-tauri/src/lib.rs), as
 // RELEASE_LESSONS 2026-07-27 prescribed: poll the rolling `lab-latest`
 // prerelease pointer (NEVER `releases/latest` — that URL belongs to the
-// firmware the fleet polls), verify the signed manifest, and ask the user —
+// firmware the fleet polls), verify the signed installer it names, and ask the user —
 // with the release's own notes — before anything installs. Every check and
 // install is appended to a local update journal, so what the app did is
 // visible and recoverable, never silent.
