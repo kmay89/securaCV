@@ -535,6 +535,9 @@ pub async fn hub_probe_hub(host: String) -> Result<bool, String> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(3))
         .timeout(std::time::Duration::from_secs(5))
+        // Same local-first transport policy as fleet.rs's device calls: the
+        // URL is gated, the connection needs .no_proxy() too.
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     // Any HTTP response at all — 200, a redirect, even a 401 — means HA is up

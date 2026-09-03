@@ -224,6 +224,15 @@ pub async fn fleet_device_call(
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
         .timeout(std::time::Duration::from_secs(timeout))
+        // A LAN probe must never be routed through an OS-configured proxy.
+        // reqwest defaults `auto_sys_proxy` on, and hyper-util's
+        // client-proxy-system feature — which tauri-plugin-updater can switch
+        // on from the other side of the graph, since Cargo unifies features on
+        // the one shared hyper-util — makes that read the system proxy on
+        // macOS/Windows. macOS applies no bypass list there, so `.local` and
+        // 192.168.x.x addresses would leave the machine. base_ok gates the
+        // URL; only .no_proxy() gates the connection.
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     let mut req = client.request(method, &url);
@@ -278,6 +287,9 @@ pub async fn device_whoami(
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
         .timeout(std::time::Duration::from_secs(6))
+        // Same local-first transport policy as fleet.rs's device calls: the
+        // URL is gated, the connection needs .no_proxy() too.
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     let resp = match client.get(&url).send().await {

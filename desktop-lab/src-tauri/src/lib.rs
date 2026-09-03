@@ -155,6 +155,15 @@ async fn witness_discover(bases: Vec<String>) -> Result<serde_json::Value, Strin
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Lab")
         .timeout(std::time::Duration::from_secs(2))
+        // A LAN probe must never be routed through an OS-configured proxy.
+        // reqwest defaults `auto_sys_proxy` on, and hyper-util's
+        // client-proxy-system feature — which tauri-plugin-updater can switch
+        // on from the other side of the graph, since Cargo unifies features on
+        // the one shared hyper-util — makes that read the system proxy on
+        // macOS/Windows. macOS applies no bypass list there, so `.local` and
+        // 192.168.x.x addresses would leave the machine. base_ok gates the
+        // URL; only .no_proxy() gates the connection.
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     for base in &bases {
