@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [2.4.15] - 2026-09-03
+
+### The timeline of a day becomes an instrument
+
+- **Scrub timeline in the evidence viewer.** Every day renders as a
+  minimap-style strip you can scrub: one column per 10-minute bucket,
+  worst-first ink, declared gaps drawn as their own marks and never folded
+  away. Landing on a bucket spotlights its rows (dims, never hides); a lens
+  names the worst record under the pointer; buckets are detents you feel on
+  every input — keyboard, wheel, drag, and touch (#1604, #1624, #1625).
+- **The Seismograph.** The viewer restyled to two structural hairlines,
+  whisper-gray chrome, and family-hue washes — gorgeous without a single
+  honesty trade: counts, gap declarations, and worst-first color all
+  survive forced-colors, print, and increased-contrast modes (#1626).
+- **iOS: the strip-chart, cut in glass.** The same language translated to
+  the iPhone app's day ribbons — capsule columns on a single hairline
+  baseline, declared gaps as outline + hatch (never a fill, in any branch),
+  a pen caret that visibly narrows as drag gain rises, per-bucket haptic
+  detents, and the day readable as a VoiceOver Audio Graph (#1627).
+
 ### Wi-Fi sensing that a solo Canary can actually run
 
 - **The CSI HAL compiles on the ESP32-C6 / C5 it always claimed to support.**
