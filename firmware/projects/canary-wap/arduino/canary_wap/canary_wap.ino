@@ -3368,6 +3368,11 @@ static esp_err_t handle_status(httpd_req_t* req) {
     csi["frames_dropped_rate"] = (uint32_t)cs.frames_dropped_rate;
     csi["frames_dropped_rssi"] = (uint32_t)cs.frames_dropped_rssi;
     csi["windows_degraded"] = (uint32_t)cs.windows_degraded;
+    // Breathing-envelope cadence: how far the loop's real window pace was
+    // from the 1 Hz grid the feature layer resamples onto.
+    csi["windows_held"] = (uint32_t)cs.windows_held;
+    csi["windows_merged"] = (uint32_t)cs.windows_merged;
+    csi["window_period_ms"] = (uint32_t)cs.window_period_ms;
   }
 
   String response;

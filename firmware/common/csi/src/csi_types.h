@@ -221,6 +221,13 @@ typedef struct {
   uint32_t windows_emitted;      /* Feature vectors produced. */
   uint32_t windows_degraded;     /* Windows where frames_in_window < target. */
   uint32_t frames_dropped_short; /* Dropped: no L-LTF section (< 128 bytes). */
+  /* Breathing-envelope cadence (appended; never reorder the fields above).
+   * The feature layer resamples the envelope onto a fixed 1 Hz grid keyed
+   * by each window's close timestamp; these say how far the loop's real
+   * pace was from one window per second. */
+  uint32_t windows_held;     /* Grid slots filled by holding the previous sample (late closes). */
+  uint32_t windows_merged;   /* Closes averaged into an already-filled slot (early closes). */
+  uint32_t window_period_ms; /* Mean close-to-close interval, ms; 0 until two timed closes. */
 } csi_stats_t;
 
 bool csi_get_stats(csi_stats_t* out);

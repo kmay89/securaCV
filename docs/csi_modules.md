@@ -33,6 +33,31 @@ carries, (c) its default settings. The runtime calls `tick()` once per CSI
 window; modules may call `csi_event_emit()` from inside `tick()`. Modules
 **must not** reach into each other's state.
 
+### The breathing time base
+
+Windows are loop-driven, so "once per window" is *about* once a second,
+not exactly. The breathing bins (`v[12..19]`, one Goertzel tap per
+0.05 Hz) assume one envelope sample per second, and would drift with CPU
+load if the ring were fed per window. They are not: `csi_features.cpp`
+resamples the envelope onto a fixed 1 Hz grid keyed by each window's
+close timestamp — an early close in the same one-second slot is averaged
+in, a late close first holds the previous sample across the skipped
+seconds. `csi_stats_t` reports what that cost: `windows_merged`,
+`windows_held` and `window_period_ms` (the mean close-to-close interval).
+A loop that keeps pace shows 0 / 0 / ~1000.
+
+The envelope itself is each subcarrier band's *share* of the
+AGC-normalized frame, not raw received power. The receiver re-gains per
+packet, so raw power would carry every gain step as a broadband transient;
+a band share cannot move with gain, and a breath's frequency-selective
+re-weighting moves the bands against each other. Both properties are
+pinned by the host test (`tests_host/test_csi_features.cpp`) with
+synthetic frames, including a simulated per-packet AGC and 700 ms /
+1300 ms / stalled window cadences. That is a **compile- and host-tested**
+claim: no bench numbers exist for the breathing path on hardware yet, so
+treat the on-device breathing rate as unverified until a bench log says
+otherwise.
+
 ## The manifest
 
 ```c
