@@ -59,6 +59,9 @@
 #ifndef CD_LEAN_BUILD
 #define LV_DISP_DEF_REFR_PERIOD 16
 #define LV_DEF_REFR_PERIOD 16
+/* The fed pointer device (ui/lvgl_port.cpp) is read on this cadence too: a
+ * tap on the settings panel is caught within a frame, not a 30 ms poll. */
+#define LV_INDEV_DEF_READ_PERIOD 16
 #endif
 
 /* No default theme: every style on these faces is deliberate (Quiet Glass

@@ -60,6 +60,12 @@ void portrait_ui_update(const canary::fleet::Fleet& fleet, uint32_t now,
 // when it lands.
 void portrait_ui_ack_hold(bool active);
 
+// The settings doorway (touch glass only: the Touch-1.69 and the AMOLED
+// 2.41): a lit tap on the gear corner, by day, opens the settings panel and
+// returns true. Every other tap — and every tap on the touch-less 1.47"
+// boards — returns false and stays the wake it already was.
+bool portrait_ui_handle_tap(int16_t x, int16_t y);
+
 // Ambient-life moment (care/ambient_life.h): brighten the glance line for a
 // few seconds so the check-in is visible, then let it settle back.
 void portrait_ui_life_glance(uint32_t now);

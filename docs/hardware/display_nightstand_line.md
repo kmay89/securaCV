@@ -375,6 +375,11 @@ everything else on these boards):
   and the wake tap). Before this, the Nightstand 7 compiled out the wall dashboard's only
   doorway (the transparency-sheet gear), so the shared settings surface existed on the build
   but no touch path reached it: the glass read as touch-dead.
+- **…and on the small portrait touch glass.** The Touch-1.69 and the AMOLED 2.41 shared the
+  same gap one wave longer: the panel compiled in, no doorway. The portrait face
+  (`ui/portrait_ui.cpp`) now carries the same day-only gear corner (`portrait_ui_handle_tap`),
+  and the panel itself lays out from the live canvas — rows at 240 and 450 px wide, not the
+  round puck's 240 — see `display_settings.md` § One tree, every glass.
 - **The clock-face ring** (`ui/clock_styles.h`, `Settings.clock_style`, blob v4): four named,
   curated faces — Segment / Slab / Hairline / the drawn Analog dial (`ui/clock_face.cpp`) —
   flip-through picker on the settings sheet, same design law as the Character ring. A face

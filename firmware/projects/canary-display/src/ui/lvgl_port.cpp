@@ -68,6 +68,29 @@ int16_t s_logical_w = SCR_W;
 int16_t s_logical_h = SCR_H;
 lv_obj_t* s_scrim = nullptr;       // rendered brightness dim (top layer)
 
+// The last touch sample main.cpp fed for the LVGL pointer device (see
+// lvgl_port_touch_feed). Released until a surface asks for input.
+bool    s_in_down = false;
+int16_t s_in_x = 0;
+int16_t s_in_y = 0;
+
+void fill_indev_data(lv_indev_data_t* data) {
+  int x = s_in_x, y = s_in_y;
+#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
+  // LVGL 9 rotates every pointer sample by the display rotation itself
+  // (lv_display_rotate_point). The HAL already handed us the logical point,
+  // so hand LVGL the native-frame point whose rotation IS that logical
+  // point — the exact inverse, host-tested in test_display_settings.cpp.
+  if (s_rot != 0) {
+    canary::glass::rotation_to_lvgl_indev(s_rot, SCR_W, SCR_H, s_in_x, s_in_y,
+                                          &x, &y);
+  }
+#endif
+  data->point.x = x;
+  data->point.y = y;
+  data->state = s_in_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
 #if LVGL_VERSION_MAJOR >= 9
 
 #if (defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)) && \
@@ -78,6 +101,8 @@ alignas(4) uint8_t s_buf[BUF_BYTES];
 lv_display_t* s_disp = nullptr;    // captured for runtime rotation (v9)
 
 uint32_t tick_cb() { return millis(); }
+
+void indev_read_cb(lv_indev_t*, lv_indev_data_t* data) { fill_indev_data(data); }
 
 void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
   Arduino_GFX* g = canary::hal::gfx();
@@ -99,6 +124,11 @@ lv_color_t s_buf[BUF_PX];
 
 lv_disp_draw_buf_t s_draw_buf;
 lv_disp_drv_t s_disp_drv;
+lv_indev_drv_t s_indev_drv;
+
+void indev_read_cb(lv_indev_drv_t*, lv_indev_data_t* data) {
+  fill_indev_data(data);
+}
 
 #ifdef CD_AMOLED_GLASS
 // RM690B0 QSPI address windows want even column/row starts and even sizes
@@ -178,6 +208,15 @@ bool lvgl_port_init() {
   lv_display_set_buffers(disp, buf, nullptr, (uint32_t)buf_bytes,
                          LV_DISPLAY_RENDER_MODE_PARTIAL);
   s_disp = disp;
+  // The fed pointer device (see lvgl_port_touch_feed). Registered on every
+  // flavor: it reports "released" until a surface feeds it, so a face that
+  // never feeds never sees an event.
+  lv_indev_t* indev = lv_indev_create();
+  if (indev) {
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, indev_read_cb);
+    lv_indev_set_display(indev, disp);
+  }
 #else
   lv_disp_draw_buf_init(&s_draw_buf, (lv_color_t*)buf, nullptr,
                         (uint32_t)(buf_bytes / sizeof(lv_color_t)));
@@ -190,6 +229,12 @@ bool lvgl_port_init() {
 #endif
   s_disp_drv.draw_buf = &s_draw_buf;
   lv_disp_drv_register(&s_disp_drv);
+  // The fed pointer device (see lvgl_port_touch_feed) — released until a
+  // surface feeds it, so the faces never see an LVGL event.
+  lv_indev_drv_init(&s_indev_drv);
+  s_indev_drv.type = LV_INDEV_TYPE_POINTER;
+  s_indev_drv.read_cb = indev_read_cb;
+  lv_indev_drv_register(&s_indev_drv);
 #endif
 
   canary::log_line("LVGL", "Renderer up (dirty-region, anti-aliased).");
@@ -239,6 +284,18 @@ void lvgl_port_set_rotation(uint8_t rot) {
 uint8_t lvgl_port_rotation() { return s_rot; }
 int16_t lvgl_port_width() { return s_logical_w; }
 int16_t lvgl_port_height() { return s_logical_h; }
+
+// ── Pointer input ────────────────────────────────────────────────────────
+
+void lvgl_port_touch_feed(bool down, int16_t x, int16_t y) {
+  s_in_down = down;
+  if (down) {
+    s_in_x = x;
+    s_in_y = y;
+  }
+  // A release keeps the last point: LVGL wants the release where the finger
+  // lifted, and the controllers report (0,0) once nothing is touching.
+}
 
 #if defined(CD_NIGHTLIGHT) && LVGL_VERSION_MAJOR < 9
 // The nightlight rotates in HARDWARE (hal display_set_rotation writes the
