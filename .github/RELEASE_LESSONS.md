@@ -145,6 +145,32 @@ declare it, and let the app render what the device says it has.
 
 ## Entries
 
+### 2026-09-03 — The release notes said the false privacy claim was fixed; the installer's own background image still made it
+
+- **Symptom:** Lab 0.2.4's notes celebrated exact network claims ("talks
+  only to your own devices") while the committed DMG background —
+  the first thing a macOS user sees when they open the installer — still
+  read "nothing phones home", and the bundler's `longDescription` (the
+  .deb/AppImage store text) called the fetched `latest.json` a "signed
+  update manifest". Caught by review on the release-bump PR, not by any
+  gate.
+- **Cause:** a privacy/network claim lives on more surfaces than the file
+  being edited: committed installer artwork (`src-tauri/dmg/background.png`
+  + its generator), `tauri.conf.json`'s `longDescription`, README, release
+  notes, and in-app copy — and nothing holds them together. And "signed
+  update manifest" overstated the mechanism: Tauri verifies the
+  installer's signature from `platforms[*].signature`; the manifest's own
+  version/notes/URLs are outside any signature.
+- **Fix:** reword every surface in one commit and regenerate the DMG
+  background from its generator (no CI byte-gate exists on it — the
+  committed PNG only changes when someone re-runs the generator, so the
+  generator edit alone fixes nothing a user sees).
+- **Applies to:** every app target with committed installer artwork or
+  store descriptions. When a network/privacy claim changes, grep the
+  claim's old wording across the app's whole directory — artwork
+  generators included — and describe signing by what is actually signed
+  (the artifact, unless the manifest itself carries a verified signature).
+
 ### 2026-08-23 — The dev channel quietly had no AMOLED: two workflows, one product list, no gate comparing them
 
 - **Symptom:** the Canary Glance AMOLED read "no published release yet" on

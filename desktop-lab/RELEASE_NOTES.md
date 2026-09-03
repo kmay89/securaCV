@@ -16,6 +16,23 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.2.4 — 2026-09-03
+
+**Honest about the one thing it fetches.**
+
+- The network claim is now exact, on every surface: the Lab talks only to
+  your own devices, and the one thing it fetches on its own is its update
+  manifest from GitHub (15 s after launch, then every 6 h) — every update
+  it offers is signature-verified before install. The old "nothing phones
+  home" line predated the self-updater and overclaimed; the DMG
+  installer's background image carried the same words and is regenerated
+  without them.
+- The main window's grant list no longer includes updater, dialog, or
+  process: the self-update flow (manifest check, native confirm dialog,
+  relaunch) runs entirely from Rust, so those plugins are out of an
+  injected script's reach.
+- Toolchain floor raised to Rust 1.88, matching the Flasher.
+
 ## 0.2.3 — 2026-08-21
 
 - **A quit can no longer break an install.** The updater now marks the brief
