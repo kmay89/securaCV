@@ -39,7 +39,7 @@ survived only if a majority could not. The counts:
 | Landed in the September PRs (first pass) | 78 |
 | Open list items landed in the same PR before merge | 34 |
 | Landed in the follow-up wave (PR #1635, mirror #9, website #184) | 13 in full, 2 in part |
-| Still open | 15 in full, 6 in part |
+| Still open | 13 in full, 6 in part |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -102,10 +102,10 @@ waves 2 and 3 in §4 are open) and 30 (the platform pin lives once, as a pure
 refactor; the decision about the version spread is documented in
 `firmware/PLATFORMS.md` and still open). Each row below says what actually
 shipped and where it deviates from the row's original proposal. What is
-left — 15 rows in full and 6 in part — is hardware-bound
+left — 13 rows in full and 6 in part — is hardware-bound
 (items 2, 22 and the §5 bench steps), Apple-toolchain-bound (5, 6, 13), a
-maintainer decision (30's version spread, 42, 51), or a larger refactor
-(12, 26, 34, 35, 38).
+maintainer decision (30's version spread, 42, 51), or a larger firmware or
+CI refactor (9, 12, 26, 34, 35, 38).
 
 ### P0 — wrong evidence or a broken promise a user would hit
 
@@ -161,11 +161,11 @@ maintainer decision (30's version spread, 42, 51), or a larger refactor
 |---|---|---|---|
 | 34 | **canary-display builds 21 PlatformIO envs serially** in one 45–50 minute job; comments say 18. | Shard by board family; read the count from `flavors.json`. | M |
 | 35 | **Firmware SBOM is hand-written** and no longer matches the build files it cites. | Generate from `platformio.ini` and `library.json` in CI; byte-gate it. | M |
-| 36 | **ruff covers only `custom_components`**; the 100+ tooling scripts are unlinted (106 findings at first run). | Add `canary-local/tools` and `scripts` to the ruff step; fix in one sweep. | S |
+| 36 | **(landed)** **ruff covers only `custom_components`**; the 100+ tooling scripts are unlinted (106 findings at first run). | Add `canary-local/tools` and `scripts` to the ruff step; fix in one sweep. | S |
 | 37 | **(landed)** **Tooling Python is unpinned**; half the workflows run whatever `ubuntu-latest` ships while `pyproject` targets 3.11. | Landed: `pyproject.toml` carries `requires-python = ">=3.11"` as the one floor, every Python-running job sets up Python from it, and rule R9 in `CI.md` is machine-enforced by `ci_policy_check.py` (unit-tested). The resolver picks the newest interpreter that satisfies the floor; the floor is the one knob if that ever bites. | S |
 | 38 | **Toolchain setup is hand-rolled** (PlatformIO ×15, emsdk ×2, libseccomp ×9, issue-dedup ×3) despite CI.md's composite-action rule. | Four composite actions; CI.md rule R9 to require them. | M |
 | 39 | **(landed)** **`gen_qr.py` output is committed with no `--check`** and runs in no workflow. | Add the flag and a line in `lint.yml`. | S |
-| 40 | **`bom-pricing` still pushes to `main`** (now gated, still with the default token so zero CI runs on the commit). | Open a PR instead, or use the freshness PAT. | S |
+| 40 | **(landed)** **`bom-pricing` still pushes to `main`** (now gated, still with the default token so zero CI runs on the commit). | Open a PR instead, or use the freshness PAT. | S |
 | 41 | **(landed)** **CI.md's concurrency pattern evicts the pending `main` run** when merges land faster than the build. | Landed: test workflows key their group on the commit for pushes to `main` (a merge burst queues instead of evicting) and on the PR for pull requests; publishers stay per-ref under a documented exemption; no bare `cancel-in-progress: true` remains outside documented exemptions; the checker enforces it. | S |
 | 42 | **Four dispatch-only release buttons** have not run in 60+ days and overlap "Update everything". | Retire or fold in; `RELEASE_BUTTONS.md` shrinks. | S |
 | 43 | **(landed)** **CI never boots 3 of the 5 display flavors** in the emulator; the boot probe hardcodes the watch artifact. | Loop the probe over every `dist/*.meta.json`. | S |
