@@ -41,6 +41,15 @@
     object_removed_from_zone: { label: "Object removed from zone", icon: "mdi:package-variant-closed-remove" },
     tamper_detected: { label: "Tamper detected", icon: "mdi:shield-alert" },
     vehicle_arrival_departure: { label: "Vehicle arrival/departure", icon: "mdi:car-side" },
+    // The WAP's system.integrity tamper kinds ride the events wire with
+    // event_type = the const.py kind word (csi_mqtt stamps event_type from
+    // the state name), so each kind narrates here instead of falling back
+    // to a prettified raw id. Same calm sentences the phone app uses.
+    power_loss: { label: "Power was cut", icon: "mdi:shield-alert" },
+    sd_remove: { label: "Storage card removed", icon: "mdi:shield-alert" },
+    sd_error: { label: "Storage card failing", icon: "mdi:shield-alert" },
+    watchdog: { label: "Recovered from a system hang", icon: "mdi:shield-alert" },
+    unexpected_reboot: { label: "Rebooted unexpectedly", icon: "mdi:shield-alert" },
   };
   const DEFAULT_EVENT_ICON = "mdi:shield-eye";
 

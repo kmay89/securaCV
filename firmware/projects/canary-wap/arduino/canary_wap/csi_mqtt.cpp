@@ -645,6 +645,33 @@ void publish_event(uint32_t                  event_id,
       /*is_replay=*/false);
   if (n == 0) return;
   publish_and_advance(topic, body, n, /*retain=*/false, event_id);
+
+  /* Per-kind tamper bridge: the HA integration's tamper binary sensors —
+   * the general one and the ten per-type ones — have subscribed to the
+   * dedicated `tamper` topic since day one
+   * (custom_components/securacv/binary_sensor.py), while committed events
+   * ride `events`; until this bridge, a system.integrity commit narrated
+   * on the phone while every HA tamper entity stayed silent. Republish it
+   * here in the exact shape those sensors already parse: the per-type
+   * sensor matches data.type == its kind, the general one fires on any
+   * publish and reads type/detail as attributes. state_name is
+   * chokepoint-sanitized ASCII, so no escaping is needed. LIVE emits
+   * only — the backfill replay path stays off this topic on purpose: it
+   * carries no is_replay marker, and re-firing tamper automations for
+   * old events is exactly what the replay flag exists to prevent. */
+  if (module_id && type_name
+      && strcmp(module_id, "system.integrity") == 0
+      && strcmp(type_name, "tamper") == 0
+      && values->state_name[0]) {
+    char ttopic[192];
+    build_topic(ttopic, sizeof(ttopic), "tamper");
+    char tbody[128];
+    const int tn = snprintf(tbody, sizeof(tbody),
+        "{\"type\":\"%s\",\"severity\":\"tamper\"}", values->state_name);
+    if (tn > 0 && (size_t)tn < sizeof(tbody)) {
+      publish_raw(ttopic, tbody, (size_t)tn, /*retain=*/false);
+    }
+  }
 }
 
 bool publish_event_record(const csi_event_record_t* rec) {
@@ -1004,8 +1031,19 @@ struct DiscoveryEntity {
 
 const DiscoveryEntity ENTITIES[] = {
   /* Binary sensors — surfaced in the headline HA card. */
+  /* Presence keys on the PRESENCE vocabulary, never on "any non-empty
+   * state": the events topic also carries acoustic anomalies and (since
+   * the system.integrity module) tamper kinds like "watchdog" — and the
+   * old any-state template rendered a brownout reboot as motion ON, a
+   * false someone-is-home through every HomeKit-bridged automation. A
+   * state outside the allowlist renders neither payload, which an MQTT
+   * binary_sensor IGNORES (state unchanged) — an alarm or a tamper says
+   * nothing about whether the room is occupied, so it must not move
+   * this entity in either direction. */
   { "binary_sensor", "presence", "Presence", "events",
-    "{% if value_json.state and value_json.state != 'empty' %}ON{% else %}OFF{% endif %}",
+    "{% if value_json.state in ['active','subtle','quiet','together',"
+    "'breathing_nearby','breathing_lost'] %}ON"
+    "{% elif value_json.state == 'empty' %}OFF{% endif %}",
     nullptr, "motion", nullptr, "mdi:account" },
   { "binary_sensor", "online", "Online", "status",
     "{% if value_json.online %}ON{% else %}OFF{% endif %}",

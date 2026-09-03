@@ -414,12 +414,12 @@ existing: the integration listens for several signals no firmware publishes yet.
 | `sd_error` | SD Error | Canary publishes `sd_errors` in health | Implemented |
 | `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
 | `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
-| `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot when the power-events classifier reports a restored outage or brownout (`canary_power_events.h`; the WAP and other trees are still pending their boot-path wiring) | Implemented (canary base) |
+| `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot (power-events classifier, `canary_power_events.h`); Canary WAP publishes the same shape on the tamper topic when its `system.integrity` module commits a brownout-boot tamper (`csi_mqtt.cpp`'s per-kind bridge) | Implemented (canary base + WAP) |
 | `gps_jamming` | GPS Jamming | none found | Experimental |
 | `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
 | `gpio` | GPIO Tamper | none found | Experimental |
-| `watchdog` | Watchdog Timeout | none found | Experimental |
-| `unexpected_reboot` | Unexpected Reboot | canary base publishes `{"type":"unexpected_reboot"}` on the tamper topic at boot after a fault reset (same power-events path as `power_loss`) | Implemented (canary base) |
+| `watchdog` | Watchdog Timeout | Canary WAP publishes `{"type":"watchdog"}` on the tamper topic when its `system.integrity` module classifies a watchdog reset at boot | Implemented (WAP) |
+| `unexpected_reboot` | Unexpected Reboot | canary base publishes `{"type":"unexpected_reboot"}` on the tamper topic at boot after a fault reset (power-events path); Canary WAP publishes the same shape from its `system.integrity` module after a panic reset | Implemented (canary base + WAP) |
 | `battery_remove` | — (no sensor) | none | Planned |
 | `gps_spoof` | — (no sensor) | none | Planned |
 | `capacitive` | — (no sensor; folded into `enclosure` on-device) | touch pad tamper | Planned |
@@ -908,6 +908,8 @@ curl -H "Authorization: Bearer $TOKEN" http://d0491a67-privacy-witness-kernel:87
 | `/digest` | GET | Coarse activity digest for dashboards (bucketed counts, no per-event detail) |
 | `/status` | GET | Daemon status snapshot (retention, verify state) |
 | `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
+| `/export/bundle` | GET | Receipted export bundle (events reshaped for disclosure; correlation tokens stripped) |
+| `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design) |
 | `/health` | GET | Check daemon health (unauthenticated) |
 
 ### `/events/latest` Response (Event)
