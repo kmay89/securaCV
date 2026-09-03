@@ -48,11 +48,18 @@ char *scv_verify_sealed_log(const char *json);
  *
  * Returns the normalized snapshot as JSON:
  *   { "kernel"?, "verified_through"?,
- *     "devices": [ { "name", "online", "chain"?, "product"?, "hw"?, "hub"? } ] }
+ *     "devices": [ { "name", "online", "chain"?, "product"?, "hw"?, "hub"?,
+ *                    "presence"?, "occupants"?, "breathing"?,
+ *                    "seeing"?, "seeing_score"? } ] }
  * or, on bad input, { "error": "<why>" }.
  * `hw` is the board id (resolves the figure a client draws); `hub` is the
- * device's hub standing ("none" / "down" / "ok"). Both pass through only
- * when the device sent them — absent stays absent, never a default.
+ * device's hub standing ("none" / "down" / "ok"); the wellbeing keys are the
+ * contract's coarse room words ("clear"/"present", "0"/"1"/"2+", a breathing
+ * lock held/lapsed, "person"/"vehicle"/"animal"/"package" with an optional
+ * 0-100 score), carried verbatim — tolerance lives in the reader. All of
+ * them pass through only when the device sent them — absent stays absent,
+ * never a default: an absent wellbeing key means "cannot say", never an
+ * empty calm room.
  *
  * Caller frees the result with scv_string_free.
  */

@@ -7,7 +7,9 @@
 //!
 //! * only `devices[].name` is required; `online` defaults to `false` — a
 //!   silent field is never a presence claim — and `chain` / `product` / `hw`
-//!   / `hub` are shown only when present. That default is pinned by
+//!   / `hub`, plus the coarse wellbeing keys (`presence` / `occupants` /
+//!   `breathing` / `seeing` / `seeing_score`), are shown only when present.
+//!   That default is pinned by
 //!   `tests/fixtures/fleet_contract_vectors.json` (`tests/fleet_contract.rs`),
 //!   because it once drifted three ways between the doc, this crate and the
 //!   Swift decoder;
@@ -53,6 +55,32 @@ pub struct Device {
     /// which a client must never render as "fine".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<String>,
+    /// THE ROOM, COARSELY — the sense line's presence story in the wire's own
+    /// words: "clear" or "present". Kept verbatim on purpose (the `hub`
+    /// rule): tolerance lives in the reader, so a word this normalizer has
+    /// never met crosses intact and the client folds it to "cannot say"
+    /// instead of a guess. Absent means the row did not say — which a client
+    /// must never render as an empty calm room. This struct used to end at
+    /// `hub`, and serde silently STRIPPED these keys before Swift ever saw
+    /// them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<String>,
+    /// The headcount bucket, as words: "0" | "1" | "2+". Same verbatim rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occupants: Option<String>,
+    /// Breathing lock held (`true`) or lapsed (`false`); absent = the row is
+    /// not claiming either.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub breathing: Option<bool>,
+    /// What the camera line reports seeing — "person" / "vehicle" / "animal"
+    /// / "package" today, carried verbatim so tomorrow's word still crosses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeing: Option<String>,
+    /// Detection confidence, 0–100: the firmware writes it only beside a
+    /// `seeing` word. Carried as sent — the reader decides what counts as a
+    /// percentage, exactly as it decides what counts as a known word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeing_score: Option<i64>,
 }
 
 impl Device {
@@ -199,6 +227,34 @@ mod tests {
             "\"unknown\" is an absent claim, not a failure"
         );
         assert!(!fleet.has_chain_trouble());
+    }
+
+    #[test]
+    fn the_wellbeing_keys_survive_the_normalizer() {
+        // This struct used to end at `hub`, and serde strips unknown fields —
+        // so the wave-6 wellbeing keys vanished here before Swift ever saw
+        // them. Words stay verbatim (tolerance lives in the reader), and a
+        // row that says nothing stays silent: absent is "cannot say", never
+        // an empty calm room. The full aggregated-body literal is pinned in
+        // tests/fixtures/fleet_contract_vectors.json.
+        let fleet = parse_fleet(
+            r#"{"devices":[
+                {"name":"Bedroom","online":true,"presence":"present","occupants":"1","breathing":true},
+                {"name":"Driveway","online":true,"seeing":"package","seeing_score":87},
+                {"name":"Porch"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(fleet.devices[0].presence.as_deref(), Some("present"));
+        assert_eq!(fleet.devices[0].occupants.as_deref(), Some("1"));
+        assert_eq!(fleet.devices[0].breathing, Some(true));
+        assert_eq!(fleet.devices[1].seeing.as_deref(), Some("package"));
+        assert_eq!(fleet.devices[1].seeing_score, Some(87));
+        let silent = &fleet.devices[2];
+        assert_eq!(silent.presence, None);
+        assert_eq!(silent.occupants, None);
+        assert_eq!(silent.breathing, None);
+        assert_eq!(silent.seeing, None);
+        assert_eq!(silent.seeing_score, None);
     }
 
     #[test]

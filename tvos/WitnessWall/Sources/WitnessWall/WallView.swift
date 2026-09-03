@@ -352,7 +352,7 @@ struct WallView: View {
 
 // MARK: - Pieces
 
-/// The two sentences the Wall says about a device, defined once so the card
+/// The sentences the Wall says about a device, defined once so the card
 /// on the grid and the detail view can never phrase the same state two ways.
 extension FleetSnapshot.Device {
     var wallStatusLine: String {
@@ -374,6 +374,53 @@ extension FleetSnapshot.Device {
         case .absent: return "No hub yet — it works on its own"
         case .down:   return "Can't reach its hub"
         case .ok, .unknown: return ""
+        }
+    }
+
+    /// The coarse wellbeing line — the sense line's room story and the camera
+    /// line's seeing claim, folded to one quiet sentence in the phone's
+    /// vocabulary (Present/Clear, a count that tops out at 2+, a breathing
+    /// rhythm sensed-or-not). Nil when the row carries none of the keys, and
+    /// the caller then draws NOTHING: absence is "cannot say", never an
+    /// empty calm room (tvos/discovery/DISCOVERY.md).
+    var wallWellbeingLine: String? {
+        var parts: [String] = []
+        if let present = radarPresent {
+            parts.append(present ? "someone present" : "room clear")
+        }
+        if let count = radarOccupants {
+            // The radar's contract is 0 / 1 / 2-meaning-2-or-more — it
+            // deliberately cannot count a crowd, so neither may this label
+            // (the phone's Witness.occupantsLabel rule).
+            parts.append(count >= 2 ? "2+ in the room" : "\(count) in the room")
+        }
+        if let held = breathing {
+            // "Sensed", never a vital-signs claim — the lock is a rhythm the
+            // radar can currently hold, nothing more. Same words as the
+            // phone's Wellbeing section.
+            parts.append(held ? "breathing rhythm sensed" : "breathing rhythm not sensed")
+        }
+        if let seen = wallSeeingPhrase {
+            parts.append(seeingScore.map { "\(seen) · \($0)%" } ?? seen)
+        }
+        guard let first = parts.first else { return nil }
+        parts[0] = first.prefix(1).uppercased() + String(first.dropFirst())
+        return parts.joined(separator: " · ")
+    }
+
+    /// The seeing word folded to a phrase — for exactly the four words the
+    /// fleet vocabulary holds (person/vehicle/animal/package; Invariant II
+    /// ends the list). The Wall compiles no SeenClass enum, so this switch IS
+    /// the fold: silence and any word outside the vocabulary render as
+    /// nothing, never as a guess — the same nil the phone's tolerant
+    /// decoders answer for a stranger's word.
+    private var wallSeeingPhrase: String? {
+        switch seeing {
+        case "person": return "seeing a person"
+        case "vehicle": return "seeing a vehicle"
+        case "animal": return "seeing an animal"
+        case "package": return "seeing a package"
+        default: return nil
         }
     }
 }
@@ -423,6 +470,15 @@ struct DeviceCard: View {
             // connected or didn't say (HubState.unknown).
             if device.hubState.needsAttention {
                 Text(device.wallHubLine)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            // The coarse wellbeing words, when the row carries any — one
+            // quiet line in the hub line's register, never a tile of its
+            // own. A row without the keys draws NOTHING here: absence is
+            // "cannot say", never an empty calm room.
+            if let wellbeing = device.wallWellbeingLine {
+                Text(wellbeing)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

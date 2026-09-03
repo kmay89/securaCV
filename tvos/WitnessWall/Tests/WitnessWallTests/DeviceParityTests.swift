@@ -142,6 +142,88 @@ final class DeviceParityTests: XCTestCase {
         XCTAssertFalse(connected.hubState.needsAttention)
     }
 
+    // MARK: - the wellbeing words (the aggregated body)
+
+    /// A display aggregating its fleet: self row (no wellbeing keys), a sense
+    /// peer carrying the coarse room words, and a (future) camera-line row
+    /// carrying a seeing claim. Verbatim stdout of the firmware's
+    /// open/append/close composition — the SAME literal the iPhone's
+    /// FleetSelfReportTests.aggregatedBody pins and the Rust contract vectors
+    /// replay (tvos/witness-core/tests/fixtures/fleet_contract_vectors.json):
+    /// one set of bytes, three readers, one answer.
+    private let aggregatedJSON = #"""
+    {"kernel":"Hallway Glass","verified_through":"now","devices":[{"name":"Hallway Glass","online":true,"chain":"unknown","product":"canary-dash7","hw":"waveshare-esp32s3-lcd7","hub":"ok"},{"name":"Bedroom","online":true,"chain":"unknown","product":"canary-sense","presence":"present","occupants":"1","breathing":true},{"name":"Driveway","online":true,"chain":"ok","product":"canary-vision","chain_height":512,"seeing":"package","seeing_score":87}]}
+    """#
+
+    /// The words fold to the same verdicts the phone reaches, and the rows
+    /// that said nothing stay silent — absence is "cannot say", never an
+    /// empty calm room.
+    func testWellbeingWordsDecodeFromTheDisplaysAggregatedBody() throws {
+        let snapshot = try JSONDecoder().decode(FleetSnapshot.self, from: Data(aggregatedJSON.utf8))
+        XCTAssertEqual(snapshot.devices.count, 3)
+
+        // The self row carries no wellbeing keys — and none may be invented.
+        let glass = snapshot.devices[0]
+        XCTAssertNil(glass.radarPresent)
+        XCTAssertNil(glass.radarOccupants)
+        XCTAssertNil(glass.breathing)
+        XCTAssertNil(glass.seeing)
+        XCTAssertNil(glass.wallWellbeingLine,
+                     "a row without the keys draws NOTHING — never an empty calm room")
+
+        // The sense peer's words fold exactly as the phone folds them.
+        let bedroom = snapshot.devices[1]
+        XCTAssertEqual(bedroom.presence, "present")
+        XCTAssertEqual(bedroom.radarPresent, true)
+        XCTAssertEqual(bedroom.radarOccupants, 1)
+        XCTAssertEqual(bedroom.breathing, true)
+
+        // The seeing claim survives with its score.
+        let driveway = snapshot.devices[2]
+        XCTAssertEqual(driveway.seeing, "package")
+        XCTAssertEqual(driveway.seeingScore, 87)
+    }
+
+    /// The one quiet line the card and the detail screen share, pinned so the
+    /// phrasing can't drift per-surface.
+    func testTheWellbeingLineSaysTheRoomCoarsely() throws {
+        let snapshot = try JSONDecoder().decode(FleetSnapshot.self, from: Data(aggregatedJSON.utf8))
+        XCTAssertEqual(snapshot.devices[1].wallWellbeingLine,
+                       "Someone present · 1 in the room · breathing rhythm sensed")
+        XCTAssertEqual(snapshot.devices[2].wallWellbeingLine, "Seeing a package · 87%")
+    }
+
+    /// Words this build has never heard fold to nil verdicts and to no line
+    /// at all, never to a guess — the chain/hub tolerance rule, held for the
+    /// new keys. And a score outside 1…100 reads as unscored (the phone's
+    /// "150 is not a percentage" rule).
+    func testUnknownWellbeingWordsFoldToNothingNotAGuess() throws {
+        let d = try device(from: #"{"devices":[{"name":"K","online":true,"presence":"levitating","occupants":"many","seeing":"face","seeing_score":150}]}"#)
+        XCTAssertNil(d.radarPresent, "an unknown presence word must not read as either answer")
+        XCTAssertNil(d.radarOccupants)
+        XCTAssertNil(d.seeingScore, "150 is not a percentage")
+        XCTAssertNil(d.wallWellbeingLine,
+                     "a class outside the vocabulary renders as nothing (Invariant II)")
+    }
+
+    /// A source that stopped answering keeps its devices on the wall, but its
+    /// remembered wellbeing claims do not survive: "someone present" is the
+    /// most present-tense fact on the wire, and a stale claim omits rather
+    /// than lies. Durable facts (board, hub standing, chain word) stay.
+    func testARememberedWellbeingClaimDoesNotSurviveTheSourceGoingDark() throws {
+        let snapshot = try JSONDecoder().decode(FleetSnapshot.self, from: Data(aggregatedJSON.utf8))
+        let remembered = snapshot.withEveryDeviceOffline()
+        let bedroom = remembered.devices[1]
+        XCTAssertFalse(bedroom.online)
+        XCTAssertNil(bedroom.presence)
+        XCTAssertNil(bedroom.occupants)
+        XCTAssertNil(bedroom.breathing)
+        XCTAssertNil(remembered.devices[2].seeing)
+        XCTAssertNil(remembered.devices[2].seeingScore)
+        XCTAssertEqual(remembered.devices[0].hw, "waveshare-esp32s3-lcd7",
+                       "the durable facts still draw the device")
+    }
+
     // MARK: - the fleet-level verdict
 
     /// The count under the fleet name must not treat a chainless display as a
