@@ -181,11 +181,12 @@ FORBIDDEN_SOURCES = {"'unsafe-inline'", "'unsafe-eval'", "'unsafe-hashes'", "*"}
 # ── page scanning ───────────────────────────────────────────────────────────
 
 COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
-# The end tags allow whitespace before ">" ("</script >" is a valid end tag
-# to every browser); a filter that only matched "</script>" would let such a
-# block slip past the inline-script census (CodeQL py/bad-tag-filter).
-SCRIPT_RE = re.compile(r"<script\b([^>]*)>([\s\S]*?)</script\s*>", re.IGNORECASE)
-STYLE_RE = re.compile(r"<style\b([^>]*)>([\s\S]*?)</style\s*>", re.IGNORECASE)
+# An end tag is "</script" followed by anything up to ">" ("</script >" and
+# "</script foo>" both close the element in every browser); a filter that only
+# matched "</script>" would let such a block slip past the inline-script
+# census (CodeQL py/bad-tag-filter).
+SCRIPT_RE = re.compile(r"<script\b([^>]*)>([\s\S]*?)</script\b[^>]*>", re.IGNORECASE)
+STYLE_RE = re.compile(r"<style\b([^>]*)>([\s\S]*?)</style\b[^>]*>", re.IGNORECASE)
 TAG_RE = re.compile(r"<[a-zA-Z][^>]*>")
 INLINE_ATTR_RE = re.compile(r"""\s(style|on[a-z]+)\s*=""", re.IGNORECASE)
 

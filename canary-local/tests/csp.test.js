@@ -57,8 +57,8 @@ function parse(csp) {
 const sha256 = (text) => "'sha256-" + createHash("sha256").update(text, "utf8").digest("base64") + "'";
 // Strip every match, and keep stripping until nothing changes: a single pass
 // over "<!<!---->--" leaves "<!--" behind, and the same goes for a nested
-// "<scr<script></script>ipt>". The end tags accept whitespace before ">"
-// ("</script >" is an end tag to every browser).
+// "<scr<script></script>ipt>". An end tag is "</script" followed by anything
+// up to ">" ("</script >" and "</script foo>" both close it in every browser).
 const stripAll = (text, re) => {
   let prev;
   do { prev = text; text = text.replace(re, ""); } while (text !== prev);
@@ -69,7 +69,7 @@ const stripJsComments = (src) =>
   src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\w])\/\/.*$/gm, "$1");
 // Markup only: no comments, no script or style bodies.
 const markupOf = (html) =>
-  stripAll(stripAll(stripHtmlComments(html), /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi), /<style\b[^>]*>[\s\S]*?<\/style\s*>/gi);
+  stripAll(stripAll(stripHtmlComments(html), /<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi), /<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi);
 
 // ── the policies are present, generated, and strict ─────────────────────────
 
@@ -133,14 +133,14 @@ test("every inline <script> and <style> body is hashed into the policy — and t
   const inline = [];
   for (const [page, html] of pageHtml) {
     const p = parse(policyOf(page));
-    for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+    for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)) {
       if (/\ssrc\s*=/.test(m[1])) continue;
       inline.push(`${page} <script${m[1]}>`);
       const want = sha256(m[2]);
       assert.ok((p.get("script-src") || []).includes(want),
         `${page}: inline <script${m[1]}> is not pinned — ${want} is missing from script-src (rerun gen_csp.py, or move it to a file)`);
     }
-    for (const m of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) {
+    for (const m of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\b[^>]*>/gi)) {
       inline.push(`${page} <style>`);
       const want = sha256(m[1]);
       assert.ok((p.get("style-src") || []).includes(want),
@@ -264,7 +264,7 @@ test("wap.html's style-src pins the firmware's captive page (a srcdoc frame) —
   // style= attribute, an on*= handler or an inline <script> there, so that
   // document must carry none.
   const captive = JSON.parse(read(join(ROOT, "devices/wap.json"))).captive.html;
-  const blocks = [...captive.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)].map((m) => m[1]);
+  const blocks = [...captive.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\b[^>]*>/gi)].map((m) => m[1]);
   assert.strictEqual(blocks.length, 1, "the captive page carries one <style> block");
   assert.deepStrictEqual(parse(policyOf("wap.html")).get("style-src"), ["'self'", sha256(blocks[0])],
     "wap.html style-src must be 'self' plus the captive page's <style> hash (rerun gen_csp.py after gen_wap.py)");
