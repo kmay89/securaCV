@@ -23,6 +23,73 @@
   entry yet, so a fresh device's standalone forecast stays idle until one
   lands. Compile-tested, not bench-tested.
 
+### One manifest per device, and the joins it makes checkable
+
+- **`devices/<slug>/device.json` describes each of the 19 devices the repo
+  builds** — the board and its PlatformIO envs, the fleet figure, the
+  enclosure CAD, the emulator flavor, the flasher product and the website
+  page — validated by one JSON Schema and by `scripts/lint_device_manifests.py`
+  in `lint.yml`. The linter proves every join against the files that own the
+  fact today: each env exists in its family's PlatformIO config and every
+  `flavors.json` env is claimed exactly once (or listed in
+  `devices/unclaimed.json` with a reason), the emulator flavor has a committed
+  dist artifact, the figure exists and its confidence is read from the ladder
+  rather than typed, the flasher product exists with the same chip, and every
+  `build_matrix.json` product has a manifest. Nothing consumes the manifests
+  yet; this is wave 1 of the device package (`docs/IMPROVEMENT_ROADMAP.md` §4).
+
+### Every Lab page carries a Content-Security-Policy
+
+- **`canary-local/tools/gen_csp.py` writes the policy for all 26 Lab pages and
+  the emulator harness from one table** — a strict floor (`default-src 'none'`,
+  same-origin scripts and styles, no `unsafe-*` anywhere) plus per-page rows
+  that each carry a reason (`'wasm-unsafe-eval'` for the pages that boot the
+  emulator, `frame-src` for the two that frame it, the flasher's release
+  hosts). Inline scripts and styles moved into files; the two that cannot
+  move — the flasher's import map and the firmware's captive page that
+  `wap.html` embeds — are hashed from their bytes, so a firmware change to the
+  captive page is `gen_wap.py` then `gen_csp.py`. `tests/csp.test.js` pins the
+  policies, `tests/csp_probe.mjs` loads every page in Chromium and fails on any
+  violation, and `gen_csp.py --check` joins the drift gate. Before this only
+  `flash.html` had a policy; the webcam and microphone benches had none.
+
+### CI: pinned Python, no evicted main runs, a native aarch64 add-on build, a mirror that pushes
+
+- **Every job that runs Python sets it up from `pyproject.toml`**
+  (`requires-python = ">=3.11"`), and rule R9 in `.github/CI.md` is enforced
+  by `ci_policy_check.py`.
+- **A merge burst no longer evicts the pending `main` run**: test workflows key
+  their concurrency group on the commit for pushes to `main` and on the PR for
+  pull requests; publishers keep their per-ref group under a documented
+  exemption; the checker enforces both halves.
+- **The add-on image builds aarch64 on a native `ubuntu-24.04-arm` runner**
+  instead of under QEMU, which had been hitting the 90-minute timeout on
+  `main`. `verify_published_image.sh` now cross-probes GHCR with the workflow
+  token, so it can say whether a package is private (a one-time visibility
+  flip by the owner) or a tag was never pushed — the 30 August failure was the
+  former, and the anonymous probe alone could not tell.
+- **`homeassistant-mirror.yml` pushes `custom_components/securacv/` to the HACS
+  mirror as a PR on every `main` change**, proving the copy exact with the
+  mirror's own check. It needs a `MIRROR_PAT` secret; without one the run stays
+  green and raises one deduplicated issue.
+- **`dist/*.meta.json` stamps the merge-base with `origin/main`** rather than
+  the rebuild bot's PR-branch commit; the committed stamps update on the next
+  bot rebuild.
+
+### The website's carries are generated, not hand-mirrored
+
+- **`scripts/carry_to_site.py --site <checkout>` refreshes everything the
+  website carries from this repo**: the `/checkup` build matrix (the `builds`
+  block of the website's `onboarding-spec.json`, projected from
+  `firmware/build_matrix.json`), `kernel-status.json` (via
+  `tools/gen_kernel_status.py --site`, with the evidence sentences now keyed by
+  tile and status in the generator), and the TV verifier
+  (`tv/vendor/verify_core.js`, its fixtures and their provenance file). The
+  website's weekly carry job runs it next to the CAD carry and opens a PR only
+  when bytes moved. Its first run showed the `/checkup` matrix four products
+  behind. `onboarding-spec.json` itself stays website-authored; only that one
+  block is stamped.
+
 ### Wi-Fi sensing that a solo Canary can actually run
 
 - **The CSI HAL compiles on the ESP32-C6 / C5 it always claimed to support.**
