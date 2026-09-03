@@ -9,6 +9,7 @@
 #include <WiFi.h>
 
 #include "canary/net/glass_web.h"
+#include "canary/net/settings_policy.h"  // the on-glass-only write class
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/tz_auto.h"
 #include "canary/net/mqtt_mgr.h"   // hub state for the /api/fleet self-report
@@ -78,6 +79,18 @@ bool s_mdns_added = false;
 // itself). That is the same trust boundary /api/glass and /api/fleet already
 // sit on (see handle_glass) — the reachable-from-a-web-page half is what this
 // closes, which is the drive-by the finding describes.
+//
+//   3) And for the two keys where that residual LAN host is NOT an acceptable
+//      writer — wx_direct, the standalone-weather opt-in that is this glass's
+//      one OPT-IN outbound path (SNTP and the daily signed update check are
+//      always-on and carry no location), and wx_loc, the coarse location it
+//      would carry — the network API refuses the write outright, every caller,
+//      every token: 403 {"ok":false,"err":"on_glass_only"}. Those are set on
+//      the glass (settings > weather > fetch itself) or not at all. "Zero
+//      phone-home" must not be a principle a neighbor on the WiFi can flip.
+//      The key class lives in ONE host-tested table (settings_policy.h) that
+//      handle_settings_set enforces and handle_settings_get serves under
+//      `on_glass`, so no client draws a switch this handler would refuse.
 char s_csrf[33];  // 16 RNG bytes as 32 lowercase-hex chars + NUL
 
 void csrf_init() {
@@ -378,6 +391,32 @@ void handle_settings_get() {
   }
   if (o < sizeof(body))
     o += (size_t)snprintf(body + o, sizeof(body) - o, "]");
+#ifdef GW_WX
+  // The standalone-weather block — READ-ONLY from here, and nested under
+  // `on_glass` on purpose: these are the keys /api/set refuses (rule 3 of
+  // the write-guard note), so a client that renders top-level keys as
+  // controls never grows a switch that would 403. `keys` is the policy
+  // table itself (settings_policy.h), so the page and the guard cannot
+  // disagree about which keys those are. The opt-in's on/off goes to every
+  // caller. The two LOCATION-DERIVED facts — whether a grid point is stored,
+  // and the fetcher's verdict (wx_direct.h: 0 off, 1 needs a location, 2 a
+  // hub owns weather, 3 on, 4 on but the last fetch failed) — ride only on
+  // requests that are not cross-site (no Origin, or the glass's own pages),
+  // the same rule /api/fleet applies to presence. The grid point itself is
+  // never served, by this route or any other.
+  o = bappend(body, sizeof(body), o, ",\"on_glass\":{\"keys\":[");
+  for (size_t i = 0; i < canary::net::kOnGlassOnlyKeyCount; i++) {
+    o = bappend(body, sizeof(body), o, "%s\"%s\"", i ? "," : "",
+                canary::net::kOnGlassOnlyKeys[i]);
+  }
+  o = bappend(body, sizeof(body), o, "],\"wx_direct\":%u", gs.wx_direct);
+  if (!origin_is_cross_site()) {
+    o = bappend(body, sizeof(body), o,
+                ",\"wx_loc_set\":%u,\"wx_status\":%u", gs.wx_loc_set,
+                (unsigned)canary::net::wx_direct_status());
+  }
+  o = bappend(body, sizeof(body), o, "}");
+#endif
 #endif
 #ifdef CD_NIGHTLIGHT
   // The nightlight's own knobs, plus the scene catalog BY NAME — the app
@@ -419,8 +458,27 @@ void handle_settings_get() {
 // engine validates and debounces the NVS commit, exactly as if the change
 // had been made on the panel.
 void handle_settings_set() {
-  if (write_blocked()) return;  // Origin allowlist + per-boot CSRF token
   const String k = s_server->arg("k");
+  // The on-glass-only class (settings_policy.h, rule 3 of the write-guard
+  // note): the standalone-weather opt-in and its coarse location. Refused
+  // BEFORE the Origin/CSRF gate and regardless of it — no header, token or
+  // origin reaches a branch that stores these, so a host on the LAN cannot
+  // switch this glass's one opt-in outbound path on or plant a location for
+  // it. One Warn line per refusal, so a spree shows up in the browser serial
+  // monitor. The key logged is the policy table's own constant (the lookup
+  // returns the table entry it matched), never caller-supplied text.
+  if (const char* refused =
+          canary::net::settings_key_on_glass_only_name(k.c_str())) {
+    char msg[96];
+    snprintf(msg, sizeof(msg),
+             "WARN refused network write to %s - set it on the glass "
+             "(settings > weather)", refused);
+    canary::log_line("WEB", msg);
+    s_server->send(403, "application/json",
+                   "{\"ok\":false,\"err\":\"on_glass_only\"}");
+    return;
+  }
+  if (write_blocked()) return;  // Origin allowlist + per-boot CSRF token
   const long v = s_server->arg("v").toInt();
   auto gs = canary::glass::settings();  // copy; setters below persist
   bool ok = true;
@@ -453,23 +511,10 @@ void handle_settings_set() {
     gs.rotation = (uint8_t)v;
   else if (k == "clock_12h" && (v == 0 || v == 1))
     gs.clock_12h = (uint8_t)v;
-#ifdef GW_WX
-  else if (k == "wx_direct" && (v == 0 || v == 1))
-    gs.wx_direct = (uint8_t)v;
-  else if (k == "wx_loc") {
-    // The coarse location arrives as ONE combined integer (wx_loc_encode in
-    // glass_settings.h) so half a coordinate can never be stored. The app
-    // coarsens to the 0.1-degree grid before encoding; anything outside the
-    // grid is refused here, exactly like every other knob.
-    int16_t la, lo;
-    if (!canary::glass::wx_loc_decode(v, &la, &lo)) ok = false;
-    else {
-      gs.wx_lat10 = la;
-      gs.wx_lon10 = lo;
-      gs.wx_loc_set = 1;
-    }
-  }
-#endif
+  // wx_direct and wx_loc have NO branch here on purpose — they are the
+  // on-glass-only class refused at the top of this handler. The opt-in is
+  // set on the glass (settings > weather); a location is not settable over
+  // the network at all (settings_policy.h). Do not add them back.
 #endif
   // Two stored modes only (glow / off) — what "off" does on tap (peek vs
   // wake) is per-flavor behavior, not a third value (review catch: a 2
@@ -608,10 +653,14 @@ void handle_tz_set() {
 // button takes — so HTTP and MQTT can never disagree about a run in
 // flight; the engine's own guard answers "busy" for both.
 //
-// LAN-open like every write here (/api/set, /api/tz): the glass mints no
-// bearer credential, the LAN is the trust boundary, and the worst a
-// caller can do is start a check for firmware the device then verifies
-// against its pinned Ed25519 release key. What it is NOT open to is a web
+// LAN-open like the ordinary writes here (/api/set's look and night knobs,
+// /api/tz): the glass mints no bearer credential, the LAN is the trust
+// boundary, and the worst a caller can do is start a check for firmware
+// the device then verifies against its pinned Ed25519 release key. (The
+// one write class that is NOT LAN-open is the on-glass-only pair — see
+// rule 3 of the write-guard note; an update check is not an opt-in to
+// anything and is answered by a signature, so it does not belong there.)
+// What it is NOT open to is a web
 // page on another origin: a browser attaches Origin to every POST, so the
 // two kick routes refuse a cross-site Origin exactly as /api/set does. They
 // do not require the per-boot CSRF token, because their callers are native

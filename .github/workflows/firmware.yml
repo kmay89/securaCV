@@ -1185,6 +1185,26 @@ jobs:
           /tmp/voice_clearance | tee /tmp/voice_clearance.log
           grep -q "ALL .* PASSED" /tmp/voice_clearance.log
 
+      - name: Build + run canary-display settings write-policy host test
+        # The LAN write API's on-glass-only class (canary/net/settings_policy.h):
+        # the standalone-weather opt-in (wx_direct — the display's one opt-in
+        # outbound path) and its coarse location (wx_loc) are refused by
+        # /api/set for every caller, token or not, so a host on the home WiFi
+        # cannot flip zero-phone-home; the switch is a hand on the glass
+        # (settings > weather > fetch itself). Pins every egress/location key
+        # true, every ordinary knob false, unknown and near-miss keys false,
+        # that the lookup hands the refusal log the table's own constant, and
+        # that the table /api/settings serves under `on_glass` and the
+        # predicate the handler enforces are one thing.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_settings_policy.cpp \
+              -o /tmp/settings_policy
+          /tmp/settings_policy | tee /tmp/settings_policy.log
+          grep -q "ALL .* PASSED" /tmp/settings_policy.log
+
       - name: Build + run Canary Link core host test
         # The generic authenticated-datagram layer under the Tin Can's strings
         # (firmware/common/link/) — deliberately NOT kid-specific, because

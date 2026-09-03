@@ -218,7 +218,20 @@ ROUNDFRAME11_SRC = test_round_frame_cpp11.cpp
 $(ROUNDFRAME11_BIN): $(ROUNDFRAME11_SRC)
 	$(CXX) -std=gnu++11 -O2 -Wall -Wextra $(INC) -o $@ $(ROUNDFRAME11_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)
+# The LAN write policy (canary/net/settings_policy.h): the /api/set keys the
+# display refuses from the network for every caller — the standalone-weather
+# opt-in (wx_direct, the glass's one opt-in outbound path) and its coarse
+# location (wx_loc) — so a host on the home WiFi cannot flip zero-phone-home.
+# Pins every egress/location key true, every ordinary knob false, unknown and
+# near-miss keys false, the lookup's table-constant return, and the served
+# table == the predicate. Pure header, no Arduino.
+POLICY_BIN = test_settings_policy
+POLICY_SRC = test_settings_policy.cpp
+
+$(POLICY_BIN): $(POLICY_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(POLICY_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -240,6 +253,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(MOTION_BIN)
 	./$(ROUNDFRAME_BIN)
 	./$(ROUNDFRAME11_BIN)
+	./$(POLICY_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN)
