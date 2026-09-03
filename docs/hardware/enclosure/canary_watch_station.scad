@@ -41,7 +41,8 @@
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect + the catalog tolerance trio the knobs cite
-use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the drum's blind pocket
+use <canary_mount_lib.scad>
+use <canary_snap_lib.scad>   // the finger strain budget  // the stud/keyhole hanging standard — the drum's blind pocket
 use <canary_board_lib.scad>  // board registry — the measured round_disp record disc_d cites
 
 /* [What to render] */
@@ -80,9 +81,12 @@ snap_n       = 4;     // nubs / wall slots
 snap_w       = 6.5;   // slot width (arc chord)
 snap_h       = 1.8;   // slot height
 snap_depth   = 2.6;   // slot center below the drum rim
-snap_proud   = 0.4;   // nub stand-proud of the skirt (with the relief slits this is
-                      // the working snap interference — 0.6 needed crush to insert)
-skirt_dep    = 4.0;   // bezel skirt reach into the bore
+snap_proud   = 0.3;   // nub stand-proud of the skirt: 0.15 of working interference over the bore
+                      // (0.4 needed 0.25 of finger travel — 9 % strain on the 2.35 mm skirt)
+skirt_dep    = 4.0;   // bezel skirt reach into the bore (capped: the skirt must float over the PCB rim)
+skirt_t      = 1.0;   // finger thickness — the skirt is relieved to this behind the nubs so the
+                      // fingers flex (a 2.35 wall did not); the snap lib's cycle budget gates it
+pcb_t        = 1.2;   // display PCB thickness — the skirt floats 0.2 over its rim
 
 /* [Mounting] */
 kh_head_d  = 7.0;    // blind keyhole pocket in the drum back (wall mount) — catalog standard, canary_mount_lib
@@ -139,6 +143,15 @@ echo(str("Canary Watch station v0.2-dev — drum Ø", drum_d, " x ", puck_len,
 // ----------------------------------------------------------------------------
 // the four snap windows, mid-wall between the USB slot (270°) and keyhole (90°)
 function snap_angs() = [45, 135, 225, 315];
+// the bezel's fingers are a snap worked at every service: the lib's CYCLE
+// budget, on the finger's real numbers (thickness skirt_t, travel = the nub's
+// interference over the bore, free length = the slit length)
+snap_defl = skirt_od/2 + snap_proud - bore_d/2;
+assert(snap_strain(skirt_t, snap_defl, skirt_dep - 0.6) <= snap_budget_cycle(),
+       str("bezel fingers strain ", round(snap_strain(skirt_t, snap_defl, skirt_dep - 0.6)*1000)/10,
+           " % — over the ", round(snap_budget_cycle()*1000)/10, " % cycle budget: thin skirt_t or shrink snap_proud"));
+assert(drum_h - skirt_dep >= z_pcb + pcb_t + 0.2,
+       "the bezel skirt lands on the display PCB rim — shorten skirt_dep (it must float 0.2 over pcb_t)");
 module drum() {
     difference() {
         cylinder(d = drum_d, h = drum_h);
@@ -190,8 +203,11 @@ module bezel() {
             translate([0, 0, -skirt_dep]) difference() {
                 cylinder(d = skirt_od, h = skirt_dep + 0.01);
                 translate([0, 0, -0.1]) cylinder(d = bez_ap_d, h = skirt_dep + 0.2);
+                // relieve the skirt to skirt_t over the finger span so the fingers
+                // are beams, not a wall; slits leave a 0.6 root under the face
+                translate([0, 0, -0.1]) cylinder(d = skirt_od - 2*skirt_t, h = skirt_dep - 0.6);
                 for (a = snap_angs()) rotate([0, 0, a + 45])
-                    translate([skirt_od/2 - 3, -0.6, -0.1]) cube([6, 1.2, skirt_dep - 0.9]);
+                    translate([skirt_od/2 - 3, -0.6, -0.1]) cube([6, 1.2, skirt_dep - 0.6]);
             }
             // snap nubs, chamfered both ways (assembly AND service removal).
             // The face underside (bezel z=0) rests on the drum rim (drum z=drum_h),

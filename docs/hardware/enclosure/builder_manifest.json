@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "56c0f7efe252a224230ad622c462bb3d4eac2f4abd0a35ba92384b28ede4d244",
+      "sha256": "a84917acd5e8e64bf53526f7f7ed2ebfac68b84184f15d2f0bf97097b6b6f919",
       "groups": [
         {
           "name": "What to render",
@@ -285,6 +285,33 @@
               "type": "number",
               "default": 1.0,
               "desc": "recess depth into the outer wall face"
+            },
+            {
+              "name": "head_seal",
+              "type": "bool",
+              "default": false,
+              "desc": "(seal mode) O-ring under every lid screw head: the posts stand INSIDE the gasket"
+            },
+            {
+              "name": "opt_weep",
+              "type": "bool",
+              "default": false,
+              "desc": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate"
+            },
+            {
+              "name": "usb_hood",
+              "type": "bool",
+              "default": false,
+              "desc": "drip awning over the USB opening — for a case standing sideways or on a desk"
+            },
+            {
+              "name": "hood_reach",
+              "type": "number",
+              "default": 4.0,
+              "min": 2,
+              "step": 0.5,
+              "max": 8,
+              "desc": "how far the awning's drip edge stands off the wall"
             }
           ]
         },
@@ -416,11 +443,11 @@
             {
               "name": "lid_edge2",
               "type": "number",
-              "default": 0.0,
+              "default": 0.8,
               "min": 0,
               "step": 0.1,
               "max": 1.5,
-              "desc": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover"
+              "desc": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
             },
             {
               "name": "opt_mark",
@@ -529,6 +556,9 @@
               "name": "batt_h",
               "type": "number",
               "default": 6.0,
+              "min": 4,
+              "step": 0.5,
+              "max": 12,
               "desc": "bay height — keep >= 1 mm over the nominal cell for LiPo swelling"
             },
             {
@@ -542,6 +572,12 @@
               "type": "number",
               "default": 4.0,
               "desc": "lead channel notched into the bay ribs, hugs the +Y wall (0 = off)"
+            },
+            {
+              "name": "batt_hold",
+              "type": "bool",
+              "default": true,
+              "desc": "lid-side ribs over the bay that stop the cell bouncing in a drop: they"
             }
           ]
         },
@@ -566,7 +602,8 @@
             {
               "name": "gps_gap",
               "type": "number",
-              "default": 2.5
+              "default": 2.3,
+              "desc": "rim fuses into the battery rib at 2.3 (a larger gap leaves a slot the slicer can't print)"
             }
           ]
         },
@@ -576,7 +613,14 @@
             {
               "name": "ant_d",
               "type": "number",
-              "default": 6.5
+              "default": 6.5,
+              "desc": "SMA bulkhead thread is 6.35; the bore is a teardrop so its crown prints without sag"
+            },
+            {
+              "name": "ant_z",
+              "type": "number",
+              "default": 4.0,
+              "desc": "bore center above the PCB underside (clears the corner posts' gussets)"
             }
           ]
         },
@@ -657,13 +701,13 @@
               "name": "insert_d",
               "type": "number",
               "default": 3.5,
-              "desc": "insert nominal OD (M2 short series: 3.5 x 4.0)"
+              "desc": "(m2) insert knurl OD (M2 short series: 3.5 x 4.0) — the bore is cut 0.3 under"
             },
             {
               "name": "insert_h",
               "type": "number",
               "default": 4.0,
-              "desc": "insert length"
+              "desc": "(m2) insert length; other sizes read the registry"
             },
             {
               "name": "lid_ribs",
@@ -742,8 +786,8 @@
             {
               "name": "standoff_h",
               "type": "number",
-              "default": 3.0,
-              "desc": "PCB sits this high off the floor (clearance for bottom parts)"
+              "default": 3.5,
+              "desc": "PCB sits this high off the floor (clearance for bottom parts). 3.5, not"
             },
             {
               "name": "standoff_d",
@@ -754,25 +798,46 @@
               "name": "post_d",
               "type": "number",
               "default": 5.0,
-              "desc": "corner screw posts (lid screws thread into these)"
+              "desc": "corner screw posts (lid screws thread into these; auto-fattened for larger screws)"
+            },
+            {
+              "name": "screw_size",
+              "type": "string",
+              "default": "m2",
+              "options": [
+                "m2",
+                "m2.5",
+                "m3"
+              ],
+              "desc": "lid screw — the catalog screw registry (canary_core_lib) sets"
+            },
+            {
+              "name": "screw_head",
+              "type": "string",
+              "default": "flat",
+              "options": [
+                "flat",
+                "pan"
+              ],
+              "desc": "the head in the bag: flat = 90° countersink (this lid's validated"
             },
             {
               "name": "screw_d",
               "type": "number",
               "default": 1.6,
-              "desc": "M2 self-tapping pilot — 1.6 mm so threads bite (2.0 = no grip)"
+              "desc": "(m2) self-tapping pilot — 1.6 mm so threads bite (2.0 = no grip)"
             },
             {
               "name": "screw_head_d",
               "type": "number",
               "default": 4.0,
-              "desc": "countersink on lid"
+              "desc": "(m2 flat) the flat head's Ø, used by the shield's seat; the lid's 90° cone"
             },
             {
               "name": "screw_head_h",
               "type": "number",
               "default": 1.2,
-              "desc": "countersink depth — the cone below is a true 90° seat for an M2 flat head"
+              "desc": "(m2 flat) countersink depth — the cone below is a true 90° seat for an M2 flat head"
             }
           ]
         },
@@ -783,13 +848,25 @@
               "name": "usb_w",
               "type": "number",
               "default": 12.0,
+              "min": 9,
+              "step": 0.5,
+              "max": 14,
               "desc": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)"
             },
             {
               "name": "usb_h",
               "type": "number",
               "default": 6.5,
+              "min": 4,
+              "step": 0.5,
+              "max": 8,
               "desc": "opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare"
+            },
+            {
+              "name": "usb_web",
+              "type": "number",
+              "default": 1.5,
+              "desc": "wall guaranteed ABOVE the opening in every mode (the compact case shipped 0.65)"
             },
             {
               "name": "usb_z",
@@ -805,7 +882,23 @@
             {
               "name": "cam_win_d",
               "type": "number",
-              "default": 9.0
+              "default": 9.0,
+              "desc": "asserted against cam_fov at the disc's inner plane so a corner never vignettes"
+            },
+            {
+              "name": "cam_fov",
+              "type": "number",
+              "default": 66,
+              "min": 40,
+              "step": 1,
+              "max": 120,
+              "desc": "lens diagonal field of view (OV2640 on the Sense: 66°)"
+            },
+            {
+              "name": "cam_lens_h",
+              "type": "number",
+              "default": 6.0,
+              "desc": "lens front above the PCB top (Sense expansion board + OV2640 module) — MEASURE"
             },
             {
               "name": "cam_disc_d",
@@ -858,7 +951,8 @@
             {
               "name": "vent_hole_d",
               "type": "number",
-              "default": 1.6
+              "default": 1.0,
+              "desc": "fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm); the"
             },
             {
               "name": "vent_ring_d",
@@ -868,7 +962,7 @@
             {
               "name": "vent_holes",
               "type": "number",
-              "default": 6
+              "default": 10
             },
             {
               "name": "vent_dx",
@@ -916,7 +1010,13 @@
               "name": "mag_h",
               "type": "number",
               "default": 2.2,
-              "desc": "pocket depth — a 6 x 2 mm disc is standard; keep parts under"
+              "desc": "pocket depth — a 6 x 2 mm disc is standard"
+            },
+            {
+              "name": "mag_under",
+              "type": "number",
+              "default": 6.0,
+              "desc": "tallest part on the board UNDER the pocket: the Sense expansion board's top"
             },
             {
               "name": "mag_dx",
@@ -968,16 +1068,18 @@
               "type": "number",
               "default": 0.25,
               "desc": "gap between tab inner face and the board edge (a fit — tune on the coupon)"
-            }
-          ]
-        },
-        {
-          "name": "Quality",
-          "params": [
+            },
             {
-              "name": "board_cy",
+              "name": "clip_dx",
               "type": "number",
-              "default": 0
+              "default": 5.25,
+              "desc": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The"
+            },
+            {
+              "name": "clip_over",
+              "type": "number",
+              "default": 0.15,
+              "desc": "extra lip travel per side for the MEASURED board (brd_xiao_w_measured() 17.8"
             }
           ]
         }
@@ -985,7 +1087,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "12075acdcd2e1ed1b99195131895f7e73dd7ad8db93b4d99a853e3926a1da87a"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -993,7 +1095,7 @@
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "7949c28187ab69e8bda7d736454a4d1982c0646e45349829598743466490ede3"
+          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
         },
         {
           "file": "canary_port_lib.scad",
@@ -1089,7 +1191,7 @@
         }
       },
       "units": {},
-      "sha256": "f44e72c02332d6e1c1561073d58764338102f51b31c611b9d66706d2d85ca0f9",
+      "sha256": "f7f6fb4c7ea0e74c30d4d736332956f81c24f69fbe6e6d97c9f2314045700f42",
       "groups": [
         {
           "name": "What to render",
@@ -1145,7 +1247,7 @@
               "name": "opt_vent",
               "type": "bool",
               "default": false,
-              "desc": "GORE vent cluster -> pressure equalisation (recommended with opt_seal)"
+              "desc": "GORE vent cluster -> pressure equalization (recommended with opt_seal)"
             },
             {
               "name": "opt_tamper",
@@ -1181,6 +1283,24 @@
                 "both"
               ],
               "desc": ""
+            },
+            {
+              "name": "opt_weep",
+              "type": "bool",
+              "default": false,
+              "desc": "Ø2 weep at the cavity's low point (bottom wall, beside the USB): condensate leaves (ON in the weather preset)"
+            },
+            {
+              "name": "seal_mid_posts",
+              "type": "bool",
+              "default": false,
+              "desc": "(seal mode) one extra screw post mid-way along each long wall: four corner"
+            },
+            {
+              "name": "head_seal",
+              "type": "bool",
+              "default": false,
+              "desc": "(seal mode) O-ring under each front screw head — the posts stand INSIDE the"
             }
           ]
         },
@@ -1230,14 +1350,20 @@
             {
               "name": "xiao_w",
               "type": "number",
-              "default": 17.5,
-              "desc": "stacked XIAO (X) — spec; a real board mics 17.8 (brd_xiao_w_measured())"
+              "default": 17.8,
+              "desc": "stacked XIAO (X) — the MEASURED board (brd_xiao_w_measured()); sets the corner pins"
             },
             {
               "name": "stack_sock_h",
               "type": "number",
-              "default": 11.5,
+              "default": 6.5,
               "desc": "module underside -> XIAO underside when seated (socket + headers):"
+            },
+            {
+              "name": "xiao_below",
+              "type": "number",
+              "default": 5.5,
+              "desc": "air under the XIAO's outward face: its USB-C shell (3.3) plus half a plug's"
             },
             {
               "name": "vm_front_h",
@@ -1302,7 +1428,19 @@
               "name": "cam_post_h",
               "type": "number",
               "default": 4.0,
-              "desc": "post height = lens-board standoff from the front face"
+              "desc": "post height = lens-board standoff from the front face — auto-raised to"
+            },
+            {
+              "name": "cam_lens_h",
+              "type": "number",
+              "default": 5.5,
+              "desc": "Pi-cam v1.3 lens holder height above the PCB face (drawing: 9.0 module"
+            },
+            {
+              "name": "cam_lens_sq",
+              "type": "number",
+              "default": 8.5,
+              "desc": "the holder's square (its 12.0 diagonal cannot enter a Ø10 aperture, so"
             },
             {
               "name": "cam_screw_d",
@@ -1326,7 +1464,16 @@
               "name": "cam_ap_d",
               "type": "number",
               "default": 10.0,
-              "desc": "lens aperture in the front face"
+              "desc": "lens aperture in the front face — asserted against cam_fov"
+            },
+            {
+              "name": "cam_fov",
+              "type": "number",
+              "default": 62,
+              "min": 40,
+              "step": 1,
+              "max": 160,
+              "desc": "lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)"
             },
             {
               "name": "cam_disc_d",
@@ -1384,7 +1531,7 @@
             {
               "name": "standoff_h",
               "type": "number",
-              "default": 3.0,
+              "default": 3.5,
               "desc": "PCBs sit this high off the back (RAISE if DevKit has soldered pin headers!)"
             },
             {
@@ -1480,20 +1627,43 @@
               "default": 5.0
             },
             {
+              "name": "screw_size",
+              "type": "string",
+              "default": "m2",
+              "options": [
+                "m2",
+                "m2.5",
+                "m3"
+              ],
+              "desc": "front screw — the core lib's screw registry sets pilot, clearance,"
+            },
+            {
+              "name": "screw_head",
+              "type": "string",
+              "default": "pan",
+              "options": [
+                "pan",
+                "flat"
+              ],
+              "desc": "the head in the bag: pan = flat-floored counterbore (the BOM's"
+            },
+            {
               "name": "screw_d",
               "type": "number",
               "default": 1.6,
-              "desc": "M2 self-tapping pilot"
+              "desc": "(m2) M2 self-tapping pilot"
             },
             {
               "name": "screw_head_d",
               "type": "number",
-              "default": 4.0
+              "default": 4.0,
+              "desc": "(m2 pan) head Ø"
             },
             {
               "name": "screw_head_h",
               "type": "number",
-              "default": 2.0
+              "default": 2.0,
+              "desc": "(m2 pan) seat depth: the head 1.6 + 0.4 sink. Deeper than the 2.0 front,"
             }
           ]
         },
@@ -1503,25 +1673,32 @@
             {
               "name": "usb_w",
               "type": "number",
-              "default": 10.5,
-              "desc": "opening width (USB-C body ~8.9 — port_usbc_shell_w())"
+              "default": 12.0,
+              "min": 9,
+              "step": 0.5,
+              "max": 14,
+              "desc": "opening width: clears rugged cable boots (USB-C body ~8.9 — port_usbc_shell_w())"
             },
             {
               "name": "usb_h",
               "type": "number",
-              "default": 6.5
+              "default": 6.5,
+              "min": 4,
+              "step": 0.5,
+              "max": 8,
+              "desc": "opening height: boot clearance (the shell is 3.26)"
             },
             {
               "name": "usb_z",
               "type": "number",
               "default": 0.0,
-              "desc": "extra lift relative to PCB-top centering"
+              "desc": "extra lift relative to the connector AXIS (shell/2 above the PCB) — MEASURE"
             },
             {
               "name": "usb_dx",
               "type": "number",
               "default": 0.0,
-              "desc": "upper/main port offset along the wall — MEASURE your boards"
+              "desc": "upper/main port offset along the wall — MEASURE your boards (the module's"
             },
             {
               "name": "xiao_usb_dx",
@@ -1530,10 +1707,10 @@
               "desc": "XIAO port offset along the wall"
             },
             {
-              "name": "xiao_usb_drop",
+              "name": "xiao_usb_z",
               "type": "number",
-              "default": 10.0,
-              "desc": "XIAO port center BELOW the module port center — MEASURE the seated stack"
+              "default": 0.0,
+              "desc": "extra lift of the XIAO port relative to its DERIVED axis (the XIAO's outward"
             }
           ]
         },
@@ -1569,6 +1746,15 @@
               "type": "number",
               "default": 5.0,
               "desc": "M5 thumbscrew (GoPro standard)"
+            },
+            {
+              "name": "hinge_clear",
+              "type": "number",
+              "default": 0.15,
+              "min": 0,
+              "step": 0.05,
+              "max": 0.4,
+              "desc": "extra slot width on the bracket for printed fins that run +0.1 oversize"
             },
             {
               "name": "hinge_teeth",
@@ -1715,10 +1901,19 @@
               "default": 1.0
             },
             {
+              "name": "weep_d",
+              "type": "number",
+              "default": 2.0,
+              "min": 1.5,
+              "step": 0.5,
+              "max": 3,
+              "desc": "weep bore (canary_core_lib weep_d)"
+            },
+            {
               "name": "hood_len",
               "type": "number",
               "default": 9.0,
-              "desc": "rain-hood protrusion from the front face"
+              "desc": "rain-hood protrusion from the front face (a hooded front exports FACE-UP)"
             },
             {
               "name": "hood_t",
@@ -1864,11 +2059,11 @@
             {
               "name": "lid_edge2",
               "type": "number",
-              "default": 0.0,
+              "default": 0.8,
               "min": 0,
               "step": 0.1,
               "max": 1.5,
-              "desc": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover"
+              "desc": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
             },
             {
               "name": "label_text",
@@ -1940,7 +2135,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "12075acdcd2e1ed1b99195131895f7e73dd7ad8db93b4d99a853e3926a1da87a"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1948,7 +2143,7 @@
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "7949c28187ab69e8bda7d736454a4d1982c0646e45349829598743466490ede3"
+          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
         },
         {
           "file": "canary_port_lib.scad",
@@ -2018,7 +2213,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "ba868339c8503158a45d242b8ad34689b7516adaff273dcfcf8c3d4ebaa3fc15",
+      "sha256": "16c4732a1734574e6209330203be2152ece01448147b8a34e9b6c61be71c01df",
       "groups": [
         {
           "name": "What to render",
@@ -2064,6 +2259,33 @@
               "type": "bool",
               "default": false,
               "desc": "reed/Hall magnet pocket on the face underside"
+            },
+            {
+              "name": "opt_weep",
+              "type": "bool",
+              "default": true,
+              "desc": "Ø2 weep through the bottom wall at the floor corner (mounted button-down):"
+            },
+            {
+              "name": "weep_d",
+              "type": "number",
+              "default": 2.0,
+              "min": 1.5,
+              "step": 0.5,
+              "max": 3,
+              "desc": "weep bore"
+            },
+            {
+              "name": "seal_mid_posts",
+              "type": "bool",
+              "default": true,
+              "desc": "one extra face screw per long wall, at the cable well: four corner screws"
+            },
+            {
+              "name": "head_seal",
+              "type": "bool",
+              "default": false,
+              "desc": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a"
             }
           ]
         },
@@ -2099,6 +2321,12 @@
               "type": "number",
               "default": 6.5,
               "desc": "module underside -> XIAO underside when seated — THIS bench"
+            },
+            {
+              "name": "xiao_below",
+              "type": "number",
+              "default": 5.5,
+              "desc": "air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's"
             },
             {
               "name": "vm_front_h",
@@ -2152,7 +2380,20 @@
             {
               "name": "cam_post_h",
               "type": "number",
-              "default": 4.0
+              "default": 4.0,
+              "desc": "auto-raised to hold the lens holder behind the face (cam_lens_h)"
+            },
+            {
+              "name": "cam_lens_h",
+              "type": "number",
+              "default": 5.5,
+              "desc": "Pi-cam v1.3 lens holder height above the PCB face — MEASURE yours"
+            },
+            {
+              "name": "cam_lens_sq",
+              "type": "number",
+              "default": 8.5,
+              "desc": "the holder's square: its 12.0 diagonal cannot enter a Ø10 aperture"
             },
             {
               "name": "cam_screw_d",
@@ -2214,6 +2455,12 @@
               "type": "number",
               "default": 18.0,
               "desc": "body + terminals depth behind the panel — checked against the cavity"
+            },
+            {
+              "name": "btn_nut_ac",
+              "type": "number",
+              "default": 16.2,
+              "desc": "panel nut across corners (14 AF M12 nut = 16.2; 16 AF = 18.5) — asserted"
             }
           ]
         },
@@ -2298,14 +2545,14 @@
             {
               "name": "usb_exit_dx",
               "type": "number",
-              "default": 5.0,
-              "desc": "exit offset from the centerline"
+              "default": 0.0,
+              "desc": "exit offset from the centerline (0 keeps it between the mid-span posts)"
             },
             {
               "name": "usb_exit_dy",
               "type": "number",
-              "default": 6.0,
-              "desc": "exit offset above the well center — clears the lower T-stud pocket"
+              "default": 0.0,
+              "desc": "exit offset from the well center: the oval sits wholly in the well, under"
             }
           ]
         },
@@ -2384,19 +2631,43 @@
               "default": 5.0
             },
             {
+              "name": "screw_size",
+              "type": "string",
+              "default": "m2",
+              "options": [
+                "m2",
+                "m2.5",
+                "m3"
+              ],
+              "desc": "face screw — the core lib's registry sets pilot, clearance,"
+            },
+            {
+              "name": "screw_head",
+              "type": "string",
+              "default": "pan",
+              "options": [
+                "pan",
+                "flat"
+              ],
+              "desc": "pan = flat-floored seat (the BOM's black-oxide pan heads; what"
+            },
+            {
               "name": "screw_d",
               "type": "number",
-              "default": 1.6
+              "default": 1.6,
+              "desc": "(m2)"
             },
             {
               "name": "screw_head_d",
               "type": "number",
-              "default": 4.0
+              "default": 4.0,
+              "desc": "(m2 pan)"
             },
             {
               "name": "screw_head_h",
               "type": "number",
-              "default": 2.0
+              "default": 2.0,
+              "desc": "(m2 pan) seat depth; the face carries a pad under it (head_pad)"
             }
           ]
         },
@@ -2460,8 +2731,8 @@
             {
               "name": "stud_y",
               "type": "number",
-              "default": 34.0,
-              "desc": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit)"
+              "default": 40.0,
+              "desc": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit and the well)"
             },
             {
               "name": "kh_head_d",
@@ -2509,7 +2780,7 @@
               "name": "plate_screw_d",
               "type": "number",
               "default": 4.2,
-              "desc": "wall screws (#8 / M4 countersunk)"
+              "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
             }
           ]
         },
@@ -2691,27 +2962,12 @@
               "default": 0.25
             }
           ]
-        },
-        {
-          "name": "Quality",
-          "params": [
-            {
-              "name": "vm_cx",
-              "type": "number",
-              "default": 0
-            },
-            {
-              "name": "cam_cx",
-              "type": "number",
-              "default": 0
-            }
-          ]
         }
       ],
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "12075acdcd2e1ed1b99195131895f7e73dd7ad8db93b4d99a853e3926a1da87a"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2719,7 +2975,7 @@
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "7949c28187ab69e8bda7d736454a4d1982c0646e45349829598743466490ede3"
+          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
         },
         {
           "file": "canary_port_lib.scad",
@@ -2788,9 +3044,7 @@
         "mount_style": "Mount style",
         "radome_t": "Radome thickness"
       },
-      "hints": {
-        "radome_t": "The membrane the beam passes through: 1.0 mm is the proven default; 1.5 mm is a half-wave wall (also low-loss) if you want a tougher face."
-      },
+      "hints": {},
       "choices": {
         "radar": {
           "bha2": "MR60BHA2 — breathing & presence (wall or bedside)",
@@ -2805,7 +3059,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "c9bfc3b9e7961bc29a0497f8c2a5a6f53faf140face95a7a03fd714934406b20",
+      "sha256": "854715be4f9e9971fae4bf3786e9f888a8546bf0e85bf9bfcd5ea38847b21f3b",
       "groups": [
         {
           "name": "What to render",
@@ -2858,6 +3112,33 @@
               "type": "bool",
               "default": false,
               "desc": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)"
+            },
+            {
+              "name": "opt_weep",
+              "type": "bool",
+              "default": false,
+              "desc": "Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves"
+            },
+            {
+              "name": "weep_d",
+              "type": "number",
+              "default": 2.0,
+              "min": 1.5,
+              "step": 0.5,
+              "max": 3,
+              "desc": "weep bore"
+            },
+            {
+              "name": "seal_mid_posts",
+              "type": "bool",
+              "default": false,
+              "desc": "(seal mode) one extra screw post mid-way along each ±X wall"
+            },
+            {
+              "name": "head_seal",
+              "type": "bool",
+              "default": false,
+              "desc": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\""
             },
             {
               "name": "opt_mount",
@@ -2922,8 +3203,14 @@
             {
               "name": "stack_sock_h",
               "type": "number",
-              "default": 11.5,
-              "desc": "carrier underside -> XIAO underside when seated — MEASURE."
+              "default": 6.5,
+              "desc": "carrier underside -> XIAO underside when seated: the registry's"
+            },
+            {
+              "name": "xiao_below",
+              "type": "number",
+              "default": 5.5,
+              "desc": "air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's"
             },
             {
               "name": "vm_front_h",
@@ -2950,8 +3237,8 @@
             {
               "name": "xiao_usb_z",
               "type": "number",
-              "default": 4.0,
-              "desc": "XIAO USB-C center above the back floor — MEASURE the seated stack"
+              "default": 0.0,
+              "desc": "extra lift of the XIAO port relative to its DERIVED axis (the XIAO's"
             }
           ]
         },
@@ -2962,7 +3249,10 @@
               "name": "radome_t",
               "type": "number",
               "default": 1.5,
-              "desc": "membrane thickness — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection"
+              "min": 1.3,
+              "step": 0.1,
+              "max": 1.7,
+              "desc": "membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused"
             },
             {
               "name": "rad_win_x",
@@ -3075,14 +3365,14 @@
             {
               "name": "mag_dx",
               "type": "number",
-              "default": 13.0,
+              "default": 18.0,
               "desc": "mag_h below the front's inner face, so parts on the carrier under"
             },
             {
               "name": "mag_dy",
               "type": "number",
-              "default": 14.0,
-              "desc": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE"
+              "default": -14.0,
+              "desc": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE. (13, 14)"
             }
           ]
         },
@@ -3205,19 +3495,43 @@
               "default": 5.0
             },
             {
+              "name": "screw_size",
+              "type": "string",
+              "default": "m2",
+              "options": [
+                "m2",
+                "m2.5",
+                "m3"
+              ],
+              "desc": "front screw — the core lib's registry sets pilot, clearance,"
+            },
+            {
+              "name": "screw_head",
+              "type": "string",
+              "default": "pan",
+              "options": [
+                "pan",
+                "flat"
+              ],
+              "desc": "pan = flat-floored seat (what head_seal needs), flat = 90° countersink"
+            },
+            {
               "name": "screw_d",
               "type": "number",
-              "default": 1.6
+              "default": 1.6,
+              "desc": "(m2)"
             },
             {
               "name": "screw_head_d",
               "type": "number",
-              "default": 4.0
+              "default": 4.0,
+              "desc": "(m2 pan)"
             },
             {
               "name": "screw_head_h",
               "type": "number",
-              "default": 2.0
+              "default": 2.0,
+              "desc": "(m2 pan) seat depth; the front carries a pad under it (head_pad)"
             }
           ]
         },
@@ -3227,12 +3541,20 @@
             {
               "name": "usb_w",
               "type": "number",
-              "default": 10.5
+              "default": 12.0,
+              "min": 9,
+              "step": 0.5,
+              "max": 14,
+              "desc": "clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)"
             },
             {
               "name": "usb_h",
               "type": "number",
-              "default": 6.5
+              "default": 6.5,
+              "min": 4,
+              "step": 0.5,
+              "max": 8,
+              "desc": ""
             },
             {
               "name": "usb_dx",
@@ -3430,7 +3752,11 @@
             {
               "name": "lid_edge2",
               "type": "number",
-              "default": 0.0
+              "default": 0.8,
+              "min": 0,
+              "step": 0.1,
+              "max": 1.5,
+              "desc": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you"
             },
             {
               "name": "opt_mark",
@@ -3510,22 +3836,12 @@
               "desc": "beam face to carrier edge (a fit — tune on the coupon)"
             }
           ]
-        },
-        {
-          "name": "Quality",
-          "params": [
-            {
-              "name": "vm_cx",
-              "type": "number",
-              "default": 0
-            }
-          ]
         }
       ],
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "12075acdcd2e1ed1b99195131895f7e73dd7ad8db93b4d99a853e3926a1da87a"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3533,7 +3849,7 @@
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "7949c28187ab69e8bda7d736454a4d1982c0646e45349829598743466490ede3"
+          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
         },
         {
           "file": "canary_port_lib.scad",
@@ -3566,7 +3882,7 @@
         "tol_press",
         "tol_hole",
         "kh_click",
-        "emblem_rib"
+        "glyph_rib"
       ],
       "preset_param": null,
       "preset_controls": [],
@@ -3588,18 +3904,19 @@
         "tol_press": "Press fits",
         "tol_hole": "Screw holes",
         "kh_click": "Keyhole click",
-        "emblem_h": "Emblem height",
-        "emblem_rib": "Emblem stroke",
-        "emblem_crown": "Emblem crown"
+        "glyph_show": "Bird on the bed face",
+        "glyph_h": "Bird height",
+        "glyph_rib": "Bird stroke",
+        "glyph_depth": "Bird deboss depth"
       },
       "hints": {
         "tol_slide": "Parts that slide or snap: lid lips, board clips, keyholes. Loose station → smaller number.",
         "tol_press": "Parts pushed in to stay: magnets, light pipes. They should seat firmly by thumb.",
         "tol_hole": "Self-tapping M2 pilots: threads should bite without splitting the post.",
         "kh_click": "The keyhole retention bump. Mate won't slide past it → smaller number; slides back off too easily → bigger. 0 removes the click.",
-        "emblem_h": "How tall the embossed Canary prints. At the default 15.8 mm it spans 15.4 mm — the clear air between the two wordmarks. 0 removes the station.",
-        "emblem_rib": "No part of the mark is drawn narrower than this, so one number decides the whole emblem. Blobbed and closed up → smaller; broken or missing → bigger. Below 0.4 mm is thinner than one extrusion.",
-        "emblem_crown": "Domes the tops of the strokes instead of leaving them flat slabs, so the mark catches light like metal. 0 is a flat top; keep it under half the stroke or the crown pinches the strokes off."
+        "glyph_show": "Debosses the Canary into the face that prints against the bed. Every case A-surface in this catalog prints face-down, so this is the station that tells you what your plate and first layer do to a visible surface.",
+        "glyph_rib": "The stroke width the bird is drawn at, and the number this station tests. Blobbed and closed up → smaller; broken or missing → bigger. No feature is drawn thinner than this, so one number decides the whole mark.",
+        "glyph_depth": "How deep the bird is sunk. Too shallow and one bridged layer closes it back up; this is the same depth every case label uses, so what happens here happens on your case."
       },
       "choices": {},
       "units": {
@@ -3607,11 +3924,10 @@
         "tol_press": "mm",
         "tol_hole": "mm",
         "kh_click": "mm",
-        "emblem_h": "mm",
-        "emblem_rib": "mm",
-        "emblem_crown": "mm"
+        "glyph_rib": "mm",
+        "glyph_depth": "mm"
       },
-      "sha256": "6ffad1861d5315f2f539f753b348d8de97d0e3833afc3210fd5c513a625c5008",
+      "sha256": "d8e072e0a10ad94711a205eb909b03a57cd3eaf72da1f642e5f73ed4755b731c",
       "groups": [
         {
           "name": "What to render",
@@ -3732,12 +4048,18 @@
             {
               "name": "standoff_h",
               "type": "number",
-              "default": 3.0
+              "default": 3.5
             },
             {
               "name": "standoff_d",
               "type": "number",
               "default": 4.0
+            },
+            {
+              "name": "clip_over",
+              "type": "number",
+              "default": 0.15,
+              "desc": "the measured board's extra half-width — brd_xiao_w_measured() - clip_bw, per side"
             },
             {
               "name": "screw_d",
@@ -3879,52 +4201,53 @@
             {
               "name": "glyph_show",
               "type": "bool",
-              "default": true
+              "default": true,
+              "desc": "deboss the bird into the face that prints against the bed — the finish test every case A-surface actually takes"
             },
             {
               "name": "glyph_h",
               "type": "number",
               "default": 34.0,
-              "desc": "NOMINAL height (mark_span units) — draws about"
+              "min": 24,
+              "step": 1,
+              "max": 40,
+              "desc": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this"
             },
             {
               "name": "glyph_rib",
               "type": "number",
               "default": 0.7,
-              "desc": "stroke width, in mm. THE number this station tests:"
+              "min": 0.42,
+              "step": 0.02,
+              "max": 1.2,
+              "desc": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print"
             },
             {
               "name": "glyph_depth",
               "type": "number",
               "default": 0.5,
-              "desc": "= label_depth's sibling; one bridged layer closes it"
+              "min": 0.2,
+              "step": 0.1,
+              "max": 1.2,
+              "desc": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up"
             },
             {
               "name": "glyph_dx",
               "type": "number",
               "default": -26.5,
-              "desc": "the clear rectangle on the bed face: left of the"
+              "min": -40,
+              "step": 0.5,
+              "max": 40,
+              "desc": "bird center, mm from the plate center across the plate"
             },
             {
               "name": "glyph_dy",
               "type": "number",
               "default": 12.0,
-              "desc": "PORT through-hole, above the keyhole pockets"
-            }
-          ]
-        },
-        {
-          "name": "Quality",
-          "params": [
-            {
-              "name": "bw",
-              "type": "number",
-              "default": 90
-            },
-            {
-              "name": "bh",
-              "type": "number",
-              "default": 68
+              "min": -30,
+              "step": 0.5,
+              "max": 30,
+              "desc": "bird center, mm from the plate center up the plate"
             }
           ]
         }
@@ -3936,7 +4259,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "12075acdcd2e1ed1b99195131895f7e73dd7ad8db93b4d99a853e3926a1da87a"
+          "sha256": "1f9084db516885a7cfd449a5930f6e6c2b17ac20d370a331ed0a2704519295cb"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3944,7 +4267,7 @@
         },
         {
           "file": "canary_snap_lib.scad",
-          "sha256": "7949c28187ab69e8bda7d736454a4d1982c0646e45349829598743466490ede3"
+          "sha256": "9d5e60eaa24280a4539421e1506071f91c3d101372b368a0b6270094e2bff61a"
         },
         {
           "file": "canary_port_lib.scad",

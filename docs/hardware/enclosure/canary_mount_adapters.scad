@@ -76,9 +76,11 @@ module corner() {
             // pad inside the prism with the studs at the inside-corner vertex)
             translate([-ap_w/2, ap_w*0.9/sqrt(2) - 1.0, 0]) cube([ap_w, 1.01, ap_l]);
         }
-        // wall screws through each wing (two per wing)
+        // wall screws through each wing — ONE per wing, mid-height between the
+        // studs: at 0.25/0.75 of ap_l the Ø8.6 counterbores exited the hypotenuse
+        // under the stud heads and left each stud on a hollowed base
         for (w = [0, 90]) rotate([0, 0, 45])
-            for (zz = [ap_l*0.25, ap_l*0.75])
+            for (zz = [ap_l/2])
                 if (w == 0)
                     translate([ap_w*0.55, 3.5, zz]) rotate([90, 0, 0])
                         { cylinder(d = screw_d, h = 8); translate([0,0,-14]) cylinder(d = screw_d + 4.4, h = 14.6); }
@@ -99,8 +101,11 @@ mag_ap_t = mag_t + 3.0;
 module magnet() {
     difference() {
         linear_extrude(mag_ap_t) rrect2d(ap_w, ap_l, 5);
+        // pockets inboard of the plate end by 2 mm of wall (at ±18 a Ø20 pocket
+        // breached a 56 mm plate's end); mag_n = 1 would divide by zero
+        assert(mag_n >= 2, "mag_n: two pockets minimum (one divides the spacing by zero)");
         for (i = [0 : mag_n - 1])
-            translate([0, -ap_l/2 + 10 + i*(ap_l - 20)/(mag_n - 1), -0.1])
+            translate([0, -(ap_l/2 - mag_d/2 - 2) + i*(ap_l - mag_d - 4)/(mag_n - 1), -0.1])
                 cylinder(d = mag_d + 2*tol_press, h = mag_t + 0.1);
     }
     tstud( stud_gap/2, mag_ap_t - 0.01);
@@ -111,7 +116,9 @@ module magnet() {
 module pole() {
     difference() {
         linear_extrude(ap_t) rrect2d(ap_w, ap_l, 5);
-        for (sy = [1, -1]) translate([-ap_w/2 - 1, sy*ap_l/4 - strap_w/2, -0.1])
+        // ONE strap channel, centered between the studs: at ±ap_l/4 the channels
+        // ran directly under the stud heads and left 1.8 mm of floor in the load path
+        translate([-ap_w/2 - 1, -strap_w/2, -0.1])
             cube([ap_w + 2, strap_w, strap_t + 0.1]);
         cb_screw(0, 0, ap_t);        // optional center wall screw as backup
     }

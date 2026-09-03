@@ -59,7 +59,16 @@ DEVICE_OF = [
 # and catalog.test.js fails it for not being in the enclosures.json inventory.
 NON_PRODUCT_SCADS = {
     "canary_s3_lcd7_fitcheck.scad",   # 7" bezel/tray assembly-interference check
+    "canary_case_fitcheck.scad",      # the released cases' assembly-interference
+                                      # check — renders each case's two halves
+                                      # seated and intersects them; every check
+                                      # must come out EMPTY, so it produces no
+                                      # printable geometry at all
     "canary_s3_lcd7_qr.scad",         # generated help-QR bit matrix (gen_qr.py)
+    "canary_rib_lib.scad",            # the STIFFENING contract — rib/gusset/rail/
+                                      # boss geometry plus the thickness,
+                                      # slenderness and span rules as asserts.
+                                      # Not a part.
     "canary_vent_lib.scad",           # brand vent pattern library — shapes, not a part
     "canary_cradle_lib.scad",         # the wall dock's INTERFACE — studs, clips and
                                       # the pockets that swallow them. Each case

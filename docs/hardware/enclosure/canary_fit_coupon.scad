@@ -79,10 +79,11 @@ kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_h = 3.5;  kh_face
 kh_click = 0.25;  // detent bump proud of the head-channel ceiling (0 = no click) — catalog standard, canary_mount_lib
 clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;  // the WAP clip — snap_boardclip defaults, canary_snap_lib
 clip_bw = 17.5;   // the WAP's board width — the CLIP station is its coupon verbatim
-pcb_t = 1.2;  standoff_h = 3.0;  standoff_d = 4.0;
+pcb_t = 1.2;  standoff_h = 3.5;  standoff_d = 4.0;   // 3.5 = the WAP's standoff (beam 4.7: the measured 17.8 board under budget)
+clip_over = 0.15;   // the measured board's extra half-width — brd_xiao_w_measured() - clip_bw, per side
 screw_d = 1.6;  screw_head_d = 4.0;
 screw_step = 0.15;   // pilot ladder: three holes at screw_d − step / screw_d / + step
-insert_d = 3.5;  insert_h = 4.0;
+insert_d = 3.5;  insert_h = 4.0;   // knurl OD; the station bores it 0.3 under (3.2, the M2 short-series hole)
 mag_d = 6.0;  lp_d = 3.0;
 lip_t = 1.2;  lip_h = 4.0;
 gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;   // matches the catalog gasket recipe (20 % squeeze, ~86 % fill)
@@ -125,27 +126,31 @@ emblem_crown = 0.15;
 // lands on the one test this catalog most needs: EVERY case A-surface
 // prints face-down, so the first layers against the textured plate ARE the
 // visible finish. If the beak, the eye ring and the notepad spiral come off
-// the plate crisp, your first layer is dialled for every case in the set.
+// the plate crisp, your first layer is dialed in for every case in the set.
 // A deboss (not an emboss) so the coupon still sits flat on its own face.
 // These knobs existed and NOTHING READ THEM. The station was described in this
 // file's header, given six parameters and a paragraph of reasoning, and never
 // cut — so the coupon has been shipping without the one test its own header
 // calls "the one that matters most". It is wired up now, with the redrawn mark.
-glyph_show  = true;
-glyph_h     = 34.0;   // NOMINAL height (mark_span units) — draws about
-                      // 30 x 32 mm, which is what the reserved rectangle on
-                      // the bed face was always sized for
-glyph_rib   = 0.7;    // stroke width, in mm. THE number this station tests:
-                      // the mark is MONOLINE, so no part of it is narrower
-                      // than this — if the rib survives, the mark survives.
-                      // Below ~0.42 it is thinner than one extrusion
-glyph_depth = 0.5;    // = label_depth's sibling; one bridged layer closes it
-glyph_dx    = -26.5;  // the clear rectangle on the bed face: left of the
-glyph_dy    = 12.0;   // PORT through-hole, above the keyhole pockets
+// A note on the numbers below, since the Customizer only ever shows the ONE
+// line trailing an assignment: glyph_h is in mark_span units, not millimeters,
+// and 34 draws about 30 x 32 mm — the size the reserved rectangle on the bed
+// face was always cut for. glyph_dx/glyph_dy place that rectangle: left of the
+// PORT through-hole and above the keyhole pockets.
+glyph_show  = true;   // deboss the bird into the face that prints against the bed — the finish test every case A-surface actually takes
+glyph_h     = 34.0;   // bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this  // [24:1:40]
+glyph_rib   = 0.7;    // stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print  // [0.42:0.02:1.2]
+glyph_depth = 0.5;    // how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up  // [0.2:0.1:1.2]
+glyph_dx    = -26.5;  // bird center, mm from the plate center across the plate  // [-40:0.5:40]
+glyph_dy    = 12.0;   // bird center, mm from the plate center up the plate  // [-30:0.5:30]
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
+/* [Hidden] */
+// Everything past here is DERIVED, not a knob. Without this closer the next
+// literal assignment falls into the group above it and the Customizer offers
+// the coupon's own plate size to the user under the heading "Quality".
 bw = 90; bh = 68;
 echo(str("Canary fit coupon v0.3-dev — base ", bw, "x", bh, "  (IN DEVELOPMENT)"));
 if (emblem_h > 0) {
@@ -222,7 +227,7 @@ module stationclip(cx, cy, sy) {
     snap_boardclip(cx, cy + sy*clip_bw/2, sy,
                    z_floor = base_t, z_board = base_t + standoff_h + pcb_t,
                    w = clip_w, t = clip_t, hook = clip_hook,
-                   hook_h = clip_hook_h, clear = clip_clear);
+                   hook_h = clip_hook_h, clear = clip_clear, over = clip_over);
 }
 
 // Station anchors — one grid, every label gets clear air.
@@ -257,9 +262,11 @@ module base() {
             // GROOVE station: straight gasket groove
             translate([-24, 1, base_t - gasket_groove]) linear_extrude(gasket_groove + 0.1)
                 rrect2d(30, gasket_w, 0.3);
-            // SCREW station: countersunk clearance hole (lid side of the joint)...
-            translate([23, 1, -0.1]) cylinder(d = screw_d + 2*tol_hole, h = base_t + 0.2);
-            translate([23, 1, base_t - 1.6]) cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = 1.7);
+            // SCREW station: the lid side of the joint, BOTH seats the cases cut —
+            // the WAP's 90° cone for a flat head, and beside it the Vision/Sense
+            // flat-floored pan-head seat (cb_flat_cut) with the 1.0 floor under it
+            cs_cone90_cut(23, 1, base_t, screw_d + 2*tol_hole, 1.2);
+            cb_flat_cut(19, -8, base_t, screw_d + 2*tol_hole, screw_head_d + 2*tol_hole, 2.0);
             // ...plus the −/0/+ pilot ladder: blind holes, drive the screw into each
             for (i = [0:2]) translate([ladder_x[i], 1, base_t - 4]) cylinder(d = ladder_d[i], h = 4.1);
             // POCKET station: keyhole pocket pair for the mate's studs (gap = stud_gap)
@@ -318,7 +325,7 @@ module base() {
         // INSERT station: heat-set boss
         translate([34, -14, base_t - 0.01]) difference() {
             cylinder(d = insert_d + 2.4, h = insert_h + 2);
-            translate([0, 0, 2]) cylinder(d = insert_d - 0.1, h = insert_h + 2.1);
+            translate([0, 0, 2]) cylinder(d = insert_d - 0.3, h = insert_h + 2.1);   // 0.3 interference: the brass bites
         }
     }
 }

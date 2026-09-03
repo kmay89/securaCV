@@ -22,6 +22,7 @@
 // ============================================================================
 
 use <canary_core_lib.scad>     // rrect2d + the catalog tolerance trio the knobs cite
+use <canary_port_lib.scad>     // bridge-safe port openings for the upright bottom wall
 use <canary_cradle_lib.scad>   // the click-on wall dock — this case is so far
                                // its only adopter (the 7" hangs on two screws
                                // through plain keyholes, no dock)
@@ -151,12 +152,14 @@ module frame() {
                 cylinder(d = 3.4, h = cav_t + 0.1);
         // USB-C slot in the bottom wall (glass side down = -Y wall), at stack
         // depth — cubes are corner-anchored, so center them on their _dx
-        translate([usb_dx - usb_w/2, -out_w/2 - 0.1, face_t + glass_t + 0.5])
-            cube([usb_w, frame_w + 0.2, usb_h]);
+        // (both openings are bridges in the face-down frame's upright wall: the
+        // catalog's chamfered-top profile halves the unsupported span)
+        translate([usb_dx, -out_w/2 + frame_w + 0.1, face_t + glass_t + 0.5 + usb_h/2])
+            rotate([90, 0, 0]) linear_extrude(frame_w + 0.2) port_bridge_profile2d(usb_w, usb_h);
         // optional CAN/RS485 terminal opening
         if (term_open)
-            translate([term_dx - term_w/2, -out_w/2 - 0.1, face_t + glass_t + 0.5])
-                cube([term_w, frame_w + 0.2, term_h]);
+            translate([term_dx, -out_w/2 + frame_w + 0.1, face_t + glass_t + 0.5 + term_h/2])
+                rotate([90, 0, 0]) linear_extrude(frame_w + 0.2) port_bridge_profile2d(term_w, term_h);
         // top-wall chimney vents (pitch 8 keeps all of them inside the shell)
         for (i = [0:vent_n - 1])
             translate([-((vent_n - 1)*8)/2 + i*8 - vent_w/2,

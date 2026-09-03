@@ -786,6 +786,26 @@
        "name": "usb_cov_dep",
        "default": "1.0",
        "comment": "recess depth into the outer wall face"
+      },
+      {
+       "name": "head_seal",
+       "default": "false",
+       "comment": "(seal mode) O-ring under every lid screw head: the posts stand INSIDE the gasket"
+      },
+      {
+       "name": "opt_weep",
+       "default": "false",
+       "comment": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate"
+      },
+      {
+       "name": "usb_hood",
+       "default": "false",
+       "comment": "drip awning over the USB opening — for a case standing sideways or on a desk"
+      },
+      {
+       "name": "hood_reach",
+       "default": "4.0",
+       "comment": "how far the awning's drip edge stands off the wall  // [2:0.5:8]"
       }
      ]
     },
@@ -897,8 +917,8 @@
       },
       {
        "name": "lid_edge2",
-       "default": "0.0",
-       "comment": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]"
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
       },
       {
        "name": "opt_mark",
@@ -977,6 +997,10 @@
       {
        "name": "e_mount",
        "default": "_pre(opt_mount,   false, false, true)"
+      },
+      {
+       "name": "e_weep",
+       "default": "_pre(opt_weep,    false, false, true)"
       }
      ]
     },
@@ -1036,7 +1060,7 @@
       {
        "name": "batt_h",
        "default": "6.0",
-       "comment": "bay height — keep >= 1 mm over the nominal cell for LiPo swelling"
+       "comment": "bay height — keep >= 1 mm over the nominal cell for LiPo swelling  // [4:0.5:12]"
       },
       {
        "name": "batt_gap",
@@ -1047,6 +1071,11 @@
        "name": "batt_wire_w",
        "default": "4.0",
        "comment": "lead channel notched into the bay ribs, hugs the +Y wall (0 = off)"
+      },
+      {
+       "name": "batt_hold",
+       "default": "true",
+       "comment": "lid-side ribs over the bay that stop the cell bouncing in a drop: they"
       }
      ]
     },
@@ -1068,7 +1097,8 @@
       },
       {
        "name": "gps_gap",
-       "default": "2.5"
+       "default": "2.3",
+       "comment": "rim fuses into the battery rib at 2.3 (a larger gap leaves a slot the slicer can't print)"
       }
      ]
     },
@@ -1078,7 +1108,13 @@
      "params": [
       {
        "name": "ant_d",
-       "default": "6.5"
+       "default": "6.5",
+       "comment": "SMA bulkhead thread is 6.35; the bore is a teardrop so its crown prints without sag"
+      },
+      {
+       "name": "ant_z",
+       "default": "4.0",
+       "comment": "bore center above the PCB underside (clears the corner posts' gussets)"
       }
      ]
     },
@@ -1145,12 +1181,12 @@
       {
        "name": "insert_d",
        "default": "3.5",
-       "comment": "insert nominal OD (M2 short series: 3.5 x 4.0)"
+       "comment": "(m2) insert knurl OD (M2 short series: 3.5 x 4.0) — the bore is cut 0.3 under"
       },
       {
        "name": "insert_h",
        "default": "4.0",
-       "comment": "insert length"
+       "comment": "(m2) insert length; other sizes read the registry"
       },
       {
        "name": "lid_ribs",
@@ -1213,8 +1249,8 @@
      "params": [
       {
        "name": "standoff_h",
-       "default": "3.0",
-       "comment": "PCB sits this high off the floor (clearance for bottom parts)"
+       "default": "3.5",
+       "comment": "PCB sits this high off the floor (clearance for bottom parts). 3.5, not"
       },
       {
        "name": "standoff_d",
@@ -1223,22 +1259,41 @@
       {
        "name": "post_d",
        "default": "5.0",
-       "comment": "corner screw posts (lid screws thread into these)"
+       "comment": "corner screw posts (lid screws thread into these; auto-fattened for larger screws)"
+      },
+      {
+       "name": "screw_size",
+       "default": "m2",
+       "enum": [
+        "m2",
+        "m2.5",
+        "m3"
+       ],
+       "comment": "lid screw — the catalog screw registry (canary_core_lib) sets"
+      },
+      {
+       "name": "screw_head",
+       "default": "flat",
+       "enum": [
+        "flat",
+        "pan"
+       ],
+       "comment": "the head in the bag: flat = 90° countersink (this lid's validated"
       },
       {
        "name": "screw_d",
        "default": "1.6",
-       "comment": "M2 self-tapping pilot — 1.6 mm so threads bite (2.0 = no grip)"
+       "comment": "(m2) self-tapping pilot — 1.6 mm so threads bite (2.0 = no grip)"
       },
       {
        "name": "screw_head_d",
        "default": "4.0",
-       "comment": "countersink on lid"
+       "comment": "(m2 flat) the flat head's Ø, used by the shield's seat; the lid's 90° cone"
       },
       {
        "name": "screw_head_h",
        "default": "1.2",
-       "comment": "countersink depth — the cone below is a true 90° seat for an M2 flat head"
+       "comment": "(m2 flat) countersink depth — the cone below is a true 90° seat for an M2 flat head"
       }
      ]
     },
@@ -1249,12 +1304,17 @@
       {
        "name": "usb_w",
        "default": "12.0",
-       "comment": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)"
+       "comment": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)  // [9:0.5:14]"
       },
       {
        "name": "usb_h",
        "default": "6.5",
-       "comment": "opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare"
+       "comment": "opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare  // [4:0.5:8]"
+      },
+      {
+       "name": "usb_web",
+       "default": "1.5",
+       "comment": "wall guaranteed ABOVE the opening in every mode (the compact case shipped 0.65)"
       },
       {
        "name": "usb_z",
@@ -1269,7 +1329,18 @@
      "params": [
       {
        "name": "cam_win_d",
-       "default": "9.0"
+       "default": "9.0",
+       "comment": "asserted against cam_fov at the disc's inner plane so a corner never vignettes"
+      },
+      {
+       "name": "cam_fov",
+       "default": "66",
+       "comment": "lens diagonal field of view (OV2640 on the Sense: 66°)  // [40:1:120]"
+      },
+      {
+       "name": "cam_lens_h",
+       "default": "6.0",
+       "comment": "lens front above the PCB top (Sense expansion board + OV2640 module) — MEASURE"
       },
       {
        "name": "cam_disc_d",
@@ -1312,7 +1383,8 @@
       },
       {
        "name": "vent_hole_d",
-       "default": "1.6"
+       "default": "1.0",
+       "comment": "fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm); the"
       },
       {
        "name": "vent_ring_d",
@@ -1320,7 +1392,7 @@
       },
       {
        "name": "vent_holes",
-       "default": "6"
+       "default": "10"
       },
       {
        "name": "vent_dx",
@@ -1361,7 +1433,12 @@
       {
        "name": "mag_h",
        "default": "2.2",
-       "comment": "pocket depth — a 6 x 2 mm disc is standard; keep parts under"
+       "comment": "pocket depth — a 6 x 2 mm disc is standard"
+      },
+      {
+       "name": "mag_under",
+       "default": "6.0",
+       "comment": "tallest part on the board UNDER the pocket: the Sense expansion board's top"
       },
       {
        "name": "mag_dx",
@@ -1406,6 +1483,16 @@
        "name": "clip_clear",
        "default": "0.25",
        "comment": "gap between tab inner face and the board edge (a fit — tune on the coupon)"
+      },
+      {
+       "name": "clip_dx",
+       "default": "5.25",
+       "comment": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The"
+      },
+      {
+       "name": "clip_over",
+       "default": "0.15",
+       "comment": "extra lip travel per side for the MEASURED board (brd_xiao_w_measured() 17.8"
       }
      ]
     },
@@ -1419,9 +1506,31 @@
        "comment": ">=0.8 mm cheek each side of the groove"
       },
       {
-       "name": "pd",
-       "default": "screw_insert ? max(post_d, insert_d + 2.4) : post_d",
-       "comment": "effective post dia (>=1.2 mm wall around an insert)"
+       "name": "scr_d",
+       "default": "(screw_size == \"m2\") ? screw_d : scr_pilot(screw_size)"
+      },
+      {
+       "name": "scr_c",
+       "default": "max(scr_d + 2*tol_hole, scr_clear(screw_size))",
+       "comment": "lid clearance hole"
+      },
+      {
+       "name": "ins_od",
+       "default": "(screw_size == \"m2\") ? insert_d : scr_insert_d(screw_size) + 0.3",
+       "comment": "knurl OD"
+      },
+      {
+       "name": "ins_h",
+       "default": "(screw_size == \"m2\") ? insert_h : scr_insert_h(screw_size)"
+      },
+      {
+       "name": "ins_bore",
+       "default": "ins_od - 0.3",
+       "comment": "0.3 interference: the brass bites"
+      },
+      {
+       "name": "head_pad",
+       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "board_zone_l",
@@ -1454,13 +1563,12 @@
        "default": "board_zone_l + extra_l + post_corner + 1.0"
       },
       {
-       "name": "cav_h_min",
-       "default": "standoff_h + board_h + board_stack_h + 1.0",
-       "comment": "internal height above floor"
+       "name": "usb_over",
+       "default": "usb_web + (e_seal ? gasket_groove + (usb_cover ? usb_cov_pad : 0) : 0)"
       },
       {
        "name": "cav_h",
-       "default": "e_seal ? max(cav_h_min, standoff_h + board_h + usb_h + usb_z + 2.5) : cav_h_min"
+       "default": "max(cav_h_min, standoff_h + board_h + usb_h + usb_z + usb_over)"
       },
       {
        "name": "out_l",
@@ -1531,6 +1639,14 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "cam_throw",
+       "default": "base_h + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0) - (pcb_z + board_h + cam_lens_h)"
+      },
+      {
+       "name": "cam_need",
+       "default": "2*cam_throw*tan(cam_fov/2) + 2.0"
       }
      ]
     }
@@ -1589,7 +1705,7 @@
       {
        "name": "opt_vent",
        "default": "false",
-       "comment": "GORE vent cluster -> pressure equalisation (recommended with opt_seal)"
+       "comment": "GORE vent cluster -> pressure equalization (recommended with opt_seal)"
       },
       {
        "name": "opt_tamper",
@@ -1621,6 +1737,21 @@
        ]
       },
       {
+       "name": "opt_weep",
+       "default": "false",
+       "comment": "Ø2 weep at the cavity's low point (bottom wall, beside the USB): condensate leaves (ON in the weather preset)"
+      },
+      {
+       "name": "seal_mid_posts",
+       "default": "false",
+       "comment": "(seal mode) one extra screw post mid-way along each long wall: four corner"
+      },
+      {
+       "name": "head_seal",
+       "default": "false",
+       "comment": "(seal mode) O-ring under each front screw head — the posts stand INSIDE the"
+      },
+      {
        "name": "e_led",
        "default": "_pre(opt_led,    true,  true)"
       },
@@ -1647,6 +1778,10 @@
       {
        "name": "e_mount",
        "default": "_pre(opt_mount,  true,  true)"
+      },
+      {
+       "name": "e_weep",
+       "default": "_pre(opt_weep,   false, true)"
       },
       {
        "name": "m_style",
@@ -1688,13 +1823,18 @@
       },
       {
        "name": "xiao_w",
-       "default": "17.5",
-       "comment": "stacked XIAO (X) — spec; a real board mics 17.8 (brd_xiao_w_measured())"
+       "default": "17.8",
+       "comment": "stacked XIAO (X) — the MEASURED board (brd_xiao_w_measured()); sets the corner pins"
       },
       {
        "name": "stack_sock_h",
-       "default": "11.5",
+       "default": "6.5",
        "comment": "module underside -> XIAO underside when seated (socket + headers):"
+      },
+      {
+       "name": "xiao_below",
+       "default": "5.5",
+       "comment": "air under the XIAO's outward face: its USB-C shell (3.3) plus half a plug's"
       },
       {
        "name": "vm_front_h",
@@ -1750,7 +1890,17 @@
       {
        "name": "cam_post_h",
        "default": "4.0",
-       "comment": "post height = lens-board standoff from the front face"
+       "comment": "post height = lens-board standoff from the front face — auto-raised to"
+      },
+      {
+       "name": "cam_lens_h",
+       "default": "5.5",
+       "comment": "Pi-cam v1.3 lens holder height above the PCB face (drawing: 9.0 module"
+      },
+      {
+       "name": "cam_lens_sq",
+       "default": "8.5",
+       "comment": "the holder's square (its 12.0 diagonal cannot enter a Ø10 aperture, so"
       },
       {
        "name": "cam_screw_d",
@@ -1770,7 +1920,12 @@
       {
        "name": "cam_ap_d",
        "default": "10.0",
-       "comment": "lens aperture in the front face"
+       "comment": "lens aperture in the front face — asserted against cam_fov"
+      },
+      {
+       "name": "cam_fov",
+       "default": "62",
+       "comment": "lens diagonal field of view (OV5647-62; the 160° fisheye needs no hood)  // [40:1:160]"
       },
       {
        "name": "cam_disc_d",
@@ -1820,7 +1975,7 @@
       },
       {
        "name": "standoff_h",
-       "default": "3.0",
+       "default": "3.5",
        "comment": "PCBs sit this high off the back (RAISE if DevKit has soldered pin headers!)"
       },
       {
@@ -1900,36 +2055,58 @@
        "default": "5.0"
       },
       {
+       "name": "screw_size",
+       "default": "m2",
+       "enum": [
+        "m2",
+        "m2.5",
+        "m3"
+       ],
+       "comment": "front screw — the core lib's screw registry sets pilot, clearance,"
+      },
+      {
+       "name": "screw_head",
+       "default": "pan",
+       "enum": [
+        "pan",
+        "flat"
+       ],
+       "comment": "the head in the bag: pan = flat-floored counterbore (the BOM's"
+      },
+      {
        "name": "screw_d",
        "default": "1.6",
-       "comment": "M2 self-tapping pilot"
+       "comment": "(m2) M2 self-tapping pilot"
       },
       {
        "name": "screw_head_d",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "(m2 pan) head Ø"
       },
       {
        "name": "screw_head_h",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "(m2 pan) seat depth: the head 1.6 + 0.4 sink. Deeper than the 2.0 front,"
       },
       {
        "name": "usb_w",
-       "default": "10.5",
-       "comment": "opening width (USB-C body ~8.9 — port_usbc_shell_w())"
+       "default": "12.0",
+       "comment": "opening width: clears rugged cable boots (USB-C body ~8.9 — port_usbc_shell_w())  // [9:0.5:14]"
       },
       {
        "name": "usb_h",
-       "default": "6.5"
+       "default": "6.5",
+       "comment": "opening height: boot clearance (the shell is 3.26)  // [4:0.5:8]"
       },
       {
        "name": "usb_z",
        "default": "0.0",
-       "comment": "extra lift relative to PCB-top centering"
+       "comment": "extra lift relative to the connector AXIS (shell/2 above the PCB) — MEASURE"
       },
       {
        "name": "usb_dx",
        "default": "0.0",
-       "comment": "upper/main port offset along the wall — MEASURE your boards"
+       "comment": "upper/main port offset along the wall — MEASURE your boards (the module's"
       },
       {
        "name": "xiao_usb_dx",
@@ -1937,9 +2114,9 @@
        "comment": "XIAO port offset along the wall"
       },
       {
-       "name": "xiao_usb_drop",
-       "default": "10.0",
-       "comment": "XIAO port center BELOW the module port center — MEASURE the seated stack"
+       "name": "xiao_usb_z",
+       "default": "0.0",
+       "comment": "extra lift of the XIAO port relative to its DERIVED axis (the XIAO's outward"
       }
      ]
     },
@@ -1971,6 +2148,11 @@
        "name": "hinge_bolt_d",
        "default": "5.0",
        "comment": "M5 thumbscrew (GoPro standard)"
+      },
+      {
+       "name": "hinge_clear",
+       "default": "0.15",
+       "comment": "extra slot width on the bracket for printed fins that run +0.1 oversize  // [0:0.05:0.4]"
       },
       {
        "name": "hinge_teeth",
@@ -2091,9 +2273,14 @@
        "default": "1.0"
       },
       {
+       "name": "weep_d",
+       "default": "2.0",
+       "comment": "weep bore (canary_core_lib weep_d)  // [1.5:0.5:3]"
+      },
+      {
        "name": "hood_len",
        "default": "9.0",
-       "comment": "rain-hood protrusion from the front face"
+       "comment": "rain-hood protrusion from the front face (a hooded front exports FACE-UP)"
       },
       {
        "name": "hood_t",
@@ -2204,8 +2391,8 @@
       },
       {
        "name": "lid_edge2",
-       "default": "0.0",
-       "comment": "optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]"
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
       },
       {
        "name": "label_text",
@@ -2259,16 +2446,32 @@
      "params": [
       {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 1.6) : wall_t"
+       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t",
+       "comment": "1.2 mm cheek each side of the groove"
       },
       {
        "name": "clip_stack",
        "default": "clip_clear + clip_t"
       },
       {
-       "name": "pd",
-       "default": "screw_insert ? max(post_d, insert_d + 2.4) : post_d",
-       "comment": "effective post dia (>=1.2 mm wall around an insert)"
+       "name": "scr_d",
+       "default": "(screw_size == \"m2\") ? screw_d : scr_pilot(screw_size)"
+      },
+      {
+       "name": "scr_c",
+       "default": "max(scr_d + 2*tol_hole, scr_clear(screw_size))"
+      },
+      {
+       "name": "ins_od",
+       "default": "(screw_size == \"m2\") ? insert_d : scr_insert_d(screw_size) + 0.3"
+      },
+      {
+       "name": "ins_h",
+       "default": "(screw_size == \"m2\") ? insert_h : scr_insert_h(screw_size)"
+      },
+      {
+       "name": "head_pad",
+       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "post_corner",
@@ -2280,7 +2483,11 @@
       },
       {
        "name": "vm_standoff",
-       "default": "has_dk ? standoff_h : stack_sock_h + 1.5"
+       "default": "has_dk ? standoff_h : stack_sock_h + xiao_below"
+      },
+      {
+       "name": "bot_margin",
+       "default": "max(board_clear, tol_slide + lip_t + 0.2)"
       },
       {
        "name": "col_cam",
@@ -2300,8 +2507,21 @@
        "comment": "standoff of the board that owns the USB wall"
       },
       {
+       "name": "usb_axis",
+       "default": "usb_soff + pcb_t + port_usbc_shell_h()/2 + usb_z",
+       "comment": "connector axis above the floor top"
+      },
+      {
+       "name": "usb_over",
+       "default": "1.5 + (e_seal ? gasket_groove + (usb_cover ? usb_cov_pad : 0) : 0)"
+      },
+      {
        "name": "cav_d",
-       "default": "e_seal ? max(cav_d_min, usb_soff + pcb_t + usb_h + usb_z + 2.5) : cav_d_min"
+       "default": "max(cav_d_min, usb_axis + usb_h/2 + usb_over)"
+      },
+      {
+       "name": "cam_post_eff",
+       "default": "(cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3)"
       },
       {
        "name": "out_x",
@@ -2330,7 +2550,7 @@
       },
       {
        "name": "vm_cy_x",
-       "default": "-inner_y/2 + board_clear + vm_l/2",
+       "default": "-inner_y/2 + bot_margin + vm_l/2",
        "comment": "xiao host: module at the bottom wall"
       },
       {
@@ -2339,7 +2559,7 @@
       },
       {
        "name": "dk_cy",
-       "default": "-inner_y/2 + board_clear + dk_l/2",
+       "default": "-inner_y/2 + bot_margin + dk_l/2",
        "comment": "DevKit parked at the USB (bottom) wall"
       },
       {
@@ -2357,8 +2577,12 @@
       },
       {
        "name": "usb_zc",
-       "default": "floor_t + usb_soff + pcb_t + usb_h/2 + usb_z",
-       "comment": "and its center height"
+       "default": "floor_t + usb_axis",
+       "comment": "opening centered on the connector axis"
+      },
+      {
+       "name": "xiao_usb_zc",
+       "default": "floor_t + vm_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z"
       },
       {
        "name": "mount_extra",
@@ -2392,6 +2616,14 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "cam_throw",
+       "default": "(cam_post_eff - cam_lens_h) + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0)"
+      },
+      {
+       "name": "cam_need",
+       "default": "2*max(0, cam_throw)*tan(cam_fov/2) + 4.0"
       }
      ]
     }
@@ -2442,6 +2674,26 @@
        "comment": "reed/Hall magnet pocket on the face underside"
       },
       {
+       "name": "opt_weep",
+       "default": "true",
+       "comment": "Ø2 weep through the bottom wall at the floor corner (mounted button-down):"
+      },
+      {
+       "name": "weep_d",
+       "default": "2.0",
+       "comment": "weep bore  // [1.5:0.5:3]"
+      },
+      {
+       "name": "seal_mid_posts",
+       "default": "true",
+       "comment": "one extra face screw per long wall, at the cable well: four corner screws"
+      },
+      {
+       "name": "head_seal",
+       "default": "false",
+       "comment": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a"
+      },
+      {
        "name": "vm_l",
        "default": "40.0",
        "comment": "Grove Vision AI V2 long side (Y; USB edge down) — measured, brd_l(\"grove_v2\")"
@@ -2465,6 +2717,11 @@
        "name": "stack_sock_h",
        "default": "6.5",
        "comment": "module underside -> XIAO underside when seated — THIS bench"
+      },
+      {
+       "name": "xiao_below",
+       "default": "5.5",
+       "comment": "air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's"
       },
       {
        "name": "vm_front_h",
@@ -2510,7 +2767,18 @@
       },
       {
        "name": "cam_post_h",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "auto-raised to hold the lens holder behind the face (cam_lens_h)"
+      },
+      {
+       "name": "cam_lens_h",
+       "default": "5.5",
+       "comment": "Pi-cam v1.3 lens holder height above the PCB face — MEASURE yours"
+      },
+      {
+       "name": "cam_lens_sq",
+       "default": "8.5",
+       "comment": "the holder's square: its 12.0 diagonal cannot enter a Ø10 aperture"
       },
       {
        "name": "cam_screw_d",
@@ -2563,6 +2831,11 @@
        "name": "btn_body_l",
        "default": "18.0",
        "comment": "body + terminals depth behind the panel — checked against the cavity"
+      },
+      {
+       "name": "btn_nut_ac",
+       "default": "16.2",
+       "comment": "panel nut across corners (14 AF M12 nut = 16.2; 16 AF = 18.5) — asserted"
       }
      ]
     },
@@ -2634,13 +2907,13 @@
       },
       {
        "name": "usb_exit_dx",
-       "default": "5.0",
-       "comment": "exit offset from the centerline"
+       "default": "0.0",
+       "comment": "exit offset from the centerline (0 keeps it between the mid-span posts)"
       },
       {
        "name": "usb_exit_dy",
-       "default": "6.0",
-       "comment": "exit offset above the well center — clears the lower T-stud pocket"
+       "default": "0.0",
+       "comment": "exit offset from the well center: the oval sits wholly in the well, under"
       },
       {
        "name": "tol_slide",
@@ -2705,16 +2978,38 @@
        "default": "5.0"
       },
       {
+       "name": "screw_size",
+       "default": "m2",
+       "enum": [
+        "m2",
+        "m2.5",
+        "m3"
+       ],
+       "comment": "face screw — the core lib's registry sets pilot, clearance,"
+      },
+      {
+       "name": "screw_head",
+       "default": "pan",
+       "enum": [
+        "pan",
+        "flat"
+       ],
+       "comment": "pan = flat-floored seat (the BOM's black-oxide pan heads; what"
+      },
+      {
        "name": "screw_d",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "(m2)"
       },
       {
        "name": "screw_head_d",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "(m2 pan)"
       },
       {
        "name": "screw_head_h",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "(m2 pan) seat depth; the face carries a pad under it (head_pad)"
       }
      ]
     },
@@ -2759,8 +3054,8 @@
       },
       {
        "name": "stud_y",
-       "default": "34.0",
-       "comment": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit)"
+       "default": "40.0",
+       "comment": "T-stud/pocket centers at y = ±stud_y (clear of the cable exit and the well)"
       },
       {
        "name": "kh_head_d",
@@ -2800,7 +3095,7 @@
       {
        "name": "plate_screw_d",
        "default": "4.2",
-       "comment": "wall screws (#8 / M4 countersunk)"
+       "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
       }
      ]
     },
@@ -2960,11 +3255,32 @@
       },
       {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 1.6) : wall_t"
+       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t",
+       "comment": "1.2 mm cheek each side of the groove"
+      },
+      {
+       "name": "scr_d",
+       "default": "(screw_size == \"m2\") ? screw_d : scr_pilot(screw_size)"
+      },
+      {
+       "name": "scr_c",
+       "default": "max(scr_d + 2*tol_hole, scr_clear(screw_size))"
+      },
+      {
+       "name": "ins_od",
+       "default": "(screw_size == \"m2\") ? insert_d : scr_insert_d(screw_size) + 0.3"
+      },
+      {
+       "name": "ins_h",
+       "default": "(screw_size == \"m2\") ? insert_h : scr_insert_h(screw_size)"
       },
       {
        "name": "pd",
-       "default": "screw_insert ? max(post_d, insert_d + 2.4) : post_d"
+       "default": "max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size))"
+      },
+      {
+       "name": "head_pad",
+       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "clip_stack",
@@ -2972,7 +3288,11 @@
       },
       {
        "name": "vm_standoff",
-       "default": "stack_sock_h + 1.5"
+       "default": "stack_sock_h + xiao_below"
+      },
+      {
+       "name": "cam_post_eff",
+       "default": "(cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3)"
       },
       {
        "name": "inner_x",
@@ -3091,6 +3411,26 @@
        "comment": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)"
       },
       {
+       "name": "opt_weep",
+       "default": "false",
+       "comment": "Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves"
+      },
+      {
+       "name": "weep_d",
+       "default": "2.0",
+       "comment": "weep bore  // [1.5:0.5:3]"
+      },
+      {
+       "name": "seal_mid_posts",
+       "default": "false",
+       "comment": "(seal mode) one extra screw post mid-way along each ±X wall"
+      },
+      {
+       "name": "head_seal",
+       "default": "false",
+       "comment": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\""
+      },
+      {
        "name": "opt_mount",
        "default": "true"
       },
@@ -3157,8 +3497,13 @@
       },
       {
        "name": "stack_sock_h",
-       "default": "11.5",
-       "comment": "carrier underside -> XIAO underside when seated — MEASURE."
+       "default": "6.5",
+       "comment": "carrier underside -> XIAO underside when seated: the registry's"
+      },
+      {
+       "name": "xiao_below",
+       "default": "5.5",
+       "comment": "air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's"
       },
       {
        "name": "vm_front_h",
@@ -3180,8 +3525,8 @@
       },
       {
        "name": "xiao_usb_z",
-       "default": "4.0",
-       "comment": "XIAO USB-C center above the back floor — MEASURE the seated stack"
+       "default": "0.0",
+       "comment": "extra lift of the XIAO port relative to its DERIVED axis (the XIAO's"
       }
      ]
     },
@@ -3192,7 +3537,7 @@
       {
        "name": "radome_t",
        "default": "1.5",
-       "comment": "membrane thickness — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection"
+       "comment": "membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused  // [1.3:0.1:1.7]"
       },
       {
        "name": "rad_win_x",
@@ -3286,13 +3631,13 @@
       },
       {
        "name": "mag_dx",
-       "default": "13.0",
+       "default": "18.0",
        "comment": "mag_h below the front's inner face, so parts on the carrier under"
       },
       {
        "name": "mag_dy",
-       "default": "14.0",
-       "comment": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE"
+       "default": "-14.0",
+       "comment": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE. (13, 14)"
       }
      ]
     },
@@ -3400,16 +3745,38 @@
        "default": "5.0"
       },
       {
+       "name": "screw_size",
+       "default": "m2",
+       "enum": [
+        "m2",
+        "m2.5",
+        "m3"
+       ],
+       "comment": "front screw — the core lib's registry sets pilot, clearance,"
+      },
+      {
+       "name": "screw_head",
+       "default": "pan",
+       "enum": [
+        "pan",
+        "flat"
+       ],
+       "comment": "pan = flat-floored seat (what head_seal needs), flat = 90° countersink"
+      },
+      {
        "name": "screw_d",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "(m2)"
       },
       {
        "name": "screw_head_d",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "(m2 pan)"
       },
       {
        "name": "screw_head_h",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "(m2 pan) seat depth; the front carries a pad under it (head_pad)"
       }
      ]
     },
@@ -3419,11 +3786,17 @@
      "params": [
       {
        "name": "usb_w",
-       "default": "10.5"
+       "default": "12.0",
+       "comment": "clears rugged cable boots (the receptacle face sits ~2.6 mm behind the wall)  // [9:0.5:14]"
       },
       {
        "name": "usb_h",
-       "default": "6.5"
+       "default": "6.5",
+       "range": [
+        4.0,
+        0.5,
+        8.0
+       ]
       },
       {
        "name": "usb_dx",
@@ -3594,7 +3967,8 @@
       },
       {
        "name": "lid_edge2",
-       "default": "0.0"
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
       },
       {
        "name": "opt_mark",
@@ -3669,11 +4043,32 @@
      "params": [
       {
        "name": "wall_eff",
-       "default": "e_seal ? max(wall_t, gasket_w + 1.6) : wall_t"
+       "default": "e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t",
+       "comment": "1.2 mm cheek each side of the groove"
+      },
+      {
+       "name": "scr_d",
+       "default": "(screw_size == \"m2\") ? screw_d : scr_pilot(screw_size)"
+      },
+      {
+       "name": "scr_c",
+       "default": "max(scr_d + 2*tol_hole, scr_clear(screw_size))"
+      },
+      {
+       "name": "ins_od",
+       "default": "(screw_size == \"m2\") ? insert_d : scr_insert_d(screw_size) + 0.3"
+      },
+      {
+       "name": "ins_h",
+       "default": "(screw_size == \"m2\") ? insert_h : scr_insert_h(screw_size)"
       },
       {
        "name": "pd",
-       "default": "screw_insert ? max(post_d, insert_d + 2.4) : post_d"
+       "default": "max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size))"
+      },
+      {
+       "name": "head_pad",
+       "default": "(screw_head == \"pan\") ? max(0, head_h + 1.0 - lid_t) : 0"
       },
       {
        "name": "clip_stack",
@@ -3681,11 +4076,15 @@
       },
       {
        "name": "vm_standoff",
-       "default": "stack_sock_h + 1.5"
+       "default": "stack_sock_h + xiao_below"
       },
       {
        "name": "post_corner",
        "default": "pd + 1.5"
+      },
+      {
+       "name": "bot_margin",
+       "default": "max(board_clear, tol_slide + lip_t + 0.2)"
       },
       {
        "name": "inner_x",
@@ -3693,20 +4092,24 @@
       },
       {
        "name": "inner_y",
-       "default": "board_clear + vm_l + 2 + 6",
-       "comment": "board at the USB wall + wire room + top margin"
+       "default": "bot_margin + vm_l + 0.6 + 2 + 6",
+       "comment": "board at the USB wall + end stops + wire room + top margin"
       },
       {
        "name": "cav_d_min",
        "default": "vm_standoff + pcb_t + vm_front_h + cav_extra"
       },
       {
+       "name": "usb_axis",
+       "default": "vm_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z"
+      },
+      {
        "name": "usb_zc",
-       "default": "floor_t + xiao_usb_z"
+       "default": "floor_t + usb_axis"
       },
       {
        "name": "cav_d",
-       "default": "e_seal ? max(cav_d_min, xiao_usb_z + usb_h/2 + 2.5) : cav_d_min"
+       "default": "e_seal ? max(cav_d_min, usb_axis + usb_h/2 + 1.5 + gasket_groove + (usb_cover ? usb_cov_pad : 0)) : cav_d_min"
       },
       {
        "name": "rad_gap",
@@ -3730,7 +4133,7 @@
       },
       {
        "name": "vm_cy",
-       "default": "-inner_y/2 + board_clear + vm_l/2"
+       "default": "-inner_y/2 + bot_margin + vm_l/2"
       },
       {
        "name": "rad_cx",
@@ -3932,13 +4335,23 @@
       },
       {
        "name": "snap_proud",
-       "default": "0.4",
-       "comment": "nub stand-proud of the skirt (with the relief slits this is"
+       "default": "0.3",
+       "comment": "nub stand-proud of the skirt: 0.15 of working interference over the bore"
       },
       {
        "name": "skirt_dep",
        "default": "4.0",
-       "comment": "bezel skirt reach into the bore"
+       "comment": "bezel skirt reach into the bore (capped: the skirt must float over the PCB rim)"
+      },
+      {
+       "name": "skirt_t",
+       "default": "1.0",
+       "comment": "finger thickness — the skirt is relieved to this behind the nubs so the"
+      },
+      {
+       "name": "pcb_t",
+       "default": "1.2",
+       "comment": "display PCB thickness — the skirt floats 0.2 over its rim"
       }
      ]
     },
@@ -4088,6 +4501,10 @@
        "comment": "full seated length, back cap → face"
       },
       {
+       "name": "snap_defl",
+       "default": "skirt_od/2 + snap_proud - bore_d/2"
+      },
+      {
        "name": "pkt_d",
        "default": "drum_d + 2*pocket_clear",
        "comment": "divot bore"
@@ -4178,8 +4595,13 @@
       },
       {
        "name": "stalk_h",
-       "default": "55.0",
-       "comment": "stalk height to the hinge axis region"
+       "default": "70.0",
+       "comment": "stalk height to the hinge axis region — 70, not 55: hung plumb (radome"
+      },
+      {
+       "name": "case_reach",
+       "default": "70.0",
+       "comment": "the Sense case's far bottom edge from its hinge axis (out_y/2 + hinge_off + ... = 69.6)"
       },
       {
        "name": "stalk_d",
@@ -4462,6 +4884,11 @@
        "comment": "collar depth along the wart (leave the plug face clear)"
       },
       {
+       "name": "plug_room",
+       "default": "8.0",
+       "comment": "pocket behind the stud face for a RIGHT-ANGLE USB-A plug's body: the"
+      },
+      {
        "name": "grip_lip",
        "default": "1.2",
        "comment": "inward LOCATING lip at the collar front (clearance-sized: it"
@@ -4593,7 +5020,8 @@
      "params": [
       {
        "name": "sma_d",
-       "default": "6.5"
+       "default": "6.8",
+       "comment": "1/4-36 SMA thread is Ø6.35: 6.8 with the D-flat at 5.7 (was 6.5/5.9 — 0.075 a side, under FDM hole shrink)"
       }
      ]
     },
@@ -4646,6 +5074,16 @@
       {
        "name": "standoff_h",
        "default": "3.0"
+      },
+      {
+       "name": "lid_edge",
+       "default": "0.8",
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+      },
+      {
+       "name": "lid_edge2",
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
       },
       {
        "name": "foot_cham",
@@ -4714,6 +5152,10 @@
        "default": "clip_clear + clip_t"
       },
       {
+       "name": "head_pad",
+       "default": "max(0, screw_head_h + 1.0 - lid_t)"
+      },
+      {
        "name": "col_lb",
        "default": "lb_w + 2*(clip_stack + board_clear) + 0.5"
       },
@@ -4764,7 +5206,8 @@
       },
       {
        "name": "usb_zc",
-       "default": "floor_t + standoff_h + pcb_t + usb_h/2"
+       "default": "floor_t + standoff_h + pcb_t + port_usbc_shell_h()/2",
+       "comment": "on the connector AXIS, not PCB-top + h/2"
       },
       {
        "name": "skirt_gap",
@@ -4832,17 +5275,22 @@
      "params": [
       {
        "name": "v_stack_sock",
-       "default": "11.5",
-       "comment": "brd_stack_sock_unmeasured(), canary_board_lib — the roomier legacy"
+       "default": "6.5",
+       "comment": "brd_stack_sock_measured(), canary_board_lib — the XIAO ports are DERIVED"
       },
       {
        "name": "v_front_h",
        "default": "5.0"
       },
       {
-       "name": "v_usb_drop",
-       "default": "10.0",
-       "comment": "XIAO port below the module port (see Vision case)"
+       "name": "xiao_w",
+       "default": "17.8",
+       "comment": "the measured XIAO — sets the corner pins that catch the module under it"
+      },
+      {
+       "name": "xiao_below",
+       "default": "5.5",
+       "comment": "air under a stacked XIAO's USB face: shell + half a plug overmold + clearance"
       }
      ]
     },
@@ -4852,8 +5300,8 @@
      "params": [
       {
        "name": "s_stack_sock",
-       "default": "11.5",
-       "comment": "brd_stack_sock_unmeasured() — same decision as v_stack_sock"
+       "default": "6.5",
+       "comment": "brd_stack_sock_measured() — same decision as v_stack_sock"
       },
       {
        "name": "s_front_h",
@@ -4870,8 +5318,8 @@
       },
       {
        "name": "s_usb_z",
-       "default": "4.0",
-       "comment": "C6 USB center above the floor"
+       "default": "0.0",
+       "comment": "extra lift of the C6 port relative to its DERIVED axis (a measured correction)"
       }
      ]
     },
@@ -4879,6 +5327,16 @@
      "name": "Shared",
      "note": "",
      "params": [
+      {
+       "name": "lid_edge",
+       "default": "0.8",
+       "comment": "first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]"
+      },
+      {
+       "name": "lid_edge2",
+       "default": "0.8",
+       "comment": "second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]"
+      },
       {
        "name": "opt_mount",
        "default": "true",
@@ -4940,11 +5398,15 @@
       },
       {
        "name": "v_standoff",
-       "default": "v_stack_sock + 1.5"
+       "default": "v_stack_sock + xiao_below"
       },
       {
        "name": "s_standoff",
-       "default": "s_stack_sock + 1.5"
+       "default": "s_stack_sock + xiao_below"
+      },
+      {
+       "name": "head_pad",
+       "default": "max(0, screw_head_h + 1.0 - lid_t)"
       },
       {
        "name": "col_v",
@@ -4996,7 +5458,15 @@
       },
       {
        "name": "v_usb_zc",
-       "default": "floor_t + v_standoff + pcb_t + usb_h/2"
+       "default": "floor_t + v_standoff + pcb_t + port_usbc_shell_h()/2"
+      },
+      {
+       "name": "v_usb_lo",
+       "default": "floor_t + v_standoff - v_stack_sock - port_usbc_shell_h()/2"
+      },
+      {
+       "name": "s_usb_zc",
+       "default": "floor_t + s_standoff - s_stack_sock - port_usbc_shell_h()/2 + s_usb_z"
       },
       {
        "name": "rad_gap",
@@ -5040,6 +5510,7 @@
        "enum": [
         "tray",
         "cover",
+        "clip",
         "all"
        ]
       }
@@ -5113,16 +5584,23 @@
       },
       {
        "name": "lid_screw_d",
-       "default": "2.6",
-       "comment": "M3 self-tap into corner posts"
+       "default": "2.8",
+       "comment": "M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into F-F"
       },
       {
-       "name": "post_d",
-       "default": "7.0"
+       "name": "clip_screw_d",
+       "default": "3.4",
+       "comment": "M3 clearance through the floor into the clip's lands (self-tap 2.6 there)"
       },
       {
        "name": "lid_edge",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()  // [0:0.1:1.5]"
+      },
+      {
+       "name": "lid_edge2",
+       "default": "0.8",
+       "comment": "second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]"
       }
      ]
     },
@@ -5190,6 +5668,11 @@
        "name": "tray_h",
        "default": "floor_t + standoff_h + pcb_t + 6",
        "comment": "tray walls stop above the PCB"
+      },
+      {
+       "name": "clip_screws",
+       "default": "[[-6.5, 23.5], [6.5, 23.5], [-6.5, -23.5], [6.5, -23.5]]",
+       "comment": "M3s, floor -> clip lands (between the vent slots)"
       },
       {
        "name": "total_h",
@@ -5284,7 +5767,18 @@
       },
       {
        "name": "standoff_h",
-       "default": "3.0"
+       "default": "3.5",
+       "comment": "3.5: the WAP-stack clip beam is standoff + PCB, and at 4.7 mm the measured"
+      },
+      {
+       "name": "xiao_w",
+       "default": "17.8",
+       "comment": "the measured XIAO (brd_xiao_w_measured) — sets the vision stack's corner pins"
+      },
+      {
+       "name": "xiao_below",
+       "default": "5.5",
+       "comment": "air under a stacked XIAO's USB face (shell + half a plug overmold + clearance)"
       }
      ]
     },
@@ -5321,7 +5815,7 @@
       },
       {
        "name": "soff",
-       "default": "(stack == \"wap\") ? standoff_h : stack_sock_h + 1.5"
+       "default": "(stack == \"wap\") ? standoff_h : stack_sock_h + xiao_below"
       }
      ]
     }
@@ -6002,7 +6496,13 @@
       },
       {
        "name": "standoff_h",
-       "default": "3.0"
+       "default": "3.5",
+       "comment": "3.5: beam 4.7 keeps the MEASURED 17.8 board at 4.4 % (3.0 ran 5.5 %)"
+      },
+      {
+       "name": "usb_room",
+       "default": "12.0",
+       "comment": "plug room beyond the board's USB edge (a USB-C boot needs ~10 to seat);"
       }
      ]
     },
@@ -6031,8 +6531,8 @@
      "params": [
       {
        "name": "board_zone",
-       "default": "board_l + 4.5",
-       "comment": "board + clip room"
+       "default": "board_l + 4.5 + usb_room",
+       "comment": "board + clip room + plug room at the +X wall"
       },
       {
        "name": "inner_l",
@@ -6068,8 +6568,8 @@
       },
       {
        "name": "bcx",
-       "default": "inner_l/2 - board_zone/2",
-       "comment": "board center X"
+       "default": "inner_l/2 - board_zone/2 - usb_room/2",
+       "comment": "board center X (the plug room sits +X of it)"
       },
       {
        "name": "x_div",
@@ -6656,8 +7156,8 @@
       },
       {
        "name": "snap_lead",
-       "default": "30",
-       "comment": "insertion lead-in angle, degrees"
+       "default": "45",
+       "comment": "insertion lead-in angle, degrees — 45, not 30: the hook prints on a"
       },
       {
        "name": "snap_ret_lock",
@@ -6809,8 +7309,8 @@
       },
       {
        "name": "bez_h",
-       "default": "face_t + cav_d",
-       "comment": "bezel wall height"
+       "default": "face_t + cav_d + back_t",
+       "comment": "bezel wall height: the RIM carries the plate. It was"
       },
       {
        "name": "z_pcb_front",
@@ -7010,10 +7510,9 @@
        "name": "model",
        "default": "1.47",
        "enum": [
-        "1.47",
-        "1.69"
+        "1.47"
        ],
-       "comment": "board preset"
+       "comment": "board preset (the 1.69 lives in canary_s3_touch169.scad)"
       },
       {
        "name": "headers",
@@ -7059,7 +7558,7 @@
       },
       {
        "name": "brass_h",
-       "default": "5.0",
+       "default": "3.0",
        "comment": "factory corner pillar height above the PCB back (0 ="
       }
      ]
@@ -8210,6 +8709,10 @@
        "default": "stack_eff - (pillars_in ? brass_h : 0)"
       },
       {
+       "name": "hole_iy_usb_eff",
+       "default": "(is_a && collar_on) ? max(hole_iy_usb, collar_l + stand_d/2 + 0.3 + tol_slide) : hole_iy_usb"
+      },
+      {
        "name": "mark_w",
        "default": "mark_word_ink_w(mark_word, mark_word_h)"
       },
@@ -8539,7 +9042,7 @@
       },
       {
        "name": "win_margin",
-       "default": "0.6",
+       "default": "1.0",
        "comment": "window opened this much beyond the active area on each"
       }
      ]
@@ -10025,6 +10528,10 @@
        "default": "(edge_vent_n - 1)/2*edge_vent_pitch + edge_vent_w/2"
       },
       {
+       "name": "frame_comp_ceiling",
+       "default": "glass_guard + glass_t + pcb_standoff + pcb_t + comp_h"
+      },
+      {
        "name": "stamp_half",
        "default": "stamp_size*0.9 + stamp_size*0.39 + 0.6",
        "comment": "text block half-height"
@@ -10249,6 +10756,34 @@
      "note": "battery / RTC / pin row exit on the RIGHT (+X) edge",
      "params": [
       {
+       "name": "usb_side",
+       "default": "back",
+       "enum": [
+        "back",
+        "front"
+       ],
+       "comment": "which PCB face carries the USB-C — MEASURE"
+      },
+      {
+       "name": "usb_dz",
+       "default": "0.0",
+       "comment": "measured correction to the derived USB-C center (+ = toward the back)"
+      },
+      {
+       "name": "btn_side",
+       "default": "back",
+       "enum": [
+        "back",
+        "front"
+       ],
+       "comment": "which PCB face carries the buttons — MEASURE"
+      },
+      {
+       "name": "btn_dz",
+       "default": "1.0",
+       "comment": "actuator center off that face (side tact switches sit ~1.0) — MEASURE"
+      },
+      {
        "name": "opt_side",
        "default": "true"
       },
@@ -10405,9 +10940,13 @@
        "comment": "PCB front plane"
       },
       {
-       "name": "z_usb",
-       "default": "face_t + lcd_rise + pcb_t/2",
-       "comment": "USB-C center (mid-PCB)"
+       "name": "z_pcb_back",
+       "default": "z_pcb_front + pcb_t",
+       "comment": "PCB back plane"
+      },
+      {
+       "name": "z_btn",
+       "default": "(btn_side == \"back\" ? z_pcb_back + btn_dz : z_pcb_front - btn_dz)"
       },
       {
        "name": "kh_pad_wall",
@@ -10439,6 +10978,14 @@
       {
        "name": "snap_w",
        "default": "snap_window(nub_w, snap_play)"
+      },
+      {
+       "name": "vent_z0",
+       "default": "face_t + 1.0"
+      },
+      {
+       "name": "vent_z1",
+       "default": "bez_h - snap_depth - snap_h/2 - 0.8"
       }
      ]
     }
@@ -10533,8 +11080,8 @@
       },
       {
        "name": "louver_gap",
-       "default": "2.8",
-       "comment": "louver BLADE thickness + play — MEASURE your vents"
+       "default": "2.2",
+       "comment": "louver BLADE thickness + play — MEASURE your vents (blades run 1.5-2.0; at"
       }
      ]
     }
@@ -10805,6 +11352,11 @@
        "comment": "the WAP's board width — the CLIP station is its coupon verbatim"
       },
       {
+       "name": "clip_over",
+       "default": "0.15",
+       "comment": "the measured board's extra half-width — brd_xiao_w_measured() - clip_bw, per side"
+      },
+      {
        "name": "screw_step",
        "default": "0.15",
        "comment": "pilot ladder: three holes at screw_d − step / screw_d / + step"
@@ -10869,37 +11421,38 @@
      "params": [
       {
        "name": "glyph_show",
-       "default": "true"
+       "default": "true",
+       "comment": "deboss the bird into the face that prints against the bed — the finish test every case A-surface actually takes"
       },
       {
        "name": "glyph_h",
        "default": "34.0",
-       "comment": "NOMINAL height (mark_span units) — draws about"
+       "comment": "bird height, in mark_span units (about 30 x 32 mm on the plate). Leave it: the bed face is sized for this  // [24:1:40]"
       },
       {
        "name": "glyph_rib",
        "default": "0.7",
-       "comment": "stroke width, in mm. THE number this station tests:"
+       "comment": "stroke width in mm, and THE number this station tests. Blobbed and closed up: smaller. Broken or missing: bigger. Under ~0.42 is thinner than one extrusion and will not print  // [0.42:0.02:1.2]"
       },
       {
        "name": "glyph_depth",
        "default": "0.5",
-       "comment": "= label_depth's sibling; one bridged layer closes it"
+       "comment": "how deep the bird is sunk, in mm — the same depth every case label uses. Too shallow and one bridged layer closes it back up  // [0.2:0.1:1.2]"
       },
       {
        "name": "glyph_dx",
        "default": "-26.5",
-       "comment": "the clear rectangle on the bed face: left of the"
+       "comment": "bird center, mm from the plate center across the plate  // [-40:0.5:40]"
       },
       {
        "name": "glyph_dy",
        "default": "12.0",
-       "comment": "PORT through-hole, above the keyhole pockets"
+       "comment": "bird center, mm from the plate center up the plate  // [-30:0.5:30]"
       }
      ]
     },
     {
-     "name": "Quality",
+     "name": "Hidden",
      "note": "",
      "params": [
       {
@@ -11144,7 +11697,13 @@
       },
       {
        "name": "bh",
-       "default": "board_l * cos(recline) + 14"
+       "default": "2 + board_l*cos(recline) + 2",
+       "comment": "bays start 2 above the base; the USB end sits 2 under the top"
+      },
+      {
+       "name": "front_setback",
+       "default": "(bh - 4)*tan(recline)",
+       "comment": "the front face leans back with the bays"
       }
      ]
     }

@@ -138,6 +138,30 @@
      ]
     },
     {
+     "id": "head_seal",
+     "group": "Weather sealing",
+     "label": "(seal mode) O-ring under every lid screw head: the posts stand INSIDE the gasket",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_weep",
+     "group": "Weather sealing",
+     "label": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "usb_hood",
+     "group": "Weather sealing",
+     "label": "drip awning over the USB opening — for a case standing sideways or on a desk",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "opt_mount",
      "group": "Mounting",
      "label": "wall-mount features (keyholes thicken the case back by `kh_extra`)",
@@ -168,6 +192,14 @@
      "consequence": "",
      "audience": "user",
      "default": false
+    },
+    {
+     "id": "batt_hold",
+     "group": "Battery",
+     "label": "lid-side ribs over the bay that stop the cell bouncing in a drop: they",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
    "packages": [
@@ -175,7 +207,7 @@
      "id": "battery_full",
      "label": "battery full",
      "set": "wap-battery",
-     "dims_mm": "104.7 × 39 × 17.2 mm",
+     "dims_mm": "104.5 × 39 × 17.9 mm",
      "contents": "camera + buzzer + LED + LiPo bay + GPS bay + tamper",
      "options": {
       "opt_camera": true,
@@ -205,7 +237,7 @@
      "id": "compact_plain",
      "label": "compact plain",
      "set": "wap-compact",
-     "dims_mm": "33.7 × 36.6 × 13.7 mm",
+     "dims_mm": "33.7 × 36.6 × 15.05 mm",
      "contents": "plain board (no camera), buzzer + LED, USB-powered",
      "options": {
       "opt_camera": false,
@@ -235,8 +267,8 @@
      "id": "battery_weather",
      "label": "battery weather",
      "set": "wap-weather",
-     "dims_mm": "107.1 × 41.4 × 20.2 mm",
-     "contents": "battery_full + gasket seal + drip-edge lid + keyhole mounts",
+     "dims_mm": "106.9 × 41.4 × 21.25 mm",
+     "contents": "battery_full + gasket seal + drip-edge lid + keyhole mounts + weep",
      "options": {
       "opt_camera": true,
       "opt_buzzer": true,
@@ -293,7 +325,7 @@
    "always": [
     {
      "label": "Fasteners",
-     "note": "4 × M2 self-tapping screws (8–10 mm) into the corner posts"
+     "note": "4 × M2 flat-head self-tapping screws into the corner posts — max length is echoed at render (10 mm compact, 13 mm battery: the pilot is blind). `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`)"
     }
    ],
    "recipes": [
@@ -658,6 +690,30 @@
      "bom": [
       "FIL1"
      ]
+    },
+    {
+     "id": "opt_weep",
+     "group": "Options",
+     "label": "Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "seal_mid_posts",
+     "group": "Options",
+     "label": "(seal mode) one extra screw post mid-way along each ±X wall",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "head_seal",
+     "group": "Options",
+     "label": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\"",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     },
     {
      "id": "opt_mount",

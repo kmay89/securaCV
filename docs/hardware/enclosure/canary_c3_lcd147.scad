@@ -1051,9 +1051,13 @@ snap_w = nub_w + 2*snap_play;
 // Stripped, they run to the bare PCB corners over the same M2 positions.
 stand_d   = pillars_in ? 4.6 : 4.2;
 stand_len = stack_eff - (pillars_in ? brass_h : 0);
+// usb_a build: the USB-pair bosses move inboard of the drop collar's reach
+// (collar_l + boss radius + 0.3) — at the M2 positions they landed on the
+// collar's flanks and the lid could not close; they press bare PCB there
+hole_iy_usb_eff = (is_a && collar_on) ? max(hole_iy_usb, collar_l + stand_d/2 + 0.3 + tol_slide) : hole_iy_usb;
 // the four positions in CASE frame (USB end = −Y); the lid module flips Y
-stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb)],
-              [-(board_w/2 - hole_ix_usb), -(board_l/2 - hole_iy_usb)],
+stand_case = [[ board_w/2 - hole_ix_usb, -(board_l/2 - hole_iy_usb_eff)],
+              [-(board_w/2 - hole_ix_usb), -(board_l/2 - hole_iy_usb_eff)],
               [ board_w/2 - hole_ix_far,  board_l/2 - hole_iy_far ],
               [-(board_w/2 - hole_ix_far), board_l/2 - hole_iy_far ]];
 
@@ -1885,7 +1889,11 @@ module lid() {
                     // edge and the notch circle's reach — one triangle wide,
                     // full skirt height, found by slicing the STL, not by
                     // admesh (it was watertight and connected).
-                    translate([usb_dx, skirt_y/2]) square([usb_w + 4, 3*skirt_wall], center = true);
+                    // (the OPENING's width, plus the drop collar's ring on the
+                    // usb_a build — sized to the C knob, the skirt landed 1.7 mm
+                    // onto the collar on both exported usb_a lids)
+                    translate([usb_dx, skirt_y/2])
+                        square([usb_ow + (is_a && collar_on ? 2*collar_gap + 2*collar_t : 0) + 4, 3*skirt_wall], center = true);
                     // button-body reliefs at the real button positions
                     if (opt_btn) for (sx = [1, -1])
                         translate([sx*skirt_x/2, -btn_y]) square([3*skirt_wall, btn_body_w + 2], center = true);

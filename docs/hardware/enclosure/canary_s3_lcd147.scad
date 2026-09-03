@@ -348,7 +348,9 @@ snap_beam_t = 0.85;  // beam thickness (the wall is locally thinned to this)
 snap_eng = 0.55;     // engagement depth (how far the hook stands proud)
 snap_flat = 0.5;     // the flat that actually seats
 snap_slot = 0.9;     // U-slot width freeing each side of the beam
-snap_lead = 30;      // insertion lead-in angle, degrees
+snap_lead = 45;      // insertion lead-in angle, degrees — 45, not 30: the hook prints on a
+                     // face-down bezel and a 30° lead-in is a 60° overhang (strain does not
+                     // depend on it)
 snap_ret_lock = 62;  // return angle at the plug end — effectively permanent
 snap_ret_free = 38;  // return angle at the free end — releases with intent
 
@@ -413,7 +415,10 @@ r_in = max(0.6, r_out - wall);
 // bare one, never tighter than the hardware.
 stack_eff = (headers == "male") ? max(back_stack, hdr_drop) : back_stack;
 cav_d = lcd_rise + pcb_t + stack_eff;    // glass ledge -> back plate inner
-bez_h = face_t + cav_d;                  // bezel wall height
+bez_h = face_t + cav_d + back_t;         // bezel wall height: the RIM carries the plate. It was
+                                         // face_t + cav_d with the plate seated back_t INSIDE it,
+                                         // which put the plate 2.0 mm too deep — its ribs ran
+                                         // through the PCB and it sat on the drop collar
 
 z_pcb_front = face_t + lcd_rise;
 z_pcb_back  = z_pcb_front + pcb_t;
@@ -457,8 +462,8 @@ assert(headers != "male" || rib_out <= pin_in - 0.15,
            "(1.27 and 2.00 are both still on the table)."));
 // A rib is a column now, not a bump. Slenderness is what turns a compliant
 // crush into something that folds over on assembly instead of pushing back.
-assert(stack_eff - preload <= 9.0 * rib_w,
-       str("the compliant ribs would stand ", stack_eff - preload, " mm on a ",
+assert(stack_eff + preload <= 9.0 * rib_w,
+       str("the compliant ribs would stand ", stack_eff + preload, " mm on a ",
            rib_w, " mm section — too slender to load. Widen rib_w."));
 
 usb_free = usb_proud - usb_wall;
@@ -695,11 +700,15 @@ module bezel_collar() {
                              usb_h + 2*collar_gap + 2*collar_t, usb_r + collar_t);
                     usb_a_2d(usb_w + 2*collar_gap, usb_h + 2*collar_gap);
                 }
-        // above the board, inside the shell
-        translate([0, 0, z_pcb_back]) linear_extrude(bez_h - z_pcb_back)
+        // above the board, inside the shell, and 0.2 UNDER the plate's
+        // underside (the plate used to sit on the collar's crown)
+        translate([0, 0, z_pcb_back]) linear_extrude(plate_z0 - 0.2 - z_pcb_back)
             rrect(xc, yc, r_in);
     }
 }
+assert(plate_z0 - 0.2 - (z_usb + usb_h/2 + collar_gap) >= 1.0,
+       str("the drop collar keeps only ", plate_z0 - 0.2 - (z_usb + usb_h/2 + collar_gap),
+           " mm of ring over the shell crown under the plate — thin back_t or deepen back_stack"));
 
 // Button access, through the ear skin.
 module bezel_buttons() {
@@ -868,7 +877,9 @@ kJoin = 0.3;   // overlap into the parent so the union is ONE solid
 module hook_profile(ret) {
     lead_run = snap_eng / tan(snap_lead);
     ret_run  = snap_eng / tan(ret);
-    polygon([[-kJoin, -lead_run],
+    // the pedestal's underside runs 45° from the beam face to its tip (a flat
+    // 1.65 mm shelf printed in air on the face-down bezel)
+    polygon([[-kJoin, -lead_run - hook_ped - kJoin],
              [hook_ped, -lead_run],
              [hook_ped + snap_eng, 0],
              [hook_ped + snap_eng, snap_flat],
@@ -1008,7 +1019,9 @@ module back_ribs() {
     // Extruded a hair PAST z=0 into the plate: a rib that merely touches the
     // underside is a separate solid to CGAL, and the mesh gate counts it as
     // another part. Same reason as the hook pedestal above.
-    rib_h = stack_eff - preload;
+    // plate underside -> PCB back is stack_eff; the rib reaches preload PAST
+    // the PCB plane (it was stack_eff - preload: a 0.25 gap, not a 0.25 crush)
+    rib_h = stack_eff + preload;
     for (sy = [-1, 1], sx = [-1, 1])
         translate([sx * (xc/2 - rib_inset), sy * (yc/2 - 4.5), -rib_h])
             linear_extrude(rib_h + kJoin) square([rib_w, 5.0], center = true);

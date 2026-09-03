@@ -60,28 +60,28 @@ struct HardwareRef {
 // than one board are absent ON PURPOSE — see the note above.
 inline constexpr FigureRef kFigures[] = {
   { "canary-nightlight", "device.canary-nightlight", "27f621f7", "prototype" },
-  { "canary-sense", "device.canary-sense", "112abb6d", "shipping" },
-  { "canary-vision", "device.canary-vision", "421d34f1", "shipping" },
+  { "canary-sense", "device.canary-sense", "1fb6d5ed", "shipping" },
+  { "canary-vision", "device.canary-vision", "a032db11", "shipping" },
   { "canary-watch", "device.canary-display-watch", "17e158d1", "prototype" },
-  { "canary_wap", "device.canary-wap", "5fab1e20", "shipping" },
-  { "canary_wap_mobile", "device.canary-wap", "5fab1e20", "shipping" },
+  { "canary_wap", "device.canary-wap", "d54f315c", "shipping" },
+  { "canary_wap_mobile", "device.canary-wap", "d54f315c", "shipping" },
 };
 inline constexpr size_t kFigureCount = sizeof(kFigures) / sizeof(kFigures[0]);
 
 // One row per piece of hardware we can draw. The board is exact; see
 // shared_across_products for when the product name is not.
 inline constexpr HardwareRef kHardware[] = {
-  { "board:seeed_xiao_esp32s3", "device.canary-wap", "5fab1e20", "shipping", false },  // 4 builds
-  { "esp32-c3", "device.canary-vision-devkit", "996e322d", "shipping", false },  // 2 builds
+  { "board:seeed_xiao_esp32s3", "device.canary-wap", "d54f315c", "shipping", false },  // 4 builds
+  { "esp32-c3", "device.canary-vision-devkit", "8137e8a1", "shipping", false },  // 2 builds
   { "waveshare-esp32c3-lcd147", "device.canary-nightlight", "27f621f7", "prototype", false },  // 1 build
   { "waveshare-esp32s3-amoled241", "device.canary-display-amoled241", "8c939c25", "prototype", false },  // 1 build
   { "waveshare-esp32s3-lcd147", "device.canary-display-nightstand", "c361481b", "prototype", false },  // 1 build
   { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "9bb5e13f", "prototype", false },  // 2 builds
   { "waveshare-esp32s3-lcd7", "device.canary-display-dash7", "cdff74a9", "prototype", true },  // 2 builds — shared by canary-dash + canary-nightstand7
   { "waveshare-esp32s3-touch-lcd169", "device.canary-display-touch169", "72fa8cf1", "prototype", false },  // 1 build
-  { "xiao-esp32c3", "device.canary-vision", "421d34f1", "shipping", false },  // 1 build
-  { "xiao-esp32c6-mr60", "device.canary-sense", "112abb6d", "shipping", false },  // 3 builds
-  { "xiao-esp32s3", "device.canary-vision", "421d34f1", "shipping", false },  // 1 build
+  { "xiao-esp32c3", "device.canary-vision", "a032db11", "shipping", false },  // 1 build
+  { "xiao-esp32c6-mr60", "device.canary-sense", "1fb6d5ed", "shipping", false },  // 3 builds
+  { "xiao-esp32s3", "device.canary-vision", "a032db11", "shipping", false },  // 1 build
   { "xiao-esp32s3-round", "device.canary-display-watch", "17e158d1", "prototype", false },  // 3 builds
 };
 inline constexpr size_t kHardwareCount = sizeof(kHardware) / sizeof(kHardware[0]);

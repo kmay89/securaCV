@@ -92,7 +92,7 @@ BANNED = re.compile(
     r"|labelled|labelling|mislabelled|relabelled"
     r"|cancelled|cancelling|uncancelled"
     r"|modelled|modelling"
-    r"|levelled|levelling|travelling|signalling|dialling"
+    r"|levelled|levelling|travelling|signalling|dialling|dialled"
     r"|catalogue|catalogued|catalogues"
     r"|judgement|judgements|judgemental"
     r"|honour|honours|honoured|honouring"
@@ -113,6 +113,13 @@ BANNED = re.compile(
     r"|apologise|apologised|summarise|summarised|utilise|utilised"
     r"|prioritise|prioritised|standardise|standardised|customise|customised"
     r"|authorise|authorised|civilise|civilised|emphasise|emphasised"
+    # The list is a word list, not a suffix rule, so a family that nobody
+    # happened to type is a family that ships. This one did: the enclosure
+    # sources carried it four times, and one of those is a trailing comment
+    # on a released case's Customizer knob — which the builder manifest
+    # parses as that control's help text and carries to the website. The
+    # lint reported "US English throughout" the whole time.
+    r"|equalise|equalised|equalises|equalising|equalisation"
     r"|programme|programmes"
     r")\b",
     re.IGNORECASE,

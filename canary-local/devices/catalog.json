@@ -221,7 +221,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 162,
+   "engineering_param_count": 163,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -246,12 +246,11 @@
     {
      "param": "model",
      "values": [
-      "1.47",
-      "1.69"
+      "1.47"
      ],
      "default": "1.47",
      "audience": "user",
-     "note": "board preset"
+     "note": "board preset (the 1.69 lives in canary_s3_touch169.scad)"
     },
     {
      "param": "headers",
@@ -400,7 +399,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 37,
+   "engineering_param_count": 43,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -534,7 +533,7 @@
     "dock"
    ],
    "options": [],
-   "engineering_param_count": 15,
+   "engineering_param_count": 16,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -592,7 +591,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 48,
+   "engineering_param_count": 49,
    "alternatives": [
     "hammond_chassis",
     "relay_solar"
@@ -638,13 +637,13 @@
     {
      "id": "glyph_show",
      "type": "bool",
-     "label": "glyph_show",
+     "label": "deboss the bird into the face that prints against the bed — the finish test every case A-surface actually takes",
      "consequence": "",
      "audience": "user",
      "default": true
     }
    ],
-   "engineering_param_count": 26,
+   "engineering_param_count": 27,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -707,7 +706,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 16,
+   "engineering_param_count": 18,
    "alternatives": [
     "field_case",
     "relay_solar"
@@ -746,7 +745,8 @@
    ],
    "render_parts": [
     "tray",
-    "cover"
+    "cover",
+    "clip"
    ],
    "options": [
     {
@@ -758,7 +758,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 26,
+   "engineering_param_count": 28,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -952,7 +952,7 @@
     "cradle"
    ],
    "options": [],
-   "engineering_param_count": 11,
+   "engineering_param_count": 12,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1015,7 +1015,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 44,
+   "engineering_param_count": 47,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1518,7 +1518,7 @@
      "default": "none"
     }
    ],
-   "engineering_param_count": 293,
+   "engineering_param_count": 294,
    "alternatives": [
     "dash_display"
    ],
@@ -1609,7 +1609,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 46,
+   "engineering_param_count": 53,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -1740,6 +1740,30 @@
      ]
     },
     {
+     "id": "opt_weep",
+     "type": "bool",
+     "label": "Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "seal_mid_posts",
+     "type": "bool",
+     "label": "(seal mode) one extra screw post mid-way along each ±X wall",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "head_seal",
+     "type": "bool",
+     "label": "(seal mode) O-ring under each front screw head — needs screw_head = \"pan\"",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "opt_mount",
      "type": "bool",
      "label": "opt_mount",
@@ -1820,14 +1844,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 124,
+   "engineering_param_count": 135,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 14,
-    "user_options": 8,
+    "options": 17,
+    "user_options": 11,
     "variant_axes": 1
    }
   },
@@ -1906,7 +1930,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 19,
+   "engineering_param_count": 20,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2176,6 +2200,30 @@
      "default": false
     },
     {
+     "id": "opt_weep",
+     "type": "bool",
+     "label": "Ø2 weep through the bottom wall at the floor corner (mounted button-down):",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "seal_mid_posts",
+     "type": "bool",
+     "label": "one extra face screw per long wall, at the cable well: four corner screws",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "head_seal",
+     "type": "bool",
+     "label": "O-ring under each face screw head (the posts stand INSIDE the gasket line, so a",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "screw_insert",
      "type": "bool",
      "label": "M2 brass heat-set inserts in the corner posts",
@@ -2200,14 +2248,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 117,
+   "engineering_param_count": 130,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 7,
-    "user_options": 5,
+    "options": 10,
+    "user_options": 8,
     "variant_axes": 0
    }
   },
@@ -2368,7 +2416,7 @@
      "id": "opt_vent",
      "type": "bool",
      "label": "GORE vent cluster",
-     "consequence": "pressure equalisation (recommended with opt_seal)",
+     "consequence": "pressure equalization (recommended with opt_seal)",
      "audience": "user",
      "default": false
     },
@@ -2422,6 +2470,30 @@
       "both"
      ],
      "default": "hinge"
+    },
+    {
+     "id": "opt_weep",
+     "type": "bool",
+     "label": "Ø2 weep at the cavity's low point (bottom wall, beside the USB): condensate leaves (ON in the weather preset)",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "seal_mid_posts",
+     "type": "bool",
+     "label": "(seal mode) one extra screw post mid-way along each long wall: four corner",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "head_seal",
+     "type": "bool",
+     "label": "(seal mode) O-ring under each front screw head — the posts stand INSIDE the",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     },
     {
      "id": "screw_insert",
@@ -2480,14 +2552,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 147,
+   "engineering_param_count": 167,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 4,
     "released": 4,
-    "options": 15,
-    "user_options": 9,
+    "options": 18,
+    "user_options": 12,
     "variant_axes": 2
    }
   },
@@ -2818,6 +2890,30 @@
      "default": true
     },
     {
+     "id": "head_seal",
+     "type": "bool",
+     "label": "(seal mode) O-ring under every lid screw head: the posts stand INSIDE the gasket",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "opt_weep",
+     "type": "bool",
+     "label": "Ø1.5 weep at the cavity's low point (the USB wall, hung USB-down): condensate",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
+     "id": "usb_hood",
+     "type": "bool",
+     "label": "drip awning over the USB opening — for a case standing sideways or on a desk",
+     "consequence": "",
+     "audience": "user",
+     "default": false
+    },
+    {
      "id": "opt_mount",
      "type": "bool",
      "label": "wall-mount features (keyholes thicken the case back by `kh_extra`)",
@@ -2848,6 +2944,14 @@
      "consequence": "",
      "audience": "user",
      "default": false
+    },
+    {
+     "id": "batt_hold",
+     "type": "bool",
+     "label": "lid-side ribs over the bay that stop the cell bouncing in a drop: they",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     },
     {
      "id": "screw_insert",
@@ -2882,14 +2986,14 @@
      "default": true
     }
    ],
-   "engineering_param_count": 141,
+   "engineering_param_count": 159,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 5,
     "released": 5,
-    "options": 17,
-    "user_options": 12,
+    "options": 21,
+    "user_options": 16,
     "variant_axes": 1
    }
   },
@@ -2950,7 +3054,7 @@
      ]
     }
    ],
-   "engineering_param_count": 59,
+   "engineering_param_count": 62,
    "alternatives": [
     "s3_touch169",
     "c6_display"

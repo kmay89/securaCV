@@ -51,6 +51,7 @@ use <canary_core_lib.scad>    // rrect2d/pill2d + the catalog tolerance trio the
 use <canary_mount_lib.scad>   // the stud/keyhole hanging standard — the blind pocket's one home
 use <canary_snap_lib.scad>    // snap doctrine — the window derives from the ridge it parks
 use <canary_board_lib.scad>   // board registry — the ws169 numbers the knobs cite
+use <canary_port_lib.scad>    // the USB-C shell height the port datum is derived from
 
 /* [What to render] */
 part = "all";        // ["bezel","back","stand","all"]
@@ -93,6 +94,14 @@ btn_d = 3.4;                       // access hole Ø
 btn_xs = [-9.0, 0.0, 9.0];         // button X centers on the top edge — MEASURE
 
 /* [Side cluster] — battery / RTC / pin row exit on the RIGHT (+X) edge */
+/* [Port / button datums] — the 1.47 family mounts USB-C and the tact switches
+   on the BACK of the PCB (photo-verified on the C3 and C6); the 1.69 has not
+   met calipers, so the side is a knob. At "front"/"back" the opening centers
+   on the connector's own height off that face, never on the PCB's middle. */
+usb_side = "back";   // ["back","front"] which PCB face carries the USB-C — MEASURE
+usb_dz   = 0.0;      // measured correction to the derived USB-C center (+ = toward the back)
+btn_side = "back";   // ["back","front"] which PCB face carries the buttons — MEASURE
+btn_dz   = 1.0;      // actuator center off that face (side tact switches sit ~1.0) — MEASURE
 opt_side = true;
 side_open_h = 16.0;   side_open_dy = 0.0;      // tall slot — MEASURE
 
@@ -163,7 +172,10 @@ bez_h = face_t + cav_d;                         // bezel wall height
 r_in  = max(1.0, r_out - wall);                 // cavity corner radius
 
 z_pcb_front = face_t + lcd_rise;                // PCB front plane
-z_usb       = face_t + lcd_rise + pcb_t/2;      // USB-C center (mid-PCB)
+z_pcb_back  = z_pcb_front + pcb_t;              // PCB back plane
+z_usb       = (usb_side == "back" ? z_pcb_back + port_usbc_shell_h()/2
+                                  : z_pcb_front - port_usbc_shell_h()/2) + usb_dz;   // on the shell's axis
+z_btn       = (btn_side == "back" ? z_pcb_back + btn_dz : z_pcb_front - btn_dz);
 
 // the face overlaps the glass border by (glass − AA)/2 per side; that retains it
 lip_w = (glass_w - aa_w)/2;   lip_h = (glass_h - aa_h)/2;
@@ -218,7 +230,17 @@ skirt_x = xc - 2*tol_press;   skirt_y = yc - 2*tol_press;
 // (snap_window(): ridge + play per side; one number cannot size two features
 // that are not the same size)
 snap_w = snap_window(nub_w, snap_play);
-function nub_ys() = [-glass_h/4, glass_h/4];
+// the snap pair sits 5 mm in from the glass's ends: at ±glass_h/4 the windows
+// shared their wall with the vent slots and the +X side slot (45 % of each +X
+// catch edge was air)
+function nub_ys() = [-(glass_h/2 - 5), glass_h/2 - 5];
+// the vent slots stop 0.8 below the snap windows' bottom edge, so the two
+// never share wall wherever the row runs in y
+vent_z0 = face_t + 1.0;
+vent_z1 = bez_h - snap_depth - snap_h/2 - 0.8;
+assert(vent_z1 - vent_z0 >= 2.0, "no wall left for vent slots below the snap windows — raise back_stack or drop opt_vent");
+assert(!opt_side || len([for (yy = nub_ys()) if (abs(yy - side_open_dy) < side_open_h/2 + snap_w/2 + 0.8) 1]) == 0,
+       "a +X snap window shares its wall with the side cluster slot");
 
 // stagger the PCB-pressing standoffs just inside the PCB corners
 function standoff_pts() = [for (sx = [1,-1], sy = [1,-1])
@@ -247,16 +269,16 @@ module bezel() {
             translate([usb_dx, -yo/2, z_usb]) cube([usb_w, wall*3, usb_h], center = true);
         // PWR/BOOT/RST access holes in the top (+Y) wall
         if (opt_btn) for (bx = btn_xs)
-            translate([bx, yo/2, z_pcb_front + 0.5])
+            translate([bx, yo/2, z_btn])
                 rotate([90, 0, 0]) cylinder(d = btn_d, h = wall*3, center = true);
         // battery / RTC / pin cluster slot in the right (+X) wall
         if (opt_side)
-            translate([xo/2, side_open_dy, z_pcb_front + pcb_t/2])
-                cube([wall*3, side_open_h, back_stack + 1.0], center = true);
+            translate([xo/2, side_open_dy, z_pcb_back + back_stack/2])   // behind the PCB only — it used to open onto the glass edge
+                cube([wall*3, side_open_h, back_stack + 0.5], center = true);
         // heat-escape slots: a row low on each ±X side wall, over the cavity
         if (opt_vent) for (sx = [1, -1], i = [0:vent_n-1])
-            translate([sx*xo/2, -(vent_n-1)*vent_pitch/2 + i*vent_pitch, face_t + cav_d/2])
-                cube([wall*3, vent_w, cav_d*0.6], center = true);
+            translate([sx*xo/2, -(vent_n-1)*vent_pitch/2 + i*vent_pitch, (vent_z0 + vent_z1)/2])
+                cube([wall*3, vent_w, vent_z1 - vent_z0], center = true);
         // snap windows in the ±X side walls (the back's nubs click in here) —
         // sized by snap_window(), never by the ridge's own number
         for (sx = [1, -1], yy = nub_ys())

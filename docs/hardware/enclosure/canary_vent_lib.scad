@@ -62,11 +62,17 @@
 //      pressure-equalization membrane. They are a seal, not a grille; the
 //      hole pattern is set by the membrane pad, and shaping them would
 //      cost sealing area for no visible mark.
-//    - Sub-2 mm slots (the C6 and 1.69" back grilles, the DIN hub's floor
-//      and chimney slots run at vent_slot_w = 1.4). An egg needs length
-//      enough to read as one; at those widths the profile is smaller than
-//      the eye resolves at arm's length and smaller than most nozzles
-//      place cleanly. Those cases vent, they do not wear the mark.
+//    - Sub-2 mm slots (the C6 and 1.69" back grilles run at vent_w = 1.4).
+//      An egg needs length enough to read as one; at those widths the
+//      profile is smaller than the eye resolves at arm's length and smaller
+//      than most nozzles place cleanly. Those cases vent, they do not wear
+//      the mark. Use egg_reads() rather than re-checking this by hand —
+//      this paragraph used to excuse the DIN hub here too, on the grounds
+//      that its slots also ran at 1.4, and they run at 2.0. The exemption
+//      was entirely a size argument and the size was wrong by 43 %.
+//    - The DIN hub, on the real reason rather than that one: its floor and
+//      chimney slots are structural cuts on faces nobody looks at (a rail-
+//      mounted box, slots facing the panel and the ceiling).
 //  The mark lives on faces big enough to show a field. Today that is the
 //  7" back plate (canary_s3_lcd7.scad, the library's first and so far only
 //  adopter); it is a property of the surface, not a ranking of the cases.
@@ -84,6 +90,15 @@
 // quietly becomes false — the 7" had exactly that copy and would have been
 // left behind by the first change to this line.
 function egg_tip() = 0.72;
+
+// The width below which the egg stops reading as an egg — smaller than the
+// eye resolves at arm's length, and smaller than most nozzles place cleanly.
+// A FUNCTION and not a sentence, because the sentence went stale: the prose
+// above excused the DIN hub at "vent_slot_w = 1.4" while the hub actually
+// runs 2.0, and the whole exemption was a size argument. A maintainer should
+// ask the library, not re-check a comment against five files.
+function egg_min_w() = 2.0;
+function egg_reads(w) = w >= egg_min_w();
 
 // The construction, one place (everything else reads its fields):
 //   R    base radius w/2            — the semicircle below the equator

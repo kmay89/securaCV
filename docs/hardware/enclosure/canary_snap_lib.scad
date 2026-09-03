@@ -69,16 +69,22 @@ function snap_window(ridge, play = 0.15) = ridge + 2*play;
 //    w/t/hook  — tab width along the edge / beam thickness / lip overhang
 //    hook_h    — lip + lead-in height above the board top
 //    clear     — beam face to board edge gap (a FIT — tune on the coupon)
+//    over      — how much wider (per side) the REAL board is than the edge
+//                line it is drawn to. A XIAO is drawn 17.5 and mics 17.8
+//                (brd_xiao_w_measured): the lip has to open that extra 0.15
+//                on top of the hook, and a gate that only saw the hook
+//                passed a 5.5 % insertion as 4.3 %. Pass it; the drawing
+//                does not move, the arithmetic does.
 //
 //  The strain gate runs on every render: the beam's working length is the
-//  root-to-seat rise, the tip deflection is the full lip (hook + clear cam
-//  travel is bounded by hook), and the budget defaults to the once class.
+//  root-to-seat rise, the tip deflection is the full lip plus the real
+//  board's overwidth, and the budget defaults to the once class.
 // ---------------------------------------------------------------------------
 module snap_boardclip(cx, ey, sy, z_floor, z_board,
                       w = 6.0, t = 1.0, hook = 0.5, hook_h = 1.2,
-                      clear = 0.25, budget = snap_budget_once()) {
+                      clear = 0.25, budget = snap_budget_once(), over = 0) {
     len = z_board - z_floor;
-    eps = snap_strain(t, hook, len);
+    eps = snap_strain(t, hook + max(0, over), len);
     assert(len > 0, "snap_boardclip: board top must sit above the floor");
     assert(eps <= budget,
            str("snap_boardclip: insertion strain ", round(eps*1000)/10,
@@ -111,5 +117,12 @@ module snap_selfcheck() {
            "snap: repeated flexing budgets tighter than one-time flexing");
     assert(snap_window(1.3) > 1.3,
            "snap: a window must be larger than its ridge");
+    // the overwidth lesson: the WAP's clip on a 3.0 standoff (L 4.2) passes
+    // for the drawn board and FAILS for the measured one; on the 3.5 standoff
+    // it now stands on (L 4.7) the measured board passes too
+    assert(snap_strain(1.0, 0.5 + 0.15, 4.2) > snap_budget_once(),
+           "snap: 1.0/0.5 at L=4.2 must fail once the 17.8 board's extra 0.15 is counted, or `over` is inert");
+    assert(snap_strain(1.0, 0.5 + 0.15, 4.7) <= snap_budget_once(),
+           "snap: 1.0/0.5 at L=4.7 must pass with the measured board — that is why the WAP standoff is 3.5");
     echo("canary_snap_lib: self-check OK");
 }

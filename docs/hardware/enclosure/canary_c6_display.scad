@@ -78,7 +78,8 @@ use <canary_board_lib.scad>   // the board registry — ws147 family numbers
 
 /* [What to render] */
 part  = "all";      // ["bezel","back","all"]
-model = "1.47";     // ["1.47","1.69"]  board preset
+model = "1.47";     // ["1.47"]  board preset (the 1.69 lives in canary_s3_touch169.scad)
+assert(model == "1.47", "the \"1.69\" preset here was a placeholder with invented dimensions — use canary_s3_touch169.scad");
 // board variant: "none" = stripped (no headers, corner pillars removed), "male" = as shipped (down-facing headers + brass corner pillars)
 headers = "none";   // ["none","male"]
 
@@ -105,10 +106,11 @@ hdr_drop = 8.8;      // cavity depth below the PCB back that swallows base + pin
                      // (fit-tested: 8.8 closes fine — the earlier "pins foul the
                      // lid" was the boss Ø, fixed by the slimmer Ø4.6 bosses) — MEASURE
 hdr_inset = 1.6;     // PCB edge → header row centerline — MEASURE
-brass_h = 5.0;       // factory corner pillar height above the PCB back (0 =
-                     // pillars removed) — brd_ws147_brass_c6() carries this
-                     // same guess; the C3 sibling's pillars measured 3.0,
-                     // ours never met calipers — MEASURE
+brass_h = 3.0;       // factory corner pillar height above the PCB back (0 =
+                     // pillars removed) — the C3 sibling's pillars MEASURED 3.0
+                     // (brd_ws147_brass_c3) on the same PCB family; the 5.0 this
+                     // carried was a guess that left the bosses 2.0 short of the
+                     // pillar tops (the C3's print-2 floating board) — MEASURE
 
 /* [Screen] — active area = the window; the LCD module border sits under the lip */
 aa_l  = (model == "1.69") ? 27.972 : 32.35;    // active-area long (Y) — 1.69 = MEASURE

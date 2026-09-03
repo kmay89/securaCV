@@ -107,8 +107,9 @@ module plate() {
                 rrect2d(led_w + 2*tol_slide, led_w + 2*tol_slide, 1);
             translate([x_btn, y_btn, fx_t - btn_dep]) linear_extrude(btn_dep + 0.1)
                 rrect2d(btn_w + 2*tol_slide, btn_w + 2*tol_slide, 0.5);
-            // reed channel (press the glass reed in; leads exit both ends)
-            translate([x_reed, y_reed, fx_t - reed_d + 0.6]) rotate([0, 90, 0])
+            // reed channel — an OPEN slot (its axis 0.3 below the face, so the top is
+            // open and the glass reed presses in; buried 0.7 deep it was a tunnel)
+            translate([x_reed, y_reed, fx_t - reed_d/2 + 0.3]) rotate([0, 90, 0])
                 translate([0, 0, -reed_l/2 - 4]) cylinder(d = reed_d + 2*tol_press, h = reed_l + 8);
             // magnet slider rail: dovetail-ish groove running toward the reed
             translate([x_reed + 14, y_reed, fx_t - 1.8]) linear_extrude(1.9)
@@ -154,7 +155,10 @@ module slider() {
             linear_extrude(1.7) rrect2d(20, 8, 1);                  // rail foot
             translate([0, 0, 1.7 - 0.01]) cylinder(d = 8, h = 6);   // grip knob
         }
-        translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
+        // magnet pocket, loaded from the KNOB TOP and resting 1.3 above the groove
+        // floor: a pocket open from below put the magnet's face at z 0 — through
+        // the reed's 1.1 mm protrusion the relief channel below is there to clear
+        translate([0, 0, 1.3]) cylinder(d = mag_d + 2*tol_press, h = 10);
         // underside relief channel: the reed's glass body protrudes ~1.1 mm
         // above the groove floor — without this the first slide crushes it
         translate([0, 0, 0.55]) cube([20.2, reed_d + 1.0, 1.3], center = true);

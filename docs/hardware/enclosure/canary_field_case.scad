@@ -9,7 +9,7 @@
 //
 //  Why this can honestly aim at IP67 where the other cases can't:
 //    - ZERO external penetrations except the bonded lens disc and a Ø3 mm
-//      vent hole backed by an adhesive ePTFE membrane (equalises pressure
+//      vent hole backed by an adhesive ePTFE membrane (equalizes pressure
 //      so thermal cycling can't pump moisture past the seal). No external
 //      USB: open the case to charge/flash — the biggest leak path deleted.
 //    - A real Ø1.5 mm O-ring CORD in a machined-style groove on the body
@@ -88,7 +88,8 @@ g_c     = 2.0;       // groove centerline offset outboard of the cavity edge
 lob_d    = 9.0;
 lob_off  = 8.0;      // lobe center offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
 end_lob_y = 8.0;     // Y of the two lobes on each short end
-insert_d = 4.6;  insert_h = 6.0;   // M3 heat-set pocket
+insert_d = 4.0;  insert_h = 6.0;   // M3 heat-set HOLE (the short-series insert's knurl is Ø4.6:
+                                   // bore it 4.0 so the brass bites — at 4.6 it pulled out under preload)
 screw_c_d = 3.4;                    // lid clearance hole
 cb_d = 6.4;  cb_h = 2.0;            // pan-head counterbore
 
@@ -136,7 +137,9 @@ grip_grooves = 3;
    pair (~4.3 % against the 4.5 % once-budget, engagement 0.5 >= the 0.4
    floor); retention comes from the catalog's widest tabs — holding force
    scales with clip_w, insertion strain does not. */
-standoff_h = 3.0;
+standoff_h = 3.5;    // 3.5: beam 4.7 keeps the MEASURED 17.8 board at 4.4 % (3.0 ran 5.5 %)
+usb_room = 12.0;     // plug room beyond the board's USB edge (a USB-C boot needs ~10 to seat);
+                     // 0 = pop the board out of its clips to charge
 clip_w = 8.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 
 /* [Divider] */
@@ -153,7 +156,7 @@ lid_edge = 0.64;     // stepped edge chamfer on the lid face
 $fa = 3; $fs = 0.4;
 
 // ---- derived --------------------------------------------------------------
-board_zone = board_l + 4.5;                        // board + clip room
+board_zone = board_l + 4.5 + usb_room;             // board + clip room + plug room at the +X wall
 inner_l = batt_l + batt_pad + rib_t + board_zone;
 inner_w = max(batt_w + 1.0, board_w + 9.0);
 cav_h   = standoff_h + board_h + stack_h + head_clear;
@@ -162,7 +165,7 @@ out_l   = inner_l + 2*wall_t;
 out_w   = inner_w + 2*wall_t;
 r_out   = r_in + wall_t;
 total_h = base_h + lid_t;
-bcx     = inner_l/2 - board_zone/2;                // board center X
+bcx     = inner_l/2 - board_zone/2 - usb_room/2;   // board center X (the plug room sits +X of it)
 x_div   = -inner_l/2 + batt_l + batt_pad + rib_t/2;
 lens_x  = bcx + cam_dx;  lens_y = cam_dy;
 
@@ -231,7 +234,7 @@ module edgeclip(px, py, ang) {
     translate([px, py, 0]) rotate([0, 0, ang - 90])
         snap_boardclip(0, 0, 1, floor_t, floor_t + standoff_h + board_h,
                        clip_w, clip_t, clip_hook, clip_hook_h, clip_clear,
-                       snap_budget_once());
+                       snap_budget_once(), over = (brd_xiao_w_measured() - board_w)/2);
 }
 
 // blind keyhole pocket, opening on the bottom face (z0 = 0); slot slides
