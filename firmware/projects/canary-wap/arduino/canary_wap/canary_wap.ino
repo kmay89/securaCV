@@ -123,8 +123,6 @@
 #include <Crypto.h>
 #include <Ed25519.h>
 
-#include "esp_camera.h"
-
 #include <boot_banner.h>
 #include "log_level.h"
 #include "health_log.h"
@@ -195,6 +193,15 @@ extern "C" {
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "build_config.h"
+
+// Chip-gated, not profile-gated: the ESP32-C3 Arduino core ships no camera
+// driver, so this header does not exist there at all — while on the S3 it
+// is present in every profile (which is why the unfenced include compiled
+// for years and the first C3 CI leg found it in an hour). Must sit AFTER
+// build_config.h; the includes above it predate the hardware selection.
+#if HW_HAS_CAMERA
+#include "esp_camera.h"
+#endif
 
 #if FEATURE_QR_PROVISION
 #include "qr_scanner.h"
