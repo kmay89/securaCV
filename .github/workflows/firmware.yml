@@ -1265,6 +1265,25 @@ jobs:
           /tmp/settings_policy | tee /tmp/settings_policy.log
           grep -q "ALL .* PASSED" /tmp/settings_policy.log
 
+      - name: Build + run canary-display Host guard host test
+        # The LAN web API's Host check (canary/net/host_guard.h): the Origin
+        # + CSRF write guard compares the browser's own headers with each
+        # other, which DNS rebinding satisfies (a public domain re-pointed at
+        # the glass arrives with Origin == Host), so writes, the CSRF token
+        # and the per-witness reads also require a Host that can only mean
+        # this device — an IP literal, the .local name, a single label, or a
+        # private-use suffix. Pins every way a household reaches the glass
+        # true, every registrable public domain false, and degenerate or
+        # oversized authorities foreign rather than a free pass.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_host_guard.cpp \
+              -o /tmp/host_guard
+          /tmp/host_guard | tee /tmp/host_guard.log
+          grep -q "ALL .* PASSED" /tmp/host_guard.log
+
       - name: Build + run Canary Link core host test
         # The generic authenticated-datagram layer under the Tin Can's strings
         # (firmware/common/link/) — deliberately NOT kid-specific, because
