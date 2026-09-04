@@ -313,6 +313,10 @@ assert(btn_body_l - lid_t + 1 <= cav_d, "button too deep — raise btn_body_l bu
 assert(zone_btn >= btn_bez_d + 3, "zone_btn too short for the button bezel");
 assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lip");
+assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
+       str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
+           " % of its groove - past ", round(100*core_gasket_fill_max()),
+           " % the incompressible gasket props the lid open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(cam_disc_d == 0 || cam_disc_d > cam_ap_d, "cam_disc_d must exceed cam_ap_d");
 assert(kh_head_h + 1.5 <= floor_t + kh_extra, "stud pocket too deep — raise kh_extra");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of range");
@@ -447,8 +451,13 @@ module body() {
         }
     }
     // security-screw pilot, drilled LAST so it passes through wall AND boss,
-    // ending blind inside the boss (the seal envelope stays intact)
-    translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0]) cylinder(d = sec_screw_d - 0.5, h = 6.5);
+    // ending blind inside the boss (the seal envelope stays intact). The
+    // length is DERIVED: wall_eff + 3.1 always leaves 1.0 mm of the 4 mm boss
+    // as web. The old fixed 6.5 was drilled for the sealed wall and broke
+    // through into the cavity on any config with wall_eff < 2.4 — a "blind"
+    // pilot that opened the case it was securing.
+    translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0])
+        cylinder(d = sec_screw_d - 0.5, h = wall_eff + 3.1);
     }
 }
 

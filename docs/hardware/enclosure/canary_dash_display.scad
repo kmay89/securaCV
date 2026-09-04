@@ -45,7 +45,9 @@ bez_lip = 2.5;       // bezel overlap onto the glass edge
 /* [USB / terminals] — positions along the BOTTOM wall, from panel center */
 usb_dx   = 0.0;      // USB-C slot center offset — MEASURE
 usb_w    = 12.0;  usb_h = 6.5;
-term_open = false;   // also open the CAN/RS485 terminal zone
+term_open = false;   // also open the CAN/RS485 terminal zone (a parting-line notch to the rear rim; the back plate closes it)
+// term_h is the connector zone's height: the notch must clear it (asserted
+// below), and the back plate covers everything above it
 term_dx  = -30.0;  term_w = 24.0;  term_h = 8.0;
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
@@ -124,6 +126,11 @@ assert(mount != "cradle"
        || cradle_dx - (cr_barb_w() + 9)/2 > (vent_n - 1)*8/2 + vent_w,
        "dash: a cradle pad lands on the back vent row — widen cradle_dx or narrow the vent field");
 assert(usb_h <= stack_t, "usb_h exceeds the rear stack depth");
+assert(!term_open || face_t + glass_t + 0.5 + term_h <= frame_h + 1e-9,
+       "the terminal zone stands taller than the frame — its notch cannot clear it");
+// the USB slot and the terminal notch must not merge into one ragged opening
+assert(!term_open || abs(term_dx - usb_dx) >= term_w/2 + usb_w/2 + 3.0,
+       "terminal notch overlaps the USB slot — separate term_dx/usb_dx");
 assert(cb_h + 1.0 <= back_t, "counterbore through the back plate");
 
 echo(str("Canary dash display v0.1-dev — ", out_l, " x ", out_w, " x ", total_t,
@@ -156,10 +163,16 @@ module frame() {
         // catalog's chamfered-top profile halves the unsupported span)
         translate([usb_dx, -out_w/2 + frame_w + 0.1, face_t + glass_t + 0.5 + usb_h/2])
             rotate([90, 0, 0]) linear_extrude(frame_w + 0.2) port_bridge_profile2d(usb_w, usb_h);
-        // optional CAN/RS485 terminal opening
+        // optional CAN/RS485 terminal opening. 24 mm is too wide for a
+        // bridge-safe hole — port_bridge_profile2d refuses it (the 45°
+        // chamfers it would need are taller than the opening; the old
+        // constant-chamfer call shipped a 19.0 mm flat bridge here). So the
+        // cut runs OPEN to the frame's rear rim instead: a parting-line
+        // notch the screwed-on back plate covers, printing with zero
+        // unsupported span in the face-down frame.
         if (term_open)
-            translate([term_dx, -out_w/2 + frame_w + 0.1, face_t + glass_t + 0.5 + term_h/2])
-                rotate([90, 0, 0]) linear_extrude(frame_w + 0.2) port_bridge_profile2d(term_w, term_h);
+            translate([term_dx - term_w/2, -out_w/2 - 0.1, face_t + glass_t + 0.5])
+                cube([term_w, frame_w + 0.2, frame_h - (face_t + glass_t + 0.5) + 0.1]);
         // top-wall chimney vents (pitch 8 keeps all of them inside the shell)
         for (i = [0:vent_n - 1])
             translate([-((vent_n - 1)*8)/2 + i*8 - vent_w/2,

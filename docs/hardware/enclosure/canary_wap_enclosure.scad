@@ -307,7 +307,11 @@ $fa = 3; $fs = 0.4;
 // ----------------------------------------------------------------------------
 //  Derived geometry
 // ----------------------------------------------------------------------------
-wall_eff     = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;   // >=0.8 mm cheek each side of the groove
+// 1.2 mm cheek each side of the groove — the structural floor, not the web.
+// This file shipped `gasket_w + 1.6` (0.8 mm cheeks) after its three siblings
+// were corrected to 2*core_min_wall(): the fork the audit predicted, caught in
+// the released case. The cheeks ARE the seal path's walls.
+wall_eff     = e_seal ? max(wall_t, gasket_w + 2*core_min_wall()) : wall_t;
 // the fastener, resolved once: the M2 rows of the registry equal this file's
 // validated knobs, so a default render reads the knobs and larger sizes read
 // the registry (a pilot sized for M2 under an M3 self-tapper splits the post)
@@ -405,6 +409,10 @@ assert(!(usb_hood && e_seal && usb_cover),
 assert(!batt_hold || !e_battery || cav_h - batt_h >= 1.5,
        "batt_hold ribs would be shorter than 1.5 mm — the bay is already nearly full-height");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lid lip depth");
+assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
+       str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
+           " % of its groove - past ", round(100*core_gasket_fill_max()),
+           " % the incompressible gasket props the lid open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(!e_seal || skirt_h < base_h, "skirt_h must be shorter than the base");
 assert(cam_disc_t == 0 || cam_disc_t + 0.2 < lid_t, "cam_disc_t too thick for lid_t");
 assert(cam_disc_t == 0 || cam_disc_d == 0 || cam_disc_d > cam_win_d,

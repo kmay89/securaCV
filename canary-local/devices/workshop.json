@@ -267,7 +267,7 @@
      "id": "battery_weather",
      "label": "battery weather",
      "set": "wap-weather",
-     "dims_mm": "106.9 × 41.4 × 21.25 mm",
+     "dims_mm": "108.5 × 43 × 21.25 mm",
      "contents": "battery_full + gasket seal + drip-edge lid + keyhole mounts + weep",
      "options": {
       "opt_camera": true,

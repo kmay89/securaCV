@@ -401,6 +401,10 @@ assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5,
 assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the front lip depth");
+assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
+       str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
+           " % of its groove - past ", round(100*core_gasket_fill_max()),
+           " % the incompressible gasket props the lid open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(!e_seal || skirt_h < base_d, "skirt_h must be shorter than the back shell");
 assert(cam_disc_t == 0 || cam_disc_t + 0.2 < lid_t, "cam_disc_t too thick for lid_t");
 assert(cam_disc_d == 0 || cam_disc_d > cam_ap_d, "cam_disc_d must be larger than cam_ap_d");

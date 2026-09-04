@@ -277,8 +277,12 @@ module body() {
     edgeclip(bcx,  board_w/2,  90);
     edgeclip(bcx, -board_w/2, 270);
     difference() {                     // battery divider with a wire notch
-        translate([x_div - rib_t/2, -inner_w/2 + 0.5, floor_t - 0.01])
-            cube([rib_t, inner_w - 1.0, rib_h + 0.01]);
+        // the divider runs 0.3 INTO each side wall — it is the drop case's
+        // only transverse member, and the old cut stopped 0.5 mm short of
+        // both walls (probe-proven voids), so the one rib that should tie
+        // the shell together tied nothing
+        translate([x_div - rib_t/2, -inner_w/2 - 0.3, floor_t - 0.01])
+            cube([rib_t, inner_w + 0.6, rib_h + 0.01]);
         translate([x_div - rib_t/2 - 0.1, inner_w/2 - 2 - notch_w, floor_t + rib_h - notch_d])
             cube([rib_t + 0.2, notch_w, notch_d + 0.1]);
     }
@@ -346,11 +350,18 @@ module bezel() {                        // contrast-color lens trim ring
 }
 
 module boot() {                         // TPU 95A; print open-side-up
-    bh = boot_floor + total_h + 0.6;
+    // The rim stands 0.6 proud of the TALLEST face feature — which with the
+    // trim ring fitted is the bezel tip (bez_proud above the lid), not the
+    // lid itself. The old +0.6 was measured from the lid face, so the bezel
+    // stood 0.2 proud of the boot and a lid-face drop landed the whole case
+    // on a press-fit trim ring over the lens.
+    rim_over = (bez_on ? bez_proud : 0) + 0.6;
+    bh = boot_floor + total_h + rim_over;
     difference() {
         linear_extrude(bh) offset(r = boot_w - boot_fit) outline2d();
-        // case pocket (stretch fit)
-        translate([0, 0, boot_floor]) linear_extrude(total_h + 1.0) offset(r = -boot_fit) outline2d();
+        // case pocket (stretch fit) — cut past the rim so the taller rim
+        // stays a rim, not a roof
+        translate([0, 0, boot_floor]) linear_extrude(total_h + rim_over + 0.5) offset(r = -boot_fit) outline2d();
         // keyhole windows in the floor
         for (s = [1, -1])
             translate([s*kh_x, 0, -0.1]) linear_extrude(boot_floor + 0.2)
@@ -366,8 +377,10 @@ module boot() {                         // TPU 95A; print open-side-up
                 offset(r = boot_w - boot_fit - 0.8) outline2d();
             }
     }
-    // retention lip: snaps over the lid's chamfered edge
-    translate([0, 0, bh - 1.2]) linear_extrude(1.2) difference() {
+    // retention lip: snaps over the lid's chamfered edge — anchored to the
+    // LID EDGE's height (it used to ride at bh - 1.2, which the raised rim
+    // would have carried up past the edge it grips)
+    translate([0, 0, boot_floor + total_h - 0.6]) linear_extrude(1.2) difference() {
         offset(r = -boot_fit + 0.3) outline2d();
         offset(r = -boot_fit - 0.8) outline2d();
     }

@@ -84,9 +84,15 @@ panel_gap  = 0.0;    // spacer between the display-module base and the PCB front
                      // (0 = module bonded straight on) — MEASURE
 back_stack = 4.5;    // tallest thing behind the PCB (USB-C / JST / buzzer) — MEASURE
 
-/* [USB-C] — on the BOTTOM (−Y) edge, centered on the PCB thickness */
+/* [USB-C] — on the BOTTOM (−Y) edge. The opening is the plug OVERMOLD
+   channel, not a shell-sized slot: the receptacle face sits at the PCB edge,
+   wall + tol_slide + glass-overhang (4.25 mm at defaults) behind the outer
+   face, and a shell-sized hole stopped the cable's overmold at the outer
+   wall — the shell latched on 2.25 mm of its 6.5 mm insertion. The channel
+   is the Type-C spec's maximum overmold envelope (canary_port_lib) cut clear
+   through to the receptacle, so any compliant cable seats and latches. */
 opt_usb = true;
-usb_w = 9.2;   usb_h = 3.4;   usb_dx = 0.0;   // MEASURE your connector
+usb_dx = 0.0;        // channel center along the bottom edge — MEASURE
 
 /* [Buttons] — PWR / BOOT / RST on the TOP (+Y) edge (side access holes) */
 opt_btn = true;
@@ -184,6 +190,14 @@ lip_w = (glass_w - aa_w)/2;   lip_h = (glass_h - aa_h)/2;
 land_x = lip_w - glass_relief_w;   land_y = lip_h - glass_relief_w;
 // the PCB is inset inside the glass — that overhang is what the lip presses on
 ohang_x = (glass_w - pcb_w)/2;   ohang_y = (glass_h - pcb_h)/2;
+// the USB overmold channel: outer face -> receptacle face at the PCB edge,
+// opened to the spec envelope so the cable seats (see the [USB-C] note)
+usb_reach = wall + tol_slide + ohang_y;                 // how far the receptacle hides
+usb_ch_w  = port_usbc_overmold_w() + 2*tol_hole;        // channel envelope
+usb_ch_h  = port_usbc_overmold_h() + 2*tol_hole;
+// the channel's crown stands past the bezel rim by this much; the back
+// plate's edge band covers it and is shelved to let the overmold through
+plate_relief = max(0, z_usb + usb_ch_h/2 - bez_h);
 
 // blind keyhole: the catalog pocket wants kh_head_h + 1.5 of stock (the +1.5
 // is the web that keeps it blind — canary_mount_lib), and the 2.0 plate
@@ -211,7 +225,13 @@ assert(glass_relief < face_t - 0.5, "glass relief eats the bezel face — check 
 assert(pcb_w < glass_w && pcb_h < glass_h, "PCB should be smaller than the glass slab — check dims");
 assert(skirt_dep <= back_stack + 0.01, "skirt_dep > back_stack — the skirt would drive into the PCB; cap it at back_stack");
 assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth) — raise skirt_dep or lower snap_depth");
-assert(usb_h <= pcb_t + 2*lcd_rise, "USB slot taller than the front stack — check usb_h");
+// the mated plug's overmold sweeps a spec-height band about the shell axis;
+// it must ride OVER the glass slab (which is wider than the PCB, so it stands
+// in the channel's approach for the overmold's last 1.65 mm of travel)
+assert(!opt_usb || z_usb - port_usbc_overmold_h()/2 >= face_t + glass_t - 0.1,
+       str("a mated plug's overmold would land on the glass slab (overmold under-edge ",
+           z_usb - port_usbc_overmold_h()/2, " vs glass back plane ", face_t + glass_t,
+           ") — usb_side/usb_dz put the port too low for the overmold channel"));
 assert(!opt_keyhole || back_stack - kh_pad_h >= 1.0,
        str("the keyhole pad tops out ", back_stack - kh_pad_h, " mm under the ",
            "PCB back — nothing on the case-center footprint may be taller; ",
@@ -222,6 +242,11 @@ echo(str("Canary S3-Touch-1.69 watch display v0.2-dev — outer ", xo, " x ", yo
          " x ", bez_h + back_t, " mm, window ", aa_w, " x ", aa_h,
          " (glass lip X ", lip_w, " / Y ", lip_h, ", PCB overhang X ", ohang_x,
          " / Y ", ohang_y, ")  (IN DEVELOPMENT — MEASURE CONNECTORS)"));
+if (opt_usb)
+    echo(str("USB-C: receptacle face ", usb_reach, " mm behind the outer face — ",
+             "overmold channel ", usb_ch_w, " x ", usb_ch_h, " cut through wall, ",
+             "skirt and plate band, so the full ", port_usbc_insertion(),
+             " mm insertion survives (was latched on 2.25 mm)"));
 
 // snap windows / nubs live on the two long (±Y is top/bottom → use ±X side) walls.
 // Put them on the ±X (left/right) walls, near top & bottom.
@@ -264,9 +289,13 @@ module bezel() {
                         3.0 + glass_relief_w);
         // glass cavity behind the face ledge
         translate([0, 0, face_t]) linear_extrude(cav_d + 0.2) rrect2d(xc, yc, r_in);
-        // USB-C slot in the bottom (−Y) wall
+        // USB-C overmold channel through the bottom (−Y) wall — the full
+        // Type-C plug envelope, because the receptacle face sits usb_reach
+        // behind the outer face (see the [USB-C] note). Its crown clips the
+        // wall's rear rim; the back plate covers that and is shelved to match.
         if (opt_usb)
-            translate([usb_dx, -yo/2, z_usb]) cube([usb_w, wall*3, usb_h], center = true);
+            translate([usb_dx, -yo/2, z_usb]) rotate([90, 0, 0])
+                linear_extrude(wall*3, center = true) pill2d(usb_ch_w, usb_ch_h);
         // PWR/BOOT/RST access holes in the top (+Y) wall
         if (opt_btn) for (bx = btn_xs)
             translate([bx, yo/2, z_btn])
@@ -334,6 +363,21 @@ module back() {
                 translate([sx*(grille_x0 + grille_x1)/2, gy, -0.1])
                     linear_extrude(back_t + 0.2)
                         pill2d(grille_x1 - grille_x0 + vent_w, vent_w);
+        }
+        // the USB overmold channel continues THROUGH the back part: the
+        // skirt ring crosses the plug's path between the wall and the PCB
+        // edge, and the plate's edge band stands where the channel's crown
+        // clips the bezel rim. (Back-local x mirrors bezel x — the part
+        // flips about Y to assemble, which is what points the keyhole
+        // slot up.)
+        if (opt_usb) {
+            // full-height skirt notch over the channel's footprint
+            translate([-usb_dx - usb_ch_w/2 - 0.1, -skirt_y/2 - 0.3, back_t - 0.1])
+                cube([usb_ch_w + 0.2, skirt_wall + 0.6, skirt_dep + 0.3]);
+            // shelf in the plate's inner face where the crown passes over it
+            if (plate_relief > 0)
+                translate([-usb_dx - usb_ch_w/2 - 0.1, -yo/2 - 0.1, back_t - plate_relief])
+                    cube([usb_ch_w + 0.2, usb_reach + 0.3, plate_relief + 0.2]);
         }
         // BLIND keyhole pocket, cut into plate + pad from the outer face
         // (slot toward +Y = UP on the wall, so the case slides DOWN to seat —

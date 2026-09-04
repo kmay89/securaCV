@@ -3070,17 +3070,17 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 104.8,
+    "w": 105.6,
     "d": 1.5,
-    "h": 39.3
+    "h": 40.1
    },
    "traced_to": [
     {
      "file": "canary_wap_enclosure_weather_gasket.stl",
-     "triangles": 288,
+     "triangles": 240,
      "mm": [
-      104.8,
-      39.3,
+      105.6,
+      40.1,
       1.5
      ]
     }
@@ -3090,7 +3090,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "1a346654",
+   "rev": "b101ba12",
    "svg": "canary-local/figures/part.wap.gasket.svg",
    "glyph": "canary-local/figures/part.wap.gasket.glyph.svg"
   },
@@ -3301,17 +3301,17 @@
    "dims_source": "stl",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 118.9,
+    "w": 120.5,
     "d": 7.6,
-    "h": 53.4
+    "h": 55
    },
    "traced_to": [
     {
      "file": "canary_wap_enclosure_weather_shield.stl",
      "triangles": 3396,
      "mm": [
-      118.9,
-      53.4,
+      120.5,
+      55,
       7.6
      ]
     }
@@ -3321,7 +3321,7 @@
     "depth_tol_mm": 4
    },
    "solids": 1,
-   "rev": "b37755fd",
+   "rev": "de6d1547",
    "svg": "canary-local/figures/part.wap.weather-shield.svg",
    "glyph": "canary-local/figures/part.wap.weather-shield.glyph.svg"
   },

@@ -344,7 +344,9 @@ module plate_ribs(l, w, t, h, r = 3.0, inset = 3.0, n = 2, rw = 0, fil = 0) {
 module boss_tower(d_out, d_in, h, taper = 0, webs = 0, web_t = 0, wall_t = 0,
                   fil = 0, web_reach = 0) {
     tw = (d_out - d_in) / 2;
-    assert(tw >= core_min_wall(),
+    // - 1e-9: a wall derived as (d_in + 2*1.2 - d_in)/2 lands a float hair
+    // under 1.2 and must not trip a gate about REAL thin walls
+    assert(tw >= core_min_wall() - 1e-9,
            str("boss_tower: a ", tw, " mm tube wall is under the ",
                core_min_wall(), " mm structural floor"));
     assert(h <= boss_h_max(tw) + 1e-9 || taper > 0 || webs > 0,

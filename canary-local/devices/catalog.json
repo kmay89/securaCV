@@ -477,7 +477,7 @@
     {
      "id": "term_open",
      "type": "bool",
-     "label": "also open the CAN/RS485 terminal zone",
+     "label": "also open the CAN/RS485 terminal zone (a parting-line notch to the rear rim; the back plate closes it)",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -758,7 +758,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 28,
+   "engineering_param_count": 30,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1609,7 +1609,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 53,
+   "engineering_param_count": 58,
    "alternatives": [
     "c6_display",
     "watch_station"

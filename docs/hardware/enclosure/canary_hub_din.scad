@@ -23,10 +23,19 @@
 //  floor with two M3s and prints rail-side down. Its lands now ride the
 //  rail's flange FACES (they stood outboard of the rail and bore on nothing),
 //  and the port faces open from the standoff line, not 0.5 mm off the floor.
+//
+//  2026-09-03 audit fix: the cover's screw-guide tubes were a fixed `ch - 2`
+//  = 20 mm and drove 9.0 mm THROUGH the standoffs they were meant to meet —
+//  the cover could not close, and had no Z datum when it did. The tubes are
+//  now tapered boss_tower()s whose derived length (hat_h - standoff_ff) seats
+//  their bottom faces exactly on the F-F standoff tops: the datum. The screw
+//  callout is derived and echoed (the old comment said "M3 x 25"; the screws
+//  are M2.5, and much shorter).
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // beam-strain arithmetic — the DIN leaf is a snap fit
+use <canary_rib_lib.scad>    // boss_tower — the cover's screw tubes, tapered + gated
 
 /* [What to render] */
 part = "all";        // ["tray","cover","clip","all"]
@@ -41,6 +50,9 @@ hole_off_y = 3.5;
 pcb_t = 1.4;
 standoff_h = 6.0;    // clearance under the board (PoE HAT pins / SD access)
 hat_h = 22.0;        // headroom above the PCB (HAT/M.2 + fan)
+// The cover's guide tubes SEAT on the F-F standoff tops, making this number
+// the cover's Z datum — measure the standoffs actually fitted.
+standoff_ff = 11.0;  // F-F brass standoffs on the Pi's hole grid: 11 bare, 16 with a HAT
 
 /* [Shell] */
 wall_t = 2.0;  floor_t = 3.0;  lid_t = 2.0;  corner_r = 3.0;   // wall_t: catalog default shell — core_wall(), canary_core_lib
@@ -76,6 +88,21 @@ out_w = inner_w + 2*wall_t;
 tray_h = floor_t + standoff_h + pcb_t + 6;     // tray walls stop above the PCB
 clip_screws = [[-6.5, 23.5], [6.5, 23.5], [-6.5, -23.5], [6.5, -23.5]];   // M3s, floor -> clip lands (between the vent slots)
 total_h = floor_t + standoff_h + pcb_t + hat_h + lid_t;
+// The cover's guide tubes run from the lid's inner face DOWN TO the F-F
+// standoff tops, and no further: tube bottom = standoff top is the cover's
+// Z datum (it used to have none — 2.0 mm of free travel, closing by landing
+// on the bare Pi PCB), and the old fixed `ch - 2` length drove the tubes
+// 9.0 mm THROUGH the standoffs they were meant to meet: the cover could not
+// close at all. Derived, the length tracks standoff_ff and hat_h together.
+tube_h = hat_h - standoff_ff;
+assert(tube_h >= 2.0,
+       str("hub cover: standoff_ff (", standoff_ff, ") nearly fills hat_h (", hat_h,
+           ") — no room for the guide tubes; raise hat_h or shorten the standoffs"));
+// the fastener, derived: through the head seat + lid + tube, then ~4 mm of
+// thread into the standoff's female M2.5
+echo(str("hub cover screws: 4 x M2.5 x ", ceil((lid_t - 1.2) + tube_h + 4),
+         " machine, through the cover into the ", standoff_ff,
+         " mm F-F standoffs (tube bottoms seat on the standoff tops = the Z datum)"));
 echo(str("Canary hub (Pi 5, DIN) v0.1-dev — ", out_l, " x ", out_w, " x ", total_h,
          " mm  (IN DEVELOPMENT)"));
 
@@ -172,7 +199,8 @@ module tray() {
 }
 
 // cover: slides over the tray walls; chimney vents over the SoC zone; screwed
-// at the four posts with M3 x 25 through tubes
+// down the Pi's hole grid with M2.5 machine screws (length echoed at render)
+// through guide tubes that seat on the F-F standoff tops
 module cover() {
     ch = total_h - tray_h + 4;                  // cover skirt height (4 mm overlap)
     union() {
@@ -218,13 +246,14 @@ module cover() {
             for (h = holes()) translate([h[0], h[1], lid_t]) mirror([0, 0, 1])
                 cb_flat_cut(0, 0, lid_t, lid_screw_d, screw_head_d + 0.6, 1.2);
         }
-        // screw tubes guiding the long M2.5s down to the standoffs on the Pi grid
+        // screw tubes guiding the M2.5s down to the standoffs on the Pi grid.
+        // boss_tower (canary_rib_lib): tapered so the root section carries the
+        // side-nudge loads the bare Ø5.2 x 20 tube failed — 20 / 1.2 was 16.7,
+        // past the library's 12x slenderness ceiling. tube_h lands the bottom
+        // face exactly on the standoff tops (see the derivation above).
         for (h = holes())
             translate([h[0], h[1], lid_t - 0.01])
-                difference() {
-                    cylinder(d = lid_screw_d + 2.4, h = ch - 2);
-                    translate([0, 0, -1]) cylinder(d = lid_screw_d, h = ch + 2);
-                }
+                boss_tower(lid_screw_d + 2.4, lid_screw_d, tube_h + 0.01, taper = 1.6);
     }
 }
 
