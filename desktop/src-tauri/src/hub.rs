@@ -517,10 +517,12 @@ fn free_space_bytes(_path: &std::path::Path) -> Option<u64> {
 /// loop across the long silent first boot instead of abandoning the user.
 /// Returns true once the host responds with any HTTP status (HA serving a
 /// login page, a redirect, anything) — reachability is the signal, not 200.
-#[tauri::command]
-pub async fn hub_probe_hub(host: String) -> Result<bool, String> {
-    // Guard the host: only a plain hostname[:port], no scheme/path, so this
-    // can't be steered into probing an arbitrary URL.
+/// The hub address the UI hands these commands: a bare `hostname[:port]`,
+/// never a URL — and one that can only be on this network. The syntax half
+/// alone let `attacker.example` through, and `hub_onboard` posts the owner's
+/// typed credentials to whatever passes here, so the locality half is the
+/// same rule every device-facing command in fleet.rs already applies.
+fn local_hub_host(host: &str) -> Result<&str, String> {
     let host = host.trim();
     if host.is_empty()
         || host.contains('/')
@@ -531,6 +533,27 @@ pub async fn hub_probe_hub(host: String) -> Result<bool, String> {
     {
         return Err("that doesn't look like a hostname".to_string());
     }
+    // One trailing :port comes off; more colons than that is an IPv6 literal.
+    let bare = match host.rsplit_once(':') {
+        Some((name, port))
+            if !name.contains(':') && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            name
+        }
+        _ => host,
+    };
+    if !crate::fleet::host_is_local(bare) {
+        return Err(
+            "the hub address must be on your own network — a .local name, a LAN hostname, or a private IP"
+                .to_string(),
+        );
+    }
+    Ok(host)
+}
+
+#[tauri::command]
+pub async fn hub_probe_hub(host: String) -> Result<bool, String> {
+    let host = local_hub_host(&host)?;
     let url = format!("http://{host}/");
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(3))
@@ -575,6 +598,7 @@ pub async fn hub_onboard(
     username: String,
     password: String,
 ) -> Result<OnboardReport, String> {
+    local_hub_host(&host)?;
     tauri::async_runtime::spawn_blocking(move || {
         let log = |line: String| {
             let _ = app.emit("hub:headless-log", line);
@@ -1170,6 +1194,7 @@ pub async fn hub_headless_setup(
     with_pihole: Option<bool>,
     with_display: Option<bool>,
 ) -> Result<HeadlessReport, String> {
+    local_hub_host(&host)?;
     {
         let mut busy = state.0.lock().map_err(|_| "headless state poisoned")?;
         if *busy {

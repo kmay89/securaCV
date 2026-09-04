@@ -85,6 +85,21 @@ pub fn base_url_for_host(host: &str) -> Result<String, String> {
     {
         return Err("that doesn't look like a hostname".to_string());
     }
+    // Syntax is not enough: this URL receives the owner's typed credentials,
+    // so the host must be one that can only be on this network. One trailing
+    // :port comes off first; more colons than that is an IPv6 literal.
+    let bare = match host.rsplit_once(':') {
+        Some((name, port)) if !name.contains(':') && port.bytes().all(|b| b.is_ascii_digit()) => {
+            name
+        }
+        _ => host,
+    };
+    if !hub_core::hub_headless::host_is_local(bare) {
+        return Err(
+            "the hub address must be on your own network — a .local name, a LAN hostname, or a private IP"
+                .to_string(),
+        );
+    }
     if host.contains(':') {
         Ok(format!("http://{host}"))
     } else {
@@ -599,6 +614,19 @@ mod tests {
         // arbitrary URL.
         for bad in ["", "http://evil", "host/path", "host name", "a\nb"] {
             assert!(base_url_for_host(bad).is_err(), "{bad:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn base_url_refuses_hosts_off_this_network() {
+        // The typed owner credentials go to this URL, so a well-formed public
+        // host is the one that must not pass.
+        for far in ["example.com", "example.com:8123", "203.0.113.5", "8.8.8.8:8123"] {
+            let err = base_url_for_host(far).unwrap_err();
+            assert!(err.contains("own network"), "{far:?}: {err}");
+        }
+        for near in ["hub", "hub-2.lan:8123", "192.168.1.20:8123", "10.0.0.5"] {
+            assert!(base_url_for_host(near).is_ok(), "{near:?} is on this network");
         }
     }
 

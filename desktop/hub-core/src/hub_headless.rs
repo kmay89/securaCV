@@ -91,16 +91,51 @@ pub fn authorized_keys_content(pubkey_file: &str) -> Result<String, KeyError> {
     Ok(format!("{trimmed}\n"))
 }
 
+/// True when `host` can only be on this network: a private, loopback or
+/// link-local IP literal, a `.local`-style name (`.local`, `.lan`,
+/// `.internal`, `.home.arpa`), or a single-label LAN hostname. A well-formed
+/// hostname is not enough on its own — `attacker.example` is one — and the
+/// companion carries the owner's typed credentials to whatever it accepts.
+/// Same policy as the Flasher's device calls (`src-tauri/src/fleet.rs`
+/// `host_is_local`); it lives here too so PR CI tests it.
+pub fn host_is_local(host: &str) -> bool {
+    let host = host.trim_matches(['[', ']']);
+    if host.is_empty() {
+        return false;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    // fe80::/10 link-local and fc00::/7 unique-local
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+            }
+        };
+    }
+    let lower = host.to_ascii_lowercase();
+    for suffix in [".local", ".lan", ".internal", ".home.arpa"] {
+        if lower.ends_with(suffix) && lower.len() > suffix.len() {
+            return true;
+        }
+    }
+    // A single-label hostname ("canary-3f2a") can only resolve locally.
+    !lower.contains('.')
+}
+
 /// True when `host` is a plain hostname or address the companion may connect
-/// to — no scheme, path, port, or shell metacharacters. Same shape the HTTP
-/// probe enforces, minus `:` (the console port is fixed and passed separately,
-/// so a smuggled `host:port` can't redirect it).
+/// to — no scheme, path, port, or shell metacharacters, and on this network
+/// ([`host_is_local`]). Same shape the HTTP probe enforces, minus `:` (the
+/// console port is fixed and passed separately, so a smuggled `host:port`
+/// can't redirect it).
 pub fn valid_host(host: &str) -> bool {
     let host = host.trim();
     !host.is_empty()
         && host
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && host_is_local(host)
 }
 
 /// The remote command the companion runs: the bundle's own host-side runner,
@@ -249,6 +284,32 @@ mod tests {
             !valid_host("homeassistant.local:8123"),
             "the console port is fixed — a smuggled port must be refused"
         );
+    }
+
+    #[test]
+    fn hosts_off_this_network_are_refused_however_well_formed() {
+        // The companion posts the owner's credentials to whatever passes, so
+        // a syntactically fine public host is exactly the one to refuse.
+        for far in ["example.com", "attacker-vps.example", "203.0.113.5", "8.8.8.8"] {
+            assert!(!host_is_local(far), "{far} is not on this network");
+            assert!(!valid_host(far), "{far} must be refused");
+        }
+        for near in [
+            "homeassistant.local",
+            "hub",
+            "hub-2.lan",
+            "pi.home.arpa",
+            "10.0.0.17",
+            "192.168.1.20",
+            "172.16.4.9",
+            "127.0.0.1",
+            "[fe80::1]",
+            "fd00::a1",
+        ] {
+            assert!(host_is_local(near), "{near} is on this network");
+        }
+        assert!(!host_is_local(""));
+        assert!(!host_is_local(".local"), "the bare suffix is not a name");
     }
 
     #[test]
