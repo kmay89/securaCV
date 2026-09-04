@@ -367,6 +367,25 @@ final class CanaryVoiceTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testATipIsForTheScreenItExplains() async throws {
+        // The site gets this for free — leaving a page kills its timer.
+        // Here the shell outlives the switch: a tip whose section was left
+        // during the delay must not speak over the wrong screen, and must
+        // stay unmarked so it can try again on a later visit.
+        let defaults = scratchDefaults()
+        let keeper = CanaryVoiceKeeper(defaults: defaults)
+        let stage = CanaryVoiceStage(keeper: keeper)
+        stage.orient(.fleet)
+        stage.orient(.alerts)                         // moved on within the delay
+        try await Task.sleep(for: .seconds(3.5))      // > PACE.tip, with margin
+        XCTAssertEqual(stage.showing?.key, "tip-\(AppSection.alerts.rawValue)",
+                       "the section the visitor is actually on gets its line")
+        XCTAssertFalse(keeper.hasOriented(.fleet),
+                       "the abandoned tip stays unmarked for a later visit")
+        XCTAssertTrue(keeper.hasOriented(.alerts))
+    }
+
     // MARK: - the bubble's tone accents
 
     @MainActor

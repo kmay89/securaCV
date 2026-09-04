@@ -56,6 +56,11 @@ final class CanaryVoiceStage: ObservableObject {
     /// the keeper, marked only when a line is actually taken.
     private var helloPending = false
     private var orientPending: Set<AppSection> = []
+    /// Where the visitor is right now — kept fresh by arrive/orient so a
+    /// delayed line can check it still applies before speaking. On the site
+    /// this needs no code: a tip's timer dies with the page it was for; the
+    /// app's shell outlives every section switch.
+    private var currentSection: AppSection = .today
 
     init(keeper: CanaryVoiceKeeper = CanaryVoiceKeeper()) {
         self.keeper = keeper
@@ -126,14 +131,17 @@ final class CanaryVoiceStage: ObservableObject {
     /// refuse chatter, and a hello burned because the bird happened to be
     /// worried on first launch would never be heard at all.
     func arrive(at section: AppSection) {
+        currentSection = section
         if !keeper.hasGreeted {
             guard !helloPending else { return }
             helloPending = true
             after(CanaryVoicePace.hello) { [weak self] in
                 guard let self else { return }
                 self.helloPending = false
+                // The pointer suppression reads where the visitor IS, not
+                // where they were when the delay started.
                 guard !self.keeper.hasGreeted,
-                      let m = Self.greeting(arrivingAt: section) else { return }
+                      let m = Self.greeting(arrivingAt: self.currentSection) else { return }
                 if self.deliver(m) { self.keeper.markGreeted() }
             }
         } else {
@@ -146,6 +154,7 @@ final class CanaryVoiceStage: ObservableObject {
     /// so a tip refused by a worried moment gets another chance on a
     /// calmer visit.
     func orient(_ section: AppSection) {
+        currentSection = section
         guard Self.tip(for: section) != nil,
               !keeper.hasOriented(section),
               !orientPending.contains(section) else { return }
@@ -153,7 +162,12 @@ final class CanaryVoiceStage: ObservableObject {
         after(CanaryVoicePace.tip) { [weak self] in
             guard let self else { return }
             self.orientPending.remove(section)
-            guard !self.keeper.hasOriented(section),
+            // A tip is for the screen it explains. The site gets this for
+            // free — leaving a page kills its timer — so a visitor who
+            // moved on within the delay is skipped here, unmarked, and the
+            // tip may try again on a later visit.
+            guard self.currentSection == section,
+                  !self.keeper.hasOriented(section),
                   let m = Self.tip(for: section) else { return }
             if self.deliver(m) { self.keeper.markOriented(section) }
         }
