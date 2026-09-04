@@ -1,0 +1,112 @@
+{
+ "generated_by": "docs/hardware/enclosure/gen_assembled_dims.py",
+ "note": "Assembled outer envelopes, measured off the union of each device's committed parts in their fit-checked assembled positions. gen_figures.mjs reads these for multi-part device figures instead of stacking part depths, which overstates any nesting assembly. Regenerate after re-exporting any STL these unions include.",
+ "devices": {
+  "device.canary-sense": {
+   "scad": "canary_sense_enclosure.scad",
+   "overrides": {
+    "part": "back"
+   },
+   "placement": "sense_fitcheck: front at z = base_d",
+   "mm_scad": [
+    57.2,
+    78.697,
+    21.5
+   ],
+   "fig": {
+    "w": 57.2,
+    "d": 21.5,
+    "h": 78.697
+   },
+   "seams_fig_d": [
+    19.5
+   ]
+  },
+  "device.canary-vision": {
+   "scad": "canary_vision_enclosure.scad",
+   "overrides": {
+    "host": "xiao",
+    "preset": "vision_indoor",
+    "part": "back"
+   },
+   "placement": "vision_fitcheck: front at z = base_d",
+   "mm_scad": [
+    43.2,
+    95.097,
+    23.38
+   ],
+   "fig": {
+    "w": 43.2,
+    "d": 23.38,
+    "h": 95.097
+   },
+   "seams_fig_d": [
+    21.38
+   ]
+  },
+  "device.canary-vision-devkit": {
+   "scad": "canary_vision_enclosure.scad",
+   "overrides": {
+    "host": "devkit",
+    "preset": "vision_indoor",
+    "part": "back"
+   },
+   "placement": "vision_fitcheck: front at z = base_d",
+   "mm_scad": [
+    74.8,
+    96.497,
+    18.5
+   ],
+   "fig": {
+    "w": 74.8,
+    "d": 18.5,
+    "h": 96.497
+   },
+   "seams_fig_d": [
+    16.5
+   ]
+  },
+  "device.canary-vision-doorbell": {
+   "scad": "canary_vision_doorbell.scad",
+   "overrides": {
+    "part": "plate"
+   },
+   "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets), resting 0.5 up the slide on the plate's L-foot",
+   "mm_scad": [
+    38.2,
+    122.1,
+    30.2
+   ],
+   "fig": {
+    "w": 38.2,
+    "d": 30.2,
+    "h": 122.1
+   },
+   "seams_fig_d": [
+    4.0,
+    28.0
+   ]
+  },
+  "device.canary-wap": {
+   "scad": "canary_wap_enclosure.scad",
+   "overrides": {
+    "preset": "compact_plain",
+    "part": "base"
+   },
+   "placement": "wap_fitcheck: lid at z = base_h",
+   "mm_scad": [
+    33.7,
+    36.6,
+    15.05
+   ],
+   "fig": {
+    "w": 33.7,
+    "d": 15.05,
+    "h": 36.6
+   },
+   "seams_fig_d": [
+    13.05
+   ]
+  }
+ }
+}

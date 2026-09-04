@@ -60,6 +60,9 @@ const PROJECTOR_REV = 1;
 const registry = JSON.parse(readFileSync(join(ROOT, 'canary-local/devices/registry.json'), 'utf8'));
 const catalog = JSON.parse(readFileSync(join(ROOT, 'canary-local/devices/catalog.json'), 'utf8'));
 const boards = JSON.parse(readFileSync(join(ROOT, 'canary-local/devices/boards.json'), 'utf8'));
+// Measured assembled envelopes for multi-part devices (see envelopeFor) —
+// generated where OpenSCAD lives, consumed here where it does not.
+const assembledDims = JSON.parse(readFileSync(join(ENCLOSURE, 'assembled_dims.json'), 'utf8'));
 
 /* ─────────────────────────────────────────────────────────── the ladder
  * "Which of these are real and which are still ideas?" is the question the
@@ -194,15 +197,43 @@ function envelopeFor(fig) {
     parts[file] = toFigureFrame(b.size, fig.frame);
     stls.push({ file, triangles: b.triangles, mm: b.size.map(r3) });
   }
-  // A multi-part figure's envelope is the deepest stack it can make: parts
-  // sit front-to-back, so depth adds while width/height take the largest.
+  if (files.length === 1) {
+    return { E: { ...parts[files[0]] }, parts, source: 'stl', stls };
+  }
+  // A multi-part figure's envelope is its ASSEMBLED envelope, measured — not
+  // a stack of part boxes. Stacking ("depth adds") ignores every lip, skirt
+  // and pocket that nests one part into another, and it overstated the
+  // released devices' depths by 30-58 %: numbers every surface displayed as
+  // "assembled". docs/hardware/enclosure/gen_assembled_dims.py renders each
+  // device's parts in their fit-checked assembled positions (the same
+  // placements the closing gate proves) and commits the union's bounds; the
+  // enclosure CI re-measures it whenever an STL moves. A parts: figure with
+  // no measured row is refused rather than silently falling back to the lie.
+  const asm = assembledDims.devices?.[fig.id];
+  if (!asm) {
+    throw new Error(`figures: ${fig.id} is a multi-part device with no measured assembled `
+      + 'envelope — add it to docs/hardware/enclosure/gen_assembled_dims.py and regenerate.');
+  }
   const vals = Object.values(parts);
-  const E = {
-    w: Math.max(...vals.map((p) => p.w)),
-    d: vals.reduce((a, p) => a + p.d, 0),
-    h: Math.max(...vals.map((p) => p.h)),
+  const stackedD = vals.reduce((a, p) => a + p.d, 0);
+  if (asm.fig.d > stackedD + 0.01) {
+    throw new Error(`figures: ${fig.id} assembled depth ${asm.fig.d} exceeds its parts' `
+      + `stacked ${r3(stackedD)} — the assembly measurement and the committed STLs disagree; `
+      + 'rerun gen_assembled_dims.py.');
+  }
+  for (const axis of ['w', 'h']) {
+    const most = Math.max(...vals.map((p) => p[axis]));
+    if (asm.fig[axis] < most - 0.01) {
+      throw new Error(`figures: ${fig.id} assembled ${axis} ${asm.fig[axis]} is smaller than its `
+        + `largest part's ${r3(most)} — the assembly measurement and the committed STLs disagree; `
+        + 'rerun gen_assembled_dims.py.');
+    }
+  }
+  const E = { w: asm.fig.w, d: asm.fig.d, h: asm.fig.h };
+  return {
+    E, parts, source: 'stl', stls,
+    assembled: { placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d },
   };
-  return { E, parts, source: 'stl', stls };
 }
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -216,26 +247,36 @@ const r2 = (v) => Math.round(v * 100) / 100;
  * depth but tight in the plan — where a wrong number would actually mislead. */
 const PLAN_TOL = 0.75;   // mm, width & height
 const DEPTH_TOL = 4.0;   // mm, allows proud lenses/buttons/windows
+const ASM_H_TOL = 2.5;   // mm, height of a multi-part massing vs its measured assembly
 
 function guardDrift(fig, E, solids, source) {
   // Applies to any figure with ONE dimensional source of truth behind it: a
-  // committed STL, or a committed board mesh. Exempting the board path let
+  // committed STL, a committed board mesh, or — for a multi-part device —
+  // the measured assembled envelope. Exempting the board path let
   // `board.xiao` publish 22.64 x 3.66 x 19.38 while claiming to come from CAD
   // measuring 22.64 x 4.42 x 17.78 — a figure that both fell short of the part
-  // and overflowed it, under a `dims_source` that said otherwise.
-  if (fig.parts) return null;
+  // and overflowed it, under a `dims_source` that said otherwise. Exempting
+  // multi-part figures was the same hole one size up: their drawn stacks
+  // overstated every released device's assembled depth by 30-58 % with no
+  // gate to see it.
   if (source !== 'stl' && source !== 'board-cad') return null;
+  // A multi-part massing centers its parts vertically, so small assembly
+  // offsets (the doorbell plate's foot reaches 2 mm below the face's top
+  // overhang) are beneath its fidelity — the height tolerance says so
+  // explicitly rather than pretending band drawing is exact.
+  const hTol = fig.parts ? ASM_H_TOL : PLAN_TOL;
+  const what = fig.parts ? 'assembled envelope' : `STL ${fig.stl ?? ''}`.trim();
   const env = envelopeOf(solids);
   const got = { w: env.size[0], d: env.size[1], h: env.size[2] };
   const bad = [];
-  if (Math.abs(got.w - E.w) > PLAN_TOL) bad.push(`width ${r3(got.w)} vs STL ${r3(E.w)}`);
-  if (Math.abs(got.h - E.h) > PLAN_TOL) bad.push(`height ${r3(got.h)} vs STL ${r3(E.h)}`);
-  if (got.d - E.d > DEPTH_TOL || got.d < E.d - PLAN_TOL) bad.push(`depth ${r3(got.d)} vs STL ${r3(E.d)}`);
+  if (Math.abs(got.w - E.w) > PLAN_TOL) bad.push(`width ${r3(got.w)} vs ${r3(E.w)}`);
+  if (Math.abs(got.h - E.h) > hTol) bad.push(`height ${r3(got.h)} vs ${r3(E.h)}`);
+  if (got.d - E.d > DEPTH_TOL || got.d < E.d - PLAN_TOL) bad.push(`depth ${r3(got.d)} vs ${r3(E.d)}`);
   if (bad.length) {
-    throw new Error(`figures: ${fig.id} has drifted from ${fig.stl} — ${bad.join('; ')}. `
-      + 'The CAD moved; update massing.mjs so the figure matches the part again.');
+    throw new Error(`figures: ${fig.id} has drifted from its ${what} — ${bad.join('; ')}. `
+      + 'The CAD moved; update massing.mjs so the figure matches again.');
   }
-  return { plan_tol_mm: PLAN_TOL, depth_tol_mm: DEPTH_TOL };
+  return { plan_tol_mm: PLAN_TOL, depth_tol_mm: DEPTH_TOL, ...(fig.parts ? { height_tol_mm: ASM_H_TOL } : {}) };
 }
 
 /* ─────────────────────────────────────────────── the coplanar guard
@@ -285,8 +326,8 @@ function emit(path, contents) {
 }
 
 function buildOne(fig) {
-  const { E, parts, source, stls } = envelopeFor(fig);
-  const solids = fig.build(E, parts);
+  const { E, parts, source, stls, assembled } = envelopeFor(fig);
+  const solids = fig.build(E, parts, assembled ? { seams: assembled.seams } : undefined);
   guardCoplanar(fig, solids);
 
   const dev = registry.devices.find((d) => d.id === fig.of);
@@ -342,7 +383,14 @@ function buildOne(fig) {
     evidence,
     dims_source: source,
     sketch_note: fig.sketchNote ?? null,
-    envelope_mm: { w: r3(env.size[0]), d: r3(env.size[1]), h: r3(env.size[2]) },
+    // A multi-part device publishes its MEASURED assembled envelope, not the
+    // drawn massing's extent: the drawing is a banded approximation of the
+    // assembly (guarded within tolerance above), while the number is the
+    // one every surface sells as "assembled" and must be exact.
+    envelope_mm: assembled
+      ? { w: r3(E.w), d: r3(E.d), h: r3(E.h) }
+      : { w: r3(env.size[0]), d: r3(env.size[1]), h: r3(env.size[2]) },
+    ...(assembled ? { assembled: { placement: assembled.placement, seams_fig_d: assembled.seams } } : {}),
     traced_to: stls,
     drift_guard: guard,
     solids: solids.length,
@@ -382,25 +430,63 @@ function walkEnvs() {
     ...globIni(join(ROOT, 'firmware/envs/platformio')),
     ...globIni(join(ROOT, 'firmware/projects'), true),
   ];
+  // TWO maps: the envs, and every OTHER section in the same files. A pins or
+  // config include is load-bearing wherever it lives, and PlatformIO lets it
+  // live in a plain [section] an env pulls in via `extends = section` or a
+  // `${section.build_flags}` interpolation — the Sentinel head does exactly
+  // that, and scanning only [env:] bodies recorded it under the coarse
+  // `board:` id instead of the sentinel pins header it actually compiles.
+  // Interpolations are expanded into the body before scanning, so the
+  // regexes below see the flags an env actually receives.
   const raw = new Map();
+  const sections = new Map();
+  for (const file of files) {
+    const txt = readFileSync(file, 'utf8');
+    for (const m of txt.matchAll(/^\[([^\]]+)\]\n([\s\S]*?)(?=^\[|$(?![\s\S]))/gm)) {
+      const [, header, body] = m;
+      if (!header.startsWith('env:')) sections.set(header, body);
+    }
+  }
+  const expand = (body, seen = new Set()) => body.replace(
+    /\$\{([a-zA-Z0-9_.-]+)\.[a-z_]+\}/g,
+    (whole, sec) => {
+      if (seen.has(sec) || !sections.has(sec)) return whole;
+      return expand(sections.get(sec), new Set([...seen, sec]));
+    },
+  );
   for (const file of files) {
     const txt = readFileSync(file, 'utf8');
     for (const m of txt.matchAll(/^\[env:([^\]]+)\]\n([\s\S]*?)(?=^\[|$(?![\s\S]))/gm)) {
-      const [, name, body] = m;
+      const [, name, rawBody] = m;
+      const body = expand(rawBody);
       raw.set(name, {
         name,
         pins: (body.match(/boards\/([a-z0-9._-]+)\/pins/) || [])[1] || null,
-        config: (body.match(/configs\/([a-z0-9-]+)\/([a-z0-9_]+)/) || []).slice(1, 3).join('/') || null,
+        // flavor directories may carry hyphens (mailbox-lite, perimeter-demo)
+        config: (body.match(/configs\/([a-z0-9-]+)\/([a-z0-9_-]+)/) || []).slice(1, 3).join('/') || null,
         board: (body.match(/^board\s*=\s*(\S+)/m) || [])[1] || null,
-        extends: (body.match(/^extends\s*=\s*env:(\S+)/m) || [])[1] || null,
+        extends: (body.match(/^extends\s*=\s*(\S+)/m) || [])[1] || null,
         file: file.replace(`${ROOT}/`, ''),
       });
     }
   }
   const resolve = (name, key, seen = new Set()) => {
-    if (seen.has(name) || !raw.has(name)) return null;
+    if (seen.has(name)) return null;
+    // an env extends either another env (`env:x`) or a plain section, whose
+    // expanded body answers the same questions
+    if (!raw.has(name)) {
+      if (!sections.has(name)) return null;
+      const body = expand(sections.get(name), seen);
+      const val = key === 'pins' ? (body.match(/boards\/([a-z0-9._-]+)\/pins/) || [])[1]
+        : key === 'config' ? ((body.match(/configs\/([a-z0-9-]+)\/([a-z0-9_-]+)/) || []).slice(1, 3).join('/') || null)
+          : key === 'board' ? (body.match(/^board\s*=\s*(\S+)/m) || [])[1]
+            : null;
+      const ext = (body.match(/^extends\s*=\s*(\S+)/m) || [])[1];
+      return val || (ext ? resolve(ext.replace(/^env:/, ''), key, new Set([...seen, name])) : null);
+    }
     const e = raw.get(name);
-    return e[key] || (e.extends ? resolve(e.extends, key, new Set([...seen, name])) : null);
+    return e[key]
+      || (e.extends ? resolve(e.extends.replace(/^env:/, ''), key, new Set([...seen, name])) : null);
   };
   for (const name of [...raw.keys()].sort()) {
     const pins = resolve(name, 'pins');
@@ -512,13 +598,15 @@ const HARDWARE_FIGURE = {
  * the reason beside it, rather than a silent nullptr:
  *   waveshare-esp32s3-lcd43b / -lcd43c   the 4.3B and 4.3C panels; the Dash
  *       figure traces the plain 4.3, and these are different housings
- *   waveshare-esp32s3-lcd147             the S3 1.47" USB-A stick — no panel
- *       record on disk to size it from, and inventing one is the one place a
- *       sketch would mislead
  *   waveshare-esp32c6-lcd147             the C6 1.47" board is not a device in
  *       registry.json, and the registry is the one id space (CATALOG §4)
  *   xiao-esp32c3-sentinel-lite / board:seeed_xiao_esp32c6   the Sentinel line
- *       has no enclosure CAD at all yet
+ *       (Phase 0 — firmware host-tested, hardware bench pending) has no
+ *       enclosure CAD at all yet, and inventing a case shape for it is the
+ *       one place a sketch would mislead
+ * (The S3 1.47" USB-A stick used to sit in this list as "no panel record on
+ * disk to size it from"; canary_s3_lcd147.scad now carries the whole record
+ * and the map above traces it — see the 1.47" comment there.)
  */
 
 // firmware/configs/<family>/<flavor> -> figure. Used ONLY to work out which
@@ -535,6 +623,16 @@ const CONFIG_FIGURE = {
   'canary-display/dash7': 'device.canary-display-dash7',
   'canary-display/touch169': 'device.canary-display-touch169',
   'canary-display/nightlight': 'device.canary-nightlight',
+  // These three were missing, which made the audit lie in both directions:
+  // `canary-nightstand` read "at least one board has no figure yet" when its
+  // real state is three boards with three DIFFERENT figures (an honest
+  // ambiguity), and `canary-nightstand7` read "no figure for this hardware"
+  // when it is published by exactly ONE board whose shape is figured — the
+  // 7" slab it shares with the Dash 7. One board, two products: the SHAPE is
+  // what a figure is, and product naming stays with the device type.
+  'canary-display/nightstand': 'device.canary-display-nightstand',
+  'canary-display/amoled241': 'device.canary-display-amoled241',
+  'canary-display/nightstand7': 'device.canary-display-dash7',
 };
 
 const configRows = deviceTypes

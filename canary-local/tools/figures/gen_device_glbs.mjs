@@ -59,6 +59,9 @@ const OUT_DIRS = [
  *    must be evaluated over the same E or the tiers would disagree) ────── */
 
 const boards = JSON.parse(readFileSync(BOARDS, 'utf8'));
+const assembledDims = JSON.parse(
+  readFileSync(join(ENCLOSURE, 'assembled_dims.json'), 'utf8'),
+);
 
 function toFigureFrame(size, frame) {
   if (frame === 'scad-wall') return { w: size[0], d: size[2], h: size[1] };
@@ -78,13 +81,21 @@ function envelopeFor(fig) {
     const b = stlBounds(join(ENCLOSURE, file));
     parts[file] = toFigureFrame(b.size, fig.frame);
   }
-  const vals = Object.values(parts);
-  const E = {
-    w: Math.max(...vals.map((p) => p.w)),
-    d: vals.reduce((a, p) => a + p.d, 0),
-    h: Math.max(...vals.map((p) => p.h)),
+  if (files.length === 1) return { E: { ...parts[files[0]] }, parts };
+  // Multi-part devices use the MEASURED assembled envelope + seams
+  // (docs/hardware/enclosure/assembled_dims.json) — never the stacked sum of
+  // part boxes, which overstates any nesting assembly. Same contract as
+  // gen_figures.mjs, refusal included.
+  const asm = assembledDims.devices?.[fig.id];
+  if (!asm) {
+    throw new Error(`device glbs: ${fig.id} is a multi-part device with no measured `
+      + 'assembled envelope — add it to docs/hardware/enclosure/gen_assembled_dims.py.');
+  }
+  return {
+    E: { w: asm.fig.w, d: asm.fig.d, h: asm.fig.h },
+    parts,
+    assembled: { seams: asm.seams_fig_d },
   };
-  return { E, parts };
 }
 
 /* ── mesh building ─────────────────────────────────────────────────────── */
@@ -284,8 +295,8 @@ export function builtDeviceFigures() {
 }
 
 export function buildOne(fig) {
-  const { E, parts } = envelopeFor(fig);
-  const solids = fig.build(E, parts);
+  const { E, parts, assembled } = envelopeFor(fig);
+  const solids = fig.build(E, parts, assembled ? { seams: assembled.seams } : undefined);
   return buildGlb(fig, solids, E);
 }
 

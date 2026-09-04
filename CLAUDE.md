@@ -171,8 +171,11 @@ pushes the bytes back. Two things to know before you rely on it:
 - **Re-export an STL → regenerate the figures.** The fleet figures
   ([`docs/design/FLEET_FIGURES.md`](docs/design/FLEET_FIGURES.md)) read their
   dimensions live off the committed STL bounding boxes, so a re-export moves
-  the drawings every surface shows. Run
-  `node canary-local/tools/figures/gen_figures.mjs` and commit its output in
+  the drawings every surface shows. If the STL belongs to a released device's
+  assembled set, run `python3 docs/hardware/enclosure/gen_assembled_dims.py`
+  FIRST (it re-measures the assembled envelopes the ledger publishes; the
+  enclosure CI `--check`s it), then
+  `node canary-local/tools/figures/gen_figures.mjs` and commit both outputs in
   the same change; `--check` is the CI gate and will name every stale file.
   The generator refuses to emit a figure that has drifted from its part, or
   one that puts two materials on the same plane — both are real defects, not

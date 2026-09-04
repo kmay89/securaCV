@@ -44,6 +44,12 @@ enum DeviceNaming {
         "canary-wap": "Canary WAP",
         "canary-vision": "Canary Vision",
         "canary-sense": "Canary Sense",
+        // Published by firmware/configs/canary-sentinel/door/config.h
+        // (SENT_DEVICE_TYPE) — a real wire string, unlike the two fictions
+        // this table once carried. The Sentinel has no figure yet (no
+        // enclosure CAD), so it draws the honest no-picture card, but it
+        // deserves its name rather than an identifier.
+        "canary-sentinel": "Canary Sentinel",
     ]
 
     /// The product name for a published device type, or nil when this build

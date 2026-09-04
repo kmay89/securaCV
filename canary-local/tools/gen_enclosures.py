@@ -537,12 +537,17 @@ def parse_assembly(md):
         if not steps:
             continue
         text = body.lower()
-        if "ov5647" in text or "grove" in text or "lens" in text:
+        # The radar vocabulary comes FIRST because it is the most specific:
+        # a Sense block legitimately mentions the same magnets and discs the
+        # WAP and Vision nets match on, while nothing but the Sense says
+        # "radome" — with radar last, the Sense's own §Assembly would be
+        # claimed by whichever broader net matched first.
+        if "radar" in text or "mr60" in text or "radome" in text:
+            dev = "canary-sense"
+        elif "ov5647" in text or "grove" in text or "lens" in text:
             dev = "canary-vision"
         elif "lipo" in text or "wire channel" in text or "magnet" in text:
             dev = "canary-wap"
-        elif "radar" in text or "mr60" in text:
-            dev = "canary-sense"
         else:
             continue
         out[dev] = {

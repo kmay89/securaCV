@@ -68,6 +68,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq openscad admesh
 
+      # The measured assembled envelopes the fleet-figure ledger reads for
+      # multi-part devices (gen_figures.mjs cannot run OpenSCAD, so the
+      # measurement is committed here where the toolchain lives). Re-measures
+      # each device's fit-checked assembled union and fails if an STL moved
+      # out from under the committed numbers.
+      - name: Assembled envelopes match the committed parts
+        run: python3 gen_assembled_dims.py --check
+
       - name: Render all presets and parts
         run: |
           ./render.sh --no-png 2>&1 | tee render.log

@@ -90,19 +90,24 @@ export const FIGURES = [
     role: 'device', of: 'canary-sense',
     parts: ['canary_sense_back.stl', 'canary_sense_front.stl'],
     frame: 'scad-wall',
-    build: (E, P) => {
+    // Drawn AS ASSEMBLED: each part fills its visible band between the
+    // measured seams (assembled_dims.json), so the drawn depth is the
+    // assembled depth — the front's nesting lip is inside the back, not
+    // stacked in front of it. Same rule on every multi-part device below.
+    build: (E, P, A) => {
       const back = P['canary_sense_back.stl'];
       const front = P['canary_sense_front.stl'];
+      const [s0] = A.seams;
       const fx = (back.w - front.w) / 2;
       return [
-        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [back.w, back.d, back.h], r: 2 },
-        { kind: 'box', m: 'shell', face: 'y', at: [fx, back.d - EPS, E.h - front.h], size: [front.w, front.d + EPS, front.h], r: 3 },
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [back.w, s0, back.h], r: 2 },
+        { kind: 'box', m: 'shell', face: 'y', at: [fx, s0 - EPS, E.h - front.h], size: [front.w, E.d - s0 + EPS, front.h], r: 3 },
         {
           kind: 'box', m: 'radome', face: 'y',
-          at: [E.w / 2 - 12, back.d + front.d - EPS, E.h - front.h / 2 - 12],
+          at: [E.w / 2 - 12, E.d - EPS, E.h - front.h / 2 - 12],
           size: [24, 0.9, 24], r: 1.5,
         },
-        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, back.d + front.d + 0.9 - EPS, E.h - front.h + 6], r: 2, h: 0.6, detail: 'full' },
+        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, E.d + 0.9 - EPS, E.h - front.h + 6], r: 2, h: 0.6, detail: 'full' },
       ];
     },
   },
@@ -160,15 +165,16 @@ export const FIGURES = [
       'canary_vision_enclosure_xiao_indoor_front.stl',
     ],
     frame: 'scad-wall',
-    build: (E, P) => {
+    build: (E, P, A) => {
       const back = P['canary_vision_enclosure_xiao_indoor_back.stl'];
       const front = P['canary_vision_enclosure_xiao_indoor_front.stl'];
+      const [s0] = A.seams;
       const top = E.h;
       return [
-        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [back.w, back.d, back.h], r: 2 },
-        { kind: 'box', m: 'shell', face: 'y', at: [0, back.d - EPS, top - front.h], size: [front.w, front.d + EPS, front.h], r: 3 },
-        { kind: 'disc', m: 'lens', axis: 'y', at: [E.w / 2, back.d + front.d - EPS, top - 14], r: 5.5, h: 1.4 },
-        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, back.d + front.d - EPS, top - front.h + 8], r: 1.8, h: 0.5, detail: 'full' },
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [back.w, s0, back.h], r: 2 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, s0 - EPS, top - front.h], size: [front.w, E.d - s0 + EPS, front.h], r: 3 },
+        { kind: 'disc', m: 'lens', axis: 'y', at: [E.w / 2, E.d - EPS, top - 14], r: 5.5, h: 1.4 },
+        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, E.d - EPS, top - front.h + 8], r: 1.8, h: 0.5, detail: 'full' },
       ];
     },
   },
@@ -185,14 +191,15 @@ export const FIGURES = [
       'canary_vision_enclosure_devkit_indoor_front.stl',
     ],
     frame: 'scad-wall',
-    build: (E, P) => {
+    build: (E, P, A) => {
       const back = P['canary_vision_enclosure_devkit_indoor_back.stl'];
       const front = P['canary_vision_enclosure_devkit_indoor_front.stl'];
+      const [s0] = A.seams;
       return [
-        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [back.w, back.d, back.h], r: 2 },
-        { kind: 'box', m: 'shell', face: 'y', at: [0, back.d - EPS, E.h - front.h], size: [front.w, front.d + EPS, front.h], r: 3 },
-        { kind: 'disc', m: 'lens', axis: 'y', at: [E.w / 2, back.d + front.d - EPS, E.h - 14], r: 5.5, h: 1.4 },
-        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, back.d + front.d - EPS, E.h - front.h + 8], r: 1.8, h: 0.5, detail: 'full' },
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [back.w, s0, back.h], r: 2 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, s0 - EPS, E.h - front.h], size: [front.w, E.d - s0 + EPS, front.h], r: 3 },
+        { kind: 'disc', m: 'lens', axis: 'y', at: [E.w / 2, E.d - EPS, E.h - 14], r: 5.5, h: 1.4 },
+        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, E.d - EPS, E.h - front.h + 8], r: 1.8, h: 0.5, detail: 'full' },
       ];
     },
   },
@@ -240,18 +247,19 @@ export const FIGURES = [
       'canary_vision_doorbell_face.stl',
     ],
     frame: 'scad-wall',
-    build: (E, P) => {
+    build: (E, P, A) => {
       const plate = P['canary_vision_doorbell_plate.stl'];
       const body = P['canary_vision_doorbell_body.stl'];
       const face = P['canary_vision_doorbell_face.stl'];
+      const [s0, s1] = A.seams;   // plate reveal; body front rim
       const bx = (E.w - body.w) / 2;
       const fx = (E.w - face.w) / 2;
       return [
-        { kind: 'box', m: 'shell2', face: 'y', at: [(E.w - plate.w) / 2, 0, 0], size: [plate.w, plate.d, plate.h], r: 8 },
-        { kind: 'box', m: 'shell', face: 'y', at: [bx, plate.d - EPS, (E.h - body.h) / 2], size: [body.w, body.d + EPS, body.h], r: 12 },
-        { kind: 'box', m: 'dark', face: 'y', at: [fx, plate.d + body.d - EPS, (E.h - face.h) / 2], size: [face.w, face.d + EPS, face.h], r: 12 },
-        { kind: 'disc', m: 'lens', axis: 'y', at: [E.w / 2, plate.d + body.d + face.d - EPS, E.h - 24], r: 6, h: 1.4 },
-        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, plate.d + body.d + face.d - EPS, 24], r: 6, h: 1.6 },
+        { kind: 'box', m: 'shell2', face: 'y', at: [(E.w - plate.w) / 2, 0, 0], size: [plate.w, s0, plate.h], r: 8 },
+        { kind: 'box', m: 'shell', face: 'y', at: [bx, s0 - EPS, (E.h - body.h) / 2], size: [body.w, s1 - s0 + EPS, body.h], r: 12 },
+        { kind: 'box', m: 'dark', face: 'y', at: [fx, s1 - EPS, (E.h - face.h) / 2], size: [face.w, E.d - s1 + EPS, face.h], r: 12 },
+        { kind: 'disc', m: 'lens', axis: 'y', at: [E.w / 2, E.d - EPS, E.h - 24], r: 6, h: 1.4 },
+        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, E.d - EPS, 24], r: 6, h: 1.6 },
       ];
     },
   },
@@ -308,13 +316,14 @@ export const FIGURES = [
     role: 'device', of: 'canary-wap',
     parts: ['canary_wap_enclosure_compact_base.stl', 'canary_wap_enclosure_compact_lid.stl'],
     frame: 'scad-wall',
-    build: (E, P) => {
+    build: (E, P, A) => {
       const base = P['canary_wap_enclosure_compact_base.stl'];
       const lid = P['canary_wap_enclosure_compact_lid.stl'];
+      const [s0] = A.seams;
       return [
-        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [base.w, base.d, base.h], r: 3 },
-        { kind: 'box', m: 'shell', face: 'y', at: [0, base.d - EPS, 0], size: [lid.w, lid.d + EPS, lid.h], r: 3 },
-        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, base.d + lid.d - EPS, E.h / 2], r: 2.2, h: 0.6, detail: 'full' },
+        { kind: 'box', m: 'shell2', face: 'y', at: [0, 0, 0], size: [base.w, s0, base.h], r: 3 },
+        { kind: 'box', m: 'shell', face: 'y', at: [0, s0 - EPS, 0], size: [lid.w, E.d - s0 + EPS, lid.h], r: 3 },
+        { kind: 'disc', m: 'accent', axis: 'y', at: [E.w / 2, E.d - EPS, E.h / 2], r: 2.2, h: 0.6, detail: 'full' },
       ];
     },
   },

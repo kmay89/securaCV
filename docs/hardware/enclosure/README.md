@@ -1166,6 +1166,25 @@ exits the bottom wall at a height DERIVED from the seated stack
 > zone are nominal; measure your kit revision. Print the front first and
 > check the radome window lands over the antenna array.
 
+## Assembly
+
+1. Seat the **XIAO ESP32-C6** in the MR60 radar carrier's stacking socket
+   (its USB-C toward the bottom-wall opening — the port height is derived
+   from the seated stack, so a mis-seated stack misses its own cutout).
+2. **Click the carrier into the snap rails**, antenna face toward the front,
+   until the +Y end stops locate it — the stops are what keep the antenna
+   under the radome window, so push it home against them.
+3. Press the **light pipe** into the WS2812 port; when sealing, glue a clear
+   disc behind the **lux aperture** (the BH1750 needs to see room light) and
+   stick a GORE-type membrane over any vent seat.
+4. (weather mode) Seat the **TPU gasket** in the rim groove.
+5. Close the **radome front** (lip nests into the back; the window must land
+   over the antenna array) and drive the 4 × M2 corner screws — snug
+   diagonally first, then final quarter-turns, never past ~0.3 N·m.
+6. Mount it: slot the hinge prongs into the shared **Vision bracket** and set
+   the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind
+   keyholes — **ceiling-mount the MR60FDA2 fall build** facing straight down.
+
 ## Links
 - [Best-practice printing tips](./printing_best_practices.md) — the *why*: strength, fit, finish, durability (slicer-agnostic)
 - [Printing in PETG — Cura guide](./printing_petg_cura.md) — settings sheet, per-model cheat-sheet, importable profile

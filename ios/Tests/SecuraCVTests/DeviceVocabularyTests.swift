@@ -83,10 +83,12 @@ final class DeviceVocabularyTests: XCTestCase {
     /// Keep this list matched to CD_DEVICE_TYPE across
     /// firmware/configs/canary-display/*/config.h.
     func testTheNamingTableOnlyCarriesTypesThatArePublished() {
+        // Display configs (CD_DEVICE_TYPE), plus the Sentinel's
+        // SENT_DEVICE_TYPE from firmware/configs/canary-sentinel/door.
         for published in ["canary-dash", "canary-nightstand", "canary-nightstand7",
-                          "canary-nightlight", "canary-watch"] {
+                          "canary-nightlight", "canary-watch", "canary-sentinel"] {
             XCTAssertNotNil(DeviceNaming.productTitle(forPublishedType: published),
-                            "\(published) is published by a display config and needs a name")
+                            "\(published) is published by a firmware config and needs a name")
         }
         // These are NOT published by anything — the Dash 7 answers
         // "canary-dash" and the Nightstand Touch answers "canary-nightstand",

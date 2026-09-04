@@ -215,10 +215,17 @@ test("a device type is never guessed onto the wrong hardware", () => {
       `${u.device_type} cannot be both mapped and unmapped`);
     assert.ok(u.why && u.why.length > 10, `${u.device_type} says WHY it is unresolved`);
   }
-  for (const t of ["canary-nightstand", "canary-nightstand7"]) {
-    assert.ok(!mappedTypes.has(t),
-      `${t} must not resolve to a figure while no figure matches that hardware`);
-  }
+  assert.ok(!mappedTypes.has("canary-nightstand"),
+    "canary-nightstand must not resolve — three boards publish it with three different figures");
+  // canary-nightstand7 is the counter-case: ONE board (the 7" panel) and one
+  // flavor publish it, so it resolves — to the 7" slab it physically is, the
+  // figure it shares with the Dash 7. This is an explicit CONFIG_FIGURE row,
+  // not the regex guess this test was written against; the SHAPE is the
+  // figure's claim, and the product name stays with the device type.
+  const n7 = dt.mapped.find((m) => m.device_type === "canary-nightstand7");
+  assert.ok(n7, "canary-nightstand7 is published by exactly one board and must resolve");
+  assert.strictEqual(n7.figure, "device.canary-display-dash7",
+    "canary-nightstand7 draws the 7\" slab it runs on");
   // Every mapped type points at a real, whole-device figure.
   for (const m of dt.mapped) {
     const f = byId.get(m.figure);
