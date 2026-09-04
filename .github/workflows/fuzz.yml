@@ -141,9 +141,16 @@ jobs:
         # structured format like DER is effectively unreachable from random
         # bytes, and the run reports a confident green having tested the first
         # length check and nothing else.
+        env:
+          # Free-text dispatch input: through the environment, never
+          # interpolated into the script (the same rule sbom.yml states).
+          MINUTES: ${{ github.event.inputs.minutes_per_target || '5' }}
         run: |
           set -euo pipefail
-          minutes="${{ github.event.inputs.minutes_per_target || '5' }}"
+          minutes="${MINUTES}"
+          case "$minutes" in
+            ''|*[!0-9]*) echo "::error::minutes_per_target must be a whole number, got '${minutes}'"; exit 1 ;;
+          esac
           seconds=$(( minutes * 60 ))
           status=0
           for target in $(cargo +nightly fuzz list); do

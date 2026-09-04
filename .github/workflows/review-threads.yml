@@ -119,13 +119,18 @@ jobs:
               { data: 'From', header: true },
               { data: 'Comment', header: true },
             ]];
+            // Table cells land in the step summary as raw HTML, and a review
+            // comment is anyone's text — escape before it can close the anchor.
+            const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             for (const t of unresolved) {
               const c = t.comments.nodes[0] ?? {};
               const author = c.author?.login ?? 'unknown';
               const preview = (c.body ?? '').split('\n')[0].slice(0, 120);
               const where = (t.path ?? '(PR-level)') + (t.isOutdated ? ' (outdated)' : '');
               core.warning(`unresolved review thread — ${where} — @${author}: ${preview} ${c.url ?? ''}`);
-              rows.push([where, `@${author}`, c.url ? `<a href="${c.url}">${preview}</a>` : preview]);
+              const cell = c.url ? `<a href="${esc(c.url)}">${esc(preview)}</a>` : esc(preview);
+              rows.push([esc(where), `@${esc(author)}`, cell]);
             }
             core.summary.addTable(rows);
             core.summary.addRaw(

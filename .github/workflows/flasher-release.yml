@@ -201,12 +201,15 @@ jobs:
           # (via ota_release.py). Installed unconditionally: whether this run
           # signs depends on a secret, and discovering a missing dependency
           # after a 40-minute build would be the worst possible moment.
-          pip install --upgrade platformio cryptography
+          # Exact pins, same as firmware-release.yml: this job can hold the OTA
+          # release key, and a PyPI install runs package code on the runner.
+          # Bump deliberately; Dependabot does not watch these lines.
+          pip install "platformio==6.1.19" "cryptography==50.0.1"
           # esptool 4.11 imports intelhex without declaring it (same workaround
           # as the release workflow); esptool<5 keeps `merge_bin` stable for
           # make_factory.py.
-          pip install intelhex
-          pip install "esptool>=4,<5"
+          pip install "intelhex==2.3.0"
+          pip install "esptool==4.12.0"
 
       - name: Cache PlatformIO
         uses: actions/cache@v6
