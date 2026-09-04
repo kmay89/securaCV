@@ -8,3 +8,13 @@ Trademarks (the SecuraCV name and logo, the canary mascot) are not licensed
 by Apache-2.0; see TRADEMARK.md.
 
 Third-party attribution required by upstream licenses is appended below.
+
+Third-party model attribution
+-----------------------------
+The pinned detection model distributed with SecuraCV releases for the Grove
+Vision AI V2 module ("Person Detection", Swift-YOLO 192) originates from the
+Seeed Studio SSCMA model zoo and is licensed under the MIT License:
+  Copyright (c) 2023 Seeed Technology Co.,Ltd.
+  https://github.com/Seeed-Studio/sscma-model-zoo
+(Also recorded beside the firmware that ships it, in
+firmware/projects/canary-vision/NOTICE.)

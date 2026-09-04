@@ -1,9 +1,13 @@
 # Setting up your Canary
 
 > A SecuraCV Canary is a small RF-sensing witness device. It watches the
-> shape of motion in a room — without a camera, without a microphone,
-> without ever learning who you are. This guide gets one going in five
-> minutes.
+> shape of motion in a room — without a camera, without recording a single
+> second of audio, without ever learning who you are. (Where a Canary has a
+> microphone, it is honest work: in stock builds it listens only for the
+> standard smoke and CO alarm cadences as an on/off loudness envelope,
+> never as sound it keeps — see
+> [section 5](#5--listening-for-alarms).) This guide gets one going in
+> five minutes.
 
 **The journey, by surface** (each is optional; every one is free): rehearse
 in [the Lab](https://kmay89.github.io/securaCV/canary-local/) — the real

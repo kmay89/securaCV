@@ -8,10 +8,10 @@ packaged flat for the Arduino toolchain. One sketch, two flavors:
 |---|---|---|
 | **watch** | Seeed XIAO ESP32-S3 + Round Display for XIAO | GC9A01 1.28" 240×240, CST816S touch |
 | **dash**  | ESP32-S3-DevKitC-1 profile + Waveshare 4.3/4.3B | 800×480 RGB, GT911 touch, CH422G expander |
-| **playground** | Waveshare ESP32-S3-Touch-LCD-4.3B (vendor board, core 3.x) | dash hardware + isolated-IO bench mode — [dev playground doc](../../../../docs/hardware/dev_playground_43b.md) |
+| **playground** | Waveshare ESP32-S3-Touch-LCD-4.3B (vendor board, core 3.x) | dash hardware + isolated-IO bench mode — [dev playground doc](../../../../../docs/hardware/dev_playground_43b.md) |
 
 > ⚠️ **DEV STATUS (v0.1):** compile/CI-verified; not yet validated on bench
-> hardware. See the [bench bring-up runbook](../../../../docs/hardware/display_bench_bringup.md).
+> hardware. See the [bench bring-up runbook](../../../../../docs/hardware/display_bench_bringup.md).
 
 ## This sketch is generated — don't hand-edit it
 
@@ -95,7 +95,7 @@ with `#define CD_BUILD_DASH 0|1` in a `flavor_local.h` next to the sketch
 if you know what you're doing — an explicit choice beats inference.
 
 **Dev playground** (guided peripheral bench on the 4.3B —
-[doc](../../../../docs/hardware/dev_playground_43b.md)): run
+[doc](../../../../../docs/hardware/dev_playground_43b.md)): run
 `../../setup.sh arduino playground`, then build with the IDE (board
 `Waveshare ESP32-S3-Touch-LCD-4.3B`) or `arduino-cli compile --profile
 playground`. Core 3.x only — the vendor board entry doesn't exist on

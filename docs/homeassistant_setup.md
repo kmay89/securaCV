@@ -468,6 +468,14 @@ unusual layouts (a kernel on another host, a re-bridged topic prefix).
 
 ---
 
+> **Most people are done here.** The next sections are the legacy, by-hand
+> versions of the setup that the one-command install (or the app + wizard)
+> already did for you — kept for unusual layouts and for anyone untangling
+> an older install. The reference material applies to every install: the
+> configuration reference, go2rtc, MQTT discovery, the
+> [API reference](#api-reference), [privacy features](#privacy-features),
+> and [troubleshooting](#troubleshooting).
+
 ## Legacy: Witness Kernel Setup
 
 ### Choose Your Mode

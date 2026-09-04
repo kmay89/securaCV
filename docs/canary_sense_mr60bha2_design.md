@@ -66,7 +66,7 @@ corroboration model the kernel's contract layer was built for.
   control of the UART frame protocol for a native canary firmware.
 - **Enclosure**: a parametric 3D-printable **RADOME housing** exists —
   [`docs/hardware/enclosure/canary_sense_enclosure.scad`](./hardware/enclosure/canary_sense_enclosure.scad)
-  ([README section](./hardware/enclosure/README.md#canary-sense--radome-enclosure-v01)).
+  ([README section](./hardware/enclosure/README.md#canary-sense--radome-enclosure-v02)).
   The front over the antenna zone is a thin, flat, uniform membrane (no ribs
   or labels there — 60 GHz radar transparency demands it; the air gap behind
   it is computed and asserted in the model). A `radar = "fda2"` flavor covers

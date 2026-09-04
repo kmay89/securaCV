@@ -184,6 +184,8 @@ These run on every PR. Run the relevant one locally before you push.
 | Gate | What it enforces |
 |---|---|
 | `scripts/lint_docs_index.py` | Every doc reachable from `docs/README.md`; no dead links |
+| `scripts/lint_md_links.py` | Every relative link and `#anchor` in every tracked `.md` resolves — including the ~160 files outside `docs/` |
+| `scripts/lint_fleet_word.py` | A group of Canaries is a *fleet* — the banned bird-group word fails the build (rule 3, now deterministic) |
 | `scripts/lint_dictionary_sync.py` | Rust/Python/JS/firmware vocabularies match `spec/witness_dictionary.json` |
 | `scripts/gen_agent_entrypoints.py --check` | Vendor agent files match this file's brief block |
 | `scripts/lint_no_impersonation.sh` | No red, no reserved emergency tones, no official-alert phrasing |
@@ -511,8 +513,6 @@ fix(frame): prevent InferenceView from leaking raw bytes
 docs(agents): clarify audit boundary vs security boundary
 ```
 
-````
-
 ---
 
 ## Beacon Channel Invariants (v0.2 — must be enforced)
@@ -521,7 +521,8 @@ The Beacon channel (`spec/beacon_channel_v0.md`) is the project's
 harm-reduction broadcast layer. It carries life-safety advisories with
 smoke-detector-grade reliability requirements. Any agent modifying Beacon
 firmware (`firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.{h,cpp}`)
-or the Chirp v0.2 channel (`chirp_channel.{h,cpp}`) MUST observe:
+or the Chirp v0.2 channel (`chirp_channel.cpp` there, with its header at
+`firmware/common/chirp/chirp_channel.h`) MUST observe:
 
 1. **No automatic origination.** Beacons are originated only on explicit
    user action. Sensors (CSI, motion, audio) may prompt a human; sensors

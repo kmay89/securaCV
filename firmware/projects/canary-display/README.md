@@ -12,7 +12,7 @@ Two hardware flavors of one app (selection rationale:
 | **dash** | Waveshare ESP32-S3-Touch-LCD-4.3 (800×480 IPS, GT911 5-pt touch) | by the front door, kitchen wall | `canary-display-dash` |
 | **playground** | Waveshare ESP32-S3-Touch-LCD-4.3**B** (dash hardware + isolated DI/DO, RS485, CAN, I2C terminals) | the workbench — a safe guided peripheral test mode, no network ([doc](../../../docs/hardware/dev_playground_43b.md)) | `canary-display-playground` |
 
-Companion docs: [BOM](../../../docs/hardware/display_bom.md) ·
+Companion docs: [BOM](../../../docs/hardware/bom_canary_display.csv) ·
 [UX design goals](../../../docs/hardware/display_ux_design.md) ·
 enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 

@@ -32,8 +32,10 @@ in public.
   issue that involves someone's personal data): use the private channel in
   [`SECURITY.md`](SECURITY.md) or a GitHub private security advisory. Do not
   open a public issue.
-- **Everything else:** contact the maintainers listed in
-  [`MAINTAINERS.md`](MAINTAINERS.md).
+- **Everything else:** email the maintainers privately at
+  **errerlabs@gmail.com** (the same address [`SECURITY.md`](SECURITY.md)
+  publishes), or open a GitHub issue if the report is fine being public.
+  A conduct report about a person never has to go through a public issue.
 
 Reports are handled confidentially. Maintainers who cannot review a report
 impartially will recuse themselves.

@@ -3,14 +3,14 @@
 A 10-foot ambient security surface. It reads the **same `/api/glass`
 snapshot** the wall glass and phone mirror read, so it needs **no hub**: a
 television on your home WiFi, pointed at a Canary, is a conformant
-[Open Ambient Security Display](../../../docs/standard/AMBIENT_DISPLAY_STANDARD.md).
+[Open Ambient Security Display](../../../../docs/standard/AMBIENT_DISPLAY_STANDARD.md).
 
 There are no camera feeds here — securaCV witnesses without watching. The TV
 shows the fleet's worst state at a glance, a roll-call of every Canary, and
 degrades honestly when a witness goes silent or the signal drops.
 
 For the product rationale, competitive picture, and the "Canary TV" dongle
-proposal, see [`docs/hardware/tv_display_design.md`](../../../docs/hardware/tv_display_design.md).
+proposal, see [`docs/hardware/tv_display_design.md`](../../../../docs/hardware/tv_display_design.md).
 
 ## Three ways to put it on a TV (cheapest first)
 
@@ -28,7 +28,7 @@ proposal, see [`docs/hardware/tv_display_design.md`](../../../docs/hardware/tv_d
 
 Open `index.html?demo=1` in any browser — it renders a synthetic fleet,
 loudly labeled **DEMO · NOT A LIVE FLEET** so it can never be mistaken for a
-real one (per [`display_modes.md`](../../../docs/hardware/display_modes.md)).
+real one (per [`display_modes.md`](../../../../docs/hardware/display_modes.md)).
 
 ```
 firmware/projects/canary-display/tv/index.html?demo=1

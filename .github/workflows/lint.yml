@@ -113,6 +113,16 @@ jobs:
         run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: Markdown links — every relative link and anchor resolves
+        # The docs index covers docs/ reachability and the map's own links;
+        # this covers everything it can't: the ~160 tracked .md files outside
+        # docs/ (root README, firmware project READMEs, .github/ guides),
+        # links inside non-README docs pages, and every #anchor fragment.
+        # Two canary-display READMEs pointed a `../` short of the repo root
+        # for months (six companion-doc links), and the enclosure README's
+        # own table of contents carried four stale version anchors, one of
+        # them three releases behind — nothing was red.
+        run: python3 scripts/lint_md_links.py
       - name: Apple Home docs match the vocabulary they describe
         # The quickstart tells a user exactly what their Canaries will publish
         # into their home — which signals, which are OFF by default, how
@@ -132,6 +142,15 @@ jobs:
         # It also self-tests that its ban pattern never starts matching correct
         # English (characteristic, realistic, colored, …).
         run: python3 scripts/lint_spelling.py
+      - name: A group of Canaries is a fleet (AGENTS.md rule 3)
+        # Rule 3 had prose and an advisory review but no deterministic gate —
+        # a PR using the banned bird-group word in a new doc, comment, or
+        # identifier merged green. The script masks the three real names that
+        # legitimately contain the letters (the flock(2) syscall, the
+        # flight-rules "no flock/PID lock" phrase, the Flock Safety company in
+        # research docs) and allowlists only the files that state the rule or
+        # test for it.
+        run: python3 scripts/lint_fleet_word.py
       - name: CloudKit container — named, never defaulted, fully deployed
         # CKContainer.default() reads an entitlement and raises an ObjC
         # CKException when there isn't one. Swift can't catch that, so an

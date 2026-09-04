@@ -233,6 +233,9 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 
 1. Every new doc gets a home on this map in the same PR that adds it —
    `scripts/lint_docs_index.py` fails otherwise.
-2. A new docs directory gets its own `README.md`, linked from here; the
-   directory then indexes itself.
+2. A new docs directory either gets its own `README.md` linked from here (the
+   directory then indexes itself — `security/`, `hardware/`, `review/`,
+   `strategy/`, and `tvos/` work this way), or its docs are linked from this
+   map directly. Prefer a directory README once a directory grows past a
+   handful of files.
 3. Links here are relative, so the map works on GitHub, in editors, and offline.

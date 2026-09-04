@@ -218,21 +218,25 @@ The frigate_bridge is classified as an **external tool** per `kernel/architectur
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `frigate.mqtt_host` | `core-mosquitto` | MQTT broker hostname |
+| `frigate.mqtt_host` | (empty = auto-discover) | MQTT broker hostname; empty means the Supervisor's Mosquitto service is auto-discovered — set only for an external broker |
 | `frigate.mqtt_port` | `1883` | MQTT broker port |
-| `frigate.mqtt_topic` | `frigate/events` | Frigate event topic |
+| `frigate.topic_prefix` | `frigate` | Matches Frigate's `mqtt.topic_prefix`; events arrive on `<prefix>/events` |
+| `frigate.enable_reviews` | `false` | Also ingest `<prefix>/reviews` (Frigate 0.14+) |
+| `frigate.mqtt_topic` | (empty) | Legacy full-topic override — wins over `topic_prefix` when set |
 | `frigate.mqtt_username` | (empty) | MQTT authentication username |
 | `frigate.mqtt_password` | (empty) | MQTT authentication password |
 | `frigate.min_confidence` | `0.5` | Minimum detection confidence |
 | `frigate.cameras` | `[]` (all) | Camera names to process |
 | `frigate.labels` | `[person,car,dog,cat]` | Object types to process |
 
+(Defaults mirror [`privacy_witness_kernel/config.yaml`](../privacy_witness_kernel/config.yaml) — the add-on schema is the source of truth.)
+
 ### MQTT Publishing Options (HA Discovery)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `mqtt_publish.enabled` | `false` | Enable MQTT publishing to HA |
-| `mqtt_publish.host` | `core-mosquitto` | MQTT broker for publishing |
+| `mqtt_publish.enabled` | `true` | Publish events to HA — on by default so events are visible out of the box |
+| `mqtt_publish.host` | (empty = auto-discover) | MQTT broker for publishing; auto-discovered like the Frigate broker |
 | `mqtt_publish.port` | `1883` | MQTT port |
 | `mqtt_publish.username` | (empty) | MQTT auth username |
 | `mqtt_publish.password` | (empty) | MQTT auth password |

@@ -16,8 +16,9 @@
 # which is what proves the copy exact:
 #   custom_components/securacv/**   minus brand/ (mirror-only) and caches
 #   conftest.py                      the root Home Assistant stubs the tests import
-# Mirror-owned, never written from here: README.md, LICENSE, hacs.json,
-# .gitignore, .github/**, custom_components/securacv/brand/, and
+# Mirror-owned, never written from here: README.md, AGENTS.md, CLAUDE.md,
+# LICENSE, hacs.json, .gitignore, .github/**,
+# custom_components/securacv/brand/, and
 # requirements_test.txt — Dependabot bumps that file in BOTH repos and the
 # mirror's pins lead, so copying ours would downgrade them.
 #

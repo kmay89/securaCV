@@ -12,9 +12,9 @@ ignore = [
     # timing sidechannels in `rsa` 0.9.10 (5.9 medium).
     #
     # No fix exists on the 0.9 line; the constant-time rewrite lands in
-    # `rsa` 0.10, which is still a release candidate (0.10.0-rc.18). `rsa`
-    # is pulled by exactly one crate — `c2pa` 0.90.3, the newest release,
-    # which requires `rsa ^0.9.10` as a non-optional dependency — so there
+    # `rsa` 0.10 (still a release candidate when this was written). `rsa`
+    # is pulled by exactly one crate — `c2pa`, whose 0.90.x line (see
+    # Cargo.lock) requires `rsa ^0.9.10` as a non-optional dependency — so there
     # is no bump, no feature flag, and no maintained alternative that drops
     # it. Waiting for `c2pa` to adopt `rsa` 0.10 is the only real fix.
     #

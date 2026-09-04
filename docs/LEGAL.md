@@ -56,10 +56,11 @@ Two carve-outs, stated honestly:
   by [`TRADEMARK.md`](../TRADEMARK.md) (the "Works with SecuraCV" badge
   stays free under that policy's rules).
 - **Components that carry their own license keep it.** The tree is not
-  uniformly Apache-2.0 today: `firmware/projects/canary-vision/` and
-  `firmware/common/csi/` ship **MIT** LICENSE files, and several firmware
-  sources carry MIT headers (some first-party, some vendored — e.g.
-  `qrcodegen`). **The nearest LICENSE/header governs that component**;
+  uniformly Apache-2.0 today: `canary-vision/` (the Vision device-API/SPA
+  tree at the repo root) and `firmware/common/csi/` ship **MIT** LICENSE
+  files, and
+  several firmware sources carry MIT headers (some first-party, some
+  vendored — e.g. `qrcodegen`). **The nearest LICENSE/header governs that component**;
   nothing in this doc relicenses anything, and MIT components convey no
   Apache-style patent grant. Redistributors must honor the per-component
   terms. Whether to consolidate the first-party MIT pieces to Apache-2.0
@@ -203,8 +204,10 @@ highest leverage first. Check them off here as they close, with dates.
 - [ ] **License inventory & consolidation decision:** enumerate the
       first-party MIT components (§2), decide keep-as-MIT vs relicense to
       Apache-2.0 (needs every copyright holder's authorization; note
-      `canary-vision/LICENSE` names "SecuraCV Contributors," not Errer
-      Labs), and record the outcome per component.
+      `firmware/common/csi/LICENSE` names "SecuraCV Contributors," not
+      Errer Labs, and `canary-vision/LICENSE` spells the company
+      "ERRERlabs" — both copyright lines need normalizing per §3), and
+      record the outcome per component.
 - [ ] **Repo-wide license CI:** extend the permissive-only gate beyond
       cargo-deny to npm and the firmware/vendored tree so §3.5's policy
       is machine-enforced everywhere (engineering, not counsel).
