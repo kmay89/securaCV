@@ -123,6 +123,18 @@ struct RootView: View {
                 TabRootView(section: $section)
             }
         }
+        // The bird helper's bubble, docked over every section in both
+        // idioms — one channel the whole app can rely on, always in the
+        // same corner (the website Herald's promise, kept here). Mounted
+        // at the root so a message can never be delivered off-screen. It
+        // rides over the navigation-bar band for its dwell, the same
+        // top-of-page overlay the site's docked bar is — acceptable because
+        // messages are rare and paced, and the one sticky tone (warn)
+        // carries its own dismiss.
+        .overlay(alignment: .top) {
+            CanaryVoiceBubble(voice: store.voice) { section = $0 }
+        }
+        .onAppear { store.voice.arrive(at: section) }
         // The deep-link doors, both landing on the same route value: a
         // widget or link speaks the securacv:// dialect; a notification tap
         // arrives already parsed (AlertCenter → pendingRoute). The shell's
@@ -131,6 +143,12 @@ struct RootView: View {
         // leaks into the shell.
         .onOpenURL { url in
             if let route = AppRoute(url: url) { store.pendingRoute = route }
+        }
+        // Arriving on a section is the moment its one orientation line can
+        // help — once per section, ever, and only where a newcomer might
+        // stall (the tip table in CanaryVoiceStage).
+        .onChange(of: section) { _, now in
+            store.voice.orient(now)
         }
         .onChange(of: store.pendingRoute) { _, route in
             guard let route else { return }

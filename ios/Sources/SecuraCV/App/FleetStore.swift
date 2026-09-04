@@ -70,6 +70,11 @@ final class FleetStore: ObservableObject {
     // LINE is ambient copy only (the Voice rule: it may rephrase
     // contentment or name who's being looked for, never word an alarm).
     private let moodKeeper = CanaryMoodKeeper()
+    /// The bird helper's one channel (the website Herald, ported): anything
+    /// in the app can hand the character a line through `voice.say(...)`.
+    /// Its honesty gates are wired in init — chatter only in the calm, and
+    /// the whole channel holds its tongue while the face is .hidden.
+    let voice = CanaryVoiceStage()
     @Published private(set) var canaryFace: CanaryFace = .calm
     @Published private(set) var canaryPosture: CanaryPosture = .asFace
     @Published private(set) var canaryAnxiety: Int = 0
@@ -129,6 +134,12 @@ final class FleetStore: ObservableObject {
             if !self.alerts.authorized { await self.alerts.requestAuthorization() }
             return self.alerts.authorized
         }
+
+        // The character's honesty gates: the bird volunteers small talk only
+        // in the calm, and during a real unacknowledged alarm (.hidden) the
+        // whole speech channel waits — the instruments own the stage.
+        voice.stagePermitted = { [weak self] in (self?.canaryFace ?? .calm) != .hidden }
+        voice.chatterPermitted = { [weak self] in (self?.canaryFace ?? .calm) == .calm }
 
         // The news-dedupe ledgers are rebuilt from the persisted history, so
         // an alarm that outlives a relaunch stays ONE alert: still on the
@@ -492,11 +503,32 @@ final class FleetStore: ObservableObject {
         let inputs = CanaryMoodInputs(fleet: witnesses,
                                       alarmUnacked: !alarming.isEmpty && !allAcked)
         let reading = moodKeeper.observe(inputs)
+        let stageWasBlocked = canaryFace == .hidden
         canaryFace = reading.face
         canaryPosture = reading.posture
         canaryAnxiety = reading.state.anxiety
         canaryTrustDays = reading.state.trustDays
         moodLine = composeMoodLine(reading: reading)
+
+        // A trust milestone (the exact 7- and 30-day crossings) is the one
+        // piece of good news worth a spoken line, not just an inflection of
+        // the ambient copy. Keyed so a crossing says it once; chatter so a
+        // quieted bird keeps the pleasantry to itself.
+        if reading.milestone {
+            voice.say(reading.state.trustDays >= 30 ? "A clean month together."
+                                                    : "A clean week together.",
+                      tone: .good,
+                      key: "trust-milestone-\(reading.state.trustDays)",
+                      chatter: true)
+        }
+        // The alarm edges, both of them: seizure shelves whatever the bird
+        // was mid-sentence on (the instruments own the stage), release lets
+        // it resume with its full dwell.
+        if !stageWasBlocked && reading.face == .hidden {
+            voice.stageSeized()
+        } else if stageWasBlocked && reading.face != .hidden {
+            voice.stageChanged()
+        }
     }
 
     /// Ambient copy only, and every line names log-able state (the honesty
