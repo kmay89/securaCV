@@ -71,16 +71,16 @@
    "overrides": {
     "part": "plate"
    },
-   "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets)",
+   "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets), resting 0.5 up the slide on the plate's L-foot",
    "mm_scad": [
     38.2,
-    121.6,
+    122.1,
     30.2
    ],
    "fig": {
     "w": 38.2,
     "d": 30.2,
-    "h": 121.6
+    "h": 122.1
    },
    "seams_fig_d": [
     4.0,

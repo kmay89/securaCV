@@ -1816,10 +1816,10 @@
    "envelope_mm": {
     "w": 38.2,
     "d": 30.2,
-    "h": 121.6
+    "h": 122.1
    },
    "assembled": {
-    "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets)",
+    "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets), resting 0.5 up the slide on the plate's L-foot",
     "seams_fig_d": [
      4,
      28
@@ -1860,7 +1860,7 @@
     "height_tol_mm": 2.5
    },
    "solids": 5,
-   "rev": "84e105f0",
+   "rev": "3eb0f713",
    "svg": "canary-local/figures/device.canary-vision-doorbell.svg",
    "glyph": "canary-local/figures/device.canary-vision-doorbell.glyph.svg"
   },

@@ -96,12 +96,22 @@ DEVICES = {
         # body() carries its keyhole-pocket thickening at z = -kh_extra, so
         # landing that back face flush on the plate front (z = plate_t) is a
         # lift of plate_t + kh_extra; the plate's T-studs bury in the pockets.
-        "body": ("union() { plate(); translate([0, 0, plate_t + kh_extra]) "
+        # The hang is a slide, not a snap: the body is offered 7.5 higher
+        # (pass holes over the stud heads) and dropped until it RESTS ON THE
+        # PLATE'S L-FOOT, whose top sits 0.5 above the plate's bottom edge —
+        # the plate() comments' own datum ("the body rests on the foot 0.5
+        # above the plate's bottom edge"; its studs are drawn slot_l/2 - 0.5
+        # high so the head parks at the slot end exactly there). So the
+        # resting body + face ride 0.5 up the mounting axis (+y), which is
+        # where the assembled envelope gets its extra half-millimeter of
+        # height: the face's top edge clears the plate's by that slide.
+        "body": ("union() { plate(); translate([0, 0.5, plate_t + kh_extra]) "
                  "{ body(); translate([0, 0, base_d]) face(); } }"),
         # visible bands from the wall out: plate to plate_t (the studs bury in
         # the body's pockets), body to its front rim, face to the outer plane
         "seams": "[plate_t, plate_t + kh_extra + base_d]",
-        "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets)",
+        "placement": ("doorbell_fitcheck: face at z = base_d; body back flush on plate front "
+                      "(T-studs in pockets), resting 0.5 up the slide on the plate's L-foot"),
     },
 }
 
@@ -198,6 +208,29 @@ def main():
                     sys.exit(
                         f"gen_assembled_dims: {fig_id} axis {a}: measured {m} vs committed {n} "
                         "— an STL moved; regenerate and re-run gen_figures.mjs"
+                    )
+            # The seams are consumed data too (the massings draw each part's
+            # visible band between them), and a datum like base_d can move
+            # WITHOUT moving the union's outer box — so a bbox-only check
+            # would bless stale bands. Compare them with the same tolerance.
+            fresh_seams = spec["seams_fig_d"]
+            got_seams = got.get("seams_fig_d", [])
+            if len(fresh_seams) != len(got_seams) or any(
+                abs(m - n) > TOL for m, n in zip(fresh_seams, got_seams)
+            ):
+                sys.exit(
+                    f"gen_assembled_dims: {fig_id} seams: measured {fresh_seams} vs committed "
+                    f"{got_seams} — an assembly datum moved; regenerate and re-run gen_figures.mjs"
+                )
+            # And everything else in the record (fig frame, placement prose,
+            # overrides) must match what this generator would write, so the
+            # committed file can never describe a different assembly than the
+            # one measured.
+            for key in ("scad", "overrides", "placement", "fig"):
+                if spec[key] != got.get(key):
+                    sys.exit(
+                        f"gen_assembled_dims: {fig_id} field '{key}' drifted from the committed "
+                        "record — regenerate"
                     )
         stray = set(have.get("devices", {})) - set(fresh["devices"])
         if stray:
