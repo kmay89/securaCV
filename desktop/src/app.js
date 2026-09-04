@@ -953,8 +953,9 @@ function announceToWitness(product) {
   try {
     const frame = $("witness-frame");
     if (frame && frame.contentWindow) {
+      // "/" = our own origin: the wall is our iframe, nothing else may hear it.
       frame.contentWindow.postMessage(
-        { type: "witness:appear", name: witnessName(product), label: "just flashed" }, "*");
+        { type: "witness:appear", name: witnessName(product), label: "just flashed" }, "/");
     }
     const badge = $("badge-fleet");
     if (badge) { badge.textContent = "new"; badge.classList.remove("hidden"); }
@@ -985,7 +986,9 @@ const witnessDiscovery = {
   highlight: null,    // device name to highlight on next find
   inFlight: false,    // a witness_discover call is running (they can take ~8 s)
   found: false,
-  post(m) { try { const f = $("witness-frame"); if (f && f.contentWindow) f.contentWindow.postMessage(m, "*"); } catch (_) {} },
+  // "/" = our own origin: the LAN fleet (device names, who is home) goes to
+  // our wall iframe and nowhere else, even if something else were framed.
+  post(m) { try { const f = $("witness-frame"); if (f && f.contentWindow) f.contentWindow.postMessage(m, "/"); } catch (_) {} },
   status(msg, live) {
     try {
       const el = $("fleet-scan-status");
