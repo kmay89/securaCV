@@ -9,6 +9,13 @@ This document explains *why* cryptographically verifiable, non-surveillant perce
 > explainer aimed at council members, trustees, and journalists, see
 > [`why_this_matters.md`](why_this_matters.md).
 
+> **Where this lands today:** the same argument — records you can trust even
+> when trust is inconvenient — is what the shipping product applies to homes
+> and small sites: the witness kernel sealing camera and sensor events into a
+> signed hash chain, and the [Canary devices](getting_started_canary.md)
+> corroborating it. The essay below makes the general case; autonomous
+> systems are its sharpest instance, not its only one.
+
 ---
 
 ## 1. The Problem This Document Addresses
@@ -180,7 +187,9 @@ It asserts a narrower, essential claim:
 
 ## 9. Non-Goals
 
-SecuraCV is not a vision system, but a witnessing layer for autonomous systems.
+SecuraCV is not a surveillance or analytics system. Vision is one input among
+several; the witness log is the product — a witnessing layer for homes today,
+and for autonomous systems as they arrive.
 
 SecuraCV is explicitly **not**:
 - a surveillance platform,

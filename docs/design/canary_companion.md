@@ -91,7 +91,7 @@ pixel is off — no bleed, no gray, no rectangle, and no power. Black is free he
 in a way it has never been free anywhere else in this project.
 
 So the Night Watch **inverts the display's default**: `NightStyle::GoDark` is
-what ships, and [§3.2](#32--the-rule-that-outranks-the-users-preference) exists
+what ships, and [§3.2](#32-the-rule-that-outranks-the-users-preference) exists
 to make sure "dark" never quietly starts meaning "safe".
 
 ---

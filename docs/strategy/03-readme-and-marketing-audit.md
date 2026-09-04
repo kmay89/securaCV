@@ -50,7 +50,7 @@
 ## What the README rewrite does (Deliverable 2)
 
 - Top fold: logo → one-line value prop → 3 "why" bullets (no subscription / private by design /
-  tamper-proof) → screenshot slot → 3-step install → "Who it's for" → "Why this exists" link.
+  tamper-evident) → screenshot slot → 3-step install → "Who it's for" → "Why this exists" link.
 - Keep both "How it works" sections (normal people / engineers) + the data-flow diagram +
   canonical-spec links.
 - Move the long CLI/ingest reference into `docs/` with short blurbs + links in their place.

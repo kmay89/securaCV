@@ -31,6 +31,7 @@ Clips stay on your hardware. Events become privacy-preserving claims. The durabl
 
 | If you are... | Start here | Outcome |
 |---|---|---|
+| Completely new — you just found this | [Why this matters](docs/why_this_matters.md) → [the FAQ](docs/FAQ.md) | The idea in plain words, then the questions everyone asks — answered honestly. Nothing to install, nothing to buy. |
 | Running Home Assistant with cameras | [Home Assistant setup](docs/homeassistant_setup.md) → [Frigate integration](docs/frigate_integration.md) | Frigate keeps recording; SecuraCV adds verified witness events and chain health. |
 | Running Docker beside an existing Frigate | [Docker quickstart](docs/frigate_integration.md#quick-start-docker-no-home-assistant) | One sidecar container wraps the witness API, bridge, and doctor checks. |
 | Building hardware | [Getting started with Canaries](docs/getting_started_canary.md) → [hardware guides](docs/hardware/README.md) | Small independent witnesses for radar, camera-module presence, WiFi sensing, and displays. |
@@ -156,6 +157,31 @@ A few bright lines keep the system calm:
 - No claim that outruns the implementation: if a feature is marked design, RFC, pending bench validation, or post-v1, treat it as exactly that.
 
 The project values honest edges more than glossy overclaiming.
+
+---
+
+## The monorepo at a glance
+
+Everything ships from this one repository. The short version of the map —
+the full one, with a "where do I look for X" index, is in
+[AGENTS.md](AGENTS.md):
+
+| Directory | What it is |
+|---|---|
+| [`src/`](src/) | The witness kernel — the Rust daemon `witnessd` and its binaries |
+| [`spec/`](spec/) | The normative contracts: invariants, the event contract, wire specs — each marked stable, draft, or spec-only |
+| [`firmware/`](firmware/) | The Canaries' ESP32 firmware: the canonical `canary/` tree plus per-product trees under `projects/`, on one shared `common/` core |
+| [`canary-local/`](canary-local/) | The Lab — real firmware compiled to WebAssembly, running in your browser |
+| [`custom_components/securacv/`](custom_components/securacv/) | The Home Assistant integration (distributed to HACS through [its mirror](https://github.com/kmay89/securacv-homeassistant)) |
+| [`privacy_witness_kernel/`](privacy_witness_kernel/) | The Home Assistant app (add-on) that wraps the kernel |
+| [`desktop/`](desktop/) + [`desktop-lab/`](desktop-lab/) | The desktop Flasher / hub app, and the Lab desktop app — two different apps |
+| [`ios/`](ios/) + [`tvos/`](tvos/) | The iPhone/iPad companion and the Witness Wall for Apple TV |
+| [`docs/`](docs/) | Every guide and design doc, indexed by the CI-enforced [map](docs/README.md) |
+| [`devices/`](devices/) | One manifest per Canary, joining its board, builds, figure, CAD, and flasher facts |
+| [`kernel/`](kernel/) | Architecture docs — docs only, despite the name |
+
+If two directories sound alike,
+[docs/CONSOLIDATION.md](docs/CONSOLIDATION.md) says which is the real one.
 
 ---
 

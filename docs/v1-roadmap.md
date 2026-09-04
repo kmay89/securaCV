@@ -106,7 +106,7 @@ tagging v1):**
 
 ### Stream B: Crypto Hardening
 
-**Goal:** One end-to-end tamper-proof path
+**Goal:** One end-to-end tamper-evident path
 
 **v1 choice: Ed25519 signed log** (not encrypted vault)
 
@@ -189,10 +189,14 @@ Integration testing
 
 - **WASM sandboxing** — backends are trusted, must be audited
 - **GPU acceleration** — `ort` backend is v1.1
-- **Firmware OTA updates** — `firmware/projects/canary-ota/` is a working standalone
-  engine (manifest fetch, SHA256 verify, A/B rollback) but is not integrated into the
-  canary trees and does not yet Ed25519-sign manifests. Shipping it unsigned would be a
-  security regression, so OTA lands post-v1, signing first.
+- **Firmware OTA updates** — *since closed*: the engine was promoted to
+  [`firmware/common/ota/`](../firmware/common/ota/) and now ships signed
+  pull-updates (HTTPS manifest + Ed25519 release signature + SHA-256 + A/B
+  rollback) across the active firmware trees — see
+  [`docs/firmware_ota.md`](firmware_ota.md) and the
+  [Feature-Parity Dashboard](../firmware/FEATURES.md), which still marks
+  canary-sense partial pending ESP32-C6 bench validation. That bench pass
+  rides with the hardware-validation blocker above.
 - **Encrypted-vault UX / key management** — sealing is wired (opt-in); the trustee/seal setup UI
   and hardware-backed keys are v1.1
 - **Real-time performance guarantees** — benchmark, don't promise

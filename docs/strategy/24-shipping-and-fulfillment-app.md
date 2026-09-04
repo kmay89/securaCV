@@ -4,7 +4,7 @@
 > weekly batch; doc [22](22-rapid-batch-and-education-fulfillment.md) sized the
 > batches; doc [20](20-self-running-company.md) is the operations constitution
 > this obeys. All three end at the same unautomated step —
-> [`store-README.md`](../../../securacv_website/store-README.md)'s *"bulk-import
+> [`store-README.md`](https://github.com/kmay89/securacv_website/blob/main/store-README.md)'s *"bulk-import
 > the address CSV into PirateShip, print labels."* That hand-import is the one
 > place wrong data still enters: a mistyped ZIP, a guessed weight, the wrong
 > box on a real label. This doc closes it with a small custom tool, and answers
@@ -15,7 +15,7 @@
 > data pipeline in front of it — *one canonical catalog → validate the address →
 > compute the package → buy the label → cross-check the device* — so the label
 > is a printout of verified facts, never a retype. Built as
-> [`scripts/fulfill.mjs`](../../../securacv_website/scripts/fulfill.mjs) in the
+> [`scripts/fulfill.mjs`](https://github.com/kmay89/securacv_website/blob/main/scripts/fulfill.mjs) in the
 > website repo, the exact shape of `margin-guard.mjs`.
 
 ## 0. Principles (inherited from doc 20, applied to atoms)

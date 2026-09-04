@@ -370,7 +370,7 @@ you, and the tamper-evidence properties are unaffected.
 This device is designed for people whose safety may depend on it:
 tenants documenting unauthorized entry, journalists protecting source
 meetings, activists recording police presence, domestic abuse survivors
-documenting patterns, whistleblowers who need tamper-proof records.
+documenting patterns, whistleblowers who need tamper-evident records.
 
 Every design decision is evaluated against the most vulnerable user.
 If the device fails for a journalist in a hostile state, it does not

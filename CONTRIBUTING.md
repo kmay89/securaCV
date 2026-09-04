@@ -1,4 +1,4 @@
-# Contributing to SecuraCV (the witness kernel)
+# Contributing to SecuraCV
 
 This is not a typical open-source project.
 
@@ -134,8 +134,10 @@ The legal canon is [`docs/LEGAL.md`](docs/LEGAL.md); the short version:
   is your on-record statement that you have the right to submit the work.
 - **Only submit what you may submit.** No employer-owned code without
   permission, no copied code without a compatible permissive license and
-  attribution intact. The dependency gate is permissive-only (no
-  GPL/AGPL/EUPL in-tree) and CI enforces it.
+  attribution intact. The dependency policy is permissive-only (no
+  GPL/AGPL/EUPL in-tree), repo-wide; CI enforces it for the Rust workspace
+  today (`cargo deny`), and the npm and firmware/vendored trees are held to
+  the same policy by review (see [`docs/LEGAL.md`](docs/LEGAL.md) §3.5).
 - **AI-assisted work is your work.** Same certificate, same standard —
   you vouch for its provenance. This project is built with AI assistance
   in the open; the rule applies to the maintainers first.
@@ -188,16 +190,25 @@ add or update its row in the same PR (the lint fails otherwise).
 
 ---
 
-## Release Process (HACS)
+## Releasing the Home Assistant integration (HACS)
 
-HACS validation requires the Git tag version to match the integration manifest.
-Before creating a release:
+HACS users install the integration from its distribution mirror,
+[`kmay89/securacv-homeassistant`](https://github.com/kmay89/securacv-homeassistant),
+which carries `custom_components/securacv/` from here byte-for-byte. To ship
+a change:
 
-1. Update `custom_components/securacv/manifest.json` `"version"` to the new release version.
-2. Add a matching entry to `CHANGELOG.md` for the same version.
-3. Create a Git tag that **exactly** matches the manifest version (for example, `0.1.0` if the manifest says `0.1.0`).
+1. Land it here, bumping `custom_components/securacv/manifest.json`
+   `"version"` and adding a matching `CHANGELOG.md` entry in the same PR.
+2. On merge to `main`, the
+   [`homeassistant-mirror.yml`](.github/workflows/homeassistant-mirror.yml)
+   workflow copies the carried set to the mirror and opens a pull request
+   there (it needs the `MIRROR_PAT` secret; without one it stays green and
+   raises an issue instead). The mirror's own tests, hassfest, and
+   freshness gates run on that PR before it merges.
 
-If the tag and manifest diverge, HACS will fail validation. Keep them aligned.
+For everything else release-shaped — firmware, the apps, the flashers —
+start from [`docs/RELEASE_BUTTONS.md`](docs/RELEASE_BUTTONS.md), the
+operator's index of every release button.
 
 ---
 

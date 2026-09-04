@@ -5,9 +5,11 @@ the founding maintainer (Errer Labs / @kmay89). That is the bottleneck we are
 actively trying to remove — **several seats below are open, and this file is
 partly a job posting.** If you've done good work in an area, ask to own it.
 
-The GitHub team `@securaCV/maintainers` is what [`.github/CODEOWNERS`](.github/CODEOWNERS)
-resolves to for constitutional paths (`spec/`, `kernel/`, `src/`). Being
-listed here for a subsystem means your review is expected on changes to it.
+[`.github/CODEOWNERS`](.github/CODEOWNERS) assigns the constitutional paths
+(`spec/`, `kernel/`, `src/`) to the founding maintainer directly — the repo
+lives on a personal account, where a GitHub team cannot exist, so a
+`@securaCV/maintainers` team waits until the repo moves into an organization.
+Being listed here for a subsystem means your review is expected on changes to it.
 
 ## Subsystem map
 
@@ -43,4 +45,6 @@ listed here for a subsystem means your review is expected on changes to it.
 ## Contact
 
 Security-sensitive reports go through [`SECURITY.md`](SECURITY.md), never a
-public issue. Everything else: open a GitHub issue with the right template.
+public issue. Conduct reports can go privately to **errerlabs@gmail.com**
+(see [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)). Everything else: open a
+GitHub issue with the right template.

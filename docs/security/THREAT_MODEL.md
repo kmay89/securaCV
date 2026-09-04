@@ -59,7 +59,9 @@ There is no export function, backdoor, recovery key, escrow, or master key.
 national security letters, rubber-hose attacks — if the key CAN leave
 the device, an adversary with sufficient power WILL extract it.
 
-**Scope of this principle:** every item above is a statement about
+#### Scope of this principle
+
+Every item above is a statement about
 *software* paths. It is not a claim that the key survives an adversary who
 takes the device to a bench: flash encryption is an opt-in tier, so on a
 default Canary the key is recoverable by reading the flash directly. What

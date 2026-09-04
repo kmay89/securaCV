@@ -10,9 +10,14 @@ See also: [`docs/rtsp_setup.md`](rtsp_setup.md), [`docs/v4l2_setup.md`](v4l2_set
 [`docs/sd_card_health.md`](sd_card_health.md) (card selection, endurance monitoring, replacement runbook),
 [`docs/timestamping.md`](timestamping.md) (RFC 3161 anchors: third-party proof of when the chain existed).
 
+**Prerequisites:** a clone of this repository and a Rust toolchain
+([rustup](https://rustup.rs)); on Ubuntu/Debian also
+`build-essential libseccomp-dev pkg-config`. Every command below runs from
+the repository root.
+
 ---
 
-## Demo & tamper proof
+## Demo & tamper evidence
 
 ```bash
 cargo run --bin demo

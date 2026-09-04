@@ -198,7 +198,7 @@ default bit rate `CAN_BITRATE_DEFAULT` 500 kbit/s).
   compiles the gated driver — including `<driver/twai.h>` — against the toolchain.
 
 **Why it matters:** a Canary that witnesses a **vehicle gate/barrier controller,
-fleet telematics, or CANopen building automation** — a tamper-proof CAN event
+fleet telematics, or CANopen building automation** — a tamper-evident CAN event
 log. The transceiver is free and dedicated, so it's pure upside.
 
 **Remaining to go live:** bench-validate TX/RX orientation, bit timing, and the

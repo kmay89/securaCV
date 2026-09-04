@@ -157,7 +157,8 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   constant-time, so an attacker who can submit ciphertexts and measure how
   long the victim takes to process them can recover the RSA **private key**.
   CVSS 5.9 (medium).
-- **Where it comes from:** exactly one crate — `c2pa 0.90.3`, the Content
+- **Where it comes from:** exactly one crate — `c2pa` (0.90.3 when this
+  analysis was written; the whole 0.90.x line behaves the same), the Content
   Credentials SDK behind the optional, non-default `c2pa-export` feature.
   `c2pa` requires `rsa ^0.9.10` as a **non-optional** dependency (it must be
   able to *verify* manifests signed with RSA-PSS by other producers), so no
@@ -173,10 +174,11 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   that, `c2pa` is compiled in only when someone opts into `c2pa-export`; it
   is not in the default feature set.
 - **Fix not yet possible:** there is no fixed release on the `0.9` line. The
-  constant-time rewrite lands in `rsa 0.10`, still a release candidate
-  (`0.10.0-rc.18`), and `c2pa 0.90.3` — the newest published version — pins
-  `rsa ^0.9.10`. Nothing we can bump changes the resolved version. The real
-  fix is upstream: `c2pa` adopting `rsa 0.10` once it ships stable.
+  constant-time rewrite lands in `rsa 0.10` (still a release candidate when
+  this analysis was written), and `c2pa` still pins `rsa ^0.9.10` on its
+  current `0.90.x` line (`0.90.16` in `Cargo.lock` today). Nothing we can
+  bump changes the resolved version. The real fix is upstream: `c2pa`
+  adopting `rsa 0.10` once it ships stable.
 - **What we did instead:** the advisory is ignored explicitly and in the open,
   in [`.cargo/audit.toml`](.cargo/audit.toml), with this analysis as its
   justification. It is an entry with a name on it, not a silenced gate —

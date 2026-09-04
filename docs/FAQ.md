@@ -261,7 +261,9 @@ card](lovelace_timeline.md).
 
 ### Can I talk to it? Doesn't voice mean a microphone?
 
-**Yes — locally, and the microphone is never a Canary's.** The hub runs Home
+**Yes — locally, and voice input never comes from a Canary.** (A Canary's
+own mic, where fitted, hears only an on/off loudness envelope for smoke/CO
+alarm cadences — it is structurally unable to carry speech.) The hub runs Home
 Assistant's fully local voice stack (Whisper speech-to-text, Piper
 text-to-speech, an optional wake word), so "is the fleet OK?" and "what was
 the last witness event?" are answered on your own Pi with nothing leaving the

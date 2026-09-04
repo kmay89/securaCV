@@ -53,7 +53,7 @@ the website's carried copies after a CAD change.
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
 - [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
-- Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
+- Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v04) · [Doorbell](#canary-vision--doorbell-v04) · [Sense radome](#canary-sense--radome-enclosure-v02)
 
 ## The complete file map
 
