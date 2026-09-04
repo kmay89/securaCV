@@ -221,6 +221,23 @@ def _bare_handler():
     return handler
 
 
+def test_handle_verify_reaches_the_health_endpoint(monkeypatch):
+    """The health probe must actually run: a wrong urllib kwarg used to raise
+    inside the try and surface as "kernel unreachable" for every caller."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        serve_wizard.urllib.request,
+        "urlopen",
+        _capture_urlopen(captured, payload=b'{"status": "ok"}'),
+    )
+
+    result = _bare_handler()._handle_verify()
+
+    assert result == {"ok": True, "health": {"status": "ok"}}
+    assert captured["req"].full_url == "http://127.0.0.1:8799/health"
+    assert captured["timeout"] == 5
+
+
 def test_handle_mesh_proxy_forwards_address_and_token(monkeypatch):
     captured: dict = {}
 
