@@ -1474,6 +1474,35 @@
   table, and the web page shows it read-only with the on-glass path.
 - **Date learned:** 2026-09
 
+## Build profiles: a configuration nobody compiles is a configuration that rots
+
+### Every offered BUILD_PROFILE and hardware target needs its own CI leg
+- **What happened:** `build_config.h` has offered `BUILD_PROFILE_MINIMAL`,
+  `BUILD_PROFILE_DEV`, and `HARDWARE_XIAO_ESP32C3` as first-class choices
+  since it was written — and every CI leg compiled `FULL` on the S3. A
+  tamper-module include then landed inside a `#if FEATURE_VAULT_SNAPSHOT`
+  block while its registration call sat outside any fence: `DEV`, `MINIMAL`,
+  and C3 builds all broke, invisibly, because nothing ever compiled them.
+  Adversarial review caught it; CI should have.
+- **Root cause:** The feature matrix's claims and CI's coverage were two
+  different sets. A profile-gated `#if` is only as tested as the profiles
+  CI actually builds — the compiler cannot warn about a branch it never
+  enters.
+- **Fix:** `firmware.yml` grew compile-only legs for `BUILD_PROFILE_DEV`
+  (S3) and `BUILD_PROFILE_FULL` on the claimed `XIAO_ESP32C3` FQBN — the
+  combination `check_route_budget.py` already models. The DEV leg's first
+  run immediately caught twelve mesh auth wrappers defined outside the
+  `FEATURE_MESH_NETWORK` fence their handlers and registrations live in:
+  years of invisible rot, found in the first hour of coverage.
+- **Regression check:** The legs themselves ("Compile firmware (DEV profile
+  gate)" / "(FULL profile, claimed C3 target)" in `firmware.yml`). When
+  `build_config.h` gains a new profile or hardware target, add its leg in
+  the same change — an unbuilt configuration is a false promise.
+  `BUILD_PROFILE_MINIMAL` is still compiled by nobody and is a declared
+  gap: the sketch fences the HTTP server's startup, not its handler
+  bodies, so a no-WiFi/no-HTTP/no-SD build needs a fencing repair first.
+- **Date learned:** 2026-09
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

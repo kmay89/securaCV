@@ -152,6 +152,13 @@ final class BLEConsole: NSObject, ObservableObject {
     /// to run NOW instead of at the next poll. Wired by FleetStore.
     var onUrgentSnapshot: ((String) -> Void)?
 
+    /// Same contract for the connectionless cry: a tamper or alert CHIRP is
+    /// the fastest off-grid signal a Canary has, and it used to wait out the
+    /// 20-second poll the GATT NOTIFY path bypasses. Fired once per parsed
+    /// tamper/alert chirp; heartbeat/witness/boot stay poll-paced (they are
+    /// liveness, not cries). Wired by FleetStore.
+    var onUrgentChirp: ((UUID) -> Void)?
+
     /// One credentials write in flight at a time — the firmware rate-limits
     /// to one per 5 s anyway, and a second concurrent write could only
     /// steal the first one's answer.
@@ -248,6 +255,19 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
                     localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
                 )
             } else if let chirp = ChirpAdvert.parse(manufacturerData: mfg) {
+                // A repeated chirp (the 2 s broadcast window, duplicates on)
+                // must not re-fire the urgent path every advert — but a NEW
+                // cry must, even of the same kind: sightings live well past
+                // the broadcast, so dedup by kind alone would swallow a
+                // second distinct alert for as long as the first is
+                // remembered. Suppress only a same-kind repeat still inside
+                // one broadcast window (2 s, with margin for scan latency);
+                // anything later is a fresh cry, heard fresh.
+                let previous = chirpSightings[peripheral.identifier]
+                let isSameBurst = previous.map {
+                    $0.chirp.kind == chirp.kind
+                        && Date().timeIntervalSince($0.lastHeard) < 10
+                } ?? false
                 chirpSightings[peripheral.identifier] = ChirpSighting(
                     chirp: chirp,
                     rssiDBM: RSSI.intValue,
@@ -255,6 +275,9 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
                     peripheralID: peripheral.identifier,
                     localName: advertisementData[CBAdvertisementDataLocalNameKey] as? String
                 )
+                if (chirp.kind == .tamper || chirp.kind == .alert), !isSameBurst {
+                    onUrgentChirp?(peripheral.identifier)
+                }
             }
         }
 

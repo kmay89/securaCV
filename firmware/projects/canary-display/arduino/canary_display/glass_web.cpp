@@ -887,8 +887,15 @@ void handle_fleet() {
   // plus every fixed key and the wellbeing words (peers never carry
   // hw/born/hub from here) — the same unconditional-worst-case discipline
   // as the macro, so a full fleet of hostile names still closes its JSON.
-  // Static: ~8 KB belongs in BSS, not on the HTTP handler's stack.
-  constexpr size_t kPeerRows = 8;              // bounded; row count clamps,
+  // Static: ~8-15 KB (per flavor) belongs in BSS, not on the handler's
+  // stack.
+  //
+  // The clamp matches the fleet model's own capacity: the first cut hard
+  // coded 8 while the dash flavors hold 16 slots, so peers 9-16 — whoever
+  // was seated last — silently vanished from /api/fleet, wellbeing words
+  // and all. Whatever the model can hold, this surface can say.
+  constexpr size_t kPeerRows = CD_FLEET_MAX_DEVICES;
+                                               // bounded; row count clamps,
                                                // the JSON never truncates
   constexpr size_t kPeerRowCap = 6u * 47u + 6u * 23u + 384u;
   static char body[FLEET_SELFREPORT_BODY_CAP(sizeof(cfg.device_id), 24) +

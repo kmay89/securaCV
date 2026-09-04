@@ -103,11 +103,20 @@ test("MQTT prefix + topic pattern are the firmware's", () => {
   assert.ok(csiMqttCpp.includes('DISCOVERY_PREFIX = "' + data.mqtt.discovery.prefix + '"'));
 });
 
-test("only events is non-retained (the retention rule the page relies on)", () => {
-  const events = data.mqtt.topics.find((t) => t.suffix === "events");
-  assert.ok(events && events.retained === false, "events must be non-retained");
+test("only MOMENT topics are non-retained (the retention rule the page relies on)", () => {
+  // Two topics carry moments rather than state, and a moment must never be
+  // redelivered as if current: a retained `events` row would replay an old
+  // event into HA's history on every reconnect, and a retained `tamper`
+  // row would re-fire the general tamper sensor — it triggers on ANY
+  // publish, retained delivery included — turning one real tamper into an
+  // alarm on every subscribe. Everything else is state and stays retained.
+  const MOMENTS = ["events", "tamper"];
+  for (const suffix of MOMENTS) {
+    const t = data.mqtt.topics.find((x) => x.suffix === suffix);
+    assert.ok(t && t.retained === false, suffix + " must be non-retained");
+  }
   for (const t of data.mqtt.topics)
-    if (t.suffix !== "events" && !String(t.payload).startsWith('"'))
+    if (!MOMENTS.includes(t.suffix) && !String(t.payload).startsWith('"'))
       assert.strictEqual(t.retained, true, t.suffix + " should be retained");
 });
 

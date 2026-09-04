@@ -618,6 +618,13 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     padding: 6px 10px; border-radius: 8px;
     font: inherit; font-size: 12px; cursor: pointer;
   }
+  /* An open bundle wears this instead of a dismiss button: it is still
+   * happening, and its id is not dismissable until the bundle commits. */
+  .event-row .live-tag {
+    color: var(--fg-soft);
+    font-size: 12px;
+    white-space: nowrap;
+  }
   .summary-card {
     margin-top: 16px;
     padding: 14px 16px;
@@ -2072,6 +2079,15 @@ async function fetchToday() {
         knock: 'Knock heard', doorbell: 'Doorbell heard',
         glass_break: 'Glass break heard',
         mic_muted: 'Mic muted', mic_on: 'Mic turned on',
+        /* The system.integrity tamper kinds, in the same calm sentences
+         * the phone app narrates (TamperKind) — one vocabulary on every
+         * surface, per the two-flashers rule. Without these the device's
+         * OWN dashboard showed the raw wire id ('power_loss') for the
+         * highest-severity event class it produces. */
+        power_loss: 'Power was cut', sd_remove: 'Storage card removed',
+        sd_error: 'Storage card failing',
+        watchdog: 'Recovered from a system hang',
+        unexpected_reboot: 'Rebooted unexpectedly',
       })[e.state] || e.state;
       if (e.state === 'active') activeCount++;
       if (e.state === 'empty')  quietCount++;
@@ -2079,12 +2095,18 @@ async function fetchToday() {
       const bucket = e.time_bucket;
       const bucketLabelStr = (bucket >= 0 && bucket < 144)
         ? `${Math.floor(bucket/6)}:${(bucket%6*10).toString().padStart(2,'0')}` : '';
+      /* An OPEN bundle is still happening: its id is not in the committed
+       * ring yet, so a dismiss would 200 with {"ok":false} and the row
+       * would spring back on the next fetch — the button was a lie. Live
+       * rows say so instead; the dismiss appears when the bundle commits. */
+      const live = !!e.open;
       row.innerHTML = `
         <div>
           <div class="label">${stateLabel}</div>
-          <div class="when">${bucketLabelStr}${dur ? ' · ' + dur : ''}${e.bundled > 1 ? ' · bundled ×'+e.bundled : ''}</div>
+          <div class="when">${bucketLabelStr}${dur ? ' · ' + dur : ''}${e.bundled > 1 ? ' · bundled ×'+e.bundled : ''}${live ? ' · ongoing' : ''}</div>
         </div>
-        <button class="dismiss-btn" data-id="${e.id}">That was nothing</button>
+        ${live ? '<span class="live-tag">happening now</span>'
+               : `<button class="dismiss-btn" data-id="${e.id}">That was nothing</button>`}
       `;
       body.appendChild(row);
     }
@@ -2101,13 +2123,22 @@ async function fetchToday() {
     body.querySelectorAll('.dismiss-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = +btn.dataset.id;
-        await cvFetch('/api/events/dismiss', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({event_id: id}),
-        });
-        btn.closest('.event-row').classList.add('dismissed');
-        btn.disabled = true;
+        /* The endpoint answers HTTP 200 with {"ok":false} when the id
+         * cannot be dismissed — graying the row without reading the
+         * verdict showed a dismissal that never happened. */
+        let ok = false;
+        try {
+          const r = await cvFetch('/api/events/dismiss', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({event_id: id}),
+          });
+          ok = !!(r && r.ok && (await r.json()).ok);
+        } catch (_) { /* leave the row alone; the next fetch retells it */ }
+        if (ok) {
+          btn.closest('.event-row').classList.add('dismissed');
+          btn.disabled = true;
+        }
       });
     });
   } catch (err) {

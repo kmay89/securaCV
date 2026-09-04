@@ -117,6 +117,15 @@ struct DeviceDetailView: View {
                         .font(.callout)
                         .foregroundStyle(.tertiary)
                 }
+                // The same one quiet wellbeing line the card shows — defined
+                // once (wallWellbeingLine), so the grid and this screen can
+                // never phrase the room two ways. Absent keys draw nothing:
+                // absence is "cannot say", never an empty calm room.
+                if let wellbeing = device.wallWellbeingLine {
+                    Text(wellbeing)
+                        .font(.callout)
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             Button("Back to the Wall") { dismiss() }

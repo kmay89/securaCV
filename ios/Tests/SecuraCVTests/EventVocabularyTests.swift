@@ -289,4 +289,27 @@ final class EventVocabularyTests: XCTestCase {
                            "\(kind.rawValue) owes one calm sentence")
         }
     }
+
+    /// The state-aware headline: a "tamper" row's `state` carries the kind
+    /// word, and the timeline says the kind's story instead of the generic
+    /// label. Unknown kinds fall back to the plain headline (calm default,
+    /// never a guess), and every other wire ignores `state` entirely.
+    func testTamperHeadlineNarratesTheKind() {
+        XCTAssertEqual(EventVocabulary.headline(forWire: "tamper", state: "power_loss",
+                                                zone: "", deviceName: "Porch"),
+                       TamperKind.powerLoss.narration)
+        XCTAssertEqual(EventVocabulary.headline(forWire: "tamper", state: "watchdog",
+                                                zone: "Garage", deviceName: "Porch"),
+                       "\(TamperKind.watchdog.narration) · Garage")
+        // Unknown kind word → the plain tamper headline, not a guess.
+        XCTAssertEqual(EventVocabulary.headline(forWire: "tamper", state: "levitated",
+                                                zone: "", deviceName: "Porch"),
+                       EventVocabulary.headline(forWire: "tamper",
+                                                zone: "", deviceName: "Porch"))
+        // A non-tamper wire never reads `state`.
+        XCTAssertEqual(EventVocabulary.headline(forWire: "motion", state: "power_loss",
+                                                zone: "Yard", deviceName: "Porch"),
+                       EventVocabulary.headline(forWire: "motion",
+                                                zone: "Yard", deviceName: "Porch"))
+    }
 }

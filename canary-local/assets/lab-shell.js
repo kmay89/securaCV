@@ -521,8 +521,15 @@ function familyView() {
               rel: "noopener" }, "Open"))))));
     })
     .catch(() => {
+      // No circular dead ends: when ecosystem.json is unreachable, say the
+      // short version outright and link somewhere that actually resolves.
       grid.replaceChildren(h("p", {},
-        "The family map didn't load. Every surface is still reachable from the complete site map."));
+        "The family map (ecosystem.json) didn't load, so here is the short " +
+        "version: the same fleet is watched from the iPhone app, the Apple " +
+        "TV Witness Wall, the desktop Flasher and Lab apps, the Home " +
+        "Assistant integration, and the hub kernel. ",
+        h("a", { href: "site-map.html" }, "The complete site map"),
+        " still knows the way to every Lab surface."));
     });
   return h("div", {},
     h("div", { class: "crumbs" }, h("b", {}, "Reference")),

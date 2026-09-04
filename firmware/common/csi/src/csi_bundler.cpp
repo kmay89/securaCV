@@ -320,6 +320,20 @@ void csi_bundler_flush_all(void) {
   for (size_t i = 0; i < npending; ++i) run_commit_hooks(&pending[i]);
 }
 
+void csi_bundler_flush_key(const char* module_id,
+                           const char* type_name,
+                           const char* state_name) {
+  if (!module_id || !type_name || !state_name) return;
+  Slot pending[1];
+  size_t npending = 0;
+  {
+    SlotLock _lock;
+    Slot* s = find_open_slot(module_id, type_name, state_name);
+    if (s) close_slot_locked(s, pending, &npending);
+  }
+  if (npending) run_commit_hooks(&pending[0]);
+}
+
 void csi_bundler_reset(void) {
   SlotLock _lock;
   memset(g_slots, 0, sizeof(g_slots));

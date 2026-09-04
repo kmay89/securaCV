@@ -42,6 +42,19 @@
     tamper_detected: { label: "Tamper detected", icon: "mdi:shield-alert" },
     vehicle_arrival_departure: { label: "Vehicle arrival/departure", icon: "mdi:car-side" },
   };
+  // The WAP's system.integrity tamper KINDS (const.py's tamper vocabulary,
+  // not dictionary event types — lint_dictionary_sync pins the table above
+  // to the dictionary's ids, and these deliberately are not ids). They ride
+  // the events wire with event_type = the kind word (csi_mqtt stamps
+  // event_type from the state name), so eventMeta narrates each kind with
+  // the phone app's exact calm sentences instead of a prettified raw id.
+  const TAMPER_KIND_METADATA = {
+    power_loss: { label: "Power was cut", icon: "mdi:shield-alert" },
+    sd_remove: { label: "Storage card removed", icon: "mdi:shield-alert" },
+    sd_error: { label: "Storage card failing", icon: "mdi:shield-alert" },
+    watchdog: { label: "Recovered from a system hang", icon: "mdi:shield-alert" },
+    unexpected_reboot: { label: "Rebooted unexpectedly", icon: "mdi:shield-alert" },
+  };
   const DEFAULT_EVENT_ICON = "mdi:shield-eye";
 
   // Mirror of const.py MODALITY_METADATA + DEVICE_TYPE_MODALITY. A small
@@ -143,7 +156,7 @@
   function eventMeta(eventType) {
     if (!eventType) return { label: "Unknown", icon: DEFAULT_EVENT_ICON };
     const key = normalizeEventType(eventType);
-    const meta = EVENT_TYPE_METADATA[key];
+    const meta = EVENT_TYPE_METADATA[key] || TAMPER_KIND_METADATA[key];
     if (meta) return meta;
     return { label: String(eventType), icon: DEFAULT_EVENT_ICON };
   }

@@ -182,6 +182,19 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
     // vision "event"/"state". Fall through the spellings; classify_event
     // owns severity.
     const char* name = doc["event"] | doc["event_type"] | doc["kind"] | "event";
+    // The WAP's system.integrity rows mark themselves type:"tamper" and
+    // carry the KIND as the event word ("watchdog", "sd_remove") — words
+    // the severity ladder was never taught, so a crash-reboot classified
+    // through the "boot" rung and painted the glass GREEN. Rebuild the
+    // name as tamper_<kind>: the ladder's worst-first "tamper" rung
+    // classifies it, the journal still names the kind, and a kind minted
+    // after this build inherits the right severity by construction.
+    char tamper_name[48];
+    if (strcmp(doc["type"] | "", "tamper") == 0 &&
+        strncmp(name, "tamper", 6) != 0) {
+      snprintf(tamper_name, sizeof(tamper_name), "tamper_%s", name);
+      name = tamper_name;
+    }
     const bool signed_flag = (doc["signed"] | false) || !doc["sig"].isNull();
     fleet.on_event(device_id, name, signed_flag, now);
     return;

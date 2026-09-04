@@ -56,6 +56,25 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
         /// Where the device stands with its hub ("none" / "down" / "ok"), or
         /// nil when it did not say. Never rendered as "fine" when nil.
         var hub: String? = nil
+        /// THE ROOM, COARSELY — the sense line's presence story, verbatim
+        /// ("clear" / "present"), with the folded verdict below. nil = the
+        /// row did not say, which must never render as an empty calm room
+        /// (tvos/discovery/DISCOVERY.md's wellbeing keys). Same tolerant
+        /// posture as the phone's FleetSelfDevice: keep the wire's word,
+        /// fold at the edge.
+        var presence: String? = nil
+        /// The headcount bucket, verbatim: "0" / "1" / "2+".
+        var occupants: String? = nil
+        /// Breathing lock held (true) or lapsed (false); nil = not claiming.
+        var breathing: Bool? = nil
+        /// What the camera line reports seeing ("person" / "vehicle" /
+        /// "animal" / "package"), kept as the wire's word: the Wall compiles
+        /// no SeenClass vocabulary, so the fold to a phrase happens at
+        /// render time and a word outside the four draws nothing.
+        var seeing: String? = nil
+        /// Detection confidence — kept only when it is a percentage (1–100),
+        /// the same fold as the phone's decoder.
+        var seeingScore: Int? = nil
         /// WHICH SOURCE reported this row — the polled address, stamped by
         /// the model after decode (never a wire field). It exists because a
         /// name is not an identity: two units on older firmware both call
@@ -100,6 +119,30 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
         /// This device's hub standing, folded through the same enum the phone
         /// uses. Silence is `.unknown`, which renders as nothing.
         var hubState: HubState { HubState(tolerant: hub) }
+
+        /// The radar presence claim as a verdict — true = present, false =
+        /// clear, nil for silence AND for a word this build has never heard:
+        /// a future word must not read as either answer. Mirrors the phone's
+        /// `FleetSelfDevice.radarPresent`.
+        var radarPresent: Bool? {
+            switch presence {
+            case "present": return true
+            case "clear": return false
+            default: return nil
+            }
+        }
+
+        /// "0"/"1"/"2+" folded to the 0/1/2 occupant shape the phone uses;
+        /// nil for silence and unknown words alike. 2 means 2-or-more — the
+        /// radar deliberately cannot count a crowd, so neither may a label.
+        var radarOccupants: Int? {
+            switch occupants {
+            case "0": return 0
+            case "1": return 1
+            case "2+": return 2
+            default: return nil
+            }
+        }
 
         /// The coarse device family, decoded with the shared tolerant decoder
         /// so the Wall and the phone can never disagree about what a device
@@ -188,7 +231,12 @@ extension FleetSnapshot {
     /// shows for a source that stopped answering: its last-known devices stay
     /// on the wall as unreachable, rather than vanishing and letting the
     /// merge read as all-online. The verification stamp does not survive:
-    /// a remembered report is not a current verdict.
+    /// a remembered report is not a current verdict. Neither do the wellbeing
+    /// claims (presence/occupants/breathing/seeing): they are the most
+    /// present-tense words on the wire, and a remembered "someone present"
+    /// from a source that stopped answering is exactly the stale claim the
+    /// contract says must omit rather than lie. Durable facts (board, hub
+    /// standing, the chain word) stay.
     func withEveryDeviceOffline() -> FleetSnapshot {
         FleetSnapshot(kernel: kernel, verifiedThrough: nil,
                       devices: devices.map { device in
@@ -213,6 +261,8 @@ extension FleetSnapshot {
 extension FleetSnapshot.Device {
     enum CodingKeys: String, CodingKey {
         case name, online, chain, product, hw, hub
+        case presence, occupants, breathing, seeing
+        case seeingScore = "seeing_score"
     }
 
     init(from decoder: Decoder) throws {
@@ -237,6 +287,21 @@ extension FleetSnapshot.Device {
         hw = (board?.isEmpty == false) ? board : nil
         let standing = (try? c.decodeIfPresent(String.self, forKey: .hub)) ?? nil
         hub = (standing?.isEmpty == false) ? standing : nil
+        // The wellbeing words, verbatim-or-nil, empty folded to nil like hw —
+        // the same reading as the phone's FleetSelfDevice. Absent stays
+        // absent: "cannot say" must never decode into an empty calm room.
+        let pres = (try? c.decodeIfPresent(String.self, forKey: .presence)) ?? nil
+        presence = (pres?.isEmpty == false) ? pres : nil
+        let occ = (try? c.decodeIfPresent(String.self, forKey: .occupants)) ?? nil
+        occupants = (occ?.isEmpty == false) ? occ : nil
+        breathing = (try? c.decodeIfPresent(Bool.self, forKey: .breathing)) ?? nil
+        let seen = (try? c.decodeIfPresent(String.self, forKey: .seeing)) ?? nil
+        seeing = (seen?.isEmpty == false) ? seen : nil
+        // The firmware only writes a score in 1…100 beside a seeing word;
+        // anything else reaching us is a stranger's phrasing, folded to nil
+        // (unscored) rather than rendered as a confidence — the phone's rule.
+        let score = (try? c.decodeIfPresent(Int.self, forKey: .seeingScore)) ?? nil
+        seeingScore = ((score ?? 0) > 0 && (score ?? 0) <= 100) ? score : nil
     }
 }
 

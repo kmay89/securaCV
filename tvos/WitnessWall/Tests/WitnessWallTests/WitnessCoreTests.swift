@@ -92,6 +92,30 @@ final class WitnessCoreTests: XCTestCase {
         XCTAssertNil(fleet.devices[1].hw)
     }
 
+    func testTheWellbeingKeysSurviveTheRustNormalizer() throws {
+        // The Rust Device used to end at `hub`, and serde silently STRIPS
+        // fields it doesn't model — so the wave-6 wellbeing keys vanished in
+        // the normalizer before Swift ever saw them, and the Wall rendered a
+        // sense peer as if it had nothing to say. Same aggregated-body
+        // literal as DeviceParityTests and the iPhone's FleetSelfReportTests
+        // (and the Rust contract vectors): one wire, every surface.
+        let json = #"""
+        {"kernel":"Hallway Glass","verified_through":"now","devices":[{"name":"Hallway Glass","online":true,"chain":"unknown","product":"canary-dash7","hw":"waveshare-esp32s3-lcd7","hub":"ok"},{"name":"Bedroom","online":true,"chain":"unknown","product":"canary-sense","presence":"present","occupants":"1","breathing":true},{"name":"Driveway","online":true,"chain":"ok","product":"canary-vision","chain_height":512,"seeing":"package","seeing_score":87}]}
+        """#
+        let fleet = try WitnessCore.parseFleet(json: json)
+        XCTAssertEqual(fleet.devices.count, 3)
+        XCTAssertEqual(fleet.devices[1].presence, "present")
+        XCTAssertEqual(fleet.devices[1].occupants, "1")
+        XCTAssertEqual(fleet.devices[1].breathing, true)
+        XCTAssertEqual(fleet.devices[2].seeing, "package")
+        XCTAssertEqual(fleet.devices[2].seeingScore, 87)
+        // Absent stays absent through the round trip — the self row said
+        // nothing about the room, and nothing may be invented for it.
+        XCTAssertNil(fleet.devices[0].presence)
+        XCTAssertNil(fleet.devices[0].breathing)
+        XCTAssertNil(fleet.devices[0].seeing)
+    }
+
     func testOnlineDefaultsToFalseWhenOmitted() throws {
         // Same rule as the Swift decoder and the phone: a silent field is
         // never a presence claim (DeviceParityTests.testASilentFieldCostsTheDeviceNothing).

@@ -511,6 +511,13 @@
         "payload": "{\"v\":1,\"total\":312,\"alg\":\"ed25519\",\"fp\":\"7f3a9c21\",\"sig\":\"\u2026\"}"
       },
       {
+        "suffix": "tamper",
+        "retained": false,
+        "cadence": "per committed system.integrity event (live only, never backfill)",
+        "payload": "{\"type\":\"sd_remove\",\"severity\":\"tamper\"}",
+        "note": "type is a const.py tamper kind; the HA per-type tamper sensors key on it"
+      },
+      {
         "suffix": "sensing",
         "retained": true,
         "cadence": "on acoustic event + 60 s heartbeat",

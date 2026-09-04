@@ -45,6 +45,11 @@ struct WristWitness: Codable, Hashable, Identifiable, Sendable {
     var linkRaw: UInt8
     var badgeRaw: UInt8
     var tamper: Bool
+    /// The per-kind tamper story ("Power was cut", "Storage card removed" —
+    /// the phone's Witness.tamperKind narration), when the phone knows one.
+    /// ADDITIVE OPTIONAL: an older phone sends nothing and the wrist falls
+    /// back to the bare "Tamper detected", which is still true.
+    var tamperNarration: String? = nil
     var lastEventHeadline: String?
     var lastEventBucket: Date?
     var batteryPct: Int?
@@ -53,6 +58,14 @@ struct WristWitness: Codable, Hashable, Identifiable, Sendable {
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var link: Liveness { Liveness(tolerant: Int(linkRaw)) }
     var badge: TrustBadge { TrustBadge(tolerant: Int(badgeRaw)) }
+
+    /// What a live tamper should say on the wrist: the kind's story when the
+    /// phone sent one, the bare truth otherwise. Empty reads as absent — a
+    /// tolerant reader never renders a blank where an alarm belongs.
+    var tamperHeadline: String {
+        guard let n = tamperNarration, !n.isEmpty else { return "Tamper detected" }
+        return n
+    }
 }
 
 /// The heartbeat dead-man's-switch state, flattened for the wire. The phone's

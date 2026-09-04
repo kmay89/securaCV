@@ -209,8 +209,14 @@ final class WapEventsTests: XCTestCase {
         XCTAssertEqual(printed,
                        ["id", "module", "type", "category", "state", "confidence",
                         "motion", "breathing", "bpm", "duration_sec", "bundled",
-                        "time_bucket", "dismissed", "open"],
-                       "the serializer's row keys drifted from WapEventRow — reconcile both")
+                        "time_bucket", "dismissed", "open",
+                        // Not row keys: the standing-tamper envelope printed
+                        // after the rows ("tamper":{"kind":…}). Tamper rows
+                        // seal the moment they commit, so this field IS the
+                        // wire's present tense — losing it would orphan the
+                        // phone's level-triggered tamper latch again.
+                        "tamper", "kind"],
+                       "the serializer's keys drifted from WapEvents.swift — reconcile both")
 
         // The live half's load-bearing call: open bundles must actually be
         // serialized (snapshot, not flush — flushing from the handler would
@@ -373,5 +379,27 @@ final class WapEventsTests: XCTestCase {
             XCTAssertTrue(handler.contains("\\\"\(key)\\\""),
                           "handle_stream no longer prints \"\(key)\" — WapStream reads it")
         }
+    }
+
+    /// The standing-tamper envelope: tamper rows seal the moment they commit
+    /// (durability over bundling), so the wire says the present tense
+    /// outright — and its ABSENCE decodes as calm (nil), never as a claim.
+    func testStandingTamperEnvelopeDecodesAndAbsenceIsCalm() throws {
+        let withTamper = #"{"events":[],"tamper":{"kind":"power_loss"}}"#
+        let feed = try JSONDecoder().decode(WapEventsToday.self,
+                                            from: Data(withTamper.utf8))
+        XCTAssertEqual(feed.tamper?.kind, "power_loss")
+        XCTAssertEqual(TamperKind(wire: feed.tamper?.kind ?? "")?.narration,
+                       "Power was cut")
+
+        // Absent field (every pre-envelope firmware) → nil, not a claim.
+        let calm = try JSONDecoder().decode(WapEventsToday.self,
+                                            from: Data(#"{"events":[]}"#.utf8))
+        XCTAssertNil(calm.tamper)
+
+        // A stranger's shape under the key never sinks the feed.
+        let odd = try JSONDecoder().decode(WapEventsToday.self,
+                                           from: Data(#"{"events":[],"tamper":{"kind":7}}"#.utf8))
+        XCTAssertEqual(odd.tamper?.kind, "")
     }
 }

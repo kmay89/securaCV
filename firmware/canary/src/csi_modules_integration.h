@@ -31,6 +31,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +65,25 @@ bool securacv_csi_modules_init(void);
  * Pass nullptr to no-op (e.g. before init has run).
  */
 void securacv_csi_modules_feed(const void* features_blob);
+
+/**
+ * Feed the system.integrity tamper watcher once per main loop with the
+ * facts only main.cpp can see together: the boot's reset classification
+ * (crash / watchdog / brownout, the canary-wap reset_is_crash mapping)
+ * and the SD state in the module's pinned ABSENT=0 / MOUNTED=1 / ERROR=2
+ * numbering. Plain-typed on purpose — main.cpp cannot include
+ * tamper_events_module.h without pulling the common `csi_features_t`
+ * into the same translation unit as the canary HAL's (the same typedef
+ * collision this whole bridge exists to avoid).
+ *
+ * Safe to call before init(): an emit before the module is registered is
+ * silently dropped by the chokepoint, and the module re-attempts the
+ * boot classification (bounded) until one emit is accepted.
+ */
+void securacv_csi_modules_tamper_watch(int reset_was_crash,
+                                       int reset_was_watchdog,
+                                       int reset_was_brownout,
+                                       uint8_t sd_state);
 
 /**
  * Tear down the pipeline. Optional — only needed if the host wants

@@ -92,12 +92,19 @@ enum HomeAuthorError: Error {
     case noHome
     case accessoryGone
     case sceneGone
+    /// The accessory is there, but no service of it carries this signal —
+    /// for a class-scoped signal, the bridge hasn't published the named
+    /// class service (usually: that consent is off). Refusing is the honest
+    /// move; binding plain motion instead would fire on everything.
+    case signalNotPublished(HomeSignal)
 
     var line: String {
         switch self {
         case .noHome: return "No Apple Home is set up on this iPhone."
         case .accessoryGone: return "That Canary is no longer visible in Apple Home."
         case .sceneGone: return "That scene no longer exists in the Home app."
+        case .signalNotPublished(let signal):
+            return "\(signal.label) isn't published for that Canary in Apple Home — enable the signal and let the bridge publish it first."
         }
     }
 }
@@ -109,7 +116,9 @@ extension HomeSignal {
     /// short names, linter-parsed in HomeKitBridge.swift); these are the
     /// `HMCharacteristicType*` UUID strings, kept here so the linter's
     /// parsed regions stay untouched. Class-scoped signals collapse onto
-    /// motion, exactly as `hapCharacteristic` does.
+    /// motion, exactly as `hapCharacteristic` does — at binding time the
+    /// parent service's NAME is what tells the classes apart (see
+    /// `automationBindingIndex`).
     var hmCharacteristicTypeID: String {
         #if canImport(HomeKit)
         // The framework's own constants — never UUID literals typed from
@@ -131,5 +140,69 @@ extension HomeSignal {
         #else
         return rawValue
         #endif
+    }
+}
+
+// ── Binding a signal to the right service, not merely the right type ──
+//
+// HAP has one motion-detected characteristic type, so on a bridged Canary
+// "Person" and plain "Motion" are the SAME characteristic type on different
+// services — only each service's name says which is which. Binding by type
+// alone is how a "Motion (person)" automation ends up firing on any motion.
+// Everything here is plain values, so the selection is host-tested with no
+// HMAccessory anywhere; HomeKitBridge flattens the real accessory into
+// these pairs and indexes the answer back.
+
+/// One (service name, characteristic type) pair from an accessory, in the
+/// order the accessory lists them — the shape the selector reads.
+struct ServiceCharacteristic: Equatable, Sendable {
+    let serviceName: String
+    let characteristicType: String
+}
+
+extension HomeSignal {
+    /// The name the hub's HAP bridge gives this signal's service — the word
+    /// under the tile in the Home app. Mirrored, in this one place, from
+    /// `service_name()` in `src/bridge/hap/accessory.rs`, where those
+    /// strings are minted.
+    var bridgeServiceName: String {
+        switch self {
+        case .motion: return "Motion"
+        case .occupancy: return "Occupancy"
+        case .contact: return "Contact"
+        case .tamper: return "Tamper"
+        case .active: return "Active"
+        case .lowBattery: return "Battery"
+        case .motionPerson: return "Person"
+        case .motionVehicle: return "Vehicle"
+        case .motionAnimal: return "Animal"
+        case .motionPackage: return "Package"
+        }
+    }
+
+    /// The service names that mean "this tile is class-scoped" — derived
+    /// from the vocabulary above, never listed twice.
+    static var classServiceNames: Set<String> {
+        Set(allCases.filter(\.isClassScoped).map(\.bridgeServiceName))
+    }
+
+    /// Which of an accessory's characteristics this signal's automation may
+    /// bind to: an index into `pairs`, or nil when no honest binding exists.
+    ///
+    /// A class-scoped signal binds ONLY its named service — a missing
+    /// Person service is a refusal, never a quiet fallback to plain motion.
+    /// A plain signal prefers a service NOT named for a class, so plain
+    /// motion doesn't ride the Person tile when both exist; when only class
+    /// services carry the type, first-of-type stands (the pre-class
+    /// behavior).
+    func automationBindingIndex(in pairs: [ServiceCharacteristic]) -> Int? {
+        let typed = pairs.indices.filter {
+            pairs[$0].characteristicType == hmCharacteristicTypeID
+        }
+        if isClassScoped {
+            return typed.first { pairs[$0].serviceName == bridgeServiceName }
+        }
+        return typed.first { !Self.classServiceNames.contains(pairs[$0].serviceName) }
+            ?? typed.first
     }
 }

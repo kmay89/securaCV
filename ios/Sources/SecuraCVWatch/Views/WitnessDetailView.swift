@@ -47,7 +47,7 @@ struct WitnessDetailView: View {
                     }
                 }
                 if live.tamper {
-                    Label("Tamper detected", systemImage: "hand.raised.slash.fill")
+                    Label(live.tamperHeadline, systemImage: "hand.raised.slash.fill")
                         .foregroundStyle(Theme.color(.tamper))
                 }
                 if let battery = live.batteryPct {

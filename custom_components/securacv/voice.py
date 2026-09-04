@@ -76,9 +76,22 @@ def is_night(local_hour: int | None) -> bool:
 
 
 # Alert-class event types: when the latest event is one of these, the casual
-# answer leads with it — a smoke alarm outranks small talk.
+# answer leads with it — a smoke alarm outranks small talk. The five bare
+# kind words are the WAP's system.integrity tamper events, whose wire
+# event_type IS the kind (const.py's vocabulary; csi_mqtt.cpp stamps
+# event_type from the state name) — a box that just rebooted unexpectedly
+# outranks small talk exactly as a named tamper does.
 _ALERT_EVENT_TYPES = frozenset(
-    {"tamper_detected", "acoustic_smoke_alarm", "acoustic_co_alarm"}
+    {
+        "tamper_detected",
+        "acoustic_smoke_alarm",
+        "acoustic_co_alarm",
+        "power_loss",
+        "sd_remove",
+        "sd_error",
+        "watchdog",
+        "unexpected_reboot",
+    }
 )
 
 # The complete HA weather-entity condition vocabulary, each with a warm,

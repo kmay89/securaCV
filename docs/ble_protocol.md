@@ -79,7 +79,7 @@ Chirp uses BLE manufacturer-specific advertising data (no connection required).
 |--------|------|-------|-------------|
 | 0-1 | 2 | Company ID | `0xFFFF` (testing) — little-endian, added by NimBLE |
 | 2 | 1 | Chirp Type | Message type enum |
-| 3-6 | 4 | Timestamp | Coarse hour bucket (`epoch / 3600`), big-endian |
+| 3-6 | 4 | Timestamp | Coarse hour bucket, **boot-relative** (`millis / 3600000` — hours since the device booted, not epoch time), big-endian. Receivers may only compare buckets from the same sender across a short window; the value carries no wall-clock meaning. |
 | 7-14 | 8 | Chain Hash | First 8 bytes of witness chain head hash |
 | 15-16 | 2 | Device ID | 2-byte prefix from pubkey fingerprint |
 
@@ -158,7 +158,7 @@ Note: RSSI-to-distance mapping is approximate and varies significantly by enviro
 | No MAC addresses in API responses | Only device ID prefix (from pubkey hash) exposed |
 | Non-Canary devices counted only | `non_canary_device_count` field, no individual entries |
 | Device ID from pubkey hash | Not hardware MAC — changes with key rotation |
-| Time coarsened in chirps | Hour buckets, matching PWK time coarsening |
+| Time coarsened in chirps | Boot-relative hour buckets — even coarser than the PWK's 10-minute wall-clock buckets, and anchored to nothing an observer can correlate with a clock |
 | Chain hash truncated | 8-byte prefix — proves integrity, doesn't reveal content |
 
 ## 9. API Endpoints

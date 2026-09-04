@@ -388,6 +388,47 @@ jobs:
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+      - name: Compile firmware (DEV profile gate)
+        run: |
+          # BUILD_PROFILE_DEV (WiFi + HTTP + SD, no mesh/BLE) was compiled by
+          # nobody: flavors.json's PlatformIO envs and both legs above are all
+          # FULL on S3, so any #if the profile gates could rot invisibly —
+          # and one did (a tamper-module include landed inside a FULL-only
+          # block; only review caught it). Compile-only: the gate is "every
+          # offered profile still builds", not a new artifact. PSRAM stays on
+          # (the S3 board's real configuration); the #error guard itself only
+          # binds FULL.
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DBUILD_PROFILE_DEV -DBOARD_HAS_PSRAM" \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
+      - name: Compile firmware (FULL profile, claimed C3 target)
+        run: |
+          # build_config.h offers HARDWARE_XIAO_ESP32C3 as a first-class
+          # target and no workflow ever compiled ANY profile for it — yet
+          # check_route_budget.py models FULL/XIAO_ESP32C3 as a supported
+          # combination. This leg makes that claim compile: single-core
+          # RISC-V, no PSRAM (the #error guard binds FULL+S3 only), camera
+          # auto-disabled via HW_HAS_CAMERA, BLE 5.0 real. The C3 FQBN
+          # carries no PSRAM {build.defines} to re-add.
+          # (BUILD_PROFILE_MINIMAL is still compiled by nobody: the sketch
+          # fences the HTTP server's *startup*, not its thousands of handler
+          # lines, so a no-WiFi/no-HTTP/no-SD build needs a fencing repair
+          # far wider than a CI leg — a declared gap, not an oversight.)
+          # PartitionScheme=huge_app (3 MB app, no OTA): this leg is a
+          # compile/link VALIDITY gate, and FULL (~1.98 MB) cannot fit the
+          # C3 default layout's 1.25 MB app slot. That size reality is
+          # honest and real — a shippable C3 FULL needs a partition/feature
+          # decision that belongs to a release wave, not to this gate — but
+          # "the code is valid for the chip" must not be held hostage to it.
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32C3:PartitionScheme=huge_app \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DHARDWARE_XIAO_ESP32C3" \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
   build-arduino-cli-display:
     name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }}, core ${{ matrix.core.name }})
     runs-on: ubuntu-latest
@@ -507,6 +548,16 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_csi_sync.sh
           firmware/scripts/check_csi_sync.sh
+
+      - name: Verify gzipped web assets match their source HTML
+        # The dashboard/settings/companion pages ship as pre-gzipped byte
+        # arrays (web_assets_gz.h); the editable raw literals are compiled
+        # OUT via CANARY_WEB_ASSETS_GZIPPED. So an HTML edit without the
+        # regen ships a repo that shows the new page while every device
+        # serves the old one — and nothing else notices. This gate makes
+        # that class of drift a red build instead of a silent lie.
+        run: |
+          python3 firmware/projects/canary-wap/arduino/canary_wap/gen_web_assets_gz.py --check
 
       - name: Verify power-logic copy in canary-wap sketch dir matches canonical source
         # Same committed-copy pattern: the battery decision logic lives

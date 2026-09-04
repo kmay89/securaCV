@@ -28,10 +28,12 @@ and reliable **background notifications**. These are the exact capabilities the
   one source of truth; `scripts/heal.sh` regenerates the `.xcodeproj` on every
   build and every night. Same idea as the desktop app's `build.rs` re-embedding
   the one canonical catalog so no committed copy drifts.
-- **The device describes, the app renders.** Settings come from the Canary's own
-  `/api/v1/config` schema; state mirrors `fleet_model.h`; unknown fields are
-  forward-compatible. New firmware features light up **without an App Store
-  update**.
+- **The device describes, the app renders.** State mirrors `fleet_model.h`,
+  and every wire decoder tolerates unknown fields, so a newer fleet degrades
+  to honest omission rather than breaking the app. Device *settings* stay on
+  the Canary's own dashboard (`/api/config` is the device's wire, not ours) —
+  the app deliberately doesn't duplicate that surface. A self-describing
+  config schema the app could render is a roadmap idea, not a shipped one.
 - **Frozen OS primitives only** — Network.framework, CoreBluetooth, Keychain
   (generic-password items today; Secure Enclave-backed keys are a roadmap item,
   not a shipped one), CloudKit, UserNotifications, ActivityKit, CryptoKit. The

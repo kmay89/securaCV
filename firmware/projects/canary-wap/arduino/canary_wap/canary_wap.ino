@@ -123,8 +123,6 @@
 #include <Crypto.h>
 #include <Ed25519.h>
 
-#include "esp_camera.h"
-
 #include <boot_banner.h>
 #include "log_level.h"
 #include "health_log.h"
@@ -195,6 +193,15 @@ extern "C" {
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "build_config.h"
+
+// Chip-gated, not profile-gated: the ESP32-C3 Arduino core ships no camera
+// driver, so this header does not exist there at all — while on the S3 it
+// is present in every profile (which is why the unfenced include compiled
+// for years and the first C3 CI leg found it in an hour). Must sit AFTER
+// build_config.h; the includes above it predate the hardware selection.
+#if HW_HAS_CAMERA
+#include "esp_camera.h"
+#endif
 
 #if FEATURE_QR_PROVISION
 #include "qr_scanner.h"
@@ -6650,6 +6657,20 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   // until this Canary has met a believable clock; see birth_day.h.
   self.born_day   = g_device.born_day;
   self.born_exact = g_device.born_exact ? 1 : 0;
+  // Where this device stands with its hub — the same derivation the Help
+  // Desk QR trusts (handle_help_qr): no broker configured means standalone
+  // (NONE — the state that needs a person), a configured broker splits on
+  // the live link. The WAP is the device family the hub story exists FOR,
+  // and until this line its self row never said — so the app's hub
+  // guidance could light for a display and never for a WAP.
+  {
+    csi_mqtt::Config mcfg;
+    if (csi_mqtt::config_load(&mcfg) && mcfg.enabled && mcfg.host[0] != '\0') {
+      self.hub = csi_mqtt::connected() ? FSR_HUB_OK : FSR_HUB_DOWN;
+    } else {
+      self.hub = FSR_HUB_NONE;
+    }
+  }
   // Sized by the shared macro for the WORST case: a stored 32-byte name of
   // all-escaping bytes (the rename path bounds length, not content) expands
   // 6x and is written twice — a smaller fixed buffer would truncate that
@@ -7679,6 +7700,11 @@ static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
 // pair_token_valid. The dashboard's secureFetch already supplies the
 // Bearer token on every call (web_ui.h:3063-3170), so wrapping mirrors
 // the same plumbing-only fix as #435 for the WiFi-mgmt handlers.
+// Fenced like the handlers and registrations they bridge: with the mesh
+// off (DEV/MINIMAL profiles) the wrapped handle_mesh_* symbols don't
+// exist, and an unfenced wrapper is a build break the FULL-only CI of
+// the time never saw (the CAMERA_PEEK block below always had it right).
+#if FEATURE_MESH_NETWORK
 static esp_err_t handle_mesh_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_status(req);
@@ -7727,6 +7753,7 @@ static esp_err_t handle_mesh_name_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_name(req);
 }
+#endif // FEATURE_MESH_NETWORK
 
 #if FEATURE_CAMERA_PEEK
 static esp_err_t handle_peek_stream_auth(httpd_req_t* req) {

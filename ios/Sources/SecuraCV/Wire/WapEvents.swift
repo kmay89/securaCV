@@ -37,17 +37,40 @@
 
 import Foundation
 
-/// The `{"events":[…]}` envelope. Tolerant: a body without the key decodes
-/// as an empty feed, matching the repo's "newer firmware never breaks an
-/// older app" rule.
+/// The standing tamper condition, when the device confesses one — the
+/// envelope's present tense. Tamper rows are sealed-and-closed the moment
+/// they commit (durability over bundling), so "still standing" can no
+/// longer be read off an open bundle; the firmware says it outright
+/// instead. `kind` is the system.integrity vocabulary word. Absent means
+/// nothing to confess — never an empty object.
+struct WapTamperEnvelope: Codable, Sendable, Equatable {
+    var kind: String = ""
+
+    init(kind: String = "") { self.kind = kind }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? ""
+    }
+}
+
+/// The `{"events":[…]}` envelope (plus the optional standing-tamper field).
+/// Tolerant: a body without a key decodes as its absence, matching the
+/// repo's "newer firmware never breaks an older app" rule.
 struct WapEventsToday: Codable, Sendable {
     var events: [WapEventRow] = []
+    /// nil = the wire said nothing (older firmware, or nothing standing).
+    var tamper: WapTamperEnvelope? = nil
 
-    init(events: [WapEventRow] = []) { self.events = events }
+    init(events: [WapEventRow] = [], tamper: WapTamperEnvelope? = nil) {
+        self.events = events
+        self.tamper = tamper
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         events = (try? c.decode([WapEventRow].self, forKey: .events)) ?? []
+        tamper = (try? c.decodeIfPresent(WapTamperEnvelope.self, forKey: .tamper)) ?? nil
     }
 }
 

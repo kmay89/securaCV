@@ -35,6 +35,10 @@ struct SecuraCVApp: App {
                     // The intents' landing pad (Siri / Shortcuts / Action
                     // button) — same pattern, same timing as the push one.
                     AppIntentBridge.store = store
+                    // Persisted Apple Home consent resumes here — never in
+                    // the bridge's init, so tests and previews stay dark
+                    // (the lazy-manager rule in HomeKitBridge).
+                    HomeKitBridge.shared.resumeIfEnabled()
                     store.onAppear()
                 }
         }

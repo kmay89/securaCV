@@ -11,6 +11,21 @@ import XCTest
 
 final class HomeKitBridgeTests: XCTestCase {
 
+    /// Consent persists now, so every bridge in these tests gets its own
+    /// throwaway store — sharing `.standard` would let one test's consent
+    /// leak into the next test's restore.
+    private func freshDefaults() -> UserDefaults {
+        let suite = "homekit-bridge-tests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        return defaults
+    }
+
+    @MainActor
+    private func freshBridge() -> HomeKitBridge {
+        HomeKitBridge(defaults: freshDefaults())
+    }
+
     @MainActor
     func testDefaultConsentStopsAtTheDumbPIRBar() {
         let defaults = HomeSignal.defaultEnabled
@@ -27,7 +42,7 @@ final class HomeKitBridgeTests: XCTestCase {
 
     @MainActor
     func testTamperCannotBeTurnedOff() {
-        let bridge = HomeKitBridge()
+        let bridge = freshBridge()
         XCTAssertFalse(bridge.setSignal(.tamper, enabled: false),
                        "a witness must not go quiet invisibly")
         XCTAssertTrue(bridge.enabledSignals.contains(.tamper),
@@ -39,7 +54,7 @@ final class HomeKitBridgeTests: XCTestCase {
 
     @MainActor
     func testTamperReportsEvenWhenNeverConsented() {
-        let bridge = HomeKitBridge()
+        let bridge = freshBridge()
         var w = Witness(id: "canary-a")
         w.tamper = true
         XCTAssertTrue(bridge.signals(for: w).contains(.tamper),
@@ -48,7 +63,7 @@ final class HomeKitBridgeTests: XCTestCase {
 
     @MainActor
     func testADarkWitnessIsNotResponding() {
-        let bridge = HomeKitBridge()
+        let bridge = freshBridge()
         var w = Witness(id: "canary-a")
         w.link = .lost
         XCTAssertFalse(bridge.signals(for: w).contains(.active),
@@ -60,7 +75,7 @@ final class HomeKitBridgeTests: XCTestCase {
         // One number, one meaning: the projection warns exactly where the
         // app's own severity ladder warns (Witness.lowBatteryThreshold) —
         // the house and the phone can never tell different battery stories.
-        let bridge = HomeKitBridge()
+        let bridge = freshBridge()
         var w = Witness(id: "canary-a")
         w.batteryPct = Witness.lowBatteryThreshold - 1
         XCTAssertTrue(bridge.signals(for: w).contains(.lowBattery),
@@ -77,7 +92,7 @@ final class HomeKitBridgeTests: XCTestCase {
 
     @MainActor
     func testLowBatteryHonorsConsentLikeEveryNonTamperSignal() {
-        let bridge = HomeKitBridge()
+        let bridge = freshBridge()
         XCTAssertTrue(bridge.setSignal(.lowBattery, enabled: false),
                       "low battery is not tamper — a human may quiet it")
         var w = Witness(id: "canary-a")
@@ -120,6 +135,66 @@ final class HomeKitBridgeTests: XCTestCase {
         }
     }
 
+    // ── consent persistence: decisions survive a relaunch ──
+
+    @MainActor
+    func testConsentSurvivesRelaunch() {
+        let defaults = freshDefaults()
+        let before = HomeKitBridge(defaults: defaults)
+        before.isEnabled = true
+        XCTAssertTrue(before.setSignal(.motionPerson, enabled: true))
+        XCTAssertTrue(before.setSignal(.occupancy, enabled: false))
+
+        // "Relaunch" is a new bridge over the same store.
+        let after = HomeKitBridge(defaults: defaults)
+        XCTAssertTrue(after.isEnabled, "the opt-in is a decision, not a session")
+        XCTAssertTrue(after.enabledSignals.contains(.motionPerson),
+                      "a granted class consent survives the relaunch")
+        XCTAssertFalse(after.enabledSignals.contains(.occupancy),
+                       "a revoked consent stays revoked")
+        XCTAssertTrue(after.enabledSignals.contains(.tamper))
+    }
+
+    @MainActor
+    func testAStoredSetMissingTamperGetsItBack() {
+        // A doctored (or stale) store is not a quieter way around the
+        // setSignal refusal: restore re-arms tamper unconditionally.
+        let defaults = freshDefaults()
+        defaults.set([HomeSignal.motion.rawValue, HomeSignal.occupancy.rawValue],
+                     forKey: HomeKitBridge.enabledSignalsKey)
+        let bridge = HomeKitBridge(defaults: defaults)
+        XCTAssertTrue(bridge.enabledSignals.contains(.tamper),
+                      "restore must re-insert tamper, whatever the plist says")
+        XCTAssertTrue(bridge.enabledSignals.contains(.motion),
+                      "the stored consents themselves are honored")
+    }
+
+    @MainActor
+    func testUnknownStoredIdsDropSilently() {
+        // The tolerant-decoder rule: ids from a newer build (or garbage)
+        // vanish without taking the known consents with them.
+        let defaults = freshDefaults()
+        defaults.set(["motion", "motion_unicorn", "42", ""],
+                     forKey: HomeKitBridge.enabledSignalsKey)
+        let bridge = HomeKitBridge(defaults: defaults)
+        XCTAssertEqual(bridge.enabledSignals, [.motion, .tamper])
+    }
+
+    @MainActor
+    func testAnEmptyOrGarbledStoreMeansTheDefaults() {
+        // Nothing stored: off, and the dumb-PIR default set.
+        let empty = freshBridge()
+        XCTAssertFalse(empty.isEnabled, "opt-in; off by default")
+        XCTAssertEqual(empty.enabledSignals, HomeSignal.defaultEnabled)
+
+        // The wrong TYPE under the key reads as nothing stored — the
+        // defaults again, not a crash and not an empty consent set.
+        let defaults = freshDefaults()
+        defaults.set("not an array", forKey: HomeKitBridge.enabledSignalsKey)
+        let garbled = HomeKitBridge(defaults: defaults)
+        XCTAssertEqual(garbled.enabledSignals, HomeSignal.defaultEnabled)
+    }
+
     // ── the class-scoped motion signals, live via the attributed fold ──
 
     /// A witness whose plain .motion signal is derivable and whose seeing
@@ -138,7 +213,7 @@ final class HomeKitBridgeTests: XCTestCase {
 
     @MainActor
     func testClassScopedMotionDerivesOnlyWithConsentAndAFreshClaim() {
-        let bridge = HomeKitBridge()
+        let bridge = freshBridge()
 
         // Fresh claim, but the class signal was never consented: the house
         // hears plain motion (dumb-PIR grade, default-on) and nothing finer.
@@ -161,7 +236,7 @@ final class HomeKitBridgeTests: XCTestCase {
 
     @MainActor
     func testClassIsARefinementOfMotionNeverASecondOpinion() {
-        let bridge = HomeKitBridge()
+        let bridge = freshBridge()
         _ = bridge.setSignal(.motionPerson, enabled: true)
 
         // A fresh seeing claim on a witness whose plain .motion is NOT

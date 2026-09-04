@@ -14,6 +14,13 @@ the CANARY_WEB_ASSETS_GZIPPED guard, so the uncompressed copy never reaches the
 binary. Re-run this after editing any of the source HTML files:
 
     python3 gen_web_assets_gz.py
+
+`--check` regenerates in memory and byte-compares against the committed
+web_assets_gz.h, exiting nonzero on drift — the CI gate. The failure mode it
+exists for is nasty: because the raw literals are compiled OUT, an edit to
+the source HTML that skips the regen ships a repo that shows the new page
+while every device keeps serving the old one, and nothing else notices
+(an entire wave of dashboard fixes once sailed through review that way).
 """
 
 import gzip
@@ -84,6 +91,18 @@ def main() -> int:
         + "\n\n".join(blocks)
         + "\n\n#endif  // SECURACV_WEB_ASSETS_GZ_H\n"
     )
+    if "--check" in sys.argv[1:]:
+        current = OUT.read_bytes() if OUT.exists() else b""
+        if current != header.encode("utf-8"):
+            print("STALE: web_assets_gz.h does not match its source HTML")
+            print("  (web_ui.h / csi_dashboard_html.h / companion_pwa.h).")
+            print("  The raw literals are compiled out via CANARY_WEB_ASSETS_GZIPPED,")
+            print("  so devices would serve the OLD page while the repo shows the new one.")
+            print("  Fix: python3 gen_web_assets_gz.py  — and commit web_assets_gz.h.")
+            return 1
+        print("web_assets_gz.h is in sync with its source HTML.")
+        return 0
+
     # newline="\n" forces LF on all platforms (Path.write_text would emit CRLF
     # on Windows, causing spurious diffs).
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:

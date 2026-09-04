@@ -62,6 +62,30 @@
           { "name": "C", "online": false }
         ]
       }
+    },
+    {
+      "name": "a display's aggregated body carries the wellbeing keys through, and a row without them stays silent (fleet_selfreport open/append/close, verbatim — the same literal the iPhone's FleetSelfReportTests.aggregatedBody pins)",
+      "_note": "The Rust Device used to end at `hub`, and serde strips unknown fields — so presence/occupants/breathing/seeing/seeing_score vanished here before Swift ever saw them. The self row carries none of the keys and none may be invented: absence is 'cannot say', never an empty calm room. (`chain_height` is not part of this normalizer's shape and does not survive it — a change to that is a contract change, made in DISCOVERY.md first.)",
+      "input": "{\"kernel\":\"Hallway Glass\",\"verified_through\":\"now\",\"devices\":[{\"name\":\"Hallway Glass\",\"online\":true,\"chain\":\"unknown\",\"product\":\"canary-dash7\",\"hw\":\"waveshare-esp32s3-lcd7\",\"hub\":\"ok\"},{\"name\":\"Bedroom\",\"online\":true,\"chain\":\"unknown\",\"product\":\"canary-sense\",\"presence\":\"present\",\"occupants\":\"1\",\"breathing\":true},{\"name\":\"Driveway\",\"online\":true,\"chain\":\"ok\",\"product\":\"canary-vision\",\"chain_height\":512,\"seeing\":\"package\",\"seeing_score\":87}]}",
+      "normalized": {
+        "kernel": "Hallway Glass",
+        "verified_through": "now",
+        "devices": [
+          { "name": "Hallway Glass", "online": true, "chain": "unknown", "product": "canary-dash7", "hw": "waveshare-esp32s3-lcd7", "hub": "ok" },
+          { "name": "Bedroom", "online": true, "chain": "unknown", "product": "canary-sense", "presence": "present", "occupants": "1", "breathing": true },
+          { "name": "Driveway", "online": true, "chain": "ok", "product": "canary-vision", "seeing": "package", "seeing_score": 87 }
+        ]
+      }
+    },
+    {
+      "name": "unknown wellbeing words survive as words — tolerance lives in the reader, not in this normalizer",
+      "_note": "A word this build has never sent must cross intact so the client can fold it to 'cannot say'; stripping or rewriting it here would turn a future firmware's honest claim into silence or a guess. The out-of-range score crosses too — what counts as a percentage is the reader's call, same as what counts as a known word.",
+      "input": "{\"devices\":[{\"name\":\"K\",\"online\":true,\"presence\":\"levitating\",\"occupants\":\"many\",\"breathing\":false,\"seeing\":\"face\",\"seeing_score\":150}]}",
+      "normalized": {
+        "devices": [
+          { "name": "K", "online": true, "presence": "levitating", "occupants": "many", "breathing": false, "seeing": "face", "seeing_score": 150 }
+        ]
+      }
     }
   ]
 }

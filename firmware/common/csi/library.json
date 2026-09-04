@@ -48,7 +48,8 @@
     "meta_empty_room_baseline.h",
     "anomaly_baseline.h",
     "wifi_channel_activity.h",
-    "ble_events_module.h"
+    "ble_events_module.h",
+    "tamper_events_module.h"
   ],
   "build": {
     "srcDir": "src",

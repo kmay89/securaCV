@@ -122,7 +122,7 @@ struct WitnessGlanceRow: View {
     }
 
     private var subtitle: String {
-        if witness.tamper { return "Tamper detected" }
+        if witness.tamper { return witness.tamperHeadline }
         if witness.badge == .failed { return "Signature did not verify" }
         if witness.link.isDark { return "Gone dark" }
         if let event = witness.lastEventHeadline { return event }
