@@ -194,21 +194,34 @@ Firmware products live under [`firmware/`](../firmware). The canonical product
 list is [`firmware/flavors.json`](../firmware/flavors.json); per-build feature
 truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 
-| Name | What it is |
-|---|---|
-| **Canary WAP** | The recommended first build — captive-portal setup, SD storage, mesh. XIAO ESP32-S3 Sense. |
-| **Canary Vision** | Camera + on-device person detection, reports to Home Assistant. |
-| **Canary Sense** | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
-| **Canary Pool** | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
-| **Canary Sentinel** | *Phase 0 — fusion core host-tested, no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
-| **Canary Display** | The wall displays and dashes — the ambient surface a household actually looks at. |
-| **Canary OTA** | The signed pull-update path, with rollback. |
-| **Canary Fence Guard** | *Concept — nothing builds yet.* Boundary/perimeter variant. |
-| **The Tin Can** | Design-stage kids' wrist Canary on the AMOLED watch board: two kids "tie a string" and knock at each other, with **no voice, no text, no location, no cloud**. The refusal list *is* the design. |
-| **The Night Watch** | Phase-0 bedside clock on the same AMOLED watch board. Ships `GoDark` — genuinely off, which only AMOLED allows — under one rule that outranks the owner's preference: *silence is never rendered as safety*, so fleet trouble or a clock unsure of the time breaks blackout every time. |
-| **The Nightlight** | The kid-facing Canary Display flavor on the Waveshare ESP32-C3-LCD-1.47 pocket board (`canary-display-nightlight-c3`): a 7-segment clock over a lamp wash (warm Lantern orange · Rainbow · Moonbeam white), with the living canary visiting on the household's rhythm. The lamp is decor and never a status — this flavor never renders safety as light — and backlight duty is HAL-capped at 50% for heat (a `can't`, not a `won't`). Not **The Night Watch** (the AMOLED watch-board clock); this one lives in the [C3 pocket case](hardware/enclosure/README.md). |
-| **The Pocket Canary** | Phase-0 virtual pet: Tamagotchi's charm without its guilt loop. It cannot die, has no bell, has no random reward, and stops paying growth once the day's care is done. See **the Weather / the Bond**. |
-| **The Weather / the Bond** | The two channels the Pocket Canary keeps separate. **The Weather** is real fleet health and owns the bird's *posture* (it is diagnostic and never faked). **The Bond** is the child's own care history and owns the bird's *growth* (it is openly a game). Real household hygiene feeds the Bond as a bonus — and there is deliberately no penalty direction, because a child must never be made to feel responsible for a red fleet. |
+| Name | Status | What it is |
+|---|---|---|
+| **Canary WAP** | shipping | The recommended first build — captive-portal setup, SD storage, mesh. XIAO ESP32-S3 Sense. |
+| **Canary Vision** | shipping | Camera + on-device person detection, reports to Home Assistant. |
+| **Canary Sense** | shipping | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
+| **Canary Pool** | design | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
+| **Canary Sentinel** | design | *Phase 0 — fusion core host-tested, no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
+| **Canary Display** | prototype | The wall displays and dashes — the ambient surface a household actually looks at. |
+| **Canary OTA** | software | The signed pull-update path, with rollback. |
+| **Canary Fence Guard** | idea | *Concept — nothing builds yet.* Boundary/perimeter variant. |
+| **The Tin Can** | design | Design-stage kids' wrist Canary on the AMOLED watch board: two kids "tie a string" and knock at each other, with **no voice, no text, no location, no cloud**. The refusal list *is* the design. |
+| **The Night Watch** | design | Phase-0 bedside clock on the same AMOLED watch board. Ships `GoDark` — genuinely off, which only AMOLED allows — under one rule that outranks the owner's preference: *silence is never rendered as safety*, so fleet trouble or a clock unsure of the time breaks blackout every time. |
+| **The Nightlight** | prototype | The kid-facing Canary Display flavor on the Waveshare ESP32-C3-LCD-1.47 pocket board (`canary-display-nightlight-c3`): a 7-segment clock over a lamp wash (warm Lantern orange · Rainbow · Moonbeam white), with the living canary visiting on the household's rhythm. The lamp is decor and never a status — this flavor never renders safety as light — and backlight duty is HAL-capped at 50% for heat (a `can't`, not a `won't`). Not **The Night Watch** (the AMOLED watch-board clock); this one lives in the [C3 pocket case](hardware/enclosure/README.md). |
+| **The Pocket Canary** | design | Phase-0 virtual pet: Tamagotchi's charm without its guilt loop. It cannot die, has no bell, has no random reward, and stops paying growth once the day's care is done. See **the Weather / the Bond**. |
+| **The Weather / the Bond** | design | The two channels the Pocket Canary keeps separate. **The Weather** is real fleet health and owns the bird's *posture* (it is diagnostic and never faked). **The Bond** is the child's own care history and owns the bird's *growth* (it is openly a game). Real household hygiene feeds the Bond as a bonus — and there is deliberately no penalty direction, because a child must never be made to feel responsible for a red fleet. |
+
+Statuses are the evidence-derived confidence ladder from
+[`canary-local/devices/figures.json`](../canary-local/devices/figures.json):
+**shipping** (committed STLs + a firmware config + a released catalog variant),
+**prototype** (in development — not committed to print), **idea** (a research
+note and a sketch; it renders as a dashed ghost, never as a product). The
+ladder's fourth rung, **confirmed**, sits between prototype and shipping; no
+device-line row carries it today. Those verdicts are derived from evidence on
+disk, never hand-typed. Two labels sit outside the ladder: **design** marks a
+row with no figures.json entry yet — still on paper, nothing to derive a
+verdict from — and **software** marks Canary OTA, a firmware subsystem rather
+than a physical thing the ladder measures. Only **shipping** rows have
+released, build-it-today parts.
 
 **Board tier** — Every board is labeled `verified` (proven on real hardware)
 or `compile-tested` (builds in CI, not yet bench-proven). The distinction is
