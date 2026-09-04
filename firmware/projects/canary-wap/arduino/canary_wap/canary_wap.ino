@@ -2311,7 +2311,7 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
 //
 // kv / rs / zn satisfy spec/event_contract.md §2 — every event MUST
 // carry the firmware version, ruleset, and zone it was scored under.
-// All fields are ASCII; the chokepoint already sanitised the strings to
+// All fields are ASCII; the chokepoint already sanitized the strings to
 // printable ASCII before this point.
 //
 // The string is built by csi_witness_build_payload() (host-buildable,
@@ -2323,7 +2323,7 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
 // canary's coverage area without recompiling.
 //
 // The wire format `kv=<v> rs=<r> zn=<z>` is space-delimited, so the
-// override gets sanitised to a tokenizer-safe charset before caching:
+// override gets sanitized to a tokenizer-safe charset before caching:
 // any byte outside [A-Za-z0-9._:-] becomes '_'. This keeps a future
 // setup UI that accepts free-text labels (with spaces, accents,
 // emoji) from corrupting the wire format and breaking downstream

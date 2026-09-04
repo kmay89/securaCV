@@ -180,7 +180,7 @@ inline void trust_card(const Renderer& r, const TrustInfo& t) {
   row(r, inner, COL_DIM, line);
 
   row_blank(r, inner);
-  row(r, inner, COL_DIM, "Memorise this shape - it changes if the key does.");
+  row(r, inner, COL_DIM, "Memorize this shape - it changes if the key does.");
   if (t.tamper)
     row(r, inner, COL_AMBER, "!! TAMPER FLAG SET - investigate before trusting");
   hrule(r, "", inner, 2);

@@ -85,7 +85,7 @@ class AuthManager {
   // Snapshot of current auth counters (for /api/status or health log).
   AuthStats stats() const;
 
-  // Serialise stats() as compact JSON into buf.
+  // Serialize stats() as compact JSON into buf.
   // Always null-terminates when buf_len >= 1.
   void statsJson(char* buf, size_t buf_len) const;
 

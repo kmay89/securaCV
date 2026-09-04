@@ -3853,7 +3853,7 @@ module frame() {
             translate([p[0], p[1], fz_plate - 0.01]) cylinder(d = cb_d + 0.4, h = back_t + 0.11);
         }
         // BOOT/RESET window through the TOP wall (the button edge in native
-        // mounting), with a 45° bevelled surround on the outer face
+        // mounting), with a 45° beveled surround on the outer face
         translate([btn_dx, fr_yi/2 - 0.1, btn_zc]) rotate([-90, 0, 0])
             linear_extrude(frame_wall + 0.3) rrect2d(btn_w, btn_h, 3);
         hull() {
