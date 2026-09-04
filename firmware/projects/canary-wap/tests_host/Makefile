@@ -30,10 +30,14 @@ CHIRP_INV_SRC = test_chirp_protocol_invariants.cpp
 CHIRP_SEC_BIN = test_chirp_security
 CHIRP_SEC_SRC = test_chirp_security.cpp
 
-# v0.3: Beacon origination two-pubkey co-signing invariants. Verifies the
-# validation pipeline in beacon_channel.cpp::handle_alert_frame rejects
-# single-signature frames, revoked pubkeys, origin==cosigner, wrong scope,
-# and wrong magic.
+# v0.3: Beacon receive-path invariants. Verifies the validation pipeline in
+# beacon_channel.cpp::handle_alert_frame rejects single-signature frames,
+# revoked or long-unsupervised pubkeys, origin==cosigner, wrong scope, wrong
+# magic, a header msg_type that disagrees with the signed canonical, a drill
+# without its flag, an out-of-set template, a replayed nonce, and a frame
+# outside the freshness window — and that CANCEL/UPDATE only act on the
+# alarm they name, drills bank against their own rate bucket, and a replayed
+# SELFTEST_OK cannot keep a dead neighbor supervised-healthy.
 BEACON_ORIG_BIN = test_beacon_origination
 BEACON_ORIG_SRC = test_beacon_origination.cpp
 

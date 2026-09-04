@@ -235,6 +235,10 @@ struct BeaconAlertFrame {
 };
 
 struct BeaconSelfTestPayload {
+  // Wall clock at emission (spec §5.3). Load-bearing: without it every
+  // emission signs identical bytes, so one captured frame replays forever
+  // and keeps a dead neighbor inside the 36 h supervised-health window.
+  uint64_t timestamp;
   uint32_t uptime_sec;
   uint16_t free_heap_kb;
   uint8_t  key_self_test_ok;

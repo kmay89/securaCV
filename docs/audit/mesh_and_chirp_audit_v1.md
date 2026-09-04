@@ -413,6 +413,52 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 
 **Status: closed (PR #454 merged 2026-05-12).** Hardware verification of the two-pubkey origination flow remains queued — see `docs/audit/hardware_verification_checklist.md`.
 
+### 9.1 Beacon receive-path hardening (2026-09)
+
+A follow-up read of `beacon_channel.cpp::handle_alert_frame` against
+`spec/beacon_channel_v0.md` §5.4/§7.1/§7.2/§8 found four invariants the
+checklist above assumed but the code did not enforce. All four now hold on
+the receive path, with mirrors in `tests_host/test_beacon_origination.cpp`
+and `test_beacon_solo_origination.cpp` that fail on the pre-fix logic:
+
+- **Signed `msg_type` is authoritative.** The signatures cover the canonical
+  only, so `canonical->msg_type` is cross-checked against the unsigned
+  header byte and the accept action keys off the signed value. A captured
+  EXERCISE or CANCEL can no longer be rebroadcast as a real ALERT. Spec §5.4's
+  flag rule is enforced as a biconditional — EXERCISE frames carry
+  `BCN_FLAG_IS_EXERCISE` and nothing else does — so neither direction of the
+  drill/alert substitution survives.
+- **Replay and freshness (§7.1 steps 3–4, §8).** A 32-entry seen-nonce ring
+  keyed on the header nonce, checked before signature verification, drops
+  rebroadcasts at no cryptographic cost and before the originator's rate
+  bucket is charged; `|now − effective| <= BEACON_FRESHNESS_S` is enforced,
+  with the unsynced-clock accept-but-flag branch kept.
+- **CANCEL and UPDATE name their alarm (§5.4, §7.2).** The accepted alarm's
+  header nonce is retained; both message types require a non-zero
+  `ref_canceled_nonce` that matches it. An unreferenced frame is still
+  audited — only its state effect is dropped. An UPDATE amends the alarm
+  without becoming its identity, so a later CANCEL still resolves against the
+  originating ALERT.
+- **Drills bank separately (AGENTS.md Beacon invariant 10).** `OriginationRate`
+  carries a second counter selected by the signed `msg_type`, so an exercise
+  can no longer spend a neighbor's real-alert budget.
+
+Also closed in the same pass, from the same read: signer supervised-health
+gating (§7.1 step 9) for signers whose selftest has lapsed past 36 h,
+`COSIGN_WINDOW_MS` on a late `COSIGN_RESP` (§6.1), life-safety template
+validation at origination, at the cosigner (§6.1 step 3) and on receive (§4),
+and the signed selftest timestamp (§5.3) that makes `SELFTEST_OK` frames
+non-replayable.
+
+Still open on this surface: gateway-trust keys are accepted as ordinary
+community cosigners with no upstream CAP attestation (the `.cpp` header
+documents the gap); `MAX_ORIGINATIONS_PER_PAIR_24H` is unimplemented and
+rate-limit state is not rebuilt from the audit log on boot (§8, §11);
+`cancel_active_alarm()` silences locally without originating a
+`BEACON_MSG_CANCEL` while the REST caller is told the cancel succeeded (§10);
+and spec §6.2's "no fresh paired neighbor" precondition on solo origination
+is unenforced.
+
 ## 10. Closure traceability — every finding's fix in code
 
 | Finding | Severity | Fix shipped in | Code reference | Regression test |

@@ -121,13 +121,43 @@ struct PendingCosignRequest {
 static PendingCosignRequest g_pending_cosign_in;
 
 // Per-pubkey origination rate-limit (audit C14 analog for Beacon).
+// Drills carry a second, independent counter: AGENTS.md Beacon invariant 10
+// forbids merging exercise and real-alert buckets, so a morning drill can
+// never rate-limit away an afternoon fire alert from the same pubkey.
 struct OriginationRate {
   uint8_t  fingerprint[DEVICE_FP_SIZE];
   uint32_t window_start_ms;
   uint8_t  count_in_window;
+  uint32_t exercise_window_start_ms;
+  uint8_t  exercise_count_in_window;
   bool     valid;
 };
 static OriginationRate g_origination_rate[MAX_BEACON_SET];
+
+// Seen-nonce ring for receive-path replay dedup (spec §7.1 step 3; §8 sets
+// the horizon at the last 5 minutes of nonces). Checked before signature
+// verification so a replay costs no Ed25519 work, and a nonce is recorded
+// only after a frame has fully validated, so unverifiable traffic cannot
+// evict real entries. Origination is capped at a handful of frames per
+// pubkey per day, so this cannot wrap within the horizon under real load.
+static const size_t SEEN_NONCE_MAX = 32;
+struct SeenNonce {
+  uint8_t  nonce[BEACON_NONCE_SIZE];
+  uint32_t seen_ms;
+  bool     valid;
+};
+static SeenNonce g_seen_nonces[SEEN_NONCE_MAX];
+static size_t g_seen_nonce_head = 0;
+
+// Header nonce of the frame that raised g_active_alarm. CANCEL and UPDATE
+// must name it (spec §5.4, §7.2). An UPDATE amends the alarm without
+// becoming its new identity, so a later CANCEL still resolves against the
+// originating ALERT.
+static uint8_t g_active_alarm_nonce[BEACON_NONCE_SIZE];
+
+// Newest signed selftest timestamp accepted per beacon-set slot. RAM only
+// (spec §11). Monotonicity here is what refuses a replayed SELFTEST_OK.
+static uint64_t g_last_selftest_ts[MAX_BEACON_SET];
 
 static uint32_t g_last_selftest_ms = 0;
 static uint16_t g_trouble_reasons = BCN_TROUBLE_BEACON_SET_EMPTY;
@@ -168,7 +198,7 @@ static bool flash_encryption_enabled();
 static bool persist_beacon_set();
 static bool load_beacon_set();
 static void recompute_trouble_reasons();
-static bool rate_check_and_record(const uint8_t* fp);
+static bool rate_check_and_record(const uint8_t* fp, bool is_exercise);
 static void emit_alert_frame();
 static void chain_audit_entry(BeaconAuditEntry* entry);
 static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi);
@@ -319,10 +349,11 @@ static size_t build_selftest_canonical(const BeaconSelfTestPayload* p,
                                        uint8_t* out, size_t out_max) {
   static const char DOMAIN[] = "securacv:beacon:selftest:v0";
   const size_t domain_len = sizeof(DOMAIN) - 1;
-  size_t body_len = 4 + 2 + 1 + DEVICE_FP_SIZE;
+  size_t body_len = 8 + 4 + 2 + 1 + DEVICE_FP_SIZE;
   if (out_max < domain_len + body_len) return 0;
   size_t i = 0;
   memcpy(out + i, DOMAIN, domain_len); i += domain_len;
+  memcpy(out + i, &p->timestamp, 8); i += 8;
   memcpy(out + i, &p->uptime_sec, 4); i += 4;
   memcpy(out + i, &p->free_heap_kb, 2); i += 2;
   out[i++] = p->key_self_test_ok;
@@ -340,7 +371,7 @@ static const BeaconSetEntry* find_set_entry_by_fp(const uint8_t* fp) {
   return nullptr;
 }
 
-static bool rate_check_and_record(const uint8_t* fp) {
+static bool rate_check_and_record(const uint8_t* fp, bool is_exercise) {
   uint32_t now = millis();
   const uint32_t WINDOW_MS = 86400000;  // 24 h
   OriginationRate* entry = nullptr;
@@ -355,19 +386,97 @@ static bool rate_check_and_record(const uint8_t* fp) {
   if (!entry) {
     if (!free_slot) return true;
     memcpy(free_slot->fingerprint, fp, DEVICE_FP_SIZE);
-    free_slot->window_start_ms = now;
-    free_slot->count_in_window = 1;
     free_slot->valid = true;
+    entry = free_slot;
+  }
+  // Separate buckets by frame class (AGENTS.md Beacon invariant 10).
+  uint32_t* window_start = is_exercise ? &entry->exercise_window_start_ms
+                                       : &entry->window_start_ms;
+  uint8_t* count = is_exercise ? &entry->exercise_count_in_window
+                               : &entry->count_in_window;
+  if (*count == 0 || now - *window_start > WINDOW_MS) {
+    *window_start = now;
+    *count = 1;
     return true;
   }
-  if (now - entry->window_start_ms > WINDOW_MS) {
-    entry->window_start_ms = now;
-    entry->count_in_window = 1;
-    return true;
-  }
-  if (entry->count_in_window >= MAX_ORIGINATIONS_PER_PUBKEY_24H) return false;
-  entry->count_in_window++;
+  if (*count >= MAX_ORIGINATIONS_PER_PUBKEY_24H) return false;
+  (*count)++;
   return true;
+}
+
+// spec §4: the life-safety template set is the entire Beacon vocabulary.
+// The byte space overlaps Chirp's (the magic byte discriminates the
+// channel), so an unlisted id is not merely unknown — it can be a Chirp
+// authority/aid category Beacon excludes by design.
+static bool is_valid_beacon_template(uint8_t id) {
+  switch (id) {
+    case BCN_INFRA_POWER_OUT:
+    case BCN_INFRA_GAS_SMELL:
+    case BCN_EMERG_FIRE_VISIBLE:
+    case BCN_EMERG_MEDICAL_SCENE:
+    case BCN_EMERG_MULTIPLE_AMBULANCE:
+    case BCN_EMERG_EVACUATION:
+    case BCN_EMERG_SHELTER_IN_PLACE:
+    case BCN_WX_SEVERE_WARNING:
+    case BCN_WX_TORNADO:
+    case BCN_WX_FLOOD:
+    case BCN_CLR_RESOLVED:
+    case BCN_CLR_SAFE:
+    case BCN_CLR_FALSE_ALARM:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool nonce_seen(const uint8_t* nonce) {
+  const uint32_t now = millis();
+  const uint32_t horizon_ms = BEACON_FRESHNESS_S * 1000UL;
+  for (size_t i = 0; i < SEEN_NONCE_MAX; i++) {
+    if (!g_seen_nonces[i].valid) continue;
+    if (now - g_seen_nonces[i].seen_ms > horizon_ms) {
+      g_seen_nonces[i].valid = false;
+      continue;
+    }
+    if (memcmp(g_seen_nonces[i].nonce, nonce, BEACON_NONCE_SIZE) == 0) return true;
+  }
+  return false;
+}
+
+static void remember_nonce(const uint8_t* nonce) {
+  SeenNonce* slot = &g_seen_nonces[g_seen_nonce_head];
+  memcpy(slot->nonce, nonce, BEACON_NONCE_SIZE);
+  slot->seen_ms = millis();
+  slot->valid = true;
+  g_seen_nonce_head = (g_seen_nonce_head + 1) % SEEN_NONCE_MAX;
+}
+
+// spec §5.4 requires a non-zero ref_canceled_nonce on CANCEL and UPDATE;
+// §7.2 scopes their effect to the alarm actually in force. Both were
+// previously unenforceable — the old check compared zero bytes, and the
+// accepted alarm's frame nonce was never stored anywhere.
+static bool references_active_alarm(const BeaconAlertCanonical* c) {
+  if (!g_active_alarm_valid) return false;
+  bool nonzero = false;
+  for (size_t i = 0; i < BEACON_NONCE_SIZE; i++) {
+    if (c->ref_canceled_nonce[i] != 0) { nonzero = true; break; }
+  }
+  if (!nonzero) return false;
+  return memcmp(c->ref_canceled_nonce, g_active_alarm_nonce,
+                BEACON_NONCE_SIZE) == 0;
+}
+
+// spec §7.1 step 9: a signer whose supervised health has lapsed does not
+// authorize alarms. `last_selftest == 0` means "not observed since boot"
+// (the map is RAM-only per §11), not "stale" — treating it as stale would
+// deafen a just-rebooted receiver for a full selftest cadence, which is a
+// worse failure than accepting one frame from an unproven-but-paired
+// signer. Same reading as recompute_trouble_reasons.
+static bool signer_selftest_stale(const BeaconSetEntry* e) {
+  if (e->last_selftest == 0) return false;
+  const uint32_t now = millis();
+  const uint64_t age_ms = (now > e->last_selftest) ? (now - e->last_selftest) : 0;
+  return age_ms > SELFTEST_MISSING_MS;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -809,6 +918,9 @@ static void handle_cosign_req_frame(const uint8_t* data, size_t len) {
   if (memcmp(candidate.originator_fp, req->originator_fp, DEVICE_FP_SIZE) != 0) return;
   if (memcmp(candidate.cosigner_fp, g_device_fp, DEVICE_FP_SIZE) != 0) return;
   if (candidate.scope != BCN_SCOPE_PRIVATE) return;
+  // spec §6.1 step 3: the cosigner checks the template before the user is
+  // ever asked to confirm — nothing outside the life-safety set is signable.
+  if (!is_valid_beacon_template(candidate.template_id)) return;
 
   // Verify originator's signature.
   uint8_t buf[64 + sizeof(BeaconAlertCanonical)];
@@ -844,6 +956,15 @@ static void handle_cosign_resp_frame(const uint8_t* data, size_t len) {
   // Only the originator listens.
   if (memcmp(resp->originator_fp, g_device_fp, DEVICE_FP_SIZE) != 0) return;
   if (!g_pending_origination.valid) return;
+  // spec §6.1: an origination the cosigner did not answer inside
+  // COSIGN_WINDOW_MS expires silently. A late response must not resurrect
+  // it — the canonical's `effective` is already stale by then.
+  if (millis() - g_pending_origination.requested_ms > COSIGN_WINDOW_MS) {
+    g_pending_origination.valid = false;
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "beacon: COSIGN_RESP arrived after the cosign window — discarded");
+    return;
+  }
   if (memcmp(g_pending_origination.canonical.cosigner_fp, resp->cosigner_fp,
              DEVICE_FP_SIZE) != 0) return;
 
@@ -913,8 +1034,26 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
   const uint8_t* sig_a = data + sizeof(BeaconHeader) + sizeof(BeaconAlertCanonical);
   const uint8_t* sig_b = sig_a + BEACON_SIGNATURE_SIZE;
 
+  // Replay dedup first (spec §7.1 step 3), so a rebroadcast costs no
+  // signature verification and never reaches the originator's rate bucket.
+  if (nonce_seen(hdr->nonce)) return;
+
   // Scope must be Private (lint and spec invariant).
   if (canonical->scope != BCN_SCOPE_PRIVATE) return;
+
+  // The two signatures cover the canonical only — the header msg_type is
+  // unauthenticated. Without this cross-check, a captured drill or
+  // all-clear can be rebroadcast with the header byte rewritten to ALERT
+  // and both signatures still verify.
+  if (canonical->msg_type != hdr->msg_type) return;
+
+  // spec §5.4: EXERCISE frames carry BCN_FLAG_IS_EXERCISE and nothing else
+  // does. Requiring the biconditional is what keeps a drill from presenting
+  // as a real alert, and a real alert from presenting as a drill.
+  const bool exercise_flag = (hdr->flags & BCN_FLAG_IS_EXERCISE) != 0;
+  if ((canonical->msg_type == BEACON_MSG_EXERCISE) != exercise_flag) return;
+
+  if (!is_valid_beacon_template(canonical->template_id)) return;
 
   // v0.4 (spec §6.2): solo-origination frames bypass the
   // "originator != cosigner" check because the cosigner IS the originator
@@ -948,6 +1087,12 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
     return;  // Standard dual-pubkey frame with collapsed signers is malformed.
   }
 
+  if (signer_selftest_stale(a) || signer_selftest_stale(b)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: rejected frame — a signer's selftest is older than 36 h");
+    return;
+  }
+
   // Verify both signatures over the canonical. Solo frames carry the
   // same signature in both slots; we still verify both to keep the
   // accept-path uniform (any tampering with either slot is caught).
@@ -957,19 +1102,26 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
   if (!Ed25519::verify(sig_a, a->device_pubkey, buf, cl)) return;
   if (!Ed25519::verify(sig_b, b->device_pubkey, buf, cl)) return;
 
-  // Wall-clock freshness.
+  // Wall-clock freshness (spec §7.1 step 4).
   time_t now = time(nullptr);
   if (now < (time_t)MIN_UNIX_TIME) {
     // Time unsynced — accept but flag.
   } else {
-    if (canonical->effective > (uint64_t)now + 60 ||
-        (uint64_t)now > canonical->expires) {
-      return;
-    }
+    if ((uint64_t)now > canonical->expires) return;
+    const uint64_t n = (uint64_t)now;
+    const uint64_t skew = (canonical->effective > n) ? (canonical->effective - n)
+                                                     : (n - canonical->effective);
+    if (skew > BEACON_FRESHNESS_S) return;
   }
 
-  // Rate limit per originator fingerprint.
-  if (!rate_check_and_record(canonical->originator_fp)) return;
+  // The frame is authentic and fresh: remember its nonce before any bucket
+  // is charged, so the rate limiter sees each origination exactly once.
+  remember_nonce(hdr->nonce);
+
+  // Rate limit per originator fingerprint, in the bucket for this frame's
+  // class (AGENTS.md Beacon invariant 10 — drills never share with alerts).
+  const bool is_exercise = (canonical->msg_type == BEACON_MSG_EXERCISE);
+  if (!rate_check_and_record(canonical->originator_fp, is_exercise)) return;
 
   // Record audit entry.
   BeaconAuditEntry entry;
@@ -981,20 +1133,30 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
   entry.hop_count = hdr->hop_count;
   chain_audit_entry(&entry);
 
-  // Action by msg_type.
-  if (hdr->msg_type == BEACON_MSG_ALERT || hdr->msg_type == BEACON_MSG_UPDATE) {
+  // Action by the SIGNED msg_type. A frame whose reference doesn't resolve
+  // is still audited above; only its state effect is dropped.
+  if (canonical->msg_type == BEACON_MSG_ALERT) {
     g_active_alarm = *canonical;
     g_active_alarm_valid = true;
     g_active_alarm_expires = canonical->expires;
+    memcpy(g_active_alarm_nonce, hdr->nonce, BEACON_NONCE_SIZE);
     if (g_alarm_callback) g_alarm_callback(&g_active_alarm);
     recompute_trouble_reasons();
-  } else if (hdr->msg_type == BEACON_MSG_CANCEL) {
-    if (g_active_alarm_valid &&
-        memcmp(canonical->ref_canceled_nonce, "", 0) == 0) {
+  } else if (canonical->msg_type == BEACON_MSG_UPDATE) {
+    // spec §5.3: an UPDATE amends an alert already in force, so it names
+    // that alert rather than installing itself as a new one.
+    if (references_active_alarm(canonical)) {
+      g_active_alarm = *canonical;
+      g_active_alarm_expires = canonical->expires;
+      if (g_alarm_callback) g_alarm_callback(&g_active_alarm);
+      recompute_trouble_reasons();
+    }
+  } else if (canonical->msg_type == BEACON_MSG_CANCEL) {
+    if (references_active_alarm(canonical)) {
       g_active_alarm_valid = false;
       set_state(BEACON_STATE_SUPERVISORY);
     }
-  } else if (hdr->msg_type == BEACON_MSG_EXERCISE) {
+  } else if (canonical->msg_type == BEACON_MSG_EXERCISE) {
     // Exercises don't trigger ALARM; logged only.
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "beacon: exercise received");
   }
@@ -1009,14 +1171,27 @@ static void handle_selftest_frame(const uint8_t* data, size_t len) {
   if (!entry) return;
   if (entry->trust_level == BCN_TRUST_REVOKED) return;
 
-  uint8_t canon[64 + 4 + 2 + 1 + DEVICE_FP_SIZE];
+  uint8_t canon[64 + 8 + 4 + 2 + 1 + DEVICE_FP_SIZE];
   size_t cl = build_selftest_canonical(p, canon, sizeof(canon));
   if (cl == 0) return;
   if (!Ed25519::verify(p->signature, entry->device_pubkey, canon, cl)) return;
 
+  // The signed timestamp must be inside the freshness window and must
+  // advance (spec §5.3). A replayed frame carries identical signed bytes,
+  // so monotonicity is the only thing that distinguishes it from a live
+  // heartbeat — without it a dead neighbor stays supervised-healthy forever.
+  const time_t now_wall = time(nullptr);
+  if (now_wall >= (time_t)MIN_UNIX_TIME) {
+    const uint64_t n = (uint64_t)now_wall;
+    const uint64_t skew = (p->timestamp > n) ? (p->timestamp - n) : (n - p->timestamp);
+    if (skew > BEACON_FRESHNESS_S) return;
+  }
+
   // Update last_selftest timestamp (cast away const for in-place update).
   for (uint8_t i = 0; i < g_beacon_set_count; i++) {
     if (memcmp(g_beacon_set[i].fingerprint, p->device_fp, DEVICE_FP_SIZE) == 0) {
+      if (p->timestamp <= g_last_selftest_ts[i]) return;
+      g_last_selftest_ts[i] = p->timestamp;
       g_beacon_set[i].last_selftest = (uint64_t)millis();
       break;
     }
@@ -1040,6 +1215,10 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
 
   memset(g_beacon_set, 0, sizeof(g_beacon_set));
   memset(g_origination_rate, 0, sizeof(g_origination_rate));
+  memset(g_seen_nonces, 0, sizeof(g_seen_nonces));
+  memset(g_active_alarm_nonce, 0, sizeof(g_active_alarm_nonce));
+  memset(g_last_selftest_ts, 0, sizeof(g_last_selftest_ts));
+  g_seen_nonce_head = 0;
   memset(g_audit_log, 0, sizeof(g_audit_log));
   memset(g_audit_chain_head, 0, sizeof(g_audit_chain_head));
   g_audit_log_count = 0;
@@ -1239,7 +1418,12 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
   if (!g_enabled) return false;
   if (time(nullptr) < (time_t)MIN_UNIX_TIME) return false;
   if (g_beacon_set_count == 0) return false;  // no cosigner available
-  if (!rate_check_and_record(g_device_fp)) return false;
+  if (!is_valid_beacon_template((uint8_t)template_id)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: origination refused — template outside the life-safety set");
+    return false;
+  }
+  if (!rate_check_and_record(g_device_fp, /*is_exercise=*/false)) return false;
 
   ensure_x25519_keypair();
 
@@ -1404,7 +1588,12 @@ bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
                           uint32_t ttl_minutes) {
   if (!g_enabled) return false;
   if (time(nullptr) < (time_t)MIN_UNIX_TIME) return false;
-  if (!rate_check_and_record(g_device_fp)) return false;
+  if (!is_valid_beacon_template((uint8_t)template_id)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: solo origination refused — template outside the life-safety set");
+    return false;
+  }
+  if (!rate_check_and_record(g_device_fp, /*is_exercise=*/false)) return false;
 
   // ── Physical attestation: BOOT button MUST be held right now ──
   // This is the load-bearing security check for the solo path. The user
@@ -1512,6 +1701,7 @@ bool emit_selftest() {
   hdr->payload_len = sizeof(BeaconSelfTestPayload);
   esp_fill_random(hdr->nonce, BEACON_NONCE_SIZE);
 
+  p->timestamp = (uint64_t)time(nullptr);
   p->uptime_sec = (uint32_t)(millis() / 1000);
   p->free_heap_kb = (uint16_t)(ESP.getFreeHeap() / 1024);
   // Round-trip a fresh signature to prove key works.
