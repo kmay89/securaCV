@@ -426,7 +426,7 @@ fn with_advisory_lock<T>(lock_path: &Path, f: impl FnOnce() -> Result<T>) -> Res
         .mode(0o600)
         .open(lock_path)
         .with_context(|| format!("opening high-water-mark lock {}", lock_path.display()))?;
-    // SAFETY: `file` owns the fd for the duration of the call; flock on a valid
+    // SAFETY: `file` owns the fd for the duration of the call; `flock` on a valid
     // fd has no memory-safety hazard. LOCK_EX blocks until the lock is granted.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(anyhow!(
