@@ -16,8 +16,10 @@ WHAT IS ALLOWED, MECHANICALLY
 Three narrow shapes survive, because each is a real name rather than the
 bird word:
 
-  flock(          the Unix flock(2) syscall and calls to it — flock(2),
-                  libc::flock(fd, LOCK_EX), fcntl.flock(...)
+  flock(2)        the Unix syscall's man-page form, and QUALIFIED call
+  libc::flock(    sites — libc::flock(fd, LOCK_EX), fcntl.flock(...). A
+  fcntl.flock(    bare call-shaped "flock(" is NOT exempt: it would also
+                  mask a first-party function named after the bird word
   `flock`         the same syscall named in prose/doc comments, backticked
                   the way an API name should be
   flock/PID       the storage flight-rules phrase for the lock we don't take
@@ -39,8 +41,10 @@ EXTS = {".rs", ".py", ".js", ".mjs", ".ts", ".c", ".h", ".cpp", ".hpp", ".md",
         ".html", ".css", ".swift", ".json", ".yml", ".yaml", ".sh", ".toml",
         ".scad", ".ino", ".txt",
         # Copy-bearing formats the rule binds just as hard: an SVG badge
-        # label, a plist display string, a CSV column of user-facing text.
-        ".svg", ".plist", ".ini", ".properties", ".entitlements", ".csv"}
+        # label, a plist display string, a CSV column of user-facing text,
+        # an installed app's manifest name.
+        ".svg", ".plist", ".ini", ".properties", ".entitlements", ".csv",
+        ".webmanifest"}
 EXTRA_NAMES = {"Makefile", "makefile", "GNUmakefile", "Dockerfile"}
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
              "__pycache__", ".pytest_cache", "third_party"}
@@ -56,8 +60,13 @@ BANNED = re.compile(r"flock", re.IGNORECASE)
 # Masked out BEFORE the ban runs, in the same spirit as lint_spelling.py's
 # API_EXEMPT: real names are not ours to rename.
 EXEMPT_PATTERNS = [
-    r"\bflock\((?!s\))",  # the syscall and calls to it: flock(2), libc::flock( —
-                          # but never parenthetical pluralization, "flock(s)"
+    # The syscall: the man-page form and QUALIFIED call sites only. A bare
+    # "flock(" is deliberately not exempt — it would also mask a first-party
+    # function or identifier named after the bird word (def flock():), which
+    # the rule forbids. Unqualified C calls to the real syscall are rare
+    # enough here (none today) to earn an allowlist entry when they appear.
+    r"\bflock\(2\)",
+    r"(?:libc::|fcntl\.)flock\(",
     r"`flock`",         # the syscall named in prose, backticked
     r"\bflock/PID\b",   # the flight-rules phrase (no flock/PID lock)
     r"\bFlock Safety\b",  # the company (research docs must name it)
@@ -103,7 +112,8 @@ MUST_PASS = [
 # failure mode.
 MUST_FAIL = ["a flock of Canaries", "your flock", "the whole Flock",
              "flockSummary", "flocking to the feeder",
-             "your flock(s) of Canaries"]
+             "your flock(s) of Canaries",
+             "def flock():", "function flock() {"]
 
 
 def masked(line: str) -> str:

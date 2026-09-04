@@ -22,7 +22,8 @@ holes this gate closes, both of which shipped real rot:
 
 WHAT IT CHECKS
 --------------
-Every inline markdown link or image `[text](target)` in every .md file:
+Every inline markdown link or image `[text](target)`, and every
+reference-style definition `[label]: target`, in every .md file:
 
   - a relative target must resolve to a file or directory that exists AND
     stays inside the repository (a `../` chain that escapes the root is a
@@ -52,6 +53,8 @@ SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
 # One level of balanced parentheses is allowed inside the target, so
 # `[spec](file_(v2).md)` isn't truncated at the first `)`.
 LINK_RE = re.compile(r'!?\[[^\]]*\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"]*")?\)')
+# Reference-style definitions: [label]: target — the target is a link too.
+REF_DEF_RE = re.compile(r'^ {0,3}\[[^\]]+\]:\s*(\S+)')
 FENCE_RE = re.compile(r'^(`{3,}|~{3,})')
 # GitHub honors up to three leading spaces on an ATX heading.
 HEADING_RE = re.compile(r'^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$')
@@ -151,41 +154,46 @@ def check_file(path: Path, anchor_cache: dict) -> list:
     # HTML comments are not rendered; blank them (preserving line numbers).
     text = HTML_COMMENT_RE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group(0)),
                                text)
+    def check_target(raw: str, i: int):
+        target = raw.strip("<>")
+        if target.lower().startswith(EXTERNAL):
+            return
+        frag = None
+        if "#" in target:
+            target, frag = target.split("#", 1)
+            frag = unquote(frag)
+        if not target:  # bare #anchor into this same file
+            if frag and frag not in anchors(path):
+                problems.append(f"{rel(path)}:{i}: "
+                                f"#{frag} — no such heading in this file")
+            return
+        target = unquote(target)
+        if target.startswith("/"):
+            resolved = (ROOT / target.lstrip("/")).resolve()
+        else:
+            resolved = (path.parent / target).resolve()
+        if not resolved.is_relative_to(ROOT):
+            problems.append(f"{rel(path)}:{i}: {raw} — resolves outside "
+                            f"the repository ({resolved})")
+        elif not resolved.exists():
+            problems.append(f"{rel(path)}:{i}: {raw} — "
+                            f"no such file ({resolved})")
+        elif frag and resolved.suffix == ".md":
+            if frag not in anchors(resolved):
+                problems.append(f"{rel(path)}:{i}: {raw} — "
+                                f"file exists but #{frag} matches no "
+                                f"heading there")
+
     fence = FenceTracker()
     for i, line in enumerate(text.splitlines(), 1):
         if fence.feed(line):
             continue
         line = CODE_SPAN_RE.sub(lambda m: ' ' * len(m.group(0)), line)
         for m in LINK_RE.finditer(line):
-            raw = m.group(1)
-            target = raw.strip("<>")
-            if target.lower().startswith(EXTERNAL):
-                continue
-            frag = None
-            if "#" in target:
-                target, frag = target.split("#", 1)
-                frag = unquote(frag)
-            if not target:  # bare #anchor into this same file
-                if frag and frag not in anchors(path):
-                    problems.append(f"{rel(path)}:{i}: "
-                                    f"#{frag} — no such heading in this file")
-                continue
-            target = unquote(target)
-            if target.startswith("/"):
-                resolved = (ROOT / target.lstrip("/")).resolve()
-            else:
-                resolved = (path.parent / target).resolve()
-            if not resolved.is_relative_to(ROOT):
-                problems.append(f"{rel(path)}:{i}: {raw} — resolves outside "
-                                f"the repository ({resolved})")
-            elif not resolved.exists():
-                problems.append(f"{rel(path)}:{i}: {raw} — "
-                                f"no such file ({resolved})")
-            elif frag and resolved.suffix == ".md":
-                if frag not in anchors(resolved):
-                    problems.append(f"{rel(path)}:{i}: {raw} — "
-                                    f"file exists but #{frag} matches no "
-                                    f"heading there")
+            check_target(m.group(1), i)
+        ref = REF_DEF_RE.match(line)
+        if ref:
+            check_target(ref.group(1), i)
     return problems
 
 

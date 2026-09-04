@@ -430,7 +430,7 @@ fn with_advisory_lock<T>(lock_path: &Path, f: impl FnOnce() -> Result<T>) -> Res
     // fd has no memory-safety hazard. LOCK_EX blocks until the lock is granted.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(anyhow!(
-            "flock(LOCK_EX) on {}: {}",
+            "libc::flock(LOCK_EX) on {}: {}",
             lock_path.display(),
             std::io::Error::last_os_error()
         ));
