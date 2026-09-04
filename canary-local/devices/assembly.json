@@ -1179,17 +1179,17 @@
     },
     {
      "title": "Seat the radar carrier",
-     "readmeStep": null,
+     "readmeStep": 1,
      "note": "The MR60BHA2 carrier drops onto the rails with its 60 GHz antenna facing the radome window — nothing (ribs, labels, gaskets) may cross that zone or it scatters the beam."
     },
     {
      "title": "Click the XIAO into the carrier socket",
-     "readmeStep": null,
+     "readmeStep": 0,
      "note": "The XIAO ESP32-C6 seats in the carrier's socket beneath the board (zero wiring), USB-C aligned to the bottom-wall opening."
     },
     {
      "title": "Close the radome front",
-     "readmeStep": null,
+     "readmeStep": 4,
      "note": "The front's lip nests into the back; keep the antenna air-gap clear (the window sits a few mm off the AiP package)."
     },
     {

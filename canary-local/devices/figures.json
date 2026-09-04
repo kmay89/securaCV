@@ -34,6 +34,10 @@
     "figure": "device.canary-nightlight"
    },
    {
+    "device_type": "canary-nightstand7",
+    "figure": "device.canary-display-dash7"
+   },
+   {
     "device_type": "canary-sense",
     "figure": "device.canary-sense"
    },
@@ -61,11 +65,7 @@
    },
    {
     "device_type": "canary-nightstand",
-    "why": "published by more than one board, and at least one has no figure yet (the figured one is device.canary-display-touch169)"
-   },
-   {
-    "device_type": "canary-nightstand7",
-    "why": "no figure for this hardware yet"
+    "why": "published by boards with different figures (device.canary-display-amoled241, device.canary-display-nightstand, device.canary-display-touch169)"
    },
    {
     "device_type": "canary-sentinel",
@@ -73,6 +73,12 @@
    }
   ],
   "configs_audit": [
+   {
+    "family": "canary-display",
+    "flavor": "amoled241",
+    "device_type": "canary-nightstand",
+    "figure": "device.canary-display-amoled241"
+   },
    {
     "family": "canary-display",
     "flavor": "dash",
@@ -90,6 +96,18 @@
     "flavor": "nightlight",
     "device_type": "canary-nightlight",
     "figure": "device.canary-nightlight"
+   },
+   {
+    "family": "canary-display",
+    "flavor": "nightstand",
+    "device_type": "canary-nightstand",
+    "figure": "device.canary-display-nightstand"
+   },
+   {
+    "family": "canary-display",
+    "flavor": "nightstand7",
+    "device_type": "canary-nightstand7",
+    "figure": "device.canary-display-dash7"
    },
    {
     "family": "canary-display",
@@ -282,18 +300,6 @@
   ],
   "unmapped": [
    {
-    "hardware": "board:seeed_xiao_esp32c6",
-    "builds": [
-     "canary-sentinel-demo-head",
-     "canary-sentinel-door",
-     "canary-sentinel-hallway",
-     "canary-sentinel-window"
-    ],
-    "serves": [
-     "canary-sentinel"
-    ]
-   },
-   {
     "hardware": "esp32c3-super-mini",
     "builds": [
      "canary-vision-c3-super-mini"
@@ -343,6 +349,18 @@
      "canary-sentinel-lite"
     ],
     "serves": []
+   },
+   {
+    "hardware": "xiao-esp32c6-sentinel",
+    "builds": [
+     "canary-sentinel-demo-head",
+     "canary-sentinel-door",
+     "canary-sentinel-hallway",
+     "canary-sentinel-window"
+    ],
+    "serves": [
+     "canary-sentinel"
+    ]
    }
   ]
  },
@@ -1421,8 +1439,14 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 57.2,
-    "d": 26.95,
+    "d": 21.5,
     "h": 78.697
+   },
+   "assembled": {
+    "placement": "sense_fitcheck: front at z = base_d",
+    "seams_fig_d": [
+     19.5
+    ]
    },
    "traced_to": [
     {
@@ -1444,9 +1468,13 @@
      ]
     }
    ],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4,
+    "height_tol_mm": 2.5
+   },
    "solids": 4,
-   "rev": "1fb6d5ed",
+   "rev": "423b3305",
    "svg": "canary-local/figures/device.canary-sense.svg",
    "glyph": "canary-local/figures/device.canary-sense.glyph.svg"
   },
@@ -1580,8 +1608,14 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 43.2,
-    "d": 30.53,
+    "d": 23.38,
     "h": 95.097
+   },
+   "assembled": {
+    "placement": "vision_fitcheck: front at z = base_d",
+    "seams_fig_d": [
+     21.38
+    ]
    },
    "traced_to": [
     {
@@ -1603,9 +1637,13 @@
      ]
     }
    ],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4,
+    "height_tol_mm": 2.5
+   },
    "solids": 4,
-   "rev": "a032db11",
+   "rev": "0d4ba02d",
    "svg": "canary-local/figures/device.canary-vision.svg",
    "glyph": "canary-local/figures/device.canary-vision.glyph.svg"
   },
@@ -1673,8 +1711,14 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 74.8,
-    "d": 25.65,
+    "d": 18.5,
     "h": 96.497
+   },
+   "assembled": {
+    "placement": "vision_fitcheck: front at z = base_d",
+    "seams_fig_d": [
+     16.5
+    ]
    },
    "traced_to": [
     {
@@ -1696,9 +1740,13 @@
      ]
     }
    ],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4,
+    "height_tol_mm": 2.5
+   },
    "solids": 4,
-   "rev": "8137e8a1",
+   "rev": "36ad7de9",
    "svg": "canary-local/figures/device.canary-vision-devkit.svg",
    "glyph": "canary-local/figures/device.canary-vision-devkit.glyph.svg"
   },
@@ -1767,8 +1815,15 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 38.2,
-    "d": 47.55,
-    "h": 119.6
+    "d": 30.2,
+    "h": 121.6
+   },
+   "assembled": {
+    "placement": "doorbell_fitcheck: face at z = base_d; body back flush on plate front (T-studs in pockets)",
+    "seams_fig_d": [
+     4,
+     28
+    ]
    },
    "traced_to": [
     {
@@ -1799,9 +1854,13 @@
      ]
     }
    ],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4,
+    "height_tol_mm": 2.5
+   },
    "solids": 5,
-   "rev": "52ba0b9e",
+   "rev": "84e105f0",
    "svg": "canary-local/figures/device.canary-vision-doorbell.svg",
    "glyph": "canary-local/figures/device.canary-vision-doorbell.glyph.svg"
   },
@@ -1926,8 +1985,14 @@
    "sketch_note": null,
    "envelope_mm": {
     "w": 33.7,
-    "d": 19.6,
+    "d": 15.05,
     "h": 36.6
+   },
+   "assembled": {
+    "placement": "wap_fitcheck: lid at z = base_h",
+    "seams_fig_d": [
+     13.05
+    ]
    },
    "traced_to": [
     {
@@ -1949,9 +2014,13 @@
      ]
     }
    ],
-   "drift_guard": null,
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4,
+    "height_tol_mm": 2.5
+   },
    "solids": 3,
-   "rev": "d54f315c",
+   "rev": "85a6140a",
    "svg": "canary-local/figures/device.canary-wap.svg",
    "glyph": "canary-local/figures/device.canary-wap.glyph.svg"
   },
