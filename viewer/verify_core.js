@@ -586,7 +586,15 @@ async function verifyEnvelope(envelope) {
     // Warnings & status.
     if (envelope.provenance.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
     else result.warnings.push('no post-quantum public key; PQ signatures not checked');
-    if (envelope.gaps && envelope.gaps.failure_count > 0) result.warnings.push(`${envelope.gaps.failure_count} failure record(s) present (explicit gaps)`);
+    // failure_count is derived from the artifact at assembly (artifact_hash is signature-bound;
+    // gaps is not), so re-derive it rather than trust the declared value — matches src/envelope.rs.
+    const derivedFailures = ((envelope.artifact && envelope.artifact.batches) || [])
+      .reduce((n, b) => n + ((b.buckets || []).reduce((m, k) => m + ((k.failures || []).length), 0)), 0);
+    const declaredFailures = envelope.gaps ? envelope.gaps.failure_count : undefined;
+    if (declaredFailures !== derivedFailures) {
+      throw new Error(`gaps.failure_count ${declaredFailures} does not match the ${derivedFailures} failure record(s) in the signed artifact`);
+    }
+    if (derivedFailures > 0) result.warnings.push(`${derivedFailures} failure record(s) present (explicit gaps)`);
     if (envelope.disclosure && envelope.disclosure.redactions && envelope.disclosure.redactions.length > 0) result.warnings.push('disclosure contains redactions');
 
     result.sealed_events = sealed.entries.length;

@@ -78,7 +78,9 @@ pub use adapter::{
     SensorAdapter,
 };
 pub use detect::{Detection, DetectionResult, SizeClass};
-pub use envelope::{verify_envelope, EnvelopeReport, EvidenceEnvelope, IntegrityStatus};
+pub use envelope::{
+    verify_envelope, verify_envelope_bytes, EnvelopeReport, EvidenceEnvelope, IntegrityStatus,
+};
 pub use frame::{
     select_inference_backend, BackendSelection, CpuDetector, Detector, DetectorBackend,
     DeviceCapabilities, FrameBuffer, InferenceBackend, InferenceView, RawFrame, StubDetector,
@@ -5161,6 +5163,57 @@ mod tests {
         // Digest must be stable across (de)serialization, and verification must still pass.
         assert_eq!(parsed.whole_envelope_digest, envelope.whole_envelope_digest);
         verify_envelope(&parsed, SignatureMode::Compat)?;
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_bytes_reject_fields_the_schema_does_not_know() -> Result<()> {
+        let envelope = build_test_envelope()?;
+        let clean = serde_json::to_vec(&envelope)?;
+        let (parsed, report) = verify_envelope_bytes(&clean, SignatureMode::Compat)?;
+        assert_eq!(parsed.whole_envelope_digest, envelope.whole_envelope_digest);
+        assert_eq!(report.sealed_events, 2);
+
+        // Serde drops a field it does not know, so the struct-side digest would still
+        // match; the digest over the presented bytes must not.
+        for (path, planted) in [
+            (&["provenance", "operator_note"][..], "planted"),
+            (&["annotation"][..], "planted"),
+            (&["ledgers", "sealed_events", "entries", "0", "note"][..], "planted"),
+        ] {
+            let mut raw: serde_json::Value = serde_json::from_slice(&clean)?;
+            let mut slot = &mut raw;
+            for key in &path[..path.len() - 1] {
+                slot = match key.parse::<usize>() {
+                    Ok(index) => &mut slot[index],
+                    Err(_) => &mut slot[*key],
+                };
+            }
+            slot[path[path.len() - 1]] = serde_json::Value::String(planted.to_string());
+            let err = verify_envelope_bytes(&serde_json::to_vec(&raw)?, SignatureMode::Compat)
+                .unwrap_err();
+            assert!(
+                format!("{err}").contains("whole_envelope_digest mismatch"),
+                "planting at {path:?} was not caught: {err}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_envelope_rejects_a_gap_count_the_artifact_does_not_carry() -> Result<()> {
+        // gaps.failure_count is not signature-bound; the artifact it is derived
+        // from is. A discloser who edits the count (and recomputes the digest)
+        // must be caught by re-derivation, not trusted.
+        let mut envelope = build_test_envelope()?;
+        assert_eq!(envelope.gaps.failure_count, 0, "sanity: a clean seal has no failures");
+        envelope.gaps.failure_count = 1;
+        envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
+        let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();
+        assert!(
+            format!("{err}").contains("does not match the 0 failure record(s)"),
+            "unexpected error: {err}"
+        );
         Ok(())
     }
 

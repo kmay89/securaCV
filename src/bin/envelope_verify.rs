@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 
 use witness_kernel::crypto::signatures::SignatureMode;
-use witness_kernel::{verify_envelope, verify_explain, EvidenceEnvelope, IntegrityStatus};
+use witness_kernel::{verify_envelope_bytes, verify_explain, IntegrityStatus};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -54,11 +54,11 @@ fn main() -> Result<()> {
 
     let bytes = std::fs::read(&args.bundle)
         .with_context(|| format!("failed to read envelope file {}", args.bundle))?;
-    let envelope: EvidenceEnvelope =
-        serde_json::from_slice(&bytes).context("failed to parse evidence envelope JSON")?;
 
-    match verify_envelope(&envelope, mode) {
-        Ok(report) => {
+    // Verified from the presented bytes, not a re-serialized struct: a field this
+    // schema does not know must break the digest, exactly as it does in verify_core.js.
+    match verify_envelope_bytes(&bytes, mode) {
+        Ok((envelope, report)) => {
             let status = match report.status {
                 IntegrityStatus::Ok => "ok",
                 IntegrityStatus::ValidWithWarnings => "valid_with_warnings",
