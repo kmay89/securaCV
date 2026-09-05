@@ -1031,7 +1031,10 @@ mod tests {
             |_| {},
         )
         .expect("runner runs");
-        assert!(!report.chain_valid, "a replayed legacy checkpoint must not pass");
+        assert!(
+            !report.chain_valid,
+            "a replayed legacy checkpoint must not pass"
+        );
         assert!(
             report
                 .error

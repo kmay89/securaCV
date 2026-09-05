@@ -1318,10 +1318,13 @@ mod tests {
             cutoff_event_id: Some(4200),
             signer_public_key: None,
         };
-        assert!(
-            verify_checkpoint_signature(&verifying_key, &inflated, SignatureMode::Compat, None)
-                .is_err()
-        );
+        assert!(verify_checkpoint_signature(
+            &verifying_key,
+            &inflated,
+            SignatureMode::Compat,
+            None
+        )
+        .is_err());
 
         // A checkpoint from before cutoffs were bound signed the bare head: it
         // still verifies, and the verifier says which form held.

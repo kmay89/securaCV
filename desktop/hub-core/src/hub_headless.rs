@@ -290,7 +290,12 @@ mod tests {
     fn hosts_off_this_network_are_refused_however_well_formed() {
         // The companion posts the owner's credentials to whatever passes, so
         // a syntactically fine public host is exactly the one to refuse.
-        for far in ["example.com", "attacker-vps.example", "203.0.113.5", "8.8.8.8"] {
+        for far in [
+            "example.com",
+            "attacker-vps.example",
+            "203.0.113.5",
+            "8.8.8.8",
+        ] {
             assert!(!host_is_local(far), "{far} is not on this network");
             assert!(!valid_host(far), "{far} must be refused");
         }

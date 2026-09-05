@@ -118,7 +118,9 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 if pinned_key.is_some() {
-                    println!("OK: evidence envelope verified against the pinned device key ({status}).");
+                    println!(
+                        "OK: evidence envelope verified against the pinned device key ({status})."
+                    );
                 } else {
                     println!(
                         "OK: evidence envelope is self-consistent ({status}) — every signature checks \

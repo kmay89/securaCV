@@ -288,8 +288,8 @@ mod linux {
                 let keep = fds[1] as libc::c_uint;
                 let mut closed = true;
                 if keep > 3 {
-                    closed &= libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, keep - 1, 0)
-                        == 0;
+                    closed &=
+                        libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, keep - 1, 0) == 0;
                 }
                 closed &= libc::syscall(libc::SYS_close_range, keep + 1, libc::c_uint::MAX, 0) == 0;
                 if !closed {

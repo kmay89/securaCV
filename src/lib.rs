@@ -5179,7 +5179,10 @@ mod tests {
         for (path, planted) in [
             (&["provenance", "operator_note"][..], "planted"),
             (&["annotation"][..], "planted"),
-            (&["ledgers", "sealed_events", "entries", "0", "note"][..], "planted"),
+            (
+                &["ledgers", "sealed_events", "entries", "0", "note"][..],
+                "planted",
+            ),
         ] {
             let mut raw: serde_json::Value = serde_json::from_slice(&clean)?;
             let mut slot = &mut raw;
@@ -5206,7 +5209,10 @@ mod tests {
         // from is. A discloser who edits the count (and recomputes the digest)
         // must be caught by re-derivation, not trusted.
         let mut envelope = build_test_envelope()?;
-        assert_eq!(envelope.gaps.failure_count, 0, "sanity: a clean seal has no failures");
+        assert_eq!(
+            envelope.gaps.failure_count, 0,
+            "sanity: a clean seal has no failures"
+        );
         envelope.gaps.failure_count = 1;
         envelope.whole_envelope_digest = envelope::compute_whole_envelope_digest(&envelope)?;
         let err = verify_envelope(&envelope, SignatureMode::Compat).unwrap_err();

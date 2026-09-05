@@ -144,21 +144,21 @@ jobs:
         env:
           # Free-text dispatch input: through the environment, never
           # interpolated into the script (the same rule sbom.yml states).
-          MINUTES: ${{ github.event.inputs.minutes_per_target || '5' }}
+          MINUTES_PER_TARGET: ${{ github.event.inputs.minutes_per_target || '5' }}
         run: |
           set -euo pipefail
-          minutes="${MINUTES}"
-          case "$minutes" in
-            ''|*[!0-9]*) echo "::error::minutes_per_target must be a whole number, got '${minutes}'"; exit 1 ;;
+          budget_min="${MINUTES_PER_TARGET}"
+          case "$budget_min" in
+            ''|*[!0-9]*) echo "::error::minutes_per_target must be a whole number, got '${budget_min}'"; exit 1 ;;
           esac
-          seconds=$(( minutes * 60 ))
+          seconds=$(( budget_min * 60 ))
           status=0
           for target in $(cargo +nightly fuzz list); do
             mkdir -p "fuzz/corpus/${target}"
             if [ -d "fuzz/seeds/${target}" ]; then
               cp -f "fuzz/seeds/${target}"/* "fuzz/corpus/${target}/" 2>/dev/null || true
             fi
-            echo "--- fuzzing ${target} for ${minutes}m"
+            echo "--- fuzzing ${target} for ${budget_min}m"
             cargo +nightly fuzz run "${target}" -- \
               -max_total_time="${seconds}" -print_final_stats=1 || status=1
           done

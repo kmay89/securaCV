@@ -649,7 +649,9 @@ fn main() -> Result<()> {
                     .to_socket_addrs()
                     .map(|addrs| addrs.into_iter().any(|sa| !sa.ip().is_loopback()))
                     .unwrap_or(false);
-                if resolves_non_loopback && (!authenticated || token_in_cleartext) && !allow_insecure
+                if resolves_non_loopback
+                    && (!authenticated || token_in_cleartext)
+                    && !allow_insecure
                 {
                     return Err(anyhow!(
                         "webhook adapter #{idx}: refusing to bind non-loopback address '{}' \

@@ -621,12 +621,20 @@ mod tests {
     fn base_url_refuses_hosts_off_this_network() {
         // The typed owner credentials go to this URL, so a well-formed public
         // host is the one that must not pass.
-        for far in ["example.com", "example.com:8123", "203.0.113.5", "8.8.8.8:8123"] {
+        for far in [
+            "example.com",
+            "example.com:8123",
+            "203.0.113.5",
+            "8.8.8.8:8123",
+        ] {
             let err = base_url_for_host(far).unwrap_err();
             assert!(err.contains("own network"), "{far:?}: {err}");
         }
         for near in ["hub", "hub-2.lan:8123", "192.168.1.20:8123", "10.0.0.5"] {
-            assert!(base_url_for_host(near).is_ok(), "{near:?} is on this network");
+            assert!(
+                base_url_for_host(near).is_ok(),
+                "{near:?} is on this network"
+            );
         }
     }
 
