@@ -141,7 +141,7 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
   across devices/buckets (`spec/event_contract.md` §6).
 - **REQ-KRNL-014 (Implemented):** Canonical event vocabulary (current): `boundary_crossing_object_large/small`,
   `acoustic_impulse_in_zone`, `presence_in_restricted_zone`, `vehicle_presence_after_hours`,
-  `contact_state_change`, `object_removed_from_zone`, `forced_entry_detected`, plus BLE-discovery
+  `contact_state_change`, `object_removed_from_zone`, `tamper_detected`, `vehicle_arrival_departure`, plus BLE-discovery
   semantic events (`spec/event_contract.md` §10) and tamper-alert records. New types may be added
   **only** via a ruleset change and only if coarse/non-identifying.
 
