@@ -8,7 +8,7 @@
 //! This is the Rust side of the cross-language verifier pair; `viewer/verify_core.js`
 //! implements the identical algorithm and both are pinned to the same fixtures.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, ValueEnum};
 
 use witness_kernel::crypto::signatures::SignatureMode;
@@ -31,6 +31,13 @@ struct Args {
     /// Emit the verification report as JSON on stdout.
     #[arg(long)]
     json: bool,
+
+    /// The device's Ed25519 public key to pin (64 hex chars). With it, "verified"
+    /// means every signature checked against THIS key. Without it the envelope is
+    /// only self-consistent under the key it carries — an attacker's envelope
+    /// under an attacker's key passes that bar — and the verdict says so.
+    #[arg(long, value_name = "HEX")]
+    public_key: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -52,6 +59,18 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let mode: SignatureMode = args.sig_mode.into();
 
+    let pinned_key: Option<[u8; 32]> = match &args.public_key {
+        Some(hex_key) => {
+            let raw = hex::decode(hex_key.trim()).context("--public-key must be hex")?;
+            let key: [u8; 32] = raw
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow!("--public-key must be 32 bytes (64 hex chars)"))?;
+            Some(key)
+        }
+        None => None,
+    };
+
     let bytes = std::fs::read(&args.bundle)
         .with_context(|| format!("failed to read envelope file {}", args.bundle))?;
 
@@ -59,13 +78,35 @@ fn main() -> Result<()> {
     // schema does not know must break the digest, exactly as it does in verify_core.js.
     match verify_envelope_bytes(&bytes, mode) {
         Ok((envelope, report)) => {
+            if let Some(key) = pinned_key {
+                if envelope.provenance.device_public_key != key {
+                    let msg = format!(
+                        "envelope is signed under device key {} but the pinned key is {}",
+                        hex::encode(envelope.provenance.device_public_key),
+                        hex::encode(key)
+                    );
+                    if args.json {
+                        let out = serde_json::json!({ "status": "compromised", "error": msg });
+                        println!("{}", serde_json::to_string_pretty(&out)?);
+                    } else {
+                        eprintln!("COMPROMISED: {msg}");
+                    }
+                    std::process::exit(1);
+                }
+            }
             let status = match report.status {
                 IntegrityStatus::Ok => "ok",
                 IntegrityStatus::ValidWithWarnings => "valid_with_warnings",
             };
+            let device_key = if pinned_key.is_some() {
+                "pinned"
+            } else {
+                "self-attested"
+            };
             if args.json {
                 let out = serde_json::json!({
                     "status": status,
+                    "device_key": device_key,
                     "whole_envelope_digest": envelope.whole_envelope_digest,
                     "sealed_events": report.sealed_events,
                     "break_glass_granted": report.break_glass_granted,
@@ -76,7 +117,16 @@ fn main() -> Result<()> {
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
-                println!("OK: evidence envelope verified ({status}).");
+                if pinned_key.is_some() {
+                    println!("OK: evidence envelope verified against the pinned device key ({status}).");
+                } else {
+                    println!(
+                        "OK: evidence envelope is self-consistent ({status}) — every signature checks \
+                         under the device key the envelope itself carries. Pass --public-key to \
+                         verify against a pinned key."
+                    );
+                }
+                println!("  device key:     {device_key}");
                 println!("  digest:         {}", envelope.whole_envelope_digest);
                 println!("  sealed events:  {}", report.sealed_events);
                 println!(

@@ -17,7 +17,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::io::Read;
-use std::net::UdpSocket;
+use std::net::{IpAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use image::GenericImageView;
@@ -263,6 +263,27 @@ struct UdpEsp32Source {
     connected_at: Option<Instant>,
     frame_count: u64,
     last_error: Option<String>,
+    /// The one sender whose datagrams become frames: `?from=<ip>` on the URL,
+    /// or — when unset — locked to whoever sends first. RTP carries no
+    /// authentication, so without this any host that can reach the port
+    /// injects imagery into the evidence pipeline. A mitigation (UDP can be
+    /// spoofed), not a proof of origin; the HTTP pull mode is the answer on an
+    /// untrusted network.
+    expected_peer: Option<IpAddr>,
+    locked_peer: Option<IpAddr>,
+}
+
+/// `?from=<ip>` on a `udp://` source URL: the only sender to accept frames from.
+fn expected_peer_from_url(url: &Url) -> Result<Option<IpAddr>> {
+    for (key, value) in url.query_pairs() {
+        if key == "from" {
+            let ip: IpAddr = value
+                .parse()
+                .map_err(|_| anyhow!("udp url ?from= must be an IP address, got {value:?}"))?;
+            return Ok(Some(ip));
+        }
+    }
+    Ok(None)
 }
 
 impl UdpEsp32Source {
@@ -272,6 +293,7 @@ impl UdpEsp32Source {
             .ok_or_else(|| anyhow!("udp url missing host"))?;
         let port = url.port().ok_or_else(|| anyhow!("udp url missing port"))?;
         let bind_addr = format!("{}:{}", host, port);
+        let expected_peer = expected_peer_from_url(&url)?;
         Ok(Self {
             config,
             socket: Some(
@@ -283,6 +305,8 @@ impl UdpEsp32Source {
             connected_at: None,
             frame_count: 0,
             last_error: None,
+            expected_peer,
+            locked_peer: None,
         })
     }
 
@@ -305,7 +329,21 @@ impl UdpEsp32Source {
 
         loop {
             let mut packet = vec![0u8; 64 * 1024];
-            let (len, _) = socket.recv_from(&mut packet).context("recv udp packet")?;
+            let (len, src) = socket.recv_from(&mut packet).context("recv udp packet")?;
+            match self.expected_peer.or(self.locked_peer) {
+                Some(allowed) if allowed != src.ip() => {
+                    log::warn!(
+                        "udp esp32 source: dropped {len}-byte datagram from {} (frames come from {allowed} only)",
+                        src.ip()
+                    );
+                    continue;
+                }
+                None => {
+                    log::info!("udp esp32 source: locked to first sender {}", src.ip());
+                    self.locked_peer = Some(src.ip());
+                }
+                Some(_) => {}
+            }
             packet.truncate(len);
             let (payload, marker) = parse_rtp_payload(&packet)?;
 
@@ -476,4 +514,24 @@ fn health_grace(target_fps: u32) -> Duration {
         .checked_div(target_fps)
         .map_or(2_000, |ms| ms.saturating_mul(6));
     Duration::from_millis(base_ms.max(2_000) as u64)
+}
+
+#[cfg(test)]
+mod udp_peer_tests {
+    use super::expected_peer_from_url;
+    use std::net::IpAddr;
+    use url::Url;
+
+    #[test]
+    fn from_query_pins_the_sender_and_rejects_non_addresses() {
+        let url = Url::parse("udp://0.0.0.0:5004?from=192.168.1.50").unwrap();
+        assert_eq!(
+            expected_peer_from_url(&url).unwrap(),
+            Some("192.168.1.50".parse::<IpAddr>().unwrap())
+        );
+        let url = Url::parse("udp://0.0.0.0:5004").unwrap();
+        assert_eq!(expected_peer_from_url(&url).unwrap(), None);
+        let url = Url::parse("udp://0.0.0.0:5004?from=camera.local").unwrap();
+        assert!(expected_peer_from_url(&url).is_err(), "a name is not a pin");
+    }
 }

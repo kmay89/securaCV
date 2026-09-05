@@ -283,13 +283,37 @@ mod linux {
                 // filter cannot deny write()/read() (the pipe needs them), so
                 // an inherited live fd would be a ready-made exfiltration or
                 // log-corruption channel that the syscall denylist can't close.
-                // Best-effort (ENOSYS on very old kernels is ignored); the pipe
-                // write end is preserved so the response can still be sent.
+                // The pipe write end is preserved so the response can still be
+                // sent.
                 let keep = fds[1] as libc::c_uint;
+                let mut closed = true;
                 if keep > 3 {
-                    libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, keep - 1, 0);
+                    closed &= libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, keep - 1, 0)
+                        == 0;
                 }
-                libc::syscall(libc::SYS_close_range, keep + 1, libc::c_uint::MAX, 0);
+                closed &= libc::syscall(libc::SYS_close_range, keep + 1, libc::c_uint::MAX, 0) == 0;
+                if !closed {
+                    // close_range(2) is Linux >= 5.9. On an older kernel (a
+                    // Buster-era Pi, an 18.04 host) it is ENOSYS, and silently
+                    // skipping it would leave every parent descriptor open
+                    // inside the filtered child — so sweep by hand. This must
+                    // run before install_filter(): the filter may deny what
+                    // the sweep needs.
+                    let mut lim = libc::rlimit {
+                        rlim_cur: 0,
+                        rlim_max: 0,
+                    };
+                    let max_fd = if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 {
+                        lim.rlim_cur.min(65_536) as libc::c_int
+                    } else {
+                        1024
+                    };
+                    for fd in 3..max_fd {
+                        if fd as libc::c_uint != keep {
+                            libc::close(fd);
+                        }
+                    }
+                }
             }
             let response = match install_filter().and_then(|_| f()) {
                 Ok(value) => SandboxResponse::Ok(value),

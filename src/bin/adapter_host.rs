@@ -627,6 +627,13 @@ fn main() -> Result<()> {
                 // non-loopback bind. An explicit operator override is honored
                 // for deliberately network-isolated deployments.
                 let authenticated = authed || wc.tls_client_ca.is_some();
+                // A bearer token rides every request in cleartext on a plain-HTTP
+                // bind, so anyone who observes one replays it and forges events —
+                // the very thing this gate exists to stop. Bearer counts only
+                // when TLS terminates here; HMAC (the secret never crosses the
+                // wire) and mutual TLS count regardless.
+                let token_in_cleartext =
+                    matches!(options.auth, WebhookAuth::Bearer(_)) && wc.tls_cert.is_none();
                 let allow_insecure = std::env::var("ADAPTER_WEBHOOK_ALLOW_INSECURE")
                     .map(|v| {
                         let v = v.trim();
@@ -642,14 +649,21 @@ fn main() -> Result<()> {
                     .to_socket_addrs()
                     .map(|addrs| addrs.into_iter().any(|sa| !sa.ip().is_loopback()))
                     .unwrap_or(false);
-                if resolves_non_loopback && !authenticated && !allow_insecure {
+                if resolves_non_loopback && (!authenticated || token_in_cleartext) && !allow_insecure
+                {
                     return Err(anyhow!(
                         "webhook adapter #{idx}: refusing to bind non-loopback address '{}' \
-                         without authentication — an unauthenticated webhook can forge witness \
-                         events. Set auth_token/hmac_secret (or mutual TLS via tls_client_ca), \
-                         bind a loopback address, or set ADAPTER_WEBHOOK_ALLOW_INSECURE=1 to \
-                         override explicitly.",
-                        listen_addr
+                         {} — an unauthenticated webhook can forge witness events. Set \
+                         hmac_secret (or mutual TLS via tls_client_ca, or auth_token together \
+                         with tls_cert/tls_key), bind a loopback address, or set \
+                         ADAPTER_WEBHOOK_ALLOW_INSECURE=1 to override explicitly.",
+                        listen_addr,
+                        if token_in_cleartext {
+                            "with a bearer token over plain HTTP (the token would travel in \
+                             cleartext and be replayable)"
+                        } else {
+                            "without authentication"
+                        }
                     ));
                 }
 
