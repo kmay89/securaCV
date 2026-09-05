@@ -110,50 +110,10 @@ and dashboards. What's left for you is exactly what should be: your cameras'
 RTSP URLs (step 4) and your Canaries' broker login (step 5). Details:
 [`homeassistant_setup.md`](homeassistant_setup.md).
 
-> **The no-hands path (experimental):** if you ticked **"Let this app finish hub
-> setup by itself"** when flashing, skip this whole step — keep the Flasher open
-> and it does it for you. The card carries the self-setup bundle and a
-> maintenance key; the moment the hub answers, the Flasher connects to the hub's
-> service console over your network and installs the broker, the MQTT
-> connection, Frigate, and securaCV, narrating every step in its console. The
-> Pi never needs a monitor — the Flasher's screen is the screen. If a run stops
-> partway it's safe to press "Run self-setup again": it never repeats a
-> finished step. (Manual fallback from that same console:
-> `sh /mnt/boot/CONFIG/securacv/host_provision.sh`.)
->
-> The self-setup can also install **Pi-hole** (recommended, one untick to
-> skip; manual: append `--with pihole`). Why it's paired with securaCV: our
-> promise is devices that don't talk out, and Pi-hole's local DNS log is how
-> you *check* that promise rather than take our word — one page shows every
-> domain every device (Canaries included) asks for, and known ad/tracker
-> domains get refused for the whole house as the side effect. Be clear-eyed
-> about what that costs: to tell you *which* device asked, Pi-hole logs the
-> client's IP (and hostname where the network supplies one) with the domain and
-> the time — never page contents. That log is the feature and it is also a
-> record of your household's lookups, so it stays on the hub, nothing is
-> uploaded, and retention is yours to shorten or switch off in Pi-hole's
-> settings (blocking still works with query logging off). It does nothing at
-> all until you point your router's DNS at the hub's IP.
->
-> **A screen on the hub (optional):** the hub never needs one — but if you've
-> plugged an HDMI display into the Pi (say a 7" 1024x600 IPS touchscreen with
-> USB touch), self-setup can also install **HAOSKiosk** (tick "Also install the
-> hub display" in the Flasher; manual: append `--with display`). It runs a
-> small browser on the hub itself and shows your dashboard on that screen
-> full-screen, touch and all. No vendor cloud and no new account — though it is
-> a real browser, so a dashboard that embeds outside content (a weather card, a
-> remote image) fetches it on the screen exactly as your phone does opening the
-> same dashboard. One step stays yours, and the installer never mints or
-> carries a password: give the screen a **dedicated non-admin user** (Settings
-> → People → Users → Add User — name it `screen`, leave Administrator off; the
-> add-on keeps that password in its configuration, and a screen only needs to
-> view dashboards), then open Settings → Apps → **HAOS Kiosk Display** →
-> Configuration, enter that login, and press Start. Zoom, rotation, and
-> screen-timeout for your particular panel live in the same tab. No screen
-> attached? The add-on simply won't start, and nothing else cares. By hand
-> instead: add `https://github.com/puterboy/HAOS-kiosk` as an app repository
-> and install **HAOS Kiosk Display** from it — same result. Like Frigate and
-> Pi-hole above, it's a community add-on tracking its own upstream releases.
+> Worth a detour later: the **no-hands path** (if you ticked **"Let this app
+> finish hub setup by itself"** when flashing, the Flasher runs this whole
+> step for you), **Pi-hole**, and **a screen on the hub** — see
+> [the appendix](#appendix--worth-knowing-not-on-the-path).
 
 By hand, it's two installs:
 
@@ -315,3 +275,56 @@ left is honest: hardware validation on a real Pi — the Wi-Fi seed, the key
 import, and a full companion-driven install have not yet been watched
 end-to-end on a fresh flash, which is why the Flasher option is labeled
 experimental and this guide keeps the by-hand path.
+
+---
+
+## Appendix — worth knowing, not on the path
+
+Three asides from step 3, moved here so the golden path reads straight
+through. Nothing below is required — each is a detour worth taking once the
+hub is up.
+
+**The no-hands path (experimental):** if you ticked **"Let this app finish hub
+setup by itself"** when flashing, skip all of step 3 — keep the Flasher open
+and it does it for you. The card carries the self-setup bundle and a
+maintenance key; the moment the hub answers, the Flasher connects to the hub's
+service console over your network and installs the broker, the MQTT
+connection, Frigate, and securaCV, narrating every step in its console. The
+Pi never needs a monitor — the Flasher's screen is the screen. If a run stops
+partway it's safe to press "Run self-setup again": it never repeats a
+finished step. (Manual fallback from that same console:
+`sh /mnt/boot/CONFIG/securacv/host_provision.sh`.)
+
+The self-setup can also install **Pi-hole** (recommended, one untick to
+skip; manual: append `--with pihole`). Why it's paired with securaCV: our
+promise is devices that don't talk out, and Pi-hole's local DNS log is how
+you *check* that promise rather than take our word — one page shows every
+domain every device (Canaries included) asks for, and known ad/tracker
+domains get refused for the whole house as the side effect. Be clear-eyed
+about what that costs: to tell you *which* device asked, Pi-hole logs the
+client's IP (and hostname where the network supplies one) with the domain and
+the time — never page contents. That log is the feature and it is also a
+record of your household's lookups, so it stays on the hub, nothing is
+uploaded, and retention is yours to shorten or switch off in Pi-hole's
+settings (blocking still works with query logging off). It does nothing at
+all until you point your router's DNS at the hub's IP.
+
+**A screen on the hub (optional):** the hub never needs one — but if you've
+plugged an HDMI display into the Pi (say a 7" 1024x600 IPS touchscreen with
+USB touch), self-setup can also install **HAOSKiosk** (tick "Also install the
+hub display" in the Flasher; manual: append `--with display`). It runs a
+small browser on the hub itself and shows your dashboard on that screen
+full-screen, touch and all. No vendor cloud and no new account — though it is
+a real browser, so a dashboard that embeds outside content (a weather card, a
+remote image) fetches it on the screen exactly as your phone does opening the
+same dashboard. One step stays yours, and the installer never mints or
+carries a password: give the screen a **dedicated non-admin user** (Settings
+→ People → Users → Add User — name it `screen`, leave Administrator off; the
+add-on keeps that password in its configuration, and a screen only needs to
+view dashboards), then open Settings → Apps → **HAOS Kiosk Display** →
+Configuration, enter that login, and press Start. Zoom, rotation, and
+screen-timeout for your particular panel live in the same tab. No screen
+attached? The add-on simply won't start, and nothing else cares. By hand
+instead: add `https://github.com/puterboy/HAOS-kiosk` as an app repository
+and install **HAOS Kiosk Display** from it — same result. Like Frigate and
+Pi-hole above, it's a community add-on tracking its own upstream releases.

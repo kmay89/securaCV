@@ -39,6 +39,7 @@ survived only if a majority could not. The counts:
 | Landed in the September PRs (first pass) | 78 |
 | Open list items landed in the same PR before merge | 34 |
 | Landed in the follow-up wave (PR #1635, mirror #9, website #184) | 13 in full, 2 in part |
+| Closed by the documentation wave (PR #1647, mirror #11, website #189) | 0 — a fresh docs audit, not this list; see §3 |
 | Still open | 13 in full, 6 in part |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -106,6 +107,67 @@ left — 13 rows in full and 6 in part — is hardware-bound
 (items 2, 22 and the §5 bench steps), Apple-toolchain-bound (5, 6, 13), a
 maintainer decision (30's version spread, 42, 51), or a larger firmware or
 CI refactor (9, 12, 26, 34, 35, 38).
+
+### The documentation wave
+
+A third pass on 2026-09-04 (monorepo PR #1647, mirror PR #11, website PR
+#189) audited the prose itself — the claims in the three repos' docs
+checked against the trees, every markdown link resolved — and fixed what
+it found, with gates so the same rot cannot recur. It closes **none of
+the rows above**: what is still open is hardware-, Apple-, decision- or
+refactor-bound, and a docs pass cannot reach it. (The nearest miss is 51
+— the wave's new mirror brief records `brand/` as mirror-owned, but the
+row's open half, moving those assets to the HACS brands repo and out of
+the mirror, is the maintainer decision it always was.) Recorded here so
+the ledger stays complete:
+
+- **Monorepo (#1647), docs, comments and lint scripts only.** Wrong or
+  stale claims fixed, each verified against the tree: `MAINTAINERS.md`'s
+  CODEOWNERS team that cannot exist on a personal account;
+  `CONTRIBUTING.md`'s HACS release recipe, replaced with the real
+  mirror-PR flow; `SECURITY.md` and `.cargo/audit.toml` citing a c2pa
+  version as newest that no longer was (citations are date-anchored now);
+  `docs/LEGAL.md`'s misplaced Vision MIT license path and swapped
+  copyright holders; the third-party attribution `NOTICE` promised and
+  never appended; a private contact route for the code of conduct; the
+  "without a microphone" claim in the getting-started guide and FAQ (now:
+  loudness envelope, never sound it keeps, hedged for mic-less variants);
+  `docs/frigate_integration.md`'s configuration table against the
+  kernel's `config.yaml`; `docs/v1-roadmap.md`'s pre-promotion OTA bullet
+  and `firmware/FEATURES.md`'s already-shipped open action; and five
+  surviving uses of the banned "-proof" claim, now tamper-evident. Every
+  broken relative link and anchor the audit found is fixed — from the
+  enclosure README's own TOC to strategy doc 24 linking into a sibling
+  checkout of the website repo — and AGENTS.md's unclosed fence (which
+  made GitHub render the Beacon-invariants section as one code block) and
+  stale `chirp_channel.h` path are gone. Two new gates in `lint.yml` hold
+  it: `scripts/lint_md_links.py` (every relative link and `#anchor` in
+  every tracked `.md` resolves) and `scripts/lint_fleet_word.py` (rule 3,
+  deterministic at last).
+- **Mirror (#11).** The two carried files that had drifted — `voice.py`
+  (the WAP `system.integrity` tamper kinds missing from the urgency set)
+  and the timeline card (missing `TAMPER_KIND_METADATA`) — resynced
+  byte-for-byte and proven exact by `check_mirror_sync.py`, making the
+  README's "byte-identical" line true again. The README's standalone test
+  command now works as written and its freshness description matches the
+  workflow; the mirror has its first agent briefs (`AGENTS.md`,
+  `CLAUDE.md`), stating the carried-vs-owned split; and
+  `.github/scripts/lint_readme.py`, wired into `validate.yml`, checks the
+  three mirror-owned prose files — every relative link resolves, no
+  banned bird-group word, no overclaims.
+- **Website (#189).** A root README at last (the repo had none — a GitHub
+  visitor landed on a bare file listing), with its guards in the same
+  commit: the claims tests in `tests/copy-honesty.test.mjs` scan the
+  README now, a new whole-file test bans the bird-group word on every
+  root page, the routed `/tv/` pages, the share-card design and the
+  README (`glossary.html`, where the rule is defined and byte-pinned, is
+  the one exemption), and `tests/md-links.test.mjs` makes every markdown
+  link in the repo resolve. The brief's gaps are closed too:
+  `scad/colorways.json` joins rule 7's carried outputs, the one
+  deliberately un-byte-checked generator (`share-card.jpg`) is documented
+  with its pair rule, the CI-gates table gains the two workflows it
+  omitted, and CLAUDE.md's phantom rule reference now says rule 3 — with
+  all six vendor entrypoints regenerated.
 
 ### P0 — wrong evidence or a broken promise a user would hit
 

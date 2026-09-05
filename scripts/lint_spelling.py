@@ -54,7 +54,13 @@ EXTS = {".rs", ".py", ".js", ".mjs", ".ts", ".c", ".h", ".cpp", ".hpp", ".md",
         # version of this gate, which then reported "US English throughout"
         # while three tracked .ino files still carried banned forms. A gate
         # that advertises repo-wide has to mean it.
-        ".ino"}
+        ".ino",
+        # Same lesson, wider: figures and icons (.svg), Apple property lists
+        # and entitlements, config (.ini/.properties), data tables (.csv),
+        # web manifests and any future .xml are text with words in them.
+        # All scanned clean the day they were added.
+        ".svg", ".webmanifest", ".plist", ".ini", ".properties",
+        ".entitlements", ".csv", ".xml"}
 # Extensionless files that are still source. Same reason as .ino.
 EXTRA_NAMES = {"Makefile", "makefile", "GNUmakefile", "Dockerfile"}
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
@@ -83,6 +89,7 @@ SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
 # This file names the banned forms, so it cannot police itself.
 SKIP_FILES = {"lint_spelling.py"}
 
+# The website's tests/copy-honesty.test.mjs holds the same families for that repo — keep them aligned.
 BANNED = re.compile(
     r"\b("
     # NOT colou?r — the optional u matches "colored", which is the CORRECT
@@ -98,6 +105,7 @@ BANNED = re.compile(
     r"|cancelled|cancelling|uncancelled"
     r"|modelled|modelling"
     r"|levelled|levelling|travelling|signalling|dialling|dialled"
+    r"|bevelled|bevelling"
     r"|catalogue|catalogued|catalogues"
     r"|judgement|judgements|judgemental"
     r"|honour|honours|honoured|honouring"
@@ -105,6 +113,7 @@ BANNED = re.compile(
     r"|mould|moulded|moulding|fibre|fibres|theatre|litre|litres"
     r"|licence|licences|practise|practised|storey|storeys|tyre|tyres"
     r"|aluminium|sceptic|sceptical|cheque|cheques|kerb|kerbs"
+    r"|anodise|anodised|anodising"
     r"|recognise|recognised|recognises|recognising|recognisable|unrecognised"
     r"|organise|organised|organises|organising|organisation|organisations"
     r"|normalise|normalised|normalises|normalising|normalisation"
@@ -115,9 +124,14 @@ BANNED = re.compile(
     r"|generalise|generalised|generalising|generalisation"
     r"|characterise|characterised|characterising|characterisation"
     r"|analyse|analysed|analyser|analysers|analysing"
-    r"|apologise|apologised|summarise|summarised|utilise|utilised"
-    r"|prioritise|prioritised|standardise|standardised|customise|customised"
-    r"|authorise|authorised|civilise|civilised|emphasise|emphasised"
+    r"|realise|realised|realises|realising"
+    r"|apologise|apologised|summarise|summarised|summarising"
+    r"|utilise|utilised|utilising"
+    r"|prioritise|prioritised|prioritising"
+    r"|standardise|standardised|standardising"
+    r"|customise|customised|customising"
+    r"|authorise|authorised|authorising|civilise|civilised"
+    r"|emphasise|emphasised|emphasising"
     # The list is a word list, not a suffix rule, so a family that nobody
     # happened to type is a family that ships. This one did: the enclosure
     # sources carried it four times, and one of those is a trailing comment
@@ -125,6 +139,18 @@ BANNED = re.compile(
     # parses as that control's help text and carries to the website. The
     # lint reported "US English throughout" the whole time.
     r"|equalise|equalised|equalises|equalising|equalisation"
+    r"|randomise|randomised|randomising"
+    r"|serialise|serialised|serialising"
+    r"|synchronise|synchronised|synchronising"
+    r"|minimise|minimised|minimising"
+    r"|maximise|maximised|maximising"
+    r"|finalise|finalised|finalising"
+    r"|visualise|visualised|visualising"
+    r"|categorise|categorised|categorising"
+    r"|harmonise|harmonised|harmonising"
+    r"|memorise|memorised|memorising"
+    r"|stabilise|stabilised|stabilising"
+    r"|sanitise|sanitised|sanitising"
     r"|programme|programmes"
     r")\b",
     re.IGNORECASE,

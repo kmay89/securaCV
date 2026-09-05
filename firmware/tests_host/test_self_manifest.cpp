@@ -126,7 +126,7 @@ static void test_no_fleet() {
 
 // ── a full, maximally-flagged roster fits the firmware's scan-build buffer ───
 static void test_worst_case_fleet_fits() {
-  // The failure this guards: a populated roster serialising past the manifest
+  // The failure this guards: a populated roster serializing past the manifest
   // buffer drops the WHOLE `j` response to {"error":"manifest overflow"} exactly
   // when the fleet is most interesting. Build the worst case — FLEET_ROSTER_MAX
   // peers, each with the widest age (uint32) and every status word — atop a rich
