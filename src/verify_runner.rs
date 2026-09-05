@@ -981,10 +981,14 @@ mod tests {
             crate::crypto::signatures::DOMAIN_CHECKPOINT,
         )
         .unwrap();
+        // A legacy row is Ed25519-only over the bare head. Under the
+        // pqc-signatures build the kernel writes a hybrid checkpoint, so the PQ
+        // columns must go too — a PQ signature over the BOUND message left
+        // beside a head-only Ed25519 one is a corrupt row, not a legacy one.
         kernel
             .conn
             .execute(
-                "UPDATE checkpoints SET signature = ?1",
+                "UPDATE checkpoints SET signature = ?1, pq_signature = NULL, pq_scheme = NULL",
                 rusqlite::params![at_mark.ed25519_signature],
             )
             .unwrap();
@@ -1014,7 +1018,8 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "UPDATE checkpoints SET chain_head_hash = ?1, signature = ?2, cutoff_event_id = ?3",
+            "UPDATE checkpoints SET chain_head_hash = ?1, signature = ?2, cutoff_event_id = ?3, \
+             pq_signature = NULL, pq_scheme = NULL",
             rusqlite::params![
                 older_head.to_vec(),
                 replayed.ed25519_signature,
