@@ -339,7 +339,7 @@ else if (check == "frame_usb_head") {
         frame();
         translate([P[0], -P[4]/2 + P[6] + 0.4, P[1]]) rotate([90, 0, 0])
             linear_extrude(P[6] + (P[5] - P[4])/2 + 2.4)
-                rotate(90) pill2d(P[2], P[3]);
+                rotate(90) pill2d_y(P[2], P[3]);
     }
 }
 else if (check == "frame_btn_window") {
