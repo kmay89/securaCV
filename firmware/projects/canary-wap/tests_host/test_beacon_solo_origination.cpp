@@ -18,6 +18,11 @@
 // that violate the inverse (originator==cosigner) are still rejected (no
 // regression).
 //
+// The origination side has one gate of its own (spec §6.2): solo is for a
+// device with no paired neighbor able to cosign right now. With a fresh
+// cosigner in the set, originate_alert_solo refuses and the operator is sent
+// to the two-device path.
+//
 // The solo path is not a relaxed path: every receive-path check the
 // dual-pubkey path answers to applies here too. The header msg_type must
 // agree with the signed canonical, EXERCISE and BCN_FLAG_IS_EXERCISE imply
@@ -122,6 +127,41 @@ bool would_accept(const std::vector<SetEntry>& set, const Frame& f) {
 
   if (!f.sig_a_valid || !f.sig_b_valid) return false;
   return true;
+}
+
+// ── Origination-side precondition (spec §6.2) ─────────────────────────────
+// Mirrors originate_alert_solo's first gate. The solo path exists for a
+// device with no paired neighbor able to cosign right now, so it is refused
+// whenever pick_cosign_candidate() would return an entry: a non-revoked
+// neighbor with a known X25519 key whose selftest is inside
+// COSIGN_FRESHNESS_MS — or not yet observed since boot, which the firmware
+// reads as unknown rather than stale, the same reading the receive path
+// gives an unobserved selftest.
+constexpr uint32_t COSIGN_FRESHNESS_MS = 600000;
+
+struct Neighbor {
+  uint8_t  trust;
+  bool     has_x25519;
+  uint32_t last_selftest_ms;  // 0 = not observed since boot
+  bool     valid;
+};
+
+bool cosign_candidate_exists(const std::vector<Neighbor>& set, uint32_t now_ms) {
+  for (const auto& e : set) {
+    if (!e.valid) continue;
+    if (e.trust == BCN_TRUST_REVOKED) continue;
+    if (!e.has_x25519) continue;
+    if (e.last_selftest_ms != 0 && now_ms > e.last_selftest_ms &&
+        now_ms - e.last_selftest_ms > COSIGN_FRESHNESS_MS) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool solo_origination_allowed(const std::vector<Neighbor>& set, uint32_t now_ms) {
+  return !cosign_candidate_exists(set, now_ms);
 }
 
 int failures = 0;
@@ -294,6 +334,40 @@ void test_solo_template_must_be_life_safety() {
 
 } // namespace
 
+// ───────────────────────────────────────────────────────────────────────────
+// spec §6.2 — solo is for a device with no fresh paired cosigner
+// ───────────────────────────────────────────────────────────────────────────
+
+void test_solo_refused_while_a_fresh_cosigner_exists() {
+  const uint32_t now = 1000000;
+  const std::vector<Neighbor> none;
+  EXPECT(solo_origination_allowed(none, now), "no paired neighbor at all → solo allowed");
+
+  std::vector<Neighbor> fresh = { {0, true, now - 60000, true} };
+  EXPECT(!solo_origination_allowed(fresh, now),
+         "a fresh paired neighbor with an X25519 key → solo refused; the two-device path is open");
+
+  std::vector<Neighbor> stale = { {0, true, now - (COSIGN_FRESHNESS_MS + 1000), true} };
+  EXPECT(solo_origination_allowed(stale, now),
+         "a neighbor whose selftest is outside the cosign window → solo allowed");
+
+  std::vector<Neighbor> revoked = { {BCN_TRUST_REVOKED, true, now - 60000, true} };
+  EXPECT(solo_origination_allowed(revoked, now), "a revoked neighbor is no cosigner → solo allowed");
+
+  std::vector<Neighbor> legacy = { {0, false, now - 60000, true} };
+  EXPECT(solo_origination_allowed(legacy, now),
+         "a v0.1 entry with no X25519 key cannot take an encrypted COSIGN_REQ → solo allowed");
+
+  std::vector<Neighbor> unseen = { {0, true, 0, true} };
+  EXPECT(!solo_origination_allowed(unseen, now),
+         "a neighbor not heard since boot is unknown, not stale → solo refused");
+
+  std::vector<Neighbor> mixed = { {BCN_TRUST_REVOKED, true, now - 1000, true},
+                                  {0, true, now - (COSIGN_FRESHNESS_MS + 1000), true},
+                                  {0, true, now - 1000, true} };
+  EXPECT(!solo_origination_allowed(mixed, now), "one eligible cosigner among several is enough to refuse");
+}
+
 int main() {
   test_solo_happy_path();
   test_solo_requires_observed_certainty();
@@ -306,6 +380,7 @@ int main() {
   test_solo_header_msg_type_must_match_canonical();
   test_solo_exercise_flag_biconditional();
   test_solo_template_must_be_life_safety();
+  test_solo_refused_while_a_fresh_cosigner_exists();
 
   if (failures == 0) {
     std::printf("All beacon solo origination invariants passed.\n");

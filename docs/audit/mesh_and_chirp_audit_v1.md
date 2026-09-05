@@ -465,14 +465,27 @@ validation at origination, at the cosigner (§6.1 step 3) and on receive (§4),
 and the signed selftest timestamp (§5.3) that makes `SELFTEST_OK` frames
 non-replayable.
 
+Closed in the follow-up pass: the §8 per-pair co-sign budget
+(`MAX_ORIGINATIONS_PER_PAIR_24H`, checked on receive beside the per-pubkey
+bucket; the pair is the two fingerprints in byte order, so trading roles does
+not double the budget; solo frames and drills are not counted against it),
+and §6.2's precondition that solo origination is for a device with no fresh
+paired cosigner (`originate_alert_solo` refuses whenever
+`pick_cosign_candidate()` would succeed, and `/api/beacon/originate-solo`
+names the reason, `paired_cosigner_available`, so the operator is sent to the
+two-device path rather than told "refused").
+
 Still open on this surface: gateway-trust keys are accepted as ordinary
 community cosigners with no upstream CAP attestation (the `.cpp` header
-documents the gap); `MAX_ORIGINATIONS_PER_PAIR_24H` is unimplemented and
-rate-limit state is not rebuilt from the audit log on boot (§8, §11);
-`cancel_active_alarm()` silences locally without originating a
-`BEACON_MSG_CANCEL` while the REST caller is told the cancel succeeded (§10);
-and spec §6.2's "no fresh paired neighbor" precondition on solo origination
-is unenforced.
+documents the gap); rate-limit state is not rebuilt from the audit log on
+boot (§11 — `init()` runs before the wall clock syncs, so the persisted
+entries' ages cannot be judged there; a rebuild deferred to first time sync
+is the shape of the fix); `cancel_active_alarm()` still silences locally
+without originating a `BEACON_MSG_CANCEL` (§10) — the REST reply now says
+exactly that ("silenced on this device only — no network CANCEL was sent")
+instead of "alarm canceled", but the network cancel itself needs the
+dual-signed cosign flow with `msg_type=CANCEL`; and the CANCEL reference is
+the unsigned header nonce (above).
 
 ## 10. Closure traceability — every finding's fix in code
 

@@ -372,8 +372,17 @@ bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
 // COSIGN_RESP back to the originator.
 bool cosign_pending_request(bool confirm);
 
+// True when pick_cosign_candidate() would find a paired neighbor able to
+// take an encrypted COSIGN_REQ right now: non-revoked, X25519 key known,
+// selftest inside COSIGN_FRESHNESS_MS (or not yet observed since boot). The
+// two-device path is open exactly when this is true — and the solo path is
+// closed (spec §6.2). The REST layer checks it first so it can name the
+// reason (`paired_cosigner_available`) instead of a generic refusal.
+bool paired_cosigner_available();
+
 // Solo-degraded origination path (spec §6.2). For genuinely single-device
-// households that have no paired Beacon-set neighbor.
+// households that have no paired Beacon-set neighbor — or none able to
+// cosign right now. Refused whenever paired_cosigner_available() is true.
 //
 // Caller MUST:
 //   - Have the physical BOOT button held DOWN at the moment of this call
@@ -389,6 +398,7 @@ bool cosign_pending_request(bool confirm);
 //   - single Ed25519 signature, copied into both signature slots
 //
 // Returns false if:
+//   - a fresh paired cosigner is available (use originate_alert instead)
 //   - BOOT button is not currently held
 //   - device key self-test fails
 //   - rate limit exceeded
@@ -408,7 +418,11 @@ void set_boot_button_gpio(uint8_t gpio);
 // Step 3 (back on originator, automatic): receive COSIGN_RESP, verify, emit
 // the dual-signed BEACON_MSG_ALERT at hop 0.
 
-// Cancel the currently active alarm originated locally.
+// Silence the active alarm on THIS device only. Does NOT originate a
+// BEACON_MSG_CANCEL (spec §10) — that needs the dual-signed cosign flow with
+// msg_type=CANCEL, not yet built — so paired devices stay in ALARM until the
+// alarm's own `expires`. Any surface that calls this must say exactly that;
+// "canceled" would be a claim the network never saw.
 bool cancel_active_alarm();
 
 // ── Active alarm + audit log ──

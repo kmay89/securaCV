@@ -15,7 +15,9 @@
 //  10. neither signer's selftest older than 36 h (§7.1 step 9)
 //  11. both signatures verify (assumed; we don't link Ed25519 here)
 //  12. |now - effective| <= BEACON_FRESHNESS_S and now <= expires (§7.1 step 4)
-//  13. per-pubkey rate bucket, drills counted separately (AGENTS invariant 10)
+//  13. per-pubkey rate bucket, drills counted separately (AGENTS invariant 10),
+//      then the co-signing pair's own bucket (spec §8; solo frames and drills
+//      are not counted there)
 // then the state effect keyed off the SIGNED msg_type, where CANCEL and
 // UPDATE must name the active alarm's frame nonce (§5.4, §7.2).
 //
@@ -55,6 +57,7 @@ constexpr uint8_t TPL_NOT_BEACON   = 0x00;
 constexpr uint32_t BEACON_FRESHNESS_S = 300;
 constexpr uint32_t SELFTEST_MISSING_MS = 129600000;  // 36 h
 constexpr uint8_t  MAX_ORIGINATIONS_PER_PUBKEY_24H = 5;
+constexpr uint8_t  MAX_ORIGINATIONS_PER_PAIR_24H = 8;
 constexpr size_t   SEEN_FRAME_MAX = 32;
 constexpr size_t   FRAME_ID_SIZE = 32;  // 16 bytes of each signature
 
@@ -198,6 +201,15 @@ struct Receiver {
   };
   std::vector<Rate> rates;
 
+  struct PairRate {
+    uint8_t  fp_lo[DEVICE_FP_SIZE];
+    uint8_t  fp_hi[DEVICE_FP_SIZE];
+    uint32_t window_start_ms;
+    uint8_t  count;
+    bool     valid;
+  };
+  std::vector<PairRate> pair_rates;
+
   bool    alarm_valid = false;
   uint8_t alarm_nonce[BEACON_NONCE_SIZE] = {};
   uint8_t alarm_template = 0;
@@ -249,6 +261,36 @@ struct Receiver {
     return true;
   }
 
+  // Pair key is the two fingerprints in byte order, so (A,B) and (B,A) are
+  // one pair — the point of the limit is the two devices, not the roles.
+  bool pair_rate_check_and_record(const uint8_t* fp_a, const uint8_t* fp_b, uint32_t now_ms) {
+    const uint32_t WINDOW_MS = 86400000;
+    const uint8_t* lo = fp_a;
+    const uint8_t* hi = fp_b;
+    if (std::memcmp(fp_a, fp_b, DEVICE_FP_SIZE) > 0) { lo = fp_b; hi = fp_a; }
+    PairRate* entry = nullptr;
+    for (auto& p : pair_rates) {
+      if (p.valid && std::memcmp(p.fp_lo, lo, DEVICE_FP_SIZE) == 0 &&
+          std::memcmp(p.fp_hi, hi, DEVICE_FP_SIZE) == 0) { entry = &p; break; }
+    }
+    if (!entry) {
+      PairRate p{};
+      std::memcpy(p.fp_lo, lo, DEVICE_FP_SIZE);
+      std::memcpy(p.fp_hi, hi, DEVICE_FP_SIZE);
+      p.valid = true;
+      pair_rates.push_back(p);
+      entry = &pair_rates.back();
+    }
+    if (entry->count == 0 || now_ms - entry->window_start_ms > WINDOW_MS) {
+      entry->window_start_ms = now_ms;
+      entry->count = 1;
+      return true;
+    }
+    if (entry->count >= MAX_ORIGINATIONS_PER_PAIR_24H) return false;
+    entry->count++;
+    return true;
+  }
+
   bool references_active_alarm(const Frame& f) const {
     if (!alarm_valid) return false;
     bool nonzero = false;
@@ -268,6 +310,11 @@ struct Receiver {
     remember_frame(f.sig_id, now_ms);
     const bool is_exercise = (f.canon_msg_type == MSG_EXERCISE);
     if (!rate_check_and_record(f.originator_fp, is_exercise, now_ms)) {
+      return Outcome::RejectedRate;
+    }
+    const bool is_solo = (f.flags & BCN_FLAG_SOLO_ORIGIN) != 0;
+    if (!is_solo && !is_exercise &&
+        !pair_rate_check_and_record(f.originator_fp, f.cosigner_fp, now_ms)) {
       return Outcome::RejectedRate;
     }
     audited++;
@@ -802,6 +849,31 @@ void test_selftest_monotonic_when_clock_unsynced() {
 
 } // namespace
 
+// ───────────────────────────────────────────────────────────────────────────
+// spec §8 — the co-signing pair has a budget of its own
+// ───────────────────────────────────────────────────────────────────────────
+
+void test_pair_budget_caps_co_signed_alerts() {
+  // The per-pubkey bucket charges the originator only, so two devices that
+  // trade roles held 2 x 5 alerts a day between them. §8 caps the PAIR at 8.
+  Receiver rx;
+  rx.set = { mk(0xAA), mk(0xBB), mk(0xCC) };
+  for (int i = 0; i < MAX_ORIGINATIONS_PER_PUBKEY_24H; i++) {
+    EXPECT(rx.receive(mk_frame(0xAA, 0xBB)) == Outcome::Audited,
+           "AA originates, BB cosigns: inside both budgets");
+  }
+  for (int i = 0; i < MAX_ORIGINATIONS_PER_PAIR_24H - MAX_ORIGINATIONS_PER_PUBKEY_24H; i++) {
+    EXPECT(rx.receive(mk_frame(0xBB, 0xAA)) == Outcome::Audited,
+           "roles swapped: BB's own bucket is fresh and the pair still has room");
+  }
+  EXPECT(rx.receive(mk_frame(0xBB, 0xAA)) == Outcome::RejectedRate,
+         "the ninth alert co-signed by the same two devices is refused although BB's budget is not spent");
+  EXPECT(rx.receive(mk_frame(0xBB, 0xCC)) == Outcome::Audited,
+         "BB with a different cosigner is a different pair and still gets through");
+  EXPECT(rx.receive(mk_exercise(0xBB, 0xAA)) == Outcome::Audited,
+         "a drill by the spent pair is banked apart (invariant 10) and not counted against it");
+}
+
 int main() {
   test_happy_path_two_signatures();
   test_reject_single_signature();
@@ -831,6 +903,7 @@ int main() {
 
   test_drills_do_not_exhaust_the_alert_bucket();
   test_alerts_do_not_exhaust_the_drill_bucket();
+  test_pair_budget_caps_co_signed_alerts();
 
   test_template_outside_life_safety_set_rejected();
 

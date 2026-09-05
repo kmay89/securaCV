@@ -134,6 +134,21 @@ struct OriginationRate {
 };
 static OriginationRate g_origination_rate[MAX_BEACON_SET];
 
+// Per-pair co-sign budget (spec §8, MAX_ORIGINATIONS_PER_PAIR_24H). Keyed on
+// the two fingerprints in byte order, so (A,B) and (B,A) are one pair. The
+// per-pubkey bucket above charges the originator only, so two devices that
+// trade roles would otherwise hold twice that budget between them. Solo
+// frames (originator == cosigner) are not a pair and stay on the per-pubkey
+// bucket; drills are banked apart (invariant 10) and are not counted here.
+struct PairRate {
+  uint8_t  fp_lo[DEVICE_FP_SIZE];
+  uint8_t  fp_hi[DEVICE_FP_SIZE];
+  uint32_t window_start_ms;
+  uint8_t  count_in_window;
+  bool     valid;
+};
+static PairRate g_pair_rate[MAX_BEACON_SET];
+
 // Seen-frame ring for receive-path replay dedup (spec §7.1 step 3; §8 sets
 // the horizon at the last 5 minutes). A frame's identity is taken from its
 // two signatures, never from the header nonce: the nonce sits outside
@@ -419,6 +434,55 @@ static bool rate_check_and_record(const uint8_t* fp, bool is_exercise) {
   }
   if (*count >= MAX_ORIGINATIONS_PER_PUBKEY_24H) return false;
   (*count)++;
+  return true;
+}
+
+static bool pair_rate_check_and_record(const uint8_t* fp_a, const uint8_t* fp_b) {
+  const uint32_t now = millis();
+  const uint32_t WINDOW_MS = 86400000;  // 24 h
+  const uint8_t* lo = fp_a;
+  const uint8_t* hi = fp_b;
+  if (memcmp(fp_a, fp_b, DEVICE_FP_SIZE) > 0) { lo = fp_b; hi = fp_a; }
+
+  PairRate* entry = nullptr;
+  for (size_t i = 0; i < MAX_BEACON_SET; i++) {
+    PairRate* p = &g_pair_rate[i];
+    if (p->valid && memcmp(p->fp_lo, lo, DEVICE_FP_SIZE) == 0 &&
+        memcmp(p->fp_hi, hi, DEVICE_FP_SIZE) == 0) {
+      entry = p;
+      break;
+    }
+  }
+  if (!entry) {
+    for (size_t i = 0; i < MAX_BEACON_SET && !entry; i++) {
+      if (!g_pair_rate[i].valid) entry = &g_pair_rate[i];
+    }
+  }
+  if (!entry) {
+    // Table full: take over the pair whose window is oldest. A still-active
+    // pair that loses its slot restarts at 1, which errs toward accepting —
+    // each signer's own per-pubkey bucket still holds.
+    entry = &g_pair_rate[0];
+    for (size_t i = 1; i < MAX_BEACON_SET; i++) {
+      if (now - g_pair_rate[i].window_start_ms > now - entry->window_start_ms) {
+        entry = &g_pair_rate[i];
+      }
+    }
+    entry->valid = false;
+  }
+  if (!entry->valid) {
+    memcpy(entry->fp_lo, lo, DEVICE_FP_SIZE);
+    memcpy(entry->fp_hi, hi, DEVICE_FP_SIZE);
+    entry->valid = true;
+    entry->count_in_window = 0;
+  }
+  if (entry->count_in_window == 0 || now - entry->window_start_ms > WINDOW_MS) {
+    entry->window_start_ms = now;
+    entry->count_in_window = 1;
+    return true;
+  }
+  if (entry->count_in_window >= MAX_ORIGINATIONS_PER_PAIR_24H) return false;
+  entry->count_in_window++;
   return true;
 }
 
@@ -1154,6 +1218,17 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
   const bool is_exercise = (canonical->msg_type == BEACON_MSG_EXERCISE);
   if (!rate_check_and_record(canonical->originator_fp, is_exercise)) return;
 
+  // spec §8: the pair that co-signed has a budget of its own. The per-pubkey
+  // bucket charges the originator only, so two devices trading roles would
+  // otherwise hold twice that budget between them. Solo frames are not a
+  // pair; drills are banked apart (invariant 10) and are not counted here.
+  if (!is_solo && !is_exercise &&
+      !pair_rate_check_and_record(canonical->originator_fp, canonical->cosigner_fp)) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "beacon: rejected frame — this pair's 24 h co-sign budget is spent");
+    return;
+  }
+
   // Record audit entry.
   BeaconAuditEntry entry;
   memset(&entry, 0, sizeof(entry));
@@ -1248,6 +1323,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
 
   memset(g_beacon_set, 0, sizeof(g_beacon_set));
   memset(g_origination_rate, 0, sizeof(g_origination_rate));
+  memset(g_pair_rate, 0, sizeof(g_pair_rate));
   memset(g_seen_frames, 0, sizeof(g_seen_frames));
   memset(g_active_alarm_nonce, 0, sizeof(g_active_alarm_nonce));
   memset(g_last_alert_id, 0, sizeof(g_last_alert_id));
@@ -1447,6 +1523,8 @@ static const BeaconSetEntry* pick_cosign_candidate() {
   return nullptr;
 }
 
+bool paired_cosigner_available() { return pick_cosign_candidate() != nullptr; }
+
 bool originate_alert(BeaconTemplate template_id, BeaconUrgency urgency,
                      BeaconSeverity severity, BeaconCertainty certainty,
                      BeaconDetailSlot detail, uint32_t ttl_minutes) {
@@ -1628,6 +1706,17 @@ bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
                "beacon: solo origination refused — template outside the life-safety set");
     return false;
   }
+
+  // spec §6.2 scopes this path to a device with no paired neighbor able to
+  // cosign right now. If the two-device path is open, it is the path: the
+  // BOOT-button attestation stands in for a second key that is missing, not
+  // for one an operator would rather not ask. Checked before the rate bucket
+  // so being sent to the right path costs nothing.
+  if (paired_cosigner_available()) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "beacon: solo origination refused — a fresh paired cosigner is available; use the two-device path");
+    return false;
+  }
   if (!rate_check_and_record(g_device_fp, /*is_exercise=*/false)) return false;
 
   // ── Physical attestation: BOOT button MUST be held right now ──
@@ -1695,12 +1784,20 @@ bool originate_alert_solo(BeaconTemplate template_id, BeaconUrgency urgency,
   return true;
 }
 
+// Silences the active alarm on THIS device only. Spec §10 has the endpoint
+// behind this originate a BEACON_MSG_CANCEL so every receiver stands down
+// together; that needs the dual-signed cosign flow with msg_type=CANCEL and
+// ref_canceled_nonce set, which is not built yet. Until it is, the caller
+// has to say so (beacon_api.h's handle_cancel does) rather than report a
+// network cancel that never went out — neighbors stay in ALARM until the
+// alarm's own `expires`.
 bool cancel_active_alarm() {
   if (!g_active_alarm_valid) return false;
-  // Build a CANCEL frame referencing the active alarm.
-  // Skeleton: in v0.3 this will also require a cosigner.
   g_active_alarm_valid = false;
   set_state(BEACON_STATE_SUPERVISORY);
+  health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+             "beacon: alarm silenced on this device only — no CANCEL originated; "
+             "paired devices stay in alarm until it expires");
   return true;
 }
 
