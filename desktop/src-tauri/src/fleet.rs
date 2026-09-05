@@ -127,8 +127,9 @@ fn scan_blocking(wait_ms: u64) -> Result<Vec<FleetSighting>, String> {
 /// names, single-label LAN hostnames, or private/loopback/link-local IP
 /// literals. Mirrors the firmware's own local-transport policy
 /// (docs/firmware_ota.md §Transport) — a fleet-book call must never be
-/// steerable at an internet host.
-fn host_is_local(host: &str) -> bool {
+/// steerable at an internet host. `pub(crate)` because the hub commands
+/// (hub.rs) carry the owner's typed credentials and hold to the same rule.
+pub(crate) fn host_is_local(host: &str) -> bool {
     let host = host.trim_matches(['[', ']']);
     if host.is_empty() {
         return false;
@@ -338,19 +339,13 @@ pub async fn device_whoami(
     );
     let seen_fp = match &verdict {
         crate::whoami::Proof::WrongKey { seen_fp, .. } => seen_fp.clone(),
-        _ => {
-            let pk = field("pubkey_hex");
-            if pk.len() == 64 {
-                crate::whoami::pubkey_fingerprint(
-                    &(0..64)
-                        .step_by(2)
-                        .filter_map(|i| u8::from_str_radix(&pk[i..i + 2], 16).ok())
-                        .collect::<Vec<u8>>(),
-                )
-            } else {
-                String::new()
-            }
-        }
+        // The device's own answer is untrusted bytes: decode_hex refuses anything
+        // that is not pure hex before slicing, so a multi-byte character at an even
+        // offset cannot turn a byte-index slice into a panic (and an aborted app).
+        _ => crate::whoami::decode_hex(&field("pubkey_hex"))
+            .filter(|key| key.len() == 32)
+            .map(|key| crate::whoami::pubkey_fingerprint(&key))
+            .unwrap_or_default(),
     };
     let detail = match &verdict {
         crate::whoami::Proof::Answered => {

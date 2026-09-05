@@ -76,6 +76,7 @@ from . import (
     unsigned_trust_attrs,
     valid_device_id,
 )
+from .voice import json_status_online, status_online
 from .health_metrics import (
     canary_sd_replace_recommended,
     replacement_recommended,
@@ -411,14 +412,27 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
-        """Handle status message."""
-        if not mqtt_payload_within_cap(msg.payload):
-            return
-        try:
-            payload = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
-        except UnicodeDecodeError:
-            return
-        self._attr_is_on = payload.lower().strip() in ("online", "1", "true", "connected")
+        """Handle status message.
+
+        The verdict comes from voice.py so this entity and the spoken answer
+        can never disagree about which Canaries are up. JSON first —
+        canary-wap publishes only `{"online":true}` / `{"online":false}`
+        (csi_mqtt.cpp), and reading it as a bare word rendered every live WAP
+        permanently offline — then the bare-word dialect.
+        """
+        data = parse_mqtt_json(msg.payload)
+        if data is not None:
+            self._attr_is_on = json_status_online(data)
+        else:
+            if not mqtt_payload_within_cap(msg.payload):
+                return
+            try:
+                payload = (
+                    msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
+                )
+            except UnicodeDecodeError:
+                return
+            self._attr_is_on = status_online(payload)
         self.async_write_ha_state()
 
 

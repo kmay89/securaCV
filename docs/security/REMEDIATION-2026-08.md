@@ -295,6 +295,17 @@ opposite sides, both now fixed and regression-tested:
   the old gate read as a wipe. Fixed by reconciling the empty-table case against
   the already-verified checkpoint head; a new test exercises a full prune and
   confirms verify passes.
+- **That reconciliation trusted the checkpoint's unsigned cutoff (2026-09
+  follow-up).** The checkpoint signed only its head, so an actor with DB write
+  access could wipe the table, replay an old signed checkpoint, and inflate its
+  `cutoff_event_id` past the mark. Checkpoints now sign
+  `SHA256(tag ‖ chain_head_hash ‖ le64(cutoff_event_id))`
+  (`log::checkpoint_message`); every verifier accepts the legacy bare-head
+  form, but over an empty table a legacy cutoff is trusted only when the
+  checkpoint head equals the mark's head — otherwise a prune cannot be told
+  from a wipe and verify fails closed, saying exactly that. Tests cover the
+  inflated bound cutoff, the legacy-at-the-mark pass, and the replayed legacy
+  checkpoint.
 Also hardened: the concurrent-writer mark advance no longer raises false
 "regression" alarms (benign out-of-order no-op), and the honest-scope docs now
 state the best-effort-lag, durability (`synchronous=full`), and lockstep-rollback

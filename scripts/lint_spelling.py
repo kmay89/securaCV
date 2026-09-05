@@ -59,6 +59,11 @@ EXTS = {".rs", ".py", ".js", ".mjs", ".ts", ".c", ".h", ".cpp", ".hpp", ".md",
 EXTRA_NAMES = {"Makefile", "makefile", "GNUmakefile", "Dockerfile"}
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
              "__pycache__",
+             # Tool caches: mypy's cache serializes typeshed stubs (which spell
+             # `CANCELLED` the way the stdlib does), so a local `mypy` run made
+             # this gate red on files nobody wrote. CI never has them; the
+             # person running both tools locally does.
+             ".mypy_cache", ".pytest_cache", ".ruff_cache",
              # Vendored upstream sources, fetched into the tree by a build and
              # not ours to respell. canary-local/emulator/build.sh clones LVGL,
              # ArduinoJson and arduinolibs into third_party/ before the wasm

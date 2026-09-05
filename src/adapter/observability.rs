@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -53,16 +54,29 @@ pub fn serve_stats(addr: impl ToSocketAddrs, stats: SharedStats) -> Result<()> {
     if let Ok(local) = listener.local_addr() {
         log::info!("adapter stats endpoint bound to {local}");
     }
+    // Bounded like the webhook listener: a connection flood must not spawn
+    // unbounded threads. Past the cap a connection is dropped unanswered — a
+    // scraper simply retries — instead of costing a thread for READ_TIMEOUT.
+    const MAX_LIVE_CONNECTIONS: usize = 32;
+    let live = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
+                if live.fetch_add(1, Ordering::AcqRel) >= MAX_LIVE_CONNECTIONS {
+                    live.fetch_sub(1, Ordering::AcqRel);
+                    log::debug!("stats endpoint at capacity; dropping a connection");
+                    drop(s);
+                    continue;
+                }
                 // One thread per connection so a slow/idle client cannot block other readers
                 // (e.g. Home Assistant) for up to READ_TIMEOUT.
                 let stats = Arc::clone(&stats);
+                let live = Arc::clone(&live);
                 std::thread::spawn(move || {
                     if let Err(e) = handle(s, &stats) {
                         log::debug!("stats connection error: {e}");
                     }
+                    live.fetch_sub(1, Ordering::AcqRel);
                 });
             }
             Err(e) => log::warn!("stats accept error: {e}"),

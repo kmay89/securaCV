@@ -156,13 +156,38 @@ def main():
     # which is sound in one direction: no false positives, and it catches the
     # real mistake — copying a feature list from the flagship onto a board
     # whose posture is deliberately smaller.
+    #
+    # Envs live in two places: firmware/canary/platformio.ini (the canary tree's
+    # dev/release/full/board lanes) and firmware/envs/platformio/*.ini (every
+    # other product's env — canary-wap, -vision, -sense, -display). Both are
+    # read, so no product's env is skipped as "not ours".
+    #
+    # KNOWN GAP, stated so nobody assumes otherwise: this proves only the
+    # NEGATIVE direction. A feature no build enables anywhere still passes,
+    # because featureCatalog's `flag` names are canary-tree spellings and the
+    # other trees name the same capability differently — canary-wap's die-temp
+    # / self-test flag is FEATURE_SYS_MONITOR, not the catalog's
+    # FEATURE_DIAGNOSTICS — so "the flag never appears in this project" is not
+    # evidence of absence. That gap is how canary-sense advertised a battery
+    # gauge and a die-temp sensor it has neither of (fixed 2026-09-05); closing
+    # it properly needs a per-tree flag alias table, not a wider grep.
+    extra_env_sections = {}
+    for extra_ini in sorted((FW / "envs" / "platformio").glob("*.ini")):
+        for name, body in env_sections(extra_ini.read_text()).items():
+            # Only env tables; [common]/[env] base tables would collide with
+            # canary/platformio.ini's, which section 1 above depends on.
+            if name.startswith("env:"):
+                extra_env_sections.setdefault(name, body)
+
     for p in matrix.get("products", []):
         env_name = p.get("build", {}).get("env")
         if not env_name or p.get("hasLevels"):
             continue
-        body = sections.get(f"env:{env_name}")
+        body = sections.get(f"env:{env_name}", extra_env_sections.get(f"env:{env_name}"))
         if body is None:
-            continue  # env lives in another project's ini; not ours to read
+            err(f"product {p['id']}: build.env '{env_name}' is not defined in "
+                f"firmware/canary/platformio.ini or firmware/envs/platformio/*.ini")
+            continue
         # build_unflags lists `-DFEATURE_X=1` to REMOVE an inherited flag; only
         # the build_flags half states what this env compiles.
         flags_body = body.split("build_flags", 1)[1] if "build_flags" in body else ""

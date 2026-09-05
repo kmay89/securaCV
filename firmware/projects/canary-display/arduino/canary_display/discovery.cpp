@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 #include "config.h"     // MODEL (CD_MODEL)
+#include "runtime_config.h"  // cfg().mqtt_user — a credentialed glass never rebinds by referral
 #include "version.h"    // CANARY_FW_VERSION
 #include "log.h"
 #include "fleet_instance.h"  // the_fleet()
@@ -147,6 +148,18 @@ void discovery_clear_broker() {
 
 bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) {
   if (!s_up || !host_out || host_cap == 0) return false;
+
+  // A referral is unauthenticated gossip: anyone on the LAN can advertise a
+  // TXT record or an _mqtt._tcp service. A glass that was given broker
+  // credentials presents them to whatever host it connects to, so adopting a
+  // referral would hand the household's MQTT password to whoever advertised
+  // it. A credentialed glass therefore never rebinds by referral — its broker
+  // moves the way it arrived, through provisioning — and only an anonymous
+  // glass self-heals this way.
+  if (canary::cfg::get().mqtt_user[0] != '\0') {
+    log_line("MDNS", "Broker credentials are set — ignoring LAN referrals (re-provision to move the broker).");
+    return false;
+  }
 
   // 1) Ask the fleet: any SecuraCV device that has a working broker link
   //    gossips it in its TXT records.

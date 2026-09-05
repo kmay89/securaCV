@@ -318,6 +318,69 @@ pub fn compute_whole_envelope_digest(envelope: &EvidenceEnvelope) -> Result<Stri
     Ok(hex::encode(Sha256::digest(&bytes)))
 }
 
+/// The same digest, computed from the JSON a verifier was HANDED rather than from the
+/// struct it parsed. Serde drops fields the schema does not know, so a digest over the
+/// re-serialized struct cannot see a field appended after sealing; this one can. It is
+/// also the input `viewer/verify_core.js` hashes, so both verifiers agree on tampered
+/// input, not only on clean input.
+pub fn compute_whole_envelope_digest_from_json(raw: &Value) -> Result<String> {
+    let mut value = raw.clone();
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("envelope must be a JSON object"))?;
+    obj.remove("whole_envelope_digest");
+    let artifact_hash = raw
+        .pointer("/export_receipt_entry/receipt/artifact_hash")
+        .ok_or_else(|| anyhow!("envelope lacks export_receipt_entry.receipt.artifact_hash"))?;
+    let artifact_hash_hex = match artifact_hash {
+        Value::Array(items) => {
+            let mut bytes = Vec::with_capacity(items.len());
+            for item in items {
+                let byte = item
+                    .as_u64()
+                    .filter(|b| *b <= u64::from(u8::MAX))
+                    .ok_or_else(|| anyhow!("artifact_hash must be an array of bytes"))?;
+                bytes.push(byte as u8);
+            }
+            hex::encode(bytes)
+        }
+        Value::String(hex_str) => hex_str.to_ascii_lowercase(),
+        _ => return Err(anyhow!("artifact_hash must be an array of bytes")),
+    };
+    obj.insert("artifact".to_string(), Value::String(artifact_hash_hex));
+    let bytes = canonical_json::to_canonical_bytes(&value)?;
+    Ok(hex::encode(Sha256::digest(&bytes)))
+}
+
+/// Parse and verify an envelope from the bytes a caller was handed: the digest over those
+/// bytes first (see [`compute_whole_envelope_digest_from_json`]), then the full
+/// [`verify_envelope`] over the parsed struct. Anything that receives an envelope from
+/// outside the process goes through here; `verify_envelope` alone trusts that its caller
+/// already holds a faithful struct.
+pub fn verify_envelope_bytes(
+    bytes: &[u8],
+    mode: SignatureMode,
+) -> Result<(EvidenceEnvelope, EnvelopeReport)> {
+    let raw: Value = serde_json::from_slice(bytes)
+        .map_err(|e| anyhow!("failed to parse evidence envelope JSON: {e}"))?;
+    let stored = raw
+        .get("whole_envelope_digest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("envelope lacks a whole_envelope_digest"))?;
+    let presented = compute_whole_envelope_digest_from_json(&raw)?;
+    if presented != stored {
+        return Err(anyhow!(
+            "whole_envelope_digest mismatch over the presented bytes: computed={}, stored={}",
+            presented,
+            stored
+        ));
+    }
+    let envelope: EvidenceEnvelope = serde_json::from_value(raw)
+        .map_err(|e| anyhow!("failed to parse evidence envelope JSON: {e}"))?;
+    let report = verify_envelope(&envelope, mode)?;
+    Ok((envelope, report))
+}
+
 // --------------------------------------------------------------------------
 // Verification
 // --------------------------------------------------------------------------
@@ -430,16 +493,28 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     )?;
 
     // 4. Checkpoint signature — by whichever lineage key was current when the
-    // checkpoint was written.
+    // checkpoint was written. The cutoff-bound message first (log::checkpoint_message),
+    // then the legacy bare head for checkpoints written before the cutoff was bound.
     if let Some(cp) = envelope.ledgers.checkpoints.latest.as_ref() {
+        let bound = crate::log::checkpoint_message(&cp.chain_head_hash, cp.cutoff_event_id);
         verify_entry_signature_any_of(
             &lineage_keys,
-            &cp.chain_head_hash,
+            &bound,
             &cp.signatures,
             mode,
             pq_key.as_ref(),
             DOMAIN_CHECKPOINT,
         )
+        .or_else(|_| {
+            verify_entry_signature_any_of(
+                &lineage_keys,
+                &cp.chain_head_hash,
+                &cp.signatures,
+                mode,
+                pq_key.as_ref(),
+                DOMAIN_CHECKPOINT,
+            )
+        })
         .map_err(|e| {
             anyhow::Error::new(verify::VerifyFailure {
                 ledger: verify::FailedLedger::Checkpoint,
@@ -603,10 +678,28 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     } else if !has_pq_material {
         warnings.push("no post-quantum public key; PQ signatures not checked".to_string());
     }
-    if envelope.gaps.failure_count > 0 {
+    // `failure_count` is machine-derived from the artifact at assembly, and the
+    // artifact is what the receipt signature binds (artifact_hash); `gaps` is not.
+    // Re-derive it so a discloser cannot zero the declared count and quiet the
+    // explicit-gaps warning. verify_core.js makes the same check.
+    let derived_failure_count: u64 = envelope
+        .artifact
+        .batches
+        .iter()
+        .flat_map(|b| b.buckets.iter())
+        .map(|bucket| bucket.failures.len() as u64)
+        .sum();
+    if derived_failure_count != envelope.gaps.failure_count {
+        return Err(anyhow!(
+            "gaps.failure_count {} does not match the {} failure record(s) in the signed artifact",
+            envelope.gaps.failure_count,
+            derived_failure_count
+        ));
+    }
+    if derived_failure_count > 0 {
         warnings.push(format!(
             "{} failure record(s) present (explicit gaps)",
-            envelope.gaps.failure_count
+            derived_failure_count
         ));
     }
     if !envelope.disclosure.redactions.is_empty() {

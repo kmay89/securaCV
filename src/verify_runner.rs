@@ -255,7 +255,7 @@ fn run_inner(
     };
     let chain_key = verifying_key_from_bytes(&chain_key_bytes)?;
     let checkpoint_key = verifying_key_from_bytes(&checkpoint_key_bytes)?;
-    verify::verify_checkpoint_signature(
+    let checkpoint_binding = verify::verify_checkpoint_signature(
         &checkpoint_key,
         &checkpoint,
         signature_mode,
@@ -350,10 +350,38 @@ fn run_inner(
         let (newest_id, newest_head) = crate::log::high_water_mark::read_live_head(conn)?;
         let (live_high, live_head): (i64, Option<[u8; 32]>) = match newest_id {
             Some(id) => (id, newest_head),
-            None => (
-                checkpoint.cutoff_event_id.unwrap_or(0),
-                checkpoint.chain_head_hash,
-            ),
+            // The checkpoint's cutoff stands in for the live high only when its
+            // signature binds it. A legacy checkpoint's cutoff is an unsigned
+            // column: a no-key actor who wiped the table could replay an old
+            // signed checkpoint with an inflated cutoff and pass as a prune that
+            // advanced past the mark. For a legacy checkpoint the one case its
+            // signed head itself proves is the prune that stopped exactly at the
+            // mark; anything else cannot be told from a wipe, and the mark was
+            // deployed to say so.
+            None => match checkpoint_binding {
+                verify::CheckpointBinding::CutoffSigned => (
+                    checkpoint.cutoff_event_id.unwrap_or(0),
+                    checkpoint.chain_head_hash,
+                ),
+                _ if checkpoint.chain_head_hash == Some(hwm.head_hash) => {
+                    (hwm.seq as i64, checkpoint.chain_head_hash)
+                }
+                _ => {
+                    return Err(anyhow::Error::new(verify::VerifyFailure {
+                        ledger: verify::FailedLedger::HighWaterMark,
+                        entry_id: None,
+                        kind: verify::FailureKind::HighWaterRegression,
+                        detail: format!(
+                            "sealed-log table is empty and the checkpoint does not sign its \
+                             cutoff (written before cutoffs were bound), so its cutoff {} cannot \
+                             stand in for the live high against the signed high-water {}: a \
+                             full-retention prune cannot be told from a wipe",
+                            checkpoint.cutoff_event_id.unwrap_or(0),
+                            hwm.seq
+                        ),
+                    }));
+                }
+            },
         };
         let live_high = live_high.max(0) as u64;
 
@@ -858,6 +886,169 @@ mod tests {
             report.error
         );
         assert!(report.high_water_mark_checked);
+    }
+
+    /// Two sealed events, a mark signed at the tip, then a full-retention prune
+    /// (which writes a cutoff-bound checkpoint and empties the table). Returns
+    /// the mark, the entry hash of the FIRST event (an "older head" for the
+    /// replay case) and the open kernel for the caller to tamper with.
+    fn prune_everything_under_a_mark(
+        kernel: &mut Kernel,
+    ) -> (crate::HighWaterMark, [u8; 32], ed25519_dalek::SigningKey) {
+        write_test_event(kernel);
+        write_test_event(kernel);
+        let sk = signing_key_from_seed(TEST_SEED).unwrap();
+        let (newest_id, head) = crate::log::high_water_mark::read_live_head(&kernel.conn).unwrap();
+        let mark = crate::HighWaterMark::sign(
+            newest_id.expect("has events") as u64,
+            head.expect("has events"),
+            600,
+            &device_signature_keys(&sk),
+        )
+        .unwrap();
+        let first_hash: Vec<u8> = kernel
+            .conn
+            .query_row(
+                "SELECT entry_hash FROM sealed_events ORDER BY id ASC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut older_head = [0u8; 32];
+        older_head.copy_from_slice(&first_hash);
+        kernel
+            .conn
+            .execute("UPDATE sealed_events SET created_at = 1", [])
+            .unwrap();
+        kernel
+            .enforce_retention_with_checkpoint(std::time::Duration::from_secs(1))
+            .unwrap();
+        (mark, older_head, sk)
+    }
+
+    #[test]
+    fn high_water_mark_rejects_an_inflated_cutoff_on_a_bound_checkpoint() {
+        // The empty-table branch lets the checkpoint's cutoff stand in for the
+        // live high. Inflating it used to pass as a prune that advanced past
+        // the mark; now the cutoff is in the signed message, so it cannot move.
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        let (mark, _, _) = prune_everything_under_a_mark(&mut kernel);
+        kernel
+            .conn
+            .execute(
+                "UPDATE checkpoints SET cutoff_event_id = cutoff_event_id + 100",
+                [],
+            )
+            .unwrap();
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(!report.chain_valid, "an inflated cutoff must not verify");
+        assert!(
+            report
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("checkpoint signature"),
+            "{:?}",
+            report.error
+        );
+    }
+
+    #[test]
+    fn legacy_checkpoint_cutoff_is_not_trusted_over_an_empty_table() {
+        // A checkpoint from before cutoffs were bound signs only its head. Left
+        // exactly at the mark it still verifies (the head proves the prune
+        // stopped there); replayed as an OLDER head with an inflated cutoff —
+        // the wipe dressed as a prune — it must not.
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        let (mark, older_head, sk) = prune_everything_under_a_mark(&mut kernel);
+        let keys = device_signature_keys(&sk);
+        let at_mark = crate::log::sign_entry(
+            &keys,
+            &mark.head_hash,
+            crate::crypto::signatures::DOMAIN_CHECKPOINT,
+        )
+        .unwrap();
+        // A legacy row is Ed25519-only over the bare head. Under the
+        // pqc-signatures build the kernel writes a hybrid checkpoint, so the PQ
+        // columns must go too — a PQ signature over the BOUND message left
+        // beside a head-only Ed25519 one is a corrupt row, not a legacy one.
+        kernel
+            .conn
+            .execute(
+                "UPDATE checkpoints SET signature = ?1, pq_signature = NULL, pq_scheme = NULL",
+                rusqlite::params![at_mark.ed25519_signature],
+            )
+            .unwrap();
+        drop(kernel);
+
+        let conn = open_encrypted(db.path());
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(
+            report.chain_valid,
+            "a legacy prune that stopped at the mark still verifies: {:?}",
+            report.error
+        );
+        assert!(report.high_water_mark_checked);
+
+        let replayed = crate::log::sign_entry(
+            &keys,
+            &older_head,
+            crate::crypto::signatures::DOMAIN_CHECKPOINT,
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE checkpoints SET chain_head_hash = ?1, signature = ?2, cutoff_event_id = ?3, \
+             pq_signature = NULL, pq_scheme = NULL",
+            rusqlite::params![
+                older_head.to_vec(),
+                replayed.ed25519_signature,
+                mark.seq as i64 + 100
+            ],
+        )
+        .unwrap();
+        let report = run_full_verify_with_high_water_mark(
+            &conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            Some(&mark),
+            |_| {},
+        )
+        .expect("runner runs");
+        assert!(
+            !report.chain_valid,
+            "a replayed legacy checkpoint must not pass"
+        );
+        assert!(
+            report
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("cannot be told from a wipe"),
+            "{:?}",
+            report.error
+        );
     }
 
     #[test]

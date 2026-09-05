@@ -573,6 +573,7 @@ async function boot() {
   // The embedded isometric room (Overview) posts a slug when a station's tool is
   // tapped; route it through the same allowlist sanitizer before navigating.
   window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin) return; // the room is our own iframe
     const d = e.data;
     if (d && d.source === "canary-room" && typeof d.slug === "string") navigate(routeId(d.slug));
   });

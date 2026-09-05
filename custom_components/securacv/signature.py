@@ -26,6 +26,11 @@ import binascii
 import logging
 from typing import Any, Optional
 
+# `cryptography` is a Home Assistant core dependency, pinned by HA itself, so
+# it is deliberately NOT listed in manifest.json's `requirements`: an
+# integration-level pin would fight HA's own on every core upgrade, and it is
+# importable in every HA install this integration can load into. If HA ever
+# drops it from core, this import is the loud failure that says so.
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
 

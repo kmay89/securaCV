@@ -357,7 +357,8 @@ EOF
     [ -n "${FRIGATE_CAMERAS:-}" ] && bridge_args+=(--cameras "$FRIGATE_CAMERAS")
     [ -n "${FRIGATE_LABELS:-}" ] && bridge_args+=(--labels "$FRIGATE_LABELS")
     [ -n "${MQTT_USERNAME:-}" ] && bridge_args+=(--mqtt-username "$MQTT_USERNAME")
-    [ -n "${MQTT_PASSWORD:-}" ] && bridge_args+=(--mqtt-password "$MQTT_PASSWORD")
+    # MQTT_PASSWORD stays in the environment (clap reads it there) — never on
+    # argv, which anything in the container can read from /proc/<pid>/cmdline.
 
     frigate_bridge "${bridge_args[@]}" &
     pids+=($!)
@@ -389,7 +390,8 @@ EOF
             --verify-interval-secs "${VERIFY_INTERVAL_SECS:-86400}"
         )
         [ -n "${MQTT_USERNAME:-}" ] && pub_args+=(--mqtt-username "$MQTT_USERNAME")
-        [ -n "${MQTT_PASSWORD:-}" ] && pub_args+=(--mqtt-password "$MQTT_PASSWORD")
+        # MQTT_PASSWORD stays in the environment (clap reads it there) — never
+        # on argv; see frigate_bridge above.
         event_mqtt_bridge "${pub_args[@]}" &
         pids+=($!)
         log "event_mqtt_bridge started (PID ${pids[-1]})"

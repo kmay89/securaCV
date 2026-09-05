@@ -17,6 +17,17 @@
 // Solo frames that violate ANY of these are rejected. Dual-pubkey frames
 // that violate the inverse (originator==cosigner) are still rejected (no
 // regression).
+//
+// The origination side has one gate of its own (spec §6.2): solo is for a
+// device with no paired neighbor able to cosign right now. With a fresh
+// cosigner in the set, originate_alert_solo refuses and the operator is sent
+// to the two-device path.
+//
+// The solo path is not a relaxed path: every receive-path check the
+// dual-pubkey path answers to applies here too. The header msg_type must
+// agree with the signed canonical, EXERCISE and BCN_FLAG_IS_EXERCISE imply
+// each other, and the template must be in the life-safety set — so a
+// captured solo drill cannot be rebroadcast as a solo alert.
 
 #include <cstdint>
 #include <cstdio>
@@ -30,8 +41,30 @@ constexpr uint8_t BCN_MAGIC = 0xB1;
 constexpr uint8_t BCN_SCOPE_PRIVATE = 2;
 constexpr uint8_t BCN_TRUST_REVOKED = 2;
 constexpr uint8_t BCN_FLAG_SOLO_ORIGIN = 0x04;
+constexpr uint8_t BCN_FLAG_IS_EXERCISE = 0x01;
 constexpr uint8_t BCN_CERT_OBSERVED = 0;
 constexpr uint8_t BCN_CERT_LIKELY   = 1;
+
+constexpr uint8_t MSG_ALERT    = 0;
+constexpr uint8_t MSG_CANCEL   = 2;
+constexpr uint8_t MSG_EXERCISE = 3;
+
+constexpr uint8_t TPL_FIRE_VISIBLE = 0x20;
+// 0x00 is CHIRP_TPL_AUTH_POLICE_ACTIVITY in Chirp's numbering — a category
+// Beacon excludes by design (spec §4).
+constexpr uint8_t TPL_NOT_BEACON   = 0x00;
+
+bool is_valid_beacon_template(uint8_t id) {
+  switch (id) {
+    case 0x10: case 0x12:
+    case 0x20: case 0x21: case 0x22: case 0x23: case 0x24:
+    case 0x30: case 0x31: case 0x32:
+    case 0x80: case 0x81: case 0x82:
+      return true;
+    default:
+      return false;
+  }
+}
 
 struct SetEntry {
   uint8_t fp[DEVICE_FP_SIZE];
@@ -41,8 +74,11 @@ struct SetEntry {
 
 struct Frame {
   uint8_t  magic;
+  uint8_t  hdr_msg_type;
   uint8_t  flags;
   uint8_t  scope;
+  uint8_t  canon_msg_type;
+  uint8_t  template_id;
   uint8_t  certainty;
   uint8_t  originator_fp[DEVICE_FP_SIZE];
   uint8_t  cosigner_fp[DEVICE_FP_SIZE];
@@ -63,6 +99,13 @@ const SetEntry* find_in_set(const std::vector<SetEntry>& s, const uint8_t* fp) {
 bool would_accept(const std::vector<SetEntry>& set, const Frame& f) {
   if (f.magic != BCN_MAGIC) return false;
   if (f.scope != BCN_SCOPE_PRIVATE) return false;
+
+  // Only the canonical is signed, so the header msg_type must agree with it.
+  if (f.canon_msg_type != f.hdr_msg_type) return false;
+  // spec §5.4: EXERCISE <=> BCN_FLAG_IS_EXERCISE, in both directions.
+  const bool exercise_flag = (f.flags & BCN_FLAG_IS_EXERCISE) != 0;
+  if ((f.canon_msg_type == MSG_EXERCISE) != exercise_flag) return false;
+  if (!is_valid_beacon_template(f.template_id)) return false;
 
   const bool is_solo = (f.flags & BCN_FLAG_SOLO_ORIGIN) != 0;
   if (is_solo) {
@@ -86,6 +129,41 @@ bool would_accept(const std::vector<SetEntry>& set, const Frame& f) {
   return true;
 }
 
+// ── Origination-side precondition (spec §6.2) ─────────────────────────────
+// Mirrors originate_alert_solo's first gate. The solo path exists for a
+// device with no paired neighbor able to cosign right now, so it is refused
+// whenever pick_cosign_candidate() would return an entry: a non-revoked
+// neighbor with a known X25519 key whose selftest is inside
+// COSIGN_FRESHNESS_MS — or not yet observed since boot, which the firmware
+// reads as unknown rather than stale, the same reading the receive path
+// gives an unobserved selftest.
+constexpr uint32_t COSIGN_FRESHNESS_MS = 600000;
+
+struct Neighbor {
+  uint8_t  trust;
+  bool     has_x25519;
+  uint32_t last_selftest_ms;  // 0 = not observed since boot
+  bool     valid;
+};
+
+bool cosign_candidate_exists(const std::vector<Neighbor>& set, uint32_t now_ms) {
+  for (const auto& e : set) {
+    if (!e.valid) continue;
+    if (e.trust == BCN_TRUST_REVOKED) continue;
+    if (!e.has_x25519) continue;
+    if (e.last_selftest_ms != 0 && now_ms > e.last_selftest_ms &&
+        now_ms - e.last_selftest_ms > COSIGN_FRESHNESS_MS) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool solo_origination_allowed(const std::vector<Neighbor>& set, uint32_t now_ms) {
+  return !cosign_candidate_exists(set, now_ms);
+}
+
 int failures = 0;
 #define EXPECT(cond, msg) do { \
     if (!(cond)) { std::fprintf(stderr, "FAIL: %s (line %d)\n", msg, __LINE__); failures++; } \
@@ -105,6 +183,9 @@ Frame mk_solo(uint8_t prefix, uint8_t certainty = BCN_CERT_OBSERVED,
   f.magic = BCN_MAGIC;
   f.scope = BCN_SCOPE_PRIVATE;
   f.flags = BCN_FLAG_SOLO_ORIGIN;
+  f.hdr_msg_type = MSG_ALERT;
+  f.canon_msg_type = MSG_ALERT;
+  f.template_id = TPL_FIRE_VISIBLE;
   f.certainty = certainty;
   std::memset(f.originator_fp, prefix, DEVICE_FP_SIZE);
   std::memset(f.cosigner_fp,   prefix, DEVICE_FP_SIZE);
@@ -171,6 +252,9 @@ void test_dual_with_collapsed_signers_still_rejected() {
   f.magic = BCN_MAGIC;
   f.scope = BCN_SCOPE_PRIVATE;
   f.flags = 0;  // NOT solo
+  f.hdr_msg_type = MSG_ALERT;
+  f.canon_msg_type = MSG_ALERT;
+  f.template_id = TPL_FIRE_VISIBLE;
   f.certainty = BCN_CERT_LIKELY;
   std::memset(f.originator_fp, 0xAA, DEVICE_FP_SIZE);
   std::memset(f.cosigner_fp,   0xAA, DEVICE_FP_SIZE);  // collapsed
@@ -187,6 +271,9 @@ void test_dual_still_works() {
   f.magic = BCN_MAGIC;
   f.scope = BCN_SCOPE_PRIVATE;
   f.flags = 0;
+  f.hdr_msg_type = MSG_ALERT;
+  f.canon_msg_type = MSG_ALERT;
+  f.template_id = TPL_FIRE_VISIBLE;
   f.certainty = BCN_CERT_LIKELY;
   std::memset(f.originator_fp, 0xAA, DEVICE_FP_SIZE);
   std::memset(f.cosigner_fp,   0xBB, DEVICE_FP_SIZE);
@@ -196,7 +283,90 @@ void test_dual_still_works() {
          "standard dual-pubkey path: two distinct pubkeys still accepted");
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// The solo path answers to the same receive-path checks as the dual path.
+// ───────────────────────────────────────────────────────────────────────────
+
+void test_solo_header_msg_type_must_match_canonical() {
+  std::vector<SetEntry> set = { mk(0xAA) };
+  // A captured solo drill, rebroadcast with the unsigned header byte
+  // rewritten to ALERT. The single signature still verifies in both slots.
+  Frame f = mk_solo(0xAA);
+  f.canon_msg_type = MSG_EXERCISE;
+  f.flags = BCN_FLAG_SOLO_ORIGIN | BCN_FLAG_IS_EXERCISE;
+  f.hdr_msg_type = MSG_ALERT;
+  EXPECT(!would_accept(set, f),
+         "solo drill promoted to ALERT via the unsigned header byte -> rejected");
+
+  Frame g = mk_solo(0xAA);
+  g.canon_msg_type = MSG_CANCEL;
+  g.hdr_msg_type = MSG_ALERT;
+  EXPECT(!would_accept(set, g),
+         "solo CANCEL promoted to ALERT via the unsigned header byte -> rejected");
+}
+
+void test_solo_exercise_flag_biconditional() {
+  std::vector<SetEntry> set = { mk(0xAA) };
+  Frame f = mk_solo(0xAA);
+  f.hdr_msg_type = MSG_EXERCISE;
+  f.canon_msg_type = MSG_EXERCISE;
+  EXPECT(!would_accept(set, f),
+         "solo EXERCISE without BCN_FLAG_IS_EXERCISE -> rejected (spec 5.4)");
+
+  f.flags = BCN_FLAG_SOLO_ORIGIN | BCN_FLAG_IS_EXERCISE;
+  EXPECT(would_accept(set, f), "solo EXERCISE carrying the flag -> accepted");
+
+  Frame g = mk_solo(0xAA);  // real ALERT
+  g.flags = BCN_FLAG_SOLO_ORIGIN | BCN_FLAG_IS_EXERCISE;
+  EXPECT(!would_accept(set, g),
+         "solo ALERT wearing the drill flag -> rejected (no demotion either)");
+}
+
+void test_solo_template_must_be_life_safety() {
+  std::vector<SetEntry> set = { mk(0xAA) };
+  Frame f = mk_solo(0xAA);
+  f.template_id = TPL_NOT_BEACON;
+  EXPECT(!would_accept(set, f),
+         "solo frame carrying a non-Beacon template -> rejected (spec section 4)");
+  f.template_id = 0x99;
+  EXPECT(!would_accept(set, f), "solo frame with a junk template byte -> rejected");
+}
+
 } // namespace
+
+// ───────────────────────────────────────────────────────────────────────────
+// spec §6.2 — solo is for a device with no fresh paired cosigner
+// ───────────────────────────────────────────────────────────────────────────
+
+void test_solo_refused_while_a_fresh_cosigner_exists() {
+  const uint32_t now = 1000000;
+  const std::vector<Neighbor> none;
+  EXPECT(solo_origination_allowed(none, now), "no paired neighbor at all → solo allowed");
+
+  std::vector<Neighbor> fresh = { {0, true, now - 60000, true} };
+  EXPECT(!solo_origination_allowed(fresh, now),
+         "a fresh paired neighbor with an X25519 key → solo refused; the two-device path is open");
+
+  std::vector<Neighbor> stale = { {0, true, now - (COSIGN_FRESHNESS_MS + 1000), true} };
+  EXPECT(solo_origination_allowed(stale, now),
+         "a neighbor whose selftest is outside the cosign window → solo allowed");
+
+  std::vector<Neighbor> revoked = { {BCN_TRUST_REVOKED, true, now - 60000, true} };
+  EXPECT(solo_origination_allowed(revoked, now), "a revoked neighbor is no cosigner → solo allowed");
+
+  std::vector<Neighbor> legacy = { {0, false, now - 60000, true} };
+  EXPECT(solo_origination_allowed(legacy, now),
+         "a v0.1 entry with no X25519 key cannot take an encrypted COSIGN_REQ → solo allowed");
+
+  std::vector<Neighbor> unseen = { {0, true, 0, true} };
+  EXPECT(!solo_origination_allowed(unseen, now),
+         "a neighbor not heard since boot is unknown, not stale → solo refused");
+
+  std::vector<Neighbor> mixed = { {BCN_TRUST_REVOKED, true, now - 1000, true},
+                                  {0, true, now - (COSIGN_FRESHNESS_MS + 1000), true},
+                                  {0, true, now - 1000, true} };
+  EXPECT(!solo_origination_allowed(mixed, now), "one eligible cosigner among several is enough to refuse");
+}
 
 int main() {
   test_solo_happy_path();
@@ -207,6 +377,10 @@ int main() {
   test_solo_requires_signatures_valid();
   test_dual_with_collapsed_signers_still_rejected();
   test_dual_still_works();
+  test_solo_header_msg_type_must_match_canonical();
+  test_solo_exercise_flag_biconditional();
+  test_solo_template_must_be_life_safety();
+  test_solo_refused_while_a_fresh_cosigner_exists();
 
   if (failures == 0) {
     std::printf("All beacon solo origination invariants passed.\n");

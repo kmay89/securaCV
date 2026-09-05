@@ -134,8 +134,9 @@ impl BreakGlassOps for KernelVaultOps {
 /// could leave it at a laxer mode (e.g. `0644`) or, worse, follow a planted
 /// symlink and write the evidence through it. The temp+rename approach gives a
 /// fresh `0600` regular file every time and never writes cleartext through an
-/// existing path.
-fn write_restricted(path: &Path, bytes: &[u8]) -> Result<()> {
+/// existing path. `pub(crate)` because the rotating bearer-token files
+/// (api/mod.rs, break_glass/server.rs) are written under the same rule.
+pub(crate) fn write_restricted(path: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
         use std::io::Write;

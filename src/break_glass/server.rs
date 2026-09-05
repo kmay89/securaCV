@@ -470,22 +470,9 @@ style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'non
 }
 
 fn write_token_file(path: &Path, token: &str) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        f.write_all(format!("{token}\n").as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, format!("{token}\n"))?;
-    }
-    Ok(())
+    // Same rule as the unsealed evidence it guards: a fresh 0600 regular file
+    // every rotation, never written through a pre-existing file or symlink.
+    super::backend::write_restricted(path, format!("{token}\n").as_bytes())
 }
 
 /// Per-IP auth failure lockout with exponential backoff, mirroring the event

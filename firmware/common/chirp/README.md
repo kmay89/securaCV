@@ -13,7 +13,7 @@ which, so the eventual ACTIVE body port targets the right contract instead of re
 
 | Surface | Path | Role | Canonical? |
 |---|---|---|:---:|
-| **`chirp_channel.h`** | `firmware/common/chirp/chirp_channel.h` | **The canonical C-ABI chirp-channel API** (Community Witness Network: ephemeral identity, structured templates, ≤3-hop relay, cooldowns). Consumed by canary-wap (PIO) `firmware/projects/canary-wap/src/main.cpp`. | ✅ |
+| **`chirp_channel.h`** | `firmware/common/chirp/chirp_channel.h` | **The canonical C-ABI chirp-channel API** (Community Witness Network: ephemeral identity, structured templates, ≤3-hop relay, cooldowns). Consumed by canary-wap through `firmware/projects/canary-wap/arduino/canary_wap/` (the one source tree both the Arduino and PlatformIO builds compile — `platformio.ini` points `src_dir` there). | ✅ |
 | `chirp_channel::` (C++) | `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.h` (decls) + `chirp_channel.cpp` (~1480 LOC body) | **Reference implementation** of the same feature, in a C++ namespace embedded in the Arduino lane's mesh header. v0.2 wire format (`PROTOCOL_VERSION = 1`, MAGIC `0xC4`). | reference impl |
 | `chirp_api::` | `firmware/projects/canary-wap/arduino/canary_wap/chirp_api.h` | HTTP/REST handlers **above** the chirp API (web endpoints) — a layer, not a competing core API. | — |
 | `ble_chirp` | `firmware/projects/canary-wap/arduino/canary_wap/ble_chirp.h` | A **separate** BLE-advertisement broadcast-alert feature (different transport). Shares only the word "chirp". | — (unrelated) |

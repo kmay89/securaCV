@@ -398,6 +398,16 @@ def main() -> int:
     rust_matter = rust_match_pairs(
         rust_fn_body(rust_hk, "matter_device_type", "src/bridge/homekit.rs"),
         r'HomeSignal::(\w+) => Some\("([a-z0-9-]+)"\)')
+    # The tile name Apple's Home app shows is NOT the dictionary label — it is
+    # the per-service Name characteristic in src/bridge/hap/accessory.rs. The
+    # generated quickstart named the label ("Motion (person)") for a tile the
+    # bridge publishes as "Person", so a user was told to look for a name that
+    # is not on their screen. Pinned here so the doc cannot say it again.
+    hap_accessory = read("src/bridge/hap/accessory.rs")
+    rust_tile_names = rust_match_pairs(
+        rust_fn_body(hap_accessory, "service_name", "src/bridge/hap/accessory.rs"),
+        r'HomeSignal::(\w+) => "([^"]+)"')
+
     swift_hk = read("ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
     swift_haps = swift_computed_property_map(
         swift_hk, "hapCharacteristic", "ios/Sources/SecuraCV/Native/HomeKitBridge.swift")
@@ -420,6 +430,12 @@ def main() -> int:
         if f'"{s["label"]}"' not in swift_hk:
             err(f"[drift] HomeKitBridge.swift: label {s['label']!r} for "
                 f"{sid!r} missing or reworded (labels mirror the dictionary)")
+        if rust_tile_names.get(rv) != s.get("home_app_name"):
+            err(f"[drift] service_name(HomeSignal::{rv}) (src/bridge/hap/"
+                f"accessory.rs): dictionary home_app_name "
+                f"{s.get('home_app_name')!r} vs code {rust_tile_names.get(rv)!r} "
+                f"— this is the name on the tile in Apple's Home app, and "
+                f"docs/integrations/apple-home-quickstart.md is generated from it")
 
     compare("HomeKitBridge.swift HomeSignal ids vs dictionary",
             hk_ids, swift_enum_raw_values(swift_hk, "HomeSignal",
@@ -459,6 +475,8 @@ def main() -> int:
     # --- Device-signature format constants (Python + every firmware copy) ---
     sig_py = read("custom_components/securacv/signature.py")
     _check_sig("custom_components/securacv/signature.py", sig_py, sig)
+    kinds_found: dict[str, set] = {"custom_components/securacv/signature.py":
+                                   _canonical_kinds(sig_py)}
     for path in sorted(ROOT.glob("firmware/**/*")):
         if path.suffix not in (".h", ".cpp"):
             continue
@@ -466,6 +484,21 @@ def main() -> int:
         # Only files that *define* SIG_PREFIX (constexpr/assignment), not test refs.
         if re.search(r'SIG_PREFIX\s*=\s*"', text):
             _check_sig(str(path.relative_to(ROOT)), text, sig)
+    # The builders themselves live next to the headers that declare them, so
+    # scan the whole firmware tree plus the desktop verifier for canonical
+    # format strings — not just the SIG_PREFIX definers above.
+    for rel in _SIG_KIND_SOURCES:
+        p = ROOT / rel
+        if not p.exists():
+            err(f"[drift] signature_format: {rel} is gone — canonical_kinds "
+                f"can no longer be proved against it; update _SIG_KIND_SOURCES")
+            continue
+        kinds_found[rel] = _canonical_kinds(
+            p.read_text(encoding="utf-8", errors="replace"))
+    _check_canonical_kinds(sig, kinds_found)
+
+    # --- The normative prose must name the same nine kinds as the dictionary ---
+    _check_event_contract(ev_ids)
 
     if ERRORS:
         print("Witness Dictionary drift detected "
@@ -476,6 +509,103 @@ def main() -> int:
         return 1
     print("Witness Dictionary in sync across Rust / Python / JS / firmware / Swift.")
     return 0
+
+
+def _check_event_contract(ev_ids: list) -> None:
+    """Pin spec/event_contract.md's two claim lists to the dictionary.
+
+    The dictionary's own `governance` field says event_contract.md is the
+    normative prose and this file is its machine-readable projection — "where
+    the two disagree, event_contract.md wins and this file is the bug". Nothing
+    checked that, so §5's permitted-claims list quietly grew a tenth entry,
+    `forced_entry_detected`, that existed in no vocabulary and no code; an
+    adapter author following §5 (which spec/sensor_adapter_contract_v0.md sends
+    them to) emitted a claim the kernel refuses. Both the §5 bullet list and
+    the §11 table are now proved against the dictionary's event_types ids.
+    """
+    rel = "spec/event_contract.md"
+    text = read(rel)
+    if not text:
+        return
+    expected = sorted(ev_ids)
+
+    # §5 — bullets between the two subheadings. Strict `- \`id\`` bullets only,
+    # so prose that mentions an id in passing is not mistaken for the list.
+    m = re.search(r"### Permitted Claims \(Good\)(.*?)### Forbidden Claims",
+                  text, re.S)
+    if not m:
+        err(f"[parse] {rel}: could not find §5's 'Permitted Claims (Good)' list "
+            f"— update the linter if the section moved")
+    else:
+        s5 = re.findall(r"^- `([a-z][a-z0-9_]*)`\s*$", m.group(1), re.M)
+        if sorted(s5) != expected:
+            err(f"[drift] {rel} §5 Permitted Claims {sorted(s5)} != dictionary "
+                f"event_types {expected} — §5 is the vocabulary adapter authors "
+                f"are sent to; a claim listed there that the kernel refuses is a "
+                f"trap, and one the kernel accepts but §5 omits is invisible")
+
+    # §11 — the `| \`event_type\` | description |` table.
+    m = re.search(r"## 11\. Sensor Adapter Event Vocabulary(.*?)^## ",
+                  text + "\n## ", re.S | re.M)
+    if not m:
+        err(f"[parse] {rel}: could not find §11's 'Sensor Adapter Event "
+            f"Vocabulary' table — update the linter if the section moved")
+    else:
+        s11 = re.findall(r"^\| `([a-z][a-z0-9_]*)` \|", m.group(1), re.M)
+        if sorted(s11) != expected:
+            err(f"[drift] {rel} §11 table {sorted(s11)} != dictionary "
+                f"event_types {expected}")
+
+
+# Files that BUILD or REBUILD a `securacv-canary-sig|v<n>|<kind>|...` canonical
+# string. The union of the kinds they emit must equal the dictionary's
+# canonical_kinds — that is what stops a whole signed kind from being invented
+# (or, as happened with `whoami`, from existing for months unrecorded).
+# `verified` in this project means an Ed25519 signature checked against a pinned
+# key, so the list of things that get signed is not an optional detail.
+_SIG_KIND_SOURCES = (
+    "firmware/common/identity/device_signature.cpp",
+    "firmware/projects/canary-wap/arduino/canary_wap/device_signature.cpp",
+    "firmware/projects/canary-display/src/trust.cpp",
+    "desktop/src-tauri/src/whoami.rs",
+)
+
+# `SIG_PREFIX|v1|kind|`, in C (`"%s|v%d|chain|..."`), Python
+# (f"{SIG_PREFIX}|v{SCHEMA_V}|chain|...") and Rust (a literal `|v1|whoami|`).
+_CANONICAL_KIND_RE = re.compile(r"\|v(?:%d|\{SCHEMA_V\}|\d+)\|([a-z][a-z0-9_]*)\|")
+
+
+def _canonical_kinds(text: str) -> set:
+    """Kinds this file builds a canonical string for, from the format literals."""
+    return set(_CANONICAL_KIND_RE.findall(text))
+
+
+def _check_canonical_kinds(sig: dict, found: dict) -> None:
+    """Pin signature_format.canonical_kinds to the code that emits the kinds.
+
+    Union-equals, not per-file-equals: a tree may legitimately carry a subset
+    (canary-display's trust.cpp verifies chain heads and nothing else). What is
+    never legitimate is a kind on the wire that the dictionary does not list,
+    or a kind the dictionary lists that nothing implements.
+    """
+    declared = set(sig.get("canonical_kinds", []))
+    if not declared:
+        err("[drift] signature_format.canonical_kinds is empty or missing")
+        return
+    union = set()
+    for rel, kinds in sorted(found.items()):
+        union |= kinds
+        extra = kinds - declared
+        if extra:
+            err(f"[drift] {rel}: signs kind(s) {sorted(extra)} that "
+                f"spec/witness_dictionary.json signature_format.canonical_kinds "
+                f"does not list — add them to the dictionary first (FR-13)")
+    missing = declared - union
+    if missing:
+        err(f"[drift] signature_format.canonical_kinds lists {sorted(missing)}, "
+            f"which no builder emits (searched {', '.join(_SIG_KIND_SOURCES)} "
+            f"and custom_components/securacv/signature.py) — remove it, or point "
+            f"_SIG_KIND_SOURCES at the file that implements it")
 
 
 def _check_sig(rel: str, text: str, sig: dict) -> None:

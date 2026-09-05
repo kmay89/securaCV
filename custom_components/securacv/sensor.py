@@ -106,6 +106,11 @@ def _replay_gate(
     message, however valid its signature. The high-water mark is reset when a
     device is (re)pinned via TOFU (async_record_verify), which is what a
     factory reset looks like from here.
+
+    Marks are carried into the trust store so they survive a reload: MQTT
+    retains the last signed publish, and with an empty mark (`last is None`)
+    a stale retained message verifies as current and seeds the floor back
+    down at its own low value.
     """
     if not verdict.trusted:
         return verdict
@@ -136,6 +141,9 @@ def _replay_gate(
             ),
         )
     marks[field] = counter
+    trust_store = entry_data.get("trust_store")
+    if isinstance(trust_store, TrustStore):
+        trust_store.note_counters(device_id, marks)
     return verdict
 
 

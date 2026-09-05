@@ -471,7 +471,10 @@ if (tv && stage) {
     }, 4000);
   }
 
-  async function connectFleet(url, auto, label) {
+  // `remember` — whether a successful connect becomes the kernel this browser
+  // reconnects to on the next visit. True for the user's own actions and the
+  // embedding host; false for a ?kernel= link, which anyone can hand someone.
+  async function connectFleet(url, auto, label, remember = true) {
     if (!url) return;
     const shown = label || url;
     setStatus('Scanning ' + shown + ' …', 'scan');
@@ -488,7 +491,7 @@ if (tv && stage) {
       liveHost = shown; setLive(true, shown); render(); renderDevices(); showJson(data);
       setStatus('Connected — ' + liveFleet.length + ' Canaries from ' + shown + '. They drive the fleet above now.', 'ok');
       lastNames = liveFleet.map((d) => d.name); startPoll(url);
-      try { if (!/\.json/.test(url)) localStorage.setItem('scv-kernel', url); } catch (e) { /* private mode */ }
+      try { if (remember && !/\.json/.test(url)) localStorage.setItem('scv-kernel', url); } catch (e) { /* private mode */ }
       clearFound(); stopDetect();
     } catch (e) {
       liveFleet = null; liveHost = null; setLive(false); render(); renderDevices(); showJson(null); stopPoll();
@@ -599,9 +602,15 @@ if (tv && stage) {
   // "Go live" offer. (On the public https site the watch is off by design —
   // mixed content makes it unwinnable — and the live demo kernel button
   // always works because it's same-origin.)
-  let boot = null;
-  try { boot = new URLSearchParams(location.search).get('kernel') || localStorage.getItem('scv-kernel'); } catch (e) { /* ignore */ }
-  if (boot) { if (kernelUrl && !/\.json/.test(boot)) kernelUrl.value = boot; connectFleet(boot, true); }
+  // A ?kernel= in the link connects for this visit only: a link is something
+  // anyone can hand someone, so it never becomes the remembered kernel.
+  let boot = null, fromLink = false;
+  try {
+    boot = new URLSearchParams(location.search).get('kernel');
+    fromLink = !!boot;
+    if (!boot) boot = localStorage.getItem('scv-kernel');
+  } catch (e) { /* ignore */ }
+  if (boot) { if (kernelUrl && !/\.json/.test(boot)) kernelUrl.value = boot; connectFleet(boot, true, undefined, !fromLink); }
   else startDetect(true);
 
   // ---------- embed API (host apps: Flasher / Lab) ----------
@@ -617,7 +626,10 @@ if (tv && stage) {
     simulateFlash,
   };
   window.addEventListener('message', (e) => {
-    const d = e && e.data;
+    // Only the window that embeds the wall may drive it. Any page holding a
+    // reference to this window can post here; the host API is the parent's.
+    if (!e || window.parent === window || e.source !== window.parent) return;
+    const d = e.data;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'witness:appear' && d.name) window.witnessWall.appear(d.name, d.label);
     else if (d.type === 'witness:connect' && d.url) window.witnessWall.connect(d.url);

@@ -232,15 +232,46 @@ fn current_ssid() -> Option<String> {
 
 // The saved password for a Wi-Fi network, read from the OS's own store — the
 // macOS Keychain via `security` (the system shows its consent prompt first)
-// or NetworkManager via `nmcli -s` (polkit may prompt). Runs only on an
-// explicit "Use saved" click in the frontend; the value goes straight into
-// the field and is never logged or persisted by the app.
+// or NetworkManager via `nmcli -s` (polkit may prompt). The value goes
+// straight into the field and is never logged or persisted by the app.
+//
+// The "Use saved" click that reaches here is the frontend's word — and a
+// script injected into the webview has the same word, for any SSID it likes.
+// So a native dialog naming the network asks first, and the OS store is read
+// only after a real hand said yes (macOS then adds its Keychain prompt as a
+// second layer; nmcli on Linux would otherwise answer with no prompt at all).
 #[tauri::command]
-fn saved_wifi_password(ssid: String) -> Result<String, String> {
+async fn saved_wifi_password(app: AppHandle, ssid: String) -> Result<String, String> {
     let ssid = ssid.trim().to_string();
     if ssid.is_empty() {
         return Err("type the Wi-Fi name first".to_string());
     }
+    let prompt_app = app.clone();
+    let prompt_ssid = ssid.clone();
+    let approved = tauri::async_runtime::spawn_blocking(move || {
+        prompt_app
+            .dialog()
+            .message(format!(
+                "Fill in the saved password for \u{201c}{prompt_ssid}\u{201d}?\n\n\
+                 It is read from this computer's own password store straight into \
+                 the field — never logged or kept by the app."
+            ))
+            .title("Use the saved Wi-Fi password?")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Use saved password".into(),
+                "Not now".into(),
+            ))
+            .blocking_show()
+    })
+    .await
+    .map_err(|e| format!("couldn't ask: {e}"))?;
+    if !approved {
+        return Err("not filled in — the saved password stays where it is".to_string());
+    }
+    read_saved_wifi_password(ssid)
+}
+
+fn read_saved_wifi_password(ssid: String) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
         let out = std::process::Command::new("security")
@@ -1503,6 +1534,9 @@ async fn backup_flash(
     if flash_size == 0 {
         return Err("couldn't read this chip's flash size — reconnect and try again".into());
     }
+    let out_path = validated_backup_path(&out_path)?
+        .to_string_lossy()
+        .into_owned();
     let _ = app.emit(
         "rescue:log",
         format!(
@@ -1666,7 +1700,15 @@ async fn read_region(
 /// dress one directory up as another), ending in the one extension the
 /// export feature offers (`.json` — the health report). Returns the resolved
 /// path to write.
-fn validated_save_path(path: &str) -> Result<std::path::PathBuf, String> {
+/// A path the webview says came from the OS save panel: absolute, in a folder
+/// that exists (canonicalized, so `..` never survives), with a file name and
+/// the one extension this export writes. Validated, not trusted — a script
+/// injected into the webview can hand a command any path at all.
+fn validated_chosen_path(
+    path: &str,
+    ext: &str,
+    wrong_ext: &str,
+) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(path);
     if !p.is_absolute() {
         return Err("save path must be absolute — pick it in the save dialog".into());
@@ -1674,9 +1716,9 @@ fn validated_save_path(path: &str) -> Result<std::path::PathBuf, String> {
     let ext_ok = p
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+        .is_some_and(|e| e.eq_ignore_ascii_case(ext));
     if !ext_ok {
-        return Err("this app only saves .json exports".into());
+        return Err(wrong_ext.into());
     }
     let name = p
         .file_name()
@@ -1687,6 +1729,17 @@ fn validated_save_path(path: &str) -> Result<std::path::PathBuf, String> {
         .canonicalize()
         .map_err(|e| format!("save folder doesn't exist: {e}"))?;
     Ok(dir.join(name))
+}
+
+fn validated_save_path(path: &str) -> Result<std::path::PathBuf, String> {
+    validated_chosen_path(path, "json", "this app only saves .json exports")
+}
+
+/// The full-flash backup is the identity key and the Wi-Fi secrets in
+/// cleartext, written wherever the webview says — so it gets the same rule as
+/// the JSON export, `.bin` only.
+fn validated_backup_path(path: &str) -> Result<std::path::PathBuf, String> {
+    validated_chosen_path(path, "bin", "a flash backup is saved as a .bin file")
 }
 
 /// Write UTF-8 text to a path the user just chose in the OS save panel — the
@@ -2247,7 +2300,36 @@ mod local_image_tests {
 
 #[cfg(test)]
 mod webview_boundary_tests {
-    use super::{manifest_url_allowed, validated_save_path, DEV_FLASH_MANIFEST_URL};
+    use super::{
+        manifest_url_allowed, validated_backup_path, validated_save_path, DEV_FLASH_MANIFEST_URL,
+    };
+
+    #[test]
+    fn backup_paths_are_validated_not_trusted() {
+        // The backup is the identity key and Wi-Fi secrets in cleartext, so a
+        // webview-supplied destination gets exactly the JSON export's rules.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let good = dir.path().join("canary-backup.bin");
+        let resolved =
+            validated_backup_path(good.to_str().unwrap()).expect("a dialog-shaped path");
+        assert_eq!(resolved.file_name().unwrap(), "canary-backup.bin");
+
+        assert!(validated_backup_path("backup.bin").is_err(), "relative");
+        assert!(
+            validated_backup_path(dir.path().join("backup.json").to_str().unwrap()).is_err(),
+            "only .bin"
+        );
+        assert!(
+            validated_backup_path(dir.path().join("no-such-dir/backup.bin").to_str().unwrap())
+                .is_err(),
+            "missing folder"
+        );
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let sneaky = dir.path().join("sub/../canary-backup.bin");
+        let resolved = validated_backup_path(sneaky.to_str().unwrap()).unwrap();
+        assert!(!resolved.to_string_lossy().contains(".."));
+        assert_eq!(resolved.parent().unwrap(), dir.path().canonicalize().unwrap());
+    }
 
     #[test]
     fn only_the_bundled_manifest_urls_are_fetchable() {

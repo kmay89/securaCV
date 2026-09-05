@@ -12,6 +12,14 @@ for the vocabulary and the pacing, `Cargo.toml` for the feature name,
 `src/bridge/hap/accessory.rs` for whether a signal becomes a tile in the Home
 app or a status badge on one.
 
+One trap this file exists to avoid: the dictionary's `label` is *our* name for
+a signal, mirrored into the Apple apps; the name on the tile is the bridge's
+own `service_name()`, carried in the dictionary as `home_app_name` and pinned
+to that function by `scripts/lint_dictionary_sync.py`. This table used to say
+"Motion (person)" for four tiles the bridge publishes as "Person" / "Vehicle" /
+"Animal" / "Package" — a section headed "What you'll see" naming things the
+user cannot see. Render `home_app_name` for tiles, `label` for the signal.
+
 Restating them in prose is how docs rot. Worse, *this* prose is a privacy
 promise: a doc that still says "person/vehicle/animal/package are off by
 default" after someone flipped that default is not merely stale, it is a lie
@@ -103,8 +111,8 @@ def home_app_rendering(signal: dict, is_status: bool) -> str:
 def signal_table(hk: dict) -> str:
     status = status_signals()
     rows = [
-        "| Signal | In the Home app | On by default |",
-        "|---|---|---|",
+        "| Signal | Tile name in Home | Appears as | On by default |",
+        "|---|---|---|---|",
     ]
     for s in hk["signals"]:
         is_status = s["id"] in status
@@ -114,7 +122,15 @@ def signal_table(hk: dict) -> str:
         # footnote someone skips.
         if s["id"] == "tamper":
             default = "**always** — cannot be turned off"
-        rows.append(f"| {s['label']} | {home_app_rendering(s, is_status)} | {default} |")
+        # The tile name is the bridge's per-service Name characteristic
+        # (accessory.rs::service_name), not our label — telling a reader to
+        # look for "Motion (person)" when the tile says "Person" sends them
+        # hunting for something that is not on the screen. A status signal
+        # hosts no service, so it has no tile of its own to name.
+        tile = "— rides on each tile" if is_status else f"**{s['home_app_name']}**"
+        rows.append(
+            f"| {s['label']} | {tile} | {home_app_rendering(s, is_status)} "
+            f"| {default} |")
     return "\n".join(rows)
 
 

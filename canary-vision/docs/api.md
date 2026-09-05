@@ -377,7 +377,11 @@ curl -X POST \
 
 ### GET /api/v1/update/check
 
-Checks for available firmware updates.
+Reports the running firmware version. The reference server has no update feed
+to consult, and says so — `update_available` is `false` and the digest and
+signature fields are `null` rather than placeholders. (It used to advertise a
+hard-coded "0.4.2" with a made-up sha256 and signature.) Updates arrive by
+`POST /api/v1/update`.
 
 **Request:**
 
@@ -391,12 +395,13 @@ curl -H "X-Canary-Token: cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f" \
 ```json
 {
   "current_version": "0.4.1",
-  "available_version": "0.4.2",
-  "update_available": true,
-  "changelog": "- Fixed WiFi reconnect bug\n- Improved motion detection",
-  "sha256": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
-  "signature": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-  "requires_usb": false
+  "available_version": null,
+  "update_available": false,
+  "changelog": null,
+  "sha256": null,
+  "signature": null,
+  "requires_usb": false,
+  "note": "no update feed is configured on this device; updates arrive by POST /api/v1/update"
 }
 ```
 
@@ -410,7 +415,7 @@ Uploads and applies a firmware update.
 
 **Body:** the raw firmware binary (`application/octet-stream`) — **not** multipart/form-data. Maximum 16 MiB.
 
-**Required header:** `X-Firmware-Signature` — a detached Ed25519 signature over the entire firmware payload, hex-encoded (64 bytes, 128 hex characters). Verified against the configured signing public key (`SECURACV_FW_SIGNING_PUBKEY`, PEM or 32-byte hex; the reference server falls back to the device's own key).
+**Required header:** `X-Firmware-Signature` — a detached Ed25519 signature over the entire firmware payload, hex-encoded (64 bytes, 128 hex characters). Verified against the configured signing public key (`SECURACV_FW_SIGNING_PUBKEY`, PEM or 32-byte hex). There is no fallback: with the key unset every update is refused with `signing_key_unavailable`. The device's own key is never a stand-in for the release key — its private half lives on the device, so "signed by the device" would prove nothing about who built the firmware.
 
 **Firmware layout:** the binary must begin with an 8-byte header — magic `SCV\x01` (bytes `0x53 0x43 0x56 0x01`), then `version_major`, `version_minor`, `version_patch` (one byte each), then 1 reserved byte. The version must be **strictly newer** than the installed firmware (anti-downgrade).
 

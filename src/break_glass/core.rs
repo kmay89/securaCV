@@ -674,8 +674,9 @@ impl BreakGlass {
         approvals: &[Approval],
         now_bucket: TimeBucket,
     ) -> (Result<BreakGlassToken>, BreakGlassReceipt) {
-        // Validate approval count to prevent DoS via excessive approval processing
-        if approvals.len() > MAX_APPROVALS {
+        // A denial before any approval is examined: no trustee is "used", but the
+        // receipt still commits to what was presented.
+        let denied = |reason: String| {
             let receipt = BreakGlassReceipt {
                 vault_envelope_id: request.vault_envelope_id.clone(),
                 request_hash: request.request_hash(),
@@ -685,21 +686,33 @@ impl BreakGlass {
                 approvals_commitment: approvals_commitment(approvals),
                 policy_commitment: policy.commitment(),
                 outcome: BreakGlassOutcome::Denied {
-                    reason: format!(
-                        "approval count {} exceeds maximum {}",
-                        approvals.len(),
-                        MAX_APPROVALS
-                    ),
+                    reason: reason.clone(),
                 },
             };
-            return (
-                Err(anyhow!(
-                    "approval count {} exceeds maximum {}",
-                    approvals.len(),
-                    MAX_APPROVALS
-                )),
-                receipt,
-            );
+            (Err(anyhow!(reason)), receipt)
+        };
+
+        // Validate approval count to prevent DoS via excessive approval processing
+        if approvals.len() > MAX_APPROVALS {
+            return denied(format!(
+                "approval count {} exceeds maximum {}",
+                approvals.len(),
+                MAX_APPROVALS
+            ));
+        }
+
+        // Trustees sign a request hash that binds the bucket the request was opened in,
+        // and the CLI tells them that is the only window it redeems in. Without this
+        // check a request left open in a served session could spend approvals collected
+        // in bucket T at any later time, minting a token stamped with whatever "now" is.
+        if request.time_bucket != now_bucket {
+            return denied(format!(
+                "request time window expired: opened in bucket {}+{}s, now {}+{}s",
+                request.time_bucket.start_epoch_s,
+                request.time_bucket.size_s,
+                now_bucket.start_epoch_s,
+                now_bucket.size_s
+            ));
         }
 
         let mut trustees_used = Vec::new();
@@ -823,6 +836,49 @@ impl BreakGlass {
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
+
+    #[test]
+    fn authorize_refuses_a_request_outside_its_own_window() {
+        let opened = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:1", [1u8; 32], "incident", opened).unwrap();
+        let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            sign_approval(&signing_key, &request.request_hash()).to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+
+        // The quorum is complete, but the request's window has rolled over.
+        let later = TimeBucket {
+            start_epoch_s: 600,
+            size_s: 600,
+        };
+        let (result, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), later);
+        assert!(result.is_err());
+        assert!(receipt.trustees_used.is_empty());
+        match &receipt.outcome {
+            BreakGlassOutcome::Denied { reason } => {
+                assert!(reason.contains("time window expired"), "{reason}")
+            }
+            _ => panic!("a stale request must be denied"),
+        }
+
+        // Same approvals inside the window still grant.
+        let (result, _) = BreakGlass::authorize(&policy, &request, &[approval], opened);
+        assert!(result.is_ok());
+    }
 
     #[test]
     fn core_types_round_trip() {

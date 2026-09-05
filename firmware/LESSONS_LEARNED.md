@@ -361,6 +361,21 @@
 - **Rule:** BLE features must be compile-time opt-in (OFF by default)
 - **Users must explicitly understand the tradeoff before enabling**
 
+### Two headers from the same browser cannot vouch for each other
+- **What happened:** The glass's LAN web API refused cross-site writes by
+  comparing the Origin header's authority to the Host header. Both are the
+  browser's, and DNS rebinding makes them agree for the attacker: a page on a
+  public domain re-pointed at the device's LAN IP arrives with Origin == Host,
+  reads the CSRF token from `/api/settings` as same-origin, and writes.
+- **Fix:** `canary/net/host_guard.h` — the Host must be something that can only
+  mean this device on this network (an IP literal, `.local`, a single label, or
+  a private-use suffix); a public domain is foreign for the writes, the token,
+  and the per-witness reads. Header-only, host-tested, no Arduino.
+- **Rule:** A same-site check needs one side the attacker cannot choose.
+  Against rebinding that side is the device's own identity, never a second
+  header from the same request.
+- **Date:** 2026-09
+
 ### User-typed identifiers must use an unambiguous alphabet
 - **What happened:** A user typed their API token from the serial monitor into
   the dashboard, hit Connect, got "Too many failed attempts" after a few tries.
@@ -418,6 +433,63 @@
   wizard loops all route through `wdt_feed()`, so a future loop added without
   it is the thing to catch in review.
 - **Date learned:** 2026-08
+
+### A signature over the payload says nothing about the header that carries it
+- **What happened:** Four defects in the Beacon receive path
+  (`beacon_channel.cpp::handle_alert_frame`), all found by reading the spec
+  next to the code. (1) The two Ed25519 signatures cover
+  `BeaconAlertCanonical`, which carries its own `msg_type`, but every
+  decision — dispatch, the accept action, the audit line — read the
+  *header's* `msg_type` instead. Rewriting that one unsigned byte on a
+  captured drill or all-clear turned it into a real ALERT on every receiver,
+  with both signatures still verifying. (2) There was no nonce dedup and no
+  freshness window, so any captured in-window frame could be rebroadcast
+  indefinitely; each replay ran the per-pubkey rate check, so four replays
+  exhausted that neighbor's 24 h budget and silenced their next genuine
+  alert *and* their all-clear. (3) The CANCEL branch's reference check was
+  `memcmp(ref_canceled_nonce, "", 0) == 0` — a zero-length compare, which is
+  vacuously true — so any valid CANCEL cleared any active alarm, and the
+  accepted alarm's frame nonce was never stored anywhere to compare against.
+  (4) Drills shared the per-pubkey rate bucket with real alerts, which
+  AGENTS.md Beacon invariant 10 forbids: a morning of drills could
+  rate-limit away that afternoon's fire alert.
+- **Root cause:** one habit, four symptoms — trusting a field because the
+  frame it arrived in was signed. The header is not covered by the
+  signature; a zero-length `memcmp` is not a comparison; a counter with no
+  class is a shared counter.
+- **Fix:** cross-check `canonical->msg_type == hdr->msg_type` and key the
+  action block off the signed value; require the EXERCISE flag bit exactly
+  when the signed `msg_type` is EXERCISE, in both directions; a 32-entry
+  seen-frame ring checked *before* signature verification (so a replay costs
+  no crypto and never charges the rate bucket) plus the spec's
+  `|now - effective| <= BEACON_FRESHNESS_S` window, keeping the
+  unsynced-clock accept-but-flag branch; store the accepted alarm's header
+  nonce and require CANCEL/UPDATE to carry a non-zero reference matching it;
+  a second rate counter per pubkey selected by frame class.
+- **And the first cut of the fix repeated the mistake it was fixing.** The
+  ring was keyed on `hdr->nonce` — the field the spec's step 3 names, and a
+  field nothing signs. A replay with one header byte changed walked past
+  dedup, verified, charged the bucket, re-fired the alarm and overwrote the
+  alarm's identity, so the originator's real CANCEL then missed. Caught in
+  review. The ring now keys on the two signatures (deterministic under
+  RFC 8032, so a copy has the same identity whatever its header says, and
+  a new identity that verifies needs the keys), and the latest ALERT's
+  identity is kept outside the ring so a copy held past the horizon cannot
+  re-raise the alarm on an unsynced clock. The header nonce remains the
+  CANCEL reference the spec requires — a relay that rewrites it can still
+  desync a CANCEL, and only a wire-format change (nonce inside the signed
+  canonical) closes that; it is listed as open in the audit.
+- **Rule:** when a struct is signed and its envelope is not, every field the
+  receiver acts on must come from inside the signature — and any field that
+  exists in both places must be compared, not chosen. If a check's operands
+  can't differ (a zero-length compare, a constant), it is decoration; prove
+  it can fail.
+- **Regression check:** `tests_host/test_beacon_origination.cpp` mirrors the
+  whole receive pipeline and fails on the pre-fix logic for each of the
+  four; `test_beacon_solo_origination.cpp` pins that the solo path answers
+  to the same checks. Run `make` in
+  `firmware/projects/canary-wap/tests_host/`.
+- **Date learned:** 2026-09
 
 ---
 

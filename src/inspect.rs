@@ -271,15 +271,28 @@ pub fn inspect_checkpoints(
             (Some(signer), Ok(head32)) => {
                 match SignatureSet::from_storage(&signature, pq_signature, pq_scheme) {
                     Ok(signature_set) => {
+                        // The cutoff-bound message first (log::checkpoint_message),
+                        // then the bare head for checkpoints written before the
+                        // cutoff was bound to the signature.
                         let verified = verifying_key_from_bytes(&signer).and_then(|key| {
                             verify_entry_signature(
                                 &key,
-                                &head32,
+                                &crate::log::checkpoint_message(&head32, cutoff_event_id),
                                 &signature_set,
                                 mode,
                                 pq_public_key,
                                 DOMAIN_CHECKPOINT,
                             )
+                            .or_else(|_| {
+                                verify_entry_signature(
+                                    &key,
+                                    &head32,
+                                    &signature_set,
+                                    mode,
+                                    pq_public_key,
+                                    DOMAIN_CHECKPOINT,
+                                )
+                            })
                         });
                         match verified {
                             Ok(()) => signature_valid = true,

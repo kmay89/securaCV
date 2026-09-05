@@ -14,13 +14,16 @@ Two layers:
   - `_augment_ha_stubs()` ALWAYS runs and upgrades whichever stubs are in
     place with the richer surface the config-flow tests need (a working
     ConfigFlow base, inspectable voluptuous markers, aiohttp.ClientTimeout,
-    data_entry_flow.AbortFlow). It is additive/idempotent so it can layer
-    on top of either installer without breaking the existing tests.
+    data_entry_flow.AbortFlow), plus HA's real `@callback` marking semantics
+    and the two event/executor helpers `async_setup_entry` reaches for. It is
+    additive/idempotent so it can layer on top of either installer without
+    breaking the existing tests.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import sys
 import types
@@ -138,6 +141,9 @@ def _augment_ha_stubs() -> None:
     Runs unconditionally (idempotent, additive) because either this
     conftest OR the repo-root conftest may have installed the base
     stubs first, and both bases are too thin for the flow tests:
+      - homeassistant.core gains HA's real `callback`/`is_callback` pair
+        (the mark, not an identity function), `async_add_executor_job`,
+        and helpers.event gains `async_track_time_interval`;
       - aiohttp gains ClientTimeout/ContentTypeError (the client passes
         aiohttp.ClientTimeout(total=...) instead of deprecated ints);
       - voluptuous gains real marker classes whose key/default a test
@@ -148,6 +154,73 @@ def _augment_ha_stubs() -> None:
         `_test_entries` list the test populates);
       - homeassistant.data_entry_flow gains AbortFlow.
     """
+    # ── homeassistant.core: real @callback semantics ─────────────────
+    core_mod = sys.modules["homeassistant.core"]
+    if not getattr(core_mod, "_securacv_rich", False):
+
+        def _callback(func):
+            """HA's real decorator MARKS the target rather than wrapping it,
+            and HassJob reads that mark to decide whether to run it on the
+            event loop or hand it to a worker thread. An identity stub can't
+            tell a decorated target from a bare lambda — which is precisely
+            the bug test_watch_tick_schedule.py pins down."""
+            func._hass_callback = True
+            return func
+
+        def _is_callback(func) -> bool:
+            return getattr(func, "_hass_callback", False) is True
+
+        core_mod.callback = _callback
+        core_mod.is_callback = _is_callback
+
+        if not hasattr(core_mod.HomeAssistant, "async_add_executor_job"):
+
+            async def _async_add_executor_job(self, target, *args):
+                """Runs inline: the tests care that the integration
+                DISPATCHED the blocking call, not which thread ran it."""
+                return target(*args)
+
+            core_mod.HomeAssistant.async_add_executor_job = _async_add_executor_job
+        core_mod._securacv_rich = True
+
+        # The integration package is this conftest's own parent, so Python
+        # imported it BEFORE any line here ran — its module-level
+        # `@callback` decorations were applied by the identity stub and
+        # carry no mark. Re-execute it against the real decorator, or
+        # test_watch_tick_schedule.py cannot tell a decorated tick from the
+        # bare lambda that shipped the bug (an identity decorator makes the
+        # two indistinguishable). reload() re-executes in place, so the
+        # module object every other importer holds stays the same one.
+        package = sys.modules.get(__name__.rsplit(".", 2)[0])
+        if package is not None:
+            importlib.reload(package)
+
+    # ── Store.async_delay_save ───────────────────────────────────────
+    store_cls = sys.modules["homeassistant.helpers.storage"].Store
+    if not hasattr(store_cls, "async_delay_save"):
+
+        def _async_delay_save(self, data_func, delay: float = 0) -> None:
+            """The real one is a @callback that schedules a coalesced write.
+            The stub writes through immediately: tests assert what LANDED in
+            the store, not when the loop got round to it."""
+            self._payload = json.loads(json.dumps(data_func()))
+
+        store_cls.async_delay_save = _async_delay_save
+
+    # ── homeassistant.helpers.event ──────────────────────────────────
+    event_mod = sys.modules.get("homeassistant.helpers.event")
+    if event_mod is None:
+        event_mod = types.ModuleType("homeassistant.helpers.event")
+        sys.modules["homeassistant.helpers.event"] = event_mod
+    if not hasattr(event_mod, "async_track_time_interval"):
+        # Returns the unsubscribe callable the real helper does; tests that
+        # inspect the scheduled action monkeypatch this.
+        event_mod.async_track_time_interval = (
+            lambda hass, action, interval, **kw: (lambda: None)
+        )
+    if not hasattr(event_mod, "async_call_later"):
+        event_mod.async_call_later = lambda hass, delay, action: (lambda: None)
+
     # ── aiohttp extras ───────────────────────────────────────────────
     aiohttp_mod = sys.modules["aiohttp"]
     if not hasattr(aiohttp_mod, "ClientTimeout"):

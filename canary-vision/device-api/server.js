@@ -99,10 +99,14 @@ function createApp(options = {}) {
 if (require.main === module) {
   const fs = require('node:fs');
   const port = process.env.PORT || 3000;
+  // Dev-mode server: Host validation admits localhost, so bind loopback unless
+  // the operator says otherwise. `app.listen(port)` alone listens on every
+  // interface while the line below claims "localhost".
+  const host = process.env.HOST || '127.0.0.1';
   const dataDir = process.env.CANARY_DATA_DIR || path.join(__dirname, '..', '.data');
   const { app, state } = createApp({ devMode: true, deviceOverrides: { keyDir: dataDir } });
-  app.listen(port, () => {
-    console.log(`Canary Vision device-api listening on http://localhost:${port}`);
+  app.listen(port, host, () => {
+    console.log(`Canary Vision device-api listening on http://${host}:${port}`);
     console.log('Dev mode enabled (localhost allowed in Host validation)');
     // Write token to file instead of stdout to prevent log exposure
     const tokenPath = path.join(dataDir, 'api_token');

@@ -147,13 +147,33 @@ def _snake(event_type: Any) -> str:
     return out
 
 
-def _status_online(raw: Any) -> bool:
+def json_status_online(data: dict[str, Any]) -> bool:
+    """The liveness verdict for an already-decoded status object.
+
+    Three dialects are live in the fleet. canary-wap publishes an ``online``
+    boolean and nothing else — ``{"online":true}`` on connect,
+    ``{"online":false}`` as its last will (csi_mqtt.cpp) — while other
+    firmware publishes a ``status``/``state`` word. An explicit ``online``
+    field is authoritative: a payload that says false is never read as up,
+    whatever else it carries.
+    """
+    online = data.get("online")
+    if isinstance(online, bool):
+        return online
+    if online is not None and str(online).lower().strip() in _ONLINE_WORDS:
+        return True
+    field = str(data.get("status") or data.get("state") or "").lower().strip()
+    return field in _ONLINE_WORDS
+
+
+def status_online(raw: Any) -> bool:
     """True only when a device's retained status payload says it is online.
 
-    Mirrors SecuraCVCanaryOnlineSensor's rule for bare-word payloads, plus
-    the JSON shape (a ``status``/``state`` field with the same words). A
-    payload we can't read means we don't know — and "don't know" is never
-    spoken as online.
+    The one rule both surfaces use — SecuraCVCanaryOnlineSensor calls this
+    too — so speech and the dashboard can never disagree about what "online"
+    means. Bare words are matched directly; JSON goes through
+    ``json_status_online``. A payload we can't read means we don't know —
+    and "don't know" is never spoken as online.
     """
     if not isinstance(raw, str) or not raw.strip():
         return False
@@ -166,8 +186,7 @@ def _status_online(raw: Any) -> bool:
         except (json.JSONDecodeError, TypeError):
             return False
         if isinstance(data, dict):
-            field = str(data.get("status") or data.get("state") or "").lower().strip()
-            return field in _ONLINE_WORDS
+            return json_status_online(data)
     return False
 
 
@@ -259,7 +278,7 @@ def fleet_brief(
         verify = entry.get("verify") or {}
         for device_id in sorted(devices):
             device_ids.append(device_id)
-            is_online = _status_online(devices[device_id].get("status"))
+            is_online = status_online(devices[device_id].get("status"))
             if is_online:
                 online.append(device_id)
             verdict = verify.get(device_id)

@@ -104,7 +104,7 @@ This limits the blast radius of a single compromised device. To update fleet con
 
 ### D7: Signed Firmware Updates
 
-Firmware updates are uploaded to `POST /api/v1/update` as a raw binary body (`application/octet-stream`) with a detached Ed25519 signature over the whole payload in the `X-Firmware-Signature` header (hex-encoded, 64 bytes). The device verifies the signature against the configured signing public key before applying the update, parses an 8-byte `SCV\x01` version header from the binary, and rejects any version that is not strictly newer than the installed one (anti-downgrade). `GET /api/v1/update/check` additionally advertises the available version with its SHA-256 hash and signature.
+Firmware updates are uploaded to `POST /api/v1/update` as a raw binary body (`application/octet-stream`) with a detached Ed25519 signature over the whole payload in the `X-Firmware-Signature` header (hex-encoded, 64 bytes). The device verifies the signature against the configured signing public key before applying the update, parses an 8-byte `SCV\x01` version header from the binary, and rejects any version that is not strictly newer than the installed one (anti-downgrade). `GET /api/v1/update/check` reports the running version; the reference server has no update feed and says so (`update_available: false`, null digest and signature) rather than advertising a version it cannot vouch for. The signing key comes only from `SECURACV_FW_SIGNING_PUBKEY` — never the device's own key, whose private half is on the device.
 
 ### D8: Tamper-Evident Witness Chain
 

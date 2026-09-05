@@ -38,11 +38,20 @@ reload + HA restart. Storage shape:
           "pin_source": "tofu" | "manual" | "rotation",
           "previous": [
             {"pubkey_hex": "...", "fp": "...", "retired_at": <ts>}
-          ]
+          ],
+          "counters": {"verify_chain": <int>, ...}
         },
         ...
       }
     }
+
+`counters` is the replay gate's per-device high-water marks (sensor.py).
+They live beside the pin because they belong to the KEY, not to the
+session: kept only in memory they reset on every reload, and MQTT retains
+the last signed publish, so a stale-but-signed retained message would be
+re-accepted as current on restart — reopening exactly the window the gate
+closes. Storing them here also resets them for free on every key change:
+pin/rotate replace the entry, unpin deletes it.
 """
 
 from __future__ import annotations
@@ -60,6 +69,11 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 STORAGE_KEY_FMT = "securacv_device_trust_{entry_id}"
+
+# How long a counter advance may sit unwritten. Long enough that a chatty
+# fleet doesn't rewrite the store per publish, short enough that a hub
+# losing power keeps almost all of its replay floor.
+COUNTER_SAVE_DELAY_SECONDS = 30
 
 PIN_SOURCE_TOFU = "tofu"
 PIN_SOURCE_MANUAL = "manual"
@@ -99,15 +113,25 @@ class DeviceTrustEntry:
     pinned_at: float
     pin_source: str
     previous: list[dict[str, Any]] = field(default_factory=list)
+    # Replay high-water marks for this key (see the module docstring). A
+    # new entry starts empty, which is what a new key means.
+    counters: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def from_storage(cls, data: dict[str, Any]) -> "DeviceTrustEntry":
+        counters: dict[str, int] = {}
+        for field_name, value in (data.get("counters") or {}).items():
+            # A hand-edited or corrupted store must not be able to install a
+            # non-integer mark: the gate compares it with `<`.
+            if isinstance(value, int) and not isinstance(value, bool):
+                counters[str(field_name)] = value
         return cls(
             pubkey_hex=data["pubkey_hex"],
             fingerprint_hex=data["fingerprint_hex"],
             pinned_at=float(data.get("pinned_at", 0.0)),
             pin_source=data.get("pin_source", PIN_SOURCE_TOFU),
             previous=list(data.get("previous", [])),
+            counters=counters,
         )
 
     def to_storage(self) -> dict[str, Any]:
@@ -117,6 +141,7 @@ class DeviceTrustEntry:
             "pinned_at": self.pinned_at,
             "pin_source": self.pin_source,
             "previous": self.previous,
+            "counters": self.counters,
         }
 
 
@@ -205,16 +230,17 @@ class TrustStore:
         if healed:
             await self.async_save()
 
+    def _data_to_save(self) -> dict[str, Any]:
+        return {
+            "version": STORAGE_VERSION,
+            "devices": {
+                device_id: entry.to_storage()
+                for device_id, entry in self._devices.items()
+            },
+        }
+
     async def async_save(self) -> None:
-        await self._store.async_save(
-            {
-                "version": STORAGE_VERSION,
-                "devices": {
-                    device_id: entry.to_storage()
-                    for device_id, entry in self._devices.items()
-                },
-            }
-        )
+        await self._store.async_save(self._data_to_save())
 
     # ─── Public API ────────────────────────────────────────────────────
 
@@ -302,6 +328,21 @@ class TrustStore:
         del self._devices[device_id]
         await self.async_save()
         return True
+
+    def note_counters(self, device_id: str, counters: dict[str, int]) -> None:
+        """Record a device's replay high-water marks, save later.
+
+        Called from the MQTT verify path — an event-loop callback, on every
+        publish whose counter advanced — so the write is *delayed* and
+        coalesced rather than awaited: counters move constantly while pins
+        almost never do. An unpinned device has no entry and nothing to
+        record; a replay mark only exists for a key we trust.
+        """
+        entry = self._devices.get(device_id)
+        if entry is None or entry.counters == counters:
+            return
+        entry.counters = dict(counters)
+        self._store.async_delay_save(self._data_to_save, COUNTER_SAVE_DELAY_SECONDS)
 
     def all_devices(self) -> dict[str, DeviceTrustEntry]:
         """Returns a *copy* of the device registry so callers can

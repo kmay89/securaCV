@@ -609,6 +609,20 @@ class SecuraCVOptionsFlow(OptionsFlow):
         if isinstance(entry_data, dict):
             entry_data.setdefault("replay", {}).pop(device_id, None)
 
+    def _forget_mismatch_notifications(self, device_id: str) -> None:
+        """Drop the mismatch-notification dedup keys for a device whose key
+        just changed (pin / rotate / unpin). Without this, if a spoofed fp
+        triggered a notification before the operator acted, the dedup set
+        would permanently suppress a future real mismatch on that same fp,
+        breaking the "warn loudly" guarantee. Pin is a key-changing path too
+        — it replaces a TOFU pin with a manual one — and is the action an
+        alarmed operator is most likely to reach for."""
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+        if not entry_data:
+            return
+        notified: set = entry_data.get("mismatch_notified", set())
+        notified.difference_update({(d, f) for (d, f) in notified if d == device_id})
+
     async def async_step_pin(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -634,6 +648,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                     # high-water marks or the device's first publishes
                     # under this key all read as replays of the old one.
                     self._forget_replay_marks(device_id)
+                    self._forget_mismatch_notifications(device_id)
                     return self.async_create_entry(title="", data={})
 
         return self.async_show_form(
@@ -675,14 +690,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                     # Clear any stuck mismatch notification for this
                     # device so the operator's rotation takes effect
                     # immediately on the UI side.
-                    entry_data = self.hass.data.get(
-                        DOMAIN, {}
-                    ).get(self._config_entry.entry_id)
-                    if entry_data:
-                        notified: set = entry_data.get("mismatch_notified", set())
-                        notified.difference_update(
-                            {(d, f) for (d, f) in notified if d == device_id}
-                        )
+                    self._forget_mismatch_notifications(device_id)
                     return self.async_create_entry(title="", data={})
 
         return self.async_show_form(
@@ -717,20 +725,7 @@ class SecuraCVOptionsFlow(OptionsFlow):
                 else:
                     # Whatever key TOFU-pins next starts its counters over.
                     self._forget_replay_marks(device_id)
-                    # Mirror async_step_rotate: clear any stuck mismatch-
-                    # notification dedup keys for this device. Without this,
-                    # if a spoofed fp triggered a notification before the
-                    # operator unpinned, the dedup set would permanently
-                    # suppress a future real mismatch on that same fp,
-                    # breaking the "warn loudly" guarantee on re-pin.
-                    entry_data = self.hass.data.get(
-                        DOMAIN, {}
-                    ).get(self._config_entry.entry_id)
-                    if entry_data:
-                        notified: set = entry_data.get("mismatch_notified", set())
-                        notified.difference_update(
-                            {(d, f) for (d, f) in notified if d == device_id}
-                        )
+                    self._forget_mismatch_notifications(device_id)
                     return self.async_create_entry(title="", data={})
 
         return self.async_show_form(

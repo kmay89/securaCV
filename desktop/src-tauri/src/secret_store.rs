@@ -21,10 +21,25 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const SERVICE: &str = "SecuraCV Flasher";
 
+/// The four namespaces the frontend actually uses (see the module doc). A key
+/// outside them is refused by every command below, so `secret_get` is a
+/// lookup in the drawer this app fills — not a read-anything primitive for
+/// whatever runs in the webview.
+const NAMESPACES: [&str; 4] = ["wifi:", "mqtt:", "canary:", "hub:"];
+
 /// Keys are frontend-chosen but bounded: printable ASCII, no whitespace,
-/// short. Refusing junk here keeps the OS store browsable by a human.
+/// short, and inside a known namespace with something after the colon.
+/// Refusing junk here keeps the OS store browsable by a human.
 fn key_ok(key: &str) -> bool {
-    !key.is_empty() && key.len() <= 120 && key.bytes().all(|b| (0x21..=0x7e).contains(&b))
+    if key.is_empty() || key.len() > 120 {
+        return false;
+    }
+    if !key.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
+        return false;
+    }
+    NAMESPACES
+        .iter()
+        .any(|ns| key.starts_with(ns) && key.len() > ns.len())
 }
 
 /// Which secret store this build can reach: "keychain" (macOS),
@@ -126,10 +141,16 @@ mod tests {
         assert!(key_ok("wifi:Bird%20House"));
         assert!(key_ok("canary:a1:b2:c3:d4:e5:f6:token"));
         assert!(key_ok("mqtt:homeassistant.local:canary"));
+        assert!(key_ok("hub:account"));
         assert!(!key_ok(""));
         assert!(!key_ok("has space"));
         assert!(!key_ok("has\nnewline"));
         assert!(!key_ok(&"x".repeat(121)));
+        // Outside the drawer this app fills: refused, however well-formed.
+        assert!(!key_ok("keychain:anything"));
+        assert!(!key_ok("account"));
+        assert!(!key_ok("wifi:"));
+        assert!(!key_ok(&format!("wifi:{}", "x".repeat(120))));
     }
 
     #[test]

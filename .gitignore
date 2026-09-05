@@ -38,6 +38,16 @@ api_token
 .env.local
 secrets.h
 .device_key_seed
+# Signing-key containers the release docs walk maintainers through creating
+# (desktop/SIGNING.md and ios/DEMO.md export a .p12 into the working
+# directory). Binary, so the content greps in secrets-scan.yml cannot see
+# inside them; the filename check there is the other half of this net.
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.mobileprovision
+AuthKey_*.p8
 # =============================== 
 # Firmware secrets (DO NOT COMMIT)
 # ===============================

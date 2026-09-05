@@ -51,6 +51,23 @@ concurrency:
 env:
   ZOO_BASE: https://files.seeedstudio.com/sscma/model_zoo/detection/person
   MODEL_STEM: person_detection_int8
+  # sha256 of the source model at $ZOO_BASE/$MODEL_STEM.tflite. The compiled
+  # output is signed with the OTA release key and the browser flasher trusts
+  # that signature, so the input must be bytes we chose — not whatever the CDN
+  # serves on release day. REQUIRED: an empty pin fails the run and prints the
+  # hash the CDN served, so a re-pin is done with the bytes in hand.
+  #
+  # This value is what the zoo served on 2026-09-05 (835,856 bytes; run
+  # 33933211659 on this repo printed it) — a first-use pin, since Seeed
+  # publishes no digest to check it against. From here on the check is the
+  # guarantee: any change to the served bytes fails the release loudly
+  # instead of being signed. Recompute deliberately when MODEL_STEM changes,
+  # and only after reading why the bytes moved:
+  #   curl -fsSL "$ZOO_BASE/$MODEL_STEM.tflite" | sha256sum
+  MODEL_INT8_SHA256: "4bb86d233a2e5765e138972c2698cce46c27be0c076c94c81799ffb5f373b108"
+  # The compiler on the signing path, pinned so a release is compiled by a
+  # vela we chose on purpose. Bump deliberately, together with the model pin.
+  VELA_VERSION: "5.2.0"
 
 jobs:
   model-asset:
@@ -108,12 +125,26 @@ jobs:
           # with a different I/O layout, so we never substitute it.)
           curl -fsSL -o model_int8.tflite "$ZOO_BASE/${MODEL_STEM}.tflite"
           ls -la
+          # Refuse to carry unverified bytes toward the release key (see
+          # MODEL_INT8_SHA256 above). A missing pin is the loud failure, with
+          # the served hash in the message, so pinning is done with the bytes
+          # in hand rather than by accident of what was up that day.
+          actual=$(sha256sum model_int8.tflite | cut -d' ' -f1)
+          if [ -z "${MODEL_INT8_SHA256}" ]; then
+            echo "::error::MODEL_INT8_SHA256 is not pinned — refusing to sign an unverified download. The CDN served sha256 ${actual}; verify it against Seeed's published model, then pin it in this workflow's env."
+            exit 1
+          fi
+          if [ "${actual}" != "${MODEL_INT8_SHA256}" ]; then
+            echo "::error::model_int8.tflite sha256 mismatch (served ${actual}, pinned ${MODEL_INT8_SHA256}) — refusing to sign an unverified download"
+            exit 1
+          fi
+          echo "source model sha256 verified: ${actual}"
 
       - name: Compile for the Ethos-U55 (ethos-u-vela · Himax config, mandatory)
         if: steps.tag.outputs.skip != '1'
         run: |
           set -euo pipefail
-          pip install --quiet ethos-u-vela
+          pip install --quiet "ethos-u-vela==${VELA_VERSION}"
           cd /tmp/model
           # The HX6538's NPU is an Ethos-U55 in its 64-MAC configuration at
           # 400 MHz (Himax: "we only release models that pass himax_vela.ini,
