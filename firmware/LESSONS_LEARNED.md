@@ -361,6 +361,21 @@
 - **Rule:** BLE features must be compile-time opt-in (OFF by default)
 - **Users must explicitly understand the tradeoff before enabling**
 
+### Two headers from the same browser cannot vouch for each other
+- **What happened:** The glass's LAN web API refused cross-site writes by
+  comparing the Origin header's authority to the Host header. Both are the
+  browser's, and DNS rebinding makes them agree for the attacker: a page on a
+  public domain re-pointed at the device's LAN IP arrives with Origin == Host,
+  reads the CSRF token from `/api/settings` as same-origin, and writes.
+- **Fix:** `canary/net/host_guard.h` — the Host must be something that can only
+  mean this device on this network (an IP literal, `.local`, a single label, or
+  a private-use suffix); a public domain is foreign for the writes, the token,
+  and the per-witness reads. Header-only, host-tested, no Arduino.
+- **Rule:** A same-site check needs one side the attacker cannot choose.
+  Against rebinding that side is the device's own identity, never a second
+  header from the same request.
+- **Date:** 2026-09
+
 ### User-typed identifiers must use an unambiguous alphabet
 - **What happened:** A user typed their API token from the serial monitor into
   the dashboard, hit Connect, got "Too many failed attempts" after a few tries.
