@@ -596,14 +596,14 @@ vent_side_n = 3;         // per side, stacked toward the top corners
 // no press fit anywhere in this design (no magnet pocket, no light pipe), so
 // tol_press is deliberately absent rather than declared and ignored: a knob
 // that tunes nothing sends you through reprints that cannot change the part.
-tol_slide = 0.25;    // the glass/board pockets — the SLIDE station on the coupon
-tol_hole  = 0.35;    // M3 clearance through the bezel ears — the SCREW station
+tol_slide = 0.25;    // deviates: panel-scale fits, one step looser than core_tol_slide() — the SLIDE station on the coupon
+tol_hole  = 0.35;    // deviates: panel-scale fits, one step looser than core_tol_hole() — the SCREW station
 
 /* [Shell] */
-wall   = 3.0;    // side wall thickness (big case → thicker)
+wall   = 3.0;    // deviates: big case → thicker (plate bending scales with span — canary_rib_lib's rule)
 face_t = 3.0;    // bezel face
 back_t = 3.0;    // rear tray floor
-r_out  = 6.0;    // outer corner radius
+r_out  = 6.0;    // deviates: display-frame radius class — scaled to the 7-inch face
 
 /* [Fasteners] */
 // M3 x 16–20 from the FRONT, through the bezel lobes, self-tapping
@@ -3009,7 +3009,7 @@ function lcd7_stack() = [back_t, cav_d, bez_h, glass_t,
 function lcd7_stand_stack() = [stand_ang, std_ys, stand_floor_h, fr_depth,
                                fr_yo, fr_xo, stand_rib_drop];
 
-module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); }
+module rrect2d(x, y, r) { offset(r = r) offset(r = -r) square([x, y], center = true); } // deviates: same geometry as canary_core_lib's — this file stays self-contained (its own doctrine) rather than use-importing a 500-line lib for one two-op module
 function lobes() = [for (sx = [1,-1], sy = [1,-1]) [sx*(xc/2 + lob_o), sy*(yc/2 + lob_o)]];
 // A corner ear is HULLED into the shell body (two anchor points along the two
 // nearest edges) so a solid gusset web holds the M3 boss on — not a thin neck.
@@ -3203,12 +3203,15 @@ module gauge() {
 //  glass glass_guard below the front rim. Get standoff_len right or the
 //  glass face is off by the same error. glass_guard is -0.2 today (proud).
 // ----------------------------------------------------------------------------
-module pill2d(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
+// _y suffix on purpose: this stadium spans the Y axis, canary_core_lib's
+// pill2d spans X — the two shared a name and silently disagreed on
+// orientation, the exact transferred-skill trap the audit catalogs.
+module pill2d_y(l, w) { hull() for (d = [-1, 1]) translate([0, d*(l - w)/2]) circle(d = w); }
 // FEATHER BARB — the house pattern motif, and the reason it is a motif at all
 // is that it prints better than the stadium it replaces. Two big circles
 // intersected give a vesica: a leaf pointed at BOTH ends. On the dock's
 // near-vertical fin that top apex is self-supporting, where a stadium's flat
-// crown is a bridge the width of the vent. Same envelope (l x w) as pill2d,
+// crown is a bridge the width of the vent. Same envelope (l x w) as pill2d_y,
 // so it drops in wherever a pill was. r is the circle radius whose lens is
 // exactly l tall and w wide: r = (l^2 + w^2) / 4w.
 // NB intersection_for, not intersection(){ for ... } — a for loop is ONE
@@ -3224,7 +3227,7 @@ module barb2d(l, w) {
     intersection_for (s = [1, -1]) translate([s*(r - w/2), 0]) circle(r);
 }
 // The vent shape the dock actually cuts — one switch for the whole pattern.
-module vent2d(l, w) { if (barb_vents) barb2d(l, w); else pill2d(l, w); }
+module vent2d(l, w) { if (barb_vents) barb2d(l, w); else pill2d_y(l, w); }
 // Back-plate deboss: label_back_depth, not label_depth — the floors must sit
 // above the two-color swap band (see the knob's comment).
 // QR modules, shaped for a NOZZLE. Cutting one square per dark module
@@ -3704,15 +3707,15 @@ module port_cut(edge = 0, pos = 0) {
     rotate([0, 0, rot]) {
         translate([pos*sgn, -ri + lg + 0.6, usb_z])
             rotate([90, 0, 0]) linear_extrude(frame_wall + lg + 1.2)
-                rotate(90) pill2d(usb_open_w, usb_open_h);
+                rotate(90) pill2d_y(usb_open_w, usb_open_h);
         // 45° mouth bevel at the skin — the grommet's cone lands on it, and
         // an unused port still reads finished
         hull() {
             translate([pos*sgn, -ro + 0.01, usb_z]) rotate([90, 0, 0])
                 linear_extrude(0.02) rotate(90)
-                    pill2d(usb_open_w + 1.6, usb_open_h + 1.6);
+                    pill2d_y(usb_open_w + 1.6, usb_open_h + 1.6);
             translate([pos*sgn, -ro + 0.81, usb_z]) rotate([90, 0, 0])
-                linear_extrude(0.02) rotate(90) pill2d(usb_open_w, usb_open_h);
+                linear_extrude(0.02) rotate(90) pill2d_y(usb_open_w, usb_open_h);
         }
         // relieve the ledge ring + wedge behind the port so the grommet's
         // inner flange lands on a flat wall face
@@ -3892,7 +3895,7 @@ module frame() {
             if (!plug_tether || abs(sx*(btn_w/2 + 9 + i*6.5) - plug_teth_dx)
                                 > gill_w/2 + sd_teth_hole/2 + 1.5)
                 translate([btn_dx + sx*(btn_w/2 + 9 + i*6.5), fr_yi/2 - 0.1, gz])
-                    rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d(gh, gill_w);
+                    rotate([-90, 0, 0]) linear_extrude(frame_wall + 0.3) pill2d_y(gh, gill_w);
         // plug leash anchor beside the window: flush strap channel into the
         // outer skin (from the window's bevel surround to just past the
         // anchor), the anchor hole through the remaining wall, and a 45°
@@ -3920,7 +3923,7 @@ module frame() {
             translate([sx*(fr_xo/2 - frame_wall/2), sy*dock_key_dx, gz])
                 rotate([0, 90, 0]) translate([0, 0, -(ledge_side + frame_wall)])
                     linear_extrude(2*(ledge_side + frame_wall))
-                        pill2d(gill_l, gill_w);
+                        pill2d_y(gill_l, gill_w);
         // ...and LANDSCAPE: one through the bottom wall at ±dock_key_bx,
         // outboard of the brand words, engaged by the studs on the dock's
         // cheek pads. Cut through the FPC-edge ledge band like the shadow
@@ -3928,7 +3931,7 @@ module frame() {
         if (dock_keys) for (sx = [1, -1])
             translate([sx*dock_key_bx, -fr_yi/2 + ledge_bot + 0.6, gz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
-                    pill2d(gh, gill_w);
+                    pill2d_y(gh, gill_w);
         // USB pass-through, centered on the bottom wall: a true stadium sized
         // to pass the power cable's overmold head, cut through the wall AND
         // the FPC-edge ledge/wedge behind it. The grommet fills it afterwards.
@@ -3977,7 +3980,7 @@ module frame() {
             translate([(i - (edge_vent_n - 1)/2)*edge_vent_pitch,
                        -fr_yi/2 + ledge_bot + 0.6, edge_vz])
                 rotate([90, 0, 0]) linear_extrude(frame_wall + ledge_bot + 1.2)
-                    pill2d(edge_vent_h, edge_vent_w);
+                    pill2d_y(edge_vent_h, edge_vent_w);
         // back grille (dodging bosses and the keyholes — note -m3_ox: this
         // part is modeled print-side, x mirrored vs the two-part tray)
         // (keepouts hoisted to fr_keepouts, where the open-area echo reads
@@ -4125,7 +4128,7 @@ module frame_gauge() {
 //  (waist interference) and tpu_grip (grommet bore), not tol_slide/tol_hole —
 //  TPU seats by squeeze, rigid parts by clearance.
 // ----------------------------------------------------------------------------
-module stadium2d(w, h) { rotate(90) pill2d(w, h); }   // width w along x
+module stadium2d(w, h) { rotate(90) pill2d_y(w, h); }   // width w along x
 
 // USB wire grommet. Local z: 0 = the inner flange's bearing face (on the bed).
 // Install: unplugged, feed the cable head in through the port; plug it; open

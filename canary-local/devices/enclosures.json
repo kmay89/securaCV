@@ -2310,7 +2310,8 @@
       },
       {
        "name": "vent_hole_d",
-       "default": "1.6"
+       "default": "1.0",
+       "comment": "fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)"
       },
       {
        "name": "vent_ring_d",
@@ -2318,7 +2319,8 @@
       },
       {
        "name": "vent_holes",
-       "default": "6"
+       "default": "10",
+       "comment": "more, smaller holes recover the open area at 1.0 mm"
       },
       {
        "name": "vent_dx",
@@ -3117,7 +3119,7 @@
       {
        "name": "lid_edge",
        "default": "1.0",
-       "comment": "face edge chamfer"
+       "comment": "deviates: scaled to the pill — the 12 mm face radius carries a wider first stage"
       },
       {
        "name": "lid_edge2",
@@ -3186,7 +3188,8 @@
       },
       {
        "name": "vent_hole_d",
-       "default": "1.6"
+       "default": "1.0",
+       "comment": "fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)"
       },
       {
        "name": "vent_ring_d",
@@ -3194,7 +3197,8 @@
       },
       {
        "name": "vent_holes",
-       "default": "6"
+       "default": "10",
+       "comment": "more, smaller holes recover the open area at 1.0 mm"
       },
       {
        "name": "vent_dx",
@@ -4263,7 +4267,7 @@
       {
        "name": "wall_t",
        "default": "2.3",
-       "comment": "drum wall"
+       "comment": "deviates: the bezel's snap fingers seat through this drum wall — tuned as a set with snap_depth/skirt_t"
       },
       {
        "name": "back_t",
@@ -4433,7 +4437,7 @@
       {
        "name": "lid_edge",
        "default": "1.0",
-       "comment": "bezel face chamfer"
+       "comment": "deviates: scaled to the round bezel — the drum face carries a wider single stage"
       },
       {
        "name": "label_text",
@@ -4753,8 +4757,13 @@
       },
       {
        "name": "lid_edge",
-       "default": "1.0",
-       "comment": "face edge chamfer"
+       "default": "0.8",
+       "comment": "face edge chamfer — core_face_edge()"
+      },
+      {
+       "name": "corner_r",
+       "default": "3.0",
+       "comment": "plate corner radius — core_corner_r(); was a bare 4 in a part whose whole job is making Sense units read as a set"
       }
      ]
     },
@@ -6122,7 +6131,7 @@
       {
        "name": "corner_r",
        "default": "2.0",
-       "comment": "squared, utilitarian"
+       "comment": "deviates: squared, utilitarian — the service box reads as gear, not decor"
       },
       {
        "name": "boss_d",
@@ -6346,7 +6355,8 @@
      "params": [
       {
        "name": "wall_t",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "deviates: drop-case wall — impact duty is this case's whole intent"
       },
       {
        "name": "floor_t",
@@ -6529,7 +6539,7 @@
       {
        "name": "lid_edge",
        "default": "0.64",
-       "comment": "stepped edge chamfer on the lid face"
+       "comment": "deviates: the TPU boot's retention lip grips this stepped edge (DR-5) — conform only with a boot re-probe"
       }
      ]
     },
@@ -6690,7 +6700,8 @@
       },
       {
        "name": "r_out",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "deviates: display-frame radius class — scaled to the 4.3-inch face (palm shells run core_corner_r())"
       }
      ]
     },
@@ -7211,7 +7222,8 @@
      "params": [
       {
        "name": "wall",
-       "default": "2.1"
+       "default": "2.1",
+       "comment": "deviates: the cantilever snap beams (beam_t/eng) were tuned against this wall — conform only with a snap re-validation"
       },
       {
        "name": "face_t",
@@ -7226,7 +7238,7 @@
       {
        "name": "r_out",
        "default": "3.2",
-       "comment": "outer corner radius"
+       "comment": "deviates: pre-canon — the band look was drawn on this radius; conform on the next redraw"
       },
       {
        "name": "preload",
@@ -7708,7 +7720,7 @@
       {
        "name": "wall",
        "default": "2.2",
-       "comment": "side wall thickness"
+       "comment": "deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it"
       },
       {
        "name": "face_t",
@@ -8285,7 +8297,7 @@
       {
        "name": "kh_head_d",
        "default": "9.5",
-       "comment": "the LARGEST screw head to hang on — the number that"
+       "comment": "deviates: the LARGEST screw head to hang on — the number that"
       },
       {
        "name": "kh_shank_d",
@@ -8437,7 +8449,7 @@
       {
        "name": "wall",
        "default": "2.2",
-       "comment": "side wall thickness"
+       "comment": "deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it"
       },
       {
        "name": "face_t",
@@ -9176,12 +9188,12 @@
       {
        "name": "tol_slide",
        "default": "0.25",
-       "comment": "the glass/board pockets — the SLIDE station on the coupon"
+       "comment": "deviates: panel-scale fits, one step looser than core_tol_slide() — the SLIDE station on the coupon"
       },
       {
        "name": "tol_hole",
        "default": "0.35",
-       "comment": "M3 clearance through the bezel ears — the SCREW station"
+       "comment": "deviates: panel-scale fits, one step looser than core_tol_hole() — the SCREW station"
       }
      ]
     },
@@ -9192,7 +9204,7 @@
       {
        "name": "wall",
        "default": "3.0",
-       "comment": "side wall thickness (big case → thicker)"
+       "comment": "deviates: big case → thicker (plate bending scales with span — canary_rib_lib's rule)"
       },
       {
        "name": "face_t",
@@ -9207,7 +9219,7 @@
       {
        "name": "r_out",
        "default": "6.0",
-       "comment": "outer corner radius"
+       "comment": "deviates: display-frame radius class — scaled to the 7-inch face"
       }
      ]
     },
@@ -10878,7 +10890,7 @@
       {
        "name": "wall",
        "default": "2.4",
-       "comment": "side wall thickness"
+       "comment": "deviates: the glass sets this shell — r_out = r_glass + wall, and the skirt snap engages inside it; validated as a set"
       },
       {
        "name": "face_t",

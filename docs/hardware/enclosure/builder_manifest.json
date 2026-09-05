@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "74e4e187d238293e12570d60a1155091adf5f682103afba2e45e79891f4402bc",
+      "sha256": "1be54c0ee234bcbd8f25bc710f4a7c08c008eb96ef711b8d533d03340ffd1045",
       "groups": [
         {
           "name": "What to render",
@@ -1087,7 +1087,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "20974cb4c1c5d0c3025bd45201d2eb8a77913876bc7c84c9d0d8b4622faa3d90"
+          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1191,7 +1191,7 @@
         }
       },
       "units": {},
-      "sha256": "73c927105590eb69ddec3ded547d0d66ae17d2663108bd344ec82ccf3297e776",
+      "sha256": "4c646cc61a66e9c8b11f0d0ff372717a11580ff287b01f09776dedd6a5735484",
       "groups": [
         {
           "name": "What to render",
@@ -1956,7 +1956,8 @@
             {
               "name": "vent_hole_d",
               "type": "number",
-              "default": 1.6
+              "default": 1.0,
+              "desc": "fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)"
             },
             {
               "name": "vent_ring_d",
@@ -1966,7 +1967,8 @@
             {
               "name": "vent_holes",
               "type": "number",
-              "default": 6
+              "default": 10,
+              "desc": "more, smaller holes recover the open area at 1.0 mm"
             },
             {
               "name": "vent_dx",
@@ -2135,7 +2137,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "20974cb4c1c5d0c3025bd45201d2eb8a77913876bc7c84c9d0d8b4622faa3d90"
+          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2213,7 +2215,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "3d4788f02d1b9970f7aec75844632ddf23d6fe6482511df2b64e91b498f51b8f",
+      "sha256": "1e30d0121d3067681e5ecaafa972d224a1858c29a84511649ec227d4e015c8eb",
       "groups": [
         {
           "name": "What to render",
@@ -2804,7 +2806,7 @@
               "name": "lid_edge",
               "type": "number",
               "default": 1.0,
-              "desc": "face edge chamfer"
+              "desc": "deviates: scaled to the pill — the 12 mm face radius carries a wider first stage"
             },
             {
               "name": "lid_edge2",
@@ -2887,7 +2889,8 @@
             {
               "name": "vent_hole_d",
               "type": "number",
-              "default": 1.6
+              "default": 1.0,
+              "desc": "fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)"
             },
             {
               "name": "vent_ring_d",
@@ -2897,7 +2900,8 @@
             {
               "name": "vent_holes",
               "type": "number",
-              "default": 6
+              "default": 10,
+              "desc": "more, smaller holes recover the open area at 1.0 mm"
             },
             {
               "name": "vent_dx",
@@ -2967,7 +2971,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "20974cb4c1c5d0c3025bd45201d2eb8a77913876bc7c84c9d0d8b4622faa3d90"
+          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3059,7 +3063,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "753c69b7a3d31d3c8a9a47782b7f0a81895abe7e4d84895af5bb90400cd5a645",
+      "sha256": "960c1490993dbb42824cc35558ec0d44400703b517b82c8be92529254a5a5108",
       "groups": [
         {
           "name": "What to render",
@@ -3841,7 +3845,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "20974cb4c1c5d0c3025bd45201d2eb8a77913876bc7c84c9d0d8b4622faa3d90"
+          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4259,7 +4263,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "20974cb4c1c5d0c3025bd45201d2eb8a77913876bc7c84c9d0d8b4622faa3d90"
+          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
         },
         {
           "file": "canary_mount_lib.scad",

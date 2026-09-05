@@ -65,7 +65,7 @@ opt_batt = false;
 batt_l = 30.0;  batt_w = 20.0;  batt_h = 3.4;   // 302030-class cell — MEASURE
 
 /* [Puck] */
-wall_t   = 2.3;      // drum wall
+wall_t   = 2.3;      // deviates: the bezel's snap fingers seat through this drum wall — tuned as a set with snap_depth/skirt_t
 back_t   = 2.5;      // drum back plate
 bez_t    = 2.2;      // bezel face plate thickness
 bez_ap_d = 39.4;     // face aperture — shows the full Ø37.7 glass, covers the PCB rim
@@ -105,7 +105,7 @@ scallop_d   = 18.0;  // thumb scallops for lifting the drum out
 foot_h      = 1.5;   // foot pads (base cable channel runs beneath)
 
 /* [Aesthetics] */
-lid_edge  = 1.0;     // bezel face chamfer
+lid_edge  = 1.0;     // deviates: scaled to the round bezel — the drum face carries a wider single stage
 label_text = "";
 label_size = 4.0;  label_depth = 0.5;  label_font = "Liberation Sans:style=Bold";
 

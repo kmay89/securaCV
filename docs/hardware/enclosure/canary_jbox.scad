@@ -41,9 +41,9 @@ stack_h = 8.0;   standoff_h = 3.5;   // 3.5: the clip beam (standoff + PCB) keep
                                      // 17.8 board under the 4.5 % strain budget (3.0 ran 5.5 %)
 
 /* [Shell] */
-wall_t = 2.2;  floor_t = 2.2;  lid_t = 2.4;
+wall_t = 2.2;  floor_t = 2.2;  lid_t = 2.4;   // deviates: service-box duty build — chunkier walls to match its squared corners
 inner_pad = 8.0;     // interior margin around the board (wiring room)
-corner_r = 2.0;      // squared, utilitarian
+corner_r = 2.0;      // deviates: squared, utilitarian — the service box reads as gear, not decor
 lip_h = 3.0;  lip_t = 1.2;
 boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true 1/2" boss needs a taller shell)
 boss_l = 6.0;        // boss protrusion

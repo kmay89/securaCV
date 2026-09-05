@@ -188,7 +188,7 @@ plate_screw_d = 4.2;  // wall screws (#8 / M4 PAN head — the seats are flat co
 
 /* [Aesthetics] */
 colorway    = "graphite"; // ["graphite","canary","snow","forest","midnight"] assembled-preview spool set (canary_color_lib; single-part exports carry no color)
-lid_edge    = 1.0;    // face edge chamfer
+lid_edge    = 1.0;    // deviates: scaled to the pill — the 12 mm face radius carries a wider first stage
 lid_edge2   = 0.8;    // second, steeper stage (~66°) — softens the face edge toward a roundover
 // The wordmark sits where label_text would (label_dx/dy/rot/size/depth place
 // and size it) and is gated by the mark library's measured type
@@ -209,9 +209,9 @@ lp_dx  = 8.0;
 lp_dy  = -8.0;
 vent_pad_d     = 12.0;
 vent_pad_depth = 0.8;
-vent_hole_d    = 1.6;
+vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;
-vent_holes     = 6;
+vent_holes     = 10;    // more, smaller holes recover the open area at 1.0 mm
 vent_dx        = 0.0;    // vent/sound cluster ON the face's vertical axis — the
 vent_dy        = -8.0;   // camera → grille → button rhythm of a real doorbell
                          // (off-axis it read as an accidental drill pattern)
@@ -420,9 +420,14 @@ module body() {
                         translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
                         translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
                     }
+                    // ±Y gusset ties the post into its end wall, same 0.3
+                    // wall-overlap convention as the ±X one above. It used to
+                    // aim at inner_y/2 - 2.3, which left the d=2 target circle
+                    // entirely INSIDE the d=5 post — the hull added nothing
+                    // and this case had no end-wall gussets at all.
                     if (sy != 0 && abs(p[1]) > inner_y/2 - 10) hull() {
                         translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([p[0], sy*(inner_y/2 - 2.3), floor_t]) cylinder(d = 2, h = gusset_h);
+                        translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
                     }
                 }
             }
@@ -464,13 +469,10 @@ module body() {
 // ----------------------------------------------------------------------------
 //  FACE (lens + disc seat, button bezel, optional vent/LED/label, lip, skirt)
 // ----------------------------------------------------------------------------
-module vent_cluster(x, y) {
-    translate([x, y, 0]) {
-        translate([0, 0, lid_t - vent_pad_depth]) cylinder(d = vent_pad_d, h = vent_pad_depth + 1);
-        for (i = [0 : vent_holes - 1]) rotate([0, 0, i * 360 / vent_holes])
-            translate([vent_ring_d/2, 0, -1]) cylinder(d = vent_hole_d, h = lid_t + 2);
-    }
-}
+// The vent cluster and light-pipe bore are canary_core_lib's now
+// (core_vent_cluster / core_lightpipe_bore) — this file used to carry its
+// own copy of both, and the four copies across the weather shells had
+// forked. The knobs above still ride in as arguments.
 module face() {
     union() {
         difference() {
@@ -506,8 +508,9 @@ module face() {
                 translate([0, btn_cy, lid_t - 0.4])
                     cylinder(d1 = btn_bez_d + 2*tol_slide, d2 = btn_bez_d + 2*tol_slide + 1.0, h = 0.41);
             }
-            if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
-            if (opt_vent) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
+            if (opt_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
+            if (opt_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
+                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats by the head in the bag (canary_core_lib): flat floor for
             // PAN heads (on the pad), 90° cone for FLAT, O-ring gland with head_seal
             for (p = post_xy()) translate([0, 0, -head_pad]) {

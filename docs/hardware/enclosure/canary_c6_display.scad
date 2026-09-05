@@ -172,7 +172,7 @@ vent_w = 1.4;        // slot width
 tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
 
 /* [Shell] */
-wall   = 2.2;    // side wall thickness
+wall   = 2.2;    // deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it
 face_t = 2.0;    // bezel face (over the glass border)
 back_t = 2.0;    // rear cover plate
 r_out  = 3.0;    // outer corner radius

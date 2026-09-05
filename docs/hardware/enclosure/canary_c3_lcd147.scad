@@ -643,7 +643,7 @@ lid_back = "both";   // ["both","mark","keyhole"] back of the lid: brand, wall m
 // wrong: it used the nominal numbers RAW (a 9.6 opening for a 9.5 head,
 // 0.05 per side), and on FDM PETG that is a hole that binds — the very
 // failure the egg was drawn to fix, reintroduced one line lower down.
-kh_head_d  = 9.5;   // the LARGEST screw head to hang on — the number that
+kh_head_d  = 9.5;   // deviates: the LARGEST screw head to hang on — the number that
                     // was 7.0 and too small for a screw already in a wall
 kh_shank_d = 4.2;   // the shank the crown grips
 // A CUTER EGG, and the only knob that could give one. Everything else about
@@ -817,7 +817,7 @@ brass_d = 3.5;       // pillar body Ø (round brass M2 standoff) — MEASURE
 tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
 
 /* [Shell] */
-wall   = 2.2;    // side wall thickness
+wall   = 2.2;    // deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it
 face_t = 1.2;    // bezel face over the glass border — thin on purpose (rule 3)
 back_t = 2.0;    // lid plate
 r_out  = 3.0;    // outer corner radius
