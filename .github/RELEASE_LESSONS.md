@@ -2382,7 +2382,12 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   prints the hash the CDN served, so pinning is a deliberate act with the
   bytes in hand, never an accident of what was up that day. Recompute both
   when bumping the model or the compiler, exactly as `ESPFLASH_VERSION` /
-  `ESPFLASH_SHA256_*` prescribe for the flash engine.
+  `ESPFLASH_SHA256_*` prescribe for the flash engine. The first pin was
+  taken exactly that way: a dispatched run on the fixing branch printed the
+  served hash, and that hash went into the file with the run id beside it.
+  Seeed publishes no digest of its own, so this is a first-use pin — the
+  guarantee is that the bytes cannot change under us from here on, not that
+  the first bytes were independently attested. Say which one you have.
 - **Applies to:** every step between "download something" and "sign
   something" on any release path. A signature is a statement about bytes we
   chose; an unpinned download is bytes someone else chose. If an input comes

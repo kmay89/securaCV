@@ -55,10 +55,16 @@ env:
   # output is signed with the OTA release key and the browser flasher trusts
   # that signature, so the input must be bytes we chose — not whatever the CDN
   # serves on release day. REQUIRED: an empty pin fails the run and prints the
-  # hash the CDN served; verify that against Seeed's published model, then pin
-  # it here. Recompute deliberately when MODEL_STEM changes:
+  # hash the CDN served, so a re-pin is done with the bytes in hand.
+  #
+  # This value is what the zoo served on 2026-09-05 (835,856 bytes; run
+  # 33933211659 on this repo printed it) — a first-use pin, since Seeed
+  # publishes no digest to check it against. From here on the check is the
+  # guarantee: any change to the served bytes fails the release loudly
+  # instead of being signed. Recompute deliberately when MODEL_STEM changes,
+  # and only after reading why the bytes moved:
   #   curl -fsSL "$ZOO_BASE/$MODEL_STEM.tflite" | sha256sum
-  MODEL_INT8_SHA256: ""
+  MODEL_INT8_SHA256: "4bb86d233a2e5765e138972c2698cce46c27be0c076c94c81799ffb5f373b108"
   # The compiler on the signing path, pinned so a release is compiled by a
   # vela we chose on purpose. Bump deliberately, together with the model pin.
   VELA_VERSION: "5.2.0"
