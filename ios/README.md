@@ -171,6 +171,22 @@ Four rules keep "beautiful" from decaying into "busy":
   The honesty rules travel with the engine: every face maps 1:1 to state a
   log line can name, and during a real unacknowledged alarm the bird is
   `Hidden` — never cute during a real alarm; the instruments own the stage.
+- **The character has a voice.** The website's header-bird assistant
+  (`js/canary-herald.js` in the site repo) is ported as the bird helper:
+  one speech bubble docked over every section (`CanaryVoiceBubble`), fed by
+  one channel anything in the app can speak through (`store.voice.say(…)`).
+  The pure halves — the pacing scale, the read-time dwell curve, the queue
+  where a warning never waits behind small talk, and the three-brush-offs-
+  and-it-goes-quiet rule — are ported constant-for-constant
+  (`Model/CanaryVoice*.swift`, pinned by `CanaryVoiceTests` the way the
+  site pins them). What deliberately did not come along: the site mascot's
+  own moods and gestures (the face stays the mood engine's — one character,
+  many renderers) and URL actions (a bubble can only point at an app
+  section, so the site's href-safety rule is structural here). Today the
+  bird's own traffic is the once-ever hello, one orientation line per
+  section, and the 7/30-day trust milestones; quiet mode mutes exactly that
+  chatter and nothing else, and while the face is `Hidden` the channel
+  holds its tongue mid-sentence.
 - **The Alerts tab is a list of alerts.** It used to be a rules editor
   wearing that name, so the app kept no history at all and the one question
   people open it with — *did something need me, and did it reach me?* — had
