@@ -118,38 +118,34 @@ setup_secrets() {
         cat > "$example_file" << 'EOF'
 /**
  * @file secrets.h
- * @brief Secret credentials (NEVER commit this file!)
+ * @brief canary-wap takes NO compile-time credentials.
  *
- * Copy this file to secrets.h and fill in your credentials.
- * The secrets.h file is gitignored.
+ * This file exists because setup.sh has always created it and the Arduino
+ * IDE workflow expects it to be present; nothing in the firmware includes it.
+ * It used to advertise Wi-Fi, MQTT, AP-password and API-token macros that no
+ * source ever read — including an AP_PASSWORD_CUSTOM "change this before
+ * deployment" instruction that changed nothing.
+ *
+ * Where each credential actually lives:
+ *   - Wi-Fi station credentials: provisioned over the captive portal at first
+ *     boot and stored in NVS (canary_wap.ino, NVS_KEY_WIFI_SSID / _PASS).
+ *   - The setup-AP password: derived per device from the private key
+ *     (derive_ap_password) and shown on the serial banner and /enroll page.
+ *   - The API token: derived per device from the private key
+ *     (derive_api_token), stored in NVS, shown on the serial banner.
+ *   - MQTT: configured at runtime through the device web UI.
+ *
+ * Leave this file empty. Adding macros here does nothing.
  */
 
 #pragma once
-
-// WiFi Station credentials (connect to home network)
-#define WIFI_SSID           "your-wifi-ssid"
-#define WIFI_PASSWORD       "your-wifi-password"
-
-// WiFi Access Point settings
-// IMPORTANT: Change this password before deployment!
-// The default password is for development only.
-#define AP_PASSWORD_CUSTOM  "change-me-now"
-
-// MQTT credentials (optional)
-#define MQTT_BROKER         "192.168.1.100"
-#define MQTT_PORT           1883
-#define MQTT_USER           ""
-#define MQTT_PASSWORD       ""
-
-// API tokens (optional)
-#define API_TOKEN           ""
 EOF
         print_success "Created secrets/secrets.example.h"
     fi
 
     if [ ! -f "$secrets_file" ]; then
         cp "$example_file" "$secrets_file"
-        print_success "Created secrets/secrets.h (please edit with your credentials)"
+        print_success "Created secrets/secrets.h (nothing to edit — canary-wap takes no compile-time credentials)"
     else
         print_info "secrets/secrets.h already exists"
     fi

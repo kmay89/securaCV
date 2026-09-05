@@ -114,8 +114,9 @@ struct Args {
     mqtt_client_id: String,
 
     /// Device identifier for Home Assistant. Defaults to pwk_<8 hex chars of
-    /// sha256(DEVICE_KEY_SEED)>; an install that predates the hashed form can
-    /// pin its old id here so its entities are not re-created.
+    /// sha256("securacv:ha-device-id:v1:" || DEVICE_KEY_SEED)> — the derivation
+    /// the add-on and the sidecar use too; an install that predates the hashed
+    /// form can pin its old id here so its entities are not re-created.
     #[arg(long, env = "HA_DEVICE_ID")]
     ha_device_id: Option<String>,
 
@@ -453,7 +454,10 @@ fn main() -> Result<()> {
     let device_id = args.ha_device_id.clone().unwrap_or_else(|| {
         std::env::var("DEVICE_KEY_SEED")
             .map(|s| {
-                let digest = Sha256::digest(s.as_bytes());
+                // Same derivation as the add-on (privacy_witness_kernel/run.sh)
+                // and the sidecar (docker/sidecar/entrypoint.sh), so every
+                // deployment names a given seed the same way.
+                let digest = Sha256::digest(format!("securacv:ha-device-id:v1:{s}").as_bytes());
                 format!("pwk_{}", hex::encode(&digest[..4]))
             })
             .unwrap_or_else(|_| "pwk_default".to_string())
