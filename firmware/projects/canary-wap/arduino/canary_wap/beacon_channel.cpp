@@ -134,26 +134,44 @@ struct OriginationRate {
 };
 static OriginationRate g_origination_rate[MAX_BEACON_SET];
 
-// Seen-nonce ring for receive-path replay dedup (spec §7.1 step 3; §8 sets
-// the horizon at the last 5 minutes of nonces). Checked before signature
-// verification so a replay costs no Ed25519 work, and a nonce is recorded
-// only after a frame has fully validated, so unverifiable traffic cannot
-// evict real entries. Origination is capped at a handful of frames per
-// pubkey per day, so this cannot wrap within the horizon under real load.
-static const size_t SEEN_NONCE_MAX = 32;
-struct SeenNonce {
-  uint8_t  nonce[BEACON_NONCE_SIZE];
+// Seen-frame ring for receive-path replay dedup (spec §7.1 step 3; §8 sets
+// the horizon at the last 5 minutes). A frame's identity is taken from its
+// two signatures, never from the header nonce: the nonce sits outside
+// BeaconAlertCanonical, so neither signature covers it, and a replay that
+// rewrote it in flight would pass a nonce-keyed ring, verify, charge the
+// originator's rate bucket and re-raise the alarm. Ed25519 signing is
+// deterministic (RFC 8032), so the same canonical under the same keys
+// always yields the same bytes, and nobody without those keys can mint a
+// fresh identity that verifies. Checked before signature verification so a
+// replay costs no Ed25519 work, and recorded only after a frame has fully
+// validated, so unverifiable traffic cannot evict real entries. Origination
+// is capped at a handful of frames per pubkey per day, so this cannot wrap
+// within the horizon under real load.
+static const size_t SEEN_FRAME_MAX = 32;
+static const size_t FRAME_ID_HALF = 16;               // bytes taken from each signature
+static const size_t FRAME_ID_SIZE = 2 * FRAME_ID_HALF;
+struct SeenFrame {
+  uint8_t  id[FRAME_ID_SIZE];
   uint32_t seen_ms;
   bool     valid;
 };
-static SeenNonce g_seen_nonces[SEEN_NONCE_MAX];
-static size_t g_seen_nonce_head = 0;
+static SeenFrame g_seen_frames[SEEN_FRAME_MAX];
+static size_t g_seen_frame_head = 0;
 
 // Header nonce of the frame that raised g_active_alarm. CANCEL and UPDATE
 // must name it (spec §5.4, §7.2). An UPDATE amends the alarm without
 // becoming its new identity, so a later CANCEL still resolves against the
 // originating ALERT.
 static uint8_t g_active_alarm_nonce[BEACON_NONCE_SIZE];
+
+// Signature identity of the most recent accepted ALERT. The ring forgets
+// after the freshness horizon and a CANCEL clears the alarm, but neither
+// clears this, so a re-sent ALERT stays a duplicate for as long as it is the
+// latest one. The case this covers that the ring cannot is a receiver whose
+// clock never synced: there the freshness window (§7.1 step 4) does not run,
+// and a copy held past the horizon would otherwise re-raise the alarm.
+static uint8_t g_last_alert_id[FRAME_ID_SIZE];
+static bool g_last_alert_id_valid = false;
 
 // Newest signed selftest timestamp accepted per beacon-set slot. RAM only
 // (spec §11). Monotonicity here is what refuses a replayed SELFTEST_OK.
@@ -429,26 +447,36 @@ static bool is_valid_beacon_template(uint8_t id) {
   }
 }
 
-static bool nonce_seen(const uint8_t* nonce) {
+// The replay identity of an ALERT-class frame: half of each signature. Both
+// halves are authenticated bytes (a forgery fails verification and is never
+// remembered), and taking from both means a solo frame — which carries the
+// same signature in both slots — is keyed the same way as a dual one.
+static void frame_identity(const uint8_t* sig_a, const uint8_t* sig_b, uint8_t* id) {
+  memcpy(id, sig_a, FRAME_ID_HALF);
+  memcpy(id + FRAME_ID_HALF, sig_b, FRAME_ID_HALF);
+}
+
+static bool frame_seen(const uint8_t* id) {
+  if (g_last_alert_id_valid && memcmp(g_last_alert_id, id, FRAME_ID_SIZE) == 0) return true;
   const uint32_t now = millis();
   const uint32_t horizon_ms = BEACON_FRESHNESS_S * 1000UL;
-  for (size_t i = 0; i < SEEN_NONCE_MAX; i++) {
-    if (!g_seen_nonces[i].valid) continue;
-    if (now - g_seen_nonces[i].seen_ms > horizon_ms) {
-      g_seen_nonces[i].valid = false;
+  for (size_t i = 0; i < SEEN_FRAME_MAX; i++) {
+    if (!g_seen_frames[i].valid) continue;
+    if (now - g_seen_frames[i].seen_ms > horizon_ms) {
+      g_seen_frames[i].valid = false;
       continue;
     }
-    if (memcmp(g_seen_nonces[i].nonce, nonce, BEACON_NONCE_SIZE) == 0) return true;
+    if (memcmp(g_seen_frames[i].id, id, FRAME_ID_SIZE) == 0) return true;
   }
   return false;
 }
 
-static void remember_nonce(const uint8_t* nonce) {
-  SeenNonce* slot = &g_seen_nonces[g_seen_nonce_head];
-  memcpy(slot->nonce, nonce, BEACON_NONCE_SIZE);
+static void remember_frame(const uint8_t* id) {
+  SeenFrame* slot = &g_seen_frames[g_seen_frame_head];
+  memcpy(slot->id, id, FRAME_ID_SIZE);
   slot->seen_ms = millis();
   slot->valid = true;
-  g_seen_nonce_head = (g_seen_nonce_head + 1) % SEEN_NONCE_MAX;
+  g_seen_frame_head = (g_seen_frame_head + 1) % SEEN_FRAME_MAX;
 }
 
 // spec §5.4 requires a non-zero ref_canceled_nonce on CANCEL and UPDATE;
@@ -1036,7 +1064,10 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
 
   // Replay dedup first (spec §7.1 step 3), so a rebroadcast costs no
   // signature verification and never reaches the originator's rate bucket.
-  if (nonce_seen(hdr->nonce)) return;
+  // Keyed on the signatures, not hdr->nonce — see SeenFrame.
+  uint8_t frame_id[FRAME_ID_SIZE];
+  frame_identity(sig_a, sig_b, frame_id);
+  if (frame_seen(frame_id)) return;
 
   // Scope must be Private (lint and spec invariant).
   if (canonical->scope != BCN_SCOPE_PRIVATE) return;
@@ -1114,9 +1145,9 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
     if (skew > BEACON_FRESHNESS_S) return;
   }
 
-  // The frame is authentic and fresh: remember its nonce before any bucket
-  // is charged, so the rate limiter sees each origination exactly once.
-  remember_nonce(hdr->nonce);
+  // The frame is authentic and fresh: remember it before any bucket is
+  // charged, so the rate limiter sees each origination exactly once.
+  remember_frame(frame_id);
 
   // Rate limit per originator fingerprint, in the bucket for this frame's
   // class (AGENTS.md Beacon invariant 10 — drills never share with alerts).
@@ -1140,6 +1171,8 @@ static void handle_alert_frame(const uint8_t* data, size_t len) {
     g_active_alarm_valid = true;
     g_active_alarm_expires = canonical->expires;
     memcpy(g_active_alarm_nonce, hdr->nonce, BEACON_NONCE_SIZE);
+    memcpy(g_last_alert_id, frame_id, FRAME_ID_SIZE);
+    g_last_alert_id_valid = true;
     if (g_alarm_callback) g_alarm_callback(&g_active_alarm);
     recompute_trouble_reasons();
   } else if (canonical->msg_type == BEACON_MSG_UPDATE) {
@@ -1215,10 +1248,12 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
 
   memset(g_beacon_set, 0, sizeof(g_beacon_set));
   memset(g_origination_rate, 0, sizeof(g_origination_rate));
-  memset(g_seen_nonces, 0, sizeof(g_seen_nonces));
+  memset(g_seen_frames, 0, sizeof(g_seen_frames));
   memset(g_active_alarm_nonce, 0, sizeof(g_active_alarm_nonce));
+  memset(g_last_alert_id, 0, sizeof(g_last_alert_id));
+  g_last_alert_id_valid = false;
   memset(g_last_selftest_ts, 0, sizeof(g_last_selftest_ts));
-  g_seen_nonce_head = 0;
+  g_seen_frame_head = 0;
   memset(g_audit_log, 0, sizeof(g_audit_log));
   memset(g_audit_chain_head, 0, sizeof(g_audit_chain_head));
   g_audit_log_count = 0;

@@ -428,17 +428,32 @@ and `test_beacon_solo_origination.cpp` that fail on the pre-fix logic:
   flag rule is enforced as a biconditional — EXERCISE frames carry
   `BCN_FLAG_IS_EXERCISE` and nothing else does — so neither direction of the
   drill/alert substitution survives.
-- **Replay and freshness (§7.1 steps 3–4, §8).** A 32-entry seen-nonce ring
-  keyed on the header nonce, checked before signature verification, drops
-  rebroadcasts at no cryptographic cost and before the originator's rate
-  bucket is charged; `|now − effective| <= BEACON_FRESHNESS_S` is enforced,
-  with the unsynced-clock accept-but-flag branch kept.
+- **Replay and freshness (§7.1 steps 3–4, §8).** A 32-entry seen-frame ring,
+  checked before signature verification, drops rebroadcasts at no
+  cryptographic cost and before the originator's rate bucket is charged;
+  `|now − effective| <= BEACON_FRESHNESS_S` is enforced, with the
+  unsynced-clock accept-but-flag branch kept. The ring is keyed on the two
+  Ed25519 signatures (16 bytes of each), **not** on the header nonce the spec
+  names in step 3: the nonce sits outside `BeaconAlertCanonical`, so nothing
+  signs it, and a nonce-keyed ring let a captured ALERT be re-sent with the
+  nonce rewritten — past dedup, through verification, into the originator's
+  rate bucket and back onto the alarm (review finding on the first cut of
+  this pass). Signatures are deterministic under RFC 8032, so a copy carries
+  the same identity however its header reads, and a fresh identity that
+  verifies requires the keys. The latest accepted ALERT's identity is also
+  held outside the ring, so a copy kept past the 5-minute horizon cannot
+  re-raise the alarm on a receiver whose clock never synced (where freshness
+  cannot run), CANCEL or no CANCEL.
 - **CANCEL and UPDATE name their alarm (§5.4, §7.2).** The accepted alarm's
   header nonce is retained; both message types require a non-zero
   `ref_canceled_nonce` that matches it. An unreferenced frame is still
   audited — only its state effect is dropped. An UPDATE amends the alarm
   without becoming its identity, so a later CANCEL still resolves against the
-  originating ALERT.
+  originating ALERT. Residual, spec-level: the reference is to the *header*
+  nonce, which is unsigned, so a relay that rewrites it on the way through
+  leaves receivers holding a nonce the originator's CANCEL will never name.
+  Closing that needs the nonce inside the signed canonical (a wire-format
+  change, spec §5); tracked below with the other open items.
 - **Drills bank separately (AGENTS.md Beacon invariant 10).** `OriginationRate`
   carries a second counter selected by the signed `msg_type`, so an exercise
   can no longer spend a neighbor's real-alert budget.

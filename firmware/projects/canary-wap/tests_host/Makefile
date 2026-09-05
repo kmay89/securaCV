@@ -34,7 +34,8 @@ CHIRP_SEC_SRC = test_chirp_security.cpp
 # beacon_channel.cpp::handle_alert_frame rejects single-signature frames,
 # revoked or long-unsupervised pubkeys, origin==cosigner, wrong scope, wrong
 # magic, a header msg_type that disagrees with the signed canonical, a drill
-# without its flag, an out-of-set template, a replayed nonce, and a frame
+# without its flag, an out-of-set template, a replayed frame (whatever its
+# unsigned header nonce now says), and a frame
 # outside the freshness window — and that CANCEL/UPDATE only act on the
 # alarm they name, drills bank against their own rate bucket, and a replayed
 # SELFTEST_OK cannot keep a dead neighbor supervised-healthy.

@@ -3,7 +3,8 @@
 // Mirrors the validation pipeline in beacon_channel.cpp::handle_alert_frame
 // (spec/beacon_channel_v0.md §7.1), in pipeline order:
 //   1. magic = 0xB1
-//   2. nonce not already seen (replay dedup, §7.1 step 3)
+//   2. frame not already seen (replay dedup, §7.1 step 3 — keyed on the two
+//      signatures, because the header nonce is outside the signed bytes)
 //   3. scope = Private
 //   4. canonical.msg_type == header.msg_type (only the canonical is signed)
 //   5. EXERCISE frames carry BCN_FLAG_IS_EXERCISE and nothing else does (§5.4)
@@ -54,7 +55,8 @@ constexpr uint8_t TPL_NOT_BEACON   = 0x00;
 constexpr uint32_t BEACON_FRESHNESS_S = 300;
 constexpr uint32_t SELFTEST_MISSING_MS = 129600000;  // 36 h
 constexpr uint8_t  MAX_ORIGINATIONS_PER_PUBKEY_24H = 5;
-constexpr size_t   SEEN_NONCE_MAX = 32;
+constexpr size_t   SEEN_FRAME_MAX = 32;
+constexpr size_t   FRAME_ID_SIZE = 32;  // 16 bytes of each signature
 
 bool is_valid_beacon_template(uint8_t id) {
   switch (id) {
@@ -93,6 +95,10 @@ struct Frame {
   uint8_t  cosigner_fp[DEVICE_FP_SIZE];
   bool     sig_a_valid;
   bool     sig_b_valid;
+  // Stands in for the signature bytes: Ed25519 is deterministic, so a copy of
+  // a frame carries the same id however its header was rewritten, and a
+  // distinct origination carries a distinct one.
+  uint8_t  sig_id[FRAME_ID_SIZE];
 };
 
 const SetEntry* find_in_set(const std::vector<SetEntry>& s, const uint8_t* fp) {
@@ -169,14 +175,18 @@ enum class Outcome {
   Audited,         // entered the audit log; state effect may still be a no-op
 };
 
-// The stateful half: the seen-nonce ring, the split rate buckets, and the
+// The stateful half: the seen-frame ring, the split rate buckets, and the
 // active-alarm reference rules.
 struct Receiver {
   std::vector<SetEntry> set;
 
-  struct SeenNonce { uint8_t nonce[BEACON_NONCE_SIZE]; uint32_t seen_ms; bool valid; };
-  SeenNonce seen[SEEN_NONCE_MAX] = {};
+  struct SeenFrame { uint8_t id[FRAME_ID_SIZE]; uint32_t seen_ms; bool valid; };
+  SeenFrame seen[SEEN_FRAME_MAX] = {};
   size_t seen_head = 0;
+  // Identity of the latest accepted ALERT; outlives both the ring's horizon
+  // and the alarm itself.
+  uint8_t last_alert_id[FRAME_ID_SIZE] = {};
+  bool    last_alert_id_valid = false;
 
   struct Rate {
     uint8_t  fp[DEVICE_FP_SIZE];
@@ -195,21 +205,22 @@ struct Receiver {
   int     alarm_callbacks = 0;
   int     audited = 0;
 
-  bool nonce_seen(const uint8_t* nonce, uint32_t now_ms) {
+  bool frame_seen(const uint8_t* id, uint32_t now_ms) {
+    if (last_alert_id_valid && std::memcmp(last_alert_id, id, FRAME_ID_SIZE) == 0) return true;
     const uint32_t horizon_ms = BEACON_FRESHNESS_S * 1000UL;
-    for (size_t i = 0; i < SEEN_NONCE_MAX; i++) {
+    for (size_t i = 0; i < SEEN_FRAME_MAX; i++) {
       if (!seen[i].valid) continue;
       if (now_ms - seen[i].seen_ms > horizon_ms) { seen[i].valid = false; continue; }
-      if (std::memcmp(seen[i].nonce, nonce, BEACON_NONCE_SIZE) == 0) return true;
+      if (std::memcmp(seen[i].id, id, FRAME_ID_SIZE) == 0) return true;
     }
     return false;
   }
 
-  void remember_nonce(const uint8_t* nonce, uint32_t now_ms) {
-    std::memcpy(seen[seen_head].nonce, nonce, BEACON_NONCE_SIZE);
+  void remember_frame(const uint8_t* id, uint32_t now_ms) {
+    std::memcpy(seen[seen_head].id, id, FRAME_ID_SIZE);
     seen[seen_head].seen_ms = now_ms;
     seen[seen_head].valid = true;
-    seen_head = (seen_head + 1) % SEEN_NONCE_MAX;
+    seen_head = (seen_head + 1) % SEEN_FRAME_MAX;
   }
 
   bool rate_check_and_record(const uint8_t* fp, bool is_exercise, uint32_t now_ms) {
@@ -251,10 +262,10 @@ struct Receiver {
   Outcome receive(const Frame& f, uint64_t now_unix = 1800000000ULL,
                   uint32_t now_ms = 0) {
     if (f.magic != BCN_MAGIC) return Outcome::RejectedGate;
-    if (nonce_seen(f.nonce, now_ms)) return Outcome::RejectedReplay;
+    if (frame_seen(f.sig_id, now_ms)) return Outcome::RejectedReplay;
     if (!would_accept(set, f, now_unix, now_ms)) return Outcome::RejectedGate;
 
-    remember_nonce(f.nonce, now_ms);
+    remember_frame(f.sig_id, now_ms);
     const bool is_exercise = (f.canon_msg_type == MSG_EXERCISE);
     if (!rate_check_and_record(f.originator_fp, is_exercise, now_ms)) {
       return Outcome::RejectedRate;
@@ -266,6 +277,8 @@ struct Receiver {
       alarm_template = f.template_id;
       alarm_expires = f.expires;
       std::memcpy(alarm_nonce, f.nonce, BEACON_NONCE_SIZE);
+      std::memcpy(last_alert_id, f.sig_id, FRAME_ID_SIZE);
+      last_alert_id_valid = true;
       alarm_callbacks++;
     } else if (f.canon_msg_type == MSG_UPDATE) {
       if (references_active_alarm(f)) {
@@ -308,11 +321,24 @@ Frame mk_frame(uint8_t orig_prefix, uint8_t cosign_prefix,
   f.certainty = BCN_CERT_OBSERVED;
   f.effective = 1800000000ULL;
   f.expires = 1800000000ULL + 3600ULL;
-  std::memset(f.nonce, g_nonce_seq++, BEACON_NONCE_SIZE);
+  // One sequence drives both: every mk_frame is a distinct origination, so it
+  // gets a fresh nonce AND fresh signatures. A replay is a copy of the struct.
+  std::memset(f.nonce, g_nonce_seq, BEACON_NONCE_SIZE);
+  std::memset(f.sig_id, g_nonce_seq, FRAME_ID_SIZE);
+  g_nonce_seq++;
   std::memset(f.originator_fp, orig_prefix, DEVICE_FP_SIZE);
   std::memset(f.cosigner_fp,   cosign_prefix, DEVICE_FP_SIZE);
   f.sig_a_valid = sa;
   f.sig_b_valid = sb;
+  return f;
+}
+
+Frame mk_cancel(uint8_t orig, uint8_t cosign, const uint8_t* ref_nonce) {
+  Frame f = mk_frame(orig, cosign);
+  f.hdr_msg_type = MSG_CANCEL;
+  f.canon_msg_type = MSG_CANCEL;
+  f.template_id = TPL_FALSE_ALARM;
+  if (ref_nonce) std::memcpy(f.ref_canceled_nonce, ref_nonce, BEACON_NONCE_SIZE);
   return f;
 }
 
@@ -427,15 +453,80 @@ void test_real_alert_cannot_wear_the_exercise_flag() {
 // Finding 1 — replay dedup and the freshness window
 // ───────────────────────────────────────────────────────────────────────────
 
-void test_replayed_nonce_is_dropped() {
+void test_replayed_frame_is_dropped() {
   Receiver rx;
   rx.set = { mk(0xAA), mk(0xBB) };
   Frame f = mk_frame(0xAA, 0xBB);
   EXPECT(rx.receive(f) == Outcome::Audited, "first arrival accepted");
   EXPECT(rx.receive(f) == Outcome::RejectedReplay,
-         "same header nonce again → dropped as replay");
+         "same frame again → dropped as replay");
   EXPECT(rx.audited == 1, "a replay adds no second audit entry");
   EXPECT(rx.alarm_callbacks == 1, "a replay does not re-fire the alarm callback");
+}
+
+// The header nonce is not under either signature, so a replay can carry any
+// nonce it likes. Pre-fix the ring was keyed on it: one byte flipped in the
+// unsigned header and the copy passed dedup, verified, charged the
+// originator's rate bucket, re-fired the alarm callback and overwrote the
+// alarm's identity — after which the originator's own CANCEL, naming the
+// nonce it actually sent, no longer resolved.
+void test_replay_with_a_fresh_header_nonce_is_still_dropped() {
+  Receiver rx;
+  rx.set = { mk(0xAA), mk(0xBB) };
+  Frame f = mk_frame(0xAA, 0xBB);
+  EXPECT(rx.receive(f) == Outcome::Audited, "genuine ALERT accepted");
+
+  for (int i = 0; i < 4; i++) {
+    Frame copy = f;
+    std::memset(copy.nonce, 0xE0 + i, BEACON_NONCE_SIZE);  // rewritten in flight
+    EXPECT(rx.receive(copy) == Outcome::RejectedReplay,
+           "same signatures under a fresh header nonce → still a replay");
+  }
+  EXPECT(rx.audited == 1, "nonce-rewritten replays add no audit entries");
+  EXPECT(rx.alarm_callbacks == 1, "nonce-rewritten replays do not re-fire the alarm");
+  EXPECT(std::memcmp(rx.alarm_nonce, f.nonce, BEACON_NONCE_SIZE) == 0,
+         "the alarm keeps the nonce of the frame that actually raised it");
+
+  // Had the four replays each charged the bucket, this CANCEL would be the
+  // sixth origination and rate-limited; and had any of them become the
+  // alarm's identity, the nonce the originator actually sent would no longer
+  // name it.
+  Frame cancel = mk_cancel(0xAA, 0xBB, f.nonce);
+  EXPECT(rx.receive(cancel) == Outcome::Audited,
+         "the originator's CANCEL is not rate-limited by the replays");
+  EXPECT(!rx.alarm_valid, "the originator's own CANCEL still resolves the alarm");
+}
+
+// The ring forgets after the freshness horizon, and with a synced clock the
+// freshness window then takes over. A receiver whose clock never synced has
+// no freshness window (§7.1 step 4 says accept and flag), so for it the ring
+// horizon was the only thing standing between a held copy and a re-raised
+// alarm. The latest ALERT's identity outlives both the ring and a CANCEL.
+void test_held_copy_past_the_ring_horizon_cannot_re_raise_the_alarm() {
+  Receiver rx;
+  rx.set = { mk(0xAA), mk(0xBB) };
+  const uint64_t unsynced = 1000;  // below MIN_UNIX_TIME: freshness cannot run
+  const uint32_t horizon_ms = BEACON_FRESHNESS_S * 1000UL;
+
+  Frame f = mk_frame(0xAA, 0xBB);
+  EXPECT(rx.receive(f, unsynced, /*now_ms=*/0) == Outcome::Audited, "ALERT accepted");
+
+  Frame held = f;
+  std::memset(held.nonce, 0xEE, BEACON_NONCE_SIZE);
+  EXPECT(rx.receive(held, unsynced, horizon_ms + 60000) == Outcome::RejectedReplay,
+         "a copy held past the ring horizon is still the alarm it would re-raise");
+  EXPECT(rx.alarm_callbacks == 1, "no second alarm from the held copy");
+
+  Frame cancel = mk_cancel(0xAA, 0xBB, f.nonce);
+  EXPECT(rx.receive(cancel, unsynced, horizon_ms + 61000) == Outcome::Audited, "CANCEL accepted");
+  EXPECT(!rx.alarm_valid, "alarm cleared");
+  EXPECT(rx.receive(held, unsynced, horizon_ms + 62000) == Outcome::RejectedReplay,
+         "the canceled ALERT cannot be re-raised from a held copy either");
+  EXPECT(!rx.alarm_valid, "still clear");
+
+  Frame next = mk_frame(0xAA, 0xBB);
+  EXPECT(rx.receive(next, unsynced, horizon_ms + 63000) == Outcome::Audited,
+         "a genuinely new ALERT from the same pair is not mistaken for the old one");
 }
 
 void test_replay_does_not_consume_the_rate_bucket() {
@@ -502,15 +593,6 @@ void test_unsynced_clock_accepts_stale_effective() {
 // ───────────────────────────────────────────────────────────────────────────
 // Finding 2 — CANCEL / UPDATE must name the active alarm
 // ───────────────────────────────────────────────────────────────────────────
-
-Frame mk_cancel(uint8_t orig, uint8_t cosign, const uint8_t* ref_nonce) {
-  Frame f = mk_frame(orig, cosign);
-  f.hdr_msg_type = MSG_CANCEL;
-  f.canon_msg_type = MSG_CANCEL;
-  f.template_id = TPL_FALSE_ALARM;
-  if (ref_nonce) std::memcpy(f.ref_canceled_nonce, ref_nonce, BEACON_NONCE_SIZE);
-  return f;
-}
 
 void test_cancel_must_reference_the_active_alarm() {
   Receiver rx;
@@ -735,7 +817,9 @@ int main() {
   test_exercise_requires_exercise_flag();
   test_real_alert_cannot_wear_the_exercise_flag();
 
-  test_replayed_nonce_is_dropped();
+  test_replayed_frame_is_dropped();
+  test_replay_with_a_fresh_header_nonce_is_still_dropped();
+  test_held_copy_past_the_ring_horizon_cannot_re_raise_the_alarm();
   test_replay_does_not_consume_the_rate_bucket();
   test_rate_bucket_still_caps_distinct_originations();
   test_stale_effective_is_rejected();
