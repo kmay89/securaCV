@@ -378,7 +378,14 @@ impl SealedLogStore for SqliteSealedLogStore {
         let mut head = [0u8; 32];
         head.copy_from_slice(&head_bytes);
 
-        let checkpoint_sig = sign_entry(signature_keys, &head, DOMAIN_CHECKPOINT)?;
+        // The cutoff is bound into the signature (log::checkpoint_message): after
+        // a full-retention prune it is what the high-water-mark check reconciles
+        // against, so it cannot stay an unsigned column.
+        let checkpoint_sig = sign_entry(
+            signature_keys,
+            &crate::log::checkpoint_message(&head, cutoff_id),
+            DOMAIN_CHECKPOINT,
+        )?;
         let checkpoint_pq_signature = checkpoint_sig
             .pq_signature
             .as_ref()

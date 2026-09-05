@@ -132,6 +132,15 @@ async function domainSeparatedHash(domain, entryHash) {
   return sha256(concatBytes(le32(d.length), d, entryHash));
 }
 
+// Version tag of the cutoff-bound checkpoint message (src/log/mod.rs CHECKPOINT_CUTOFF_TAG).
+const CHECKPOINT_CUTOFF_TAG = 'securacv:pwk:sealed-log-checkpoint-cutoff:v3';
+
+function le64(n) {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, BigInt.asUintN(64, BigInt(n)), true);
+  return b;
+}
+
 async function hashEntry(prevHash, payloadStr) {
   return sha256(concatBytes(prevHash, utf8(payloadStr)));
 }
@@ -504,14 +513,18 @@ async function verifyEnvelope(envelope) {
     if (sigCheckable) result.checks.push('Device Ed25519 signatures valid on every sealed event');
 
     // Checkpoint signature — by whichever lineage key was current when it was written.
+    // The cutoff-bound message first (src/log/mod.rs checkpoint_message), then the legacy
+    // bare head for checkpoints written before the cutoff was bound to the signature.
     if (cp && sigCheckable) {
       const head = toBytes(cp.chain_head_hash);
-      const msg = await domainSeparatedHash(domains.checkpoint, head);
       const sig = Uint8Array.from(cp.signatures.ed25519_signature);
-      if (!(await verifyEd25519AnyOf(lineage.keys, sig, msg))) {
+      const bound = await sha256(concatBytes(utf8(CHECKPOINT_CUTOFF_TAG), head, le64(cp.cutoff_event_id)));
+      const cutoffBound = await verifyEd25519AnyOf(lineage.keys, sig, await domainSeparatedHash(domains.checkpoint, bound));
+      if (!cutoffBound && !(await verifyEd25519AnyOf(lineage.keys, sig, await domainSeparatedHash(domains.checkpoint, head)))) {
         throw chainFail('checkpoint signature verification failed', 'checkpoint', null, 'checkpoint_invalid');
       }
       result.checks.push('Checkpoint signature valid (chain continuity across pruning)');
+      if (cutoffBound) result.checks.push('Checkpoint cutoff is bound by its signature');
     }
 
     // Break-glass receipts.

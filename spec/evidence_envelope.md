@@ -238,8 +238,13 @@ This is a deliberate subset of RFC 8785 that is trivially reproducible in JavaSc
    signature valid under none of them is a failure. PQ is
    verified when present and a PQ key is available; otherwise it is reported as "not checked"
    (mirrors `SignatureMode::Compat`), never silently passed. (The PQ key does not rotate.)
-4. Checkpoint: verify its signature over `chain_head_hash` with the checkpoint domain, accepting
-   any validated lineage key (the checkpoint is signed by the key current when it was written).
+4. Checkpoint: verify its signature with the checkpoint domain, accepting any validated lineage
+   key (the checkpoint is signed by the key current when it was written). The signed message is
+   `SHA256("securacv:pwk:sealed-log-checkpoint-cutoff:v3" ‖ chain_head_hash ‖ le64(cutoff_event_id))`,
+   which binds the cutoff to the signature; a checkpoint written before the cutoff was bound
+   signed the bare `chain_head_hash`, and verifiers accept that legacy message as a fallback
+   (reporting which form held — a legacy checkpoint's cutoff is not signed and must not be
+   trusted on its own).
 5. Break-glass: recompute `approvals_commitment` and confirm it matches each receipt; tally
    granted/denied.
 6. Disclosure: confirm any `omitted_entry_hashes` link the chain across the omission.

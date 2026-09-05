@@ -101,34 +101,62 @@ pub struct BreakGlassReceiptCounts {
     pub denied: u64,
 }
 
+/// What a checkpoint's signature was found to cover (see `log::checkpoint_message`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointBinding {
+    /// No checkpoint has been written yet.
+    Absent,
+    /// The signature covers the chain head AND `cutoff_event_id`.
+    CutoffSigned,
+    /// The signature covers the chain head only — a checkpoint written before the
+    /// cutoff was bound, whose `cutoff_event_id` is an unsigned column.
+    HeadOnly,
+}
+
 pub fn verify_checkpoint_signature(
     verifying_key: &VerifyingKey,
     checkpoint: &CheckpointInfo,
     mode: SignatureMode,
     pq_public_key: Option<&PqPublicKey>,
-) -> Result<()> {
+) -> Result<CheckpointBinding> {
     match (
         checkpoint.chain_head_hash,
         checkpoint.signatures.as_ref(),
         checkpoint.cutoff_event_id,
     ) {
-        (None, None, None) => Ok(()),
-        (Some(head), Some(sig), Some(_)) => verify_entry_signature(
-            verifying_key,
-            &head,
-            sig,
-            mode,
-            pq_public_key,
-            DOMAIN_CHECKPOINT,
-        )
-        .map_err(|e| {
-            fail(
-                FailedLedger::Checkpoint,
-                None,
-                FailureKind::CheckpointInvalid,
-                format!("checkpoint signature verification failed: {}", e),
+        (None, None, None) => Ok(CheckpointBinding::Absent),
+        (Some(head), Some(sig), Some(cutoff)) => {
+            let bound = crate::log::checkpoint_message(&head, cutoff);
+            if verify_entry_signature(
+                verifying_key,
+                &bound,
+                sig,
+                mode,
+                pq_public_key,
+                DOMAIN_CHECKPOINT,
             )
-        }),
+            .is_ok()
+            {
+                return Ok(CheckpointBinding::CutoffSigned);
+            }
+            verify_entry_signature(
+                verifying_key,
+                &head,
+                sig,
+                mode,
+                pq_public_key,
+                DOMAIN_CHECKPOINT,
+            )
+            .map(|_| CheckpointBinding::HeadOnly)
+            .map_err(|e| {
+                fail(
+                    FailedLedger::Checkpoint,
+                    None,
+                    FailureKind::CheckpointInvalid,
+                    format!("checkpoint signature verification failed: {}", e),
+                )
+            })
+        }
         _ => Err(fail(
             FailedLedger::Checkpoint,
             None,
@@ -1252,6 +1280,61 @@ mod tests {
         };
 
         verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_checkpoint_signature_binds_the_cutoff() -> Result<()> {
+        let signing_key = SigningKey::from_bytes(&[13u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let keys = SignatureKeys::new(&signing_key);
+        let head = [3u8; 32];
+
+        // Signed the current way: the cutoff is part of the message.
+        let bound = sign_entry(
+            &keys,
+            &crate::log::checkpoint_message(&head, 42),
+            DOMAIN_CHECKPOINT,
+        )?;
+        let checkpoint = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signatures: Some(bound),
+            cutoff_event_id: Some(42),
+            signer_public_key: None,
+        };
+        assert_eq!(
+            verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?,
+            CheckpointBinding::CutoffSigned
+        );
+
+        // Inflating the cutoff of a bound checkpoint breaks its signature.
+        let inflated = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signatures: Some(sign_entry(
+                &keys,
+                &crate::log::checkpoint_message(&head, 42),
+                DOMAIN_CHECKPOINT,
+            )?),
+            cutoff_event_id: Some(4200),
+            signer_public_key: None,
+        };
+        assert!(
+            verify_checkpoint_signature(&verifying_key, &inflated, SignatureMode::Compat, None)
+                .is_err()
+        );
+
+        // A checkpoint from before cutoffs were bound signed the bare head: it
+        // still verifies, and the verifier says which form held.
+        let legacy = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signatures: Some(sign_entry(&keys, &head, DOMAIN_CHECKPOINT)?),
+            cutoff_event_id: Some(42),
+            signer_public_key: None,
+        };
+        assert_eq!(
+            verify_checkpoint_signature(&verifying_key, &legacy, SignatureMode::Compat, None)?,
+            CheckpointBinding::HeadOnly
+        );
         Ok(())
     }
 

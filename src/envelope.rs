@@ -493,16 +493,28 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     )?;
 
     // 4. Checkpoint signature — by whichever lineage key was current when the
-    // checkpoint was written.
+    // checkpoint was written. The cutoff-bound message first (log::checkpoint_message),
+    // then the legacy bare head for checkpoints written before the cutoff was bound.
     if let Some(cp) = envelope.ledgers.checkpoints.latest.as_ref() {
+        let bound = crate::log::checkpoint_message(&cp.chain_head_hash, cp.cutoff_event_id);
         verify_entry_signature_any_of(
             &lineage_keys,
-            &cp.chain_head_hash,
+            &bound,
             &cp.signatures,
             mode,
             pq_key.as_ref(),
             DOMAIN_CHECKPOINT,
         )
+        .or_else(|_| {
+            verify_entry_signature_any_of(
+                &lineage_keys,
+                &cp.chain_head_hash,
+                &cp.signatures,
+                mode,
+                pq_key.as_ref(),
+                DOMAIN_CHECKPOINT,
+            )
+        })
         .map_err(|e| {
             anyhow::Error::new(verify::VerifyFailure {
                 ledger: verify::FailedLedger::Checkpoint,
