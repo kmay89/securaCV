@@ -76,10 +76,13 @@ jobs:
           curl -fsSL -o model.tflite "$url" \
             || { echo "::error::manifest names a model asset that does not download: $url"; exit 1; }
 
+          # For check 5 below — the Ed25519 verify the flasher runs.
+          python3 -m pip install --quiet "cryptography==50.0.1"
           python3 - << 'PY'
           import json, hashlib, struct, sys
           man = json.load(open("manifest.json"))["model"]
-          catalog = json.load(open("canary-local/devices/flash.json"))["we2_module"]
+          flash = json.load(open("canary-local/devices/flash.json"))
+          catalog = flash["we2_module"]
           b = open("model.tflite", "rb").read()
           fails = []
 
@@ -116,6 +119,28 @@ jobs:
           # 4. the pin address equals the flasher's own burn address
           if str(man.get("flash_addr", "")).lower() != str(catalog.get("model_addr", "")).lower():
               fails.append(f"flash_addr {man.get('flash_addr')} != catalog burn address {catalog.get('model_addr')}")
+
+          # 5. the signature the flasher fails closed on. Once a real release key
+          #    is pinned (flash.json release_pubkey), verifyPinnedModelAsset in
+          #    canary-local/assets/flash-core.js refuses an official manifest
+          #    without a valid Ed25519 signature over uint32_le(size) || sha256 —
+          #    so this job must refuse it too, or "fresh" here can mean "the
+          #    flasher will refuse it" there.
+          pubkey_hex = str(flash.get("release_pubkey", "")).lower()
+          if pubkey_hex and set(pubkey_hex) != {"0"}:
+              sig_hex = str(man.get("signature") or "")
+              if not sig_hex:
+                  fails.append("manifest carries no Ed25519 signature while a real release key is pinned — the flasher refuses this asset")
+              else:
+                  from cryptography.exceptions import InvalidSignature
+                  from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+                  try:
+                      Ed25519PublicKey.from_public_bytes(bytes.fromhex(pubkey_hex)).verify(
+                          bytes.fromhex(sig_hex),
+                          struct.pack("<I", len(b)) + hashlib.sha256(b).digest(),
+                      )
+                  except (InvalidSignature, ValueError) as exc:
+                      fails.append(f"Ed25519 signature does not verify against the pinned release key ({exc or 'invalid signature'})")
 
           if fails:
               for f in fails:
