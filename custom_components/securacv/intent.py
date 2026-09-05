@@ -382,7 +382,12 @@ class StartWatchIntentHandler(intent.IntentHandler):
         # created against the spoken subject and the answer says plainly
         # that nothing is feeding it yet — never a silent no-op.
         brief = voice.fleet_brief(_snapshot(hass), now)
-        device_id = voice.match_device(brief.get("device_ids") or [], subject_text)
+        # Friendly names too, exactly as DeviceCheck does: a serial-like
+        # device_id is not a word anyone says, so without them "watch the
+        # gate canary" binds to nothing and the watch can never fire.
+        device_id = voice.match_device(
+            brief.get("device_ids") or [], subject_text, brief.get("device_names")
+        )
         subject = (
             {"kind": "event", "ref": device_id}
             if device_id

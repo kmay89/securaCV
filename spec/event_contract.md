@@ -121,6 +121,16 @@ Events reference space only via **local zone identifiers**.
 
 ### Permitted Claims (Good)
 
+Unlike the forbidden half below, **this list is exhaustive, not a sample.** It
+is exactly the `event_type` set of §11's table, mirrored in
+`spec/witness_dictionary.json` (`event_types`) and enforced by the kernel —
+anything else is refused at `Kernel::append_event_checked` with *"conformance:
+event_type not in allowed vocabulary"*. `scripts/lint_dictionary_sync.py`
+pins this list, §11's table and the dictionary to each other. Adding a kind
+means a ruleset change plus the dictionary and every copy that linter names,
+in that order (FR-13). (§10's BLE-discovery records are a separate,
+firmware-level family and are not adapter claims.)
+
 - `vehicle_presence_after_hours`
 - `boundary_crossing_object_large`
 - `boundary_crossing_object_small`
@@ -128,7 +138,18 @@ Events reference space only via **local zone identifiers**.
 - `presence_in_restricted_zone`
 - `contact_state_change`
 - `object_removed_from_zone`
-- `forced_entry_detected`
+- `tamper_detected`
+- `vehicle_arrival_departure`
+
+> This list carried a tenth entry, `forced_entry_detected`, until 2026-09-05.
+> No such kind ever existed — not in the dictionary, not as a `ClaimKind` or
+> an `EventType`, not in the integration, the timeline card or the Apple
+> vocabulary — so an adapter author following §5 emitted a claim the kernel
+> refused. It was also the wrong shape for this contract twice over: "forced"
+> is an inference about intent, and "entry" names an act rather than an
+> observation. The observable fact is a `contact_state_change` (a door or
+> window opened) or a `tamper_detected` (the device itself was interfered
+> with); what it *meant* is the operator's call, not the witness's.
 
 ### Forbidden Claims (Non-Conforming)
 

@@ -63,6 +63,17 @@ describe('envelope verification parity', () => {
     assert.match(report.error, /artifact hash mismatch/);
   });
 
+  it('rejects a gaps.failure_count the signed artifact does not carry', async () => {
+    const envelope = loadFixture('valid_envelope.json');
+    // gaps is not signature-bound; the artifact it is derived from is. Editing the count and
+    // refreshing the digest must still be caught by re-derivation (mirrors src/envelope.rs).
+    envelope.gaps.failure_count = envelope.gaps.failure_count + 1;
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /gaps\.failure_count .* does not match/);
+  });
+
   it('verifies an envelope from a rotated device — the ledgers mix signers', async () => {
     const envelope = loadFixture('valid_envelope_rotated.json');
     const digest = await V.computeWholeEnvelopeDigest(envelope);

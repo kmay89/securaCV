@@ -232,6 +232,11 @@ html[data-theme="dark"] .btn-primary { color: #0c0c0e; }
 .status { margin-top: 10px; font-size: 13.5px; color: var(--text-secondary); white-space: pre-wrap; }
 .status.ok { color: var(--success); } .status.err { color: var(--danger); }
 
+/* The next steps after a failed install (renderFlashFailureActions). Never
+   folded by minimal mode: a clean install is a destructive choice and the way
+   out of a stuck flash — both must stay visible in every density. */
+.flash-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
 .hint { margin-top: 12px; font-size: 13.5px; }
 .hint summary { cursor: pointer; color: var(--brand); }
 .hint p { margin-top: 8px; color: var(--text-secondary); }
@@ -252,6 +257,11 @@ kbd {
 .product:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 .product.selected { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, transparent); }
 /* The size gate: right chip, not enough flash for this image — visible but unpickable. */
+/* The detection-led recommendation and the rest of the chip's products,
+   folded one click away behind it (renderProducts / smartPick). */
+.pick-recommend { margin-top: 10px; font-size: 13px; color: var(--text-secondary); }
+.pick-recommend .pick-why { display: block; margin-bottom: 8px; }
+.product.folded { display: none; }
 .product.unfit { opacity: .55; cursor: not-allowed; }
 .product.unfit:hover { border-color: var(--border); transform: none; }
 .product.unfit .p-meta { color: var(--danger); }
@@ -355,6 +365,11 @@ kbd {
 
 .monitor-head { margin-top: 0; }
 .monitor-head h3 { margin-right: auto; }
+/* The firmware's single-key commands, labeled (renderMonitorCmds). */
+.monitor-cmds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* Console speed picker (renderMonitorBauds). */
+.monitor-baud { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.monitor-baud select { padding: 4px 6px; font-size: 12px; }
 .monitor .console { min-height: 130px; max-height: 300px; }
 .module-preview {
   display: block; max-width: 100%; max-height: 260px; margin: 12px auto 0;
@@ -1045,6 +1060,12 @@ details.coldstart[open] > summary { margin-bottom: 8px; }
 .passport .pp-built { margin-top: 2px; font-size: 11.5px; }
 .passport .pp-macwarn { margin-top: 5px; font-size: 12px; color: var(--warn, #b7791f); }
 .passport .pp-macwarn.is-stop { color: var(--danger, #c53030); font-weight: 600; }
+/* Customs: what the board arrived running, and whether it was brought up cold. */
+.passport .pp-customs { margin-top: 5px; font-size: 12px; color: var(--text-secondary); }
+.passport .pp-customs.is-attention { color: var(--warn, #b7791f); }
+/* The cold-start question, asked in the coldstart card. */
+.coldstart-answer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.coldstart-answer .btn.chosen { border-color: var(--brand); color: var(--brand); font-weight: 600; }
 .passport .pp-rows { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; }
 .passport .pp-row { display: flex; gap: 8px; font-size: 12px; }
 .passport .pp-k { color: var(--text-muted); min-width: 11ch; }

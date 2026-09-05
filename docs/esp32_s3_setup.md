@@ -72,7 +72,7 @@ the host running `witnessd` and bind the listener using a URL like:
 
 ```toml
 [esp32]
-url = "udp://0.0.0.0:5004"
+url = "udp://0.0.0.0:5004?from=192.168.1.50"   # `from` = the camera's address; without it the source locks to whoever sends first
 ```
 
 The adapter expects:

@@ -32,10 +32,13 @@ constexpr size_t DEVICE_PUBKEY_SIZE = 32;
 constexpr uint8_t BCN_TRUST_COSIGNER = 0;
 constexpr uint8_t BCN_TRUST_REVOKED  = 2;
 
+constexpr uint32_t SELFTEST_MISSING_MS = 129600000;  // 36 h
+
 struct SetEntry {
   uint8_t pubkey[DEVICE_PUBKEY_SIZE];
   uint8_t fp[DEVICE_FP_SIZE];
   uint8_t trust;
+  uint32_t last_selftest_ms;  // 0 = not observed since boot
   bool valid;
 };
 
@@ -69,13 +72,33 @@ int failures = 0;
     if (!(cond)) { std::fprintf(stderr, "FAIL: %s (line %d)\n", msg, __LINE__); failures++; } \
   } while(0)
 
-SetEntry mk_entry(uint8_t prefix, uint8_t trust = BCN_TRUST_COSIGNER) {
+SetEntry mk_entry(uint8_t prefix, uint8_t trust = BCN_TRUST_COSIGNER,
+                  uint32_t last_selftest_ms = 0) {
   SetEntry e{};
   e.valid = true;
   e.trust = trust;
+  e.last_selftest_ms = last_selftest_ms;
   std::memset(e.pubkey, prefix, DEVICE_PUBKEY_SIZE);
   compute_fingerprint(e.pubkey, e.fp);
   return e;
+}
+
+const SetEntry* find_by_fp(const std::vector<SetEntry>& set, const uint8_t* fp) {
+  for (const auto& e : set) {
+    if (!e.valid) continue;
+    if (std::memcmp(e.fp, fp, DEVICE_FP_SIZE) == 0) return &e;
+  }
+  return nullptr;
+}
+
+// The two independent doors handle_alert_frame puts in front of a signer:
+// revocation (this file's subject) and supervised health (spec §7.1 step 9).
+// `last_selftest == 0` is "not observed since boot", not "stale".
+bool signer_admissible(const SetEntry& e, uint32_t now_ms) {
+  if (e.trust == BCN_TRUST_REVOKED) return false;
+  if (e.last_selftest_ms == 0) return true;
+  const uint32_t age = (now_ms > e.last_selftest_ms) ? (now_ms - e.last_selftest_ms) : 0;
+  return age <= SELFTEST_MISSING_MS;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -142,6 +165,31 @@ void test_distinct_pubkeys_have_distinct_fingerprints() {
          "different pubkeys produce different fingerprints");
 }
 
+void test_revoked_entry_stays_findable_and_inadmissible() {
+  // Contract item 5: revocation does not delete the entry — the receive
+  // path has to be able to find it in order to refuse it.
+  const uint32_t now_ms = 60000;
+  std::vector<SetEntry> set = { mk_entry(0xAA, BCN_TRUST_COSIGNER, now_ms) };
+  EXPECT(signer_admissible(set[0], now_ms), "pre: a healthy peer may sign");
+  EXPECT(on_peer_tampered_impl(set, set[0].pubkey), "tamper alert revokes the peer");
+  const SetEntry* found = find_by_fp(set, set[0].fp);
+  EXPECT(found != nullptr, "the revoked entry is still findable by fingerprint");
+  EXPECT(found && !signer_admissible(*found, now_ms),
+         "a revoked peer never authorizes an alarm, however fresh its selftest");
+}
+
+void test_revocation_and_supervised_health_are_separate_doors() {
+  // A peer that was never tampered with but has gone silent past 36 h is
+  // refused too — auto-revoke is not the only thing gating a signer.
+  const uint32_t now_ms = SELFTEST_MISSING_MS + 100000;
+  SetEntry silent = mk_entry(0xBB, BCN_TRUST_COSIGNER, /*last_selftest_ms=*/1);
+  EXPECT(!signer_admissible(silent, now_ms),
+         "a non-revoked peer whose selftest lapsed past 36 h cannot sign");
+  SetEntry unproven = mk_entry(0xCC, BCN_TRUST_COSIGNER, /*last_selftest_ms=*/0);
+  EXPECT(signer_admissible(unproven, now_ms),
+         "a peer with no selftest observed since boot is unknown, not stale");
+}
+
 } // namespace
 
 int main() {
@@ -150,6 +198,8 @@ int main() {
   test_unknown_pubkey_is_noop();
   test_fingerprint_derivation_matches_spec();
   test_distinct_pubkeys_have_distinct_fingerprints();
+  test_revoked_entry_stays_findable_and_inadmissible();
+  test_revocation_and_supervised_health_are_separate_doors();
 
   if (failures == 0) {
     std::printf("All beacon tamper auto-revoke invariants passed.\n");

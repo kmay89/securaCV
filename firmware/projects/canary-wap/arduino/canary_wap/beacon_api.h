@@ -350,8 +350,15 @@ inline esp_err_t handle_originate_solo(httpd_req_t* req) {
   uint8_t det = (uint8_t)(doc["detail"] | 0);
   uint32_t ttl = (uint32_t)(doc["ttl_minutes"] | 15);
 
-  // Pre-check so the user gets a useful error message instead of just
+  // Pre-checks so the user gets a useful error message instead of just
   // "origination refused (rate, presence, or no cosigner)".
+  //
+  // spec §6.2: solo is for a device with no paired neighbor able to cosign
+  // right now. With one available, the answer is the two-device path
+  // (/api/beacon/originate), and the reason says so by name.
+  if (beacon_channel::paired_cosigner_available()) {
+    return send_error(req, "paired_cosigner_available");
+  }
   if (!beacon_channel::boot_button_held()) {
     return send_error(req, "boot_button_not_held");
   }
@@ -381,10 +388,15 @@ inline esp_err_t handle_cosign(httpd_req_t* req) {
       : send_error(req, "no pending cosign request");
 }
 
-// POST /api/beacon/cancel — cancel the currently active alarm
+// POST /api/beacon/cancel — silence the active alarm on this device.
+// Spec §10 defines this as originating a BEACON_MSG_CANCEL for the network;
+// the firmware does not do that yet (see cancel_active_alarm), so the reply
+// says what actually happened rather than "canceled". Paired devices stay in
+// alarm until the alarm's own expiry.
 inline esp_err_t handle_cancel(httpd_req_t* req) {
   return beacon_channel::cancel_active_alarm()
-      ? send_success(req, "alarm canceled")
+      ? send_success(req, "alarm silenced on this device only — no network CANCEL was sent; "
+                          "paired devices stay in alarm until it expires")
       : send_error(req, "no active alarm");
 }
 

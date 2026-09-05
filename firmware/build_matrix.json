@@ -232,12 +232,11 @@
         "env": "canary-sense-default",
         "partition": "min_spiffs.csv",
         "features": [
-          "selftest",
-          "battery",
-          "thermal"
+          "selftest"
         ]
       },
-      "note": "60 GHz radar presence board. No camera / SD / CSI / BLE. USB-Serial console only; end-to-end bench validation pending."
+      "note": "60 GHz radar presence board. No camera / SD / CSI / BLE, and no battery or temperature reading either — it's a mains-powered witness. USB-Serial console only; end-to-end bench validation pending.",
+      "_provenance": "Why this lane lists only 'selftest' (corrected 2026-09-05; it used to claim 'battery' and 'thermal', which the /checkup page rendered as lit 'Battery' and 'Thermal / die temp' pills for the ESP32-C6 auto-pick): the firmware has neither. FEATURE_POWER_MONITOR and FEATURE_DIAGNOSTICS appear nowhere in firmware/configs/canary-sense/, firmware/projects/canary-sense/ or firmware/envs/platformio/canary-sense.ini; src/net/fleet_beacon_adv.cpp sends battery_pct as 0xFF/unknown with the comment 'mains-powered witness, no battery gauge'; publish_health_retained() in src/net/mqtt_mgr.cpp hardcodes \"battery\":100 with \"battery_present\":false; and a case-insensitive grep for temperature/temp_c/tsens across the project returns nothing. firmware/FEATURES.md agrees (the canary-sense cell on the battery row is not-applicable). Fields prefixed with _ are monorepo-only: scripts/carry_to_site.py projects a field whitelist, so this does not reach the website."
     },
     {
       "id": "canary-display-watch",

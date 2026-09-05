@@ -397,6 +397,53 @@ function buildDiagnosticReport(info = {}) {
   return lines.join("\n") + "\n";
 }
 
+// Gather the report and put it on the clipboard, with the browser flasher's
+// select-it-by-hand fallback when the clipboard refuses. Called from the
+// Advanced button and from the failed-install card, so a stuck user never has
+// to go find it. `stage` lets the caller name what they were doing.
+async function copyDiagnosticReport(stage) {
+  const note = $("diag-report-note");
+  const info = state.appInfo || {};
+  const bridge = state.portInfo && usbBridgeInfo(state.portInfo.vid, state.portInfo.pid);
+  const usb = state.portInfo
+    ? [state.portInfo.product, state.portInfo.vid != null
+        ? `vid 0x${Number(state.portInfo.vid).toString(16)} pid 0x${Number(state.portInfo.pid || 0).toString(16)}`
+        : null, bridge ? `bridge: ${bridge.name}` : null].filter(Boolean).join(" · ")
+    : undefined;
+  const report = buildDiagnosticReport({
+    when: new Date().toISOString(),
+    app: "SecuraCV Flasher v" + (info.version || "?") + " (" + (info.build_rev || "source") + ")",
+    platform: navigator.platform + " · " + navigator.userAgent,
+    catalogVersion: (state.catalog && state.catalog.fw_train) || undefined,
+    chip: state.chip || undefined,
+    mac: state.mac || undefined,
+    flashBytes: state.flashBytes || undefined,
+    usb,
+    product: state.product ? state.product.id : undefined,
+    stage: stage || (state.busy ? "mid-flash" : "idle"),
+    error: state.lastError || undefined,
+    logTail: ($("console") && $("console").textContent) ||
+      ($("serial-console") && $("serial-console").textContent) || undefined,
+  });
+  const out = $("diag-report-out");
+  try {
+    await navigator.clipboard.writeText(report);
+    note.textContent = "Copied ✓ — paste it into a GitHub issue or discussion.";
+    out.classList.add("hidden");
+    out.value = "";
+  } catch (_) {
+    // No clipboard (denied, or a locked-down webview). The app log is no
+    // home for it — logEvent truncates every entry — so show the FULL
+    // report to select by hand, the browser flasher's fallback.
+    out.value = report;
+    out.classList.remove("hidden");
+    out.focus();
+    out.select();
+    note.textContent = "Couldn't reach the clipboard — copy the report from the box below.";
+  }
+  setTimeout(() => { note.textContent = ""; }, 6000);
+}
+
 // The standard Wi-Fi QR payload (parity: flash-core.js wifiQrString) — WPA
 // assumed unless the password is empty; backslash-escape \ ; , " :
 function wifiQrString(ssid, pass) {
@@ -689,48 +736,12 @@ async function boot() {
   $("wifi-ssid").addEventListener("input", wifiQrInvalidate);
   $("wifi-pass").addEventListener("input", wifiQrInvalidate);
   // One-click diagnostic report (parity: browser's diagnosticReportButton).
-  $("diag-report-btn").addEventListener("click", async () => {
-    const note = $("diag-report-note");
-    const info = state.appInfo || {};
-    const bridge = state.portInfo && usbBridgeInfo(state.portInfo.vid, state.portInfo.pid);
-    const usb = state.portInfo
-      ? [state.portInfo.product, state.portInfo.vid != null
-          ? `vid 0x${Number(state.portInfo.vid).toString(16)} pid 0x${Number(state.portInfo.pid || 0).toString(16)}`
-          : null, bridge ? `bridge: ${bridge.name}` : null].filter(Boolean).join(" · ")
-      : undefined;
-    const report = buildDiagnosticReport({
-      when: new Date().toISOString(),
-      app: "SecuraCV Flasher v" + (info.version || "?") + " (" + (info.build_rev || "source") + ")",
-      platform: navigator.platform + " · " + navigator.userAgent,
-      catalogVersion: (state.catalog && state.catalog.fw_train) || undefined,
-      chip: state.chip || undefined,
-      mac: state.mac || undefined,
-      flashBytes: state.flashBytes || undefined,
-      usb,
-      product: state.product ? state.product.id : undefined,
-      stage: state.busy ? "mid-flash" : "idle",
-      error: state.lastError || undefined,
-      logTail: ($("console") && $("console").textContent) ||
-        ($("serial-console") && $("serial-console").textContent) || undefined,
-    });
-    const out = $("diag-report-out");
-    try {
-      await navigator.clipboard.writeText(report);
-      note.textContent = "Copied ✓ — paste it into a GitHub issue or discussion.";
-      out.classList.add("hidden");
-      out.value = "";
-    } catch (_) {
-      // No clipboard (denied, or a locked-down webview). The app log is no
-      // home for it — logEvent truncates every entry — so show the FULL
-      // report to select by hand, the browser flasher's fallback.
-      out.value = report;
-      out.classList.remove("hidden");
-      out.focus();
-      out.select();
-      note.textContent = "Couldn't reach the clipboard — copy the report from the box below.";
-    }
-    setTimeout(() => { note.textContent = ""; }, 6000);
-  });
+  // Delegated to a named function because the failed-install card offers the
+  // same button — the browser puts it right in the error card, where someone
+  // who just got stuck actually is, not only down in Advanced.
+  $("diag-report-btn").addEventListener("click", () => copyDiagnosticReport());
+  // The cold-start question (parity: the browser's cold-start card asks it too).
+  wireColdStartAnswer();
   // Per-setting help dots from the embedded catalog's settings_help registry
   // (parity: the browser's teaching layer). Attached where a desktop control
   // matches a registry topic; a catalog without the registry degrades to none.
@@ -783,6 +794,16 @@ async function boot() {
     invoke("serial_monitor_send", { command: "j\n" }).catch((e) =>
       setStatus("monitor-status", String(e), "err"))
   );
+  renderMonitorCmds();
+  renderMonitorBauds();
+  // Changing the speed by hand re-opens at it AND stops the self-heal: a speed
+  // someone chose on purpose must not be walked away from under them.
+  $("monitor-baud").addEventListener("change", () => {
+    const baud = Number($("monitor-baud").value);
+    if (!state.monitoring) return; // nothing open yet; it'll be used on Start
+    $("serial-console").textContent = "";
+    restartMonitorAtBaud(baud, { manual: true });
+  });
   // Arduino-style controls: pause (freeze autoscroll), clear, expand, and a
   // free-text command line with a line-ending picker.
   $("monitor-pause").addEventListener("click", () => {
@@ -860,6 +881,9 @@ async function boot() {
   await listen("serial:log", (ev) => {
     feedSenseTune(ev.payload); // the tuning panel reads [cfg]/[tune] replies
     appendConsole("serial-console", ev.payload);
+    // Does this decode as text at the speed we opened? If not, walk the baud
+    // list (parity: the browser monitor's pump(), same words).
+    judgeMonitorBaud(ev.payload);
     // Watch the boot log for the fatal signatures that have a specific fix
     // (parity: the browser's maybeDiagnose on the same stream). Fed the whole
     // console, not the one line, because a backtrace's giveaway can arrive
@@ -953,8 +977,9 @@ function announceToWitness(product) {
   try {
     const frame = $("witness-frame");
     if (frame && frame.contentWindow) {
+      // "/" = our own origin: the wall is our iframe, nothing else may hear it.
       frame.contentWindow.postMessage(
-        { type: "witness:appear", name: witnessName(product), label: "just flashed" }, "*");
+        { type: "witness:appear", name: witnessName(product), label: "just flashed" }, "/");
     }
     const badge = $("badge-fleet");
     if (badge) { badge.textContent = "new"; badge.classList.remove("hidden"); }
@@ -985,7 +1010,9 @@ const witnessDiscovery = {
   highlight: null,    // device name to highlight on next find
   inFlight: false,    // a witness_discover call is running (they can take ~8 s)
   found: false,
-  post(m) { try { const f = $("witness-frame"); if (f && f.contentWindow) f.contentWindow.postMessage(m, "*"); } catch (_) {} },
+  // "/" = our own origin: the LAN fleet (device names, who is home) goes to
+  // our wall iframe and nowhere else, even if something else were framed.
+  post(m) { try { const f = $("witness-frame"); if (f && f.contentWindow) f.contentWindow.postMessage(m, "/"); } catch (_) {} },
   status(msg, live) {
     try {
       const el = $("fleet-scan-status");
@@ -2242,23 +2269,133 @@ async function identify(portInfo) {
     // fix, and coaching the BOOT/RESET ritual for those sends the user to the
     // wrong fix forever. Show the backend's first line for an OS-level
     // failure (and hide the download-mode coaching); blame download mode only
-    // when nothing else was named. (The browser flasher makes the same call
-    // in classifyFlashError — two frontends, same diagnostic.)
+    // when nothing else was named.
     const firstLine = String(e).split("\n")[0].trim();
     const osLevel = /Linux blocked opening|holding the board's serial port/i.test(firstLine);
+    // Everything the Linux hint doesn't catch goes through the SAME classifier
+    // the browser runs at exactly this moment (flash.js:connectFailed calls
+    // core.classifyFlashError on the connect failure). This used to be a
+    // comment claiming parity next to code that never made the call, so a busy
+    // port or a denied permission on macOS/Windows — where those hints are
+    // Linux-gated in lib.rs and never fire — was coached as "put it in
+    // download mode", which cannot fix either one. detect_chip carries
+    // espflash's own output into the error ("espflash said: …"), so the
+    // classifier has the words it needs. `not-in-download` and `unknown` keep
+    // the download-mode advice: for those it IS the fix.
+    const c = classifyFlashError(e);
+    const named = !osLevel && c.kind !== "unknown" && c.kind !== "not-in-download";
     // A known USB-serial bridge that won't talk is usually a missing OS
     // driver — name the chip and the driver instead of coaching BOOT/RESET
-    // at a port the OS can't even open properly (parity: usbBridgeInfo).
+    // at a port the OS can't even open properly (parity: usbBridgeInfo). The
+    // browser appends its driver hint on every non-module failure too.
     const bridge = state.portInfo && usbBridgeInfo(state.portInfo.vid, state.portInfo.pid);
     const bridgeNote = !osLevel && bridge ? " " + bridge.note : "";
-    setConn("failed", osLevel
-      ? `Found ${port} — ${firstLine}`
-      : `Found ${port} — couldn't read the chip. Put it in download mode.${bridgeNote}`);
-    $("download-mode").classList.toggle("hidden", osLevel);
+    setConn("failed",
+      osLevel ? `Found ${port} — ${firstLine}`
+        : named ? `Found ${port} — ${c.title}. ${c.hint}${bridgeNote}`
+          : `Found ${port} — couldn't read the chip. Put it in download mode.${bridgeNote}`);
+    $("download-mode").classList.toggle("hidden", osLevel || named);
     $("recheck").classList.remove("hidden");
   } finally {
     state.detecting = false;
   }
+}
+
+// ── customs: what did this board arrive running, and was it brought up cold ──
+// Ported from the browser's intake module (canary-local/assets/intake.js —
+// KNOWN_STOCK / shippedWith / coldBootVerdict), which stays the reference copy.
+// Both are pure functions over data this app already reads, and without them
+// the desktop printed an unrecognized marketplace image's project name as
+// neutral fact and never asked whether the resident firmware got to run.
+//
+// Matched on the `esp_app_desc_t` project name — a real string read off the
+// board, not a hash of an image we'd have to claim to have cataloged.
+const KNOWN_STOCK = [
+  { match: /^micropython/i, name: "MicroPython" },
+  { match: /^circuitpython/i, name: "CircuitPython" },
+  { match: /^(esp-at|at)$/i, name: "Espressif AT firmware" },
+  { match: /^arduino/i, name: "an Arduino sketch" },
+  { match: /^esphome/i, name: "ESPHome" },
+  { match: /^tasmota/i, name: "Tasmota" },
+  { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
+];
+
+// `read` is the outcome of actually pulling the partition sector off the chip:
+// "ok" (we got bytes) or "failed" (the read threw). These must stay distinct
+// from what we found in those bytes — treating a failed read as an empty chip
+// would turn missing evidence into the single cleanest verdict on the page.
+function shippedWith({ projectName, blank, read = "ok" } = {}) {
+  if (read !== "ok") {
+    return { level: "inconclusive", kind: "unread",
+      label: "We couldn't read what's on the chip",
+      detail: "The partition sector wouldn't come back over USB, so we don't know what " +
+              "this board arrived running — that's unchecked, not clean. Worth a retry " +
+              "on a different cable or port. The full erase removes whatever is there " +
+              "either way." };
+  }
+  if (blank) {
+    return { level: "clear", kind: "blank", label: "The chip arrived erased",
+      detail: "Nothing was on it to run. This is the cleanest state a board can arrive in." };
+  }
+  if (!projectName) {
+    return { level: "attention", kind: "unreadable", label: "Arrived with firmware we couldn't identify",
+      detail: "There's something on the chip but no readable app descriptor. The full erase " +
+              "removes it either way; the safety copy keeps a copy if you want to look." };
+  }
+  const hit = KNOWN_STOCK.find((k) => k.match.test(projectName));
+  if (hit) {
+    return { level: "clear", kind: "known", name: hit.name,
+      label: `Arrived running ${hit.name}`,
+      detail: "A common stock image for boards sold this way." };
+  }
+  return { level: "attention", kind: "unknown", name: projectName,
+    label: `Arrived running “${projectName}” — we don't recognize it`,
+    detail: "Not proof of anything: plenty of honest vendors ship their own demo. " +
+            "It is worth a look at the safety copy before you erase it, though." };
+}
+
+// Was the board cold when we met it — did it come up in the ROM's download mode
+// without ever executing the firmware that shipped on it? We cannot detect this
+// after the fact and don't pretend to: on a native-USB board the ROM's download
+// mode and a stock hwcdc firmware present the SAME USB descriptor, so the port
+// tells us nothing. `heldBoot` is what the user told us on the way in.
+function coldBootVerdict({ heldBoot, hadResidentFirmware } = {}) {
+  if (!hadResidentFirmware) {
+    return { level: "clear", label: "Nothing was on the chip to run",
+      detail: "The board arrived erased, so there was no resident firmware to execute " +
+              "when you plugged it in." };
+  }
+  if (heldBoot) {
+    return { level: "clear", label: "You brought it up cold",
+      detail: "You held BOOT, so the chip went straight into the ROM's download mode and " +
+              "the firmware it shipped with never executed a single instruction." };
+  }
+  return { level: "attention", label: "Its own firmware ran before we met it",
+    detail: "You plugged in without holding BOOT, so whatever shipped on the chip booted " +
+            "for a moment first — long enough to present itself to your computer however " +
+            "it liked. Nothing here can undo that after the fact. Next time hold BOOT " +
+            "while the cable goes in and it never gets the chance." };
+}
+
+// The cold-start answer buttons. `state.heldBoot` stays undefined until the
+// user answers — an unanswered question must not render as either answer.
+function wireColdStartAnswer() {
+  const held = $("coldstart-held");
+  const hot = $("coldstart-hot");
+  const note = $("coldstart-note");
+  if (!held || !hot || !note) return;
+  const mark = (isCold) => {
+    state.heldBoot = isCold;
+    held.classList.toggle("chosen", isCold);
+    hot.classList.toggle("chosen", !isCold);
+    note.textContent = isCold
+      ? "Good — its own firmware never got to run."
+      : "Noted. Whatever shipped on the chip has already booted once; the full erase " +
+        "still removes it, but next time hold BOOT on the way in.";
+    renderPassport(); // the verdict beside the passport moves with the answer
+  };
+  held.addEventListener("click", () => mark(true));
+  hot.addEventListener("click", () => mark(false));
 }
 
 // ── read the passport, then say who this board is ────────────────────────────
@@ -2339,6 +2476,34 @@ function renderPassport() {
       (r.slot ? ` from ${r.slot}` : "");
   }
   box.appendChild(head);
+
+  // Customs, both halves (parity: the browser's Customs card).
+  //
+  // 1. What it arrived running. The head above states the project name as
+  //    neutral fact; this says whether we RECOGNIZE it. An unrecognized
+  //    marketplace image reading exactly like a known one is the gap.
+  // 2. Whether its own firmware got to run before we met it — the user's own
+  //    answer to the cold-start question, labeled as their answer.
+  const findings = [
+    shippedWith({
+      projectName: r.unknown ? null : r.projectName,
+      blank: !!r.blank,
+      read: r.unknown ? "failed" : "ok",
+    }),
+    // Skipped until the question is answered: "we didn't ask" must not render
+    // as "they said no", which is the attention-level verdict.
+    state.heldBoot === undefined ? null : coldBootVerdict({
+      heldBoot: state.heldBoot,
+      hadResidentFirmware: !r.blank,
+    }),
+  ].filter(Boolean);
+  for (const f of findings) {
+    const d = document.createElement("div");
+    d.className = "pp-customs is-" + f.level;
+    d.textContent = (f.level === "clear" ? "✓ " : f.level === "inconclusive" ? "· " : "⚠ ") +
+      f.label + (f.detail ? " " + f.detail : "");
+    box.appendChild(d);
+  }
 
   // The same board, met twice: the fleet book already knows this MAC. Says so
   // before the flash, so a reflash is a choice rather than a surprise.
@@ -2431,6 +2596,19 @@ function resetSteps() {
   // next board plugged in, which is precisely the marketplace board that needs
   // the wipe. The safe default has to be restored per board, not per session.
   if ($("first-contact")) $("first-contact").checked = true;
+  // Same reasoning for the cold-start answer: it describes how ONE board was
+  // plugged in. Carrying it to the next board would report a gesture that was
+  // never performed on it — the one claim in customs we have no evidence for
+  // beyond the user's word, so it must never be inherited.
+  state.heldBoot = undefined;
+  // A new board gets a fresh recommendation, not the previous board's
+  // "show everything" — which would hide the very card the silicon just picked.
+  state.showAllProducts = false;
+  if ($("pick-recommend")) $("pick-recommend").classList.add("hidden");
+  if ($("coldstart-note")) $("coldstart-note").textContent = "";
+  for (const id of ["coldstart-held", "coldstart-hot"]) {
+    if ($(id)) $(id).classList.remove("chosen");
+  }
   $("module-flow").classList.add("hidden");
   $("serial-monitor").classList.add("hidden");
   renderReceipts();
@@ -2560,6 +2738,58 @@ function verdictMarkup(product, version) {
     `<span class="p-verdict-detail">${esc(v.detail)}</span></span>`;
 }
 
+// ── detection-led selection (parity: flash-core.js smartPick) ───────────────
+// Everything the flasher can READ narrows the choice before the human answers
+// anything: the chip guard first, then the flash size it measured, then
+// whatever firmware is already on the board. The desktop used to list every
+// chip-matching product with equal weight — a wall of SKUs where the browser
+// leads with one card and states its evidence. Every branch says WHY in plain
+// words: magic that explains itself is trust; magic that doesn't is a guess.
+function smartPick(catalog, opts = {}) {
+  const { chip, flashBytes, currentProject } = opts;
+  const byChip = ((catalog && catalog.products) || []).filter(
+    (p) => normChip(p.chip) === normChip(chip)
+  );
+  if (!byChip.length) return null;
+  const label = opts.chipLabel || chip || "this chip";
+
+  if (currentProject) {
+    const cur = matchProjectToProduct(catalog, currentProject);
+    if (cur && byChip.some((x) => x.id === cur.id)) {
+      return { product: cur, kind: "current",
+        why: `This board already runs ${cur.name} — installing keeps it, updated in place.` };
+    }
+  }
+  const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
+  if (mb) {
+    const sized = byChip.filter((p) => p.flash_mb === mb);
+    if (sized.length && sized.length < byChip.length) {
+      // Deliberately NOT tier-ordered. These candidates are different BOARDS
+      // and the products differ in pins, so preferring a `verified` entry
+      // would hand a generic DevKit owner the XIAO image — right tier, wrong
+      // pins. The tier is stated on every card instead, where it informs the
+      // choice without making it.
+      const p = sized[0];
+      // Chip + flash size narrows the field; it does not always NAME the
+      // board. When the survivors span more than one family, "that looks like
+      // a <board>" would be a guess wearing the clothes of a measurement.
+      const families = new Set(sized.map((x) => x.family));
+      const why = families.size > 1
+        ? `Your board reads as an ${label} with ${mb} MB flash. More than ` +
+          `one board matches that exactly, so this is a starting point, not ` +
+          `an identification: ${p.name} is first in the list below — check ` +
+          `the others if yours is a different board.`
+        : `Your board reads as an ${label} with ${mb} MB flash — that ` +
+          `looks like a ${p.board_label}. Recommended: ${p.name}.`;
+      return { product: p, kind: "board", why };
+    }
+  }
+  // The catalog is authored flagship-first per chip, so the first product that
+  // fits the detected silicon is the honest "recommended for you".
+  const p = byChip[0];
+  return p ? { product: p, kind: "chip", why: `Recommended for your ${label}: ${p.name}.` } : null;
+}
+
 function renderProducts() {
   const list = $("product-list");
   list.innerHTML = "";
@@ -2619,9 +2849,49 @@ function renderProducts() {
     $("pick-sub").textContent = `Images built for your ${state.chip}:`;
   }
 
+  // Lead with one card and say why. The rest of the chip's products stay one
+  // click away rather than gone — the recommendation is a starting point, and
+  // on an ambiguous match smartPick says so in as many words.
+  const pick = smartPick(state.catalog, {
+    chip: state.chip,
+    flashBytes: state.flashBytes,
+    currentProject: state.resident && !state.resident.unknown && !state.resident.blank
+      ? state.resident.projectName
+      : null,
+  });
+  const rec = $("pick-recommend");
+  const showAll = state.showAllProducts || !pick || matches.length < 2;
+  if (rec) {
+    rec.innerHTML = "";
+    rec.classList.toggle("hidden", !pick || matches.length < 2);
+    if (pick && matches.length >= 2) {
+      const why = document.createElement("span");
+      why.className = "pick-why";
+      why.textContent = "🪄 " + pick.why + " ";
+      rec.appendChild(why);
+      if (!showAll) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "btn btn-ghost btn-small";
+        more.textContent = `show all ${matches.length} for this chip (developer)`;
+        more.addEventListener("click", () => {
+          state.showAllProducts = true;
+          renderProducts();
+        });
+        rec.appendChild(more);
+      }
+    }
+  }
+  // Order, never filter: the recommended card first, everything else behind
+  // the toggle. Filtering would make a board the picker CAN flash unreachable
+  // if the recommendation is wrong, which is the failure this must not have.
+  const ordered = pick
+    ? [pick.product, ...matches.filter((p) => p.id !== pick.product.id)]
+    : matches;
+
   const selectedId = state.product ? state.product.id : null;
 
-  matches.forEach((p) => {
+  ordered.forEach((p, index) => {
     const ver =
       state.manifest &&
       state.manifest.products &&
@@ -2634,7 +2904,11 @@ function renderProducts() {
     const fit = flashFitVerdict(p, state.flashBytes);
     const isSelected = fit.fits && p.id === selectedId;
     const row = document.createElement("label");
-    row.className = "product" + (isSelected ? " selected" : "") + (fit.fits ? "" : " unfit");
+    row.className = "product" + (isSelected ? " selected" : "") + (fit.fits ? "" : " unfit") +
+      // Folded, not dropped. A row the user already chose stays visible even
+      // when it isn't the recommendation, or the picker would appear to
+      // forget their pick the moment the passport lands and re-renders.
+      (showAll || index === 0 || isSelected ? "" : " folded");
     row.innerHTML = `
       <input type="radio" name="product" value="${p.id}"${isSelected ? " checked" : ""}${fit.fits ? "" : " disabled"}>
       ${figureSlot(p)}
@@ -3034,6 +3308,9 @@ async function onFlash() {
         " (Details: " + e + ")",
       "err"
     );
+    // …and hand over the next steps, rather than a diagnosis with nowhere to
+    // go (parity: the browser's error card carries them).
+    renderFlashFailureActions({ retry: onFlash });
     logEvent("err", "Flash failed [" + c.kind + "]: " + e);
     hideHatchCard();
   } finally {
@@ -3050,6 +3327,53 @@ async function onFlash() {
     state.chip = null;
     state.failedPort = null;
   }
+}
+
+// ── what to do after a failed install (parity: the browser's error card) ────
+// The browser has always escalated in the card itself: Try again, then a
+// clean install (full erase), then a diagnostic report. The desktop diagnosed
+// the failure and then stopped — its full-erase path existed only as the
+// pre-flash #first-contact checkbox, which a user whose install just failed
+// has to already know to go find. `opts` null clears the row.
+function renderFlashFailureActions(opts) {
+  const box = $("flash-actions");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!opts || !opts.retry) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+
+  const button = (label, cls, onClick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn " + cls + " btn-small";
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    box.appendChild(b);
+    return b;
+  };
+
+  button("Try again", "btn-primary", () => {
+    renderFlashFailureActions(null);
+    opts.retry();
+  });
+
+  // Only offer the escalation when there is one left to make: if the chip was
+  // already being fully erased, a "clean install" is the same install again,
+  // and offering it as the next step would be a false promise.
+  const first = $("first-contact");
+  if (first && !first.checked) {
+    button("Clean install (full erase) →", "btn-ghost", () => {
+      // Tick the real control rather than passing a hidden flag: the checkbox
+      // stays the one place the erase is decided, and the user can see what
+      // this button just chose on their behalf.
+      first.checked = true;
+      renderFlashFailureActions(null);
+      logEvent("info", "Escalated to a clean install (full erase) after a failed flash");
+      opts.retry();
+    });
+  }
+
+  button("Copy diagnostic report", "btn-ghost", () => copyDiagnosticReport("install"));
 }
 
 // ── the token, shown once (parity: the browser's done-card token panel) ─────
@@ -4176,6 +4500,120 @@ function feedSenseTune(chunk) {
 }
 
 // ── serial monitor + earned receipts ────────────────────────────────────────
+// ── console speed, and recovering from the wrong one ────────────────────────
+// Copied from the browser flasher's core (flash-core.js CONSOLE_BAUDS /
+// looksLikeGarbage). The desktop hard-coded one speed with no control and no
+// self-heal, so a board running a non-catalog console rate showed mojibake
+// with nothing to turn. The Rust side already accepts any speed in
+// 1_200..=2_000_000 (serial_monitor.rs), so this is purely the missing
+// frontend half.
+const CONSOLE_BAUDS = [115200, 74880, 9600, 230400, 460800, 921600];
+
+// Wrong-baud output decodes as a soup of U+FFFD replacement chars and raw
+// control bytes. Real firmware text — including the help menu's box-drawing
+// glyphs — decodes cleanly. Needs a decent sample before it will judge.
+function looksLikeGarbage(text) {
+  if (!text || text.length < 60) return false;
+  let bad = 0, n = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    n++;
+    if (c === 0xfffd) bad++;
+    else if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) bad++;
+    else if (c === 0x7f) bad++;
+  }
+  return bad / n > 0.2;
+}
+
+function defaultConsoleBaud() {
+  return (state.catalog && state.catalog.console_baud) || 115200;
+}
+
+function renderMonitorBauds() {
+  const sel = $("monitor-baud");
+  if (!sel) return;
+  const def = defaultConsoleBaud();
+  const bauds = CONSOLE_BAUDS.includes(def) ? CONSOLE_BAUDS : [def, ...CONSOLE_BAUDS];
+  const keep = sel.value;
+  sel.innerHTML = "";
+  for (const b of bauds) {
+    const o = document.createElement("option");
+    o.value = String(b);
+    o.textContent = b === def ? `${b} (picked for your Canary)` : String(b);
+    sel.appendChild(o);
+  }
+  sel.value = keep && bauds.includes(Number(keep)) ? keep : String(def);
+}
+
+// Feed the monitor's first output to the baud judge. Returns nothing; hops the
+// monitor down the list itself when the text doesn't decode. Mirrors the
+// browser's pump()/pumpOnce() decision — the words included — without its
+// stream plumbing, because here the backend owns the port.
+function judgeMonitorBaud(chunk) {
+  const mon = state.monitorBaudWatch;
+  if (!mon || mon.judged || mon.manual) return;
+  mon.sample = (mon.sample + String(chunk)).slice(0, 600);
+  if (!looksLikeGarbage(mon.sample)) {
+    if (mon.sample.length >= 600) mon.judged = true;
+    return;
+  }
+  mon.judged = true; // one verdict per attach; the hop starts a fresh watch
+  const def = defaultConsoleBaud();
+  const next = CONSOLE_BAUDS.find((b) => !mon.tried.has(b));
+  if (next === undefined) {
+    // Out of rungs. Showing it raw at the catalog's speed is the honest end of
+    // the ladder — never a silent loop, and never a blank console.
+    setStatus("monitor-status",
+      "None of the usual speeds decoded as clean text — showing it raw at " + def + ".");
+    mon.manual = true;
+    $("monitor-baud").value = String(def);
+    restartMonitorAtBaud(def, { manual: true });
+    return;
+  }
+  setStatus("monitor-status", `That didn't look like text at ${mon.baud} — trying ${next}…`);
+  $("serial-console").textContent = "";
+  $("monitor-baud").value = String(next);
+  restartMonitorAtBaud(next, { tried: mon.tried });
+}
+
+async function restartMonitorAtBaud(baud, opts = {}) {
+  try { await invoke("stop_serial_monitor"); } catch (_) { /* not running is fine */ }
+  // A baud hop re-attaches as a pure OBSERVER: the board is already running,
+  // and resetting it mid-diagnosis would throw away the very output being
+  // judged. Only the flash flows ask for the reset.
+  await startMonitor({ baud, manualBaud: opts.manual, tried: opts.tried });
+}
+
+// The firmware's single-key vocabulary, copied verbatim from the browser
+// flasher (canary-local/assets/flash.js, MONITOR_CMDS). The desktop exposed
+// only `j` as a button, so every other command had to be typed blind by
+// someone who already knew that `i` is identity and `b` is battery.
+const MONITOR_CMDS = [
+  ["h", "help"], ["j", "self-manifest"], ["i", "identity"], ["s", "status"],
+  ["t", "time"], ["w", "wifi"], ["m", "system"], ["b", "battery"],
+];
+
+function renderMonitorCmds() {
+  const host = $("monitor-cmds");
+  if (!host) return;
+  host.innerHTML = "";
+  for (const [ch, label] of MONITOR_CMDS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn btn-ghost btn-small";
+    b.dataset.cmd = ch;
+    b.textContent = `${label} (${ch})`;
+    b.disabled = !state.monitoring;
+    // The backend does not auto-append a newline (so "No line ending" is
+    // honored on the free-text form), so send one here — the firmware's
+    // command parser reads a line.
+    b.addEventListener("click", () =>
+      invoke("serial_monitor_send", { command: ch + "\n" }).catch((e) =>
+        setStatus("monitor-status", String(e), "err")));
+    host.appendChild(b);
+  }
+}
+
 async function startMonitor(opts) {
   if (!state.port || state.portKind !== "esp32") {
     setStatus("flash-result", "Connect the ESP32 host port to start its serial monitor.", "err");
@@ -4187,12 +4625,27 @@ async function startMonitor(opts) {
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
   renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   setMonitorButtons(true);
+  // The speed to open at: an explicit one from a baud hop, else whatever the
+  // selector holds, else the catalog's. Arm a fresh judge for this attach so
+  // an unreadable console walks the ladder instead of sitting in mojibake.
+  renderMonitorBauds();
+  const baud = Number((opts && opts.baud) || $("monitor-baud").value || defaultConsoleBaud());
+  $("monitor-baud").value = String(baud);
+  state.monitorBaudWatch = {
+    baud,
+    sample: "",
+    judged: false,
+    // A speed the USER chose is never second-guessed — the browser stops
+    // re-judging the moment someone picks one on purpose.
+    manual: !!(opts && opts.manualBaud),
+    tried: new Set([...((opts && opts.tried) || []), baud]),
+  };
   try {
     await invoke("start_serial_monitor", {
       port: state.port,
       vid: state.portInfo && state.portInfo.vid,
       pid: state.portInfo && state.portInfo.pid,
-      baud: state.catalog.console_baud || 115200,
+      baud,
       // Only the flash flows set this. It lets the monitor reboot a
       // native-USB board ONCE so the boot streams from its first line — and
       // rescues the board espflash left sitting in its bootloader, which is
@@ -4210,6 +4663,9 @@ async function startMonitor(opts) {
 
 async function stopMonitor() {
   try { await invoke("stop_serial_monitor"); } catch (_) {}
+  // Retire the baud judge with the session that armed it, or a late log line
+  // could hop the speed of a monitor nobody has open.
+  state.monitorBaudWatch = null;
   setMonitorButtons(false);
 }
 
@@ -4218,6 +4674,7 @@ function setMonitorButtons(running) {
   $("monitor-start").disabled = running;
   $("monitor-stop").disabled = !running;
   $("monitor-manifest").disabled = !running;
+  document.querySelectorAll("#monitor-cmds button").forEach((b) => { b.disabled = !running; });
   $("monitor-pause").disabled = !running;
   $("monitor-cmd").disabled = !running;
   $("monitor-lineend").disabled = !running;
@@ -4229,6 +4686,8 @@ function setMonitorButtons(running) {
 function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
+  // The previous failure's next-step buttons belong to a run that is over.
+  try { renderFlashFailureActions(null); } catch (_) {}
   // A fresh operation begins from a clean strip; each flow's begin() re-shows
   // its own. (The registry may not have entries yet — first run mounts them.)
   for (const id in opRegistry) opRegistry[id].hide();

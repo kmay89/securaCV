@@ -46,9 +46,12 @@ cd firmware/projects/canary-wap
 ./setup.sh arduino
 ```
 
-If you skip this, the build fails with errors about `pins.h` / `config.h` /
-`secrets.h`. Re-run the script any time the shared board/config sources
-change.
+If you skip this, the build fails with errors about `pins.h` / `config.h`.
+Re-run the script any time the shared board/config sources change. (The
+script also creates a `secrets.h`, but nothing reads it — canary-wap takes no
+compile-time credentials; Wi-Fi is provisioned over the captive portal and
+the AP password and API token are derived per device. See
+`secrets/secrets.example.h`.)
 
 ### 1. Board Installation
 

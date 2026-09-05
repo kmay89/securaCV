@@ -2364,3 +2364,51 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   ref on the release path. When adding an app target, check that its install
   step is `npm ci` against a committed lockfile, and that the lockfile is in
   audit.yml's matrix and paths and in dependabot.yml.
+
+### 2026-09-04 — the vision model release signed whatever the CDN served
+
+- **Symptom:** `vision-model-release.yml` fetched the source person-detection
+  model from Seeed's CDN with a bare `curl`, compiled it, and signed the result
+  with the project's Ed25519 OTA release key — so the bytes the CDN happened to
+  serve on release day became a release-key-signed asset that the browser
+  flasher's fail-closed signature check (`verifyPinnedModelAsset`) would then
+  trust. The only checks on the input were structural (the TFL3 magic, an
+  Ethos-U command-stream string, the input tensor shape), which any
+  malicious-but-valid model passes. The compiler on the same path
+  (`pip install ethos-u-vela`) was unpinned too.
+- **Fix:** `MODEL_INT8_SHA256` sits next to `ZOO_BASE`/`MODEL_STEM` and is
+  checked with `sha256sum` right after the download; the compiler is pinned
+  (`VELA_VERSION`). The pin is REQUIRED: an empty value fails the run and
+  prints the hash the CDN served, so pinning is a deliberate act with the
+  bytes in hand, never an accident of what was up that day. Recompute both
+  when bumping the model or the compiler, exactly as `ESPFLASH_VERSION` /
+  `ESPFLASH_SHA256_*` prescribe for the flash engine. The first pin was
+  taken exactly that way: a dispatched run on the fixing branch printed the
+  served hash, and that hash went into the file with the run id beside it.
+  Seeed publishes no digest of its own, so this is a first-use pin — the
+  guarantee is that the bytes cannot change under us from here on, not that
+  the first bytes were independently attested. Say which one you have.
+- **Applies to:** every step between "download something" and "sign
+  something" on any release path. A signature is a statement about bytes we
+  chose; an unpinned download is bytes someone else chose. If an input comes
+  from a third party, pin its hash (or verify a signature of theirs) before
+  it reaches our key, and pin the tool that transforms it.
+
+### 2026-09-04 — the signing jobs installed their Python toolchain unpinned
+
+- **Symptom:** `firmware-release.yml` and `flasher-release.yml` ran
+  `pip install --upgrade platformio cryptography` (plus `intelhex` and an
+  `esptool>=4,<5` range) in the same job that writes the OTA release private
+  key to disk and signs every fielded image. `--upgrade` guarantees a fresh,
+  unreviewed PyPI resolution on every release, and installing a package runs
+  its code on the runner holding the key. The 2026-09-03 lockfile lesson
+  covered npm; the Python side of the same jobs was still floating.
+- **Fix:** exact `==` pins on all four packages in both workflows, chosen to
+  match what the unpinned install resolved to on the day, so the change is a
+  freeze, not an upgrade. Bump them on purpose, together, when the toolchain
+  needs to move.
+- **Applies to:** every `pip install` in a job that touches a signing secret.
+  A version range on a key-bearing runner is an unpinned upstream ref exactly
+  like a caret in `package.json`. Dependabot does not see inline pins in
+  workflow `run:` blocks, so a bump here is a deliberate maintainer action —
+  which, on a signing path, is the point.

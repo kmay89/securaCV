@@ -68,7 +68,7 @@ pub fn nonce_ok(nonce: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn decode_hex(value: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_hex(value: &str) -> Option<Vec<u8>> {
     if value.len() % 2 != 0 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
@@ -165,6 +165,19 @@ mod tests {
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn decode_hex_refuses_multibyte_text_of_hex_length() {
+        // 64 BYTES but not 64 hex digits: a byte-indexed slice of this lands
+        // mid-character and panics. fleet.rs feeds a device's own answer in
+        // here, so the refusal has to happen before any slicing.
+        let planted = format!("\u{20ac}{}", "a".repeat(61));
+        assert_eq!(planted.len(), 64);
+        assert!(decode_hex(&planted).is_none());
+        assert!(decode_hex("zz").is_none());
+        assert!(decode_hex("abc").is_none());
+        assert_eq!(decode_hex(&"ab".repeat(32)).map(|k| k.len()), Some(32));
     }
 
     fn answer(id: &str, nonce: &str, k: &SigningKey) -> (String, String) {

@@ -1437,7 +1437,8 @@ static void hmac_sha256(const uint8_t* key, size_t key_len,
 // reading or typing a value by hand: 0/O/o and 1/I/i/l/L. Shared by the API
 // token, the WiFi AP password, and the device_id / AP-SSID suffix, so the
 // "no confusing characters" rule holds everywhere a human sees an identifier.
-// 54 chars; 32 chars × log2(54) ≈ 184 bits of entropy — a clear UX win.
+// 54 chars; 32 chars × log2(54) ≈ 184 bits when every character is drawn
+// from random input — derive_api_token says how much input that takes.
 static const char UNAMBIGUOUS_ALPHABET[] =
   "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
 static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;  // 54
@@ -1471,7 +1472,10 @@ static void format_api_token_string(const uint8_t* input, size_t in_len,
     if (i < in_len) {
       b = input[i++];
     } else {
-      // Extremely unlikely fallback: deterministic byte generation
+      // Top-up once the input is exhausted. Deterministic — identical on
+      // every device — so a caller must supply enough input that this never
+      // runs in practice (see derive_api_token). Rejection sampling keeps
+      // ~84% of input bytes, so 32 characters need well over 32 bytes.
       b = (uint8_t)(i ^ 0xA5);
       i++;
     }
@@ -1515,10 +1519,21 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
     token_hash
   );
 
-  // ── Step 3: Encode as base62 with rejection sampling ─────────────────
-  uint8_t token_bytes[24];
-  memcpy(token_bytes, token_hash, 24);
-  format_api_token_string(token_bytes, 24, token_str, token_str_len);
+  // ── Step 3: Encode with rejection sampling ───────────────────────────
+  // The encoder keeps ~84% of its input bytes, so 32 characters need ~38 on
+  // average and the deterministic top-up covers any shortfall — identically
+  // on every device. Feeding it 24 bytes (the first cut) meant 8 to 19 of
+  // every token's 32 characters were the same fleet-wide tail. Two HKDF-style
+  // blocks (64 bytes, ~54 accepted on average) leave the top-up as the
+  // theoretical backstop it was written to be. Fresh provisioning only:
+  // an existing token is loaded from NVS and never re-derived.
+  uint8_t token_bytes[64];
+  memcpy(token_bytes, token_hash, 32);
+  uint8_t token_input2[28];  // domain + MAC + block counter
+  memcpy(token_input2, token_input, 27);
+  token_input2[27] = 0x02;
+  hmac_sha256(token_key, 32, token_input2, 28, token_bytes + 32);
+  format_api_token_string(token_bytes, sizeof(token_bytes), token_str, token_str_len);
 
   // ── Wipe intermediate key material ───────────────────────────────────
   secure_zero(token_key, sizeof(token_key));
@@ -2311,7 +2326,7 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
 //
 // kv / rs / zn satisfy spec/event_contract.md §2 — every event MUST
 // carry the firmware version, ruleset, and zone it was scored under.
-// All fields are ASCII; the chokepoint already sanitised the strings to
+// All fields are ASCII; the chokepoint already sanitized the strings to
 // printable ASCII before this point.
 //
 // The string is built by csi_witness_build_payload() (host-buildable,
@@ -2323,7 +2338,7 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
 // canary's coverage area without recompiling.
 //
 // The wire format `kv=<v> rs=<r> zn=<z>` is space-delimited, so the
-// override gets sanitised to a tokenizer-safe charset before caching:
+// override gets sanitized to a tokenizer-safe charset before caching:
 // any byte outside [A-Za-z0-9._:-] becomes '_'. This keeps a future
 // setup UI that accepts free-text labels (with spaces, accents,
 // emoji) from corrupting the wire format and breaking downstream

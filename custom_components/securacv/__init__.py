@@ -114,7 +114,11 @@ TIMELINE_CARD_URL = f"/{DOMAIN}_www/{TIMELINE_CARD_FILENAME}"
 
 
 def _manifest_version() -> str:
-    """The integration version from manifest.json, for cache-busting the cards."""
+    """The integration version from manifest.json, for cache-busting the cards.
+
+    Blocking read — reached only through `_card_assets`, which runs in an
+    executor.
+    """
     try:
         import json
         from pathlib import Path
@@ -123,6 +127,25 @@ def _manifest_version() -> str:
             return str(json.load(fh).get("version", "0"))
     except (OSError, ValueError):
         return "0"
+
+
+def _card_assets() -> tuple[str, list[tuple[str, str]]]:
+    """The manifest version plus the card files that exist, in one hop.
+
+    Both halves block — `open()` on manifest.json and `Path.is_file()` per
+    card — and HA's blocking-call detector flags either one inside the event
+    loop. Gathered here so `_async_register_frontend` pays a single
+    `async_add_executor_job`, the same discipline `_read_token_file` follows.
+    """
+    from pathlib import Path
+
+    www = Path(__file__).parent / "www"
+    cards = [
+        (filename, str(www / filename))
+        for filename in LOVELACE_CARD_FILENAMES
+        if (www / filename).is_file()
+    ]
+    return _manifest_version(), cards
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
@@ -138,23 +161,20 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         return
     domain_data["_frontend_registered"] = True
     try:
-        from pathlib import Path
+        version, cards = await hass.async_add_executor_job(_card_assets)
 
         registered_any = False
-        for filename in LOVELACE_CARD_FILENAMES:
-            card_path = Path(__file__).parent / "www" / filename
-            if not card_path.is_file():
-                continue
+        for filename, card_path in cards:
             card_url = f"/{DOMAIN}_www/{filename}"
             try:
                 from homeassistant.components.http import StaticPathConfig
 
                 await hass.http.async_register_static_paths(
-                    [StaticPathConfig(card_url, str(card_path), False)]
+                    [StaticPathConfig(card_url, card_path, False)]
                 )
             except (ImportError, AttributeError):
                 # Older HA without the bulk async API.
-                hass.http.register_static_path(card_url, str(card_path), False)
+                hass.http.register_static_path(card_url, card_path, False)
 
             from homeassistant.components.frontend import add_extra_js_url
 
@@ -164,7 +184,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             # JS (cache_headers=False above only shapes the server headers).
             # Same convention HACS uses for every frontend resource; the static
             # path itself stays unversioned.
-            add_extra_js_url(hass, f"{card_url}?v={_manifest_version()}")
+            add_extra_js_url(hass, f"{card_url}?v={version}")
             registered_any = True
             _LOGGER.debug("SecuraCV card registered at %s", card_url)
         if not registered_any:
@@ -517,7 +537,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # of an older message and must not move entity state — the
         # signatures alone cover no timestamp or nonce. Reset when a device
         # is (re)pinned via TOFU. Shape: { device_id: { field: int } }
-        "replay": {},
+        #
+        # Seeded from the pins, which persist them: an empty mark accepts a
+        # retained stale-but-signed publish as current, so starting every
+        # reload from zero would hand back the replay window on each restart.
+        "replay": {
+            device_id: dict(pin.counters)
+            for device_id, pin in trust_store.all_devices().items()
+            if pin.counters
+        },
         # Mismatches we've already surfaced as persistent_notification —
         # one entry per (device_id, fp) so we don't spam the user.
         "mismatch_notified": set(),
@@ -575,10 +603,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         from .watch_runtime import TICK_INTERVAL_SECONDS, async_tick
 
+        @callback
+        def _watch_tick(_now: Any) -> None:
+            # Decorated, never a bare lambda: HassJob classifies a target
+            # that is neither a coroutine function nor `@callback`-marked as
+            # an Executor job and runs it in a worker thread, where the
+            # tick's `hass.async_create_task` raises — and the tick's own
+            # per-watch `except` swallows it, so a fired watch's
+            # notification simply never arrives.
+            async_tick(hass)
+
         entry_data["unsub_mqtt"].append(
             async_track_time_interval(
                 hass,
-                lambda _now: async_tick(hass),
+                _watch_tick,
                 timedelta(seconds=TICK_INTERVAL_SECONDS),
             )
         )

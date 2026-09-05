@@ -1345,23 +1345,10 @@ impl HttpRequest {
 }
 
 fn write_token_file(path: &Path, token: &str) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        f.write_all(format!("{token}\n").as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, format!("{token}\n"))?;
-    }
-    Ok(())
+    // A fresh 0600 regular file on every rotation: `mode()` only applies when a
+    // file is created, so a pre-existing lax-mode file would keep its mode, and
+    // a planted symlink at the path must never receive the token.
+    crate::break_glass::backend::write_restricted(path, format!("{token}\n").as_bytes())
 }
 
 fn parse_hex32(value: &str) -> Result<[u8; 32]> {

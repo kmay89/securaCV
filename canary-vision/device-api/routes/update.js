@@ -13,10 +13,11 @@ const FIRMWARE_MAGIC = Buffer.from([0x53, 0x43, 0x56, 0x01]); // "SCV\x01"
 const FIRMWARE_HEADER_SIZE = 8;
 
 /**
- * Load the firmware signing public key from environment or state keypair.
- * Prefers SECURACV_FW_SIGNING_PUBKEY env var (PEM or hex).
+ * Load the firmware signing public key from SECURACV_FW_SIGNING_PUBKEY (PEM or
+ * 32-byte hex). Returns null when it is unset — there is deliberately no
+ * fallback; the state argument is kept so the call signature stays stable.
  */
-function loadSigningPublicKey(state) {
+function loadSigningPublicKey(_state) {
   const envKey = process.env.SECURACV_FW_SIGNING_PUBKEY;
   if (envKey) {
     if (envKey.startsWith('-----BEGIN')) {
@@ -37,8 +38,14 @@ function loadSigningPublicKey(state) {
       type: 'spki',
     });
   }
-  // Fall back to the device's own Ed25519 public key
-  return state.publicKey;
+  // No fallback to the device's own key. That key's private half lives on
+  // this very device (lib/device-state.js mints it), so checking firmware
+  // against it proves only that the firmware was signed HERE — a compromised
+  // device, or anyone holding its key, could mint "valid" firmware for it.
+  // Unset means every update is refused (signing_key_unavailable): the honest
+  // state of a build with no release key pinned.
+  console.error('[SECURITY] SECURACV_FW_SIGNING_PUBKEY is not set — firmware updates are disabled until a release key is pinned');
+  return null;
 }
 
 /**
@@ -123,14 +130,19 @@ function updateRoutes(state) {
   }
 
   router.get('/api/v1/update/check', (req, res) => {
+    // The reference server has no update feed to ask. It used to answer with a
+    // hard-coded "0.4.2 is available" plus a made-up sha256 and signature —
+    // shipped code telling every caller an update existed and looked signed.
+    // Say what is true: the running version, and that nothing is on offer here.
     res.json({
       current_version: state.device.firmware_version,
-      available_version: '0.4.2',
-      update_available: true,
-      changelog: '- Fixed WiFi reconnect bug\n- Improved motion detection',
-      sha256: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
-      signature: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      available_version: null,
+      update_available: false,
+      changelog: null,
+      sha256: null,
+      signature: null,
       requires_usb: false,
+      note: 'no update feed is configured on this device; updates arrive by POST /api/v1/update',
     });
   });
 

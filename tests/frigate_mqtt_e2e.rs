@@ -3,7 +3,7 @@
 //! This is the deterministic, Docker-free core of the
 //! `integrations/ha_frigate_mqtt` release gate. It reproduces exactly what the
 //! `frigate_bridge` binary does with a `frigate/events` payload — parse,
-//! strip identity, coarsen the timestamp, map the label, sanitise the zone, and
+//! strip identity, coarsen the timestamp, map the label, sanitize the zone, and
 //! `append_event_checked` — against a **real, SQLCipher-encrypted** on-disk
 //! `witness.db`, then runs the **real `log_verify` binary** to prove the sealed
 //! log verifies (checkpoint signature + per-event signatures + hash chain).

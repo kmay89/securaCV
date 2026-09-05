@@ -258,9 +258,19 @@ start_mqtt_publisher() {
         sleep 1
     done
 
-    # Generate device ID from key seed
+    # Public HA device id. It lands in retained MQTT discovery topics that every
+    # broker client can read, so it must carry ZERO bits of the seed: sha256 of
+    # the seed under a domain-separation prefix — the same derivation as the
+    # Docker sidecar (docker/sidecar/entrypoint.sh) and event_mqtt_bridge's own
+    # fallback, so every deployment names a given seed the same way. This line
+    # used to publish the first 8 characters of the seed itself.
+    #
+    # Entity-id MIGRATION: `pwk_<seed[0:8]>` becomes `pwk_<sha256(...)[0:8]>`,
+    # so entity_ids (sensor.pwk_<id>_*) change once on upgrade — old entities
+    # orphan and re-create under the new id. Re-point dashboards or automations
+    # that named the old ids, or delete the orphans in HA.
     local DEVICE_ID
-    DEVICE_ID="pwk_${DEVICE_KEY_SEED:0:8}"
+    DEVICE_ID="pwk_$(printf '%s' "securacv:ha-device-id:v1:${DEVICE_KEY_SEED}" | sha256sum | cut -c1-8)"
 
     # Scheduled sealed-log verification cadence (hours; 0 disables)
     local VERIFY_INTERVAL_HOURS=24
@@ -287,8 +297,15 @@ start_mqtt_publisher() {
         MQTT_CMD_ARRAY+=(--mqtt-username "$PUBLISH_USER")
     fi
 
+    # The password travels in the environment, never on argv: argv is readable
+    # from /proc/<pid>/cmdline by anything in the container and shows up in
+    # process listings and crash reports. event_mqtt_bridge reads MQTT_PASSWORD
+    # itself (clap `env`), the same way it already takes DEVICE_KEY_SEED. Set
+    # for this one child only (`env` below), not exported: in Frigate mode the
+    # frigate bridge may talk to a different broker with a different password.
+    local -a PUB_ENV=()
     if [ -n "$PUBLISH_PASS" ]; then
-        MQTT_CMD_ARRAY+=(--mqtt-password "$PUBLISH_PASS")
+        PUB_ENV=(MQTT_PASSWORD="$PUBLISH_PASS")
     fi
 
     bashio::log.info "MQTT Publisher: $PUBLISH_HOST:$PUBLISH_PORT"
@@ -297,7 +314,7 @@ start_mqtt_publisher() {
     bashio::log.info "  Device ID: $DEVICE_ID"
 
     # Start in background
-    "${MQTT_CMD_ARRAY[@]}" &
+    env "${PUB_ENV[@]}" "${MQTT_CMD_ARRAY[@]}" &
     bashio::log.info "MQTT publisher started (PID: $!)"
 }
 
@@ -393,9 +410,9 @@ if [ "$MODE" = "frigate" ]; then
         CMD_ARRAY+=(--mqtt-username "$MQTT_USER")
     fi
 
-    if [ -n "$MQTT_PASS" ]; then
-        CMD_ARRAY+=(--mqtt-password "$MQTT_PASS")
-    fi
+    # The broker password reaches frigate_bridge through the environment,
+    # never argv — set right at the exec below, so it is THIS broker's
+    # password and not the publisher's.
 
     if [ -n "$FRIGATE_CAMERAS" ]; then
         CMD_ARRAY+=(--cameras "$FRIGATE_CAMERAS")
@@ -420,6 +437,14 @@ if [ "$MODE" = "frigate" ]; then
         start_mqtt_publisher
     fi
 
+    # Password through the environment, not argv (readable from
+    # /proc/<pid>/cmdline by anything in the container). Set — or cleared —
+    # right here so the exec'd bridge sees its own broker's password only.
+    if [ -n "$MQTT_PASS" ]; then
+        export MQTT_PASSWORD="$MQTT_PASS"
+    else
+        unset MQTT_PASSWORD
+    fi
     bashio::log.info "Starting frigate_bridge..."
     exec "${CMD_ARRAY[@]}"
 

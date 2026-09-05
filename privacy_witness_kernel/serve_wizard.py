@@ -1211,8 +1211,8 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
     def _handle_verify(self) -> dict:
         """Quick health check: is the witness API reachable?"""
         try:
-            req = urllib.request.Request("http://127.0.0.1:8799/health", timeout=5)
-            with urllib.request.urlopen(req) as resp:
+            req = urllib.request.Request("http://127.0.0.1:8799/health")
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
             return {"ok": True, "health": data}
         except Exception as exc:

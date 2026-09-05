@@ -468,13 +468,17 @@ unusual layouts (a kernel on another host, a re-bridged topic prefix).
 
 ---
 
-> **Most people are done here.** The next sections are the legacy, by-hand
-> versions of the setup that the one-command install (or the app + wizard)
-> already did for you — kept for unusual layouts and for anyone untangling
-> an older install. The reference material applies to every install: the
-> configuration reference, go2rtc, MQTT discovery, the
+> **Most people are done here.** The by-hand kernel sections below are
+> collapsed — each repeats a step the one-command install (or the app +
+> wizard) already did for you, kept for unusual layouts and for anyone
+> untangling an older install; click one to expand it. The reference
+> material stays open and applies to every install: the configuration
+> reference, go2rtc, MQTT discovery, the
 > [API reference](#api-reference), [privacy features](#privacy-features),
 > and [troubleshooting](#troubleshooting).
+
+<details>
+<summary><strong>Legacy: Witness Kernel Setup</strong> — picking the kernel's frigate/standalone mode by hand, with the Frigate + MQTT checklist; the installer and the kernel's own wizard make this choice for you</summary>
 
 ## Legacy: Witness Kernel Setup
 
@@ -518,7 +522,12 @@ Cameras → go2rtc → PWK (detection + logging)
 - Simpler setup without Frigate
 - Built-in motion detection
 
+</details>
+
 ---
+
+<details>
+<summary><strong>Kernel Setup by Hand (HACS + Kernel)</strong> — the same install the one-command installer runs, step by step: HACS, the kernel app, its wizard, the integration</summary>
 
 ## Kernel Setup by Hand (HACS + Kernel)
 
@@ -609,6 +618,8 @@ mqtt_publish:
      (≤10 minutes), so for remote kernels either share the token file (e.g. a
      mounted volume) or expect to re-authenticate.
 
+</details>
+
 ---
 
 ## Distribution
@@ -617,6 +628,9 @@ mqtt_publish:
 - **Kernel runtime:** run the Privacy Witness Kernel as an app, container, or service. The integration connects to its Event API.
 
 ---
+
+<details>
+<summary><strong>Kernel Installation (Optional App)</strong> — the app repository by hand (the one-command installer already does this) or a local container build</summary>
 
 ## Kernel Installation (Optional App)
 
@@ -640,6 +654,8 @@ docker build -f privacy_witness_kernel/Dockerfile -t privacy-witness-kernel .
 # Copy to the HA /addons folder (the path keeps the historical name)
 cp -r privacy_witness_kernel /addons/privacy_witness_kernel
 ```
+
+</details>
 
 ---
 

@@ -181,9 +181,13 @@ plainly rather than hiding:
   open: each requires an `Origin`/`Host` allowlist match plus a per-boot CSRF
   token minted from the hardware RNG and handed only to the same-origin page in
   `/api/settings` (which carries no CORS header, so a cross-origin script cannot
-  read it back). This closes the drive-by CSRF where a web page the owner
-  visits blind-POSTs `http://<canary>.local/api/tz` to re-persist device
-  settings. It does not — and is not meant to — stop a direct-LAN host that
+  read it back). The `Host` must also name the device itself — its IP, its
+  `.local` name, a single-label LAN name, or a private-use alias (`.lan`,
+  `.home.arpa`, `.internal`) — so a public domain re-pointed at the glass by
+  DNS rebinding fails the match even though its page is same-origin with
+  itself; such a request is refused the writes, the token and `/api/glass`.
+  This closes the drive-by CSRF where a web page the owner visits blind-POSTs
+  `http://<canary>.local/api/tz` to re-persist device settings. It does not — and is not meant to — stop a direct-LAN host that
   reads the page and its token itself; that is the same boundary the reads sit
   on. See the write-guard note in `glass_web.cpp`.
 - **Two keys are not writable from the network at all.** `wx_direct` (the

@@ -145,13 +145,17 @@ jobs:
       - name: Install build + signing tools
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade platformio cryptography
+          # Exact pins: this job holds the OTA release key, and a PyPI install
+          # runs package code on the runner — the same rule ESPFLASH_VERSION
+          # applies to the flash engine. Bump deliberately; Dependabot does not
+          # watch these lines.
+          pip install "platformio==6.1.19" "cryptography==50.0.1"
           # esptool 4.11 (official espressif32 7.x platform) imports
           # intelhex without declaring it — same workaround as firmware.yml.
-          pip install intelhex
+          pip install "intelhex==2.3.0"
           # esptool for the browser-flasher factory images (make_factory.py).
-          # Pinned <5 so the `merge_bin` subcommand name stays stable.
-          pip install "esptool>=4,<5"
+          # Stays <5 so the `merge_bin` subcommand name stays stable.
+          pip install "esptool==4.12.0"
 
       - name: Verify the signing key matches the committed public key
         # Fail BEFORE building: artifacts signed with a drifted key would

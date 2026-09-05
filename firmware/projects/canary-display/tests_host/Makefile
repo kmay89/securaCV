@@ -232,7 +232,20 @@ POLICY_SRC = test_settings_policy.cpp
 $(POLICY_BIN): $(POLICY_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(POLICY_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN)
+# The LAN web API's Host check (canary/net/host_guard.h): the Origin + CSRF
+# write guard compares the browser's own headers with each other, which DNS
+# rebinding satisfies, so writes, the CSRF token and the per-witness reads
+# also require a Host that can only mean this device — an IP literal, the
+# .local name, a single label, or a private-use suffix. Pins every way a
+# household reaches the glass true, every public domain false, degenerate
+# and oversized authorities foreign. Pure header, no Arduino.
+HOSTGUARD_BIN = test_host_guard
+HOSTGUARD_SRC = test_host_guard.cpp
+
+$(HOSTGUARD_BIN): $(HOSTGUARD_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(HOSTGUARD_SRC)
+
+run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN) $(HOSTGUARD_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -255,6 +268,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(ROUNDFRAME_BIN)
 	./$(ROUNDFRAME11_BIN)
 	./$(POLICY_BIN)
+	./$(HOSTGUARD_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(POLICY_BIN) $(HOSTGUARD_BIN)

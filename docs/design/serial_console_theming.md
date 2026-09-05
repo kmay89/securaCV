@@ -39,7 +39,7 @@ operator can verify by eye.
 |                |        ...      |                 |
 |                +-----------------+                 |
 |                                                    |
-| Memorise this shape - it changes if the key does.  |
+| Memorize this shape - it changes if the key does.  |
 +----------------------------------------------------+
 ```
 

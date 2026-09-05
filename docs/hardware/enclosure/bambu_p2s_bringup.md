@@ -428,7 +428,7 @@ standoffs — the screws, not a ledge, set the glass depth: it lands
 `glass_guard` below the front rim, which is **−0.2 today — the rim sits one
 layer BELOW the glass** so a cleaning cloth cannot catch on it (positive
 values trade that for a drop-protection recess).
-It carries a bevelled BOOT/RESET window in the top wall — the button edge in
+It carries a beveled BOOT/RESET window in the top wall — the button edge in
 native mounting — with debossed labels (back view: **BOOT left, RESET
 right**), gill vents on the side walls, exhaust slots flanking the button
 window, a back grille, **keyhole wall mounts in all four corners** (hang the
@@ -442,7 +442,7 @@ toward the plate's center — still confirm against **your** board. The shell
 carries chamfers at both the plate edge and the opposite rim.
 
 v0.4 gives the frame its power story and closes v0.3's "USB-C has no external
-access" gap. Centered on the bottom wall is a **USB pass-through**: a bevelled
+access" gap. Centered on the bottom wall is a **USB pass-through**: a beveled
 stadium opening sized to pass the power cable's **overmold head**
 (`usb_head_w`/`usb_head_h` — **measure your cable**, overmolds vary), and the
 brand lettering is now **cut through the wall as slat-stencil intake vents**

@@ -1993,3 +1993,413 @@ test("classifyFlashError: the desktop recognizes every integrity keyword the bro
     assert.equal(d[kind].title, b[kind].title, `title for "${kind}" differs between the flashers`);
   }
 });
+
+// ── parity wave 5: the connect failure, the module proof, and the monitor ────
+//
+// The 2026-09 re-scout of rule 7. The waves above are thorough, which is why
+// the surviving gaps were concentrated in the three places they did not cover:
+// the connect-failure path, the serial monitor, and the Vision-module proof —
+// plus two that ran the other way, browser→desktop. Each of these was a
+// user-facing diagnostic one frontend had and the other did not.
+
+test("wave 5: a connect failure is classified before download mode is blamed, on both flashers", async () => {
+  // The desktop's identify() catch carried a comment CLAIMING it made the same
+  // call as the browser's connectFailed, next to code that never made it: the
+  // only escape from "put it in download mode" was a regex on two Linux hint
+  // strings, and lib.rs gates those to Linux. So a busy port or a denied
+  // permission on macOS/Windows — where espflash says "Resource busy" /
+  // "Access is denied" — was coached with the one fix that cannot help.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const browser = read(join(CANARY, "assets/flash.js"));
+
+  assert.match(browser, /function connectFailed[\s\S]{0,200}core\.classifyFlashError\(e\)/,
+    "the browser no longer classifies the connect failure");
+  // The desktop must make the call in the same place — inside identify()'s
+  // catch, not merely somewhere in the file (classifyFlashError has always
+  // existed there; it was the CALL SITE that was missing).
+  const identify = /async function identify\(([\s\S]*?)\n}\n/.exec(appJs);
+  assert.ok(identify, "identify() vanished from desktop/src/app.js");
+  assert.match(identify[1], /classifyFlashError\(e\)/,
+    "desktop identify() no longer classifies the connect failure — a busy port or a " +
+    "denied permission would be coached as 'put it in download mode' again");
+  // …and a named cause must suppress the download-mode coaching, exactly as
+  // the browser only shows downloadModeSteps() for not-in-download/unknown.
+  assert.match(identify[1], /c\.kind !== "unknown" && c\.kind !== "not-in-download"/,
+    "the desktop must keep the download-mode advice for exactly the two kinds it fixes");
+  assert.match(identify[1], /\$\("download-mode"\)\.classList\.toggle\("hidden", osLevel \|\| named\)/,
+    "a named cause must hide the download-mode gesture — it is the wrong fix for it");
+  assert.match(browser, /v\.kind === "not-in-download" \|\| v\.kind === "unknown"[\s\S]{0,400}downloadModeSteps\(\)/,
+    "the browser no longer gates its download-mode steps on the kind");
+
+  // The proof that this actually helps: run the desktop's OWN classifier over
+  // the error detect_chip really produces on macOS/Windows (its generic
+  // prefix plus espflash's tail) and require a named, non-download verdict.
+  // Asserting the call site alone would not catch a classifier that answered
+  // `unknown` for every one of these.
+  const grabFn = (name) => {
+    const i = appJs.indexOf("function " + name);
+    let p = 0, j = appJs.indexOf("(", i);
+    for (let k = j; k < appJs.length; k++) {
+      if (appJs[k] === "(") p++;
+      else if (appJs[k] === ")") { p--; if (!p) { j = k; break; } }
+    }
+    const b = appJs.indexOf("{", j);
+    let d = 0;
+    for (let k = b; k < appJs.length; k++) {
+      if (appJs[k] === "{") d++;
+      else if (appJs[k] === "}") { d--; if (!d) return appJs.slice(i, k + 1); }
+    }
+  };
+  const classify = new Function(grabFn("classifyFlashError") + "\nreturn classifyFlashError;")();
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  // lib.rs:detect_chip's own wording, which every one of these rides in on.
+  const prefix = "couldn't read the chip (espflash exit 1). Put the board in download " +
+    "mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n";
+  // The three failures the Linux hints in port_hint.rs can never cover,
+  // because lib.rs gates them to `cfg!(target_os = "linux")`. Each one has a
+  // real fix that is not the BOOT/RESET ritual — that is the whole point.
+  for (const tail of [
+    "Error: Failed to open serial port\nCaused by: Device or resource busy",
+    "Error: Failed to open serial port\nCaused by: Access is denied.",
+    "Error: Permission denied (os error 13)",
+  ]) {
+    const got = classify(new Error(prefix + tail)).kind;
+    assert.ok(got !== "unknown" && got !== "not-in-download",
+      `"${tail.split("\n").pop()}" still classifies as ${got} — it would be coached ` +
+      "as 'put it in download mode', which cannot fix a held port or a denied open");
+    // …and both flashers must reach the SAME verdict for it, or the two
+    // frontends would name different causes for one failure.
+    assert.strictEqual(got, core.classifyFlashError(new Error(prefix + tail)).kind,
+      `the flashers disagree about "${tail.split("\n").pop()}"`);
+  }
+  // The generic prefix alone must stay neutral: if it classified as anything,
+  // every failure would inherit that verdict instead of espflash's own words.
+  assert.strictEqual(classify(new Error(prefix)).kind, "unknown",
+    "detect_chip's generic prefix must not classify on its own");
+});
+
+test("wave 5: the Vision-module proof is patient, and says the burn survived, on both flashers", () => {
+  // One VER? probe made a module that was still REBOOTING FROM ITS OWN BURN
+  // look dead, and the desktop then reported a fix-less error for a burn that
+  // had completed. The browser has always retried, pulsed the reset line, and
+  // retried again. Same ladder, same words, both engines.
+  const we2FlashJs = read(join(CANARY, "assets/we2-flash.js"));
+
+  assert.match(we2FlashJs, /async function wakeModule/,
+    "the browser engine lost wakeModule — the patient handshake");
+  assert.match(we2Rs, /fn wake_module/,
+    "desktop we2.rs lost wake_module — one VER? probe is not a handshake");
+  // The ladder's shape: probes, then a reset, then more probes. Asserted on
+  // BOTH engines so neither can quietly collapse back to a single try.
+  assert.match(we2FlashJs, /wakeModule[\s\S]{0,600}setRTS\(false\)[\s\S]{0,120}setRTS\(true\)/,
+    "the browser wake no longer pulses RTS between its probe rounds");
+  assert.match(we2Rs, /fn wake_module[\s\S]{0,900}hard_reset\(\)[\s\S]{0,600}from_millis\(1500\)/,
+    "the desktop wake no longer resets the module between its probe rounds");
+  for (const [label, src, re] of [
+    ["browser", we2FlashJs, /for \(let i = 0; i < 3; i\+\+\)/g],
+    ["desktop", we2Rs, /for _ in 0\.\.3/g],
+  ]) {
+    assert.ok((src.match(re) || []).length >= 2,
+      `${label} wake must probe in TWO rounds — before the reset and after it`);
+  }
+
+  // The words, when it still doesn't answer. "The burn itself completed" is
+  // the load-bearing half: without it the message reads as "your model didn't
+  // get written", which is the one thing it does not mean.
+  for (const [label, src] of [["browser we2-flash.js", we2FlashJs], ["desktop we2.rs", we2Rs]]) {
+    assert.ok(src.includes("No AT answer after reboot, even after an automatic reset"),
+      `${label} no longer names the automatic reset it already tried`);
+    assert.ok(src.includes("The burn itself completed"),
+      `${label} no longer says the burn survived — the message reads as a failed write`);
+    // And the inference failure's remedy, which the desktop used to omit
+    // entirely (a bare statement of the failure with no next step).
+    assert.ok(src.includes("non-SSCMA firmware; see the device guide"),
+      `${label} lost the power-cycle / non-SSCMA remedy for a refused inference`);
+  }
+  // The desktop must not regrow a remedy-less INVOKE error beside the good one.
+  assert.ok(!/"SSCMA answered AT, but the pinned model did not complete an inference"/.test(we2Rs),
+    "desktop we2.rs still returns the fix-less inference error");
+});
+
+test("wave 5: an unreachable manifest is not a missing release, on both flashers", () => {
+  // A fetch that never got an ANSWER proves nothing about whether the release
+  // exists. The desktop has drawn this line since it grew the pinned-tag
+  // message; the browser lumped an offline user in with "no release has been
+  // cut" and sent them to watch a repository instead of their Wi-Fi.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+
+  for (const [label, src] of [["browser flash.js", browser], ["desktop app.js", appJs]]) {
+    assert.ok(src.includes("\\bHTTP (\\d{3})\\b"),
+      `${label} no longer distinguishes an HTTP answer from a transport failure`);
+  }
+  // The browser must CARRY the status out of the catch, or the render has
+  // nothing to branch on.
+  assert.match(browser, /__missing: true, why, httpStatus:/,
+    "the browser's manifest catch no longer keeps the HTTP status");
+  // …and must only make the "no release" claim when the server answered.
+  assert.match(browser, /const answered = !!m\.httpStatus/,
+    "the browser banner no longer asks whether anyone answered");
+  assert.match(browser, /!answered\s*\n?\s*\?[\s\S]{0,240}back online/,
+    "the browser no longer offers the offline reading of a failed manifest fetch");
+  // The dev channel is the case with no pinned fw-v* tag to name, so it was
+  // the one where the message had no address in it at all.
+  assert.match(browser, /state\.devChannel \? "fw-dev-latest" : null/,
+    "the browser no longer names the rolling dev pointer when it can't be derived");
+});
+
+test("wave 5: the serial monitor has a speed control and a wrong-baud self-heal on both flashers", () => {
+  // A board on a non-catalog console speed showed the desktop user mojibake
+  // with nothing to turn: no baud control anywhere in the monitor, and no
+  // detection that the bytes weren't text. The browser has had both.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const browserCore = read(join(CANARY, "assets/flash-core.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  // The control.
+  assert.match(browser, /flash-mon-baud/, "the browser monitor lost its baud selector");
+  assert.match(html, /id="monitor-baud"/, "the desktop monitor has no baud control");
+  assert.match(appJs, /invoke\("start_serial_monitor"[\s\S]{0,400}\n\s*baud,/,
+    "the desktop monitor no longer opens at the chosen speed");
+
+  // The ladder itself — same rungs, same order, both frontends. A desktop
+  // copy that drifts would walk a different list than the browser's.
+  const rungs = (src, re) => {
+    const m = re.exec(src);
+    assert.ok(m, "couldn't parse CONSOLE_BAUDS");
+    return m[1].split(",").map((s) => Number(s.trim())).filter(Number.isFinite);
+  };
+  assert.deepStrictEqual(
+    rungs(appJs, /const CONSOLE_BAUDS = \[([^\]]*)\]/),
+    rungs(browserCore, /export const CONSOLE_BAUDS = \[([^\]]*)\]/),
+    "the desktop's console-baud ladder drifted from the browser's");
+
+  // The judge, and the proof it agrees with the browser's on real text. A
+  // ported heuristic that answers differently is worse than none: it would
+  // hop the speed on perfectly good output, or sit in soup.
+  assert.match(browserCore, /export function looksLikeGarbage/, "browser lost looksLikeGarbage");
+  assert.match(appJs, /function looksLikeGarbage/, "desktop lost looksLikeGarbage");
+  const grab = (src, name) => {
+    const i = src.indexOf("function " + name);
+    let d = 0;
+    const b = src.indexOf("{", src.indexOf(")", i));
+    for (let k = b; k < src.length; k++) {
+      if (src[k] === "{") d++;
+      else if (src[k] === "}") { d--; if (!d) return src.slice(i, k + 1); }
+    }
+  };
+  const mine = new Function(grab(appJs, "looksLikeGarbage") + "\nreturn looksLikeGarbage;")();
+  const theirs = new Function(
+    grab(browserCore, "looksLikeGarbage") + "\nreturn looksLikeGarbage;")();
+  const soup = "��".repeat(30);
+  const bootLog =
+    "I (31) boot: ESP-IDF v5.1 2nd stage bootloader\nI (31) boot: compile time 12:00:00\n" +
+    "I (32) boot: chip revision: v0.2\nI (33) boot.esp32s3: Boot SPI Speed : 80MHz\n";
+  const helpMenu =
+    "┌─ SecuraCV Canary ─┐\n│ h  help           │\n" +
+    "│ j  self-manifest  │\n└──────────┘\n" +
+    "the box-drawing help menu must never read as garbage at the right speed.\n";
+  for (const s of ["", "short", bootLog, soup, helpMenu]) {
+    assert.strictEqual(mine(s), theirs(s),
+      `the two garbage judges disagree on: ${JSON.stringify(s.slice(0, 40))}`);
+  }
+  // Real firmware text must pass and real soup must fail, or the agreement
+  // above would be satisfied by two functions that both always answer false.
+  assert.strictEqual(mine(bootLog), false, "a clean boot log must not read as garbage");
+  assert.strictEqual(mine(helpMenu), false, "the box-drawing help menu must not read as garbage");
+  assert.strictEqual(mine(soup), true, "wrong-baud soup must read as garbage");
+
+  // The two status lines, word for word, so the hop narrates the same way.
+  for (const [label, src] of [["browser", browser], ["desktop", appJs]]) {
+    assert.ok(/didn.t look like text at/.test(src),
+      `${label} monitor no longer says why it changed speed`);
+    assert.ok(src.includes("None of the usual speeds decoded as clean text"),
+      `${label} monitor no longer says when it has run out of speeds`);
+  }
+  // A speed the USER chose is never walked away from, on either side.
+  for (const [label, src] of [["browser", browser], ["desktop", appJs]]) {
+    assert.ok(/manualBaud|manual: true/.test(src),
+      `${label} monitor no longer respects a hand-picked speed`);
+  }
+});
+
+test("wave 5: the local-file path names the connected chip and the guard it skips, on both flashers", () => {
+  // A local .bin has no catalog product, so the chip GUARD can't run — only
+  // the factory-shape gate does. The desktop has named the connected chip and
+  // said so since it grew the local path; the browser's copy mentioned
+  // neither, so a .bin built for a different ESP32 variant was written with
+  // no warning at all.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  for (const [label, src] of [["browser flash.js", browser], ["desktop app.js", appJs]]) {
+    // Tolerant of the line break each frontend happens to wrap at — the words
+    // are the contract, not the layout.
+    assert.ok(/skips the[\s\S]{0,24}catalog.s chip guard/.test(src),
+      `${label} no longer says a local file skips the catalog's chip guard`);
+    assert.ok(/there.s no product to compare against/.test(src),
+      `${label} no longer says WHY the guard can't run`);
+    assert.ok(/sure this build targets that chip/.test(src),
+      `${label} no longer tells the user what to check instead`);
+  }
+  // …and the browser must name the chip it actually read, not just the risk.
+  assert.match(browser, /Connected: \$\{state\.chipDesc \|\| state\.chip/,
+    "the browser local-file note no longer names the connected chip");
+});
+
+test("wave 5: a failed install offers the same next steps on both flashers", () => {
+  // The browser has always escalated inside the error card: Try again, then a
+  // clean install (full erase), then a diagnostic report. The desktop named
+  // the failure and stopped — its full-erase path existed only as a pre-flash
+  // checkbox a stuck user had to know to go find.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  assert.ok(browser.includes("Clean install (full erase)"),
+    "the browser error card lost its clean-install escalation");
+  assert.ok(appJs.includes("Clean install (full erase)"),
+    "the desktop failure card lost its clean-install escalation");
+  assert.match(html, /id="flash-actions"/,
+    "desktop/src/index.html has nowhere to put the failure's next steps");
+  assert.match(appJs, /function renderFlashFailureActions/,
+    "desktop lost the failure-actions renderer");
+  assert.match(appJs, /renderFlashFailureActions\(\{ retry: onFlash \}\)/,
+    "the desktop flash catch no longer offers any next step");
+
+  // The escalation must actually ARM the erase, not merely say it will —
+  // a button that re-runs the same install is worse than no button.
+  assert.match(appJs, /Clean install \(full erase\)[\s\S]{0,500}first\.checked = true/,
+    "the desktop clean-install button doesn't tick the first-contact erase");
+  // …and it must not be offered when the erase was already on, where it
+  // would promise a different attempt and deliver the same one.
+  assert.match(appJs, /if \(first && !first\.checked\)/,
+    "the desktop must not offer a clean install to someone already doing one");
+  // A previous failure's buttons must not outlive the run that produced them.
+  assert.match(appJs, /function resetOutcome[\s\S]{0,300}renderFlashFailureActions\(null\)/,
+    "a new flash must clear the previous failure's next steps");
+  // The report, where the stuck user is — both frontends.
+  assert.match(browser, /diagnosticReportButton\(\(\) => \(\{ stage: "install"/,
+    "the browser error card lost its diagnostic report button");
+  assert.match(appJs, /copyDiagnosticReport\("install"\)/,
+    "the desktop failure card lost its diagnostic report button");
+});
+
+test("wave 5: customs says what the board arrived running, and whether it was cold, on both flashers", () => {
+  // The browser runs six read-only intake findings; the desktop implemented
+  // two, so an unrecognized marketplace image's project name printed as
+  // neutral fact and the cold-start gesture the desktop TEACHES was never
+  // recorded or reported.
+  const intakeJs = read(join(CANARY, "assets/intake.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  for (const [label, src] of [["browser intake.js", intakeJs], ["desktop app.js", appJs]]) {
+    assert.ok(/(export )?const KNOWN_STOCK/.test(src),
+      `${label} lost the known-stock image table`);
+    assert.ok(/(export )?function shippedWith/.test(src),
+      `${label} lost shippedWith — an unrecognized image reads as neutral fact`);
+    assert.ok(/(export )?function coldBootVerdict/.test(src),
+      `${label} lost coldBootVerdict`);
+    // The honest verdict for an image we don't know, on both sides.
+    assert.ok(src.includes("we don't recognize it"),
+      `${label} no longer flags an unrecognized resident image`);
+    // …and the honest verdict for a read that FAILED, which must never
+    // collapse into "the chip arrived erased" (the cleanest verdict there is).
+    assert.ok(src.includes("that's unchecked, not clean"),
+      `${label} lets an unreadable chip read as a clean one`);
+  }
+  // Every stock image the browser knows, the desktop knows.
+  const names = (src) => new Set(
+    [...src.matchAll(/\{ match: \/[^/]+\/i, name: "([^"]+)" \}/g)].map((m) => m[1]));
+  const b = names(intakeJs), d = names(appJs);
+  assert.ok(b.size >= 5, "couldn't parse KNOWN_STOCK from canary-local/assets/intake.js");
+  for (const n of b) {
+    assert.ok(d.has(n), `desktop KNOWN_STOCK lost "${n}" — it would print as unrecognized`);
+  }
+
+  // The cold-start question is ASKED on both, since neither can measure it.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  for (const [label, src] of [["browser flash.js", browser], ["desktop index.html", html]]) {
+    assert.ok(src.includes("I held BOOT while plugging in"),
+      `${label} no longer asks whether the board was brought up cold`);
+    assert.ok(/It.s already plugged in/.test(src),
+      `${label} lost the honest second answer to the cold-start question`);
+  }
+  assert.match(appJs, /function wireColdStartAnswer/, "the desktop's cold-start answer is unwired");
+  // An unanswered question must not render as either answer — "we didn't ask"
+  // is not "they said no", and the no-answer verdict is attention-level.
+  assert.match(appJs, /state\.heldBoot === undefined \? null : coldBootVerdict/,
+    "the desktop renders a cold-start verdict for a question nobody answered");
+  // And the answer describes ONE board, so it must not be inherited.
+  assert.match(appJs, /function resetSteps[\s\S]{0,2000}state\.heldBoot = undefined/,
+    "the cold-start answer leaks from one board to the next");
+});
+
+test("wave 5: the picker leads with one detection-led recommendation on both flashers", () => {
+  // The desktop listed every chip-matching product with equal weight; the
+  // browser narrows to one card and states the evidence for it. Both read the
+  // same two inputs (measured flash size, resident project), so this was a
+  // presentation gap, not a data one.
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  assert.match(flashCore, /export function smartPick/, "the browser lost smartPick");
+  assert.match(appJs, /function smartPick/, "the desktop lost its smartPick port");
+  assert.match(html, /id="pick-recommend"/, "the desktop has nowhere to state the recommendation");
+  assert.match(appJs, /smartPick\(state\.catalog, \{/, "the desktop picker never calls smartPick");
+
+  // The honest-ambiguity branch is the one worth pinning: chip + size narrows
+  // the field but does not always NAME the board, and "that looks like a
+  // <board>" would then be a guess wearing the clothes of a measurement.
+  for (const [label, src] of [["browser flash-core.js", flashCore], ["desktop app.js", appJs]]) {
+    assert.ok(src.includes("this is a starting point, not"),
+      `${label} smartPick no longer admits when the match is ambiguous`);
+    assert.ok(/families\.size > 1/.test(src),
+      `${label} smartPick no longer detects the ambiguous case`);
+    assert.ok(src.includes("Recommended:"),
+      `${label} smartPick no longer names its recommendation`);
+  }
+  // The rest of the chip's products stay reachable — folded, never filtered.
+  // A recommendation that HIDES a flashable board is worse than a wall of them.
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop app.js", appJs]]) {
+    assert.ok(src.includes("for this chip (developer)"),
+      `${label} no longer offers the full list behind the recommendation`);
+  }
+  assert.match(appJs, /\[pick\.product, \.\.\.matches\.filter\(/,
+    "the desktop must ORDER by the recommendation, never filter to it");
+});
+
+test("wave 5: the firmware's single-key commands are labeled buttons on both flashers", () => {
+  // The desktop exposed exactly one (`j`) as a button; everything else had to
+  // be typed blind into a box whose placeholder taught nothing. The browser's
+  // placeholder even teaches the vocabulary.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  const cmds = (src) => {
+    const m = /MONITOR_CMDS = \[([\s\S]*?)\];/.exec(src);
+    assert.ok(m, "couldn't parse MONITOR_CMDS");
+    return [...m[1].matchAll(/\["([a-z])", "([a-z-]+)"\]/g)].map((x) => x[1] + ":" + x[2]);
+  };
+  const b = cmds(browser), d = cmds(appJs);
+  assert.strictEqual(b.length, 8, "the browser's command table is no longer the eight keys");
+  assert.deepStrictEqual(d, b,
+    "the desktop's MONITOR_CMDS drifted from the browser's — same keys, same labels");
+
+  assert.match(html, /id="monitor-cmds"/, "desktop/src/index.html has nowhere to put the chips");
+  assert.match(appJs, /function renderMonitorCmds/, "the desktop command chips are unbuilt");
+  assert.match(appJs, /invoke\("serial_monitor_send", \{ command: ch \+ "\\n" \}\)/,
+    "the desktop chips don't send their key through the serial command path");
+  // Disabled with the rest of the monitor controls, or they lie about being usable.
+  assert.match(appJs, /function setMonitorButtons[\s\S]{0,600}#monitor-cmds button/,
+    "the desktop command chips aren't enabled/disabled with the monitor");
+  // The placeholder that teaches the vocabulary, on both.
+  for (const [label, src] of [["browser flash.js", browser], ["desktop index.html", html]]) {
+    assert.ok(src.includes("the firmware answers single keys; h shows its menu"),
+      `${label} no longer teaches the single-key vocabulary in the command box`);
+  }
+});

@@ -59,16 +59,22 @@ OTA_KEY_HEADER = REPO / "firmware/common/ota/src/ota_release_key.h"
 def read_release_pubkey() -> str:
     """Extract SECURACV_OTA_RELEASE_PUBKEY[32] from the firmware header as hex.
 
-    Returns 64 hex chars (all-zero if the signing ceremony hasn't happened —
-    the flasher treats that as unprovisioned and verifies by checksum only).
+    Returns 64 hex chars. All-zero means the signing ceremony hasn't happened
+    (the flasher treats that as unprovisioned and verifies by checksum only) —
+    and it comes ONLY from a header that parses to 32 zero bytes. A header that
+    is missing or does not parse is a broken tree, not an unprovisioned one:
+    returning zeros there would silently downgrade every flasher's signature
+    check to checksum-only.
     """
-    text = OTA_KEY_HEADER.read_text(encoding="utf-8") if OTA_KEY_HEADER.exists() else ""
+    if not OTA_KEY_HEADER.exists():
+        die(f"{OTA_KEY_HEADER}: missing — the flasher pins its release key from this header")
+    text = OTA_KEY_HEADER.read_text(encoding="utf-8")
     m = re.search(r"SECURACV_OTA_RELEASE_PUBKEY\[32\]\s*=\s*\{(.*?)\}", text, re.S)
     if not m:
-        return "00" * 32
+        die(f"{OTA_KEY_HEADER}: no SECURACV_OTA_RELEASE_PUBKEY[32] initializer found")
     bytes_ = re.findall(r"0x([0-9a-fA-F]{2})", m.group(1))
     if len(bytes_) != 32:
-        return "00" * 32
+        die(f"{OTA_KEY_HEADER}: SECURACV_OTA_RELEASE_PUBKEY has {len(bytes_)} bytes, expected 32")
     return "".join(b.lower() for b in bytes_)
 
 # esptool's chip identity strings (ESPLoader.chip.CHIP_NAME), keyed by the

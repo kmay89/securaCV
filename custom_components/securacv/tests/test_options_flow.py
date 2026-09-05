@@ -158,6 +158,26 @@ def test_pin_rejects_bad_input_and_pins_nothing():
     assert store.all_devices() == {}
 
 
+def test_pin_clears_the_notification_dedup_like_rotate_and_unpin():
+    """Pin is a key-CHANGING path too — its own docstring says it replaces a
+    TOFU pin with a manual one — and it is the action an alarmed operator
+    reaches for after a mismatch notification. It alone left the dedup key
+    behind, so the next genuine mismatch carrying that same fp was dropped
+    in silence until the entry reloaded."""
+    fp = fingerprint_from_pubkey_hex(KEY_B)
+    flow, store, entry_data = _flow(notified={(DEVICE, fp), ("other-dev", "ff" * 8)})
+    run(store.async_tofu_pin_if_unknown(DEVICE, KEY_A))
+
+    result = run(flow.async_step_pin({CONF_PIN_DEVICE_ID: DEVICE, CONF_PIN_PUBKEY_HEX: KEY_B}))
+    assert result["type"] == "create_entry"
+    assert entry_data["mismatch_notified"] == {("other-dev", "ff" * 8)}
+
+    # First-time pins clear too — same path, no pre-existing pin.
+    flow, store, entry_data = _flow(notified={("fresh-dev", "aa" * 8)})
+    run(flow.async_step_pin({CONF_PIN_DEVICE_ID: "fresh-dev", CONF_PIN_PUBKEY_HEX: KEY_A}))
+    assert entry_data["mismatch_notified"] == set()
+
+
 def test_pin_without_a_trust_store_reports_it_instead_of_crashing():
     flow, _, _ = _flow(with_store=False)
     result = run(flow.async_step_pin({CONF_PIN_DEVICE_ID: DEVICE, CONF_PIN_PUBKEY_HEX: KEY_A}))

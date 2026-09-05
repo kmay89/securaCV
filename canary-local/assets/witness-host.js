@@ -33,7 +33,9 @@ try {
 const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
 if (invoke && frame) {
   const status = (msg, live) => { if (scanEl) { scanEl.textContent = msg; scanEl.classList.toggle("live", !!live); } };
-  const post = (m) => { try { if (frame.contentWindow) frame.contentWindow.postMessage(m, "*"); } catch (_) {} };
+  // "/" = our own origin: the wall is our iframe, and a LAN fleet (device
+  // names, who is home) goes nowhere else even if something else were framed.
+  const post = (m) => { try { if (frame.contentWindow) frame.contentWindow.postMessage(m, "/"); } catch (_) {} };
   const bases = () => {
     const b = [];
     try { const k = localStorage.getItem("scv-kernel"); if (k && /^http:\/\//i.test(k)) b.push(k); } catch (_) {}

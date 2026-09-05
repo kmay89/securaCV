@@ -208,9 +208,14 @@ def verify(path: str, pubkey_hex: str, device_id: str | None) -> int:
             print(f"note: {len(segments) - 1} gap(s) — records created while "
                   f"the SD card was absent never reached the file; each "
                   f"segment above verified independently")
+    # --device-id asks for the genesis to be verified (see the usage text), so
+    # a log that does not start there is a failure, not a note: a head-truncated
+    # file would otherwise pass as "every record verified".
     if device_id and segments and not segments[0][2]:
-        print("note: first record does not chain from the genesis of "
-              f"device id '{device_id}' (log may begin mid-history)")
+        failures.append(
+            f"first record (seq {segments[0][0]}) does not chain from the "
+            f"genesis of device id '{device_id}' — records before it are "
+            f"missing, or the id is wrong")
 
     if failures:
         print(f"\nFAILED — {len(failures)} problem(s):", file=sys.stderr)

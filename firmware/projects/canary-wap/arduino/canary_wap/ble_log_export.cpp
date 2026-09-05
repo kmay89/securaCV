@@ -83,7 +83,7 @@ static void rebuild_head(bool force_notify) {
                        (newest != g_head_last_newest);
   if (!changed && !force_notify) return;
 
-  // Serialise BEFORE updating the cached "last seen" state. If
+  // Serialize BEFORE updating the cached "last seen" state. If
   // serializeJson fails (overflow, allocator pressure), we want the
   // next tick to retry — bumping the cache here would mark the change
   // as "processed" and silently stall notifications until another

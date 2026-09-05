@@ -113,6 +113,13 @@ jobs:
         run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: Glossary status column matches the evidence ledger
+        # The glossary's device-line Status column is a human-readable copy
+        # of verdicts figures.json DERIVES from evidence on disk — the one
+        # kind of cell the repo's rules say must never be hand-typed. This
+        # pins each cell to the ledger (and each no-ledger row to an honest
+        # non-ladder label), so moved evidence turns the stale cell red.
+        run: python3 scripts/lint_glossary_status.py
       - name: Markdown links — every relative link and anchor resolves
         # The docs index covers docs/ reachability and the map's own links;
         # this covers everything it can't: the ~160 tracked .md files outside

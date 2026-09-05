@@ -10,6 +10,7 @@
 
 #include "glass_web.h"
 #include "settings_policy.h"  // the on-glass-only write class
+#include "host_guard.h"       // Host must name THIS device
 #include "wifi_mgr.h"
 #include "tz_auto.h"
 #include "mqtt_mgr.h"   // hub state for the /api/fleet self-report
@@ -74,6 +75,16 @@ bool s_mdns_added = false;
 //      Access-Control-Allow-Origin, a cross-origin script cannot read back.
 //      The page echoes it as X-CSRF-Token on each write, so a request that
 //      never loaded the page from this origin cannot forge one.
+//   2b) And the Host header must name THIS device (host_guard.h). Checks 1
+//      and 2 compare the browser's own headers with each other, which DNS
+//      rebinding satisfies: a page at http://evil.example whose name is
+//      re-pointed at this device's LAN IP arrives with Origin == Host ==
+//      evil.example, passes as same-site, and reads the token as
+//      same-origin. So a request whose Host is a public domain is foreign —
+//      for the writes, for the token, and for the per-witness reads — while
+//      an IP literal, the .local name, a single label, or a private-use
+//      suffix (.lan, .home.arpa, .internal) is every way the household
+//      actually reaches the glass.
 //
 // Neither stops a DIRECT LAN host (no browser: it reads the page and its token
 // itself). That is the same trust boundary /api/glass and /api/fleet already
@@ -135,14 +146,33 @@ bool origin_is_cross_site() {
   return !auth.equalsIgnoreCase(s_server->hostHeader());
 }
 
-// The gate for /api/set and /api/tz: sends its own 403 and returns true when
-// the write must be refused, so a handler need only guard with
-// `if (write_blocked()) return;` before it touches NVS.
-bool write_blocked() {
+// True when the Host the request targeted cannot name this device — the
+// rebinding case (host_guard.h). A direct client (curl, the apps, the TV)
+// addresses the glass by its IP or .local name and never trips this.
+bool host_is_foreign() {
+  return !host_names_this_device(s_server->hostHeader().c_str());
+}
+
+// Sends its own 403 and returns true when the request is not this device's
+// own page on this device's own name: a foreign Host (rebinding) or a
+// cross-site Origin (drive-by). The gate every write and OTA kick starts with.
+bool foreign_blocked() {
+  if (host_is_foreign()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"host\"}");
+    return true;
+  }
   if (origin_is_cross_site()) {
     s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"origin\"}");
     return true;
   }
+  return false;
+}
+
+// The gate for /api/set and /api/tz: sends its own 403 and returns true when
+// the write must be refused, so a handler need only guard with
+// `if (write_blocked()) return;` before it touches NVS.
+bool write_blocked() {
+  if (foreign_blocked()) return true;
   if (!s_server->hasHeader("X-CSRF-Token") ||
       !csrf_matches(s_server->header("X-CSRF-Token").c_str())) {
     s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"csrf\"}");
@@ -245,12 +275,24 @@ void handle_tv() {
 // (/api/set, /api/tz) are additionally gated (see the write-guard note above)
 // while these reads are not: a write reconfigures the device durably, whereas
 // a read sees only what a glance at the wall display already shows anyone in
-// the home.
+// the home. The one reader refused outright is a foreign Host: a rebinding
+// page is same-origin with the device it re-pointed its name at, so the
+// same-origin policy is no shield there (write-guard note 2b) — and that page
+// is not anyone in the home.
 void handle_glass() {
-  // 16 witnesses (~90 B each) + the voiced/palette head (~420 B) peaked
-  // near the old 2048 — headroom so bappend's clamp (safe but truncating)
-  // never has to cut a document the mirror then fails to parse.
-  static char body[2688];
+  if (host_is_foreign()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"host\"}");
+    return;
+  }
+  // Sized by construction, like handle_fleet: every witness row is bounded
+  // by its all-escaping worst case (bappend_jstr expands a control byte to
+  // six chars, and name[24]/room[16] arrive over unauthenticated mDNS), not
+  // by a friendly estimate — a clamp that truncates a hostile name serves
+  // invalid JSON with a 200, which is a broken mirror, not a safe one. The
+  // head is the fixed keys, nine hex colors and the two Character phrases.
+  // Static: BSS, not the handler's stack.
+  constexpr size_t kGlassRowCap = 6u * 23u + 6u * 15u + 80u;
+  static char body[768 + CD_FLEET_MAX_DEVICES * kGlassRowCap];
   size_t o = 0;
   const size_t C = sizeof(body);
 #if defined(CD_FLAVOR_WATCH)
@@ -336,8 +378,12 @@ void handle_settings_get() {
   // The per-boot CSRF token the write endpoints require. Delivered here (and
   // nowhere with an Access-Control-Allow-Origin header) so only the
   // same-origin page can read it back; the value is pure lowercase hex, so it
-  // needs no JSON escaping. See the write-guard note above.
-  o = bappend(body, sizeof(body), o, ",\"csrf\":\"%s\"", s_csrf);
+  // needs no JSON escaping. See the write-guard note above — and note 2b for
+  // why a foreign Host, which IS same-origin with its rebinding page, is not
+  // handed the token at all.
+  if (!host_is_foreign()) {
+    o = bappend(body, sizeof(body), o, ",\"csrf\":\"%s\"", s_csrf);
+  }
 #ifdef CD_FLAVOR_DASH
   // THE BRIGHTNESS KNOB THAT WORKS ON THIS GLASS.
   //
@@ -410,7 +456,7 @@ void handle_settings_get() {
                 canary::net::kOnGlassOnlyKeys[i]);
   }
   o = bappend(body, sizeof(body), o, "],\"wx_direct\":%u", gs.wx_direct);
-  if (!origin_is_cross_site()) {
+  if (!origin_is_cross_site() && !host_is_foreign()) {
     o = bappend(body, sizeof(body), o,
                 ",\"wx_loc_set\":%u,\"wx_status\":%u", gs.wx_loc_set,
                 (unsigned)canary::net::wx_direct_status());
@@ -724,10 +770,7 @@ void handle_ota_status() {
 // POST /api/ota/check — fetch the manifest and compare versions, without
 // installing. Results land in /api/ota/status (poll while state=Checking).
 void handle_ota_check() {
-  if (origin_is_cross_site()) {
-    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"origin\"}");
-    return;
-  }
+  if (foreign_blocked()) return;
   send_ota_kick(ota_web_check(), "Checking for updates...",
                 "ota_check_failed");
 }
@@ -736,10 +779,7 @@ void handle_ota_check() {
 // check first would make this 409). The device restarts into the new
 // firmware on success, with automatic rollback if it fails its probe.
 void handle_ota_install() {
-  if (origin_is_cross_site()) {
-    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"origin\"}");
-    return;
-  }
+  if (foreign_blocked()) return;
   send_ota_kick(ota_web_install(),
                 "Installing the update. Your Canary will restart on its own.",
                 "ota_install_failed");
@@ -919,7 +959,8 @@ void handle_fleet() {
   // requests with no Origin (native apps, the TV, curl) or a same-site
   // Origin (the glass's own pages). No browser client in any repo renders
   // them today, so nothing is lost; a drive-by page just stops learning it.
-  const bool coarse_only = origin_is_cross_site();
+  // A foreign Host (a rebinding page, same-origin with itself) is coarse too.
+  const bool coarse_only = origin_is_cross_site() || host_is_foreign();
   {
     const auto& fleet = canary::fleet::the_fleet();
     size_t appended = 0;

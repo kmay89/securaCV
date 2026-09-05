@@ -101,34 +101,62 @@ pub struct BreakGlassReceiptCounts {
     pub denied: u64,
 }
 
+/// What a checkpoint's signature was found to cover (see `log::checkpoint_message`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointBinding {
+    /// No checkpoint has been written yet.
+    Absent,
+    /// The signature covers the chain head AND `cutoff_event_id`.
+    CutoffSigned,
+    /// The signature covers the chain head only — a checkpoint written before the
+    /// cutoff was bound, whose `cutoff_event_id` is an unsigned column.
+    HeadOnly,
+}
+
 pub fn verify_checkpoint_signature(
     verifying_key: &VerifyingKey,
     checkpoint: &CheckpointInfo,
     mode: SignatureMode,
     pq_public_key: Option<&PqPublicKey>,
-) -> Result<()> {
+) -> Result<CheckpointBinding> {
     match (
         checkpoint.chain_head_hash,
         checkpoint.signatures.as_ref(),
         checkpoint.cutoff_event_id,
     ) {
-        (None, None, None) => Ok(()),
-        (Some(head), Some(sig), Some(_)) => verify_entry_signature(
-            verifying_key,
-            &head,
-            sig,
-            mode,
-            pq_public_key,
-            DOMAIN_CHECKPOINT,
-        )
-        .map_err(|e| {
-            fail(
-                FailedLedger::Checkpoint,
-                None,
-                FailureKind::CheckpointInvalid,
-                format!("checkpoint signature verification failed: {}", e),
+        (None, None, None) => Ok(CheckpointBinding::Absent),
+        (Some(head), Some(sig), Some(cutoff)) => {
+            let bound = crate::log::checkpoint_message(&head, cutoff);
+            if verify_entry_signature(
+                verifying_key,
+                &bound,
+                sig,
+                mode,
+                pq_public_key,
+                DOMAIN_CHECKPOINT,
             )
-        }),
+            .is_ok()
+            {
+                return Ok(CheckpointBinding::CutoffSigned);
+            }
+            verify_entry_signature(
+                verifying_key,
+                &head,
+                sig,
+                mode,
+                pq_public_key,
+                DOMAIN_CHECKPOINT,
+            )
+            .map(|_| CheckpointBinding::HeadOnly)
+            .map_err(|e| {
+                fail(
+                    FailedLedger::Checkpoint,
+                    None,
+                    FailureKind::CheckpointInvalid,
+                    format!("checkpoint signature verification failed: {}", e),
+                )
+            })
+        }
         _ => Err(fail(
             FailedLedger::Checkpoint,
             None,
@@ -893,7 +921,7 @@ pub fn audit_chain_timeline(conn: &Connection, now_bucket_start: u64) -> Result<
     let mut prev_created_at: Option<(i64, i64)> = None; // (id, created_at)
     let mut clock_skew_buckets: Vec<i64> = Vec::new();
     let mut created_at_regressions: Vec<(i64, i64, i64)> = Vec::new(); // (id, created_at, prev)
-    let mut heartbeat_buckets: Vec<u64> = Vec::new();
+    let mut heartbeat_buckets: std::collections::HashSet<u64> = std::collections::HashSet::new();
     // Lifecycle segments: (start_bucket, last_record_bucket, closed_cleanly)
     let mut segments: Vec<(u64, u64, bool)> = Vec::new();
     let mut last_record_bucket: Option<u64> = None;
@@ -923,7 +951,7 @@ pub fn audit_chain_timeline(conn: &Connection, now_bucket_start: u64) -> Result<
         // the timeline pass only inspects the records it can parse.
         match SealedLogRecord::deserialize_compat(&payload) {
             Ok(SealedLogRecord::Heartbeat(h)) => {
-                heartbeat_buckets.push(h.time_bucket.start_epoch_s);
+                heartbeat_buckets.insert(h.time_bucket.start_epoch_s);
             }
             Ok(SealedLogRecord::Lifecycle(l)) => match l.phase {
                 crate::LifecyclePhase::Start => {
@@ -987,24 +1015,39 @@ pub fn audit_chain_timeline(conn: &Connection, now_bucket_start: u64) -> Result<
     }
 
     // Heartbeat cadence inside lifecycle segments. Skip on chains that predate
-    // heartbeats (no false alarms on old databases).
+    // heartbeats (no false alarms on old databases). Segment bounds come from
+    // the unsigned created_at column, so a tampered row can stretch a span
+    // across centuries: refuse an implausible span and count buckets instead of
+    // collecting them, so a hostile database cannot turn boot verify into a
+    // hang or an allocation blow-up.
     if !heartbeat_buckets.is_empty() {
+        const MAX_SEGMENT_BUCKETS: u64 = 20 * 366 * 24 * 6; // twenty years of 10-min buckets
         for (seg_start, seg_end, _closed) in &segments {
-            let mut missing: Vec<u64> = Vec::new();
+            if seg_end < seg_start {
+                continue;
+            }
+            let span = (seg_end - seg_start) / BUCKET_S + 1;
+            if span > MAX_SEGMENT_BUCKETS {
+                warnings.push(format!(
+                    "lifecycle segment {}..{} spans an implausible {} bucket(s): \
+                     possible tampered created_at",
+                    seg_start, seg_end, span
+                ));
+                continue;
+            }
+            let mut missing: u64 = 0;
             let mut bucket = *seg_start;
             while bucket <= *seg_end {
                 if !heartbeat_buckets.contains(&bucket) {
-                    missing.push(bucket);
+                    missing += 1;
                 }
                 bucket += BUCKET_S;
             }
-            if !missing.is_empty() {
+            if missing > 0 {
                 warnings.push(format!(
                     "no heartbeat for {} bucket(s) in {}..{} while the daemon was running: \
                      possible record deletion",
-                    missing.len(),
-                    seg_start,
-                    seg_end
+                    missing, seg_start, seg_end
                 ));
             }
         }
@@ -1237,6 +1280,64 @@ mod tests {
         };
 
         verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_checkpoint_signature_binds_the_cutoff() -> Result<()> {
+        let signing_key = SigningKey::from_bytes(&[13u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let keys = SignatureKeys::new(&signing_key);
+        let head = [3u8; 32];
+
+        // Signed the current way: the cutoff is part of the message.
+        let bound = sign_entry(
+            &keys,
+            &crate::log::checkpoint_message(&head, 42),
+            DOMAIN_CHECKPOINT,
+        )?;
+        let checkpoint = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signatures: Some(bound),
+            cutoff_event_id: Some(42),
+            signer_public_key: None,
+        };
+        assert_eq!(
+            verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None)?,
+            CheckpointBinding::CutoffSigned
+        );
+
+        // Inflating the cutoff of a bound checkpoint breaks its signature.
+        let inflated = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signatures: Some(sign_entry(
+                &keys,
+                &crate::log::checkpoint_message(&head, 42),
+                DOMAIN_CHECKPOINT,
+            )?),
+            cutoff_event_id: Some(4200),
+            signer_public_key: None,
+        };
+        assert!(verify_checkpoint_signature(
+            &verifying_key,
+            &inflated,
+            SignatureMode::Compat,
+            None
+        )
+        .is_err());
+
+        // A checkpoint from before cutoffs were bound signed the bare head: it
+        // still verifies, and the verifier says which form held.
+        let legacy = CheckpointInfo {
+            chain_head_hash: Some(head),
+            signatures: Some(sign_entry(&keys, &head, DOMAIN_CHECKPOINT)?),
+            cutoff_event_id: Some(42),
+            signer_public_key: None,
+        };
+        assert_eq!(
+            verify_checkpoint_signature(&verifying_key, &legacy, SignatureMode::Compat, None)?,
+            CheckpointBinding::HeadOnly
+        );
         Ok(())
     }
 

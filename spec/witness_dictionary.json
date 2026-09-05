@@ -184,7 +184,7 @@
     ]
   },
   "homekit_projection": {
-    "$comment": "The Apple Home / HAP projection \u2014 an EGRESS vocabulary (Track C). Mirrored Rust src/bridge/homekit.rs `HomeSignal` (variants, as_str, hap_characteristic) <-> Swift ios/Sources/SecuraCV/Native/HomeKitBridge.swift `HomeSignal`. Every entry is a coarse present-tense boolean and the list is closed on purpose: there is no zone, timestamp, count, confidence or identity field for a bridge to project, because none exists here to project. `default_enabled: false` marks the class-scoped signals \u2014 the one sanctioned step past the dumb-PIR bar (the ObjectClass word, never identity) \u2014 which stay off until a human turns them on. `shape` tells the pacer whether a signal is momentary (pulse, auto-clears after the hold window), continuous (level), or sticky (latched, operator-cleared). Design of record: docs/design/apple_home_integration.md. matter_device_type is bridge site D's data-first slice (RFC section 3.5): the same table spoken as Matter sensor device types where one exists, null where Matter has no honest word for the signal (tamper/active/low-battery are HAP status characteristics, and the class-scoped motion signals have no Matter dimension - they ride the parent motion signal). Data only; no Matter stack ships until the HAP lane is stable.",
+    "$comment": "The Apple Home / HAP projection \u2014 an EGRESS vocabulary (Track C). Mirrored Rust src/bridge/homekit.rs `HomeSignal` (variants, as_str, hap_characteristic) <-> Swift ios/Sources/SecuraCV/Native/HomeKitBridge.swift `HomeSignal`. Every entry is a coarse present-tense boolean and the list is closed on purpose: there is no zone, timestamp, count, confidence or identity field for a bridge to project, because none exists here to project. `default_enabled: false` marks the class-scoped signals \u2014 the one sanctioned step past the dumb-PIR bar (the ObjectClass word, never identity) \u2014 which stay off until a human turns them on. `shape` tells the pacer whether a signal is momentary (pulse, auto-clears after the hold window), continuous (level), or sticky (latched, operator-cleared). Design of record: docs/design/apple_home_integration.md. matter_device_type is bridge site D's data-first slice (RFC section 3.5): the same table spoken as Matter sensor device types where one exists, null where Matter has no honest word for the signal (tamper/active/low-battery are HAP status characteristics, and the class-scoped motion signals have no Matter dimension - they ride the parent motion signal). Data only; no Matter stack ships until the HAP lane is stable. `label` is this project's own name for the signal and is mirrored verbatim in the Apple apps (ios/Sources/SecuraCV/Native/HomeKitBridge.swift). `home_app_name` is a DIFFERENT string and not ours to choose freely: it is the per-service Name characteristic the HAP bridge publishes (src/bridge/hap/accessory.rs::service_name), i.e. the words a user actually reads on the tile in Apple's Home app - \"Porch Canary - Person\", not \"Porch Canary - Motion (person)\". docs/integrations/apple-home-quickstart.md is generated from this block and told people to look for the label; it now names the tile. The three status signals (tamper/active/low_battery) carry a home_app_name because service_name() defines one for every variant, but they never host a service, so no tile ever bears it. scripts/lint_dictionary_sync.py pins all ten to the Rust.",
     "version": 1,
     "pacing": {
       "$comment": "The metronome that keeps this projection inside Invariant III. Publication happens on a fixed cadence, never on an event, so the finest external time resolution anything downstream can learn is one tick \u2014 and the publication rate itself carries no information (the 'explicitly configured for cover traffic' path the invariant names). `tick_ms` is a privacy/latency dial, not a performance constant. Bounds are enforced in Rust (PacingConfig::new) and a config outside them is refused, never clamped.",
@@ -203,6 +203,7 @@
         "shape": "pulse",
         "default_enabled": true,
         "label": "Motion",
+        "home_app_name": "Motion",
         "matter_device_type": "occupancy-sensor"
       },
       {
@@ -212,6 +213,7 @@
         "shape": "level",
         "default_enabled": true,
         "label": "Occupancy",
+        "home_app_name": "Occupancy",
         "matter_device_type": "occupancy-sensor"
       },
       {
@@ -221,6 +223,7 @@
         "shape": "level",
         "default_enabled": true,
         "label": "Contact",
+        "home_app_name": "Contact",
         "matter_device_type": "contact-sensor"
       },
       {
@@ -230,6 +233,7 @@
         "shape": "latched",
         "default_enabled": true,
         "label": "Tamper",
+        "home_app_name": "Tamper",
         "matter_device_type": null
       },
       {
@@ -239,6 +243,7 @@
         "shape": "level",
         "default_enabled": true,
         "label": "Responding",
+        "home_app_name": "Active",
         "matter_device_type": null
       },
       {
@@ -248,6 +253,7 @@
         "shape": "level",
         "default_enabled": true,
         "label": "Low battery",
+        "home_app_name": "Battery",
         "matter_device_type": null
       },
       {
@@ -257,6 +263,7 @@
         "shape": "pulse",
         "default_enabled": false,
         "label": "Motion (person)",
+        "home_app_name": "Person",
         "matter_device_type": null
       },
       {
@@ -266,6 +273,7 @@
         "shape": "pulse",
         "default_enabled": false,
         "label": "Motion (vehicle)",
+        "home_app_name": "Vehicle",
         "matter_device_type": null
       },
       {
@@ -275,6 +283,7 @@
         "shape": "pulse",
         "default_enabled": false,
         "label": "Motion (animal)",
+        "home_app_name": "Animal",
         "matter_device_type": null
       },
       {
@@ -284,6 +293,7 @@
         "shape": "pulse",
         "default_enabled": false,
         "label": "Motion (package)",
+        "home_app_name": "Package",
         "matter_device_type": null
       }
     ],
@@ -317,7 +327,7 @@
     }
   },
   "signature_format": {
-    "$comment": "The device-signature canonical format (Track A). SCHEMA_V, SIG_PREFIX, ALG_NAME are byte-identical across Python (signature.py) and the firmware copies (firmware/common/identity/device_signature.h and the per-project mirrors). This is the contract doc 12 A3 flags as lacking cross-language golden vectors; PR2 will add those. `canonical_kinds` records which signed message kinds each tree carries \u2014 `sense` is absent from the canary-wap tree (CSI, not radar) by design.",
+    "$comment": "The device-signature canonical format (Track A). SCHEMA_V, SIG_PREFIX, ALG_NAME are byte-identical across Python (signature.py) and the firmware copies (firmware/common/identity/device_signature.h and the per-project mirrors). This is the contract doc 12 A3 flags as lacking cross-language golden vectors; PR2 will add those. `canonical_kinds` is the COMPLETE set of Ed25519-signed message kinds in the `securacv-canary-sig|v<schema_v>|<kind>|...` family; scripts/lint_dictionary_sync.py parses the canonical format strings out of the firmware and Python builders and fails on any kind that is implemented but unlisted, or listed but unimplemented. Not every tree carries every kind (canary-display's trust.cpp verifies `chain` only), which is why the gate is union-equals rather than per-file-equals. Two things this comment used to get wrong, both corrected 2026-09-05: `whoami` was missing (firmware/common/identity/device_signature.{h,cpp} `sign_whoami`/`build_whoami_canonical`, pinned by firmware/projects/canary-wap/tests_host/test_device_signature.cpp and rebuilt verifier-side in desktop/src-tauri/src/whoami.rs), and the note that `sense` is absent from the canary-wap tree was false \u2014 firmware/projects/canary-wap/arduino/canary_wap/device_signature.{h,cpp} is a byte-identical copy of firmware/common/identity/ and declares sign_sense/build_sense_canonical like every other copy. The kinds a given PRODUCT actually publishes is a different question from the kinds the format defines; this field answers the second.",
     "schema_v": 1,
     "sig_prefix": "securacv-canary-sig",
     "alg_name": "ed25519",
@@ -325,7 +335,8 @@
       "chain",
       "event",
       "counts",
-      "sense"
+      "sense",
+      "whoami"
     ]
   },
   "known_divergences": {

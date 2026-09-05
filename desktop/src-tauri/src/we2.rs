@@ -26,6 +26,13 @@ const BLOCK: usize = 128;
 const MENU_LINE: &str = "Xmodem download and burn FW image";
 const PROMPT_LINE: &str = "Do you want to end file transmission and reboot system";
 
+/// The remedy the browser engine gives when a module answers AT but won't run
+/// the pinned model (canary-local/assets/we2-flash.js). The desktop used to
+/// return a bare statement of the failure with no next step; two flashers get
+/// one set of words for one failure.
+const INVOKE_REMEDY: &str = "Power-cycle it once. If it keeps refusing: the module may be \
+                             running non-SSCMA firmware; see the device guide §4.";
+
 pub fn is_module_usb(vid: Option<u16>, pid: Option<u16>) -> bool {
     vid == Some(USB_VID) && pid == Some(USB_PID)
 }
@@ -382,10 +389,11 @@ where
                             (Some(1), true) => return Ok(value),
                             (Some(0), true) => acked = true,
                             (Some(0), false) => {
-                                return Err(
-                                    "SSCMA answered AT, but the pinned model did not accept INVOKE"
-                                        .to_string(),
-                                )
+                                return Err(format!(
+                                    "The module answers AT but the test inference didn't \
+                                     reply — the pinned model did not accept INVOKE. \
+                                     {INVOKE_REMEDY}"
+                                ))
                             }
                             _ => {}
                         }
@@ -400,10 +408,47 @@ where
             }
         }
         Err(if acked {
-            "the module accepted INVOKE but its detection event never arrived".to_string()
+            format!(
+                "The module accepted INVOKE but its detection event never arrived. \
+                 {INVOKE_REMEDY}"
+            )
         } else {
-            "SSCMA answered AT, but the pinned model did not complete an inference".to_string()
+            format!("The module answers AT but the test inference didn't reply. {INVOKE_REMEDY}")
         })
+    }
+
+    // Wake a maybe-mid-state module. Parity with the browser engine's
+    // wakeModule (canary-local/assets/we2-flash.js): ONE VER? probe makes a
+    // module that is still booting from its own burn look dead, and the burn
+    // it just completed then reads as a failure. So be patient the same way —
+    // probe a few times while it comes up, and if it stays quiet pulse the
+    // reset line (the "power-cycle it" advice, automated) and probe again.
+    // `None` only when it truly never spoke.
+    fn wake_module(&mut self) -> Result<Option<Value>, String> {
+        for _ in 0..3 {
+            if let Some(reply) = self
+                .at_command("VER?", Duration::from_millis(1200))?
+                .filter(at_ok)
+            {
+                return Ok(Some(reply));
+            }
+        }
+        (self.log)("quiet — resetting the module and waiting for it to boot…".into());
+        // An adapter with no usable RTS is not fatal here: the retries below
+        // still count, exactly as in the browser engine.
+        let _ = self.hard_reset();
+        std::thread::sleep(Duration::from_millis(1200));
+        // Drop the boot banner so the frame parser starts on clean frames.
+        let _ = self.port.clear(ClearBuffer::Input);
+        for _ in 0..3 {
+            if let Some(reply) = self
+                .at_command("VER?", Duration::from_millis(1500))?
+                .filter(at_ok)
+            {
+                return Ok(Some(reply));
+            }
+        }
+        Ok(None)
     }
 
     fn prove(
@@ -413,13 +458,20 @@ where
     ) -> Result<(Option<Value>, Option<Value>, Value), String> {
         // The proof runs up to ~25 s (VER?/ID?/INFO plus one real inference)
         // with nothing else printing — say so before going quiet.
-        (self.log)("asking the module to prove itself — VER/ID/INFO + one live inference (up to ~25 s)…".into());
-        let version_reply = self
-            .at_command("VER?", Duration::from_secs(4))?
-            .filter(at_ok);
+        (self.log)(
+            "asking the module to prove itself — VER/ID/INFO + one live inference (up to ~25 s)…"
+                .into(),
+        );
+        let version_reply = self.wake_module()?;
         if version_reply.is_none() {
+            // Say what the user should do AND that the burn is intact — the
+            // browser's wording. Without the second half this reads as "your
+            // model didn't get written", which is the one thing it doesn't mean.
             return Err(
-                "model burn completed, but SSCMA did not answer AT+VER? after reboot".into(),
+                "No AT answer after reboot, even after an automatic reset — unplug and \
+                 replug the module and it should come up with the new model. \
+                 The burn itself completed and verified."
+                    .into(),
             );
         }
         let id_reply = self
