@@ -184,6 +184,17 @@
                 the firmware it shipped with never runs a single instruction. That's
                 not a promise this app is making — it's unerasable ROM, the same
                 property that makes the board impossible to brick from here.</p>
+              <!-- What the user actually did, carried into the passport as
+                   THEIR answer rather than our measurement — a native-USB board
+                   presents the same USB descriptor in the ROM's download mode
+                   as it does running stock firmware, so the port cannot tell us.
+                   Parity: the browser's cold-start card asks the same question
+                   (canary-local/assets/flash.js, coldStartCard). -->
+              <div class="coldstart-answer">
+                <button type="button" id="coldstart-held" class="btn btn-ghost btn-small">✓ I held BOOT while plugging in</button>
+                <button type="button" id="coldstart-hot" class="btn btn-ghost btn-small">It's already plugged in</button>
+              </div>
+              <p class="fineprint" id="coldstart-note"></p>
               <p class="fineprint" id="coldstart-efuse">The browser flasher can also read
                 this chip's security fuses to tell you whether a previous owner locked
                 it. The <code>espflash</code> tool this app drives has no fuse-read
@@ -228,6 +239,12 @@
           <section class="card disabled" id="step-pick">
             <div class="step-head"><span class="step-n">2</span><h2>Pick the firmware</h2></div>
             <p class="muted" id="pick-sub">We'll only show images built for your board's chip.</p>
+            <!-- The detection-led recommendation: one card led with, and the
+                 evidence for it in plain words. Filled by renderProducts() from
+                 smartPick(); the rest of the chip's products stay one click
+                 away. Parity with the browser flasher, which has never handed
+                 anyone a wall of SKUs when the silicon already narrowed it. -->
+            <div id="pick-recommend" class="pick-recommend hidden"></div>
             <div id="product-list" class="product-list"></div>
           </section>
 
@@ -366,6 +383,13 @@
                  event; absent when no safety copy was taken. -->
             <div id="change-map" class="change-map hidden"></div>
             <p id="flash-result" class="status"></p>
+            <!-- What to do next when an install fails. The browser flasher has
+                 always put the escalation IN the error card (try again, then a
+                 clean install with a full erase, then a diagnostic report);
+                 here the full-erase choice lived only as a pre-flash checkbox
+                 someone had to know to go find. Filled by
+                 renderFlashFailureActions(); empty and hidden otherwise. -->
+            <div id="flash-actions" class="flash-actions hidden"></div>
             <!-- The freshly minted local-API credential, shown once per flash
                  (parity with the browser done card): the keychain holds it for
                  the fleet book, but the owner deserves to see and copy it. -->
@@ -391,6 +415,17 @@
                 <button id="monitor-clear" class="btn btn-small">Clear</button>
                 <button id="monitor-manifest" class="btn btn-small" disabled>Print receipt (j)</button>
                 <button id="monitor-expand" class="btn btn-small" aria-pressed="false">Expand</button>
+                <!-- Console speed. Pre-picked from the catalog's console_baud
+                     and changeable for the curious — and if the output doesn't
+                     decode as text, the monitor walks the list itself rather
+                     than leaving someone staring at mojibake with nothing to
+                     turn. Options are filled from CONSOLE_BAUDS by
+                     renderMonitorBauds(); parity with the browser flasher's
+                     flash-mon-baud selector and its self-heal. -->
+                <label class="monitor-baud muted">
+                  <span>baud</span>
+                  <select id="monitor-baud" class="input" aria-label="Console baud rate"></select>
+                </label>
               </div>
               <details class="hint">
                 <summary>What am I looking at?</summary>
@@ -435,8 +470,15 @@
                    fix — filled by maybeDiagnose() from the live serial stream. -->
               <div id="boot-diagnosis" class="boot-diagnosis hidden"></div>
               <pre id="serial-console" class="console" aria-live="polite"></pre>
+              <!-- The firmware's single-key commands, labeled. They were
+                   reachable only by typing a letter you had to already know —
+                   the browser flasher has offered all eight as buttons since
+                   its monitor shipped. Built by renderMonitorCmds() from the
+                   MONITOR_CMDS table copied from canary-local/assets/flash.js. -->
+              <div id="monitor-cmds" class="monitor-cmds"></div>
               <form id="monitor-cmd-form" class="row monitor-cmd" autocomplete="off">
-                <input id="monitor-cmd" class="input" type="text" placeholder="Type a command and press Enter…"
+                <input id="monitor-cmd" class="input" type="text"
+                  placeholder="type a command — the firmware answers single keys; h shows its menu"
                   aria-label="Serial command" maxlength="128" disabled />
                 <label class="monitor-lineend muted">
                   <select id="monitor-lineend" class="input" aria-label="Line ending" disabled>

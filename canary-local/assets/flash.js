@@ -2111,6 +2111,17 @@ function renderPicker() {
   const localHelp = helpDot("local_file");
   if (localHelp) localP.append(localHelp);
   local.append(localP);
+  // Name the chip that is actually connected, and say plainly which check a
+  // local file skips. The factory-shape gate (localImageShape) still runs, but
+  // the catalog's chip GUARD cannot — there's no product to compare against —
+  // so a .bin built for a different ESP32 variant would be written with no
+  // warning at all. The desktop Flasher has said this since it grew the local
+  // path (app.js:updateLocalFlashUi); same words here, so the risk is visible
+  // on both flashers rather than hidden on one.
+  local.append(el("p", "fineprint",
+    `Connected: ${state.chipDesc || state.chip || "not read yet"}. A local file skips the ` +
+    "catalog’s chip guard — there’s no product to compare against — so make " +
+    "sure this build targets that chip."));
   const fileBtn = el("input");
   fileBtn.type = "file";
   fileBtn.accept = ".bin";
@@ -3058,9 +3069,19 @@ function ensureManifest() {
     // Keep WHY it's missing. "No release yet" and "the release this page is
     // pinned to was never cut" look identical to a user otherwise, and the
     // second one is a maintainer bug that hid for a whole release cycle.
+    //
+    // And keep the HTTP STATUS separately, because a fetch that never got an
+    // answer proves nothing about whether the release exists. Telling an
+    // offline user "no release has been cut" sends them to watch a repository
+    // that has nothing to do with their problem. The desktop Flasher already
+    // draws this line (app.js:renderProducts — "only claim the release is
+    // uncut when we actually got a status back"); this is the same rule on
+    // this side. A status means the SERVER answered.
     .catch((err) => {
       if (stale()) return;
-      state.manifest = { __missing: true, why: String((err && err.message) || err) };
+      const why = String((err && err.message) || err);
+      const status = /\bHTTP (\d{3})\b/.exec(why);
+      state.manifest = { __missing: true, why, httpStatus: status ? status[1] : null };
     })
     .finally(() => { if (!stale()) refreshManifestState(); });
 }
@@ -3093,21 +3114,38 @@ function refreshManifestState() {
   }
   if (m.__missing || m.__invalid) {
     const note = el("p", "flash-note flash-note-soft");
+    // A manifest we never got an answer for is a THIRD case, and it used to be
+    // told as the first two: "no release has been cut" to someone whose Wi-Fi
+    // dropped is a false statement about the project, and it points them at
+    // the wrong thing to wait for. Only claim the release is uncut when the
+    // server actually answered (parity: the desktop's renderProducts).
+    const answered = !!m.httpStatus;
     note.textContent = m.__invalid
       ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
-      : state.devChannel
-        ? "The dev channel has nothing published yet — no rolling prerelease has been cut. Turn the dev channel off under Advanced for the stable release, or install a local file."
-        : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.";
+      : !answered
+        ? "The firmware manifest didn’t load — this looks like a connection problem here, " +
+          "not a missing release. The official images appear once you’re back online. " +
+          "Until then you can install a local file under Advanced."
+        : state.devChannel
+          ? `The dev channel has nothing published yet — no rolling prerelease has been cut (HTTP ${m.httpStatus}). Turn the dev channel off under Advanced for the stable release, or install a local file.`
+          : `No signed firmware release is published yet (HTTP ${m.httpStatus}). When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.`;
     banner.append(note);
     // Name the release we were pinned to. Every product reading "unavailable"
     // because a tag was bumped but never released is indistinguishable from
-    // "no releases exist" without this line.
-    const pinned = m.__missing && core.releaseTagFromManifestUrl(activeManifestUrl());
+    // "no releases exist" without this line. releaseTagFromManifestUrl only
+    // answers for a pinned fw-v* tag, so name the rolling dev pointer by hand
+    // — otherwise the dev channel's whole story is one sentence with no
+    // address in it at all.
+    const pinned = m.__missing &&
+      (core.releaseTagFromManifestUrl(activeManifestUrl()) ||
+        (state.devChannel ? "fw-dev-latest" : null));
     if (pinned) {
       banner.append(el("p", "fineprint",
         `This page is pinned to firmware release ${pinned}` +
         (m.why ? ` — ${m.why}.` : ".") +
-        " If that release exists, the images will appear on reload."));
+        (answered
+          ? " If that release exists, the images will appear on reload."
+          : " If that release exists, the images will appear once you’re back online.")));
     }
     return;
   }
