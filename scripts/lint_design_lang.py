@@ -75,7 +75,15 @@ SKIP = {
     "canary_templates_2d.scad",
 }
 
-ASSIGN = re.compile(r"^(?P<name>[a-z_][a-z0-9_]*)\s*=\s*(?P<val>-?\d+(?:\.\d+)?)\s*;")
+# A top-level assignment line, and then EVERY `name = value;` on it —
+# Customizer defaults are frequently grouped (`wall_t = 2.2;  floor_t = 2.2;
+# lid_t = 2.4;`), and an anchored single match would leave every value after
+# the first outside the gate.
+ASSIGN_LINE = re.compile(r"^[a-z_][a-z0-9_]*\s*=")
+ASSIGN_EACH = re.compile(r"(?:^|(?<=;))\s*(?P<name>[a-z_][a-z0-9_]*)\s*=\s*(?P<val>-?\d+(?:\.\d+)?)\s*;")
+# A deviation must SAY WHY: `deviates:` followed by at least two words. A
+# bare marker is an outlier wearing a costume, not a declared decision.
+DEVIATES = re.compile(r"deviates:\s*\S+\s+\S+")
 FUNC = re.compile(r"function\s+(?P<fn>[a-z_][a-z0-9_]*)\(\)\s*=\s*(?P<val>-?\d+(?:\.\d+)?)\s*;")
 
 
@@ -100,17 +108,21 @@ def selfcheck():
 def lint_file(path):
     problems = []
     for lineno, line in enumerate(path.read_text().splitlines(), 1):
-        m = ASSIGN.match(line)
-        if m and m.group("name") in CANON:
-            want, lib, fn = CANON[m.group("name")]
-            got = float(m.group("val"))
-            if abs(got - float(want)) > 1e-9 and "deviates:" not in line:
-                problems.append(
-                    f"{path.name}:{lineno}: {m.group('name')} = {m.group('val')} "
-                    f"but the house value is {want} ({lib}:{fn}()) — conform it, "
-                    "or say why with a `deviates: <reason>` comment on the line")
+        code = line.split("//", 1)[0]
+        if ASSIGN_LINE.match(code):
+            for m in ASSIGN_EACH.finditer(code):
+                if m.group("name") not in CANON:
+                    continue
+                want, lib, fn = CANON[m.group("name")]
+                got = float(m.group("val"))
+                if abs(got - float(want)) > 1e-9 and not DEVIATES.search(line):
+                    problems.append(
+                        f"{path.name}:{lineno}: {m.group('name')} = {m.group('val')} "
+                        f"but the house value is {want} ({lib}:{fn}()) — conform it, "
+                        "or say why with a `deviates: <reason>` comment on the line "
+                        "(a bare marker with no reason does not count)")
         mm = re.match(r"\s*module\s+([a-z_][a-z0-9_]*)\s*\(", line)
-        if mm and mm.group(1) in LIB_OWNED and "deviates:" not in line:
+        if mm and mm.group(1) in LIB_OWNED and not DEVIATES.search(line):
             problems.append(
                 f"{path.name}:{lineno}: redefines library module "
                 f"'{mm.group(1)}' — a copy is a fork; call the library's, "
