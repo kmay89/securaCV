@@ -21,8 +21,11 @@
 //     is, and the badge simply isn't drawn. Absence of the claim is the
 //     honest default, exactly like the finding screen's "Listening…".
 //
-// The caller (FleetStore) feeds it matched sightings at the fold cadence
-// and excludes demo rows — sample data must never wear a real-radio badge.
+// The caller (FleetStore) feeds it matched sightings as the beacons arrive
+// (throttled) and re-evaluates on a tick inside the staleness window, so
+// both directions of the claim stay honest: a nearer challenger is heard
+// within seconds, and a quiet radio takes the badge off on time. Demo rows
+// are excluded — sample data must never wear a real-radio badge.
 
 import Foundation
 
@@ -49,7 +52,14 @@ struct NearnessKeeper: Sendable {
     /// Feed one witness's freshest sighting (already matched by the caller).
     mutating func observe(id: String, rssiDBM: Int, at now: Date = Date()) {
         let sample = Double(rssiDBM)
-        let ema = smoothed[id].map { $0.dbm + Self.smoothing * (sample - $0.dbm) } ?? sample
+        // A silence longer than the window ends the signal HISTORY, not just
+        // the claim: a beacon that returns after going stale starts a fresh
+        // average, so a buried loud reading can never resurrect through the
+        // smoothing and outvote a genuinely nearer peer.
+        let prior = smoothed[id].flatMap {
+            now.timeIntervalSince($0.at) <= Self.staleAfter ? $0.dbm : nil
+        }
+        let ema = prior.map { $0 + Self.smoothing * (sample - $0) } ?? sample
         smoothed[id] = (ema, now)
     }
 

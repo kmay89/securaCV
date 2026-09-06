@@ -173,6 +173,18 @@ final class FleetStore: ObservableObject {
                       heartbeat.objectWillChange, alertLog.objectWillChange] {
             child.sink { [weak self] in self?.objectWillChange.send() }.store(in: &bag)
         }
+
+        // The nearness badge rides the beacons THEMSELVES, not the 20-second
+        // fold: every burst of adverts re-picks within a couple of seconds
+        // (throttled — the scan runs with duplicates ON, so per-packet would
+        // be per-advert), and the sentinel's 5-second tick handles the other
+        // direction — decay, the case that produces no advert to ride.
+        ble.$sightings
+            .throttle(for: .seconds(2), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.updateNearness() }
+            }
+            .store(in: &bag)
     }
 
     // MARK: - lifecycle
@@ -602,9 +614,11 @@ final class FleetStore: ObservableObject {
     /// Feed the nearness keeper the freshest beacon per witness and re-pick.
     /// Matching is by fingerprint suffix and refuses twins (the shared
     /// ambiguity rule): a beacon two fleet members could both own can't
-    /// honestly crown either. Demo rows never wear a real-radio badge, and
-    /// running on EVERY republish path gives the claim its natural decay —
-    /// a quiet radio takes the badge off within the staleness window.
+    /// honestly crown either. Demo rows never wear a real-radio badge.
+    /// Runs from three places — throttled beacon arrivals (init), the
+    /// 5-second sentinel tick (decay, when nothing advertises), and every
+    /// republish path — so both directions of the claim keep the staleness
+    /// contract rather than waiting out the 20-second fold.
     private func updateNearness() {
         let cutoff = Date().addingTimeInterval(-NearnessKeeper.staleAfter)
         let fingerprints = witnesses.map(\.fingerprint)
@@ -618,7 +632,10 @@ final class FleetStore: ObservableObject {
             }) else { continue }
             nearness.observe(id: w.id, rssiDBM: sighting.rssiDBM, at: sighting.lastHeard)
         }
-        nearestWitnessID = nearness.evaluate()
+        // This now runs every few seconds, so publish only actual movement:
+        // a same-answer re-pick must not wake every observing view.
+        let picked = nearness.evaluate()
+        if picked != nearestWitnessID { nearestWitnessID = picked }
     }
 
     /// Felt once, at the crossing — never on the cycles that stay there.
@@ -650,6 +667,11 @@ final class FleetStore: ObservableObject {
         guard sentinelTask == nil else { return }
         sentinelTask = Task { [weak self] in
             while !Task.isCancelled {
+                // The nearness decay tick: the claim must be re-judged at
+                // least as often as its staleness window (6 s) even when no
+                // advert arrives — a beacon that STOPS is exactly the case
+                // with no event to ride, and this loop already beats 5 s.
+                self?.updateNearness()
                 await self?.probeOnce()
                 try? await Task.sleep(for: .seconds(5))
             }
