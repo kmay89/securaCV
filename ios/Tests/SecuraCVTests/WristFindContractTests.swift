@@ -20,6 +20,19 @@ final class WristFindContractTests: XCTestCase {
         """.data(using: .utf8)!
         let row = try WristSync.makeDecoder().decode(WristWitness.self, from: json)
         XCTAssertNil(row.fingerprint)
+        XCTAssertNil(row.suffixAmbiguous)
+    }
+
+    func testThePhonesTwinVerdictRoundTrips() throws {
+        // The verdict is computed phone-side against the FULL fleet, because
+        // the snapshot's rows are capped and a wrist-side check could miss a
+        // twin the cap dropped.
+        var snapshot = WristSnapshot.sample()
+        snapshot.witnesses[0].fingerprint = "aaaaaaaaaaaa0708"
+        snapshot.witnesses[0].suffixAmbiguous = true
+        let context = try WristSync.context(for: snapshot)
+        let decoded = try XCTUnwrap(WristSync.snapshot(fromContext: context))
+        XCTAssertEqual(decoded.witnesses[0].suffixAmbiguous, true)
     }
 
     func testAnOlderPhonesSnapshotReadsAsNotConsented() throws {

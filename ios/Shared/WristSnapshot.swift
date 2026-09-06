@@ -60,6 +60,12 @@ struct WristWitness: Codable, Hashable, Identifiable, Sendable {
     /// ADDITIVE OPTIONAL: an older phone sends nothing and the wrist simply
     /// doesn't offer finding for the row — never a wrong match.
     var fingerprint: String? = nil
+    /// The twin verdict, computed by the PHONE against the FULL fleet: the
+    /// snapshot's rows are capped, so a wrist-side check could miss a twin
+    /// the cap dropped and range toward the wrong device. ADDITIVE OPTIONAL:
+    /// nil (an older phone) means the wrist falls back to checking the rows
+    /// it can see — narrower, but never claiming more than it knows.
+    var suffixAmbiguous: Bool? = nil
 
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var link: Liveness { Liveness(tolerant: Int(linkRaw)) }

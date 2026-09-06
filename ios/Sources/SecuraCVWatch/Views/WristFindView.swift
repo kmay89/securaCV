@@ -31,9 +31,13 @@ struct WristFindView: View {
         store.snapshot?.discoveryConsented == true
     }
 
-    /// The same twin rule as the phone's Find screen — one shared,
-    /// host-tested definition (ProximityRanger.isSuffixAmbiguous).
+    /// The twin verdict. The PHONE's per-row answer wins when present — it
+    /// was computed against the FULL fleet, which the capped snapshot rows
+    /// are not. An older phone sends none, and the wrist falls back to the
+    /// same shared rule over the rows it can see: narrower, but never
+    /// claiming more than it knows.
     private var suffixIsAmbiguous: Bool {
+        if let verdict = witness.suffixAmbiguous { return verdict }
         guard let fingerprint = witness.fingerprint else { return false }
         let all = (store.snapshot?.witnesses ?? []).compactMap(\.fingerprint)
         return ProximityRanger.isSuffixAmbiguous(fingerprint: fingerprint, among: all)
@@ -53,8 +57,10 @@ struct WristFindView: View {
                         .font(.footnote)
                         .multilineTextAlignment(.center)
                 }
-            } else if finder.bluetoothDenied {
-                Text("Bluetooth is off for SecuraCV — allow it in Settings on this watch.")
+            } else if let reason = finder.unavailableReason {
+                // Denied, off, or missing — each names its own fix instead
+                // of an eternal "Listening…" over a radio that can't listen.
+                Text(reason)
                     .font(.footnote)
                     .multilineTextAlignment(.center)
             } else {
@@ -63,9 +69,19 @@ struct WristFindView: View {
         }
         .navigationTitle(witness.name)
         // Keyed on consent so a refresh that carries a new answer from the
-        // phone starts (or never starts) the radio accordingly.
+        // phone starts — or STOPS — the radio accordingly: the finder owns
+        // its own scan and loop, so canceling this SwiftUI task alone would
+        // leave a revoked-consent radio listening until the view closed.
+        // The twin gate matches the phone's Find screen: an ambiguous
+        // suffix never feeds the ranger, so the ring can't say "Right
+        // here" about the wrong Canary while the warning text says it
+        // can't tell them apart.
         .task(id: consented) {
-            guard consented, let fingerprint = witness.fingerprint else { return }
+            guard consented, !suffixIsAmbiguous,
+                  let fingerprint = witness.fingerprint else {
+                finder.stop()
+                return
+            }
             let neighbors = (store.snapshot?.witnesses ?? []).compactMap {
                 row -> (name: String, fingerprint: String)? in
                 guard row.id != witness.id, let fp = row.fingerprint else { return nil }

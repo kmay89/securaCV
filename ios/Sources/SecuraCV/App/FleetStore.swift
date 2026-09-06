@@ -245,6 +245,13 @@ final class FleetStore: ObservableObject {
         } else {
             discovery.stop()
             ble.stopScan()
+            // The wrist scans behind THIS choice (the snapshot carries it),
+            // so a revocation must reach the watch NOW — waiting for the
+            // next refresh cycle would leave its radio listening for a user
+            // who just said no. The granted branch needs no special push:
+            // its refreshOnce republishes on the normal path, and a stale
+            // "false" only ever errs toward not scanning.
+            WatchLink.shared.pushCurrent()
         }
     }
 

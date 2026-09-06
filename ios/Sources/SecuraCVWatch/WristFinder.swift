@@ -37,9 +37,11 @@ final class WristFinder: NSObject, ObservableObject {
                                                                   smoothedDBM: nil)
     /// Named neighbor currently outranking the target, when one clearly is.
     @Published private(set) var nearerNeighbor: String?
-    /// The system said no (Settings → Privacy → Bluetooth) — shown honestly
-    /// instead of an eternal "Listening…" over a radio we may not use.
-    @Published private(set) var bluetoothDenied = false
+    /// Why the radio cannot listen right now, in the user's terms — nil while
+    /// it can (or is still warming up, which resolves in a beat). Shown
+    /// honestly instead of an eternal "Listening…" over a radio that is
+    /// denied, off, or missing: each state names its own fix.
+    @Published private(set) var unavailableReason: String?
     /// The radio is off (or still warming up).
     @Published private(set) var poweredOn = false
 
@@ -130,9 +132,21 @@ final class WristFinder: NSObject, ObservableObject {
 
 extension WristFinder: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        let state = central.state
         Task { @MainActor in
-            self.poweredOn = central.state == .poweredOn
-            self.bluetoothDenied = central.state == .unauthorized
+            self.poweredOn = state == .poweredOn
+            switch state {
+            case .unauthorized:
+                self.unavailableReason = "Bluetooth is off for SecuraCV — allow it in Settings on this watch."
+            case .poweredOff:
+                self.unavailableReason = "Bluetooth is off on this watch — turn it on to find your Canary."
+            case .unsupported:
+                self.unavailableReason = "This watch can't scan for Bluetooth beacons."
+            default:
+                // poweredOn listens; unknown/resetting are the radio warming
+                // up — a beat of "Listening…" is the honest word for those.
+                self.unavailableReason = nil
+            }
             self.restartScanIfReady()
         }
     }
@@ -169,7 +183,7 @@ final class WristFinder: NSObject, ObservableObject {
                                                                   trend: .unknown,
                                                                   smoothedDBM: nil)
     @Published private(set) var nearerNeighbor: String?
-    @Published private(set) var bluetoothDenied = false
+    @Published private(set) var unavailableReason: String?
     @Published private(set) var poweredOn = false
 
     func start(targetFingerprint: String,
