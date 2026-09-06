@@ -141,10 +141,39 @@ struct WallView: View {
             }
 
             Spacer()
+            canaryRow
             residentRow
             footer
         }
         .padding(72)
+    }
+
+    /// The character at the base of the wall — the same living canary the
+    /// phone and the watch stage (CanaryActor over the shared mood engine),
+    /// wearing the face this wall's own truth earned and saying its one
+    /// ambient sentence. It never competes with the header's banner slot:
+    /// whenever chain trouble is live — this TV's own failed verdict, or a
+    /// device's own word, even one a stale wall remembers — the face is
+    /// .hidden, the sentence is nil, and this row vanishes; the instruments
+    /// own the stage. Not focusable on purpose; the remote's world is the
+    /// device cards.
+    private var canaryRow: some View {
+        Group {
+            if model.canaryFace != .hidden {
+                HStack(spacing: 20) {
+                    CanaryActor(face: model.canaryFace,
+                                posture: model.canaryPosture,
+                                height: 72)
+                    if let line = model.canaryLine {
+                        Text(line)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
     }
 
     private func header(_ fleet: FleetSnapshot, asOf: Date, stale: String?) -> some View {

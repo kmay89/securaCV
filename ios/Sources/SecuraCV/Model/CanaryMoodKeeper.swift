@@ -8,6 +8,13 @@
 // into the engine's inputs. Pure over injected defaults + clock;
 // host-tested. The engine itself is the shared mirror of the display
 // firmware's bird_mood.h — one character, same feelings, every surface.
+//
+// "Every surface" now includes the Apple TV: the Witness Wall compiles this
+// exact file (tvos/WitnessWall/project.yml lists it, the CloudContainer
+// pattern), so the wall's bird has the same slow feelings and the same
+// amnesia guards as the phone's. That is why this file knows nothing about
+// the phone's Witness rows — the fleet fold lives in
+// CanaryMoodInputs+Fleet.swift, which stays iPhone-only.
 
 import Foundation
 
@@ -97,22 +104,3 @@ struct CanaryMoodKeeper {
     }
 }
 
-extension CanaryMoodInputs {
-    /// The fleet's current truth, in the engine's terms. Every field maps
-    /// to state a log line can name — the honesty rule, upheld at the fold.
-    /// The caller decides `alarmUnacked` from PRE-mute severity
-    /// (`displaySeverity`): a muted alarm is still a live alarm, and the
-    /// bird stays hidden until someone actually acknowledges it.
-    @MainActor
-    init(fleet: [Witness], alarmUnacked: Bool) {
-        self.init()
-        staleWitnesses = fleet.filter { $0.link == .stale }.count
-        lostWitnesses = fleet.filter { $0.link.isDark }.count
-        allVerified = !fleet.isEmpty && fleet.allSatisfy {
-            $0.link == .online && $0.badge == .verified && !$0.tamper
-        }
-        // A live Alert/Tamper nobody acknowledged hands the stage to the
-        // instruments (face == .hidden — never cute during a real alarm).
-        self.alarmUnacked = alarmUnacked
-    }
-}

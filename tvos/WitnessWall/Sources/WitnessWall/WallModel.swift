@@ -111,6 +111,17 @@ final class WallModel {
     /// surface, so "it found it on my Mac but not my TV" can't happen.
     static let wellKnownCandidates = ["canary.local:8099", "canary.local"]
 
+    /// The character's current face and posture, and its one ambient
+    /// sentence — the SAME mood engine every surface runs (CanaryMood,
+    /// mirrored from the display firmware's bird_mood.h), fed this wall's
+    /// own truth by WallCanary.inputs. The keeper persists the slow
+    /// feelings in this app's defaults; tvOS may purge storage, and a
+    /// purged bird is honestly a fresh bird.
+    private(set) var canaryFace: CanaryFace = .calm
+    private(set) var canaryPosture: CanaryPosture = .asFace
+    private(set) var canaryLine: String?
+    private let moodKeeper: CanaryMoodKeeper
+
     init(
         transport: FleetTransport = URLSessionFleetTransport(),
         defaults: UserDefaults = .standard,
@@ -121,6 +132,7 @@ final class WallModel {
         self.discover = discover
         self.defaults = defaults
         self.pollInterval = pollInterval
+        self.moodKeeper = CanaryMoodKeeper(defaults: defaults)
         // The multi-source list is the current shape; the single hub key is
         // read as a fallback so a Wall set up before 0.2.1 keeps its address.
         if let saved = defaults.stringArray(forKey: Self.sourcesKey), !saved.isEmpty {
@@ -390,7 +402,16 @@ final class WallModel {
         // troubled chain) — see ResidentWatch.
         resident.observe(snapshot)
         backoff.reset()
+        // The character reacts TWICE: once in the same turn the snapshot
+        // publishes — a device's own chain-trouble word must hide the bird in
+        // the same render that raises the alarm banner, not seconds later
+        // when the verify fetch returns — and once more after the verify
+        // pass, so this TV's own verdict folds in too. The keeper
+        // minute-guards its slow tick; the face is recomputed on every
+        // observe, so the double call costs nothing and hides nothing.
+        updateCanaryMood(fleet: snapshot, wallDown: false)
         await refreshVerification()
+        updateCanaryMood(fleet: snapshot, wallDown: false)
     }
 
     /// One verify pass of this TV's own: fetch the sealed log and run the
@@ -434,11 +455,29 @@ final class WallModel {
         switch state {
         case .live(let snapshot, let asOf):
             state = .stale(snapshot, since: asOf, reason: reason)
+            updateCanaryMood(fleet: snapshot, wallDown: true)
         case .stale(let snapshot, let since, _):
             state = .stale(snapshot, since: since, reason: reason)
+            updateCanaryMood(fleet: snapshot, wallDown: true)
         case .searching, .needsHub, .connecting, .unreachable:
             state = .unreachable(reason: reason)
         }
+    }
+
+    /// Fold this wall's truth into the shared mood engine and let the
+    /// character react. Runs on every cycle like resident.observe — the
+    /// keeper minute-guards its own tick against the 10s poll cadence, and
+    /// a WORSE floor still lands immediately, exactly as on the phone.
+    private func updateCanaryMood(fleet: FleetSnapshot, wallDown: Bool) {
+        let reading = moodKeeper.observe(
+            WallCanary.inputs(fleet: fleet, wallDown: wallDown, report: report))
+        canaryFace = reading.face
+        canaryPosture = reading.posture
+        canaryLine = WallCanary.line(face: reading.face,
+                                     posture: reading.posture,
+                                     state: reading.state,
+                                     milestone: reading.milestone,
+                                     fleet: fleet)
     }
 
     /// Discovered mode keeps an ear open: every few poll cycles, re-browse

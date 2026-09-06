@@ -25,6 +25,12 @@ BIRD = os.path.join(REPO, "brands", "logo_512x512.png")
 CATALOGS = [
     os.path.normpath(os.path.join(HERE, "..", "Assets.xcassets")),
     os.path.normpath(os.path.join(HERE, "..", "WatchAssets.xcassets")),
+    # The Witness Wall stages the same character (CanaryActor is compiled
+    # into the tvOS target), so its catalog carries the same imageset —
+    # generated here, never redrawn, byte-identical across all three.
+    os.path.normpath(
+        os.path.join(HERE, "..", "..", "tvos", "WitnessWall", "Support", "Assets.xcassets")
+    ),
 ]
 
 INFO = {"version": 1, "author": "xcode"}
