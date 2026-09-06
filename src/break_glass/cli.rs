@@ -46,8 +46,25 @@ enum Command {
     Request {
         #[arg(long)]
         envelope: String,
+        /// Free-text narrative of why this disclosure is needed
         #[arg(long)]
         purpose: String,
+        /// Printed name of the person making this request. Bound into the
+        /// request hash (trustees consent to it) and recorded in the signed
+        /// receipt (spec/quorum_unseal_v2.md §3.6).
+        #[arg(long, value_name = "NAME")]
+        requested_by: String,
+        /// Structured reason code from the closed vocabulary (run with an
+        /// invalid value to see the list). Free text belongs in --purpose.
+        #[arg(long, value_name = "CODE")]
+        reason: String,
+        /// Case / ticket / matter reference, if one exists
+        #[arg(long, value_name = "REF")]
+        case_ref: Option<String>,
+        /// Hex-encoded Ed25519 public key the requester claims (consent-bound;
+        /// recorded, not verified against a registry)
+        #[arg(long, value_name = "HEX")]
+        requester_key: Option<String>,
         #[arg(long, default_value = "witness.db")]
         db: String,
         #[arg(long, default_value = "ruleset:v0.3.0")]
@@ -82,10 +99,27 @@ enum Command {
 
     /// Authorize unlock using collected approval files (token output is sensitive)
     Authorize {
-        #[arg(long)]
-        envelope: String,
-        #[arg(long)]
-        purpose: String,
+        /// Request-context file written by `request --output-request` — the
+        /// preferred input: every field (operator context included) comes from
+        /// the file and is re-verified, so this command reproduces the exact
+        /// hash the trustees consented to.
+        #[arg(long, value_name = "PATH")]
+        request: Option<String>,
+        #[arg(long, required_unless_present = "request", conflicts_with = "request")]
+        envelope: Option<String>,
+        #[arg(long, required_unless_present = "request", conflicts_with = "request")]
+        purpose: Option<String>,
+        /// Printed name of the requester — must match the value used at
+        /// `request` time, or the approvals will not match (prefer --request)
+        #[arg(long, value_name = "NAME", conflicts_with = "request")]
+        requested_by: Option<String>,
+        /// Structured reason code — must match the value used at `request` time
+        #[arg(long, value_name = "CODE", conflicts_with = "request")]
+        reason: Option<String>,
+        #[arg(long, value_name = "REF", conflicts_with = "request")]
+        case_ref: Option<String>,
+        #[arg(long, value_name = "HEX", conflicts_with = "request")]
+        requester_key: Option<String>,
         #[arg(long)]
         approvals: String,
         #[arg(long, default_value = "witness.db")]
@@ -344,12 +378,28 @@ pub fn run() -> Result<()> {
         Command::Request {
             envelope,
             purpose,
+            requested_by,
+            reason,
+            case_ref,
+            requester_key,
             db: _,
             ruleset_id,
             output_request,
         } => {
             let _stage = ui.stage("Create unlock request");
-            cmd_request(&envelope, &purpose, &ruleset_id, output_request.as_deref())
+            let context = crate::break_glass::OperatorContext::new(
+                &requested_by,
+                &reason,
+                case_ref.as_deref(),
+                requester_key.as_deref(),
+            )?;
+            cmd_request(
+                &envelope,
+                &purpose,
+                context,
+                &ruleset_id,
+                output_request.as_deref(),
+            )
         }
         Command::Approve {
             request,
@@ -368,8 +418,13 @@ pub fn run() -> Result<()> {
             )
         }
         Command::Authorize {
+            request,
             envelope,
             purpose,
+            requested_by,
+            reason,
+            case_ref,
+            requester_key,
             approvals,
             db,
             ruleset_id,
@@ -377,9 +432,20 @@ pub fn run() -> Result<()> {
             output_token,
         } => {
             let _stage = ui.stage("Authorize break-glass");
+            let source = match request {
+                Some(path) => AuthorizeRequestSource::File(path),
+                None => AuthorizeRequestSource::Fields {
+                    // clap enforces presence when --request is absent
+                    envelope: envelope.expect("clap: --envelope required"),
+                    purpose: purpose.expect("clap: --purpose required"),
+                    requested_by,
+                    reason,
+                    case_ref,
+                    requester_key,
+                },
+            };
             cmd_authorize(
-                &envelope,
-                &purpose,
+                source,
                 &approvals,
                 &db,
                 &ruleset_id,
@@ -549,19 +615,140 @@ pub fn run() -> Result<()> {
 /// The portable request-context file `request --output-request` writes and
 /// `approve --request` consumes. Carries every field the request hash binds,
 /// so a trustee's own tool can recompute the hash and display the decoded
-/// request before signing (WYSIWYS — spec/quorum_unseal_v2.md §3.2).
+/// request before signing (WYSIWYS — spec/quorum_unseal_v2.md §3.2). v2 adds
+/// the §3.6 operator-context fields; v1 files (no context) are still
+/// accepted, with a loud notice that no operator context was recorded.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct UnlockRequestFile {
     format: String,
     envelope: String,
     purpose: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    requested_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    case_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    requester_key: Option<String>,
     ruleset_id: String,
     ruleset_hash: String,
     time_bucket: TimeBucket,
     request_hash: String,
 }
 
-const UNLOCK_REQUEST_FILE_FORMAT: &str = "securacv-unlock-request:v1";
+const UNLOCK_REQUEST_FILE_FORMAT_V1: &str = "securacv-unlock-request:v1";
+const UNLOCK_REQUEST_FILE_FORMAT: &str = "securacv-unlock-request:v2";
+
+/// Load a request-context file and rebuild the request STRICTLY from its
+/// fields: ruleset hash re-derived from the ruleset id, operator context
+/// re-validated, request hash recomputed and cross-checked against the
+/// file's claimed hash. The file's own hashes are never trusted — the caller
+/// signs (or authorizes) what this tool derived from what it displays.
+fn load_unlock_request_file(path: &str) -> Result<(UnlockRequestFile, UnlockRequest)> {
+    let json = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("failed to read request file {}: {}", path, e))?;
+    let file: UnlockRequestFile =
+        serde_json::from_str(&json).map_err(|e| anyhow!("invalid request file {}: {}", path, e))?;
+    match file.format.as_str() {
+        f if f == UNLOCK_REQUEST_FILE_FORMAT => {
+            if file.requested_by.is_none() || file.reason.is_none() {
+                return Err(anyhow!(
+                    "request file {} is v2 but is missing the operator-context fields \
+                     (requested_by, reason) — refusing",
+                    path
+                ));
+            }
+        }
+        f if f == UNLOCK_REQUEST_FILE_FORMAT_V1 => {
+            if file.requested_by.is_some()
+                || file.reason.is_some()
+                || file.case_ref.is_some()
+                || file.requester_key.is_some()
+            {
+                return Err(anyhow!(
+                    "request file {} claims format v1 but carries v2 operator-context \
+                     fields — refusing (the v1 hash cannot bind them)",
+                    path
+                ));
+            }
+            eprintln!(
+                "NOTICE: {} carries no operator context (requested-by, reason code) — it was \
+                 created by a tool predating spec/quorum_unseal_v2.md §3.6. The receipt will \
+                 record the disclosure without a named requester.",
+                path
+            );
+        }
+        other => {
+            return Err(anyhow!(
+                "unrecognized request file format '{}' (expected {} or {})",
+                other,
+                UNLOCK_REQUEST_FILE_FORMAT,
+                UNLOCK_REQUEST_FILE_FORMAT_V1
+            ));
+        }
+    }
+    let derived_ruleset = KernelConfig::ruleset_hash_from_id(&file.ruleset_id);
+    let claimed_ruleset = parse_hex32(&file.ruleset_hash)?;
+    if derived_ruleset != claimed_ruleset {
+        return Err(anyhow!(
+            "request file inconsistent: ruleset_hash does not match ruleset_id '{}' — refusing",
+            file.ruleset_id
+        ));
+    }
+    let mut request = UnlockRequest::new(
+        &file.envelope,
+        derived_ruleset,
+        &file.purpose,
+        file.time_bucket,
+    )?;
+    if let Some(requested_by) = &file.requested_by {
+        let context = crate::break_glass::OperatorContext::new(
+            requested_by,
+            file.reason.as_deref().unwrap_or_default(),
+            file.case_ref.as_deref(),
+            file.requester_key.as_deref(),
+        )?;
+        request = request.with_context(context)?;
+    }
+    let recomputed = request.request_hash();
+    let claimed = parse_hex32(&file.request_hash)?;
+    if recomputed != claimed {
+        return Err(anyhow!(
+            "request file inconsistent: recomputed request hash {} does not match its \
+             claimed hash {} — refusing",
+            hex32(&recomputed),
+            hex32(&claimed)
+        ));
+    }
+    Ok((file, request))
+}
+
+/// Print the reviewable fields of a request — the WYSIWYS display both
+/// `approve --request` and `authorize --request` show before acting.
+fn print_request_fields(file: &UnlockRequestFile, recomputed_hash: &[u8; 32]) {
+    println!("Envelope:     {}", file.envelope);
+    println!("Purpose:      {}", file.purpose);
+    match (&file.requested_by, &file.reason) {
+        (Some(name), Some(reason)) => {
+            println!("Requested by: {}", name);
+            println!("Reason code:  {}", reason);
+            if let Some(case_ref) = &file.case_ref {
+                println!("Case ref:     {}", case_ref);
+            }
+            if let Some(key) = &file.requester_key {
+                println!("Requester key (claimed): {}", key);
+            }
+        }
+        _ => println!("Requested by: (not recorded — pre-§3.6 request)"),
+    }
+    println!("Ruleset:      {}", file.ruleset_id);
+    println!("Valid window: {}", bucket_window(&file.time_bucket));
+    println!(
+        "Request hash: {} (recomputed locally)",
+        hex32(recomputed_hash)
+    );
+}
 
 /// The portable policy-change proposal file `policy propose` writes and
 /// `policy approve` consumes. Carries the FULL current and proposed policies
@@ -600,17 +787,31 @@ fn bucket_window(bucket: &TimeBucket) -> String {
 fn cmd_request(
     envelope: &str,
     purpose: &str,
+    context: crate::break_glass::OperatorContext,
     ruleset_id: &str,
     output_request: Option<&str>,
 ) -> Result<()> {
     let bucket = TimeBucket::now_10min()?;
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(ruleset_id);
-    let request = UnlockRequest::new(envelope, ruleset_hash, purpose, bucket)?;
+    let request =
+        UnlockRequest::new(envelope, ruleset_hash, purpose, bucket)?.with_context(context)?;
+    let context = request
+        .context
+        .clone()
+        .expect("with_context always sets context");
     let request_hash = request.request_hash();
 
     println!("=== Unlock Request ===");
     println!("Envelope:     {}", envelope);
     println!("Purpose:      {}", purpose);
+    println!("Requested by: {}", context.requester_name);
+    println!("Reason code:  {}", context.reason_code);
+    if let Some(case_ref) = &context.case_ref {
+        println!("Case ref:     {}", case_ref);
+    }
+    if let Some(key) = &context.requester_key {
+        println!("Requester key (claimed): {}", key);
+    }
     println!("Ruleset:      {}", ruleset_id);
     println!("Valid window: {}", bucket_window(&bucket));
     println!("Request hash: {}", hex32(&request_hash));
@@ -620,6 +821,10 @@ fn cmd_request(
             format: UNLOCK_REQUEST_FILE_FORMAT.to_string(),
             envelope: envelope.trim().to_string(),
             purpose: purpose.trim().to_string(),
+            requested_by: Some(context.requester_name.clone()),
+            reason: Some(context.reason_code.clone()),
+            case_ref: context.case_ref.clone(),
+            requester_key: context.requester_key.clone(),
             ruleset_id: ruleset_id.to_string(),
             ruleset_hash: hex32(&ruleset_hash),
             time_bucket: bucket,
@@ -665,51 +870,15 @@ fn cmd_approve(
 ) -> Result<()> {
     let request_hash = match (request_file, request_hash_hex) {
         (Some(path), _) => {
-            let json = std::fs::read_to_string(path)
-                .map_err(|e| anyhow!("failed to read request file {}: {}", path, e))?;
-            let file: UnlockRequestFile = serde_json::from_str(&json)
-                .map_err(|e| anyhow!("invalid request file {}: {}", path, e))?;
-            if file.format != UNLOCK_REQUEST_FILE_FORMAT {
-                return Err(anyhow!(
-                    "unrecognized request file format '{}' (expected {})",
-                    file.format,
-                    UNLOCK_REQUEST_FILE_FORMAT
-                ));
-            }
             // Recompute everything locally from the request's FIELDS. The
             // file's own claimed hashes are cross-checked, never trusted:
             // the signature is over what this tool derived from what it is
             // about to display.
-            let derived_ruleset = KernelConfig::ruleset_hash_from_id(&file.ruleset_id);
-            let claimed_ruleset = parse_hex32(&file.ruleset_hash)?;
-            if derived_ruleset != claimed_ruleset {
-                return Err(anyhow!(
-                    "request file inconsistent: ruleset_hash does not match ruleset_id '{}' — refusing to sign",
-                    file.ruleset_id
-                ));
-            }
-            let request = UnlockRequest::new(
-                &file.envelope,
-                derived_ruleset,
-                &file.purpose,
-                file.time_bucket,
-            )?;
+            let (file, request) = load_unlock_request_file(path)?;
             let recomputed = request.request_hash();
-            let claimed = parse_hex32(&file.request_hash)?;
-            if recomputed != claimed {
-                return Err(anyhow!(
-                    "request file inconsistent: recomputed request hash {} does not match its claimed hash {} — refusing to sign",
-                    hex32(&recomputed),
-                    hex32(&claimed)
-                ));
-            }
 
             println!("=== Unlock request — review before signing ===");
-            println!("Envelope:     {}", file.envelope);
-            println!("Purpose:      {}", file.purpose);
-            println!("Ruleset:      {}", file.ruleset_id);
-            println!("Valid window: {}", bucket_window(&file.time_bucket));
-            println!("Request hash: {} (recomputed locally)", hex32(&recomputed));
+            print_request_fields(&file, &recomputed);
             if let Ok(now) = TimeBucket::now_10min() {
                 if now.start_epoch_s != file.time_bucket.start_epoch_s {
                     println!(
@@ -751,9 +920,23 @@ fn cmd_approve(
     Ok(())
 }
 
+/// Where `authorize` gets the request it re-derives: the portable request
+/// file (preferred — reproduces the consented hash exactly, §3.6 context
+/// included) or re-supplied field flags.
+enum AuthorizeRequestSource {
+    File(String),
+    Fields {
+        envelope: String,
+        purpose: String,
+        requested_by: Option<String>,
+        reason: Option<String>,
+        case_ref: Option<String>,
+        requester_key: Option<String>,
+    },
+}
+
 struct AuthorizeArgs<'a> {
-    envelope: &'a str,
-    purpose: &'a str,
+    source: AuthorizeRequestSource,
     approvals_arg: &'a str,
     db_path: &'a str,
     ruleset_id: &'a str,
@@ -763,8 +946,7 @@ struct AuthorizeArgs<'a> {
 }
 
 fn cmd_authorize(
-    envelope: &str,
-    purpose: &str,
+    source: AuthorizeRequestSource,
     approvals_arg: &str,
     db_path: &str,
     ruleset_id: &str,
@@ -773,8 +955,7 @@ fn cmd_authorize(
 ) -> Result<()> {
     let bucket = TimeBucket::now_10min()?;
     let args = AuthorizeArgs {
-        envelope,
-        purpose,
+        source,
         approvals_arg,
         db_path,
         ruleset_id,
@@ -793,7 +974,66 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?
         .clone();
 
-    let request = UnlockRequest::new(args.envelope, cfg.ruleset_hash, args.purpose, args.bucket)?;
+    let request = match &args.source {
+        AuthorizeRequestSource::File(path) => {
+            let (file, request) = load_unlock_request_file(path)?;
+            if file.ruleset_id != args.ruleset_id {
+                return Err(anyhow!(
+                    "request file was created for ruleset '{}' but authorize is running with \
+                     '{}' — pass the matching --ruleset-id",
+                    file.ruleset_id,
+                    args.ruleset_id
+                ));
+            }
+            // authorize() itself enforces the same-bucket redemption rule
+            // (with a receipted denial); this early check just explains it
+            // before a denial receipt is written for a stale file.
+            if request.time_bucket != args.bucket {
+                return Err(anyhow!(
+                    "request file window {} is not the current bucket — approvals redeem only \
+                     in the bucket the request was opened in; open a fresh request",
+                    bucket_window(&request.time_bucket)
+                ));
+            }
+            print_request_fields(&file, &request.request_hash());
+            request
+        }
+        AuthorizeRequestSource::Fields {
+            envelope,
+            purpose,
+            requested_by,
+            reason,
+            case_ref,
+            requester_key,
+        } => {
+            let request = UnlockRequest::new(envelope, cfg.ruleset_hash, purpose, args.bucket)?;
+            match (requested_by, reason) {
+                (Some(requested_by), Some(reason)) => {
+                    let context = crate::break_glass::OperatorContext::new(
+                        requested_by,
+                        reason,
+                        case_ref.as_deref(),
+                        requester_key.as_deref(),
+                    )?;
+                    request.with_context(context)?
+                }
+                (None, None) => {
+                    eprintln!(
+                        "NOTICE: authorizing without operator context (--requested-by/--reason). \
+                         If the request was created WITH context, these approvals will not \
+                         match — prefer `authorize --request <file>`."
+                    );
+                    request
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "--requested-by and --reason travel together (both bind into the \
+                         request hash the trustees signed)"
+                    ))
+                }
+            }
+        }
+    };
 
     let mut approvals: Vec<Approval> = Vec::new();
     for file in args
@@ -810,9 +1050,17 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
     }
 
     println!("=== Break-Glass Authorization ===");
-    println!("Envelope:  {}", args.envelope);
+    println!("Envelope:  {}", request.vault_envelope_id);
     println!("Policy:    {}-of-{}", policy.n, policy.m);
     println!("Approvals: {}", approvals.len());
+    let request_hash = request.request_hash();
+    if !approvals.is_empty() && approvals.iter().all(|a| a.request_hash != request_hash) {
+        eprintln!(
+            "NOTICE: none of the supplied approvals match this request's hash. If the request \
+             was opened with (or without) operator context, authorize must reproduce the same \
+             fields — prefer `authorize --request <file>`."
+        );
+    }
 
     let (result, receipt) = BreakGlass::authorize(&policy, &request, &approvals, args.bucket);
 
@@ -1509,7 +1757,13 @@ fn drill_authorize(
         ruleset_hash,
         "DRILL — rehearsal, not a real disclosure",
         bucket,
-    )?;
+    )?
+    .with_context(crate::break_glass::OperatorContext::new(
+        "break_glass drill (sandbox rehearsal)",
+        "drill",
+        None,
+        None,
+    )?)?;
     let approvals: Vec<Approval> = approver_keys
         .iter()
         .zip(policy.trustees.iter())
@@ -2112,12 +2366,30 @@ fn cmd_receipts(
                 .collect::<Vec<_>>(),
             status
         );
+        if let Some(context) = &receipt.context {
+            println!(
+                "  requested by: {} (reason: {}{})",
+                context.requester_name,
+                context.reason_code,
+                context
+                    .case_ref
+                    .as_deref()
+                    .map(|case_ref| format!(", case {}", case_ref))
+                    .unwrap_or_default()
+            );
+        }
         if verbose {
             println!("  prev_hash: {}", hex_vec(&prev_hash));
             println!("  entry_hash: {}", hex_vec(&entry_hash));
             println!("  signature: {}", hex_vec64(&signature));
             if let BreakGlassOutcome::Denied { reason } = &receipt.outcome {
                 println!("  reason: {}", reason);
+            }
+            // The deterministic §3.6 human-readable record (the 21 CFR 11.50
+            // triad): printed name, UTC time, and the meaning each signature
+            // carries. Same receipt, same text, on every tool.
+            for line in receipt.render_human().lines() {
+                println!("  | {}", line);
             }
             if !issues.is_empty() {
                 for issue in issues {
@@ -2381,6 +2653,9 @@ mod tests {
             approvals_commitment: approvals_commitment(&[]),
             policy_commitment: [0u8; 32],
             outcome: BreakGlassOutcome::Granted,
+            purpose: None,
+            context: None,
+            request_bucket: None,
         };
         let token = BreakGlassToken::test_token_with(
             [1u8; 32],
@@ -2458,8 +2733,14 @@ mod tests {
 
         let approval_arg = approval_path.to_string_lossy();
         let args = AuthorizeArgs {
-            envelope: "vault:1",
-            purpose: "audit",
+            source: AuthorizeRequestSource::Fields {
+                envelope: "vault:1".to_string(),
+                purpose: "audit".to_string(),
+                requested_by: None,
+                reason: None,
+                case_ref: None,
+                requester_key: None,
+            },
             approvals_arg: approval_arg.as_ref(),
             db_path: cfg.db_path.as_str(),
             ruleset_id,
@@ -2524,8 +2805,14 @@ mod tests {
 
         let approval_arg = approval_path.to_string_lossy();
         let args = AuthorizeArgs {
-            envelope: "vault:1",
-            purpose: "audit",
+            source: AuthorizeRequestSource::Fields {
+                envelope: "vault:1".to_string(),
+                purpose: "audit".to_string(),
+                requested_by: None,
+                reason: None,
+                case_ref: None,
+                requester_key: None,
+            },
             approvals_arg: approval_arg.as_ref(),
             db_path: cfg.db_path.as_str(),
             ruleset_id,
@@ -2943,6 +3230,12 @@ mod tests {
         cmd_request(
             "vault:wysiwys",
             "incident response",
+            crate::break_glass::OperatorContext::new(
+                "Alice Operator",
+                "incident-review",
+                Some("case-778"),
+                None,
+            )?,
             "ruleset:test",
             Some(&req_path),
         )?;
@@ -2976,6 +3269,12 @@ mod tests {
         cmd_request(
             "vault:tamper",
             "routine export",
+            crate::break_glass::OperatorContext::new(
+                "Bob Operator",
+                "maintenance-audit",
+                None,
+                None,
+            )?,
             "ruleset:test",
             Some(&req_path),
         )?;
@@ -2999,6 +3298,76 @@ mod tests {
             !std::path::Path::new(&out_path).exists(),
             "no approval may be written for a tampered request"
         );
+
+        // The §3.6 fields are equally hash-bound: swapping the requester name
+        // in a v2 file must be refused the same way.
+        let fresh = cmd_request(
+            "vault:tamper2",
+            "routine export",
+            crate::break_glass::OperatorContext::new(
+                "Bob Operator",
+                "maintenance-audit",
+                None,
+                None,
+            )?,
+            "ruleset:test",
+            Some(&req_path),
+        );
+        fresh?;
+        let mut file: UnlockRequestFile =
+            serde_json::from_str(&std::fs::read_to_string(&req_path)?)?;
+        file.requested_by = Some("Definitely Bob".to_string());
+        std::fs::write(&req_path, serde_json::to_string_pretty(&file)?)?;
+        assert!(
+            cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path).is_err(),
+            "a swapped requester name must be refused — it is consent-bound"
+        );
+        Ok(())
+    }
+
+    /// A v1 request file (pre-§3.6 tool, no operator context) still approves:
+    /// its context-free hash uses the legacy framing, so old requests and old
+    /// approvals interoperate with the new tool.
+    #[test]
+    fn approve_accepts_a_v1_request_file_without_context() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_v1_req_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let req_path = temp.join("unlock.request").to_string_lossy().to_string();
+        let key_path = temp.join("alice.key").to_string_lossy().to_string();
+        let out_path = temp.join("alice.approval").to_string_lossy().to_string();
+
+        // Hand-build the file exactly as the pre-§3.6 tool wrote it.
+        let bucket = TimeBucket::now_10min()?;
+        let ruleset_hash = KernelConfig::ruleset_hash_from_id("ruleset:test");
+        let request = UnlockRequest::new("vault:legacy", ruleset_hash, "incident", bucket)?;
+        let file = UnlockRequestFile {
+            format: UNLOCK_REQUEST_FILE_FORMAT_V1.to_string(),
+            envelope: "vault:legacy".to_string(),
+            purpose: "incident".to_string(),
+            requested_by: None,
+            reason: None,
+            case_ref: None,
+            requester_key: None,
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: hex32(&ruleset_hash),
+            time_bucket: bucket,
+            request_hash: hex32(&request.request_hash()),
+        };
+        std::fs::write(&req_path, serde_json::to_string_pretty(&file)?)?;
+
+        let alice = SigningKey::from_bytes(&[43u8; 32]);
+        std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
+        cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path)?;
+        let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&out_path)?)?;
+        assert_eq!(approval.request_hash, request.request_hash());
+
+        // But a file CLAIMING v1 while smuggling context fields is refused:
+        // the v1 hash cannot bind them.
+        let mut smuggled = file;
+        smuggled.requested_by = Some("Alice".to_string());
+        smuggled.reason = Some("incident-review".to_string());
+        std::fs::write(&req_path, serde_json::to_string_pretty(&smuggled)?)?;
+        assert!(cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path).is_err());
         Ok(())
     }
 

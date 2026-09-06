@@ -116,20 +116,43 @@ If `vault.crypto_mode` is omitted, it defaults to `classical`.
 
 ## Request creation
 
-An unlock request binds the envelope id, ruleset hash, purpose, and a 10-minute
-time bucket. Write the full request context to a file for trustees:
+An unlock request binds the envelope id, ruleset hash, purpose, a 10-minute
+time bucket, and the **operator context** (`spec/quorum_unseal_v2.md` §3.6):
+the printed name of the person asking (`--requested-by`), a structured
+reason code from a closed vocabulary (`--reason`; the list is enumerated
+once, in `REASON_CODES` in `src/break_glass/core.rs` — codes name the
+process a disclosure serves, never a claim about what the evidence will
+show), and optionally a case reference (`--case-ref`) and a claimed
+requester public key (`--requester-key`). All of it is bound into the
+request hash, so trustee consent covers exactly who asked and why. Write
+the full request context to a file for trustees:
 
 ```bash
 break_glass request \
   --envelope envelope_id \
   --purpose "incident response" \
+  --requested-by "Alice Operator" \
+  --reason incident-review \
+  --case-ref case-2026-0042 \
   --ruleset-id ruleset:v0.3.0 \
   --output-request unlock.request
 ```
 
-Send trustees the **context file**, not a bare hash — their tool can then
-show them exactly what they are consenting to. (Without `--output-request`
-the CLI still prints the request hash for the legacy flow.)
+Send trustees the **context file** (format `securacv-unlock-request:v2`),
+not a bare hash — their tool can then show them exactly what they are
+consenting to. v1 files from older tools are still accepted, with a notice
+that they carry no operator context; a file claiming v1 while carrying
+context fields is refused (the v1 hash cannot bind them). (Without
+`--output-request` the CLI still prints the request hash for the legacy
+flow.)
+
+**Approvals redeem only in the bucket the request was opened in.** A
+request whose 10-minute window has rolled over is denied at authorization
+with a full receipt (no trustees recorded as used) — approvals collected in
+bucket T cannot be banked and spent later, and a served session cannot hold
+a request open across windows. Any future cooling-off delay layers ON TOP
+of this rule as explicit receipted state; the redemption window itself is
+never widened.
 
 ## Trustee approvals — sign what you see
 
@@ -165,13 +188,24 @@ bucket. The token is sensitive and **must be written to a file** with
 ```bash
 DEVICE_KEY_SEED=devkey:your-seed \
   break_glass authorize \
-  --envelope envelope_id \
-  --purpose "incident response" \
+  --request unlock.request \
   --approvals alice.approval,bob.approval \
   --db witness.db \
   --ruleset-id ruleset:v0.3.0 \
   --output-token /path/to/break_glass.token
 ```
+
+`--request <file>` is the preferred input: authorize re-verifies the file
+and reproduces the exact hash the trustees consented to, operator context
+included. The field flags (`--envelope`, `--purpose`, and the §3.6 context
+flags) remain available, but every value must match what `request` used or
+the approvals will not count.
+
+The receipt records the purpose and operator context alongside the outcome,
+trustees used, and policy commitment — the receipt, not anyone's memory,
+answers who asked and why. Verification re-derives the request hash from
+those recorded fields and refuses a receipt whose recorded context is not
+what the trustees signed.
 
 ## Unsealing
 
@@ -193,4 +227,13 @@ break_glass unseal \
 
 Receipts form an append-only, signed chain in the kernel database. Use the
 `break_glass receipts` command (or `log_verify`) to validate the chain and
-confirm that approvals align with the stored quorum policy.
+confirm that approvals align with the stored quorum policy. Verification
+also re-derives each receipt's request hash from its recorded purpose and
+operator context (when recorded — pre-§3.6 receipts have nothing to bind
+and remain valid), and the unseal gate applies the same check fail-closed
+before releasing cleartext.
+
+`break_glass receipts --verbose` additionally prints each receipt's
+deterministic human-readable record — printed name, UTC time, and the
+meaning of every signature (the 21 CFR 11.50 triad) — so the same receipt
+renders as the same record on every tool.

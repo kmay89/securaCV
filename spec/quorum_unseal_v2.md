@@ -2,7 +2,7 @@
 Status: Draft v0.1
 Intended Status: Design Specification (spec-only; not implemented except where noted)
 Author: The Witness Project
-Last Updated: 2026-08-18
+Last Updated: 2026-09-06
 
 ## 0. Scope and status
 
@@ -13,11 +13,12 @@ the standards research recorded in
 and it upgrades — never replaces — the shipped v1 protocol in
 [`break_glass.md`](break_glass.md).
 
-**Maturity:** ⚪ spec-only, with two exceptions that are implemented and
-normative as of this revision: **quorum-gated policy mutation** (§3.1) and
-**WYSIWYS approval** (§3.2), both documented operationally in
-`break_glass.md`. Everything else here is design: treat it as the agreed
-direction, not a shipped contract. Known gaps this design closes are tracked
+**Maturity:** ⚪ spec-only, with four exceptions that are implemented and
+normative as of this revision: **quorum-gated policy mutation** (§3.1),
+**WYSIWYS approval** (§3.2), and **human-context fields** (§3.6) — all
+documented operationally in `break_glass.md` — plus **`court export` for
+event-export bundles** (§5, see its inline annotation). Everything else
+here is design: treat it as the agreed direction, not a shipped contract. Known gaps this design closes are tracked
 canonically in
 [`docs/security/ENTERPRISE_CUSTODY.md`](../docs/security/ENTERPRISE_CUSTODY.md);
 this spec is the "how", that tracker is the "whether it shipped yet".
@@ -221,7 +222,7 @@ recovery):
 - Dead-man / auto-unseal mechanisms are **rejected**: automatic disclosure
   without distributed consent violates Invariant V.
 
-### 3.6 Human-context fields
+### 3.6 Human-context fields *(implemented for break-glass)*
 
 Unseal and export record, inside the signed receipts (and only there —
 Invariants II/III):
@@ -230,6 +231,16 @@ Invariants II/III):
 - an **operator principal** (display name, optional registered key),
 - and receipts gain a deterministic **human-readable rendering** — printed
   name, UTC time, meaning of each signature (the 21 CFR 11.50 triad).
+
+*(Implemented on the break-glass path: `OperatorContext` — requester name,
+closed `REASON_CODES` vocabulary, optional case reference and claimed
+requester key — binds into the request hash so trustee consent covers it,
+is recorded inside the signed receipt, is re-derived at audit and at the
+unseal gate (a receipt whose recorded context does not re-derive its
+consented hash is refused), and renders deterministically via
+`BreakGlassReceipt::render_human`. Operationally documented in
+`break_glass.md`. Export receipts do not carry an operator principal yet —
+that lands with the §5 unseal-output/sidecar work.)*
 
 ### 3.7 Trustee credentials
 
@@ -302,7 +313,8 @@ Invariants II/III):
 
 ## 6. Sequencing
 
-1. Gate fixes: §3.1 + §3.2 *(done)*, §3.6 fields, ceremony/runbook docs.
+1. Gate fixes: §3.1 + §3.2 *(done)*, §3.6 fields *(done for break-glass)*,
+   ceremony/runbook docs.
 2. `court export` + anchoring upgrades (§5, §4 anchor items).
 3. Merkle tree, checkpoints, fleet witnessing, tlog-policy, `log_review`.
 4. Token delay/veto (§3.5) + trustee-credential hardening (§3.7).

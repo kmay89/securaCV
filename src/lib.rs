@@ -4154,6 +4154,13 @@ pub fn break_glass_receipt_outcome_for_verifier(
     // The signed receipt commits to its approvals via `approvals_commitment`,
     // so a swapped `approvals_json` is rejected before we count.
     if matches!(receipt.outcome, break_glass::BreakGlassOutcome::Granted) {
+        // §3.6 context binding, fail-closed at the gate: a receipt that
+        // records its request's purpose/operator context must re-derive the
+        // exact request hash the approvals signed — otherwise the recorded
+        // "who asked and why" is not what the trustees consented to.
+        receipt
+            .verify_context_binding()
+            .map_err(|e| anyhow!("break-glass receipt context binding failed: {}", e))?;
         let policy = crate::verify::load_break_glass_policy(conn)?
             .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
         // Unlike the audit path (which tolerates historical policy eras), the
@@ -4427,8 +4434,8 @@ pub struct Frame {
 // Re-exports for CLI/tools
 pub use break_glass::{
     approvals_commitment, sign_approval, verify_approval, Approval, BreakGlass, BreakGlassOutcome,
-    BreakGlassReceipt, BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId,
-    UnlockRequest,
+    BreakGlassReceipt, BreakGlassToken, BreakGlassTokenFile, OperatorContext, QuorumPolicy,
+    TrusteeEntry, TrusteeId, UnlockRequest, REASON_CODES,
 };
 
 // -------------------- Conformance Tests --------------------
@@ -6243,6 +6250,9 @@ mod tests {
             approvals_commitment: approvals_commitment(&[]),
             policy_commitment: policy.commitment(),
             outcome: BreakGlassOutcome::Granted,
+            purpose: None,
+            context: None,
+            request_bucket: None,
         };
         let forged_hash = kernel.append_break_glass_receipt(&forged, &[])?;
         let dev = kernel.device_verifying_key();
