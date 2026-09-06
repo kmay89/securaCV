@@ -249,7 +249,7 @@
       {
         "n": 1,
         "title": "Request",
-        "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket) and publishes its request_hash."
+        "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket, and the operator context: their printed name, a reason code from a closed vocabulary, an optional case reference) and publishes its request_hash \u2014 which binds every one of those fields."
       },
       {
         "n": 2,
@@ -281,12 +281,12 @@
       {
         "method": "POST",
         "path": "/breakglass/request",
-        "desc": "open a session; returns request_hash, time_bucket, needed"
+        "desc": "open a session ({envelope, purpose, requested_by, reason, case_ref?}); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"
       },
       {
         "method": "GET",
         "path": "/breakglass/status",
-        "desc": "{envelope, purpose, request_hash, needed, collected, ready}"
+        "desc": "{envelope, purpose, requested_by, reason, case_ref, ruleset_hash, time_bucket, request_hash, needed, collected, ready}"
       },
       {
         "method": "POST",
@@ -393,14 +393,15 @@
             "note": "2 of 3 must approve."
           },
           {
-            "cmd": "break_glass request --envelope cam-porch-0007 --purpose 'insurance claim'",
+            "cmd": "break_glass request --envelope cam-porch-0007 --purpose 'insurance claim' --requested-by 'Avery' --reason legal-request --output-request unlock.request",
             "out": [
-              "request_hash = 8b1d\u2026e07  (send this to the trustees)"
+              "request_hash = 8b1d\u2026e07",
+              "Request context written to: unlock.request  (send the FILE to the trustees)"
             ],
-            "note": "each trustee signs THIS hash."
+            "note": "the hash binds envelope, purpose, requester, and reason \u2014 trustees recompute it from the file before signing."
           },
           {
-            "cmd": "break_glass authorize --approval avery.json --approval bailey.json --output-token tok",
+            "cmd": "break_glass authorize --request unlock.request --approvals avery.json,bailey.json --output-token tok",
             "out": [
               "distinct approvals: 2/2  \u2192 GRANTED",
               "receipt chained + signed; token written to tok (0600)"

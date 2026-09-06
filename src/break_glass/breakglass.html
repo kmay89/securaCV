@@ -142,11 +142,19 @@
     <p class="tech">Signing runs entirely in this tab (WebCrypto Ed25519). Your key never leaves it;
       only the signature you copy out does. This page makes no network requests.</p>
     <div><strong>Envelope:</strong> <span class="mono" id="ts-envelope"></span></div>
+    <div id="ts-fields" style="display:none; margin-top:6px">
+      <div><strong>Purpose:</strong> <span id="ts-purpose"></span></div>
+      <div><strong>Requested by:</strong> <span id="ts-by"></span></div>
+      <div><strong>Reason:</strong> <span class="mono" id="ts-reason"></span></div>
+      <div><strong>Case reference:</strong> <span class="mono" id="ts-case"></span></div>
+      <div><strong>Valid window:</strong> <span class="mono" id="ts-window"></span></div>
+    </div>
     <label>Request hash you are signing</label>
     <div class="hash mono" id="ts-hash"></div>
-    <p class="muted" style="margin:8px 0 0">Before signing, confirm this hash with the operator over a channel you
-      trust (read it aloud, compare the first and last 8 characters). If it matches, you're approving exactly
-      the request they opened — nothing more.</p>
+    <div class="banner" id="ts-verify"></div>
+    <p class="muted" style="margin:8px 0 0">This page recomputes the request hash from the fields shown above and
+      signs only if they match — you are approving what you can read, not a number someone dictated. Still
+      confirm the hash with the operator over a channel you trust (compare the first and last 8 characters).</p>
     <label for="ts-sk">Your signing key (32-byte hex seed)</label>
     <input type="text" id="ts-sk" class="mono" placeholder="64 hex chars" autocomplete="off" spellcheck="false" />
     <div style="margin-top:10px"><button class="btn primary" id="ts-btn-sign">Sign in this browser</button></div>
@@ -285,6 +293,9 @@
       <div style="flex:0 0 auto"><span class="quorum mono" id="quorum">0 / 0</span></div>
       <div class="progress" id="quorum-bar"><div></div></div>
       <div style="flex:0 0 auto"><button class="btn" id="btn-refresh">Refresh status</button></div>
+    </div>
+    <div class="muted" id="status-context" style="margin:6px 0 0; display:none"></div>
+    <div class="row" style="display:none">
       <div style="flex:0 0 auto"><button class="btn primary" id="btn-unseal" disabled>Unseal</button></div>
       <div style="flex:0 0 auto"><button class="btn" id="btn-close">Close request</button></div>
     </div>
@@ -436,8 +447,7 @@ $("btn-open").onclick = guarded("btn-open", "request-msg", async () => {
   state.requestHash = json.request_hash;
   state.needed = json.needed;
   $("request-hash").textContent = json.request_hash;
-  $("share-link").textContent = window.location.origin + window.location.pathname +
-    "#sign&hash=" + json.request_hash + "&envelope=" + encodeURIComponent(envelope);
+  $("share-link").textContent = window.location.origin + window.location.pathname + shareFragment(json);
   $("request-view").style.display = "block";
   banner("request-msg", "ok", "Request recorded. Now collect " + json.needed +
     " trustee signature(s) — send each trustee their link below.");
@@ -544,6 +554,83 @@ async function approvalMessageHex(requestHashHex) {
   return bytesToHex(h);
 }
 
+// ---- Request-hash recomputation (WYSIWYS on the served path) ---------------
+// Mirrors UnlockRequest::request_hash in src/break_glass/core.rs byte for
+// byte, so a trustee's browser derives the hash from the fields it DISPLAYS
+// and signs only that:
+//   le32(len(envelope)) || envelope || ruleset_hash(32) || le32(len(purpose)) || purpose
+//   || le64(bucket.start_epoch_s) || le32(bucket.size_s)
+//   [ || 0x01 || le32(len(requested_by)) || requested_by || le32(len(reason)) || reason
+//        || (0x01 || le32(len(case_ref)) || case_ref | 0x00)
+//        || (0x01 || le32(32) || requester_key_bytes | 0x00) ]      -- only when context present
+// Cross-language vectors are pinned in core.rs (request_hash_vectors_match_
+// the_console_signer) and breakglass.test.js; they move together or not at all.
+function le64(n) {
+  const out = new Uint8Array(8);
+  let v = BigInt(n);
+  for (let i = 0; i < 8; i++) { out[i] = Number(v & 0xffn); v >>= 8n; }
+  return out;
+}
+function concatBytes(parts) {
+  let total = 0;
+  parts.forEach((p) => { total += p.length; });
+  const out = new Uint8Array(total);
+  let off = 0;
+  parts.forEach((p) => { out.set(p, off); off += p.length; });
+  return out;
+}
+async function computeRequestHashHex(f) {
+  const enc = new TextEncoder();
+  const envelope = enc.encode(f.envelope);
+  const purpose = enc.encode(f.purpose);
+  const parts = [
+    le32(envelope.length), envelope,
+    hexToBytes(f.ruleset_hash),
+    le32(purpose.length), purpose,
+    le64(Number(f.start_epoch_s)), le32(Number(f.size_s)),
+  ];
+  if (f.requested_by) {
+    const name = enc.encode(f.requested_by);
+    const reason = enc.encode(f.reason || "");
+    parts.push(new Uint8Array([1]), le32(name.length), name, le32(reason.length), reason);
+    if (f.case_ref) {
+      const c = enc.encode(f.case_ref);
+      parts.push(new Uint8Array([1]), le32(c.length), c);
+    } else {
+      parts.push(new Uint8Array([0]));
+    }
+    if (f.requester_key) {
+      const k = hexToBytes(f.requester_key);
+      parts.push(new Uint8Array([1]), le32(k.length), k);
+    } else {
+      parts.push(new Uint8Array([0]));
+    }
+  }
+  const digest = await crypto.subtle.digest("SHA-256", concatBytes(parts));
+  return bytesToHex(new Uint8Array(digest));
+}
+
+// The trustee share link carries the FULL hash preimage (as the server
+// normalized it), never just the hash, so the signer page can show every
+// field and recompute the hash locally before signing.
+function shareFragment(open) {
+  const kv = (k, v) => "&" + k + "=" + encodeURIComponent(String(v));
+  let frag = "#sign" + kv("hash", open.request_hash) + kv("envelope", open.envelope) +
+    kv("purpose", open.purpose) + kv("rh", open.ruleset_hash) +
+    kv("start", open.time_bucket.start_epoch_s) + kv("size", open.time_bucket.size_s);
+  if (open.requested_by) {
+    frag += kv("by", open.requested_by) + kv("reason", open.reason);
+    if (open.case_ref) frag += kv("case", open.case_ref);
+  }
+  return frag;
+}
+
+// Strip anything that could forge or hide a displayed line (the server
+// refuses these at construction; a link is not trusted to have come from it).
+function displaySafe(s) {
+  return String(s == null ? "" : s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, "\ufffd");
+}
+
 // In-browser Ed25519 signing (WebCrypto). The seed never leaves the tab; the
 // same routine backs the operator-side signer and the trustee share-link view.
 async function ed25519SignSeed(seedHex, messageHex) {
@@ -610,7 +697,8 @@ if (signParams) {
     "Trustee signing page — your key stays in this tab; only the signature you copy leaves it.";
   $("p-trustee-sign").style.display = "";
   $("ts-hash").textContent = signParams.hash;
-  $("ts-envelope").textContent = signParams.envelope || "(not stated — ask the operator)";
+  $("ts-envelope").textContent = displaySafe(signParams.envelope) || "(not stated — ask the operator)";
+  verifySignLink(signParams);
   $("ts-btn-sign").onclick = async () => {
     clearBanner("ts-msg");
     try {
@@ -627,6 +715,52 @@ if (signParams) {
     }
   };
   wireCopy("ts-btn-copy", () => $("ts-sig").textContent);
+}
+
+// Show the trustee what the link says they are approving, recompute the
+// request hash from exactly those fields, and only then allow a signature.
+// A link that carries only the hash (older console) is blind signing and is
+// labeled as such; a link whose fields do not hash to its claimed hash is
+// refused outright — that is the relay-swapped-the-meaning attack.
+async function verifySignLink(p) {
+  const btn = $("ts-btn-sign");
+  const hasPreimage = p.rh && p.start !== undefined && p.size !== undefined &&
+    p.envelope !== undefined && p.purpose !== undefined;
+  if (!hasPreimage) {
+    banner("ts-verify", "warn", "This link carries only the hash — it cannot show you what you are " +
+      "approving (blind signing). Ask the operator for a link from the current console, which includes " +
+      "the request fields, or verify the request another way before signing.");
+    return { ok: false, blind: true };
+  }
+  $("ts-purpose").textContent = displaySafe(p.purpose);
+  $("ts-by").textContent = p.by ? displaySafe(p.by) : "(not recorded)";
+  $("ts-reason").textContent = p.reason ? displaySafe(p.reason) : "(not recorded)";
+  $("ts-case").textContent = p.case ? displaySafe(p.case) : "(none)";
+  const start = Number(p.start), size = Number(p.size);
+  $("ts-window").textContent = new Date(start * 1000).toISOString().slice(0, 16).replace("T", " ") +
+    " UTC + " + size + "s";
+  $("ts-fields").style.display = "";
+  btn.disabled = true;
+  try {
+    const computed = await computeRequestHashHex({
+      envelope: p.envelope, purpose: p.purpose, ruleset_hash: p.rh,
+      start_epoch_s: start, size_s: size,
+      requested_by: p.by, reason: p.reason, case_ref: p.case, requester_key: p.key,
+    });
+    if (computed === p.hash) {
+      banner("ts-verify", "ok", "Verified in this browser: the fields above produce exactly the hash you are asked to sign.");
+      btn.disabled = false;
+      return { ok: true, computed };
+    }
+    banner("ts-verify", "bad", "DO NOT SIGN. The fields in this link do not produce the hash it asks you to sign " +
+      "(recomputed " + computed.slice(0, 8) + "… ≠ " + p.hash.slice(0, 8) + "…). Someone altered the link or " +
+      "the request. Ask the operator for a fresh link.");
+    return { ok: false, computed };
+  } catch (e) {
+    banner("ts-verify", "bad", "Could not recompute the request hash in this browser: " + ((e && e.message) || e) +
+      ". Do not sign here — use `break_glass approve --request` instead.");
+    return { ok: false, error: String(e) };
+  }
 }
 
 // 4. Status / unseal. While a request is open the console polls status every
@@ -664,6 +798,17 @@ async function refreshStatus() {
 function applyStatus(s) {
   if (!s || s.needed === undefined) return;
   const collected = s.collected || [];
+  const sc = $("status-context");
+  if (s.requested_by) {
+    sc.textContent = "Open request — requested by " + displaySafe(s.requested_by) + " · reason " +
+      displaySafe(s.reason || "") + (s.case_ref ? " · case " + displaySafe(s.case_ref) : "") +
+      (s.purpose ? " · purpose: " + displaySafe(s.purpose) : "");
+    sc.style.display = "";
+  } else if (s.purpose) {
+    sc.textContent = "Open request — no operator context recorded (opened by an older client) · purpose: " +
+      displaySafe(s.purpose);
+    sc.style.display = "";
+  }
   $("quorum").textContent = collected.length + " / " + s.needed;
   const bar = $("quorum-bar");
   const pct = s.needed > 0 ? Math.min(100, Math.round((collected.length / s.needed) * 100)) : 0;
