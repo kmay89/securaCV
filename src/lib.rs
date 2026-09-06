@@ -4193,6 +4193,11 @@ pub fn break_glass_receipt_outcome_for_verifier(
                 policy.n
             ));
         }
+        // §3.6 truthful attribution, fail-closed at the gate too: the
+        // trustees the receipt names must be exactly the trustees whose
+        // approvals verify.
+        break_glass::verify_trustee_attribution(&policy, &receipt, &approvals)
+            .map_err(|e| anyhow!("break-glass receipt attribution failed: {}", e))?;
     }
 
     Ok(receipt.outcome)

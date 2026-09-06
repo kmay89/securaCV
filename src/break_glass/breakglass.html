@@ -35,7 +35,7 @@
   .panel .tech { color:var(--muted); font-size:12px; margin:0 0 12px; opacity:.85; }
   .panel .tech::before { content:"Technical: "; font-weight:600; }
   label { display:block; font-size:13px; font-weight:600; margin:10px 0 4px; }
-  input[type=text], textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+  input[type=text], select, textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px;
            background:var(--bg); color:var(--fg); font-size:14px; }
   textarea { resize:vertical; min-height:42px; }
   button.btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:8px; font-size:14px;
@@ -198,10 +198,11 @@
   <!-- 2. Request -->
   <section class="panel step-off operator-only" id="p-request">
     <h2>2 · Open an unlock request</h2>
-    <p class="sub">Name the sealed envelope and say why you need it. If the vault is opened, the reason you
-      give is written into the permanent record — write it the way you'd want it read later.</p>
+    <p class="sub">Name the sealed envelope, say why you need it, and say who you are. If the vault is
+      opened, your name and the reason you give are written into the permanent record — write them the
+      way you'd want them read later.</p>
     <p class="tech">Produces the SHA-256 request hash that every trustee signs; approvals are bound to this
-      exact envelope and purpose and can't be replayed elsewhere.</p>
+      exact envelope, purpose, and requester, and can't be replayed elsewhere.</p>
     <div class="row">
       <div>
         <label for="envelope">Vault envelope id</label>
@@ -210,6 +211,20 @@
       <div>
         <label for="purpose">Purpose</label>
         <input type="text" id="purpose" placeholder="why access is needed" autocomplete="off" />
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label for="requested-by">Requested by — your printed name</label>
+        <input type="text" id="requested-by" placeholder="who is asking" autocomplete="off" />
+      </div>
+      <div>
+        <label for="reason-code">Reason</label>
+        <select id="reason-code"><option value="">choose a reason…</option></select>
+      </div>
+      <div>
+        <label for="case-ref">Case reference (optional)</label>
+        <input type="text" id="case-ref" class="mono" placeholder="case-2026-0042" autocomplete="off" spellcheck="false" />
       </div>
       <div style="flex:0 0 auto"><button class="btn primary" id="btn-open">Open request</button></div>
     </div>
@@ -364,6 +379,15 @@ $("btn-connect").onclick = guarded("btn-connect", "connect-msg", async () => {
   if (status !== 200) { banner("connect-msg", "bad", "Unexpected response (" + status + ")."); return; }
   state.trustees = (json.trustees || []).map((t) => t.id);
   renderPolicy(json);
+  // Reason vocabulary comes from the server (enumerated once, in the
+  // kernel's REASON_CODES) — the page never hardcodes it.
+  const reasonSel = $("reason-code");
+  reasonSel.length = 1;
+  (json.reason_codes || []).forEach((code) => {
+    const opt = document.createElement("option");
+    opt.value = code; opt.textContent = code;
+    reasonSel.appendChild(opt);
+  });
   banner("connect-msg", "ok", "Connected — you're in the right place. This vault opens only when " +
     json.n + " of its " + json.m + " trustees agree.");
   enableStep("p-request");
@@ -397,8 +421,17 @@ $("btn-open").onclick = guarded("btn-open", "request-msg", async () => {
   clearBanner("request-msg");
   const envelope = $("envelope").value.trim();
   const purpose = $("purpose").value.trim();
+  const requestedBy = $("requested-by").value.trim();
+  const reason = $("reason-code").value;
+  const caseRef = $("case-ref").value.trim();
   if (!envelope || !purpose) { banner("request-msg", "bad", "Envelope id and purpose are both required."); return; }
-  const { status, json } = await api("POST", "/breakglass/request", { envelope, purpose });
+  if (!requestedBy || !reason) {
+    banner("request-msg", "bad", "Your name and a reason are required — they go into the permanent record the trustees sign.");
+    return;
+  }
+  const body = { envelope, purpose, requested_by: requestedBy, reason };
+  if (caseRef) body.case_ref = caseRef;
+  const { status, json } = await api("POST", "/breakglass/request", body);
   if (status !== 200) { banner("request-msg", "bad", "Could not open request (" + status + "): " + (json.error || "")); return; }
   state.requestHash = json.request_hash;
   state.needed = json.needed;

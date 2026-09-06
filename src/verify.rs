@@ -1190,6 +1190,10 @@ pub(crate) fn verify_receipt_quorum(
             policy.n
         ));
     }
+    // §3.6 truthful attribution: the trustees the receipt NAMES must be the
+    // trustees whose approvals verify — a valid quorum from Alice must not
+    // render as "Bob signed".
+    crate::break_glass::verify_trustee_attribution(policy, receipt, approvals)?;
     Ok(())
 }
 
@@ -1435,10 +1439,21 @@ mod tests {
         };
         assert!(verify_receipt_quorum(&policy, &[], &forged, &[]).is_err());
 
-        // Legit: the same Granted receipt WITH a real trustee approval passes.
+        // Legit: the same Granted receipt WITH a real trustee approval passes
+        // — and it must NAME that trustee (authorize always does; a Granted
+        // receipt naming nobody while carrying alice's approval is the
+        // attribution forgery shape, refused).
         let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
+        let legit = BreakGlassReceipt {
+            trustees_used: vec![TrusteeId::new("alice")],
+            ..forged.clone()
+        };
         assert!(
-            verify_receipt_quorum(&policy, &[], &forged, std::slice::from_ref(&approval)).is_ok()
+            verify_receipt_quorum(&policy, &[], &legit, std::slice::from_ref(&approval)).is_ok()
+        );
+        assert!(
+            verify_receipt_quorum(&policy, &[], &forged, std::slice::from_ref(&approval)).is_err(),
+            "a Granted receipt omitting the trustee whose approval it carries must be refused"
         );
 
         // A Denied receipt carries no quorum floor — empty approvals are fine.

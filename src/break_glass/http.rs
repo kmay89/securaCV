@@ -136,7 +136,15 @@ fn policy_reply(policy: &QuorumPolicy) -> HttpReply {
         .collect();
     HttpReply::json(
         200,
-        json!({ "n": policy.n, "m": policy.m, "trustees": trustees }),
+        json!({
+            "n": policy.n,
+            "m": policy.m,
+            "trustees": trustees,
+            // The closed §3.6 reason vocabulary, served so the console's
+            // dropdown has ONE source of truth (core::REASON_CODES) and the
+            // page never hardcodes a copy.
+            "reason_codes": crate::break_glass::REASON_CODES,
+        }),
     )
 }
 
@@ -398,6 +406,102 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
         assert_eq!(v["needed"], 2);
         v["request_hash"].as_str().unwrap().to_string()
+    }
+
+    /// §3.6 over the wire: context fields ride into the session's request
+    /// (so the eventual receipt records them), the policy reply serves the
+    /// closed reason vocabulary, and a partial pair is refused.
+    #[test]
+    fn open_request_carries_operator_context() {
+        let (_alice, _bob, policy) = two_of_two();
+        let mut ops = MockOps::new(policy);
+        let mut session = BreakGlassSession::new();
+
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "GET",
+            "/breakglass/policy",
+            b"",
+        );
+        assert_eq!(reply.status, 200);
+        let v: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(
+            v["reason_codes"]
+                .as_array()
+                .expect("policy reply serves the reason vocabulary")
+                .len(),
+            crate::break_glass::REASON_CODES.len()
+        );
+
+        let body = json!({
+            "envelope": "vault:1",
+            "purpose": "incident",
+            "requested_by": "Alice Operator",
+            "reason": "incident-review",
+            "case_ref": "case-9"
+        })
+        .to_string()
+        .into_bytes();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/request",
+            &body,
+        );
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        let stored = session.request().expect("session holds the request");
+        let context = stored.context.as_ref().expect("context recorded");
+        assert_eq!(context.requester_name, "Alice Operator");
+        assert_eq!(context.reason_code, "incident-review");
+        assert_eq!(context.case_ref.as_deref(), Some("case-9"));
+
+        // requested_by without reason: refused, nothing opened over it.
+        let mut session2 = BreakGlassSession::new();
+        let partial = json!({
+            "envelope": "vault:1",
+            "purpose": "incident",
+            "requested_by": "Alice Operator"
+        })
+        .to_string()
+        .into_bytes();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session2,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/request",
+            &partial,
+        );
+        assert_eq!(reply.status, 400);
+        assert!(reply.body.contains("partial_operator_context"));
+
+        // An unknown reason code is refused too — the vocabulary is closed.
+        let bogus = json!({
+            "envelope": "vault:1",
+            "purpose": "incident",
+            "requested_by": "Alice Operator",
+            "reason": "definitely-not-a-code"
+        })
+        .to_string()
+        .into_bytes();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session2,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/request",
+            &bogus,
+        );
+        assert_eq!(reply.status, 400);
+        assert!(reply.body.contains("invalid_operator_context"));
     }
 
     #[test]

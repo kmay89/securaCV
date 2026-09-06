@@ -436,6 +436,65 @@ pub fn count_valid_distinct_approvals(
     distinct.len()
 }
 
+/// Truthful signature attribution (§3.6): every trustee a receipt NAMES in
+/// `trustees_used` must be backed by a valid, domain-separated approval over
+/// the receipt's request hash — the rendered record says "X signed", so X
+/// must actually have signed. A Granted receipt must additionally name
+/// EXACTLY the trustees whose approvals verify (authorize has always built
+/// it that way, so a mismatch is forgery, not history). Denial receipts may
+/// legitimately name nobody — the early denials (excess approvals, expired
+/// window) record the presented approvals without crediting anyone — but may
+/// never name a trustee who did not sign.
+pub fn verify_trustee_attribution(
+    policy: &QuorumPolicy,
+    receipt: &BreakGlassReceipt,
+    approvals: &[Approval],
+) -> Result<()> {
+    let mut valid_ids = std::collections::HashSet::new();
+    for approval in approvals {
+        if approval.request_hash != receipt.request_hash {
+            continue;
+        }
+        let Some(trustee) = policy
+            .trustees
+            .iter()
+            .find(|t| t.id.0 == approval.trustee.0)
+        else {
+            continue;
+        };
+        if verify_approval(
+            &trustee.public_key,
+            &receipt.request_hash,
+            &approval.signature,
+        ) {
+            valid_ids.insert(approval.trustee.0.clone());
+        }
+    }
+    for used in &receipt.trustees_used {
+        if !valid_ids.contains(&used.0) {
+            return Err(anyhow!(
+                "receipt names trustee '{}' as approving, but no valid approval from them \
+                 over this request exists — false signature attribution",
+                used.0
+            ));
+        }
+    }
+    if matches!(receipt.outcome, BreakGlassOutcome::Granted) {
+        let used_ids: std::collections::HashSet<&str> =
+            receipt.trustees_used.iter().map(|t| t.0.as_str()).collect();
+        for id in &valid_ids {
+            if !used_ids.contains(id.as_str()) {
+                return Err(anyhow!(
+                    "receipt omits trustee '{}' whose valid approval it carries — a Granted \
+                     receipt must name exactly the trustees whose approvals verify",
+                    id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A proposed change to the stored quorum policy. Consent to it is a distinct
 /// power from consent to an unlock request, carried in its own signature
 /// domain (`DOMAIN_POLICY_CHANGE_APPROVAL`) so neither can stand in for the
@@ -1944,6 +2003,78 @@ mod tests {
         let mut partial = receipt.clone();
         partial.request_bucket = None;
         assert!(partial.verify_context_binding().is_err());
+    }
+
+    /// The rendered record says "X signed" — so X must actually have signed.
+    /// A device-key holder who writes a receipt naming a trustee whose valid
+    /// approval does not exist (or omitting one whose approval does) is
+    /// refused at every audit surface.
+    #[test]
+    fn false_trustee_attribution_is_rejected() {
+        let bucket = test_bucket();
+        let request = UnlockRequest::new("vault:attr", [3u8; 32], "incident", bucket).unwrap();
+        let alice_key = SigningKey::from_bytes(&[11u8; 32]);
+        let bob_key = SigningKey::from_bytes(&[12u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: alice_key.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: bob_key.verifying_key().to_bytes(),
+                },
+            ],
+        )
+        .unwrap();
+        let alice_approval =
+            Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice_key);
+        let approvals = vec![alice_approval];
+
+        let honest = BreakGlassReceipt {
+            vault_envelope_id: "vault:attr".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [3u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![TrusteeId::new("alice")],
+            approvals_commitment: approvals_commitment(&approvals),
+            policy_commitment: policy.commitment(),
+            outcome: BreakGlassOutcome::Granted,
+            purpose: None,
+            context: None,
+            request_bucket: None,
+        };
+        assert!(verify_trustee_attribution(&policy, &honest, &approvals).is_ok());
+
+        // Alice's valid approval rendered as Bob's signature: refused.
+        let mut misattributed = honest.clone();
+        misattributed.trustees_used = vec![TrusteeId::new("bob")];
+        let err = verify_trustee_attribution(&policy, &misattributed, &approvals).unwrap_err();
+        assert!(
+            err.to_string().contains("false signature attribution"),
+            "{err}"
+        );
+
+        // A Granted receipt that OMITS the trustee whose approval it carries
+        // misrepresents the record the other way: refused too.
+        let mut understated = honest.clone();
+        understated.trustees_used = vec![];
+        assert!(verify_trustee_attribution(&policy, &understated, &approvals).is_err());
+
+        // An early DENIAL legitimately credits nobody while still committing
+        // to the presented approvals — that stays valid...
+        let mut denial = honest.clone();
+        denial.outcome = BreakGlassOutcome::Denied {
+            reason: "request time window expired".to_string(),
+        };
+        denial.trustees_used = vec![];
+        assert!(verify_trustee_attribution(&policy, &denial, &approvals).is_ok());
+
+        // ...but a denial may never NAME a trustee who did not sign.
+        denial.trustees_used = vec![TrusteeId::new("bob")];
+        assert!(verify_trustee_attribution(&policy, &denial, &approvals).is_err());
     }
 
     /// The human rendering is a pure function of the receipt (deterministic)
