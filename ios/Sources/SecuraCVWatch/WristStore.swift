@@ -99,6 +99,34 @@ final class WristStore: NSObject, ObservableObject {
                             errorHandler: nil)
     }
 
+    /// Ask the phone to make one Canary chirp and blink (~15 s identify).
+    /// The PHONE carries it out over Wi-Fi by device id; the completion gets
+    /// the honest outcome — accepted or not, visual-only or audible, and the
+    /// verbatim reason on failure. Completion always runs on the main actor.
+    func identify(id: String,
+                  completion: @escaping @MainActor (Bool, Bool, String?) -> Void) {
+        let session = WCSession.default
+        guard WCSession.isSupported(),
+              session.activationState == .activated, session.isReachable else {
+            Task { @MainActor in completion(false, false, "iPhone not reachable right now.") }
+            return
+        }
+        session.sendMessage([WristSync.messageCommandKey: WristSync.commandIdentify,
+                             WristSync.identifyIDKey: id],
+                            replyHandler: { reply in
+                                Task { @MainActor in
+                                    completion(reply[WristSync.identifyOKKey] as? Bool ?? false,
+                                               reply[WristSync.identifyVisualOnlyKey] as? Bool ?? false,
+                                               reply[WristSync.identifyWhyKey] as? String)
+                                }
+                            },
+                            errorHandler: { error in
+                                Task { @MainActor in
+                                    completion(false, false, error.localizedDescription)
+                                }
+                            })
+    }
+
     /// The reply to OUR test request: adopt the snapshot it carries and play
     /// the verdict it states — the one correlated answer.
     private func resolvePathTest(with reply: [String: Any]) {

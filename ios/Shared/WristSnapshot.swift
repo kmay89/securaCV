@@ -54,6 +54,18 @@ struct WristWitness: Codable, Hashable, Identifiable, Sendable {
     var lastEventBucket: Date?
     var batteryPct: Int?
     var isMuted: Bool
+    /// The device's 16-hex pubkey fingerprint — what lets the WRIST tie a
+    /// heard presence beacon (which carries the last 2 bytes of it) to this
+    /// row, so "Find this Canary" can run on the watch's own radio.
+    /// ADDITIVE OPTIONAL: an older phone sends nothing and the wrist simply
+    /// doesn't offer finding for the row — never a wrong match.
+    var fingerprint: String? = nil
+    /// The twin verdict, computed by the PHONE against the FULL fleet: the
+    /// snapshot's rows are capped, so a wrist-side check could miss a twin
+    /// the cap dropped and range toward the wrong device. ADDITIVE OPTIONAL:
+    /// nil (an older phone) means the wrist falls back to checking the rows
+    /// it can see — narrower, but never claiming more than it knows.
+    var suffixAmbiguous: Bool? = nil
 
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     var link: Liveness { Liveness(tolerant: Int(linkRaw)) }
@@ -251,6 +263,13 @@ struct WristSnapshot: Codable, Hashable, Sendable {
     var lastBeatAt: Date?
     var beatSourceRaw: UInt8?
 
+    /// The phone's consent-first discovery choice, carried to the wrist so
+    /// finding over the watch's own radio honors the SAME gate the phone's
+    /// radios do — the wrist never invents consent the user gave nowhere.
+    /// ADDITIVE OPTIONAL: nil (an older phone) reads as not-consented, the
+    /// honest failure direction for a radio decision.
+    var discoveryConsented: Bool?
+
     var severity: Severity { Severity(tolerant: Int(severityRaw)) }
     /// nil when the sending phone predates the distinction.
     var beatSource: WristBeatSource? {
@@ -321,6 +340,19 @@ enum WristSync {
     static let commandMute = "mute"
     static let muteIDKey = "id"
     static let muteDurationKey = "for"
+
+    /// Ask the Canary named by `identifyIDKey` to make itself known (~15 s
+    /// blink + chirp). The PHONE carries it out — identify travels over
+    /// Wi-Fi by device id, which is also what makes it the disambiguator
+    /// when two Canaries share a beacon suffix. The reply carries
+    /// `identifyOKKey` (Bool), `identifyVisualOnlyKey` (Bool — the device's
+    /// chirp is set to visual-only), and on failure `identifyWhyKey` (the
+    /// honest reason, shown verbatim).
+    static let commandIdentify = "identify"
+    static let identifyIDKey = "id"
+    static let identifyOKKey = "chirpOK"
+    static let identifyVisualOnlyKey = "chirpVisualOnly"
+    static let identifyWhyKey = "chirpWhy"
 
     /// Row cap for the snapshot — applicationContext has a small transfer
     /// budget and a wrist list past this is unreadable anyway. The cap is

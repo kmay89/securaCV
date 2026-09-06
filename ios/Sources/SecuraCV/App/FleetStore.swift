@@ -245,6 +245,13 @@ final class FleetStore: ObservableObject {
         } else {
             discovery.stop()
             ble.stopScan()
+            // The wrist scans behind THIS choice (the snapshot carries it),
+            // so a revocation must reach the watch NOW — waiting for the
+            // next refresh cycle would leave its radio listening for a user
+            // who just said no. The granted branch needs no special push:
+            // its refreshOnce republishes on the normal path, and a stale
+            // "false" only ever errs toward not scanning.
+            WatchLink.shared.pushCurrent()
         }
     }
 
@@ -1586,6 +1593,28 @@ final class FleetStore: ObservableObject {
                 online: w.link == .online, bleReachable: false, rssiDBM: w.rssiDBM))
         }
         return out
+    }
+
+    // MARK: - identify (make one Canary find YOU)
+
+    /// Ask one paired Canary to make itself known — the firmware's ~15 s
+    /// identify (LED blink + chirp). Used by the phone's Find screen and by
+    /// the wrist through WatchLink; identify travels over Wi-Fi by device
+    /// id, which is what makes it the disambiguator when two Canaries share
+    /// a beacon suffix. Returns the honest outcome: whether the device
+    /// accepted, whether its chirp is set to visual-only, and — on failure —
+    /// the reason, verbatim.
+    func identifyCanary(id: String) async -> (ok: Bool, visualOnly: Bool, why: String?) {
+        guard let ref = devices.devices.first(where: { $0.id == id }),
+              let api = try? devices.api(for: ref) else {
+            return (false, false, "This Canary isn't paired for Wi-Fi commands on this iPhone.")
+        }
+        do {
+            let visualOnly = try await api.identify()
+            return (true, visualOnly, nil)
+        } catch {
+            return (false, false, error.localizedDescription)
+        }
     }
 
     // MARK: - test alert (the "provably alive" button)

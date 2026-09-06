@@ -275,6 +275,22 @@ waking anything. The phone's `FleetStore` stays the only source of truth: the
 wrist remembers, orders, and requests — it never invents state. Design of
 record: [`docs/design/apple_watch_and_notifications.md`](../docs/design/apple_watch_and_notifications.md).
 
+**Finding, from the arm doing the walking.** The witness detail's "Find"
+runs the hot/cold search on the WATCH'S OWN radio (`WristFinder` — a
+foreground scan with a periodic restart pulse so RSSI keeps flowing past
+CoreBluetooth's duplicate filtering), so it works with the iPhone on its
+charger. The arithmetic is the same host-tested `Shared/ProximityRanger`
+the phone uses — same bands, same hysteresis, same six-second staleness,
+same twin rule (`isSuffixAmbiguous`, one shared definition) — and the taps
+are the interface: the shared grammar decides WHEN, the wrist's semantic
+haptics say it (direction-up closing in, success on arrival). The beacon
+match rides a new ADDITIVE-OPTIONAL `fingerprint` on the snapshot rows, and
+the phone's consent-first discovery choice travels as
+`discoveryConsented` — the wrist never scans for a user who said no on the
+phone, and says so instead of listening to a radio it may not run. "Chirp"
+relays through the phone (identify travels over Wi-Fi by device id — which
+is also what disambiguates twins), honest about reachability both ways.
+
 ## Ask, don't open — Siri, Shortcuts, Spotlight, the Action button
 
 The way a daily app stays wanted instead of resented: most days you never

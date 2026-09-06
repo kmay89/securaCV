@@ -16,6 +16,11 @@ extension WristSnapshot {
     @MainActor
     init(store: FleetStore) {
         let fleet = store.witnesses   // already sorted worst-first
+        // The twin verdict is computed HERE, against the FULL fleet: the
+        // rows below are capped, and a wrist-side check over the capped list
+        // would miss a twin the cap dropped — then range toward the wrong
+        // device while saying "Right here".
+        let allFingerprints = fleet.map(\.fingerprint)
         let rows = fleet.prefix(WristSync.maxWitnessRows).map { w in
             WristWitness(id: w.id,
                          name: w.displayName,
@@ -27,7 +32,15 @@ extension WristSnapshot {
                          lastEventHeadline: w.lastEvent.isEmpty ? nil : w.lastEvent,
                          lastEventBucket: w.lastEventAt.map(FleetStore.bucket),
                          batteryPct: w.batteryPct,
-                         isMuted: w.isMuted)
+                         isMuted: w.isMuted,
+                         // What lets the WRIST tie a heard beacon to this
+                         // row (the beacon carries the fingerprint's last
+                         // two bytes) — the key to finding on the watch's
+                         // own radio.
+                         fingerprint: w.fingerprint.isEmpty ? nil : w.fingerprint,
+                         suffixAmbiguous: w.fingerprint.isEmpty ? nil :
+                            ProximityRanger.isSuffixAmbiguous(fingerprint: w.fingerprint,
+                                                              among: allFingerprints))
         }
         self.init(revision: 0,
                   sentAt: Date(timeIntervalSince1970: 0),
@@ -71,6 +84,10 @@ extension WristSnapshot {
                   // heartbeat screen says "your fleet checked in" where the
                   // phone would — the honesty split travels with the data.
                   lastBeatAt: store.heartbeat.wireLastBeat,
-                  beatSourceRaw: store.heartbeat.lastBeatSource?.rawValue)
+                  beatSourceRaw: store.heartbeat.lastBeatSource?.rawValue,
+                  // The consent-first discovery choice travels with the
+                  // data: the wrist's Find runs its own radio only behind
+                  // the same gate the phone's radios honor.
+                  discoveryConsented: store.discoveryConsent)
     }
 }
