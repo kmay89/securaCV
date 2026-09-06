@@ -72,11 +72,19 @@ was closed by wording alone without saying so.
 ## Tracked, not closed here
 
 See [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md): threshold/HSM vault key
-custody; the sealed-log external signed high-water-mark and mandatory
-out-of-band verify key; in-process TLS for the API and break-glass; the seccomp
-allowlist inversion + compat ABI; an Argon2id (`v2`) seed scheme; base-image
-digest pinning; the `cargo audit` `--deny` triage; and the regulated-market
-assurance tier (FIPS / PKI / RBAC / SIEM / compliance mapping).
+custody *(the `SECURACV_VAULT_PASSPHRASE` keyguard shipped 2026-08-21 in
+#1565 — defense-in-depth, not the threshold; §1 records what remains)*; the
+sealed-log external signed high-water-mark and mandatory out-of-band verify
+key *(closed in the 2026-08-23 pass below — the mark shipped as
+`SECURACV_HWM_PATH`; the key is not mandated, but a run without one is
+labeled `self-consistent; identity unverified` instead of `valid`)*;
+in-process TLS for the API and break-glass *(closed in the 2026-08-31 pass
+below, as the `api-tls` feature)*; the seccomp allowlist inversion + compat
+ABI; an Argon2id seed scheme *(closed 2026-08-21 in #1565 — recorded in
+ENTERPRISE_CUSTODY §5; it shipped as the opt-in `seed-argon2id:v1:` device-seed
+format, not as a `v2` of the legacy form)*; base-image digest pinning; the
+`cargo audit` `--deny` triage; and the regulated-market assurance tier
+(FIPS / PKI / RBAC / SIEM / compliance mapping).
 
 ## Verification
 
@@ -188,7 +196,7 @@ and the PWK add-on. The quorum + unseal target design is
 ## Tracked, not closed here (this pass)
 
 Recorded honestly rather than half-fixed; designs in
-[`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md) §8 and
+[`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md) §4a and
 [`quorum_unseal_v2.md`](../../spec/quorum_unseal_v2.md):
 
 - **PWK wizard mutating endpoints are unauthenticated** on the
@@ -196,7 +204,7 @@ Recorded honestly rather than half-fixed; designs in
   Assistant ingress-auth model (require the ingress-authenticated path, or a
   bearer token on mutating requests) and needs live add-on testing; a
   half-verified auth change risks locking the wizard out or providing false
-  assurance. Designed in ENTERPRISE_CUSTODY §8.
+  assurance. Designed in ENTERPRISE_CUSTODY §4a.
 - **Break-glass HTTP server availability**: a pre-auth slowloris can stall the
   single-threaded server, and the per-peer lockout still collapses to the proxy
   IP behind a TLS terminator (it keys on the peer socket address). The lockout
@@ -207,7 +215,8 @@ Recorded honestly rather than half-fixed; designs in
   kernel DB without the SQLCipher key, so it reads only an unencrypted DB; the
   keyed read path (`open_kernel_db_keyed`, already used by `doctor`) should be
   threaded through. Low severity — it cannot leak an encrypted DB's contents,
-  only fail to read them.
+  only fail to read them. *(Closed in the 2026-09-06 pass below: `receipts`
+  and `unseal` both take `--device-key-seed` / `--db-key` now.)*
 - **Pre-roll buffer drain gating**: the in-memory pre-event ring drain is
   belt-and-suspenders on top of the enforced token gate at
   `export_for_vault`.
@@ -388,3 +397,65 @@ and a plaintext client gets no HTTP from a TLS listener). `cargo clippy
 --all-targets -- -D warnings` clean on default, `api-tls`, and the pqc combo;
 `cargo fmt --check` clean. CI gains `Clippy (api-tls)` + `Test (api-tls)`
 steps in the optional-feature build gate.
+
+## Ceremony runbook pass (2026-09-06)
+
+Writing [`CEREMONY_RUNBOOK.md`](CEREMONY_RUNBOOK.md) over the shipped commands
+meant running every one of them as a ceremony would. What that surfaced:
+
+### Fixed in this pass
+
+- **`break_glass receipts` and `break_glass unseal` could not open a real
+  database.** Every kernel-created database is SQLCipher-encrypted
+  (`Kernel::open` always keys the connection), but both commands opened it
+  unkeyed and failed with "file is not a database" on any deployment. Both
+  now take `--device-key-seed` (env `DEVICE_KEY_SEED`) or `--db-key` (env
+  `SECURACV_DB_KEY`) exactly like `log_verify`, `log_anchor`, and
+  `court_export`, and an unkeyed open of an encrypted file fails with a
+  message naming the flag. Regression test:
+  `receipts_audit_opens_the_encrypted_kernel_database_with_the_seed`.
+- **Operator guide described `trustee enroll` committing the policy at `n`
+  and "strengthening" on each further enrollment.** The code commits only
+  when the roster is complete (`m` enrolled); earlier enrollments edit the
+  draft only. The guide and the Lab description now say what the code does.
+
+### Tracked, not closed here (this pass)
+
+Every item below is labeled **GAP** in the runbook where a ceremony step
+needs it, with the procedural stand-in the runbook uses meanwhile.
+
+- **No operator command for device-key rotation or database re-keying.**
+  `Kernel::rotate_device_identity` and `rekey_database_file` are library
+  APIs; nothing in `src/bin`, the HA add-on, or `scripts/` calls them. A
+  rotation ceremony is therefore not scriptable today.
+- **No keyguard migration or passphrase rotation.** `SECURACV_VAULT_PASSPHRASE`
+  wraps a *fresh* master key; there is no command to wrap an existing
+  plaintext `master.key` or to change the passphrase, and `break_glass doctor`
+  reports only `master.key` (it does not recognize `master.keyguard`).
+- **`break_glass policy history` verifies rows under the current device key
+  only**, not the rotation lineage that `receipts`, `log_verify`, and the
+  API verifiers use — after a rotation, pre-rotation history rows would be
+  reported invalid.
+- **No trustee key-generation / public-key helper** for a trustee who mints
+  their own key; deriving the public hex from a self-minted seed needs an
+  external Ed25519 tool.
+- **The served console writes no per-request log**; the durable trace is the
+  receipt row and the consumed-token row. A ceremony transcript must capture
+  the HTTP replies itself.
+- **`break_glass request --db` is accepted and ignored** — the request never
+  consults the roster; a roster mismatch surfaces only at `authorize`.
+- **Receipt-chain heads are not cross-bound into `run_full_verify`**; a
+  receipt-head `digest` anchor is imprint-checked and openssl-verifiable but
+  not part of the full-verify graph (`quorum_unseal_v2.md` §4).
+- **The Lab's Operator's Bench (`operator.html`) still animates enrollment
+  going live at `n` and strengthening to `m`.** The README text is corrected
+  in this pass; the page's animation is a Lab change tracked here.
+
+### Honest scope
+
+Nothing in this pass changes a cryptographic guarantee. The receipts/unseal
+fix restores an audit and an unseal path that were unusable on encrypted
+databases; the rest is documentation that now says which steps of a custody
+ceremony the code enforces and which are human rules — the same distinction
+[`../../spec/quorum_unseal_v2.md`](../../spec/quorum_unseal_v2.md) §3.4 draws
+between the ceremony *mode* (design) and the ceremony *procedure* (runbook).

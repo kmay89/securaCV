@@ -202,8 +202,15 @@ recovery):
   exceptions as listed" — the KSK internal-witness role.
 - The receipt head is **anchored (RFC 3161) at ceremony close**.
 - A sanitized transcript is exportable. A ceremony runbook
-  (`docs/security/CEREMONY_RUNBOOK.md`, planned) and a Custody Practice
-  Statement template (modeled on the KSK DPS) make deployments assessable.
+  ([`docs/security/CEREMONY_RUNBOOK.md`](../docs/security/CEREMONY_RUNBOOK.md))
+  and a Custody Practice Statement template
+  ([`docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md`](../docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md),
+  modeled on the KSK DPS) make deployments assessable. *(Both published. The
+  runbook is procedure over the shipped v1 `break_glass` commands; the
+  ceremony-mode mechanics above — hash-committed script, exception receipts,
+  witness co-signature, anchor at close — remain design until they land in
+  code, and the runbook badges every such step as procedural rather than
+  enforced.)*
 
 ### 3.5 Token semantics and cooling-off
 
@@ -315,7 +322,9 @@ that lands with the §5 unseal-output/sidecar work.)*
 ## 6. Sequencing
 
 1. Gate fixes: §3.1 + §3.2 *(done)*, §3.6 fields *(done for break-glass)*,
-   ceremony/runbook docs.
+   ceremony/runbook docs *(done — `docs/security/CEREMONY_RUNBOOK.md` and
+   `CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md`; the §3.4 ceremony *mode* in code
+   is not, and stays on this line)*.
 2. `court export` + anchoring upgrades (§5, §4 anchor items).
 3. Merkle tree, checkpoints, fleet witnessing, tlog-policy, `log_review`.
 4. Token delay/veto (§3.5) + trustee-credential hardening (§3.7).

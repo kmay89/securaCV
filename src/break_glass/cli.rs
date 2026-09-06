@@ -146,6 +146,19 @@ enum Command {
         /// Path to file containing hex-encoded device public key
         #[arg(long, value_name = "PATH", conflicts_with = "public_key")]
         public_key_file: Option<String>,
+        /// Device key seed — used only to derive the database encryption key
+        /// (like log_verify). Every kernel-created database is encrypted, so
+        /// this (or --db-key) is needed to read a real deployment's ledger.
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: Option<String>,
+        /// Explicit SQLCipher key (hex), overriding the seed derivation.
+        #[arg(
+            long,
+            env = "SECURACV_DB_KEY",
+            conflicts_with = "device_key_seed",
+            value_name = "HEX"
+        )]
+        db_key: Option<String>,
         #[arg(short, long)]
         verbose: bool,
     },
@@ -164,6 +177,18 @@ enum Command {
         vault_path: String,
         #[arg(long, default_value = "vault/unsealed")]
         output_dir: String,
+        /// Device key seed — used only to derive the database encryption key
+        /// (like log_verify); needed to open a real deployment's database.
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: Option<String>,
+        /// Explicit SQLCipher key (hex), overriding the seed derivation.
+        #[arg(
+            long,
+            env = "SECURACV_DB_KEY",
+            conflicts_with = "device_key_seed",
+            value_name = "HEX"
+        )]
+        db_key: Option<String>,
     },
 
     /// Manage break-glass quorum policy stored in the kernel database
@@ -457,6 +482,8 @@ pub fn run() -> Result<()> {
             db,
             public_key,
             public_key_file,
+            device_key_seed,
+            db_key,
             verbose,
         } => {
             let _stage = ui.stage("Verify receipts");
@@ -464,6 +491,7 @@ pub fn run() -> Result<()> {
                 &db,
                 public_key.as_deref(),
                 public_key_file.as_deref(),
+                DbKeySource::from_args(device_key_seed.as_deref(), db_key.as_deref()),
                 verbose,
             )
         }
@@ -474,12 +502,15 @@ pub fn run() -> Result<()> {
             ruleset_id,
             vault_path,
             output_dir,
+            device_key_seed,
+            db_key,
         } => {
             let _stage = ui.stage("Unseal envelope");
             cmd_unseal(
                 &envelope,
                 &token,
                 &db,
+                DbKeySource::from_args(device_key_seed.as_deref(), db_key.as_deref()),
                 &ruleset_id,
                 &vault_path,
                 &output_dir,
@@ -1531,6 +1562,55 @@ fn count_receipts(conn: &rusqlite::Connection) -> Result<i64> {
     )
 }
 
+/// How an audit/unseal command obtains the database key: from the device
+/// seed (derived exactly as the kernel does), from an explicit hex key, or
+/// not at all (legacy unencrypted database). Every kernel-created database
+/// is SQLCipher-encrypted, so the unkeyed path exists only for old files and
+/// fails with a message naming the flags to pass.
+#[derive(Clone, Debug)]
+enum DbKeySource {
+    Seed(String),
+    Hex(String),
+    None,
+}
+
+impl DbKeySource {
+    fn from_args(device_key_seed: Option<&str>, db_key: Option<&str>) -> Self {
+        match (db_key, device_key_seed) {
+            (Some(key), _) => Self::Hex(key.to_string()),
+            (None, Some(seed)) => Self::Seed(seed.to_string()),
+            (None, None) => Self::None,
+        }
+    }
+}
+
+/// Open the kernel database for a read-only audit or an unseal, keyed per
+/// `source`. Probes readability so a wrong or missing key fails here, with
+/// an actionable message, instead of as "no such table" three steps later.
+fn open_kernel_db(db_path: &str, source: &DbKeySource) -> Result<rusqlite::Connection> {
+    match source {
+        DbKeySource::Seed(seed) => open_kernel_db_keyed(db_path, seed),
+        DbKeySource::Hex(key) => {
+            let conn = rusqlite::Connection::open(db_path)?;
+            conn.pragma_update(None, "key", format!("x'{}'", key))?;
+            conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+                .map_err(|_| anyhow!("could not open the kernel database with --db-key"))?;
+            Ok(conn)
+        }
+        DbKeySource::None => {
+            let conn = rusqlite::Connection::open(db_path)?;
+            conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+                .map_err(|_| {
+                    anyhow!(
+                        "could not read the kernel database — every kernel-created database is \
+                         encrypted; pass --device-key-seed (or DEVICE_KEY_SEED) or --db-key"
+                    )
+                })?;
+            Ok(conn)
+        }
+    }
+}
+
 /// Open the SQLCipher-encrypted kernel database, deriving the key from the
 /// device seed exactly as the kernel and `log_verify` do. Fails if the seed is
 /// wrong or the database is corrupt (the key check reads a page). Read-only use.
@@ -2269,9 +2349,10 @@ fn cmd_receipts(
     db_path: &str,
     public_key_hex: Option<&str>,
     public_key_file: Option<&str>,
+    key_source: DbKeySource,
     verbose: bool,
 ) -> Result<()> {
-    let conn = rusqlite::Connection::open(db_path)?;
+    let conn = open_kernel_db(db_path, &key_source)?;
     let verifying_key = load_verifying_key(&conn, public_key_hex, public_key_file)?;
     let policy = load_break_glass_policy(&conn)?;
     // Ground truth for a receipt's declared `policy_commitment`: the
@@ -2479,6 +2560,7 @@ fn cmd_unseal(
     envelope: &str,
     token_path: &str,
     db_path: &str,
+    key_source: DbKeySource,
     ruleset_id: &str,
     vault_path: &str,
     output_dir: &str,
@@ -2500,7 +2582,7 @@ fn cmd_unseal(
         ));
     }
     let mut token = token_file.into_token()?;
-    let conn = rusqlite::Connection::open(db_path)?;
+    let conn = open_kernel_db(db_path, &key_source)?;
     let crypto_mode = load_break_glass_policy(&conn)?
         .map(|policy| policy.vault.crypto_mode)
         .unwrap_or_default();
@@ -3518,6 +3600,53 @@ mod tests {
             err.to_string().contains("--requested-by and --reason"),
             "{err}"
         );
+        Ok(())
+    }
+
+    /// Every kernel-created database is SQLCipher-encrypted: the receipts
+    /// audit must open it with the device seed (as every other audit tool
+    /// does) and fail with an actionable message without one.
+    #[test]
+    fn receipts_audit_opens_the_encrypted_kernel_database_with_the_seed() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_rcpt_key_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db_path = temp.join("witness.db");
+        let ruleset_id = "ruleset:test";
+        let device_key_seed = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
+        let alice = SigningKey::from_bytes(&[33u8; 32]);
+        let entry = format!("alice:{}", hex_encode(alice.verifying_key().to_bytes()));
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            None,
+            None,
+            &db_path.to_string_lossy(),
+            ruleset_id,
+            device_key_seed,
+        )?;
+        // One receipt on the ledger, via the real authorize path.
+        let cfg = kernel_config(&db_path.to_string_lossy(), ruleset_id, device_key_seed);
+        let mut kernel = Kernel::open(&cfg)?;
+        let bucket = TimeBucket::now_10min()?;
+        let request = UnlockRequest::new("vault:k", cfg.ruleset_hash, "audit", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+        let policy = kernel.break_glass_policy().unwrap().clone();
+        let (_, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        kernel.log_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
+        drop(kernel);
+
+        let db = db_path.to_string_lossy().to_string();
+        cmd_receipts(
+            &db,
+            None,
+            None,
+            DbKeySource::Seed(device_key_seed.to_string()),
+            true,
+        )?;
+        let err = cmd_receipts(&db, None, None, DbKeySource::None, false)
+            .expect_err("an encrypted kernel database must not open unkeyed");
+        assert!(err.to_string().contains("--device-key-seed"), "{err}");
         Ok(())
     }
 

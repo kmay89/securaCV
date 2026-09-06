@@ -293,7 +293,12 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
 9. **Ceremony packaging**: hash-committed ceremony scripts (script hash
    covered by the signed request), exception receipts, optional witness
    co-signer, anchor at close; a ceremony runbook and a Custody Practice
-   Statement template modeled on the KSK DPS.
+   Statement template modeled on the KSK DPS. *(Documents published —
+   [`CEREMONY_RUNBOOK.md`](CEREMONY_RUNBOOK.md) and
+   [`CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md`](CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md),
+   written over the shipped v1 commands. The packaging mechanics — script
+   hash in the request, exception receipts, witness co-signature, anchor at
+   close — remain open; see `spec/quorum_unseal_v2.md` §3.4.)*
 
 **Tier 3 — custody and credentials (medium/large):**
 

@@ -53,9 +53,13 @@ can evaluate approvals against a persistent trustee roster.
 
 The easiest way to stand up a quorum. `init` pins the device identity and opens an
 `n`-of-`m` **setup draft**; `trustee enroll` adds trustees one at a time. The quorum
-policy commits automatically the moment the draft is a valid quorum (once `n`
-trustees are enrolled), and each further enrollment strengthens it — so you never
-hand-assemble a policy or hold a partial one:
+policy commits automatically when the roster is **complete** — the moment the
+`m`-th trustee is enrolled — and not before: earlier enrollments edit only the draft,
+so you never hand-assemble a policy or hold a partial one. Growing or shrinking a
+live roster afterwards is a quorum-gated policy change (`policy propose` →
+`policy approve` → `policy set --approvals`). For running any of this as a witnessed
+ceremony — who is in the room, what is read aloud, what is retained — see
+[`security/CEREMONY_RUNBOOK.md`](security/CEREMONY_RUNBOOK.md):
 
 ```bash
 DEVICE_KEY_SEED=devkey:your-seed \
