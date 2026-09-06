@@ -10,9 +10,11 @@ import SwiftUI
 
 struct FleetGlanceView: View {
     @EnvironmentObject var store: WristStore
+    /// Programmatic stack, so the find deep link can land two levels in.
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if let snap = store.snapshot {
                     fleetList(snap)
@@ -32,6 +34,30 @@ struct FleetGlanceView: View {
             }
             .navigationTitle("Fleet")
         }
+        // The complication's find anchor: resolve the row and go STRAIGHT to
+        // the search — detail is a stop the tap skipped on purpose (the row
+        // rides underneath so Back still lands somewhere sensible). Checked
+        // on appearance AND on snapshot arrival: a cold-launch tap can
+        // outrun the cache hydration, so the route must survive until there
+        // is a snapshot to resolve it against.
+        .onAppear { consumePendingFind() }
+        .onChange(of: store.pendingFindID) { _, _ in consumePendingFind() }
+        .onChange(of: store.snapshot) { _, _ in consumePendingFind() }
+    }
+
+    private func consumePendingFind() {
+        guard let id = store.pendingFindID else { return }
+        // No snapshot yet (a cold tap beat the cache): the route stays
+        // PENDING — clearing it here is how a complication tap used to open
+        // the glance instead of the search — and the snapshot's arrival
+        // retries it via onChange above.
+        guard let snap = store.snapshot else { return }
+        store.pendingFindID = nil
+        guard let row = snap.witnesses.first(where: { $0.id == id }) else { return }
+        var landing = NavigationPath()
+        landing.append(row)
+        landing.append(WristFindRoute(witness: row))
+        path = landing
     }
 
     private func fleetList(_ snap: WristSnapshot) -> some View {
@@ -89,6 +115,7 @@ struct FleetGlanceView: View {
             }
         }
         .navigationDestination(for: WristWitness.self) { WitnessDetailView(witness: $0) }
+        .navigationDestination(for: WristFindRoute.self) { WristFindView(witness: $0.witness) }
     }
 
     private func staleness(_ snap: WristSnapshot) -> some View {

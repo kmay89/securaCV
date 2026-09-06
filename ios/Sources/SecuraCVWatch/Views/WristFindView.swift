@@ -18,6 +18,14 @@
 // id) — offered when the phone is reachable, honest about why when not.
 
 import SwiftUI
+import WidgetKit
+
+/// The find screen as a NAVIGATION VALUE, so the witness detail's link and
+/// the complication's deep link push the same destination through one
+/// registration (FleetGlanceView's stack).
+struct WristFindRoute: Hashable {
+    let witness: WristWitness
+}
 
 struct WristFindView: View {
     let witness: WristWitness
@@ -82,6 +90,11 @@ struct WristFindView: View {
                 finder.stop()
                 return
             }
+            // A search that actually starts is worth remembering: it becomes
+            // the Find complication's one-tap target, and the face learns
+            // the new name now rather than at the next snapshot.
+            WristLastFind.remember(witness.id)
+            WidgetCenter.shared.reloadTimelines(ofKind: WristLastFind.widgetKind)
             let neighbors = (store.snapshot?.witnesses ?? []).compactMap {
                 row -> (name: String, fingerprint: String)? in
                 guard row.id != witness.id, let fp = row.fingerprint else { return nil }

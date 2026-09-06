@@ -31,6 +31,42 @@ enum WristCache {
     }
 }
 
+/// The last Canary the user went FINDING for, remembered watch-side so the
+/// Find complication has a one-tap target. Written by the wrist's Find
+/// screen when a search actually starts, read by the widget provider — the
+/// same app-group discipline as the snapshot cache above.
+enum WristLastFind {
+    static let key = "wrist_last_find_id_v1"
+    /// The Find complication's kind — the app reloads exactly this timeline
+    /// when a new search starts, so the face shows the new target now.
+    static let widgetKind = "SecuraCVFindCanary"
+
+    static func remember(_ witnessID: String, in defaults: UserDefaults? = nil) {
+        (defaults ?? UserDefaults(suiteName: WristCache.appGroupID))?
+            .set(witnessID, forKey: key)
+    }
+
+    static func load(from defaults: UserDefaults? = nil) -> String? {
+        (defaults ?? UserDefaults(suiteName: WristCache.appGroupID))?
+            .string(forKey: key)
+    }
+
+    /// The row the complication may honestly deep-link to — the remembered
+    /// id, IF every gate the Find screen itself enforces would let a search
+    /// actually start: discovery consent granted (the phone's choice, in
+    /// the snapshot), the row still present, its beacon recognizable
+    /// (fingerprint known), and no suffix twin (the screen refuses the
+    /// signal for twins). Anything less and the complication carries no
+    /// link and opens the app plainly, instead of a "Find <name>" tap that
+    /// lands on a refusal message. Pure, host-tested.
+    static func findableTarget(id: String?, in snapshot: WristSnapshot?) -> WristWitness? {
+        guard let id, let snapshot, snapshot.discoveryConsented == true else { return nil }
+        return snapshot.witnesses.first {
+            $0.id == id && $0.fingerprint != nil && $0.suffixAmbiguous != true
+        }
+    }
+}
+
 /// The PHONE-side twin: written by FleetStore into the iPhone app group
 /// (`group.com.securacv.witness` — the one the app and widget entitlements
 /// have carried since day one, now actually earning its keep), read by the

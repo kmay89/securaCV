@@ -12,5 +12,6 @@ import WidgetKit
 struct SecuraCVWatchWidgetsBundle: WidgetBundle {
     var body: some Widget {
         FleetGlanceWidget()
+        FindCanaryWidget()
     }
 }

@@ -88,6 +88,52 @@ final class WristFindContractTests: XCTestCase {
             among: ["AAAAAAAAAAAA0708", "bbbbbbbbbbbb0708"]))
     }
 
+    // MARK: - the complication's one-tap target
+
+    private func freshDefaults() throws -> (UserDefaults, String) {
+        let suite = "test-last-find-\(UUID().uuidString)"
+        return (try XCTUnwrap(UserDefaults(suiteName: suite)), suite)
+    }
+
+    func testLastFindRoundTripsThroughInjectedDefaults() throws {
+        let (defaults, suite) = try freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertNil(WristLastFind.load(from: defaults))
+        WristLastFind.remember("canary-porch-01", in: defaults)
+        XCTAssertEqual(WristLastFind.load(from: defaults), "canary-porch-01")
+    }
+
+    func testAFindableTargetNeedsEveryGateTheFindScreenEnforces() {
+        var snapshot = WristSnapshot.sample()
+        snapshot.discoveryConsented = true
+        snapshot.witnesses[0].fingerprint = "aaaaaaaaaaaa0708"
+        let id = snapshot.witnesses[0].id
+        // Consented, row present, beacon recognizable, no twin → the one
+        // honest deep link.
+        XCTAssertEqual(WristLastFind.findableTarget(id: id, in: snapshot)?.id, id)
+        // Nothing remembered, or nothing cached → no link, never a dead end.
+        XCTAssertNil(WristLastFind.findableTarget(id: nil, in: snapshot))
+        XCTAssertNil(WristLastFind.findableTarget(id: id, in: nil))
+        // A remembered id the fleet no longer holds → no link.
+        XCTAssertNil(WristLastFind.findableTarget(id: "gone", in: snapshot))
+        // A suffix twin → no link: the Find screen refuses the signal for
+        // twins, so a "Find <name>" tap would land on a refusal message.
+        snapshot.witnesses[0].suffixAmbiguous = true
+        XCTAssertNil(WristLastFind.findableTarget(id: id, in: snapshot))
+        snapshot.witnesses[0].suffixAmbiguous = nil
+        // Consent revoked — or never sent (an older phone) → no link: the
+        // radio wouldn't be allowed to run.
+        snapshot.discoveryConsented = false
+        XCTAssertNil(WristLastFind.findableTarget(id: id, in: snapshot))
+        snapshot.discoveryConsented = nil
+        XCTAssertNil(WristLastFind.findableTarget(id: id, in: snapshot))
+        // Row present but no fingerprint (an older phone) → no link: the
+        // search it promises couldn't recognize the beacon.
+        snapshot.discoveryConsented = true
+        snapshot.witnesses[0].fingerprint = nil
+        XCTAssertNil(WristLastFind.findableTarget(id: id, in: snapshot))
+    }
+
     // MARK: - the identify verb's vocabulary
 
     func testIdentifyKeysAreStable() {

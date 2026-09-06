@@ -290,6 +290,16 @@ the phone's consent-first discovery choice travels as
 phone, and says so instead of listening to a radio it may not run. "Chirp"
 relays through the phone (identify travels over Wi-Fi by device id — which
 is also what disambiguates twins), honest about reachability both ways.
+And finding is ONE TAP from the face: the **Find complication**
+(`FindCanaryWidget`) remembers the last Canary a search actually started
+for (`WristLastFind`, host-tested) and deep-links straight into finding it
+again — through the same `securacv://` dialect the phone's widgets speak
+(`AppRoute.find`, round-trip pinned), consumed by the glance stack so Back
+still lands somewhere sensible. The link carries only when the target is
+still honestly findable (named in the cached snapshot, beacon
+recognizable); anything less and the tap opens the app plainly instead of
+promising a search it can't run. The phone answers the same route: a
+`securacv://find?witness=…` link lands in its own Find screen.
 
 ## Ask, don't open — Siri, Shortcuts, Spotlight, the Action button
 

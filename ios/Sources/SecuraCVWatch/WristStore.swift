@@ -26,6 +26,11 @@ final class WristStore: NSObject, ObservableObject {
     /// A path self-test was requested from the wrist and hasn't reported
     /// back as state yet.
     @Published private(set) var testRequestInFlight = false
+    /// A find deep link (the complication) named this witness; the glance
+    /// view consumes it — resolving the row and pushing the search — and
+    /// clears it. A route naming a row this snapshot doesn't hold consumes
+    /// to nothing, never to a dead-end screen.
+    @Published var pendingFindID: String?
     private var testTimeoutTask: Task<Void, Never>?
 
     func activate() {
