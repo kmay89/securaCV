@@ -44,8 +44,10 @@
   other kernel tools; before this, auditing a SQLCipher-keyed database from
   these two subcommands failed as "file is not a database".
 - **An observer can now audit without the signing seed.** `policy history`
-  and `policy show` take `--db-key` / `SECURACV_DB_KEY` and open the database
-  read-only (no `Kernel`, no schema writes); `policy history` takes a pinned
+  and `policy show` take `--db-key` / `SECURACV_DB_KEY` and, like `receipts`,
+  open the database with `SQLITE_OPEN_READONLY` (no `Kernel`, no schema
+  writes, a mistyped `--db` fails instead of creating an empty file, and the
+  audit cannot write to what it audits); `policy history` takes a pinned
   `--public-key-file` and verifies every row under the genesis-anchored key
   lineage, so a legitimate device-key rotation no longer reports earlier rows
   INVALID. New `break_glass db-key` prints the SQLCipher key a seed derives,
@@ -55,11 +57,21 @@
   unverified`, the same label `log_verify` uses.
 - **`break_glass init` refuses a weak seed for a new device.** A bare
   passphrase (no `devkey:` / `seed-argon2id:v1:` prefix, not 64 hex) is
-  refused before the database is created; an existing database opens as
-  before.
+  refused before the database is created. The exemption is for a database
+  that already carries a pinned identity under that seed, not for a path
+  that merely exists — a pre-created empty `witness.db` is still a new
+  device.
 - The Lab's Operator's Bench transcript now shows the policy committing once,
   at the complete roster, as the CLI does (its test had asserted the old
   commit-at-threshold behavior).
+- **`court_export` kits: the printed openssl verification now works.** The
+  anchors the kit ships are bare DER TimeStampTokens, but `VERIFICATION.md`
+  named them `.tsr` and omitted `-token_in`, so a recipient following it got
+  an ASN.1 error against a valid token. Files are now `anchors/*.der`, the
+  instruction carries `-token_in` with the reason, and the end-to-end test
+  runs the printed command against a throwaway TSA. `log_anchor verify` no
+  longer says "in chain history" for `digest` anchors (that check applies to
+  `chain_head` anchors only).
 - New operator documents: `docs/security/CEREMONY_RUNBOOK.md` (roles,
   pre-ceremony checklist, eight ceremonies with a control-status matrix) and
   `docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md` (an RFC 3647-shaped

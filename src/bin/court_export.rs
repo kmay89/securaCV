@@ -328,7 +328,12 @@ fn package_anchors(
             })
             .take(32)
             .collect();
-        let file_name = format!("anchor-{:04}-{}.tsr", anchor.id, safe_subject);
+        // `token_der` is the bare DER TimeStampToken the TSA's response
+        // carried (tsa::parse_response unwraps the TimeStampResp), so the
+        // file is named `.der`, not `.tsr`: a `.tsr` is a full response and
+        // openssl verifies the two with different flags. Naming a bare token
+        // `.tsr` sent recipients down the wrong `openssl ts -verify` form.
+        let file_name = format!("anchor-{:04}-{}.der", anchor.id, safe_subject);
         std::fs::write(dir.join(&file_name), &anchor.token_der)?;
         out.push(KitAnchor {
             file_name,
@@ -764,12 +769,15 @@ fn write_verification(
             anchor_steps.push_str(&format!(
                 "```sh\n\
                  # Token issued {} by {}\n\
-                 openssl ts -verify -digest {} -in anchors/{} -CAfile <tsa-ca.pem>\n\
+                 openssl ts -verify -digest {} -in anchors/{} -token_in -CAfile <tsa-ca.pem>\n\
                  ```\n\
                  A `Verification: OK` result is the TSA's countersignature that these \
                  exact bytes existed no later than the token's time. Obtain \
                  `<tsa-ca.pem>` from the TSA's published CA certificate, not from this \
-                 kit.\n\n",
+                 kit. The files under `anchors/` are bare DER TimeStampTokens (the token \
+                 each TSA response carried), which is why `-token_in` is required; a \
+                 full TimeStampResp file (`.tsr`, as a TSA returns it) is verified \
+                 without that flag.\n\n",
                 a.gen_time, a.tsa_url, bundle_hex, a.file_name
             ));
         }

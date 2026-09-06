@@ -43,7 +43,7 @@ with them.
 | `VERIFICATION.md` | Steps runnable with `sha256sum` + `openssl` only; the SecuraCV-tooling path is optional depth |
 | `CERTIFICATION_FRE_902_13.md` / `_14.md` | Draft 28 U.S.C. § 1746 declarations, digests pre-filled, blanks for the certifier |
 | `evidence/` | The bundle exactly as exported (plus its C2PA sidecar, if any) |
-| `anchors/*.tsr` | The RFC 3161 tokens relevant to THIS disclosure, verbatim, each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such) plus chain-head tokens. Digest anchors for other exports are deliberately excluded — including them would disclose that those exports exist |
+| `anchors/*.der` | The RFC 3161 tokens relevant to THIS disclosure, verbatim as bare DER TimeStampTokens (verified with `openssl ts -verify … -token_in`; a `.tsr` is a full response and takes no such flag), each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such) plus chain-head tokens. Digest anchors for other exports are deliberately excluded — including them would disclose that those exports exist |
 | `MANIFEST.json` | Machine-readable list of every kit file with its SHA-256 |
 
 ## What it checks before packaging

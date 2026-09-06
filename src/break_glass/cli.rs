@@ -1473,7 +1473,7 @@ fn cmd_policy_history(
     // and backfill rows). An observer opens the database with its key and
     // verifies under the genesis-anchored lineage exactly like `receipts`,
     // so rows signed by an earlier device key stay VALID after a rotation.
-    let conn = open_kernel_db(db_path, &key_source)?;
+    let conn = open_kernel_db(db_path, &key_source, OpenMode::ReadOnly)?;
     let (genesis, provenance) =
         load_verifying_key_with_source(&conn, public_key_hex, public_key_file)?;
     let lineage = crate::verify_helpers::lineage_verifying_keys(&conn, &genesis)?;
@@ -1603,7 +1603,7 @@ fn cmd_policy_history(
 }
 
 fn cmd_policy_show(db_path: &str, key_source: DbKeySource) -> Result<()> {
-    let conn = open_kernel_db(db_path, &key_source)?;
+    let conn = open_kernel_db(db_path, &key_source, OpenMode::ReadOnly)?;
     let policy = load_break_glass_policy(&conn)?
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
     println!("{}", serde_json::to_string_pretty(&policy)?);
@@ -1677,50 +1677,97 @@ impl DbKeySource {
     }
 }
 
-/// Open the kernel database for a read-only audit or an unseal, keyed per
-/// `source`. Probes readability so a wrong or missing key fails here, with
-/// an actionable message, instead of as "no such table" three steps later.
-fn open_kernel_db(db_path: &str, source: &DbKeySource) -> Result<rusqlite::Connection> {
-    match source {
-        DbKeySource::Seed(seed) => open_kernel_db_keyed(db_path, seed),
-        DbKeySource::Hex(key) => {
-            let conn = rusqlite::Connection::open(db_path)?;
-            conn.pragma_update(None, "key", format!("x'{}'", key))?;
-            conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
-                .map_err(|_| anyhow!("could not open the kernel database with --db-key"))?;
-            Ok(conn)
-        }
-        DbKeySource::None => {
-            let conn = rusqlite::Connection::open(db_path)?;
-            conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
-                .map_err(|_| {
-                    anyhow!(
-                        "could not read the kernel database — every kernel-created database is \
-                         encrypted; pass --device-key-seed (or DEVICE_KEY_SEED) or --db-key"
-                    )
-                })?;
-            Ok(conn)
-        }
-    }
+/// How a command opens the kernel database. Every audit (`receipts`,
+/// `policy show`, `policy history`) opens READ-ONLY at the SQLite level: a
+/// missing or mistyped `--db` fails instead of creating an empty database
+/// file, and no audit can write to what it audits — the custody boundary the
+/// runbook documents for an observer. `unseal` (which must consume the
+/// token nonce), `doctor`, and the drill open read-write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenMode {
+    ReadOnly,
+    ReadWrite,
 }
 
-/// Open the SQLCipher-encrypted kernel database, deriving the key from the
-/// device seed exactly as the kernel and `log_verify` do. Fails if the seed is
-/// wrong or the database is corrupt (the key check reads a page). Read-only use.
-fn open_kernel_db_keyed(db_path: &str, device_key_seed: &str) -> Result<rusqlite::Connection> {
-    let signing_key = crate::signing_key_from_seed(device_key_seed)?;
-    let seed_env = crate::db_key_seed_from_env();
-    let db_key =
-        crate::resolve_db_encryption_key(&signing_key, seed_env.as_ref().map(|s| s.as_str()));
-    let conn = rusqlite::Connection::open(db_path)?;
-    conn.pragma_update(None, "key", format!("x'{}'", db_key.as_str()))?;
+/// Open the kernel database keyed per `source`. Probes readability so a
+/// wrong or missing key fails here, with an actionable message, instead of
+/// as "no such table" three steps later.
+fn open_kernel_db(
+    db_path: &str,
+    source: &DbKeySource,
+    mode: OpenMode,
+) -> Result<rusqlite::Connection> {
+    let conn = match mode {
+        OpenMode::ReadOnly => rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .map_err(|e| anyhow!("could not open {} read-only: {}", db_path, e))?,
+        OpenMode::ReadWrite => rusqlite::Connection::open(db_path)?,
+    };
+    let (key, failure) = match source {
+        DbKeySource::Seed(seed) => (
+            Some(derive_db_key_hex(seed)?),
+            "could not open the kernel database — wrong device key seed or corrupt database",
+        ),
+        DbKeySource::Hex(key) => (
+            Some(zeroize::Zeroizing::new(key.clone())),
+            "could not open the kernel database with --db-key",
+        ),
+        DbKeySource::None => (
+            None,
+            "could not read the kernel database — every kernel-created database is \
+             encrypted; pass --device-key-seed (or DEVICE_KEY_SEED) or --db-key",
+        ),
+    };
+    if let Some(key) = key {
+        conn.pragma_update(None, "key", format!("x'{}'", key.as_str()))?;
+    }
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
-        .map_err(|_| {
-            anyhow!(
-                "could not open the kernel database — wrong device key seed or corrupt database"
-            )
-        })?;
+        .map_err(|_| anyhow!("{}", failure))?;
     Ok(conn)
+}
+
+/// Read-write open keyed from the device seed exactly as the kernel and
+/// `log_verify` derive it — for commands that must write (unseal consumes
+/// the nonce; the drill and doctor own their state). Fails if the seed is
+/// wrong or the database is corrupt (the key check reads a page).
+fn open_kernel_db_keyed(db_path: &str, device_key_seed: &str) -> Result<rusqlite::Connection> {
+    open_kernel_db(
+        db_path,
+        &DbKeySource::Seed(device_key_seed.to_string()),
+        OpenMode::ReadWrite,
+    )
+}
+
+/// True only when `db_path` is an existing, non-empty kernel database that
+/// opens with this seed's key and already carries a pinned device identity.
+/// `init` exempts the seed-strength check on exactly this — never on the
+/// path merely existing (automation may pre-create an empty `witness.db`,
+/// which `Kernel::open` would then provision with whatever seed it is given).
+fn database_is_provisioned(db_path: &str, device_key_seed: &str) -> bool {
+    let nonempty = std::fs::metadata(db_path)
+        .map(|m| m.is_file() && m.len() > 0)
+        .unwrap_or(false);
+    if !nonempty {
+        return false;
+    }
+    let Ok(conn) = open_kernel_db(
+        db_path,
+        &DbKeySource::Seed(device_key_seed.to_string()),
+        OpenMode::ReadOnly,
+    ) else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT count(*) FROM device_metadata WHERE id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|n| n == 1)
+    .unwrap_or(false)
 }
 
 /// Inspect the break-glass setup and report health. Read-only; never writes.
@@ -2253,10 +2300,13 @@ fn cmd_init(
 
     // A NEW device is provisioned here, so this is where a weak seed is
     // refused (a bare passphrase through the legacy derivation is
-    // brute-forceable offline; ENTERPRISE_CUSTODY.md §5). An existing
-    // database is opened as it always was — the check never locks out a
-    // device that is already provisioned.
-    if !std::path::Path::new(db_path).exists() {
+    // brute-forceable offline; ENTERPRISE_CUSTODY.md §5). The exemption is
+    // for a database that already holds a pinned identity under this seed —
+    // not for a path that merely exists (an empty pre-created file would be
+    // provisioned by `Kernel::open` below with whatever seed it is given) —
+    // so the check never locks out a device that is already provisioned and
+    // never waves through one that is not.
+    if !database_is_provisioned(db_path, device_key_seed) {
         crate::validate_new_seed_strength(device_key_seed)
             .map_err(|e| anyhow!("refusing to provision a new device: {}", e))?;
     }
@@ -2455,7 +2505,7 @@ fn cmd_receipts(
     key_source: DbKeySource,
     verbose: bool,
 ) -> Result<()> {
-    let conn = open_kernel_db(db_path, &key_source)?;
+    let conn = open_kernel_db(db_path, &key_source, OpenMode::ReadOnly)?;
     let (verifying_key, provenance) =
         load_verifying_key_with_source(&conn, public_key_hex, public_key_file)?;
     let policy = load_break_glass_policy(&conn)?;
@@ -2693,7 +2743,8 @@ fn cmd_unseal(
         ));
     }
     let mut token = token_file.into_token()?;
-    let conn = open_kernel_db(db_path, &key_source)?;
+    // Read-write: redeeming the token consumes its nonce durably.
+    let conn = open_kernel_db(db_path, &key_source, OpenMode::ReadWrite)?;
     let crypto_mode = load_break_glass_policy(&conn)?
         .map(|policy| policy.vault.crypto_mode)
         .unwrap_or_default();
@@ -4066,12 +4117,43 @@ mod tests {
         cmd_init(2, 3, &db, "ruleset:test", TEST_SEED, None)?;
         let key = derive_db_key_hex(TEST_SEED)?;
         assert_eq!(key.len(), 64, "a 32-byte SQLCipher key, hex");
-        let conn = open_kernel_db(&db, &DbKeySource::Hex(key.to_string()))?;
+        let conn = open_kernel_db(&db, &DbKeySource::Hex(key.to_string()), OpenMode::ReadOnly)?;
         let pinned = device_public_key_from_db(&conn)?;
         assert_eq!(pinned, crate::verifying_key_from_seed(TEST_SEED)?);
+        drop(conn);
         assert!(
-            open_kernel_db(&db, &DbKeySource::Hex("00".repeat(32))).is_err(),
+            open_kernel_db(&db, &DbKeySource::Hex("00".repeat(32)), OpenMode::ReadOnly).is_err(),
             "a wrong key must be refused at open, not three steps later"
+        );
+        // Observer opens are read-only at the SQLite level: a mistyped path
+        // fails instead of creating an empty database, a write is refused,
+        // and an audit leaves the file bytes exactly as it found them.
+        let missing = temp.join("typo.db").to_string_lossy().to_string();
+        assert!(open_kernel_db(
+            &missing,
+            &DbKeySource::Hex(key.to_string()),
+            OpenMode::ReadOnly
+        )
+        .is_err());
+        assert!(
+            !std::path::Path::new(&missing).exists(),
+            "read-only open must not create a file"
+        );
+        let ro = open_kernel_db(&db, &DbKeySource::Hex(key.to_string()), OpenMode::ReadOnly)?;
+        assert!(
+            ro.execute("DELETE FROM device_metadata", []).is_err(),
+            "a read-only audit connection must not be able to write"
+        );
+        drop(ro);
+        let before = std::fs::read(&db)?;
+        // No policy yet: `show` reports that, but writes nothing either way.
+        let _ = cmd_policy_show(&db, DbKeySource::Hex(key.to_string()));
+        cmd_policy_history(&db, None, None, DbKeySource::Hex(key.to_string()))?;
+        cmd_receipts(&db, None, None, DbKeySource::Hex(key.to_string()), true)?;
+        assert_eq!(
+            std::fs::read(&db)?,
+            before,
+            "audits must not change the database bytes"
         );
         Ok(())
     }
@@ -4094,6 +4176,19 @@ mod tests {
         assert!(
             !std::path::Path::new(&fresh).exists(),
             "nothing may be created on refusal"
+        );
+        // A pre-created EMPTY file (automation touching witness.db first) is
+        // not a provisioned device: the gate must still refuse, and must not
+        // have provisioned the file on the way.
+        let touched = temp.join("touched.db").to_string_lossy().to_string();
+        std::fs::write(&touched, b"")?;
+        let err = cmd_init(2, 3, &touched, "ruleset:test", weak, None)
+            .expect_err("an empty pre-created file must not exempt the seed check");
+        assert!(err.to_string().contains("not strong enough"), "{err}");
+        assert_eq!(
+            std::fs::metadata(&touched)?.len(),
+            0,
+            "the empty file must stay empty"
         );
         // A database that already exists under that seed keeps working.
         let existing = temp.join("existing.db").to_string_lossy().to_string();

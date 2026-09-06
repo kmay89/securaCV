@@ -290,7 +290,7 @@ log_anchor --db witness.db verify --ca tsa-ca.pem
 sha256sum <disclosed files>            # against CLOSEOUT.md / MANIFEST.sha256
 # a full TSA response as retained from the offline flow (.tsr):
 openssl ts -verify -digest <hex> -in <anchor>.tsr -CAfile tsa-ca.pem
-# a bare token exported from tsa_anchors.token_der (.der):
+# a bare token — tsa_anchors.token_der, or a court_export kit's anchors/*.der:
 openssl ts -verify -digest <hex> -in <anchor>.der -token_in -CAfile tsa-ca.pem
 ```
 

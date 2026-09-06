@@ -292,12 +292,19 @@ fn verify(conn: &Connection, ca: Option<&str>) -> Result<()> {
             }
         }
 
+        // Say only what was checked: chain membership applies to `chain_head`
+        // anchors; a `digest` anchor (export envelope, receipt head) is not in
+        // the sealed-event history by construction and that check is skipped.
+        let membership = if a.subject == "chain_head" {
+            "in chain history"
+        } else {
+            "digest anchor, chain membership not applicable"
+        };
         if problems.is_empty() {
             if ca.is_some() {
                 println!(
-                    "anchor #{}: OK (imprint matches, in chain history, countersignature OK) \
-                     genTime {}",
-                    a.id, a.gen_time
+                    "anchor #{}: OK (imprint matches, {}, countersignature OK) genTime {}",
+                    a.id, membership, a.gen_time
                 );
             } else {
                 // Structural checks passed, but the CMS countersignature — the
@@ -307,9 +314,9 @@ fn verify(conn: &Connection, ca: Option<&str>) -> Result<()> {
                 // until --ca cryptographically verifies the token.
                 unverified += 1;
                 println!(
-                    "anchor #{}: UNVERIFIED (imprint matches, in chain history; countersignature \
+                    "anchor #{}: UNVERIFIED (imprint matches, {}; countersignature \
                      NOT checked — re-run with --ca) genTime {} (untrusted)",
-                    a.id, a.gen_time
+                    a.id, membership, a.gen_time
                 );
             }
         } else {

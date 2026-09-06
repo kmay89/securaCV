@@ -429,9 +429,13 @@ meant running every one of them as a ceremony would. What that surfaced:
   backfill rows), so the only way an observer could run them was to hold the
   seed that signs every ledger. Both now take `--db-key` / `SECURACV_DB_KEY`
   (and `history` a pinned `--public-key-file`) and open the database
-  read-only; a new `break_glass db-key` derives the database key from the
-  seed so the operator can hand a verifier that lesser credential. The card
-  and the roles table no longer mention `DEVICE_KEY_SEED` for a verifier.
+  read-only — `SQLITE_OPEN_READONLY`, so a mistyped `--db` fails instead of
+  creating an empty database and no audit connection can write (test:
+  `db_key_derivation_opens_the_database_without_the_seed` asserts a refused
+  write and unchanged file bytes); a new `break_glass db-key` derives the
+  database key from the seed so the operator can hand a verifier that lesser
+  credential. The card and the roles table no longer mention
+  `DEVICE_KEY_SEED` for a verifier.
 - **`break_glass receipts` printed plain `VALID` under a key read out of the
   database it was auditing.** It, and `policy history`, now print where the
   verifying key came from (`Verifying key: pinned out of band` vs `read from
@@ -443,8 +447,20 @@ meant running every one of them as a ceremony would. What that surfaced:
   earlier row INVALID (regression test:
   `policy_history_verifies_rows_signed_across_a_device_key_rotation`).
 - **`break_glass init` accepted a bare passphrase as the seed of a new
-  device.** It now applies `validate_new_seed_strength` when it creates the
-  database (an existing database is untouched).
+  device.** It now applies `validate_new_seed_strength` unless the database
+  already carries a pinned identity under that seed — path existence alone
+  is not enough, since a pre-created empty file would otherwise be
+  provisioned with the weak seed (review finding on #1660).
+- **`court_export`'s own `VERIFICATION.md` told the recipient to run
+  `openssl ts -verify … -in anchors/<token>.tsr` without `-token_in`, on
+  files that are bare DER TimeStampTokens** — openssl rejects that with an
+  ASN.1 tag error, so the one step the design delegates to an independent
+  implementation did not work as printed. The kit now names those files
+  `.der`, prints `-token_in` and says why, and the end-to-end test runs the
+  printed line against a throwaway TSA and requires `Verification: OK` (the
+  earlier test only checked the string). `log_anchor verify` also no longer
+  claims "in chain history" for `digest` anchors, where that check is
+  skipped by design.
 - Runbook and CPS quoted outputs and commands corrected against source: the
   `✔ <stage> (<elapsed>)` marker, which binaries take `--ui`, the drill's
   `Result: DRILL PASSED …` line, `doctor` not being a vault-touching tool,
