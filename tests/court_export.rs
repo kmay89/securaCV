@@ -428,11 +428,41 @@ fn real_token_minted_over_the_bundle_bytes_anchors_the_kit() -> Result<()> {
         .map(|e| e.unwrap().path())
         .collect();
     assert_eq!(anchor_files.len(), 2);
+    for f in &anchor_files {
+        assert_eq!(
+            f.extension().and_then(|e| e.to_str()),
+            Some("der"),
+            "kit anchors are bare tokens and must not be named like responses: {f:?}"
+        );
+    }
     let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
-    assert!(verification.contains(&format!(
-        "openssl ts -verify -digest {}",
-        hex::encode(bundle_sha)
-    )));
+    let printed = verification
+        .lines()
+        .find(|l| {
+            l.starts_with(&format!(
+                "openssl ts -verify -digest {}",
+                hex::encode(bundle_sha)
+            ))
+        })
+        .expect("VERIFICATION.md names the exact openssl invocation for the covering token");
+    // The instructions must WORK for a recipient with nothing but openssl: run
+    // the exact printed line (CA placeholder filled in) from the kit directory.
+    // This is the check that catches a wrong `-token_in` form — the string
+    // assertion alone let a non-working command ship.
+    let ca = tsa_dir.join("tsa.crt").to_string_lossy().to_string();
+    let filled = printed.replace("<tsa-ca.pem>", &ca);
+    let argv: Vec<&str> = filled.split_whitespace().collect();
+    assert_eq!(argv[0], "openssl");
+    let run = Command::new(argv[0])
+        .current_dir(&kit)
+        .args(&argv[1..])
+        .output()?;
+    assert!(
+        run.status.success() && String::from_utf8_lossy(&run.stdout).contains("Verification: OK"),
+        "the kit's own openssl instruction must verify the covering token: `{filled}` -> stdout {} stderr {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert!(!String::from_utf8_lossy(&out.stdout).contains("WARNING"));
     assert!(!String::from_utf8_lossy(&out.stderr).contains("excluded"));
     Ok(())

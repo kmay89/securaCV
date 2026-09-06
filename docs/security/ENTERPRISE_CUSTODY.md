@@ -15,6 +15,11 @@ change to the consumer kernel.
 
 ---
 
+Operational companions: [`CEREMONY_RUNBOOK.md`](CEREMONY_RUNBOOK.md) scripts the
+ceremonies over the shipped commands; [`CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md`](CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md)
+is what a deployment declares. Both badge every control as shipped, procedural,
+or not provided — the same honesty this tracker keeps.
+
 ## 1. Vault key custody — quorum is authorization, not the lock
 
 **State today.** Break-glass enforces a genuine N-of-M threshold of trustee
@@ -214,14 +219,30 @@ Supervisor reaches the add-on over the Docker network, not loopback.
 
 ## 5. Seed strength
 
-`signing_key_from_seed` derives the device key with a single unsalted SHA-256
-gated on a 32-character minimum. Auto-generated seeds are full-entropy OS random
-and safe; a human-supplied passphrase that merely clears 32 characters is
-enumerable offline. Changing the derivation would invalidate every existing
-device identity, so the path is a **versioned** scheme: add an Argon2id
-(memory-hard) KDF for a new `v2` seed format, keep `v1` (SHA-256) for existing
-devices, and steer operators to full-entropy seeds
-(`openssl rand -hex 32`) meanwhile.
+**Shipped 2026-08 (#1565).** `signing_key_from_seed` dispatches on a prefix.
+A seed of the form
+`seed-argon2id:v1:m=<KiB>,t=<iters>,p=<lanes>:<salt-hex>:<passphrase>`
+(`ARGON2_SEED_PREFIX` in `src/lib.rs`) is derived with the memory-hard
+**Argon2id** KDF, so a memorable passphrase is no longer enumerable offline
+the way a single fast hash allows. The cost parameters ride inside the seed
+string and are bounded on parse, so a typo'd or hostile seed cannot exhaust
+memory or hang device-open. Everything *without* the prefix falls through to
+the exact legacy derivation (one unsalted SHA-256 behind the 32-character
+minimum), so every existing device identity is byte-for-byte unchanged —
+that is the versioning: the memory-hard format carries its own `v1` tag and
+the legacy form is simply "no prefix". `make_argon2id_seed` builds a seed
+from a passphrase with a fresh random salt at interactive defaults, and
+`validate_new_seed_strength` refuses a bare short or low-entropy passphrase
+for a *new* device. As of 2026-09-06 `break_glass init` applies that check
+when it creates a new database (an existing database opens as before, so no
+provisioned device is locked out); `witnessd` first run and the HA add-on
+wizard do not call it yet.
+
+**Still tracked:** the memory-hard form is opt-in; `witnessd` first run and
+the HA add-on wizard still accept any legacy seed and no provisioning flow
+steers a human-typed passphrase into the Argon2id form by default. Operators
+should keep using full-entropy seeds (`openssl rand -hex 32`) unless they
+deliberately choose a passphrase seed.
 
 ---
 

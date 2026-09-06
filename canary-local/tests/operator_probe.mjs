@@ -3,8 +3,9 @@
 // Loads operator.html in headless Chromium and walks the setup ceremony end to
 // end: step through init → enroll×3 → drill → doctor and confirm the live "vault
 // state" tracks the code's real behavior — the committed policy stays a draft
-// below the threshold, goes live as 2-of-2 the instant it's valid, strengthens
-// to 2-of-3, and the drill/doctor output renders. Zero page errors.
+// until the roster is complete (two of three enrolled is still a draft), goes
+// live once as 2-of-3 on the third enrollment, and the drill/doctor output
+// renders. Zero page errors.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set), like the other
 // probes. Prints OPERATOR_PROBE_OK / exits 0 on success.
@@ -75,16 +76,18 @@ try {
   if ((await lit()) !== 1) fail("step 1 should show 1 enrolled trustee");
   if (!/draft/.test(await badge())) fail("step 1 (below threshold) should still be a draft");
 
-  // step 2 (bob): threshold reached → policy goes live as 2-of-2
+  // step 2 (bob): threshold met but roster incomplete → STILL a draft. The
+  // CLI commits only a complete roster (committing at the threshold made
+  // every later enrollment a silent rewrite of a live policy).
   await next.click();
-  await wait(() => /live · 2-of-2/.test(document.querySelector(".op-badge")?.textContent || ""),
-    "policy did not go live 2-of-2 at the threshold");
   if ((await lit()) !== 2) fail("step 2 should show 2 enrolled trustees");
+  if (!/draft/.test(await badge())) fail("step 2 (threshold met, roster incomplete) must still be a draft");
+  if (/live/.test(await badge())) fail("no policy may go live before the roster is complete");
 
-  // step 3 (carol, minted): strengthens to 2-of-3, roster full
+  // step 3 (carol, minted): roster complete → policy goes live once, as 2-of-3
   await next.click();
   await wait(() => /live · 2-of-3/.test(document.querySelector(".op-badge")?.textContent || ""),
-    "policy did not strengthen to 2-of-3");
+    "policy did not go live as 2-of-3 at the complete roster");
   if ((await lit()) !== 3) fail("step 3 should show all 3 trustees enrolled");
 
   // step 4 (drill): the sandbox rehearsal output renders
@@ -103,7 +106,7 @@ try {
   if (!/DRILL PASSED/.test(await term())) fail("Prev did not return to the drill step");
 
   if (errors.length) fail(errors.length + " page/console errors: " + errors.join(" | "));
-  console.log("OPERATOR_PROBE_OK — 4 commands, 6-step ceremony; policy draft → live 2-of-2 → 2-of-3, drill + doctor render");
+  console.log("OPERATOR_PROBE_OK — 4 commands, 6-step ceremony; policy draft → draft → live 2-of-3 at the complete roster, drill + doctor render");
 } finally {
   await browser.close();
   server.close();

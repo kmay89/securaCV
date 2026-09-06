@@ -181,20 +181,46 @@ pub const REASON_CODES: &[&str] = &[
 pub const MAX_FIELD_LEN: usize = 512;
 
 fn is_forbidden_text_char(c: char) -> bool {
-    // C0/C1 controls (newline, carriage return, ESC, DEL, ...), Unicode line
-    // and paragraph separators, zero-width and byte-order marks, and the
-    // bidirectional embedding/override/isolate controls that reorder or hide
-    // what a reader sees.
+    // C0/C1 controls (newline, carriage return, ESC, DEL, ...), the Unicode
+    // line and paragraph separators, every general-category Cf (format)
+    // code point — bidirectional controls, zero-width joiners and spaces,
+    // prepended concatenation marks, interlinear annotation anchors, the
+    // TAG block — and the rest of Unicode's Default_Ignorable_Code_Point set
+    // (soft hyphen, combining grapheme joiner, Hangul fillers, Mongolian
+    // and generic variation selectors, ...). Two names that differ only by
+    // an invisible code point would hash differently yet render identically
+    // in a receipt and on the signer page; none of them belong in a field a
+    // trustee consents to. Ranges are enumerated for a pinned UCD rather
+    // than looked up, so the console's displaySafe regex can mirror them
+    // exactly. Ordinary letters, accents, spaces, and punctuation pass.
     c.is_control()
         || matches!(
             c,
-            '\u{2028}'
-                | '\u{2029}'
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{061C}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{115F}'..='\u{1160}'
+                | '\u{17B4}'..='\u{17B5}'
+                | '\u{180B}'..='\u{180F}'
                 | '\u{200B}'..='\u{200F}'
-                | '\u{202A}'..='\u{202E}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{2066}'..='\u{2069}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{3164}'
+                | '\u{FE00}'..='\u{FE0F}'
                 | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{FFF0}'..='\u{FFFB}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{13438}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+                | '\u{1D173}'..='\u{1D17A}'
+                | '\u{E0000}'..='\u{E0FFF}'
         )
 }
 
@@ -2270,6 +2296,11 @@ mod tests {
             "Alice\u{2028}x",
             "Alice\u{200b}",
             "\u{feff}Alice",
+            "Ali\u{00ad}ce",
+            "Alice\u{061c}",
+            "Alice\u{e0041}",
+            "Alice\u{fe0f}",
+            "Alice\u{fff9}",
         ] {
             assert!(
                 OperatorContext::new(bad, "drill", None, None).is_err(),
@@ -2503,6 +2534,23 @@ mod tests {
         assert_eq!(
             hex::encode(with_ctx.request_hash()),
             "d9c3c3667e4176e50c332cec28eae6d8fb04f6c175861a51df77e64be7ef262d"
+        );
+        let key_hex = hex::encode([0xABu8; 32]);
+        let with_key = with_ctx
+            .clone()
+            .with_context(
+                OperatorContext::new(
+                    "Alice Operator",
+                    "incident-review",
+                    Some("case-2026-0042"),
+                    Some(&key_hex),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            hex::encode(with_key.request_hash()),
+            "cc09f6440b20715a8ea3a19df8652569ac8f338ec2517d245a2db7bdc89fda74"
         );
     }
 }

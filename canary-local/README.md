@@ -608,9 +608,11 @@ teaches how you stand one up** — the four commands that just shipped in
 - **The setup ceremony** is the interactive centerpiece: step through
   `init 2-of-3` → enroll three trustees (import a key, or *mint* one written
   `0600`) → `drill` → `doctor`, and watch a live "vault state" panel track the
-  code's real behavior — the committed policy stays a **draft** below the
-  threshold, goes **live as 2-of-2** the instant it's valid, then **strengthens to
-  2-of-3**. The terminal output is the real binary's, recorded.
+  vault state — the policy stays a **draft** until the roster is complete, then goes
+  **live as 2-of-3** on the third enrollment, which is what the shipped CLI does: it
+  commits only a complete roster, once. The terminal transcript is authored from the
+  binary's own messages (not captured from a run), and CI checks that every
+  load-bearing line still exists verbatim in the CLI source.
 - **What `doctor` checks** and **what `drill` rehearses** (a throwaway sandbox that
   burns a single-use token) — spelled out, honest about the plaintext-key warning.
 

@@ -140,11 +140,15 @@ break_glass request \
 
 Every consent-bound text field (envelope id, purpose, requester name, case
 reference) is capped at 512 bytes and may not contain control characters,
-line or paragraph separators, or bidirectional/format override characters —
-these strings are shown to trustees before they sign and rendered into the
-permanent record, so no field may forge a line or hide a character. Tools
-display them through `display_safe`, which neutralizes anything a record
-from another build could carry.
+line or paragraph separators, or Unicode format and default-ignorable code
+points (bidirectional controls, zero-width and other invisible characters,
+variation selectors, the TAG block) — these strings are shown to trustees
+before they sign and rendered into the permanent record, so no field may
+forge a line or hide a character, and two names that differ only by an
+invisible code point cannot hash differently while rendering identically.
+Tools display them through `display_safe`, which neutralizes anything a
+record from another build could carry; the served console's `displaySafe`
+mirrors the same code-point set.
 
 Send trustees the **context file** (format `securacv-unlock-request:v2`),
 not a bare hash — their tool can then show them exactly what they are
@@ -187,10 +191,15 @@ saying so. (Design rationale: `spec/quorum_unseal_v2.md` §3.2.)
 On the served console, the trustee signing link carries every field the hash
 binds (as the server normalized them) and the signer page recomputes the
 request hash from those fields in the browser before enabling the signature;
-a link whose fields do not produce its hash is refused, and a link carrying
-only a hash is labeled as blind signing. The status endpoint likewise
-exposes the bound operator context, so the served surface shows what the
-hash covers rather than only the hash.
+Sign ships disabled and is enabled by exactly one path — the displayed fields
+reproduce the hash. A link whose fields do not produce its hash is refused,
+and so is a link carrying only a hash (an older console, or a full link
+stripped down in transit): a signature over a number nobody can read is not
+consent, and that trustee signs from the request file instead. The link
+carries the request fields in clear text and persists in browser history, so
+it travels over the trustees' precommitted channel like the request itself.
+The status endpoint likewise exposes the bound operator context, so the
+served surface shows what the hash covers rather than only the hash.
 
 Approvals are collected by the operator and passed to the authorization step.
 
@@ -245,9 +254,13 @@ Receipts form an append-only, signed chain in the kernel database. Use the
 `break_glass receipts` command (or `log_verify`) to validate the chain and
 confirm that approvals align with the stored quorum policy. Verification
 also re-derives each receipt's request hash from its recorded purpose and
-operator context (when recorded — pre-§3.6 receipts have nothing to bind
-and remain valid), and the unseal gate applies the same check fail-closed
-before releasing cleartext.
+operator context. The audit path tolerates a receipt that recorded no
+context (a pre-§3.6 build's row has nothing to bind and is reported as it
+is), but the unseal gate does not: a `Granted` receipt without a recorded
+purpose and request bucket is refused before any cleartext is released,
+because every receipt this build writes records both, so that shape is
+either an older build's token or a re-signed row with the consent-bound
+context stripped. Either way the remedy is to re-authorize.
 
 `break_glass receipts --verbose` additionally prints each receipt's
 deterministic human-readable record — printed name, UTC time, and the

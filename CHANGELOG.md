@@ -2,6 +2,81 @@
 
 ## [Unreleased]
 
+### Break-glass: who asked, and why, is part of what the trustees sign (§3.6)
+
+- **Operator context is bound into the request hash.** An unlock request now
+  carries the requesting operator's printed name, a reason code from a closed
+  vocabulary (`incident-review`, `legal-request`, `legal-hold`,
+  `owner-recovery`, `safety-check`, `maintenance-audit`, `drill`), an optional
+  case reference, and an optional claimed requester key, and the request hash
+  every trustee signs covers all of them (framing in `spec/break_glass.md`;
+  cross-language vectors pinned in the Rust and console tests). Receipts
+  record the purpose, the context, and the request bucket, and every verifier
+  re-derives the hash from what was recorded, so a receipt cannot claim a
+  different "who and why" than the trustees consented to. Receipts also name
+  only the trustees whose approvals actually verify. The CLI writes a
+  `securacv-unlock-request:v2` file so `approve --request` shows the trustee
+  every field before signing; `--request-hash` is labeled blind signing.
+- **Upgrade note — the unseal gate refuses a `Granted` receipt that records no
+  purpose or request bucket.** Every receipt this build writes records both, so
+  that shape is either a token minted by an older build or a row re-signed
+  with its context stripped; the gate fails closed with a message that says so
+  and the remedy is to re-authorize. The audit path (`break_glass receipts`,
+  `log_verify`) still reports such historical rows rather than rejecting them.
+- **Consent-bound fields are hygienic.** Envelope id, purpose, requester name
+  and case reference are capped at 512 bytes and refuse control characters,
+  line/paragraph separators, and Unicode format or default-ignorable code
+  points (bidirectional controls, zero-width characters, variation selectors,
+  the TAG block); every tool displays stored fields through `display_safe`, and
+  the served console's `displaySafe` mirrors the same set. A stale request file
+  is refused with a receipted denial rather than a silent one.
+- **The served console is what-you-see-is-what-you-sign.** The open and status
+  replies echo every normalized field the hash binds; the trustee signing link
+  carries all of them; the signer page recomputes the hash in the browser and
+  ships Sign disabled, enabling it only when the displayed fields reproduce the
+  hash. A link whose fields do not match, a link carrying only the hash, a
+  link with partial or empty context, or a link with malformed encoding is
+  refused with a "do not sign" notice, and the click handler re-checks the
+  verdict. The operator's status pane shows the bound context and clears it
+  when the request is gone.
+- **`receipts` and `unseal` open encrypted kernel databases.** Both accept
+  `--device-key-seed` / `--db-key` (or the environment variables) like the
+  other kernel tools; before this, auditing a SQLCipher-keyed database from
+  these two subcommands failed as "file is not a database".
+- **An observer can now audit without the signing seed.** `policy history`
+  and `policy show` take `--db-key` / `SECURACV_DB_KEY` and, like `receipts`,
+  open the database with `SQLITE_OPEN_READONLY` (no `Kernel`, no schema
+  writes, a mistyped `--db` fails instead of creating an empty file, and the
+  audit cannot write to what it audits); `policy history` takes a pinned
+  `--public-key-file` and verifies every row under the genesis-anchored key
+  lineage, so a legitimate device-key rotation no longer reports earlier rows
+  INVALID. New `break_glass db-key` prints the SQLCipher key a seed derives,
+  so an operator can hand a verifier that lesser credential. `receipts` and
+  `policy history` state where their verifying key came from: `pinned out of
+  band` or `read from the audited database — … self-consistent; identity
+  unverified`, the same label `log_verify` uses.
+- **`break_glass init` refuses a weak seed for a new device.** A bare
+  passphrase (no `devkey:` / `seed-argon2id:v1:` prefix, not 64 hex) is
+  refused before the database is created. The exemption is for a database
+  that already carries a pinned identity under that seed, not for a path
+  that merely exists — a pre-created empty `witness.db` is still a new
+  device.
+- The Lab's Operator's Bench transcript now shows the policy committing once,
+  at the complete roster, as the CLI does (its test had asserted the old
+  commit-at-threshold behavior).
+- **`court_export` kits: the printed openssl verification now works.** The
+  anchors the kit ships are bare DER TimeStampTokens, but `VERIFICATION.md`
+  named them `.tsr` and omitted `-token_in`, so a recipient following it got
+  an ASN.1 error against a valid token. Files are now `anchors/*.der`, the
+  instruction carries `-token_in` with the reason, and the end-to-end test
+  runs the printed command against a throwaway TSA. `log_anchor verify` no
+  longer says "in chain history" for `digest` anchors (that check applies to
+  `chain_head` anchors only).
+- New operator documents: `docs/security/CEREMONY_RUNBOOK.md` (roles,
+  pre-ceremony checklist, eight ceremonies with a control-status matrix) and
+  `docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md` (an RFC 3647-shaped
+  statement a deployment fills in).
+
 ### Display: the LAN write API can no longer switch on the glass's one opt-in outbound path
 
 - **`wx_direct` and `wx_loc` are on-glass only.** The display's `POST /api/set`

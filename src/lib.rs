@@ -2646,28 +2646,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// (like the anchors table): chained and device-signed, but not part of
     /// the evidence envelope's ledgers.
     pub fn policy_change_history(&self) -> Result<Vec<PolicyChangeHistoryEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature \
-             FROM policy_change_history ORDER BY id ASC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            let payload_json: String = row.get(0)?;
-            let approvals_json: String = row.get(1)?;
-            let prev_hash: Vec<u8> = row.get(2)?;
-            let entry_hash: Vec<u8> = row.get(3)?;
-            let signature: Vec<u8> = row.get(4)?;
-            out.push(PolicyChangeHistoryEntry {
-                record: serde_json::from_str(&payload_json)?,
-                payload_json,
-                approvals: serde_json::from_str(&approvals_json)?,
-                prev_hash: blob32(prev_hash, "policy_change_history.prev_hash")?,
-                entry_hash: blob32(entry_hash, "policy_change_history.entry_hash")?,
-                signature,
-            });
-        }
-        Ok(out)
+        read_policy_change_history(&self.conn)
     }
 
     fn load_break_glass_policy(&mut self) -> Result<()> {
@@ -4000,6 +3979,47 @@ pub struct PolicyChangeHistoryEntry {
     pub signature: Vec<u8>,
 }
 
+/// Read the policy-change history ledger from any connection to the kernel
+/// database — a read-only verifier that holds only the database key (no
+/// device seed, no `Kernel`) uses this; `Kernel::policy_change_history`
+/// delegates here. A database without the table (pre-feature vintage) has
+/// an empty history.
+pub fn read_policy_change_history(conn: &Connection) -> Result<Vec<PolicyChangeHistoryEntry>> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='policy_change_history' LIMIT 1",
+            [],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature \
+         FROM policy_change_history ORDER BY id ASC",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let payload_json: String = row.get(0)?;
+        let approvals_json: String = row.get(1)?;
+        let prev_hash: Vec<u8> = row.get(2)?;
+        let entry_hash: Vec<u8> = row.get(3)?;
+        let signature: Vec<u8> = row.get(4)?;
+        out.push(PolicyChangeHistoryEntry {
+            record: serde_json::from_str(&payload_json)?,
+            payload_json,
+            approvals: serde_json::from_str(&approvals_json)?,
+            prev_hash: blob32(prev_hash, "policy_change_history.prev_hash")?,
+            entry_hash: blob32(entry_hash, "policy_change_history.entry_hash")?,
+            signature,
+        });
+    }
+    Ok(out)
+}
+
 pub fn consume_break_glass_token_durably(
     conn: &Connection,
     token: &break_glass::BreakGlassToken,
@@ -4163,14 +4183,17 @@ pub fn break_glass_receipt_outcome_for_verifier(
             .map_err(|e| anyhow!("break-glass receipt context binding failed: {}", e))?;
         // Absence of context is not a free pass at the gate: every receipt
         // this build writes records its purpose and request bucket, and a
-        // token only lives inside the bucket it was minted in, so a Granted
-        // receipt with all three fields missing is not one a legitimately
-        // minted token can reference — it is a re-signed row with the
-        // consent-bound context stripped. Fail closed; re-authorize.
+        // token only lives inside the bucket it was minted in. A Granted
+        // receipt with all three fields missing is therefore either a row a
+        // pre-§3.6 build wrote (a token minted before an upgrade, redeemed
+        // inside the same still-live bucket) or a re-signed row with the
+        // consent-bound context stripped. Either way, fail closed and
+        // re-authorize with this build.
         if !context_recorded {
             return Err(anyhow!(
-                "break-glass receipt records no request context (purpose/request bucket) — a \
-                 token-referenced receipt always does; refusing (re-authorize)"
+                "break-glass receipt records no request context (purpose/request bucket) — every \
+                 receipt this build writes does, so this token was minted by an older build or its \
+                 receipt was re-signed with the context stripped; refusing (re-authorize)"
             ));
         }
         let policy = crate::verify::load_break_glass_policy(conn)?
@@ -6267,23 +6290,75 @@ mod tests {
             approvals_commitment: approvals_commitment(&[]),
             policy_commitment: policy.commitment(),
             outcome: BreakGlassOutcome::Granted,
-            purpose: None,
+            // The forgery records its context truthfully so the gate reaches
+            // the quorum re-derivation (a context-less Granted receipt is
+            // refused one check earlier — see the ratchet test below).
+            purpose: Some(request.purpose.clone()),
             context: None,
-            request_bucket: None,
+            request_bucket: Some(bucket),
         };
         let forged_hash = kernel.append_break_glass_receipt(&forged, &[])?;
         let dev = kernel.device_verifying_key();
-        let result = break_glass_receipt_outcome_for_verifier(
+        let err = break_glass_receipt_outcome_for_verifier(
             &kernel.conn,
             &dev,
             "vault:rt",
             [4u8; 32],
             &forged_hash,
             kernel.device_pq_public_key_ref(),
-        );
+        )
+        .expect_err("forged empty-approvals Granted receipt must be rejected at the unseal gate");
         assert!(
-            result.is_err(),
-            "forged empty-approvals Granted receipt must be rejected at the unseal gate"
+            err.to_string().contains("distinct trustee approvals"),
+            "the refusal must come from the quorum re-derivation, not an earlier check: {err}"
+        );
+        Ok(())
+    }
+
+    /// §3.6 ratchet: a Granted receipt that records NO request context
+    /// (purpose, operator context, request bucket all absent) is refused at
+    /// the unseal gate even when it is device-signed, hash-chained, and backed
+    /// by a full quorum. Every receipt this build writes records its context,
+    /// so the only ways to reach this shape are a pre-§3.6 build's row or a
+    /// re-signed row with the consent-bound context stripped — both fail
+    /// closed and require re-authorization.
+    #[test]
+    fn runtime_gate_refuses_granted_receipt_without_recorded_context() -> Result<()> {
+        let (mut kernel, _cfg) = setup_test_kernel()?;
+        let bucket = TimeBucket::now(600)?;
+        let trustee = SigningKey::from_bytes(&[22u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: trustee.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+        let request = UnlockRequest::new("vault:legacy", [5u8; 32], "incident", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &trustee);
+        let (_tok, mut receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        assert!(matches!(receipt.outcome, BreakGlassOutcome::Granted));
+        // Strip the recorded context the way an older build (or a re-signer)
+        // would leave it; the quorum evidence itself stays intact.
+        receipt.purpose = None;
+        receipt.context = None;
+        receipt.request_bucket = None;
+        let hash = kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
+        let dev = kernel.device_verifying_key();
+        let err = break_glass_receipt_outcome_for_verifier(
+            &kernel.conn,
+            &dev,
+            "vault:legacy",
+            [5u8; 32],
+            &hash,
+            kernel.device_pq_public_key_ref(),
+        )
+        .expect_err("a Granted receipt without recorded context must be refused at the gate");
+        assert!(
+            err.to_string().contains("records no request context"),
+            "unexpected refusal reason: {err}"
         );
         Ok(())
     }

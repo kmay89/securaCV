@@ -53,9 +53,13 @@ can evaluate approvals against a persistent trustee roster.
 
 The easiest way to stand up a quorum. `init` pins the device identity and opens an
 `n`-of-`m` **setup draft**; `trustee enroll` adds trustees one at a time. The quorum
-policy commits automatically the moment the draft is a valid quorum (once `n`
-trustees are enrolled), and each further enrollment strengthens it — so you never
-hand-assemble a policy or hold a partial one:
+policy commits automatically when the roster is **complete** — the moment the
+`m`-th trustee is enrolled — and not before: earlier enrollments edit only the draft,
+so you never hand-assemble a policy or hold a partial one. Growing or shrinking a
+live roster afterwards is a quorum-gated policy change (`policy propose` →
+`policy approve` → `policy set --approvals`). For running any of this as a witnessed
+ceremony — who is in the room, what is read aloud, what is retained — see
+[`security/CEREMONY_RUNBOOK.md`](security/CEREMONY_RUNBOOK.md):
 
 ```bash
 DEVICE_KEY_SEED=devkey:your-seed \
@@ -95,6 +99,15 @@ DEVICE_KEY_SEED=devkey:your-seed \
 
 Trustee entries use the format `id:HEX_PUBLIC_KEY`, where the public key is the hex-encoded
 32-byte Ed25519 verifying key.
+
+**Auditing without the signing seed.** `receipts`, `policy history`, and `policy show`
+open the encrypted database with either `--device-key-seed` or the database key alone
+(`--db-key` / `SECURACV_DB_KEY`), which `break_glass db-key --device-key-seed …` derives.
+Hand an observer or relying party that key plus the device's public key file — never
+`DEVICE_KEY_SEED`, which signs every ledger. Pass `--public-key-file device.pub` to
+`receipts` and `policy history` for a pinned verdict; without it both tools say
+`Verifying key: read from the audited database — … self-consistent; identity unverified`,
+because a key read out of the database being audited proves internal consistency only.
 
 ### Health check (`doctor`)
 
@@ -186,8 +199,12 @@ that walks the same four phases without file shuffling:
    (no token needed; it makes no server calls — the fragment never leaves their browser). The
    page displays the request's fields, **recomputes the request hash from them in the browser**,
    and enables signing only if it matches the hash in the link — a link whose fields were altered
-   is refused. The trustee signs in-browser with their key seed and sends you back the signature
-   to paste. Offline trustees can keep using `break_glass approve --request`.
+   is refused, and so is a link that carries only the hash (a trustee who receives one signs from
+   the request file with `break_glass approve --request` instead). The link carries the request
+   fields in clear text and stays in the trustee's browser history, so send it over the same
+   precommitted channel you would use for the request itself. The trustee signs in-browser with
+   their key seed and sends you back the signature to paste. Offline trustees can keep using
+   `break_glass approve --request`.
 4. **Quorum & unseal** — status now auto-refreshes every few seconds with a per-trustee
    signed/pending table and a progress bar; **Unseal** enables when quorum is met.
 

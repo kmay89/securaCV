@@ -211,7 +211,7 @@ QUORUM = {
         {"title": "Always audited", "detail": "every decision — Granted or Denied — is appended to a hash-chained, device-signed receipt log; the CLI `receipts` command re-verifies the chain, signatures and quorum."},
     ],
     "flow": [
-        {"n": 1, "title": "Request", "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket, and the operator context: their printed name, a reason code from a closed vocabulary, an optional case reference) and publishes its request_hash — which binds every one of those fields."},
+        {"n": 1, "title": "Request", "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket, and — on the CLI always, on the served console when supplied — the operator context: their printed name, a reason code from a closed vocabulary, an optional case reference) and publishes its request_hash — which binds every one of those fields."},
         {"n": 2, "title": "Approve", "detail": "each trustee signs that request_hash with their own Ed25519 key, under the trustee-approval domain. Keys never leave the trustee."},
         {"n": 3, "title": "Count", "detail": "the kernel counts distinct valid approvals for the request. Below n → Denied (still logged). At n → Granted."},
         {"n": 4, "title": "Mint + burn", "detail": "a single-use BreakGlassToken is device-signed, its nonce burned durably, and a signed receipt is chained."},
@@ -219,13 +219,13 @@ QUORUM = {
     ],
     "http": [
         {"method": "GET", "path": "/breakglass/policy", "desc": "the policy (public keys only): {n, m, trustees}"},
-        {"method": "POST", "path": "/breakglass/request", "desc": "open a session ({envelope, purpose, requested_by, reason, case_ref?}); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"},
+        {"method": "POST", "path": "/breakglass/request", "desc": "open a session ({envelope, purpose, requested_by?+reason?, case_ref?}) — requested_by and reason are optional together (a partial pair, or case_ref alone, is refused as 400 partial_operator_context); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"},
         {"method": "GET", "path": "/breakglass/status", "desc": "{envelope, purpose, requested_by, reason, case_ref, ruleset_hash, time_bucket, request_hash, needed, collected, ready}"},
         {"method": "POST", "path": "/breakglass/approve", "desc": "verify + count one trustee's Ed25519 signature"},
         {"method": "POST", "path": "/breakglass/unseal", "desc": "only if ready → authorize + unseal to an operator dir"},
         {"method": "POST", "path": "/breakglass/close", "desc": "discard the session + approvals"},
     ],
-    "cli": ["request", "approve", "authorize", "receipts", "unseal", "policy set", "policy show"],
+    "cli": ["request", "approve", "authorize", "receipts", "unseal", "policy set", "policy show", "policy history", "db-key"],
     "console": "src/break_glass/breakglass.html",
     "console_note": "a real 4-step operator console ships in the repo (Connect → Request → Collect approvals → Quorum & unseal), with a separate trustee-signer view that makes zero network calls and signs Ed25519 in-browser via WebCrypto — the same domain separation this page uses.",
 }
