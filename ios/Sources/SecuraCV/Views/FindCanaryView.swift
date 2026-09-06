@@ -179,11 +179,8 @@ struct FindCanaryView: View {
     /// applies when decorating rows. A search that ignored it could walk
     /// the user to the WRONG Canary while saying "Right here".
     private var suffixIsAmbiguous: Bool {
-        guard witness.fingerprint.count >= 4 else { return false }
-        let suffix = witness.fingerprint.lowercased().suffix(4)
-        return store.witnesses.filter {
-            $0.fingerprint.count >= 4 && $0.fingerprint.lowercased().hasSuffix(suffix)
-        }.count > 1
+        ProximityRanger.isSuffixAmbiguous(fingerprint: witness.fingerprint,
+                                          among: store.witnesses.map(\.fingerprint))
     }
 
     /// The freshest, strongest beacon whose fingerprint suffix matches this

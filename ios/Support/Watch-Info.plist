@@ -29,5 +29,11 @@
   <!-- Same export-compliance posture as the phone app: OS crypto only. -->
   <key>ITSAppUsesNonExemptEncryption</key>
   <false/>
+
+  <!-- "Find this Canary" on the wrist listens for the fleet's own presence
+       beacons; the prompt appears the first time the user opens Find, never
+       as an ambush at launch (WristFinder defers manager creation). -->
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>SecuraCV listens for your Canaries' Bluetooth beacons so the watch can guide you to one.</string>
 </dict>
 </plist>

@@ -27,7 +27,12 @@ extension WristSnapshot {
                          lastEventHeadline: w.lastEvent.isEmpty ? nil : w.lastEvent,
                          lastEventBucket: w.lastEventAt.map(FleetStore.bucket),
                          batteryPct: w.batteryPct,
-                         isMuted: w.isMuted)
+                         isMuted: w.isMuted,
+                         // What lets the WRIST tie a heard beacon to this
+                         // row (the beacon carries the fingerprint's last
+                         // two bytes) — the key to finding on the watch's
+                         // own radio.
+                         fingerprint: w.fingerprint.isEmpty ? nil : w.fingerprint)
         }
         self.init(revision: 0,
                   sentAt: Date(timeIntervalSince1970: 0),
@@ -71,6 +76,10 @@ extension WristSnapshot {
                   // heartbeat screen says "your fleet checked in" where the
                   // phone would — the honesty split travels with the data.
                   lastBeatAt: store.heartbeat.wireLastBeat,
-                  beatSourceRaw: store.heartbeat.lastBeatSource?.rawValue)
+                  beatSourceRaw: store.heartbeat.lastBeatSource?.rawValue,
+                  // The consent-first discovery choice travels with the
+                  // data: the wrist's Find runs its own radio only behind
+                  // the same gate the phone's radios honor.
+                  discoveryConsented: store.discoveryConsent)
     }
 }

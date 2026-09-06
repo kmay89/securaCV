@@ -1588,6 +1588,28 @@ final class FleetStore: ObservableObject {
         return out
     }
 
+    // MARK: - identify (make one Canary find YOU)
+
+    /// Ask one paired Canary to make itself known — the firmware's ~15 s
+    /// identify (LED blink + chirp). Used by the phone's Find screen and by
+    /// the wrist through WatchLink; identify travels over Wi-Fi by device
+    /// id, which is what makes it the disambiguator when two Canaries share
+    /// a beacon suffix. Returns the honest outcome: whether the device
+    /// accepted, whether its chirp is set to visual-only, and — on failure —
+    /// the reason, verbatim.
+    func identifyCanary(id: String) async -> (ok: Bool, visualOnly: Bool, why: String?) {
+        guard let ref = devices.devices.first(where: { $0.id == id }),
+              let api = try? devices.api(for: ref) else {
+            return (false, false, "This Canary isn't paired for Wi-Fi commands on this iPhone.")
+        }
+        do {
+            let visualOnly = try await api.identify()
+            return (true, visualOnly, nil)
+        } catch {
+            return (false, false, error.localizedDescription)
+        }
+    }
+
     // MARK: - test alert (the "provably alive" button)
 
     /// `playFeedback: false` for wrist-originated tests: the answer lands in

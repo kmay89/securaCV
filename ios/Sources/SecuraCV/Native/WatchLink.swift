@@ -147,6 +147,22 @@ extension WatchLink: WCSessionDelegate {
                 // Answer with the post-mute snapshot so the wrist row updates
                 // in the same breath as the tap.
                 self.replyWithCurrentSnapshot(replyHandler)
+            case WristSync.commandIdentify:
+                // The wrist asked one Canary to make itself known. The phone
+                // carries it out over Wi-Fi (FleetStore.identifyCanary) and
+                // the reply says exactly what happened — the wrist's copy
+                // must claim a chirp only when a device actually accepted.
+                guard let id = message[WristSync.identifyIDKey] as? String, !id.isEmpty,
+                      let store = self.store else {
+                    replyHandler([WristSync.identifyOKKey: false,
+                                  WristSync.identifyWhyKey: "The iPhone couldn't take the request."])
+                    return
+                }
+                let outcome = await store.identifyCanary(id: id)
+                var reply: [String: Any] = [WristSync.identifyOKKey: outcome.ok,
+                                            WristSync.identifyVisualOnlyKey: outcome.visualOnly]
+                if let why = outcome.why { reply[WristSync.identifyWhyKey] = why }
+                replyHandler(reply)
             case WristSync.commandTestAlertPath:
                 // Run the test, THEN answer with the verdict-carrying
                 // snapshot: the reply IS this request's result, so the wrist

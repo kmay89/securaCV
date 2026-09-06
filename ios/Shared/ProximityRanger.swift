@@ -206,6 +206,22 @@ struct ProximityRanger: Sendable {
         return nil
     }
 
+    // MARK: - the twin rule
+
+    /// Two fleet members sharing the beacon's 2-byte suffix cannot be told
+    /// apart over the air — FleetMerge.attach's ambiguity rule, stated once
+    /// here so the phone's Find screen and the wrist's apply the SAME rule
+    /// (a search that ignored it could walk the user to the WRONG Canary
+    /// while saying "Right here"). `fingerprints` is every fleet member's
+    /// fingerprint, the target's included.
+    static func isSuffixAmbiguous(fingerprint: String, among fingerprints: [String]) -> Bool {
+        guard fingerprint.count >= 4 else { return false }
+        let suffix = fingerprint.lowercased().suffix(4)
+        return fingerprints.filter {
+            $0.count >= 4 && $0.lowercased().hasSuffix(suffix)
+        }.count > 1
+    }
+
     // MARK: - the multi-Canary hint
 
     /// "You're closer to the Kitchen one right now." Given the target's

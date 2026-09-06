@@ -55,6 +55,23 @@ struct WitnessDetailView: View {
                 }
             }
 
+            // "Where IS it?" from the wrist's own radio — offered whenever
+            // the beacon can be recognized (an older phone sends no
+            // fingerprint and the row simply doesn't offer it) and the
+            // phone's consent-first discovery choice says yes. The screen
+            // itself carries the honest gates for consent and Bluetooth.
+            if live.fingerprint != nil {
+                Section {
+                    NavigationLink {
+                        WristFindView(witness: live)
+                    } label: {
+                        Label("Find", systemImage: "location.north.circle")
+                    }
+                } footer: {
+                    Text("Warmer/colder by its beacon — taps guide your hand; a WAP-class Canary can chirp back.")
+                }
+            }
+
             if let event = live.lastEventHeadline {
                 Section("Last event") {
                     VStack(alignment: .leading, spacing: Theme.xs) {
