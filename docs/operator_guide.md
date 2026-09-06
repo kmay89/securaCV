@@ -190,8 +190,12 @@ that walks the same four phases without file shuffling:
    (no token needed; it makes no server calls — the fragment never leaves their browser). The
    page displays the request's fields, **recomputes the request hash from them in the browser**,
    and enables signing only if it matches the hash in the link — a link whose fields were altered
-   is refused. The trustee signs in-browser with their key seed and sends you back the signature
-   to paste. Offline trustees can keep using `break_glass approve --request`.
+   is refused, and so is a link that carries only the hash (a trustee who receives one signs from
+   the request file with `break_glass approve --request` instead). The link carries the request
+   fields in clear text and stays in the trustee's browser history, so send it over the same
+   precommitted channel you would use for the request itself. The trustee signs in-browser with
+   their key seed and sends you back the signature to paste. Offline trustees can keep using
+   `break_glass approve --request`.
 4. **Quorum & unseal** — status now auto-refreshes every few seconds with a per-trustee
    signed/pending table and a progress bar; **Unseal** enables when quorum is met.
 

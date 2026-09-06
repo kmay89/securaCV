@@ -353,10 +353,13 @@ The operator connects with the capability token from `--token-path`; the
 server computes the request hash over every field including the operator
 context (**CODE**); the trustee signing link carries every field the hash
 binds, and the signer page recomputes the hash in the browser and enables
-Sign only on a match — a link whose fields do not produce its hash is refused
-(**CODE**). Binding a non-loopback address requires `--tls-cert` /
-`--tls-key` (**CODE**). Record that the trustee pasted a key seed into a
-browser tab; offline trustees use the CLI. The console writes no per-request
+Sign only on a match — a link whose fields do not produce its hash is refused,
+and so is a link that carries only the hash (that trustee falls back to
+`approve --request`) (**CODE**). The link carries the request fields in clear
+text and persists in browser history, so it travels over the trustees'
+precommitted channel, not a shared chat (**PROC**). Binding a non-loopback
+address requires `--tls-cert` / `--tls-key` (**CODE**). Record that the
+trustee pasted a key seed into a browser tab; offline trustees use the CLI. The console writes no per-request
 log — the durable trace is the receipt row and the consumed-token row, so the
 transcript must capture the HTTP replies itself (**GAP**).
 

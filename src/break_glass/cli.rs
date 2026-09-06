@@ -852,9 +852,12 @@ fn cmd_request(
         .expect("with_context always sets context");
     let request_hash = request.request_hash();
 
+    // Echo the NORMALIZED fields (what the hash covers), not the raw
+    // arguments: a trailing space or stray control character the admission
+    // policy trimmed or refused must never show up as if it were signed.
     println!("=== Unlock Request ===");
-    println!("Envelope:     {}", envelope);
-    println!("Purpose:      {}", purpose);
+    println!("Envelope:     {}", request.vault_envelope_id);
+    println!("Purpose:      {}", request.purpose);
     println!("Requested by: {}", context.requester_name);
     println!("Reason code:  {}", context.reason_code);
     if let Some(case_ref) = &context.case_ref {
@@ -870,8 +873,8 @@ fn cmd_request(
     if let Some(path) = output_request {
         let file = UnlockRequestFile {
             format: UNLOCK_REQUEST_FILE_FORMAT.to_string(),
-            envelope: envelope.trim().to_string(),
-            purpose: purpose.trim().to_string(),
+            envelope: request.vault_envelope_id.clone(),
+            purpose: request.purpose.clone(),
             requested_by: Some(context.requester_name.clone()),
             reason: Some(context.reason_code.clone()),
             case_ref: context.case_ref.clone(),
@@ -2463,12 +2466,15 @@ fn cmd_receipts(
         if status == "INVALID" {
             invalid_count += 1;
         }
+        // Every field read back from the database is display_safe'd: a row
+        // another build (or a device-key holder) wrote is not trusted to be
+        // free of line-forging characters just because this build refuses them.
         println!(
             "#{} @{}: {} envelope={} trustees={:?} [{}]",
             id,
             created_at,
             outcome,
-            receipt.vault_envelope_id,
+            crate::break_glass::display_safe(&receipt.vault_envelope_id),
             receipt
                 .trustees_used
                 .iter()
@@ -2494,7 +2500,7 @@ fn cmd_receipts(
             println!("  entry_hash: {}", hex_vec(&entry_hash));
             println!("  signature: {}", hex_vec64(&signature));
             if let BreakGlassOutcome::Denied { reason } = &receipt.outcome {
-                println!("  reason: {}", reason);
+                println!("  reason: {}", crate::break_glass::display_safe(reason));
             }
             // The deterministic §3.6 human-readable record (the 21 CFR 11.50
             // triad): printed name, UTC time, and the meaning each signature

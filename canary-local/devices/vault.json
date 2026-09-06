@@ -249,7 +249,7 @@
       {
         "n": 1,
         "title": "Request",
-        "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket, and the operator context: their printed name, a reason code from a closed vocabulary, an optional case reference) and publishes its request_hash \u2014 which binds every one of those fields."
+        "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket, and \u2014 on the CLI always, on the served console when supplied \u2014 the operator context: their printed name, a reason code from a closed vocabulary, an optional case reference) and publishes its request_hash \u2014 which binds every one of those fields."
       },
       {
         "n": 2,
@@ -281,7 +281,7 @@
       {
         "method": "POST",
         "path": "/breakglass/request",
-        "desc": "open a session ({envelope, purpose, requested_by, reason, case_ref?}); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"
+        "desc": "open a session ({envelope, purpose, requested_by?+reason?, case_ref?}) \u2014 requested_by and reason are optional together (a partial pair, or case_ref alone, is refused as 400 partial_operator_context); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"
       },
       {
         "method": "GET",
