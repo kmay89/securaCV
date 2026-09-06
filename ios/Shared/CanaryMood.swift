@@ -20,6 +20,9 @@
 //   trust (days)  — consecutive fully-clean days; a long-healthy system is
 //                   VISIBLY different from a day-one system.
 
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (the one mood engine behind every bird)
+
 import Foundation
 
 /// Mirror of `canary::care::BirdInputs`.

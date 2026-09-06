@@ -18,6 +18,10 @@
 //     `hidden` renders NOTHING — during a real alarm the character leaves
 //     the stage to the instruments, by firmware rule.
 
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (the one performer behind every bird; isLuminanceReduced is simply always
+// false off the wrist, so the still-pose gate degrades to Reduce Motion)
+
 import SwiftUI
 
 struct CanaryActor: View {

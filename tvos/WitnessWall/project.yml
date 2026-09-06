@@ -21,7 +21,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.2.3"
+    MARKETING_VERSION: "0.2.4"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "$(APPLE_DEVELOPMENT_TEAM)"   # from env / CI, never committed
@@ -103,6 +103,17 @@ targets:
       # drag) — one projector, one massing, two hands.
       - path: ../../ios/Shared/FleetSolids.swift
       - path: ../../ios/Shared/FleetIsoProjector.swift
+      # THE CHARACTER — the same living canary the phone and the watch stage,
+      # compiled rather than redrawn: the mood engine (a mirror of the display
+      # firmware's bird_mood.h — one character, same feelings, every surface),
+      # the performer, and the keeper that persists the slow feelings (pure
+      # over injected defaults; lives in ios/Sources like CloudContainer
+      # above, because the phone-only fleet fold was split out of it). The
+      # Wall's own fold from ITS truth to the engine's terms is
+      # Sources/WitnessWall/WallCanary.swift.
+      - path: ../../ios/Shared/CanaryMood.swift
+      - path: ../../ios/Shared/CanaryActor.swift
+      - path: ../../ios/Sources/SecuraCV/Model/CanaryMoodKeeper.swift
     dependencies:
       # XcodeGen embeds an extension dependency via an "Embed App Extensions"
       # phase — the Top Shelf provider ships INSIDE the app, and the existing
