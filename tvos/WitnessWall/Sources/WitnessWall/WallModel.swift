@@ -409,9 +409,13 @@ final class WallModel {
         // pass, so this TV's own verdict folds in too. The keeper
         // minute-guards its slow tick; the face is recomputed on every
         // observe, so the double call costs nothing and hides nothing.
-        updateCanaryMood(fleet: snapshot, wallDown: false)
+        // A trust milestone is a ONE-SHOT from the keeper, so whichever
+        // observe crosses the day carries it into the second fold — or the
+        // week/month sentence would flash for the verify fetch and vanish.
+        let milestone = updateCanaryMood(fleet: snapshot, wallDown: false)
         await refreshVerification()
-        updateCanaryMood(fleet: snapshot, wallDown: false)
+        updateCanaryMood(fleet: snapshot, wallDown: false,
+                         carryingMilestone: milestone)
     }
 
     /// One verify pass of this TV's own: fetch the sealed log and run the
@@ -468,16 +472,22 @@ final class WallModel {
     /// character react. Runs on every cycle like resident.observe — the
     /// keeper minute-guards its own tick against the 10s poll cadence, and
     /// a WORSE floor still lands immediately, exactly as on the phone.
-    private func updateCanaryMood(fleet: FleetSnapshot, wallDown: Bool) {
+    /// Returns whether a trust milestone fired, so a caller folding twice
+    /// in one cycle can carry the one-shot through (`carryingMilestone`).
+    @discardableResult
+    private func updateCanaryMood(fleet: FleetSnapshot, wallDown: Bool,
+                                  carryingMilestone carried: Bool = false) -> Bool {
         let reading = moodKeeper.observe(
             WallCanary.inputs(fleet: fleet, wallDown: wallDown, report: report))
+        let milestone = reading.milestone || carried
         canaryFace = reading.face
         canaryPosture = reading.posture
         canaryLine = WallCanary.line(face: reading.face,
                                      posture: reading.posture,
                                      state: reading.state,
-                                     milestone: reading.milestone,
+                                     milestone: milestone,
                                      fleet: fleet)
+        return milestone
     }
 
     /// Discovered mode keeps an ear open: every few poll cycles, re-browse

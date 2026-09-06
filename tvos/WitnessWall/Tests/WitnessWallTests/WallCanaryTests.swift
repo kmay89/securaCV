@@ -69,37 +69,30 @@ final class WallCanaryTests: XCTestCase {
         XCTAssertFalse(fine.linksDown)
     }
 
-    func testVerifiedFeedsTheBirdOnlyWhenThisTVWalkedTheChain() {
+    func testTheBirdNeverClaimsVerifiedUntilAKeyIsPinned() {
+        // "Verified" is an Ed25519 signature checked against a PINNED key —
+        // nothing looser (AGENTS.md). Today's walk checks the key the log
+        // itself supplied, so the engine's anxiety-snapping full-verified
+        // input stays off — even for a walk that passes with everyone
+        // online. A passing walk is still never an alarm.
+        let walked = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
+                                       wallDown: false, report: report(ok: true))
+        XCTAssertFalse(walked.allVerified)
+        XCTAssertFalse(walked.alarmUnacked)
+
         let selfReport = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
                                            wallDown: false, report: nil)
         XCTAssertFalse(selfReport.allVerified,
                        "a device's self-stamp is its own word, not a verdict")
-
-        let walked = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
-                                       wallDown: false, report: report(ok: true))
-        XCTAssertTrue(walked.allVerified)
-
-        let walkedButDark = WallCanary.inputs(
-            fleet: fleet([("porch", false, "ok")]),
-            wallDown: false, report: report(ok: true))
-        XCTAssertFalse(walkedButDark.allVerified,
-                       "verified means everyone answered, too")
-
-        let walkedButNobody = WallCanary.inputs(
-            fleet: fleet([]), wallDown: false, report: report(ok: true))
-        XCTAssertFalse(walkedButNobody.allVerified,
-                       "an empty fleet proved nothing")
     }
 
-    func testAVerifiedPassAndALiveAlarmAreNeverBothClaimed() {
-        // A sealed log this TV walked can verify while a device still
-        // reports its own chain troubled — the alarm outranks the pass.
+    func testAPassingWalkNeverMasksADevicesOwnAlarm() {
+        // A sealed log from one source can verify while another device
+        // still reports its chain troubled — the alarm always wins.
         let i = WallCanary.inputs(
             fleet: fleet([("porch", true, "ok"), ("shed", true, "tampered")]),
             wallDown: false, report: report(ok: true))
         XCTAssertTrue(i.alarmUnacked)
-        XCTAssertFalse(i.allVerified,
-                       "a fully-verified pass cannot coexist with a live alarm")
     }
 
     func testTheWallsOwnOutageIsALinkProblemAndNothingMore() {

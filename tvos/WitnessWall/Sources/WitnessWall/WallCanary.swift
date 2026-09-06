@@ -15,10 +15,16 @@
 //                     posture is always Calling, never Searching.
 //    linksDown      — a device that cannot reach its hub, or a wall that
 //                     lost its own source (the stale state).
-//    allVerified    — ONLY a chain this TV walked itself (report.ok), with
-//                     everyone online. A device's self-stamp is its own
-//                     word, never this field — the header banner's rule,
-//                     applied to the bird's feelings.
+//    allVerified    — never claimed on this surface, yet. The repo reserves
+//                     "verified" for an Ed25519 signature checked against a
+//                     key PINNED at pairing — nothing looser — and today
+//                     this TV walks a served log against the key the log
+//                     itself supplied. A passing walk is real evidence and
+//                     the header phrases it carefully ("not yet pinned");
+//                     the engine's full-verified snap (anxiety to zero at
+//                     once) is a stronger claim than that, so the bird
+//                     earns calm the slow way. The day pairing pins a key,
+//                     this is the field that lights up.
 //    alarmUnacked   — the Wall's real alarm: a chain that did not verify
 //                     (this TV's own verdict, or a device saying so).
 //                     There is no acknowledgment on a wall, so the alarm
@@ -46,13 +52,12 @@ enum WallCanary {
         var i = CanaryMoodInputs()
         i.lostWitnesses = fleet.devices.filter { !$0.online }.count
         i.linksDown = wallDown || fleet.devices.contains { $0.hubState == .down }
-        // A verified pass and a live alarm must never both be claimed: a
-        // sealed log this TV walked can verify while a device still reports
-        // its own chain troubled, and the alarm outranks the pass.
-        i.allVerified = report?.ok == true
-            && !fleet.devices.isEmpty
-            && fleet.devices.allSatisfy(\.online)
-            && !fleet.hasChainTrouble
+        // Never claimed yet: the engine's full-verified snap is reserved
+        // for a chain walked against a key pinned at pairing ("verified"
+        // means nothing looser — AGENTS.md), and today's walk checks the
+        // key the log itself supplied. A FAILED walk is still a real alarm
+        // below — the same asymmetry the header banner speaks.
+        i.allVerified = false
         i.alarmUnacked = report?.ok == false || fleet.hasChainTrouble
         return i
     }
