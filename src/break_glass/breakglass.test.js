@@ -197,6 +197,31 @@ describe('request-hash recomputation (served-path WYSIWYS)', () => {
     assert.match(signer.el('ts-verify').textContent, /DO NOT SIGN/);
   });
 
+  it('refuses a link carrying partial context (reason without requester)', async () => {
+    // A relay that appends a reason/case to a context-free link would show
+    // fields the bare hash does not bind; the page must not green-light it.
+    const bare = '#sign&hash=' + HASH_BARE + '&envelope=vault%3Avector&purpose=incident&rh=' +
+      VECTOR.ruleset_hash + '&start=' + VECTOR.start_epoch_s + '&size=' + VECTOR.size_s;
+    const signer = loadConsole({ hash: bare + '&reason=incident-review' });
+    const result = await signer.drive('verifySignLink(parseSignFragment())');
+    assert.equal(result.ok, false);
+    assert.equal(signer.el('ts-btn-sign').disabled, true);
+    assert.match(signer.el('ts-verify').textContent, /partial/i);
+    // The same context-free link WITHOUT the orphan field matches the bare hash.
+    const clean = loadConsole({ hash: bare });
+    const ok = await clean.drive('verifySignLink(parseSignFragment())');
+    assert.equal(ok.ok, true);
+  });
+
+  it('keeps Sign disabled when the link carries an unparseable window', async () => {
+    const frag = '#sign&hash=' + HASH_BARE + '&envelope=vault%3Avector&purpose=incident&rh=' +
+      VECTOR.ruleset_hash + '&start=not-a-number&size=' + VECTOR.size_s;
+    const signer = loadConsole({ hash: frag });
+    const result = await signer.drive('verifySignLink(parseSignFragment())');
+    assert.equal(result.ok, false);
+    assert.equal(signer.el('ts-btn-sign').disabled, true, 'a malformed link must never leave Sign enabled');
+  });
+
   it('labels a hash-only link as blind signing', async () => {
     const signer = loadConsole({ hash: '#sign&hash=' + HASH_CTX + '&envelope=vault%3Avector' });
     const result = await signer.drive('verifySignLink(parseSignFragment())');

@@ -293,12 +293,10 @@
       <div style="flex:0 0 auto"><span class="quorum mono" id="quorum">0 / 0</span></div>
       <div class="progress" id="quorum-bar"><div></div></div>
       <div style="flex:0 0 auto"><button class="btn" id="btn-refresh">Refresh status</button></div>
-    </div>
-    <div class="muted" id="status-context" style="margin:6px 0 0; display:none"></div>
-    <div class="row" style="display:none">
       <div style="flex:0 0 auto"><button class="btn primary" id="btn-unseal" disabled>Unseal</button></div>
       <div style="flex:0 0 auto"><button class="btn" id="btn-close">Close request</button></div>
     </div>
+    <div class="muted" id="status-context" style="margin:6px 0 0; display:none"></div>
     <p class="muted" id="poll-note" style="margin:6px 0 0; display:none">Status refreshes
       automatically every few seconds while the request is open — approvals from other machines
       appear here by themselves.</p>
@@ -724,7 +722,7 @@ if (signParams) {
 // refused outright — that is the relay-swapped-the-meaning attack.
 async function verifySignLink(p) {
   const btn = $("ts-btn-sign");
-  const hasPreimage = p.rh && p.start !== undefined && p.size !== undefined &&
+  const hasPreimage = p.rh !== undefined && p.start !== undefined && p.size !== undefined &&
     p.envelope !== undefined && p.purpose !== undefined;
   if (!hasPreimage) {
     banner("ts-verify", "warn", "This link carries only the hash — it cannot show you what you are " +
@@ -732,34 +730,60 @@ async function verifySignLink(p) {
       "the request fields, or verify the request another way before signing.");
     return { ok: false, blind: true };
   }
-  $("ts-purpose").textContent = displaySafe(p.purpose);
-  $("ts-by").textContent = p.by ? displaySafe(p.by) : "(not recorded)";
-  $("ts-reason").textContent = p.reason ? displaySafe(p.reason) : "(not recorded)";
-  $("ts-case").textContent = p.case ? displaySafe(p.case) : "(none)";
-  const start = Number(p.start), size = Number(p.size);
-  $("ts-window").textContent = new Date(start * 1000).toISOString().slice(0, 16).replace("T", " ") +
-    " UTC + " + size + "s";
-  $("ts-fields").style.display = "";
+  // A full-preimage link never enables signing until its fields reproduce
+  // the hash — disable FIRST, before anything below can throw.
   btn.disabled = true;
+  const refuse = (why) => {
+    btn.disabled = true;
+    banner("ts-verify", "bad", "DO NOT SIGN. " + why);
+    return { ok: false, reason: why };
+  };
   try {
+    // Operator context is all-or-none, exactly as the server enforces it: a
+    // reason or case reference without a requester (or a requester without a
+    // reason) is a field the hash would NOT cover while the page displays it.
+    const hasBy = p.by !== undefined, hasReason = p.reason !== undefined;
+    const orphan = p.case !== undefined || p.key !== undefined;
+    if ((hasBy !== hasReason) || (!hasBy && orphan)) {
+      return refuse("This link carries partial operator context (a reason, case reference, or key " +
+        "without the requester/reason pair), so what it shows is not what its hash covers. Ask the " +
+        "operator for a fresh link.");
+    }
+    const start = Number(p.start), size = Number(p.size);
+    if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(size) || size <= 0) {
+      return refuse("This link's time window is not a valid bucket (start=" + displaySafe(p.start) +
+        ", size=" + displaySafe(p.size) + "). Ask the operator for a fresh link.");
+    }
+    if (!/^[0-9a-f]{64}$/i.test(p.rh) || (p.key !== undefined && !/^[0-9a-f]{64}$/i.test(p.key))) {
+      return refuse("This link's ruleset hash or requester key is malformed. Ask the operator for a fresh link.");
+    }
+    $("ts-purpose").textContent = displaySafe(p.purpose);
+    $("ts-by").textContent = hasBy ? displaySafe(p.by) : "(not recorded)";
+    $("ts-reason").textContent = hasReason ? displaySafe(p.reason) : "(not recorded)";
+    $("ts-case").textContent = p.case !== undefined ? displaySafe(p.case) : "(none)";
+    $("ts-window").textContent = new Date(start * 1000).toISOString().slice(0, 16).replace("T", " ") +
+      " UTC + " + size + "s";
+    $("ts-fields").style.display = "";
     const computed = await computeRequestHashHex({
       envelope: p.envelope, purpose: p.purpose, ruleset_hash: p.rh,
       start_epoch_s: start, size_s: size,
-      requested_by: p.by, reason: p.reason, case_ref: p.case, requester_key: p.key,
+      requested_by: hasBy ? p.by : undefined, reason: hasBy ? p.reason : undefined,
+      case_ref: hasBy ? p.case : undefined, requester_key: hasBy ? p.key : undefined,
     });
     if (computed === p.hash) {
-      banner("ts-verify", "ok", "Verified in this browser: the fields above produce exactly the hash you are asked to sign.");
+      // "Hash matched", deliberately not "verified": this checks that the
+      // displayed fields reproduce the hash — it verifies no signature.
+      banner("ts-verify", "ok", "Hash matched in this browser: the fields above produce exactly the hash " +
+        "you are asked to sign. (This checks the request's contents; it verifies no signature.)");
       btn.disabled = false;
       return { ok: true, computed };
     }
-    banner("ts-verify", "bad", "DO NOT SIGN. The fields in this link do not produce the hash it asks you to sign " +
-      "(recomputed " + computed.slice(0, 8) + "… ≠ " + p.hash.slice(0, 8) + "…). Someone altered the link or " +
-      "the request. Ask the operator for a fresh link.");
-    return { ok: false, computed };
+    return refuse("The fields in this link do not produce the hash it asks you to sign (recomputed " +
+      computed.slice(0, 8) + "… ≠ " + p.hash.slice(0, 8) + "…). Someone altered the link or the request. " +
+      "Ask the operator for a fresh link.");
   } catch (e) {
-    banner("ts-verify", "bad", "Could not recompute the request hash in this browser: " + ((e && e.message) || e) +
-      ". Do not sign here — use `break_glass approve --request` instead.");
-    return { ok: false, error: String(e) };
+    return refuse("Could not recompute the request hash in this browser: " + ((e && e.message) || e) +
+      ". Use `break_glass approve --request` instead.");
   }
 }
 

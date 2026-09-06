@@ -386,6 +386,28 @@ impl UnlockRequest {
         Ok(self)
     }
 
+    /// Rebuild a request from fields a RECEIPT recorded, verbatim and without
+    /// the admission policy (`new` trims, caps, and rejects display-unsafe
+    /// characters). Audit re-derivation must reproduce the bytes that were
+    /// hashed when the receipt was written — a receipt an older build wrote
+    /// with a 600-byte purpose is still a valid receipt, and the hygiene
+    /// rules govern what this build ACCEPTS, not what history contains.
+    pub fn from_recorded(
+        vault_envelope_id: &str,
+        ruleset_hash: [u8; 32],
+        purpose: &str,
+        time_bucket: TimeBucket,
+        context: Option<OperatorContext>,
+    ) -> Self {
+        Self {
+            vault_envelope_id: vault_envelope_id.to_string(),
+            ruleset_hash,
+            purpose: purpose.to_string(),
+            time_bucket,
+            context,
+        }
+    }
+
     pub fn request_hash(&self) -> [u8; 32] {
         // Length-prefix the variable-length fields so no two distinct
         // (envelope_id, purpose) pairs can collide by shifting the boundary
@@ -781,12 +803,16 @@ impl BreakGlassReceipt {
                 ))
             }
         };
-        let mut request =
-            UnlockRequest::new(&self.vault_envelope_id, self.ruleset_hash, purpose, bucket)?;
         if let Some(context) = &self.context {
             context.check_shape()?;
-            request.context = Some(context.clone());
         }
+        let request = UnlockRequest::from_recorded(
+            &self.vault_envelope_id,
+            self.ruleset_hash,
+            purpose,
+            bucket,
+            self.context.clone(),
+        );
         if request.request_hash() != self.request_hash {
             return Err(anyhow!(
                 "recorded request context does not re-derive the receipt's request hash — \
@@ -2363,6 +2389,42 @@ mod tests {
             ctx.requester_key = Some("zz".to_string());
         }
         assert!(bad_key.verify_context_binding().is_err());
+    }
+
+    /// Hygiene governs what this build ACCEPTS, not what history contains: a
+    /// receipt an older build wrote with an over-cap purpose (or a character
+    /// this build now refuses) must still re-derive its hash and audit VALID.
+    #[test]
+    fn historical_receipt_outside_todays_admission_policy_still_binds() {
+        let bucket = test_bucket();
+        let long_purpose = "p".repeat(MAX_FIELD_LEN + 100);
+        // An older build hashed these bytes exactly as given.
+        let request = UnlockRequest::from_recorded(
+            "vault:old\u{200b}",
+            [4u8; 32],
+            &long_purpose,
+            bucket,
+            None,
+        );
+        let receipt = BreakGlassReceipt {
+            vault_envelope_id: "vault:old\u{200b}".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [4u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![],
+            approvals_commitment: [0u8; 32],
+            policy_commitment: [0u8; 32],
+            outcome: BreakGlassOutcome::Denied {
+                reason: "insufficient".to_string(),
+            },
+            purpose: Some(long_purpose.clone()),
+            context: None,
+            request_bucket: Some(bucket),
+        };
+        assert!(receipt.verify_context_binding().unwrap());
+        // ...while the same strings are refused at admission today.
+        assert!(UnlockRequest::new("vault:old\u{200b}", [4u8; 32], "p", bucket).is_err());
+        assert!(UnlockRequest::new("vault:old", [4u8; 32], &long_purpose, bucket).is_err());
     }
 
     /// A receipt written by another build could carry forged lines; the
