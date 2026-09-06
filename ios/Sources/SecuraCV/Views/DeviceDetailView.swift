@@ -105,6 +105,15 @@ struct DeviceDetailView: View {
             }
 
             Section("Health") {
+                // The ambient nearness whisper, said in words here: the row's
+                // glyph and this line come from the same calm keeper
+                // (Shared/NearnessKeeper — margin + dwell, never a sort).
+                if store.nearestWitnessID == witness.id {
+                    LabeledContent("Nearby") {
+                        Label("Nearest to this iPhone", systemImage: "location.north.circle")
+                            .foregroundStyle(Theme.color(.info))
+                    }
+                }
                 LabeledContent("Liveness", value: witness.link.label)
                 // HOW this one senses — a device-level fact derived from the
                 // type it publishes (SenseModality), because no per-event

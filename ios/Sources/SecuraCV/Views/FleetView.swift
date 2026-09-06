@@ -179,14 +179,20 @@ struct FleetView: View {
                     ForEach(roomGroups, id: \.room) { group in
                         Section(group.room) {
                             ForEach(group.members) { w in
-                                NavigationLink(value: w) { WitnessRow(witness: w) }
+                                NavigationLink(value: w) {
+                                    WitnessRow(witness: w,
+                                               isNearest: store.nearestWitnessID == w.id)
+                                }
                             }
                         }
                     }
                 } else {
                     Section(store.demoMode ? "Your fleet (demo)" : "Your fleet") {
                         ForEach(filtered) { w in
-                            NavigationLink(value: w) { WitnessRow(witness: w) }
+                            NavigationLink(value: w) {
+                                WitnessRow(witness: w,
+                                           isNearest: store.nearestWitnessID == w.id)
+                            }
                         }
                     }
                 }
@@ -266,6 +272,9 @@ struct FleetSearchModifier: ViewModifier {
 
 struct WitnessRow: View {
     let witness: Witness
+    /// The ambient nearness whisper (FleetStore.nearestWitnessID) — a small
+    /// glyph beside the name, never an ordering: severity owns the sort.
+    var isNearest: Bool = false
     var body: some View {
         HStack(spacing: Theme.m) {
             SeverityPip(severity: witness.effectiveSeverity)
@@ -284,6 +293,12 @@ struct WitnessRow: View {
                     }
                     if witness.seenViaBLE {
                         Image(systemName: "dot.radiowaves.up.forward").imageScale(.small).foregroundStyle(.secondary)
+                    }
+                    if isNearest {
+                        Image(systemName: "location.north.circle")
+                            .imageScale(.small)
+                            .foregroundStyle(Theme.color(.info))
+                            .accessibilityLabel("Nearest to you")
                     }
                 }
                 Text(witness.statusLine).font(.caption).foregroundStyle(.secondary)
