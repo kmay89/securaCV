@@ -2646,28 +2646,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// (like the anchors table): chained and device-signed, but not part of
     /// the evidence envelope's ledgers.
     pub fn policy_change_history(&self) -> Result<Vec<PolicyChangeHistoryEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature \
-             FROM policy_change_history ORDER BY id ASC",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            let payload_json: String = row.get(0)?;
-            let approvals_json: String = row.get(1)?;
-            let prev_hash: Vec<u8> = row.get(2)?;
-            let entry_hash: Vec<u8> = row.get(3)?;
-            let signature: Vec<u8> = row.get(4)?;
-            out.push(PolicyChangeHistoryEntry {
-                record: serde_json::from_str(&payload_json)?,
-                payload_json,
-                approvals: serde_json::from_str(&approvals_json)?,
-                prev_hash: blob32(prev_hash, "policy_change_history.prev_hash")?,
-                entry_hash: blob32(entry_hash, "policy_change_history.entry_hash")?,
-                signature,
-            });
-        }
-        Ok(out)
+        read_policy_change_history(&self.conn)
     }
 
     fn load_break_glass_policy(&mut self) -> Result<()> {
@@ -3998,6 +3977,47 @@ pub struct PolicyChangeHistoryEntry {
     pub prev_hash: [u8; 32],
     pub entry_hash: [u8; 32],
     pub signature: Vec<u8>,
+}
+
+/// Read the policy-change history ledger from any connection to the kernel
+/// database — a read-only verifier that holds only the database key (no
+/// device seed, no `Kernel`) uses this; `Kernel::policy_change_history`
+/// delegates here. A database without the table (pre-feature vintage) has
+/// an empty history.
+pub fn read_policy_change_history(conn: &Connection) -> Result<Vec<PolicyChangeHistoryEntry>> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='policy_change_history' LIMIT 1",
+            [],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature \
+         FROM policy_change_history ORDER BY id ASC",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let payload_json: String = row.get(0)?;
+        let approvals_json: String = row.get(1)?;
+        let prev_hash: Vec<u8> = row.get(2)?;
+        let entry_hash: Vec<u8> = row.get(3)?;
+        let signature: Vec<u8> = row.get(4)?;
+        out.push(PolicyChangeHistoryEntry {
+            record: serde_json::from_str(&payload_json)?,
+            payload_json,
+            approvals: serde_json::from_str(&approvals_json)?,
+            prev_hash: blob32(prev_hash, "policy_change_history.prev_hash")?,
+            entry_hash: blob32(entry_hash, "policy_change_history.entry_hash")?,
+            signature,
+        });
+    }
+    Ok(out)
 }
 
 pub fn consume_break_glass_token_durably(

@@ -100,6 +100,15 @@ DEVICE_KEY_SEED=devkey:your-seed \
 Trustee entries use the format `id:HEX_PUBLIC_KEY`, where the public key is the hex-encoded
 32-byte Ed25519 verifying key.
 
+**Auditing without the signing seed.** `receipts`, `policy history`, and `policy show`
+open the encrypted database with either `--device-key-seed` or the database key alone
+(`--db-key` / `SECURACV_DB_KEY`), which `break_glass db-key --device-key-seed …` derives.
+Hand an observer or relying party that key plus the device's public key file — never
+`DEVICE_KEY_SEED`, which signs every ledger. Pass `--public-key-file device.pub` to
+`receipts` and `policy history` for a pinned verdict; without it both tools say
+`Verifying key: read from the audited database — … self-consistent; identity unverified`,
+because a key read out of the database being audited proves internal consistency only.
+
 ### Health check (`doctor`)
 
 Before you rely on the vault, confirm it is actually set up correctly:

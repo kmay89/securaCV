@@ -311,7 +311,9 @@
       "receipts",
       "unseal",
       "policy set",
-      "policy show"
+      "policy show",
+      "policy history",
+      "db-key"
     ],
     "console": "src/break_glass/breakglass.html",
     "console_note": "a real 4-step operator console ships in the repo (Connect \u2192 Request \u2192 Collect approvals \u2192 Quorum & unseal), with a separate trustee-signer view that makes zero network calls and signs Ed25519 in-browser via WebCrypto \u2014 the same domain separation this page uses."

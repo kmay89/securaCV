@@ -233,13 +233,16 @@ that is the versioning: the memory-hard format carries its own `v1` tag and
 the legacy form is simply "no prefix". `make_argon2id_seed` builds a seed
 from a passphrase with a fresh random salt at interactive defaults, and
 `validate_new_seed_strength` refuses a bare short or low-entropy passphrase
-for a *new* device.
+for a *new* device. As of 2026-09-06 `break_glass init` applies that check
+when it creates a new database (an existing database opens as before, so no
+provisioned device is locked out); `witnessd` first run and the HA add-on
+wizard do not call it yet.
 
-**Still tracked:** the memory-hard form is opt-in; provisioning flows
-(`witnessd` first run, the HA add-on wizard, `break_glass init`) still accept
-a legacy full-entropy seed and do not steer a human-typed passphrase into the
-Argon2id form by default. Operators should keep using full-entropy seeds
-(`openssl rand -hex 32`) unless they deliberately choose a passphrase seed.
+**Still tracked:** the memory-hard form is opt-in; `witnessd` first run and
+the HA add-on wizard still accept any legacy seed and no provisioning flow
+steers a human-typed passphrase into the Argon2id form by default. Operators
+should keep using full-entropy seeds (`openssl rand -hex 32`) unless they
+deliberately choose a passphrase seed.
 
 ---
 

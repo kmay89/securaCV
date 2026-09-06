@@ -143,8 +143,8 @@ COMMANDS = [
         "what": "Adds one trustee to the draft. Import a public key a trustee generated "
                 "themselves (--public-key), or mint a fresh Ed25519 keypair for them "
                 "(--generate) — the signing key is written at mode 0600 to hand over. Rejects "
-                "duplicate ids and reused keys up front. The real quorum policy commits — and "
-                "then strengthens — automatically the moment the draft is a valid quorum.",
+                "duplicate ids and reused keys up front. The real quorum policy commits automatically, "
+                "once, when the roster is complete — earlier enrollments only edit the draft.",
         "flags": [
             {"flag": "--id name", "desc": "a short, unique label for this trustee"},
             {"flag": "--public-key HEX", "desc": "import an existing 32-byte Ed25519 public key"},
@@ -194,11 +194,12 @@ CONCEPTS = [
               "It is deliberately separate from the committed quorum policy, because the kernel "
               "rejects an empty or partial roster by design (Invariant V). A half-finished setup "
               "can never be mistaken for a live gate."},
-    {"title": "It goes live the moment it's valid",
-     "blurb": "The real policy commits automatically once the draft is a genuine quorum — the "
-              "instant the n-th trustee is enrolled — and every further enrollment strengthens "
-              "it (n-of-n → n-of-(n+1) → …). Every commit runs the kernel's own validate(), so "
-              "the gate is never partial and reused keys are refused."},
+    {"title": "It goes live when the roster is complete",
+     "blurb": "The real policy commits automatically, once, when the m-th trustee is enrolled. "
+              "Committing earlier — at the threshold — would have made every later enrollment a "
+              "silent rewrite of a LIVE policy, exactly the roster-mutation path the quorum gate "
+              "exists to close (Invariant V). The commit runs the kernel's own validate(), so the "
+              "gate is never partial and reused keys are refused."},
     {"title": "Mint or import — your call",
      "blurb": "A trustee can generate their own key and send you only the public half (import), "
               "or you can mint one for them. A minted signing key is written at mode 0600 to "
@@ -224,14 +225,14 @@ CEREMONY = {
             "the encrypted kernel database carries DEVICE_KEY_SEED=… inline (init, every enroll, "
             "doctor) — export it once instead if you prefer, or pass --device-key-seed. drill needs "
             "no seed: it runs entirely in a throwaway sandbox. Watch the roster fill and the policy "
-            "go live the instant it becomes a valid 2-of-3.",
+            "go live once, when it is the complete 2-of-3.",
     "steps": [
         {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass init --threshold 2 --trustees 3 --db witness.db",
          "out": [
              "=== Break-glass setup — init ===",
              "  ✓ device identity pinned: b5c3d676657d54cd",
              "  ✓ started a 2-of-3 setup draft (witness.db.setup-draft.json)",
-             "    the quorum policy commits automatically once 2 trustee(s) are enrolled",
+             "    the quorum policy commits automatically once all 3 trustees are enrolled",
          ],
          "roster": [], "policy": None,
          "note": "Identity pinned; a 2-of-3 draft opened. No policy yet — an empty roster isn't a gate."},
@@ -240,16 +241,15 @@ CEREMONY = {
          "roster": ["alice"], "policy": None,
          "note": "One of three. Still below the threshold of 2, so no policy commits."},
         {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass trustee enroll --id bob --public-key 4567… --db witness.db",
-         "out": ["  ✓ enrolled trustee 'bob' (2/3)",
-                 "  ✓ quorum policy is live: 2-of-2"],
-         "roster": ["alice", "bob"], "policy": "2-of-2",
-         "note": "Threshold reached — the policy goes live as a valid 2-of-2 and the vault can now open under quorum."},
+         "out": ["  ✓ enrolled trustee 'bob' (2/3)"],
+         "roster": ["alice", "bob"], "policy": None,
+         "note": "Two of three. The threshold is met, but the roster is not complete, so the draft stays a draft — nothing commits until every planned trustee is enrolled."},
         {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass trustee enroll --id carol --generate --output carol.key --db witness.db",
          "out": ["  ✓ minted a signing key for 'carol' → carol.key (secret, mode 0600 — hand it to the trustee)",
                  "  ✓ enrolled trustee 'carol' (3/3)",
                  "  ✓ quorum policy is live: 2-of-3"],
          "roster": ["alice", "bob", "carol"], "policy": "2-of-3",
-         "note": "Minted carol a key (written 0600 to hand over) and reached the target — the gate strengthens to 2-of-3."},
+         "note": "Minted carol a key (written 0600 to hand over) and completed the roster — the policy commits once, as a valid 2-of-3 (history row 1, bootstrap), and the vault can now open under quorum."},
         {"cmd": "break_glass drill --threshold 2 --trustees 3",
          "out": [
              "=== Break-glass drill ===",

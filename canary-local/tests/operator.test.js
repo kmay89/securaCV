@@ -62,14 +62,19 @@ test("MAX_TRUSTEES is the kernel's own", () => {
 });
 
 // ── 5. every recorded ceremony line traces to a real CLI message ───────────
-test("the recorded ceremony output is the real binary's", () => {
+test("the recorded ceremony output matches the shipped CLI's behavior", () => {
   const cer = data.ceremony;
   assert.strictEqual(cer.threshold, 2);
   assert.strictEqual(cer.target, 3);
-  // the policy goes live at the threshold (step index 2 = 2nd enrollment), then strengthens
+  // the policy commits ONCE, when the roster is complete (step index 3 = 3rd
+  // enrollment) — never at the threshold; the CLI's enroll path commits only
+  // when trustees.len() == target_trustees.
   assert.strictEqual(cer.steps[1].policy, null, "1 trustee must not commit a policy");
-  assert.strictEqual(cer.steps[2].policy, "2-of-2", "policy must commit at the threshold");
-  assert.strictEqual(cer.steps[3].policy, "2-of-3", "policy must strengthen to the target");
+  assert.strictEqual(cer.steps[2].policy, null, "2 of 3 must not commit — the roster is incomplete");
+  assert.strictEqual(cer.steps[3].policy, "2-of-3", "policy commits once, at the complete roster");
+  assert.ok(cliRs.includes("draft.trustees.len() == draft.target_trustees"), "commit-at-complete-roster rule drifted");
+  const liveLines = cer.steps.flatMap((s) => s.out.filter((l) => l.includes("quorum policy is live")));
+  assert.deepStrictEqual(liveLines, ["  ✓ quorum policy is live: 2-of-3"], "exactly one commit line, at the target");
   // the rosters grow monotonically to the target
   assert.deepStrictEqual(cer.steps.map((s) => s.roster.length), [0, 1, 2, 3, 3, 3]);
   // the load-bearing message strings must exist verbatim in the CLI

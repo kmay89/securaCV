@@ -59,13 +59,13 @@ The KSK ceremony roles, mapped onto ours. "Trustee" is the SecuraCV word;
 
 | KSK role | SecuraCV role | Holds | Runs | May not | Status |
 |---|---|---|---|---|---|
-| Ceremony Administrator | **Operator** | access to `DEVICE_KEY_SEED` on the host | `init`, `trustee enroll`, `policy propose` / `set`, `request`, `authorize`, `unseal`, `receipts`, `doctor`, `log_anchor`, `log_verify` | hold a trustee signing key in the same ceremony | **PROC** — nothing stops one person holding both; the record must say so |
+| Ceremony Administrator | **Operator** | access to `DEVICE_KEY_SEED` on the host | `init`, `trustee enroll`, `policy propose` / `set`, `request`, `authorize`, `unseal`, `receipts`, `doctor`, `db-key` (derives the database key for observers), `log_anchor`, `log_verify` | hold a trustee signing key in the same ceremony | **PROC** — nothing stops one person holding both; the record must say so |
 | Crypto Officer | **Trustee** (one of *m*) | one Ed25519 signing-key file (32-byte hex seed, mode 0600) on their own machine | `approve --request`, `policy approve --proposal` | sign anything their own tool did not display | **CODE** — `approve --request` recomputes the hash from the file's fields before signing; `--request-hash` is labeled blind signing |
 | Requester of the act | **Requester** | nothing cryptographic | supplies `--requested-by`, `--reason`, `--case-ref`, `--requester-key` | — | **CODE** — consent-bound and recorded in the receipt; the requester key is recorded, not checked against a registry. The requester is often the operator; write that down |
 | Internal Witness | **Ceremony witness** — a person who is neither trustee nor operator | the exceptions register | nothing on the kernel | approve, operate | **PROC** → §3.4 witness co-signature. No kernel principal exists for this role |
 | Safe Security Controller | **Device-key custodian**; in keyguard mode also the **Vault-passphrase custodian** | where `DEVICE_KEY_SEED` lives; `SECURACV_VAULT_PASSPHRASE` (environment or secrets manager, never on disk) | sets the environment for the operator's commands | — | **CODE** for the on-disk part (the keyguard never writes the plaintext key); custody itself **PROC** |
 | Recovery Key Share Holder | **none** | — | — | — | **GAP** → §2.3 recovery quorum. If fewer than *n* current trustees remain, there is no in-band recovery |
-| External witness / auditor | **Observer** | read-only tools | `receipts`, `policy history`, `log_verify`, `log_anchor verify` | change anything | **CODE** — these commands write nothing (except `log_anchor`, which creates its table if missing) |
+| External witness / auditor | **Observer** | `device.pub` (the genesis public key), `tsa-ca.pem`, and the **database key** from the operator's `break_glass db-key` (passed as `--db-key` / `SECURACV_DB_KEY`) — never `DEVICE_KEY_SEED` | `receipts --public-key-file`, `policy history --public-key-file`, `policy show`, `log_verify --public-key-file`, `log_anchor verify --ca` | change anything; hold the signing seed | **CODE** — every one of these opens the database with the database key alone and writes nothing (except `log_anchor`, which creates its table if missing); the database key signs nothing, so an observer cannot forge what they audit |
 
 Vocabulary: a *ceremony witness* is a person. The *witness kernel* and a
 *tlog witness* are software. Beacon/Chirp co-signing is unrelated.
@@ -117,9 +117,13 @@ signed and chained. Write the overlap into the ceremony record and the CPS
   inside signed receipts and the ceremony record (Invariants II/III). Never in
   file names that leave the deployment, never in anchors (which carry only a
   hash). Consumer deployments may use pseudonymous trustee ids.
-- **Every command here runs with `--ui plain`** so stage markers are
-  deterministic lines (`==> <stage>` / `✔ <stage>`) rather than a spinner, and
-  the transcript can be captured with `2>&1 | tee`.
+- **Every `break_glass`, `log_verify`, `export_verify`, and `court_export`
+  command here runs with `--ui plain`** so stage markers are plain lines
+  rather than a spinner, and the transcript can be captured with
+  `2>&1 | tee`. The markers are `==> <stage>` on entry and
+  `✔ <stage> (<elapsed>)` on exit — the elapsed time differs run to run, so
+  compare transcripts line by line with that suffix ignored, never byte for
+  byte. `log_anchor` and `break_glass_serve` have no `--ui` flag.
 
 ## 3. Pre-ceremony checklist
 
@@ -128,11 +132,11 @@ Common to every ceremony; each ceremony adds its own preconditions.
 | Check | Command | Expect | Status |
 |---|---|---|---|
 | Vault and policy health | `break_glass doctor --db witness.db --vault-path vault/envelopes --device-key-seed "$DEVICE_KEY_SEED"` | exit 0; capture output (the plaintext-`master.key` warning is expected unless C6 was run) | **CODE** |
-| Ledger verdict | `log_verify --db witness.db --public-key-file device.pub [--high-water-mark hwm.bin]` | verdict `valid` — not `self-consistent; identity unverified` | **CODE** labels; distributing `device.pub` out of band is **PROC** |
+| Ledger verdict | `log_verify --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --public-key-file device.pub [--high-water-mark hwm.bin]` (an observer passes `--db-key` instead of the seed) | verdict `valid` — not `self-consistent; identity unverified` | **CODE** labels; distributing `device.pub` out of band is **PROC** |
 | Roster matches the CPS | `break_glass policy show --db witness.db --device-key-seed "$DEVICE_KEY_SEED"` | ids and fingerprints match CPS App. C | **CODE** prints; the comparison is **PROC** |
-| History intact | `break_glass policy history --db witness.db --device-key-seed "$DEVICE_KEY_SEED"` | `History chain VALID (<k> entries).` | **CODE** |
+| History intact | `break_glass policy history --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --public-key-file device.pub` | `Verifying key: pinned out of band …` then `History chain VALID (<k> entries).` — rows signed before a key rotation verify under the lineage | **CODE** |
 | Anchors | `log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" verify --ca tsa-ca.pem` | no anchor `UNVERIFIED`; note the newest anchor's age | **CODE** |
-| Receipt baseline | `break_glass receipts --db witness.db --device-key-seed "$DEVICE_KEY_SEED"` | `Total: <k>`, no INVALID; record *k* | **CODE** |
+| Receipt baseline | `break_glass receipts --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --public-key-file device.pub` | `Verifying key: pinned out of band …`, `Total: <k>`, no INVALID; record *k*. Without `--public-key-file` the tool says `self-consistent; identity unverified` and the baseline is not evidence | **CODE** |
 | Room | attendance, roles, channel check, script hash distributed, clock check, `BUILD.md` written | — | **PROC** |
 
 ## 4. Ceremony catalog
@@ -188,8 +192,9 @@ decided in advance (see step 2).
    complete roster commits; earlier enrollments edit the draft only).
    Artifacts: `policy history` and `policy show` output, captured.
 5. `break_glass doctor …` → captured output.
-6. `break_glass drill --threshold 2 --trustees 3` → `DRILL PASSED` (sandbox;
-   proves the build, not the roster — see C4).
+6. `break_glass drill --threshold 2 --trustees 3` → last line
+   `Result: DRILL PASSED — break-glass works end to end on this build.`
+   (sandbox; proves the build, not the roster — see C4).
 7. Publish the device public key and its randomart trust card to relying
    parties out of band (**PROC**). This is what makes their `log_verify`
    verdict `valid` rather than `self-consistent; identity unverified`.
@@ -338,7 +343,7 @@ script hash, and a procedural cooling-off.
 7. Audit:
    ```sh
    break_glass --ui plain receipts --db witness.db \
-     --device-key-seed "$DEVICE_KEY_SEED" --verbose
+     --device-key-seed "$DEVICE_KEY_SEED" --public-key-file device.pub --verbose
    ```
    → per receipt: `prev_hash`, `entry_hash`, signature, and the deterministic
    human-readable record (printed name, UTC bucket, meaning of each
@@ -389,7 +394,8 @@ securely delete it — it is sensitive and useless once consumed.
 Two different things; never conflate them.
 
 - **C4a — Sandbox drill.** `break_glass drill --threshold 2 --trustees 3`
-  → output ending `DRILL PASSED`, exit 0 (**CODE**). Temporary database,
+  → last line `Result: DRILL PASSED — break-glass works end to end on this
+  build.`, exit 0 (**CODE**). Temporary database,
   temporary vault, ephemeral keys; it touches nothing real and leaves **no**
   receipt in the real ledger. It proves the build and host can execute
   break-glass end to end. With `SECURACV_VAULT_PASSPHRASE` set it exercises
@@ -426,16 +432,22 @@ log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" query --out chai
 # move chain.tsq to a connected machine, submit it, bring chain.tsr back
 log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" import --response chain.tsr --url <TSA>
 ```
-`import` correlates the response's imprint against chain history before
-storing it (**CODE**).
+`import` labels the anchor by whether the response's imprint is in this
+database's chain history: a hit is stored as `chain_head`; a miss is stored
+as a generic `digest` anchor with the stderr note `imprint … is not in this
+DB's chain history` (**CODE**). Nothing is refused — and a receipt-head
+anchor always takes the `digest` branch, so that note is the expected
+outcome of step 2 in §6, not a failed step.
 
 **Check:** `log_anchor … list`, then `log_anchor … verify --ca tsa-ca.pem` →
 each anchor OK or `UNVERIFIED` (**CODE** — without `--ca` nothing is
 cryptographically verified and the tool says so).
 
-**Honest scope.** Chain membership is checked for `chain_head` anchors; a
-receipt-head `digest` anchor is imprint-checked and openssl-verifiable but is
-not cross-bound into `run_full_verify` (**GAP** → §4; `ENTERPRISE_CUSTODY.md`
+**Honest scope.** Anchors are checked only by `log_anchor verify`: imprint
+against the row for every anchor, chain membership for `chain_head` anchors,
+and the countersignature when `--ca` is given. No anchor of either kind is
+cross-bound into `log_verify` / `run_full_verify` — a `valid` verdict there
+says nothing about the anchors table (**GAP** → §4; `ENTERPRISE_CUSTODY.md`
 §2). The anchors table is not itself chained: export `tsa_anchors.token_der`
 with every backup (**PROC**). An OpenTimestamps leg and clock-provenance
 events are **GAP** (§4). Anchor on a fixed schedule, never in reaction to
@@ -454,7 +466,8 @@ guess (**CODE**).
    it to disk (**PROC**).
 2. Set `SECURACV_VAULT_PASSPHRASE` in the environment of `witnessd` and of
    every vault-touching tool (`break_glass unseal`, `break_glass_serve`,
-   `doctor`).
+   `break_glass drill`). `doctor` never opens the vault — it only inspects
+   `master.key` metadata (step 4) — so the variable does nothing there.
 3. The first open writes `master.keyguard` — an MKG1 container, Argon2id-wrapped,
    bound to the canonical vault path — and never writes a plaintext
    `master.key` (**CODE**). This is a deterrent against casual copying of the
@@ -487,8 +500,10 @@ Four different keys; the ceremony depends on which.
   signed by the retiring key plus a `device_key_history` row; verification
   follows the genesis-anchored lineage (**CODE**). Post-rotation duties
   (**PROC**): redistribute the pin and lineage to every relying party; note
-  that post-quantum keys are not rotated and receipts keep verifying under
-  the lineage.
+  that post-quantum keys are not rotated. `receipts`, `policy history`, and
+  `log_verify` all verify rows under the genesis-anchored lineage, so rows
+  signed before the rotation stay VALID and the §3 checklist does not fire a
+  Class D exception on a legitimate rotation (**CODE**).
 - **Database encryption key** → `rekey_database_file` with the database
   closed (library-only; **GAP**). Stop every process first.
 - **Vault master key / keyguard passphrase** → no rotation path (**GAP**).
@@ -531,7 +546,8 @@ rotate per bucket automatically.
 
 ## 6. Close-out
 
-1. Receipt audit: `receipts --verbose`, `policy history`, and
+1. Receipt audit: `receipts --public-key-file … --verbose`,
+   `policy history --public-key-file …`, and
    `log_verify [--high-water-mark …] --public-key-file …`, captured; counts
    before and after the ceremony.
 2. Anchor (C5): the sealed-log chain head, and the newest receipt
@@ -578,7 +594,10 @@ rotate per bucket automatically.
 | Keyguard container for a new vault | **CODE** | `SECURACV_VAULT_PASSPHRASE` → MKG1 |
 | Signed high-water-mark; fail-closed verify | **CODE** | `SECURACV_HWM_PATH`; `log_verify --high-water-mark` |
 | Anchor verification labeling | **CODE** | `log_anchor verify --ca`; `UNVERIFIED` otherwise |
-| Verdict honesty | **CODE** | `valid` vs `self-consistent; identity unverified` |
+| Verdict honesty | **CODE** | `valid` vs `self-consistent; identity unverified`; `receipts` / `policy history` print `Verifying key: pinned out of band` vs `read from the audited database` |
+| Observer verification without the signing seed | **CODE** | `--db-key` / `SECURACV_DB_KEY` on every verifier, including `policy history` / `policy show`; `break_glass db-key` derives it |
+| History verified under the rotation lineage | **CODE** | `policy history` checks each row against every validated lineage key |
+| Seed strength at provisioning | **CODE** (`break_glass init` on a new database) / **GAP** (`witnessd` first run, HA add-on) | `validate_new_seed_strength` |
 | Script hash-commitment | **PROC** → §3.4 | hash in `SCRIPT.sha256`; interim `script=` marker in `--purpose` |
 | Exception receipts | **PROC** → §3.4 | `EXCEPTIONS.md` |
 | Witness co-signature | **PROC** → §3.4 | signed `CLOSEOUT.md` |
@@ -589,7 +608,7 @@ rotate per bucket automatically.
 | Trustee key wrapping, hardware keys, enrollment attestation | **GAP** → §3.7 | plaintext 0600 key files; read-back |
 | Recovery quorum | **GAP** → §2.3 | none — loss of quorum has no in-band recovery |
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
-| Receipt-chain heads cross-bound into full verify | **GAP** → §4 | `digest` anchors of receipt heads |
+| Anchors cross-bound into full verify (`log_verify`) | **GAP** → §4 | `log_anchor verify` only; `digest` anchors of receipt heads |
 | Handoff sidecars for unseal outputs | **GAP** → §5 | `CLOSEOUT.md` digests |
 | Device-key rotation and database re-key commands | **GAP** | library APIs only |
 | Trustee key generation / public-key helper | **GAP** | external Ed25519 tool |
@@ -602,7 +621,7 @@ rotate per bucket automatically.
 Every command, flag, file format id, and quoted message above is taken from
 the shipped source (`src/break_glass/cli.rs`, `src/bin/break_glass_serve.rs`,
 `src/bin/log_anchor.rs`, `src/bin/log_verify.rs`, `src/vault/mod.rs`,
-`src/log/high_water_mark.rs`). When a badge here says **PROC** or **GAP** and
+`src/log/high_water_mark.rs`, `src/ui.rs` for the stage markers). When a badge here says **PROC** or **GAP** and
 the code later enforces the control, the badge changes in the same pull
 request — the tracker entry in
 [`REMEDIATION-2026-08.md`](REMEDIATION-2026-08.md) ("Ceremony runbook pass")

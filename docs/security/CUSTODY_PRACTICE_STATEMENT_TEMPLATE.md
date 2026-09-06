@@ -106,7 +106,7 @@ Two honest sentences belong in every CPS, unchanged:
 | Ceremony witness | `{{roles.witness}}` | must not be a trustee or the operator |
 | Device-key custodian (`DEVICE_KEY_SEED`) | `{{roles.device_key_custodian}}` | `{{…}}` |
 | Vault-passphrase custodian (`SECURACV_VAULT_PASSPHRASE`), if keyguard mode | `{{roles.passphrase_custodian}}` | `{{…}}` |
-| Observers / auditors (read-only tools) | `{{roles.observers}}` | — |
+| Observers / auditors (read-only tools) | `{{roles.observers}}` | hold `device.pub`, `tsa-ca.pem`, and the database key (`break_glass db-key`, passed as `--db-key` / `SECURACV_DB_KEY`) — never `DEVICE_KEY_SEED` |
 | Relying parties (verifiers, counsel, regulators) | `{{roles.relying_parties}}` | — |
 
 Where one person fills several roles (the household case), say so here rather
@@ -179,7 +179,7 @@ meanings are restated because a CPS is read by people outside the project:
 | 4.8 | Event exports | shipped | `auth_mode` `self_export` / `break_glass` / `api`; scheduled exports: `{{ops.export_schedule}}`; `window` bounds on every receipt. |
 | 4.9 | Disclosure packaging | shipped (event bundles only) | `court_export` assembles a disclosure kit for event-export bundles and warns loudly when the bundle is unanchored ([`../court_export.md`](../court_export.md)). It does **not** package vault unseal outputs. |
 | 4.10 | Receipt audit and review | procedural | Who reviews `break_glass receipts`, `policy history`, and `log_verify`, how often, and where the review is recorded: `{{ops.review_cadence}}`. A signed review attestation (`log_review attest`): **not provided** (§4). |
-| 4.11 | Rehearsal | shipped | Sandbox drills (`break_glass drill`, no ledger record) on every build change; recorded rehearsals (a real unseal with `--reason drill`, real receipt) `{{ops.rehearsal_cadence}}`. Runbook C4. |
+| 4.11 | Rehearsal | shipped (primitives) / procedural (cadence) | Sandbox drills (`break_glass drill`, no ledger record) and recorded rehearsals (a real unseal with `--reason drill`, real receipt) are shipped; running a drill on every build change and the rehearsal cadence `{{ops.rehearsal_cadence}}` are human rules. Runbook C4. |
 | 4.12 | Incident and compromise handling | procedural | Device-key compromise → rotation (library API today; Runbook C7) plus relying-party notification `{{inc.device_key}}`; trustee-key compromise → C2 replace/remove `{{inc.trustee_key}}`; vault passphrase compromise → no rotation path; the deployment's response: `{{inc.passphrase}}`; suspected ledger tampering → `log_verify --high-water-mark`, `log_anchor verify --ca`, incident `{{inc.tamper}}`. |
 | 4.13 | End of custody | procedural | Final anchor, `token_der` export, disposition of keys and passphrase, what relying parties receive: `{{ops.end_of_custody}}`. |
 
@@ -206,7 +206,7 @@ meanings are restated because a CPS is read by people outside the project:
 | 6.4 | Activation data | procedural | Vault passphrase custody and escrow: `{{tech.passphrase_custody}}`. Trustee passphrases: **not provided**. |
 | 6.5 | Computer security controls | procedural | Host hardening baseline: `{{tech.host_baseline}}`. The served console binds loopback unless TLS material is configured (shipped). The detector sandbox is not a custody control. |
 | 6.6 | Life-cycle controls | procedural | Build identity recorded in every ceremony's `BUILD.md`: binary SHA-256, git commit, enabled features (`tsa`, `api-tls`, `pqc-*`). Supply-chain transparency source: `{{tech.build_provenance}}`. |
-| 6.7 | Network security | shipped | No outbound connection except operator-initiated anchoring; served-console exposure `{{tech.console_exposure}}`. |
+| 6.7 | Network security | shipped (kernel and custody tools) / procedural (deployment inventory) | The kernel (`witnessd`) and the custody tools open no outbound connection except operator-initiated anchoring (`log_anchor request`). Bridges and relays a deployment enables do connect out (`alert_relay`, `event_mqtt_bridge`, `frigate_bridge`, the webhook/MQTT adapters); the enabled ones and their peers: `{{tech.outbound_components}}`. Served-console exposure `{{tech.console_exposure}}`. |
 | 6.8 | Time | shipped / procedural | Event time is bucketed to 10 minutes; precise time exists only on anchoring and disclosure acts (TSA `genTime`). Clock source and NTP check before ceremonies: `{{tech.clock}}`. |
 
 ## 7. Artifact profiles
@@ -214,13 +214,13 @@ meanings are restated because a CPS is read by people outside the project:
 | Artifact | Format / version | Custody-relevant fields | Specified in | Verifier |
 |---|---|---|---|---|
 | 7.1 Sealed event entry | hash-chained, Ed25519 | `prev_hash`, `entry_hash`, bucket, `ruleset_hash` | `spec/event_contract.md` | `log_verify` |
-| 7.2 Retention checkpoint | v3 cutoff-bound | `chain_head_hash`, `cutoff_event_id`, `signer_public_key` | `spec/evidence_envelope.md` | `log_verify` |
+| 7.2 Retention checkpoint | v3 cutoff-bound | `chain_head_hash`, `cutoff_event_id`, `signature` (the signer is resolved against the key lineage by the verifier, not carried in the record) | `spec/evidence_envelope.md` | `log_verify --checkpoints` |
 | 7.3 Break-glass receipt | JSON payload, chained | envelope id, `request_hash`, `ruleset_hash`, `time_bucket`, `trustees_used`, `approvals_commitment`, `policy_commitment`, outcome, purpose, operator context, `request_bucket` | `spec/break_glass.md` | `break_glass receipts --verbose` |
 | 7.4 Policy-change record | JSON payload, chained | previous and new policy, `change_hash`, approvals, `bootstrap` flag, device signature | `spec/break_glass.md` | `break_glass policy history` |
 | 7.5 Export receipt | JSON payload, chained | `auth_mode`, `window`, `artifact_hash` | `spec/evidence_envelope.md` §8 | `export_verify` |
 | 7.6 Anchor record | `tsa_anchors` row + DER token | `subject` (`chain_head` / `digest`), `subject_hash`, `tsa_url`, `gen_time`, `token_der` | [`../timestamping.md`](../timestamping.md) | `log_anchor verify --ca` |
 | 7.7 High-water-mark | `SCVHWM01` | `seq`, head, bucket, signer, signature | `ENTERPRISE_CUSTODY.md` §2 | `log_verify --high-water-mark` |
-| 7.8 Key-rotation record | sealed record + `device_key_history` row | new-key attestation, previous-key authorization | `spec/evidence_envelope.md` §2b | `log_verify --lineage` |
+| 7.8 Key-rotation record | sealed record + `device_key_history` row | new-key attestation, previous-key authorization | `spec/evidence_envelope.md` §11 step 2b | `log_verify --lineage` |
 | 7.9 Ceremony files | `securacv-unlock-request:v2`, approval JSON, proposal, policy-approval, token (sensitive), setup draft | as named | `spec/break_glass.md` | the commands that consume them |
 
 ## 8. Compliance audit and other assessments
@@ -229,7 +229,7 @@ meanings are restated because a CPS is read by people outside the project:
 |---|---|---|
 | 8.1 | Frequency | Per ceremony (the witness) and periodically (an observer): `{{audit.cadence}}`. |
 | 8.2–8.3 | Who; independence | `{{audit.who}}`; independent of trustees and operator: `{{yes/no, why}}`. |
-| 8.4 | Topics | `break_glass receipts` VALID; `policy history` `History chain VALID`; every anchor checked with `--ca` and none `UNVERIFIED`; high-water-mark checked; `log_verify` verdict `valid` under the out-of-band key; drill and recorded-rehearsal evidence on file; exceptions register reviewed; retention table met; CPS-versus-practice deltas listed. |
+| 8.4 | Topics | `break_glass receipts --public-key-file` VALID and `policy history --public-key-file` `History chain VALID`, both under the pinned key (a run without one is labeled `self-consistent; identity unverified` and does not count); every anchor checked with `--ca` and none `UNVERIFIED`; high-water-mark checked; `log_verify` verdict `valid` under the out-of-band key; drill and recorded-rehearsal evidence on file; exceptions register reviewed; retention table met; CPS-versus-practice deltas listed. |
 | 8.5 | Action on deficiency | `{{audit.deficiency}}` |
 | 8.6 | Communication of results | `{{audit.results_to}}` |
 | 8.7 | External regimes | Mapping is "designed to be compatible with" only: 21 CFR Part 11 / ALCOA+, BS 10008, FIPS 140-3 split-knowledge vocabulary, FRE 902(13)/(14), eIDAS — see `PROVENANCE_INTEROP.md`. Never "certified", "compliant", or "admissible". |
@@ -272,16 +272,30 @@ them, with the policy-history row that created this roster and the date.
 
 ### E. Relying-party verification card
 
-The exact commands a verifier runs, with the out-of-band inputs they need:
+The exact commands a verifier runs, with the out-of-band inputs they need. A
+relying party receives three things over the precommitted channel: the
+device's genesis public key (`device.pub`), the TSA CA bundle (`tsa-ca.pem`),
+and the **database key** — the 64-hex SQLCipher key the operator derives with
+`break_glass db-key`. A relying party is **never** given `DEVICE_KEY_SEED`:
+that is the signing seed, and whoever holds it can mint receipts, history
+rows, and high-water-marks, so any verdict they produce afterwards is
+self-signed. The database key reads the ledgers and signs nothing.
 
 ```sh
+export SECURACV_DB_KEY=<64-hex database key from `break_glass db-key`>
 log_verify --db witness.db --public-key-file device.pub [--high-water-mark hwm.bin]
-break_glass receipts --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --verbose
-break_glass policy history --db witness.db --device-key-seed "$DEVICE_KEY_SEED"
-log_anchor verify --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --ca tsa-ca.pem
+break_glass receipts --db witness.db --public-key-file device.pub --verbose
+break_glass policy history --db witness.db --public-key-file device.pub
+log_anchor --db witness.db verify --ca tsa-ca.pem
 sha256sum <disclosed files>            # against CLOSEOUT.md / MANIFEST.sha256
-openssl ts -verify -digest <hex> -in <anchor>.tsr -token_in -CAfile tsa-ca.pem
+# a full TSA response as retained from the offline flow (.tsr):
+openssl ts -verify -digest <hex> -in <anchor>.tsr -CAfile tsa-ca.pem
+# a bare token exported from tsa_anchors.token_der (.der):
+openssl ts -verify -digest <hex> -in <anchor>.der -token_in -CAfile tsa-ca.pem
 ```
 
-Expected results: verdict `valid` (not `self-consistent; identity unverified`),
-receipts and history VALID, no anchor `UNVERIFIED`, digests matching.
+Expected results: verdict `valid` (not `self-consistent; identity unverified`);
+receipts and history VALID under `Verifying key: pinned out of band` (the same
+tools print `read from the audited database — … self-consistent; identity
+unverified` when no key file is given, and that verdict is not evidence of
+identity); no anchor `UNVERIFIED`; digests matching.

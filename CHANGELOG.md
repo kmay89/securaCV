@@ -43,6 +43,23 @@
   `--device-key-seed` / `--db-key` (or the environment variables) like the
   other kernel tools; before this, auditing a SQLCipher-keyed database from
   these two subcommands failed as "file is not a database".
+- **An observer can now audit without the signing seed.** `policy history`
+  and `policy show` take `--db-key` / `SECURACV_DB_KEY` and open the database
+  read-only (no `Kernel`, no schema writes); `policy history` takes a pinned
+  `--public-key-file` and verifies every row under the genesis-anchored key
+  lineage, so a legitimate device-key rotation no longer reports earlier rows
+  INVALID. New `break_glass db-key` prints the SQLCipher key a seed derives,
+  so an operator can hand a verifier that lesser credential. `receipts` and
+  `policy history` state where their verifying key came from: `pinned out of
+  band` or `read from the audited database — … self-consistent; identity
+  unverified`, the same label `log_verify` uses.
+- **`break_glass init` refuses a weak seed for a new device.** A bare
+  passphrase (no `devkey:` / `seed-argon2id:v1:` prefix, not 64 hex) is
+  refused before the database is created; an existing database opens as
+  before.
+- The Lab's Operator's Bench transcript now shows the policy committing once,
+  at the complete roster, as the CLI does (its test had asserted the old
+  commit-at-threshold behavior).
 - New operator documents: `docs/security/CEREMONY_RUNBOOK.md` (roles,
   pre-ceremony checklist, eight ceremonies with a control-status matrix) and
   `docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md` (an RFC 3647-shaped

@@ -609,10 +609,10 @@ teaches how you stand one up** — the four commands that just shipped in
   `init 2-of-3` → enroll three trustees (import a key, or *mint* one written
   `0600`) → `drill` → `doctor`, and watch a live "vault state" panel track the
   vault state — the policy stays a **draft** until the roster is complete, then goes
-  **live as 2-of-3** on the third enrollment (that is what the shipped CLI does: it
-  commits only a complete roster; the page's older animation of a policy going live
-  at the threshold and "strengthening" is a tracked Lab fix). The terminal output is
-  the real binary's, recorded.
+  **live as 2-of-3** on the third enrollment, which is what the shipped CLI does: it
+  commits only a complete roster, once. The terminal transcript is authored from the
+  binary's own messages (not captured from a run), and CI checks that every
+  load-bearing line still exists verbatim in the CLI source.
 - **What `doctor` checks** and **what `drill` rehearses** (a throwaway sandbox that
   burns a single-use token) — spelled out, honest about the plaintext-key warning.
 

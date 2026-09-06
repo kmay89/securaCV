@@ -225,7 +225,7 @@ QUORUM = {
         {"method": "POST", "path": "/breakglass/unseal", "desc": "only if ready → authorize + unseal to an operator dir"},
         {"method": "POST", "path": "/breakglass/close", "desc": "discard the session + approvals"},
     ],
-    "cli": ["request", "approve", "authorize", "receipts", "unseal", "policy set", "policy show"],
+    "cli": ["request", "approve", "authorize", "receipts", "unseal", "policy set", "policy show", "policy history", "db-key"],
     "console": "src/break_glass/breakglass.html",
     "console_note": "a real 4-step operator console ships in the repo (Connect → Request → Collect approvals → Quorum & unseal), with a separate trustee-signer view that makes zero network calls and signs Ed25519 in-browser via WebCrypto — the same domain separation this page uses.",
 }

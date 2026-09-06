@@ -82,7 +82,9 @@ in-process TLS for the API and break-glass *(closed in the 2026-08-31 pass
 below, as the `api-tls` feature)*; the seccomp allowlist inversion + compat
 ABI; an Argon2id seed scheme *(closed 2026-08-21 in #1565 — recorded in
 ENTERPRISE_CUSTODY §5; it shipped as the opt-in `seed-argon2id:v1:` device-seed
-format, not as a `v2` of the legacy form)*; base-image digest pinning; the
+format, not as a `v2` of the legacy form; the strength check is applied by
+`break_glass init` on a new database since 2026-09-06, other provisioning
+flows still tracked)*; base-image digest pinning; the
 `cargo audit` `--deny` triage; and the regulated-market assurance tier
 (FIPS / PKI / RBAC / SIEM / compliance mapping).
 
@@ -417,7 +419,39 @@ meant running every one of them as a ceremony would. What that surfaced:
 - **Operator guide described `trustee enroll` committing the policy at `n`
   and "strengthening" on each further enrollment.** The code commits only
   when the roster is complete (`m` enrolled); earlier enrollments edit the
-  draft only. The guide and the Lab description now say what the code does.
+  draft only. The guide, the Lab description, and the Lab's Operator's Bench
+  transcript (`gen_operator.py` → `devices/operator.json`, with its test
+  `operator.test.js`, which had asserted the wrong behavior) now say what the
+  code does: one commit line, at the complete roster.
+- **The relying-party verification card and the Observer role handed out the
+  device signing seed.** `policy history` and `policy show` required
+  `--device-key-seed` and opened a full `Kernel` (which also writes schema and
+  backfill rows), so the only way an observer could run them was to hold the
+  seed that signs every ledger. Both now take `--db-key` / `SECURACV_DB_KEY`
+  (and `history` a pinned `--public-key-file`) and open the database
+  read-only; a new `break_glass db-key` derives the database key from the
+  seed so the operator can hand a verifier that lesser credential. The card
+  and the roles table no longer mention `DEVICE_KEY_SEED` for a verifier.
+- **`break_glass receipts` printed plain `VALID` under a key read out of the
+  database it was auditing.** It, and `policy history`, now print where the
+  verifying key came from (`Verifying key: pinned out of band` vs `read from
+  the audited database — … self-consistent; identity unverified`) and suffix
+  the summary line the same way `log_verify` labels that situation.
+- **`break_glass policy history` verified rows under the current device key
+  only.** It now verifies each row against the genesis-anchored lineage like
+  `receipts` and `log_verify`, so a legitimate rotation no longer turns every
+  earlier row INVALID (regression test:
+  `policy_history_verifies_rows_signed_across_a_device_key_rotation`).
+- **`break_glass init` accepted a bare passphrase as the seed of a new
+  device.** It now applies `validate_new_seed_strength` when it creates the
+  database (an existing database is untouched).
+- Runbook and CPS quoted outputs and commands corrected against source: the
+  `✔ <stage> (<elapsed>)` marker, which binaries take `--ui`, the drill's
+  `Result: DRILL PASSED …` line, `doctor` not being a vault-touching tool,
+  `log_anchor import` labeling (never refusing), no anchor being cross-bound
+  into `log_verify`, the `openssl ts -verify` forms for a `.tsr` versus a bare
+  token, the checkpoint record's fields, and CPS status badges for rehearsal
+  cadence and network security.
 
 ### Tracked, not closed here (this pass)
 
@@ -432,10 +466,6 @@ needs it, with the procedural stand-in the runbook uses meanwhile.
   wraps a *fresh* master key; there is no command to wrap an existing
   plaintext `master.key` or to change the passphrase, and `break_glass doctor`
   reports only `master.key` (it does not recognize `master.keyguard`).
-- **`break_glass policy history` verifies rows under the current device key
-  only**, not the rotation lineage that `receipts`, `log_verify`, and the
-  API verifiers use — after a rotation, pre-rotation history rows would be
-  reported invalid.
 - **No trustee key-generation / public-key helper** for a trustee who mints
   their own key; deriving the public hex from a self-minted seed needs an
   external Ed25519 tool.
@@ -444,12 +474,13 @@ needs it, with the procedural stand-in the runbook uses meanwhile.
   the HTTP replies itself.
 - **`break_glass request --db` is accepted and ignored** — the request never
   consults the roster; a roster mismatch surfaces only at `authorize`.
-- **Receipt-chain heads are not cross-bound into `run_full_verify`**; a
-  receipt-head `digest` anchor is imprint-checked and openssl-verifiable but
-  not part of the full-verify graph (`quorum_unseal_v2.md` §4).
-- **The Lab's Operator's Bench (`operator.html`) still animates enrollment
-  going live at `n` and strengthening to `m`.** The README text is corrected
-  in this pass; the page's animation is a Lab change tracked here.
+- **No anchor is cross-bound into `run_full_verify` / `log_verify`.** Anchors
+  of either kind are checked only by `log_anchor verify` (imprint, chain
+  membership for `chain_head`, countersignature with `--ca`); a `valid`
+  ledger verdict says nothing about the anchors table
+  (`quorum_unseal_v2.md` §4).
+- **`witnessd` first run and the HA add-on wizard do not apply
+  `validate_new_seed_strength`**; only `break_glass init` does.
 
 ### Honest scope
 

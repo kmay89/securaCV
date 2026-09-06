@@ -129,6 +129,9 @@ After this the DB key is independent of the signing key — the prerequisite for
 
 ## Verifier CLIs
 
-`log_verify` / `export_verify` take the DB key directly via `--db-key` /
-`SECURACV_DB_KEY`. When the database is keyed by an independent secret, pass the
-derived hex key (from `derive_db_encryption_key_from_secret`) to those tools.
+`log_verify` / `export_verify` / `log_anchor` / `court_export` and
+`break_glass receipts` / `policy history` / `policy show` / `unseal` take the DB
+key directly via `--db-key` / `SECURACV_DB_KEY`. `break_glass db-key
+--device-key-seed …` prints the key the kernel derives (honoring
+`SECURACV_DB_KEY_SEED` when set), which is how an operator hands a verifier
+the database key without the signing seed.

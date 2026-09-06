@@ -197,6 +197,18 @@ enum Command {
         command: PolicyCommand,
     },
 
+    /// Print the SQLCipher key this device seed derives for the kernel
+    /// database — the credential a read-only verifier needs (`--db-key` /
+    /// `SECURACV_DB_KEY` on `receipts`, `policy history`, `log_verify`,
+    /// `log_anchor`, `court_export`) so that an observer or relying party is
+    /// never handed the signing seed itself. Honors `SECURACV_DB_KEY_SEED`
+    /// when the database is keyed by an independent secret.
+    DbKey {
+        /// Device key seed (must match witnessd)
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+    },
+
     /// Health-check the break-glass setup: quorum policy, device identity, and
     /// vault key material. Exits non-zero if anything is missing or invalid, so
     /// it can gate a deploy. Read-only.
@@ -366,22 +378,46 @@ enum PolicyCommand {
     Show {
         #[arg(long, default_value = "witness.db")]
         db: String,
-        #[arg(long, default_value = "ruleset:v0.3.0")]
-        ruleset_id: String,
-        /// Device key seed (must match witnessd)
+        /// Device key seed — used only to derive the database encryption key.
+        /// An observer holding only the database key passes --db-key instead.
         #[arg(long, env = "DEVICE_KEY_SEED")]
-        device_key_seed: String,
+        device_key_seed: Option<String>,
+        /// Explicit SQLCipher key (hex), overriding the seed derivation.
+        #[arg(
+            long,
+            env = "SECURACV_DB_KEY",
+            conflicts_with = "device_key_seed",
+            value_name = "HEX"
+        )]
+        db_key: Option<String>,
     },
 
-    /// Print the policy-change history ledger (chained, device-signed)
+    /// Verify and print the policy-change history ledger (chained,
+    /// device-signed under the genesis-anchored key lineage). Read-only: an
+    /// observer needs the database key and, for a pinned verdict, the
+    /// device's public key — never the signing seed.
     History {
         #[arg(long, default_value = "witness.db")]
         db: String,
-        #[arg(long, default_value = "ruleset:v0.3.0")]
-        ruleset_id: String,
-        /// Device key seed (must match witnessd)
+        /// Device public key (hex-encoded Ed25519 verifying key), pinned out
+        /// of band. Without it the key is read from the audited database and
+        /// the verdict is labeled self-consistent; identity unverified.
+        #[arg(long, value_name = "HEX", conflicts_with = "public_key_file")]
+        public_key: Option<String>,
+        /// Path to file containing the hex-encoded device public key
+        #[arg(long, value_name = "PATH", conflicts_with = "public_key")]
+        public_key_file: Option<String>,
+        /// Device key seed — used only to derive the database encryption key.
         #[arg(long, env = "DEVICE_KEY_SEED")]
-        device_key_seed: String,
+        device_key_seed: Option<String>,
+        /// Explicit SQLCipher key (hex), overriding the seed derivation.
+        #[arg(
+            long,
+            env = "SECURACV_DB_KEY",
+            conflicts_with = "device_key_seed",
+            value_name = "HEX"
+        )]
+        db_key: Option<String>,
     },
 }
 
@@ -568,21 +604,32 @@ pub fn run() -> Result<()> {
             }
             PolicyCommand::Show {
                 db,
-                ruleset_id,
                 device_key_seed,
+                db_key,
             } => {
                 let _stage = ui.stage("Show quorum policy");
-                cmd_policy_show(&db, &ruleset_id, &device_key_seed)
+                cmd_policy_show(
+                    &db,
+                    DbKeySource::from_args(device_key_seed.as_deref(), db_key.as_deref()),
+                )
             }
             PolicyCommand::History {
                 db,
-                ruleset_id,
+                public_key,
+                public_key_file,
                 device_key_seed,
+                db_key,
             } => {
                 let _stage = ui.stage("Policy-change history");
-                cmd_policy_history(&db, &ruleset_id, &device_key_seed)
+                cmd_policy_history(
+                    &db,
+                    public_key.as_deref(),
+                    public_key_file.as_deref(),
+                    DbKeySource::from_args(device_key_seed.as_deref(), db_key.as_deref()),
+                )
             }
         },
+        Command::DbKey { device_key_seed } => cmd_db_key(&device_key_seed),
         Command::Doctor {
             db,
             vault_path,
@@ -1415,12 +1462,24 @@ fn cmd_policy_change_approve(
     Ok(())
 }
 
-fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) -> Result<()> {
-    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
-    let kernel = Kernel::open(&cfg)?;
-    let device_vk = kernel.device_verifying_key();
-    let entries = kernel.policy_change_history()?;
+fn cmd_policy_history(
+    db_path: &str,
+    public_key_hex: Option<&str>,
+    public_key_file: Option<&str>,
+    key_source: DbKeySource,
+) -> Result<()> {
+    // Read-only, key-only: no `Kernel::open` (which needs the signing seed,
+    // refuses a seed that is not the current identity, and writes schema
+    // and backfill rows). An observer opens the database with its key and
+    // verifies under the genesis-anchored lineage exactly like `receipts`,
+    // so rows signed by an earlier device key stay VALID after a rotation.
+    let conn = open_kernel_db(db_path, &key_source)?;
+    let (genesis, provenance) =
+        load_verifying_key_with_source(&conn, public_key_hex, public_key_file)?;
+    let lineage = crate::verify_helpers::lineage_verifying_keys(&conn, &genesis)?;
+    let entries = crate::read_policy_change_history(&conn)?;
     println!("=== Policy-change history ===");
+    println!("{}", provenance.describe(&genesis, lineage.len()));
     if entries.is_empty() {
         println!("(no policy changes recorded)");
         return Ok(());
@@ -1437,20 +1496,23 @@ fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) ->
         if computed != entry.entry_hash {
             issues.push("entry_hash mismatch".to_string());
         }
+        // Signed by whichever lineage key was current at write time.
         let sig_ok = <[u8; 64]>::try_from(entry.signature.as_slice())
             .ok()
             .map(|sig| {
-                crate::crypto::signatures::verify_ed25519_only(
-                    crate::crypto::signatures::DOMAIN_POLICY_CHANGE_RECORD,
-                    &device_vk,
-                    &entry.entry_hash,
-                    &sig,
-                )
-                .is_ok()
+                lineage.iter().any(|device_vk| {
+                    crate::crypto::signatures::verify_ed25519_only(
+                        crate::crypto::signatures::DOMAIN_POLICY_CHANGE_RECORD,
+                        device_vk,
+                        &entry.entry_hash,
+                        &sig,
+                    )
+                    .is_ok()
+                })
             })
             .unwrap_or(false);
         if !sig_ok {
-            issues.push("device signature invalid".to_string());
+            issues.push("device signature invalid (under every lineage key)".to_string());
         }
         // Approvals binding: the stored approvals must match the commitment
         // inside the signed payload.
@@ -1532,17 +1594,45 @@ fn cmd_policy_history(db_path: &str, ruleset_id: &str, device_key_seed: &str) ->
             entries.len()
         ));
     }
-    println!("History chain VALID ({} entries).", entries.len());
+    println!(
+        "History chain VALID ({} entries){}.",
+        entries.len(),
+        provenance.verdict_suffix()
+    );
     Ok(())
 }
 
-fn cmd_policy_show(db_path: &str, ruleset_id: &str, device_key_seed: &str) -> Result<()> {
-    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
-    let kernel = Kernel::open(&cfg)?;
-    let policy = kernel
-        .break_glass_policy()
+fn cmd_policy_show(db_path: &str, key_source: DbKeySource) -> Result<()> {
+    let conn = open_kernel_db(db_path, &key_source)?;
+    let policy = load_break_glass_policy(&conn)?
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
-    println!("{}", serde_json::to_string_pretty(policy)?);
+    println!("{}", serde_json::to_string_pretty(&policy)?);
+    Ok(())
+}
+
+/// Derive the SQLCipher key the kernel uses for a database keyed by this
+/// seed (or by `SECURACV_DB_KEY_SEED` when that independent secret is set),
+/// so an operator can hand a verifier the database key alone. The key reads
+/// (and could rewrite) every table, but it signs nothing: a holder cannot
+/// mint a receipt, a history row, or a high-water-mark. Printed to stdout
+/// so it can be piped into a secrets store; the caution goes to stderr.
+fn derive_db_key_hex(device_key_seed: &str) -> Result<zeroize::Zeroizing<String>> {
+    let signing_key = crate::signing_key_from_seed(device_key_seed)?;
+    let seed_env = crate::db_key_seed_from_env();
+    Ok(crate::resolve_db_encryption_key(
+        &signing_key,
+        seed_env.as_ref().map(|s| s.as_str()),
+    ))
+}
+
+fn cmd_db_key(device_key_seed: &str) -> Result<()> {
+    let key = derive_db_key_hex(device_key_seed)?;
+    eprintln!(
+        "CAUTION: this key opens the kernel database for reading and writing (it cannot sign \
+         anything). Hand it only to a verifier you would hand the database file to, over the \
+         same channel; never paste it into a shared chat. Pass it as --db-key or SECURACV_DB_KEY."
+    );
+    println!("{}", key.as_str());
     Ok(())
 }
 
@@ -2161,6 +2251,16 @@ fn cmd_init(
 
     println!("=== Break-glass setup — init ===");
 
+    // A NEW device is provisioned here, so this is where a weak seed is
+    // refused (a bare passphrase through the legacy derivation is
+    // brute-forceable offline; ENTERPRISE_CUSTODY.md §5). An existing
+    // database is opened as it always was — the check never locks out a
+    // device that is already provisioned.
+    if !std::path::Path::new(db_path).exists() {
+        crate::validate_new_seed_strength(device_key_seed)
+            .map_err(|e| anyhow!("refusing to provision a new device: {}", e))?;
+    }
+
     // Open the kernel once: this creates the (encrypted) database and pins the
     // device identity, so `authorize`/`witnessd` recognize this seed later.
     let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
@@ -2356,7 +2456,8 @@ fn cmd_receipts(
     verbose: bool,
 ) -> Result<()> {
     let conn = open_kernel_db(db_path, &key_source)?;
-    let verifying_key = load_verifying_key(&conn, public_key_hex, public_key_file)?;
+    let (verifying_key, provenance) =
+        load_verifying_key_with_source(&conn, public_key_hex, public_key_file)?;
     let policy = load_break_glass_policy(&conn)?;
     // Ground truth for a receipt's declared `policy_commitment`: the
     // authenticated policy-change history (chain + device signature + approvals
@@ -2369,6 +2470,10 @@ fn cmd_receipts(
     let mut rows = stmt.query([])?;
 
     println!("=== Break-Glass Receipts ===");
+    println!(
+        "{}",
+        provenance.describe(&verifying_key, lineage_keys.len())
+    );
     let mut n = 0usize;
     let mut expected_prev = [0u8; 32];
     let mut invalid_count = 0usize;
@@ -2521,7 +2626,7 @@ fn cmd_receipts(
         expected_prev = entry_hash;
         n += 1;
     }
-    println!("Total: {}", n);
+    println!("Total: {}{}", n, provenance.verdict_suffix());
     if invalid_count > 0 {
         return Err(anyhow!(
             "receipt verification failed for {} entr{} (run log_verify for full audit)",
@@ -2634,25 +2739,70 @@ fn cmd_unseal(
     Ok(())
 }
 
-fn load_verifying_key(
+/// Where the verifying key an audit ran under came from. A key read out of
+/// the database being audited proves internal consistency only — a host-level
+/// actor who re-keys the database and re-signs a ledger passes every check
+/// under the key they wrote — so every verdict printed under it carries the
+/// same label `log_verify` uses: `self-consistent; identity unverified`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerifyingKeySource {
+    /// Supplied out of band (`--public-key` / `--public-key-file`).
+    Pinned,
+    /// Read from `device_metadata` inside the audited database.
+    Database,
+}
+
+impl VerifyingKeySource {
+    fn describe(self, genesis: &VerifyingKey, lineage_len: usize) -> String {
+        let fp = short_fp(&genesis.to_bytes());
+        let lineage = if lineage_len > 1 {
+            format!(", {} keys in the rotation lineage", lineage_len)
+        } else {
+            String::new()
+        };
+        match self {
+            Self::Pinned => format!(
+                "Verifying key: pinned out of band ({fp}{lineage}) — verdicts below are verified."
+            ),
+            Self::Database => format!(
+                "Verifying key: read from the audited database ({fp}{lineage}) — verdicts below are \
+                 self-consistent; identity unverified. Pass --public-key-file <device.pub> for a \
+                 pinned check."
+            ),
+        }
+    }
+
+    fn verdict_suffix(self) -> &'static str {
+        match self {
+            Self::Pinned => "",
+            Self::Database => " — self-consistent; identity unverified",
+        }
+    }
+}
+
+fn load_verifying_key_with_source(
     conn: &rusqlite::Connection,
     public_key_hex: Option<&str>,
     public_key_file: Option<&str>,
-) -> Result<VerifyingKey> {
+) -> Result<(VerifyingKey, VerifyingKeySource)> {
     if let Some(hex) = public_key_hex {
-        return verifying_key_from_hex(hex);
+        return Ok((verifying_key_from_hex(hex)?, VerifyingKeySource::Pinned));
     }
     if let Some(path) = public_key_file {
         let key_hex = std::fs::read_to_string(path)
             .map_err(|e| anyhow!("failed to read public key file {}: {}", path, e))?;
-        return verifying_key_from_hex(key_hex.trim());
+        return Ok((
+            verifying_key_from_hex(key_hex.trim())?,
+            VerifyingKeySource::Pinned,
+        ));
     }
-    device_public_key_from_db(conn).map_err(|e| {
+    let key = device_public_key_from_db(conn).map_err(|e| {
         anyhow!(
             "{} (provide --public-key or --public-key-file if the database has no key)",
             e
         )
-    })
+    })?;
+    Ok((key, VerifyingKeySource::Database))
 }
 
 fn load_break_glass_policy(
@@ -3789,8 +3939,173 @@ mod tests {
         assert!(applied, "gated policy change with valid consent must apply");
         assert_eq!(policy_of(&db), Some((2, 2)));
 
-        // The history ledger records bootstrap + change and verifies.
-        cmd_policy_history(&db, "ruleset:test", seed)?;
+        // The history ledger records bootstrap + change and verifies — with
+        // the seed (operator) and with the database key alone (observer).
+        cmd_policy_history(&db, None, None, DbKeySource::Seed(seed.to_string()))?;
+        let db_key = derive_db_key_hex(seed)?;
+        cmd_policy_history(&db, None, None, DbKeySource::Hex(db_key.to_string()))?;
+        cmd_policy_show(&db, DbKeySource::Hex(db_key.to_string()))?;
+        Ok(())
+    }
+
+    /// After a device-key rotation the history ledger carries rows signed by
+    /// different lineage keys. `policy history` must verify each row under
+    /// the genesis-anchored lineage (as `receipts` and `log_verify` do), not
+    /// under the current key alone — otherwise every pre-rotation row (or,
+    /// verified from genesis, every post-rotation row) raises a false tamper
+    /// alarm on a legitimate state. And it must do so from a read-only,
+    /// key-only open: no `Kernel`, no signing seed.
+    #[test]
+    fn policy_history_verifies_rows_signed_across_a_device_key_rotation() -> Result<()> {
+        use crate::break_glass::{
+            sign_policy_change_approval, PolicyChangeProposal, QuorumPolicy, TrusteeEntry,
+        };
+        let temp = std::env::temp_dir().join(format!("secura_hist_rot_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        let seed = "devkey:test:hist-rot-genesis-0001";
+        let alice_key = SigningKey::from_bytes(&[7u8; 32]);
+        let alice_entry = trustee_entry("alice", 7);
+        // Row 1 (bootstrap): signed by the genesis key.
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&alice_entry),
+            None,
+            None,
+            &db,
+            "ruleset:test",
+            seed,
+        )?;
+        // Rotate the device identity in-process (the database key stays the
+        // genesis-derived one, so the key-only open below still works), then
+        // apply a quorum-consented change: row 2 is signed by the NEW key.
+        let cfg = kernel_config(&db, "ruleset:test", seed);
+        let mut kernel = Kernel::open(&cfg)?;
+        let genesis_vk = kernel.device_verifying_key();
+        kernel.rotate_device_identity("devkey:test:hist-rot-successor-0002")?;
+        assert_ne!(kernel.device_verifying_key(), genesis_vk);
+        let current = kernel
+            .break_glass_policy()
+            .cloned()
+            .expect("bootstrap policy present");
+        let new_policy = QuorumPolicy::new(
+            1,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: alice_key.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: SigningKey::from_bytes(&[8u8; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                },
+            ],
+        )?;
+        let bucket = TimeBucket::now_10min()?;
+        let change_hash = PolicyChangeProposal {
+            prev_policy_commitment: current.full_commitment(),
+            new_policy: new_policy.clone(),
+            time_bucket: bucket,
+        }
+        .change_hash();
+        let approval = Approval {
+            trustee: TrusteeId::new("alice"),
+            request_hash: change_hash,
+            signature: sign_policy_change_approval(&alice_key, &change_hash).to_vec(),
+        };
+        kernel.set_break_glass_policy_gated(
+            &new_policy,
+            std::slice::from_ref(&approval),
+            bucket,
+        )?;
+        drop(kernel);
+
+        let rows = crate::read_policy_change_history(&open_kernel_db_keyed(&db, seed)?)?;
+        assert_eq!(rows.len(), 2, "bootstrap + one change");
+
+        // Observer path: database key only, genesis pinned out of band.
+        let db_key = derive_db_key_hex(seed)?;
+        let genesis_hex = hex_vec(&genesis_vk.to_bytes());
+        cmd_policy_history(
+            &db,
+            Some(&genesis_hex),
+            None,
+            DbKeySource::Hex(db_key.to_string()),
+        )
+        .expect("both rows verify under the lineage");
+        // And with the key read from the database (labeled, still VALID).
+        cmd_policy_history(&db, None, None, DbKeySource::Hex(db_key.to_string()))?;
+        // A pin that is NOT this device's genesis key must fail closed.
+        let stranger = hex_vec(
+            &SigningKey::from_bytes(&[42u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        );
+        assert!(
+            cmd_policy_history(
+                &db,
+                Some(&stranger),
+                None,
+                DbKeySource::Hex(db_key.to_string())
+            )
+            .is_err(),
+            "a foreign pinned key must not verify the ledger"
+        );
+        Ok(())
+    }
+
+    /// `db-key` derives exactly the key the kernel encrypted the database
+    /// with, so a verifier holding only that key (never the seed) can open it.
+    #[test]
+    fn db_key_derivation_opens_the_database_without_the_seed() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_dbkey_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        cmd_init(2, 3, &db, "ruleset:test", TEST_SEED, None)?;
+        let key = derive_db_key_hex(TEST_SEED)?;
+        assert_eq!(key.len(), 64, "a 32-byte SQLCipher key, hex");
+        let conn = open_kernel_db(&db, &DbKeySource::Hex(key.to_string()))?;
+        let pinned = device_public_key_from_db(&conn)?;
+        assert_eq!(pinned, crate::verifying_key_from_seed(TEST_SEED)?);
+        assert!(
+            open_kernel_db(&db, &DbKeySource::Hex("00".repeat(32))).is_err(),
+            "a wrong key must be refused at open, not three steps later"
+        );
+        Ok(())
+    }
+
+    /// `init` provisions a NEW device, so it refuses a seed the legacy
+    /// derivation would leave brute-forceable — and only then: an existing
+    /// database opens as before, so no provisioned device is ever locked out.
+    #[test]
+    fn init_refuses_a_weak_seed_for_a_new_database_only() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_weak_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let weak = "correct horse battery staple correct horse"; // >= 32 chars, no prefix
+        let fresh = temp.join("fresh.db").to_string_lossy().to_string();
+        let err = cmd_init(2, 3, &fresh, "ruleset:test", weak, None)
+            .expect_err("a bare passphrase must not provision a new device");
+        assert!(
+            err.to_string().contains("not strong enough"),
+            "unexpected refusal: {err}"
+        );
+        assert!(
+            !std::path::Path::new(&fresh).exists(),
+            "nothing may be created on refusal"
+        );
+        // A database that already exists under that seed keeps working.
+        let existing = temp.join("existing.db").to_string_lossy().to_string();
+        drop(Kernel::open(&kernel_config(
+            &existing,
+            "ruleset:test",
+            weak,
+        ))?);
+        cmd_init(2, 3, &existing, "ruleset:test", weak, None)?;
+        // The strong forms are accepted for a new database.
+        let strong = temp.join("strong.db").to_string_lossy().to_string();
+        cmd_init(2, 3, &strong, "ruleset:test", &"ab".repeat(32), None)?;
         Ok(())
     }
 
