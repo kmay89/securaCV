@@ -99,6 +99,18 @@ function core_face_edge2() = 0.8;   // second (~66°) stage — ON is the house 
 function core_foot_cham()  = 0.5;   // 45° relief on a shell's bottom edge
 function core_corner_r()   = 3.0;   // outside corner radius of a shell
 
+// The feature vocabulary — the small recurring gestures that make the fleet
+// read as one product line. Same doctrine as the four above: a case's
+// Customizer knob DEFAULTS to the house number (the knob stays a literal so
+// the Customizer keeps it), and scripts/lint_design_lang.py fails the build
+// on a default that neither matches nor declares a deviation.
+function core_lightpipe_d()    = 3.0;   // status light pipe, press-fit bore = d + 2*tol_press
+function core_vent_pad_d()     = 12.0;  // GORE membrane seat on the outer face
+function core_vent_pad_depth() = 0.8;   // recess for the adhesive membrane
+function core_vent_ring_d()    = 6.0;   // through-hole ring diameter behind the pad
+function core_vent_hole_d()    = 1.0;   // the README's outdoor rule: <= 1.0 mm keeps insects out
+function core_vent_holes()     = 10;    // hole count that recovers the open area at 1.0 mm
+
 // ---------------------------------------------------------------------------
 //  Cavity corner radius — the inside vertical corner of a shell.
 //
@@ -256,6 +268,37 @@ module cs_cone90_cut(x, y, t, d_screw, h_head) {
     translate([x, y, -0.1]) cylinder(d = d_screw, h = t + 0.2);
     translate([x, y, t - h_head])
         cylinder(d1 = d_screw, d2 = d_screw + 2*h_head, h = h_head + 0.1);
+}
+
+// ---------------------------------------------------------------------------
+//  Vent / buzzer cluster — the weather shells' shared sound + pressure port:
+//  a recessed seat for the adhesive GORE membrane on the OUTER face and a
+//  ring of through-holes behind it. SUBTRACT from a lid whose outer face is
+//  at z = t. This drawing used to be copy-pasted verbatim into four case
+//  files, and the copies had already forked on hole size (the outdoor rule
+//  is core_vent_hole_d(); two outdoor cases were shipping 1.6). The
+//  geometry lives here once; what legitimately varies per case rides in as
+//  arguments from that case's Customizer knobs.
+// ---------------------------------------------------------------------------
+module core_vent_cluster(x, y, t, pad_d, pad_depth, ring_d, hole_d, holes) {
+    translate([x, y, 0]) {
+        // recessed seat for the adhesive GORE vent on the OUTER face
+        translate([0, 0, t - pad_depth]) cylinder(d = pad_d, h = pad_depth + 1);
+        // ring of through-holes for sound + pressure equalization
+        for (i = [0 : holes - 1]) rotate([0, 0, i * 360 / holes])
+            translate([ring_d/2, 0, -1]) cylinder(d = hole_d, h = t + 2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Status light-pipe bore — the press-fit port for the Ø core_lightpipe_d()
+//  pipe every LED-bearing shell carries. SUBTRACT from a lid of thickness t.
+//  One line, but a line that existed four times: with the cut here, a future
+//  surround treatment (a chamfered seat, a reveal ring) lands on the whole
+//  fleet at once instead of on whichever copies someone remembers.
+// ---------------------------------------------------------------------------
+module core_lightpipe_bore(x, y, t, d, press) {
+    translate([x, y, -1]) cylinder(d = d + 2*press, h = t + 2);
 }
 
 // ---------------------------------------------------------------------------

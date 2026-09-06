@@ -1451,7 +1451,7 @@
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3168,
+     "triangles": 3448,
      "mm": [
       57.2,
       78.697,
@@ -1620,7 +1620,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_back.stl",
-     "triangles": 3292,
+     "triangles": 3468,
      "mm": [
       43.2,
       95.097,
@@ -1723,7 +1723,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_devkit_indoor_back.stl",
-     "triangles": 3568,
+     "triangles": 3848,
      "mm": [
       74.8,
       96.497,
@@ -1837,7 +1837,7 @@
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5652,
+     "triangles": 5624,
      "mm": [
       34.2,
       115.6,
@@ -1846,7 +1846,7 @@
     },
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 10056,
+     "triangles": 10080,
      "mm": [
       38.2,
       119.6,
@@ -1997,7 +1997,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_base.stl",
-     "triangles": 1736,
+     "triangles": 2000,
      "mm": [
       33.7,
       36.6,
@@ -2093,7 +2093,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5652,
+     "triangles": 5624,
      "mm": [
       34.2,
       115.6,
@@ -2179,7 +2179,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 10056,
+     "triangles": 10080,
      "mm": [
       38.2,
       119.6,
@@ -2418,7 +2418,7 @@
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3168,
+     "triangles": 3448,
      "mm": [
       57.2,
       78.697,
@@ -2571,7 +2571,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_back.stl",
-     "triangles": 3292,
+     "triangles": 3468,
      "mm": [
       43.2,
       95.097,
@@ -2992,7 +2992,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_base.stl",
-     "triangles": 1736,
+     "triangles": 2000,
      "mm": [
       33.7,
       36.6,
@@ -3069,7 +3069,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_battery_base.stl",
-     "triangles": 1904,
+     "triangles": 2168,
      "mm": [
       104.5,
       39,

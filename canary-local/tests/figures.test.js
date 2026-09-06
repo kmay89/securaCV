@@ -576,3 +576,25 @@ test("the on-glass art tier covers every id the firmware can resolve, at the sam
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// The one accent, pinned to the one registry. The figure palette (iso.mjs
+// MATERIALS) deliberately draws a neutral drawing-style body — a technical
+// drawing is not a product render — but its ACCENT claims to be the canary
+// ink, and that claim used to be an independent literal nothing kept equal
+// to the colorway registry (canary_color_lib.scad's CW_REGISTRY). Three
+// yellows had already accumulated across the ecosystem. This pins the
+// drawing accent to the registry's graphite-colorway ink, so a registry
+// change goes red here instead of forking a fourth yellow.
+// ---------------------------------------------------------------------------
+test("the figure palette's accent IS the colorway registry's ink", () => {
+  const iso = readFileSync(join(__dirname, "../tools/figures/iso.mjs"), "utf8");
+  const acc = iso.match(/accent:\s*\{\s*base:\s*\[0x([0-9a-f]{2}),\s*0x([0-9a-f]{2}),\s*0x([0-9a-f]{2})\]/);
+  assert.ok(acc, "iso.mjs declares the accent material as a hex byte triple");
+  const lib = readFileSync(
+    join(__dirname, "../../docs/hardware/enclosure/canary_color_lib.scad"), "utf8");
+  const graphite = lib.match(/\["graphite",\s*"[^"]+",\s*"([0-9a-f]{6})",\s*"([0-9a-f]{6})"/);
+  assert.ok(graphite, "canary_color_lib.scad declares the graphite colorway");
+  assert.strictEqual(acc.slice(1, 4).join(""), graphite[2],
+    "iso.mjs accent must equal CW_REGISTRY graphite ink — one yellow, one registry");
+});

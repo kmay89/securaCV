@@ -91,6 +91,7 @@
 //     outline entirely — verify which board you have.
 // ============================================================================
 
+use <canary_core_lib.scad> // rrect2d + the house constants
 use <canary_mark_lib.scad>  // the house mark: bird + wordmark lockup
 use <canary_port_lib.scad>  // the series-A standards + the insertion-length gate
 use <canary_board_lib.scad> // the ws147 board record the knob defaults cite
@@ -368,7 +369,7 @@ flick_ramp = 22;     // the ramp face a thumb climbs, degrees
 flick_scoop = 7.0;   // Ø of the scoop through the bezel rim that reaches it
 
 /* [Shell] */
-wall = 2.1;
+wall = 2.1;   // deviates: the cantilever snap beams (beam_t/eng) were tuned against this wall — conform only with a snap re-validation
 // The bezel face, and it is a LOOK as much as a thickness. The side elevation
 // reads (kmay89): 1 mm black, then 3 mm of white band, then black to the back.
 // So the face is 1 mm and the band starts immediately behind it — which is
@@ -376,7 +377,7 @@ wall = 2.1;
 // face's inner ledge and the light escapes the moment the glass ends.
 face_t = 1.0;        // bezel face over the glass border
 back_t = 2.0;        // rear plate
-r_out = 3.2;         // outer corner radius
+r_out = 3.2;         // deviates: pre-canon — the band look was drawn on this radius; conform on the next redraw
 preload = 0.25;      // compliant squeeze on the PCB (rib crush), not a clamp
 // Where the compliant ribs land, measured in from the cavity wall. A knob
 // rather than a literal because the headered build is what decides whether it
@@ -608,9 +609,8 @@ assert(mark_w <= plate_x - 2.0,
 // The 2D rounded rect, deliberately still LOCAL: canary_core_lib owns this
 // shape as rrect2d, but under the name `rrect` that library draws the 3D
 // prism — a `use` here would leave every call one shadowed name away from a
-// silent 2D/3D mix-up. This file keeps its own copy (identical geometry) and
-// stays off the core lib until a redraw renames the call sites to rrect2d.
-module rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+// silent 2D/3D mix-up. That redraw happened: every call site now names
+// rrect2d, and the module is canary_core_lib's — the copy is retired.
 
 // The USB-A plug's cross-section: a RECTANGLE, 12.00 x 4.50, with barely
 // broken corners.
@@ -635,7 +635,7 @@ module usb_a_2d(w, h, r = usb_r) {
 // ===========================================================================
 
 module bezel_solid() {
-    linear_extrude(bez_h) rrect(xo, yo, r_out);
+    linear_extrude(bez_h) rrect2d(xo, yo, r_out);
 }
 
 // The board cavity, plus the side "ears" that let the overhanging side
@@ -644,7 +644,7 @@ module bezel_solid() {
 // on its first print, and the buttons here are on the LONG edges.
 module bezel_cavity() {
     translate([0, 0, face_t])
-        linear_extrude(bez_h) rrect(xc, yc, r_in);
+        linear_extrude(bez_h) rrect2d(xc, yc, r_in);
 
     if (opt_btn) for (sx = [-1, 1])
         translate([sx * (xc/2 + btn_reach/2 - 0.01), btn_y, face_t])
@@ -658,7 +658,7 @@ module bezel_cavity() {
 module bezel_window() {
     translate([0, 0, -0.1])
         linear_extrude(face_t + 0.2)
-            rrect(aa_w, aa_l, 1.6);
+            rrect2d(aa_w, aa_l, 1.6);
 }
 
 // The plug opening + its relief chamfer + the drop collar.
@@ -703,7 +703,7 @@ module bezel_collar() {
         // above the board, inside the shell, and 0.2 UNDER the plate's
         // underside (the plate used to sit on the collar's crown)
         translate([0, 0, z_pcb_back]) linear_extrude(plate_z0 - 0.2 - z_pcb_back)
-            rrect(xc, yc, r_in);
+            rrect2d(xc, yc, r_in);
     }
 }
 assert(plate_z0 - 0.2 - (z_usb + usb_h/2 + collar_gap) >= 1.0,
@@ -826,7 +826,7 @@ module light_band() {
                     if (opt_btn) for (sx = [-1, 1])
                         translate([sx * (xo/2 + ear_bump/2 - 0.01), btn_y, face_t])
                             linear_extrude(bez_h - face_t)
-                                rrect(ear_bump + 0.02, ear_w + 2, 0.8);
+                                rrect2d(ear_bump + 0.02, ear_w + 2, 0.8);
                 }
                 bezel_cavity();
             }
@@ -943,7 +943,7 @@ module bezel() {
                 if (opt_btn) for (sx = [-1, 1])
                     translate([sx * (xo/2 + ear_bump/2 - 0.01), btn_y, face_t])
                         linear_extrude(bez_h - face_t)
-                            rrect(ear_bump + 0.02, ear_w + 2, 0.8);
+                            rrect2d(ear_bump + 0.02, ear_w + 2, 0.8);
                 if (collar_on) bezel_collar();
             }
             bezel_cavity();
@@ -980,12 +980,12 @@ module back_plate() {
     union() {
         hull() {
             linear_extrude(0.01)
-                rrect(plate_x - 2*lead, plate_y - 2*lead, max(0.4, r_in - lead));
+                rrect2d(plate_x - 2*lead, plate_y - 2*lead, max(0.4, r_in - lead));
             translate([0, 0, lead]) linear_extrude(0.01)
-                rrect(plate_x, plate_y, r_in);
+                rrect2d(plate_x, plate_y, r_in);
         }
         translate([0, 0, lead]) linear_extrude(back_t - lead)
-            rrect(plate_x, plate_y, r_in);
+            rrect2d(plate_x, plate_y, r_in);
     }
 }
 
@@ -1000,8 +1000,8 @@ module back_groove() {
     translate([0, 0, back_t/2 - g_h/2])
         linear_extrude(g_h)
             difference() {
-                rrect(plate_x + 1, plate_y + 1, r_in);
-                rrect(plate_x - 2*g_d, plate_y - 2*g_d, max(0.4, r_in - g_d));
+                rrect2d(plate_x + 1, plate_y + 1, r_in);
+                rrect2d(plate_x - 2*g_d, plate_y - 2*g_d, max(0.4, r_in - g_d));
             }
 }
 
@@ -1052,7 +1052,7 @@ module back_cutouts() {
     // The card window.
     if (sd_window)
         translate([0, yc/2 - sd_from_usb, -1])
-            linear_extrude(back_t + 2) rrect(sd_w, sd_l, 1.4);
+            linear_extrude(back_t + 2) rrect2d(sd_w, sd_l, 1.4);
 
     // The LED wall-wash window.
     if (led_win)

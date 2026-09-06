@@ -72,7 +72,7 @@ tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog defaults —
 /* [Shell] — 4 mm everywhere is the field-grade floor, not a suggestion.
    floor_t is 4.5 so the keyhole pockets reach the ecosystem-standard 3.5 mm
    depth (the shared T-stud is 3.4 mm tall) while keeping a 1.0 mm ceiling. */
-wall_t  = 4.0;
+wall_t  = 4.0;   // deviates: drop-case wall — impact duty is this case's whole intent
 floor_t = 4.5;
 lid_t   = 4.0;
 r_in    = 3.0;       // cavity corner radius
@@ -103,7 +103,7 @@ vent_x = -15.0;  vent_y = 6.0;
 
 /* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
-kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // head Ø8.0 is a STATED deviation from
+kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // deviates: head Ø8.0 is a STATED deviation from
                      // mount_kh_head_d() = 7.0: a field case gets hung on found hardware, and Ø8
                      // passes a #8 pan head too, not just the T-stud. Shank/slot are the
                      // canary_mount_lib standard.
@@ -150,7 +150,7 @@ label_text = "CANARY";
 label_size = 5.0;  label_depth = 0.5;
 label_dx = -12.0;  label_dy = -7.0;
 label_font = "Liberation Sans:style=Bold";
-lid_edge = 0.64;     // stepped edge chamfer on the lid face
+lid_edge = 0.64;     // deviates: the TPU boot's retention lip grips this stepped edge (DR-5) — conform only with a boot re-probe
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

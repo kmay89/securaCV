@@ -448,6 +448,21 @@ module back() {
                     case_hinge();
             }
             translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            // seam reveal — the shadow line under the parting line
+            // (canary_core_lib): the indoor build closes front-on-back at the
+            // exact same footprint, a raw butt joint on a show surface. The
+            // sealed build's drip-edge front already draws a designed seam.
+            // The groove spares the hinge span — a slot through a hinge root
+            // is a stress riser, not a shadow line.
+            if (!e_seal) difference() {
+                seam_reveal_cut(out_x, out_y, corner_r, base_d);
+                if (e_mount && (m_style == "hinge" || m_style == "both"))
+                    translate([-(prong_pitch/2 + prong_t/2 + teeth_h + 1),
+                               out_y/2 - core_reveal_d() - 1,
+                               base_d - core_reveal_h() - 0.1])
+                        cube([prong_pitch + prong_t + 2*teeth_h + 2,
+                              hinge_off + fin_r + 2, core_reveal_h() + 0.2]);
+            }
             // XIAO USB-C opening, bottom wall: 45°-chamfered top corners halve
             // the unsupported bridge in the upright-printed wall and keep any
             // droop out of the plug envelope — canary_port_lib (the WAP's
@@ -522,13 +537,10 @@ module back() {
 // ----------------------------------------------------------------------------
 //  FRONT face — the RADOME: thinned window over the antenna, features outside it
 // ----------------------------------------------------------------------------
-module vent_cluster(x, y) {
-    translate([x, y, 0]) {
-        translate([0, 0, lid_t - vent_pad_depth]) cylinder(d = vent_pad_d, h = vent_pad_depth + 1);
-        for (i = [0 : vent_holes - 1]) rotate([0, 0, i * 360 / vent_holes])
-            translate([vent_ring_d/2, 0, -1]) cylinder(d = vent_hole_d, h = lid_t + 2);
-    }
-}
+// The vent cluster and light-pipe bore are canary_core_lib's now
+// (core_vent_cluster / core_lightpipe_bore) — this file used to carry its
+// own copy of both, and the four copies across the weather shells had
+// forked. The knobs above still ride in as arguments.
 module front() {
     union() {
         difference() {
@@ -552,9 +564,10 @@ module front() {
             translate([rad_cx, rad_cy, -1])
                 linear_extrude(lid_t - radome_t + 1)
                     rrect2d(rad_win_x, rad_win_y, 3);
-            if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
+            if (opt_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
             if (opt_lux) translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
-            if (opt_vent) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
+            if (opt_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
+                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats by the head in the bag (canary_core_lib): flat floor for
             // PAN heads (on the pad — a 2.0 seat in a 2.0 plate was a through-hole),
             // 90° cone for FLAT, O-ring gland with head_seal

@@ -248,9 +248,9 @@ lp_dx  = 8.0;
 lp_dy  = -8.0;
 vent_pad_d     = 12.0;  // GORE seat (outer face)
 vent_pad_depth = 0.8;
-vent_hole_d    = 1.6;
+vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;
-vent_holes     = 6;
+vent_holes     = 10;    // more, smaller holes recover the open area at 1.0 mm
 vent_dx        = -8.0;
 vent_dy        = -8.0;
 mag_d  = 6.0;      // tamper MAGNET diameter (pocket = mag_d + 2*tol_press)
@@ -572,6 +572,22 @@ module back() {
             }
             translate([0, 0, floor_t])
                 rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            // seam reveal — the shadow line under the parting line
+            // (canary_core_lib): the indoor builds close front-on-back at the
+            // exact same footprint, a raw butt joint on a show surface. The
+            // weather build's drip skirt already draws a designed seam. The
+            // groove spares the hinge span: the fins and their root web cross
+            // its band at the top wall, and a slot through a hinge root is a
+            // stress riser, not a shadow line.
+            if (!e_seal) difference() {
+                seam_reveal_cut(out_x, out_y, corner_r, base_d);
+                if (e_mount && (m_style == "hinge" || m_style == "both"))
+                    translate([-(prong_pitch/2 + prong_t/2 + teeth_h + 1),
+                               out_y/2 - core_reveal_d() - 1,
+                               base_d - core_reveal_h() - 0.1])
+                        cube([prong_pitch + prong_t + 2*teeth_h + 2,
+                              hinge_off + fin_r + 2, core_reveal_h() + 0.2]);
+            }
             // USB-C opening(s), bottom wall: DevKit port, or module "model port".
             // The WAP's bridge-safe profile (canary_port_lib): 45°-chamfered top
             // corners halve the unsupported span in this upright wall and keep
@@ -696,13 +712,10 @@ module back() {
 //  FRONT face (lens aperture + disc seat + hood, LED, vent, label; camera
 //  board screws to posts on the inside)
 // ----------------------------------------------------------------------------
-module vent_cluster(x, y) {
-    translate([x, y, 0]) {
-        translate([0, 0, lid_t - vent_pad_depth]) cylinder(d = vent_pad_d, h = vent_pad_depth + 1);
-        for (i = [0 : vent_holes - 1]) rotate([0, 0, i * 360 / vent_holes])
-            translate([vent_ring_d/2, 0, -1]) cylinder(d = vent_hole_d, h = lid_t + 2);
-    }
-}
+// The vent cluster and light-pipe bore are canary_core_lib's now
+// (core_vent_cluster / core_lightpipe_bore) — this file used to carry its
+// own copy of both, and the four copies across the weather shells had
+// forked. The knobs above still ride in as arguments.
 
 module front() {
     union() {
@@ -729,8 +742,9 @@ module front() {
             if (cam_disc_t > 0 && cam_disc_d > 0)
                 translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
                     cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
-            if (e_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
-            if (e_vent || e_buzzer) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
+            if (e_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
+            if (e_vent || e_buzzer) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
+                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats, chosen by the head in the bag (canary_core_lib): a flat
             // floor for PAN heads (1.0 mm of it, on the pad), a 90° cone for FLAT
             // heads, and in seal mode with head_seal an O-ring gland under the

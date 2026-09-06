@@ -168,7 +168,15 @@ function buildGlb(fig, solids, E) {
       materials.push({
         name: m.name,
         pbrMetallicRoughness: {
-          baseColorFactor: [...m.base.map((c) => r6(c / 255)), 1],
+          // glTF baseColorFactor is LINEAR by spec; MATERIALS holds sRGB
+          // bytes. Dividing by 255 alone stored the sRGB value in the linear
+          // field, so every flasher preview rendered lighter than the same
+          // nominal color everywhere else — the piecewise EOTF is the same
+          // conversion the website's colorway pipeline applies.
+          baseColorFactor: [...m.base.map((c) => {
+            const s8 = c / 255;
+            return r6(s8 <= 0.04045 ? s8 / 12.92 : ((s8 + 0.055) / 1.055) ** 2.4);
+          }), 1],
           metallicFactor: s.m === 'metal' ? 0.8 : 0,
           roughnessFactor: s.m === 'glass' || s.m === 'lit' ? 0.35 : 0.85,
         },

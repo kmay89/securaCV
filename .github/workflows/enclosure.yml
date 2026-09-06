@@ -11,11 +11,15 @@ on:
     paths:
       - "docs/hardware/enclosure/**"
       - ".github/workflows/enclosure.yml"
+      # the design-language gate's own script: a change to the gate must run
+      # the gate, or it can be weakened while CI stays green
+      - "scripts/lint_design_lang.py"
   pull_request:
     branches: [ "main" ]
     paths:
       - "docs/hardware/enclosure/**"
       - ".github/workflows/enclosure.yml"
+      - "scripts/lint_design_lang.py"
 
 permissions:
   contents: read
@@ -75,6 +79,15 @@ jobs:
       # out from under the committed numbers.
       - name: Assembled envelopes match the committed parts
         run: python3 gen_assembled_dims.py --check
+
+      # The design-language gate: every canonical Customizer default (corner
+      # radius, edge stages, walls, feature vocabulary, tolerances) either
+      # equals the house value canary_core_lib states, or explains itself
+      # with a `deviates:` comment on its own line — and a case may not
+      # redefine a module the libraries own. "A departure has to type its
+      # own number AND say why", as a build failure instead of a sentence.
+      - name: Design language — canonical defaults conform or explain themselves
+        run: python3 ../../../scripts/lint_design_lang.py
 
       - name: Render all presets and parts
         run: |

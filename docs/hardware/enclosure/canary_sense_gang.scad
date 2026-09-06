@@ -29,7 +29,8 @@ plate_h  = 115.0;    // wallplate height
 plate_t  = 3.2;      // plate thickness outside the radome
 screw_gap = 83.3;    // 6-32 device-screw spacing (single-gang standard)
 dev_screw_d = 3.7;   // 6-32 clearance
-lid_edge = 1.0;      // face edge chamfer
+lid_edge = 0.8;      // face edge chamfer — core_face_edge()
+corner_r = 3.0;      // plate corner radius — core_corner_r(); was a bare 4 in a part whose whole job is making Sense units read as a set
 
 /* [Boards] — MR60BHA2 carrier + stacked XIAO ESP32-C6. MEASURE */
 vm_l     = 44.0;      // brd_l("mr60") — canary_board_lib
@@ -73,11 +74,11 @@ module plate() {
         // face plate with chamfered edge (prints face-down: back features rise)
         difference() {
             union() {
-                linear_extrude(plate_t - lid_edge) rrect2d(plate_w, plate_h, 4);
+                linear_extrude(plate_t - lid_edge) rrect2d(plate_w, plate_h, corner_r);
                 translate([0, 0, plate_t - lid_edge - 0.01]) hull() {
-                    linear_extrude(0.01) rrect2d(plate_w, plate_h, 4);
+                    linear_extrude(0.01) rrect2d(plate_w, plate_h, corner_r);
                     translate([0, 0, lid_edge]) linear_extrude(0.01)
-                        rrect2d(plate_w - 2*lid_edge, plate_h - 2*lid_edge, max(0.5, 4 - lid_edge));
+                        rrect2d(plate_w - 2*lid_edge, plate_h - 2*lid_edge, max(0.5, corner_r - lid_edge));
                 }
             }
             // NOTE: model z=0 is the BACK of the plate; face at z=plate_t

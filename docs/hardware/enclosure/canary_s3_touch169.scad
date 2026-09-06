@@ -139,7 +139,7 @@ tol_press = 0.10;    // press fits: the skirt's snug seat — core_tol_press()
 tol_hole = 0.30;     // clearance holes — core_tol_hole()
 
 /* [Shell] */
-wall   = 2.4;    // side wall thickness
+wall   = 2.4;    // deviates: the glass sets this shell — r_out = r_glass + wall, and the skirt snap engages inside it; validated as a set
 face_t = 2.0;    // bezel face (over the glass border)
 back_t = 2.0;    // rear cover plate
 r_out  = r_glass + wall;   // outer corner radius follows the glass

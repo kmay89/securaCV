@@ -602,6 +602,12 @@ module base() {
             }
             translate([0, 0, floor_t])
                 rrect(inner_l, inner_w, max(0.1, corner_r - wall_eff), cav_h + 1);
+            // seam reveal — the shadow line under the parting line
+            // (canary_core_lib): the indoor variants close lid-on-base at the
+            // exact same footprint, a raw butt joint on a show surface. The
+            // weather build already gets a designed seam from its drip-edge
+            // lid, so it keeps that one.
+            if (!e_seal) seam_reveal_cut(out_l, out_w, corner_r, base_h);
             // USB opening: 45°-chamfered top corners halve the unsupported bridge in the
             // upright-printed wall and keep any droop out of the plug envelope — this
             // file's print-validated profile, now served by canary_port_lib to the
@@ -733,18 +739,10 @@ module base() {
 // ----------------------------------------------------------------------------
 //  LID
 // ----------------------------------------------------------------------------
-module vent_cluster(x, y) {
-    translate([x, y, 0]) {
-        // recessed seat for the adhesive GORE vent on the OUTER face
-        translate([0, 0, lid_t - vent_pad_depth])
-            cylinder(d = vent_pad_d, h = vent_pad_depth + 1);
-        // ring of through-holes for sound + pressure equalization
-        for (i = [0 : vent_holes - 1])
-            rotate([0, 0, i * 360 / vent_holes])
-                translate([vent_ring_d/2, 0, -1])
-                    cylinder(d = vent_hole_d, h = lid_t + 2);
-    }
-}
+// The vent cluster and light-pipe bore are canary_core_lib's now
+// (core_vent_cluster / core_lightpipe_bore) — this file used to carry its
+// own copy of both, and the four copies across the weather shells had
+// forked. The knobs above still ride in as arguments.
 
 // lid plate with a 45° chamfered top edge (prints face-down: the chamfer is a
 // clean 45° outward slope off the bed — no supports). This lid's two-stage
@@ -787,8 +785,9 @@ module lid() {
                     translate([cam[0], cam[1], lid_t - (cam_disc_t + 0.2)])
                         cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
             }
-            if (e_led)    translate([lp[0],  lp[1],  -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);  // light pipe
-            if (e_buzzer) vent_cluster(vnt[0], vnt[1]);                                                     // buzzer vent
+            if (e_led)    core_lightpipe_bore(lp[0], lp[1], lid_t, lp_d, tol_press);                        // light pipe
+            if (e_buzzer) core_vent_cluster(vnt[0], vnt[1], lid_t, vent_pad_d, vent_pad_depth,
+                                            vent_ring_d, vent_hole_d, vent_holes);                          // buzzer vent
             if (e_touch)  translate([tch[0], tch[1], -1]) cylinder(d = touch_d, h = lid_t - touch_wall + 1); // touch window (blind thinning)
 
             // lid screws over the posts — canary_core_lib's seats, chosen by the

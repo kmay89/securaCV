@@ -57,7 +57,7 @@ tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog trio — can
 frame_w = 3.5;       // side wall thickness
 face_t  = 2.4;       // bezel face thickness
 back_t  = 2.4;
-r_out   = 5.0;
+r_out   = 5.0;   // deviates: display-frame radius class — scaled to the 4.3-inch face (palm shells run core_corner_r())
 
 /* [Fasteners] — M2 x 8 self-tappers into corner lobes OUTSIDE the cavity
    (bosses inside the frame would collide with the panel's sharp glass corners) */
