@@ -258,7 +258,12 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
    warned fallback. *(Implemented — see `spec/break_glass.md`.)*
 3. **Human-context fields**: structured reason at unseal, operator principal
    in receipts, deterministic human-readable receipt rendering (name, UTC
-   time, signature meaning per 11.50).
+   time, signature meaning per 11.50). *(Implemented for break-glass —
+   consent-bound `OperatorContext` (requester name, closed reason
+   vocabulary, case reference, claimed key) recorded inside signed receipts,
+   re-derived at audit and at the unseal gate, rendered via
+   `break_glass receipts --verbose`; see `spec/break_glass.md`. Export
+   receipts gain a principal with the unseal-output work in move 4.)*
 4. **`court export` bundle**: media + digests + chain excerpt + receipts
    rendered as a custody-and-control record + TSA/OTS tokens + auto-filled
    draft FRE 902(13)/(14) certifications (28 U.S.C. § 1746 form) + system

@@ -157,12 +157,111 @@ impl Default for VaultPolicy {
     }
 }
 
+/// The closed vocabulary for the structured unseal reason
+/// (spec/quorum_unseal_v2.md §3.6). Administrative/observable categories
+/// only — no intent words (the forced-entry post-mortem rule): a reason code
+/// names the PROCESS the disclosure serves, never a claim about what the
+/// evidence will show. Free-text narrative stays in the separate `purpose`
+/// field. Closed and enumerated once, here, so tools cannot invent entries.
+pub const REASON_CODES: &[&str] = &[
+    "incident-review",
+    "legal-request",
+    "legal-hold",
+    "owner-recovery",
+    "safety-check",
+    "maintenance-audit",
+    "drill",
+];
+
+/// §3.6 operator context: WHO is asking and under WHAT process, in
+/// structured form. Bound into the request hash (so trustee consent covers
+/// it) and recorded inside the signed receipt (and only there —
+/// Invariants II/III). The requester key, when present, is a CLAIMED
+/// identity bound into what trustees approved; nothing here verifies it
+/// against a registry — the honesty is that trustees saw and signed exactly
+/// these fields.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorContext {
+    /// Printed name of the person initiating the request (21 CFR 11.50).
+    pub requester_name: String,
+    /// One of `REASON_CODES`.
+    pub reason_code: String,
+    /// Case / ticket / matter reference, when one exists.
+    #[serde(default)]
+    pub case_ref: Option<String>,
+    /// Hex-encoded Ed25519 public key the requester claims, if registered.
+    #[serde(default)]
+    pub requester_key: Option<String>,
+}
+
+impl OperatorContext {
+    pub fn new(
+        requester_name: &str,
+        reason_code: &str,
+        case_ref: Option<&str>,
+        requester_key: Option<&str>,
+    ) -> Result<Self> {
+        if requester_name.trim().is_empty() {
+            return Err(anyhow!("requester name cannot be empty"));
+        }
+        let reason = reason_code.trim();
+        if !REASON_CODES.contains(&reason) {
+            return Err(anyhow!(
+                "unknown reason code '{}' (one of: {})",
+                reason,
+                REASON_CODES.join(", ")
+            ));
+        }
+        let requester_key = match requester_key {
+            Some(hex_str) => {
+                let trimmed = hex_str.trim();
+                let bytes = hex::decode(trimmed)
+                    .map_err(|e| anyhow!("requester key is not valid hex: {}", e))?;
+                if bytes.len() != 32 {
+                    return Err(anyhow!(
+                        "requester key must be 32 bytes (Ed25519 public key), got {}",
+                        bytes.len()
+                    ));
+                }
+                Some(trimmed.to_ascii_lowercase())
+            }
+            None => None,
+        };
+        Ok(Self {
+            requester_name: requester_name.trim().to_string(),
+            reason_code: reason.to_string(),
+            case_ref: case_ref
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            requester_key,
+        })
+    }
+
+    /// Re-validate a deserialized context (a file or DB row is not trusted to
+    /// have gone through `new`).
+    pub fn validate(&self) -> Result<()> {
+        Self::new(
+            &self.requester_name,
+            &self.reason_code,
+            self.case_ref.as_deref(),
+            self.requester_key.as_deref(),
+        )
+        .map(|_| ())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnlockRequest {
     pub vault_envelope_id: String,
     pub ruleset_hash: [u8; 32],
     pub purpose: String,
     pub time_bucket: TimeBucket,
+    /// §3.6 operator context. `None` on requests from tools predating the
+    /// field; hashing is framing-compatible with the pre-context derivation
+    /// in that case, so old approvals and old request files stay valid.
+    #[serde(default)]
+    pub context: Option<OperatorContext>,
 }
 
 impl UnlockRequest {
@@ -183,7 +282,16 @@ impl UnlockRequest {
             ruleset_hash,
             purpose: purpose.trim().to_string(),
             time_bucket,
+            context: None,
         })
+    }
+
+    /// Attach validated §3.6 operator context. The context becomes part of
+    /// the request hash, so every collected approval binds it.
+    pub fn with_context(mut self, context: OperatorContext) -> Result<Self> {
+        context.validate()?;
+        self.context = Some(context);
+        Ok(self)
     }
 
     pub fn request_hash(&self) -> [u8; 32] {
@@ -202,6 +310,42 @@ impl UnlockRequest {
         hasher.update(purpose_bytes);
         hasher.update(self.time_bucket.start_epoch_s.to_le_bytes());
         hasher.update(self.time_bucket.size_s.to_le_bytes());
+        // §3.6 context rides AFTER every legacy field, and only when present:
+        // a context-free request hashes byte-identically to the pre-context
+        // derivation (old approvals stay valid), while a context-carrying
+        // request appends an unambiguous, presence-tagged block. The encoding
+        // stays injective because every legacy field is length-prefixed or
+        // fixed-width, so the byte string has exactly one parse — no
+        // context-carrying input can collide with a context-free one.
+        if let Some(ctx) = &self.context {
+            hasher.update([0x01]);
+            let name_bytes = ctx.requester_name.as_bytes();
+            hasher.update((name_bytes.len() as u32).to_le_bytes());
+            hasher.update(name_bytes);
+            let reason_bytes = ctx.reason_code.as_bytes();
+            hasher.update((reason_bytes.len() as u32).to_le_bytes());
+            hasher.update(reason_bytes);
+            match &ctx.case_ref {
+                Some(case_ref) => {
+                    hasher.update([0x01]);
+                    let case_bytes = case_ref.as_bytes();
+                    hasher.update((case_bytes.len() as u32).to_le_bytes());
+                    hasher.update(case_bytes);
+                }
+                None => hasher.update([0x00]),
+            }
+            match &ctx.requester_key {
+                Some(key_hex) => {
+                    hasher.update([0x01]);
+                    // Hash the decoded key bytes, not the hex text, so case
+                    // variants of the same key cannot yield distinct hashes.
+                    let key_bytes = hex::decode(key_hex).unwrap_or_default();
+                    hasher.update((key_bytes.len() as u32).to_le_bytes());
+                    hasher.update(&key_bytes);
+                }
+                None => hasher.update([0x00]),
+            }
+        }
         hasher.finalize().into()
     }
 }
@@ -290,6 +434,65 @@ pub fn count_valid_distinct_approvals(
         distinct.insert(trustee.public_key);
     }
     distinct.len()
+}
+
+/// Truthful signature attribution (§3.6): every trustee a receipt NAMES in
+/// `trustees_used` must be backed by a valid, domain-separated approval over
+/// the receipt's request hash — the rendered record says "X signed", so X
+/// must actually have signed. A Granted receipt must additionally name
+/// EXACTLY the trustees whose approvals verify (authorize has always built
+/// it that way, so a mismatch is forgery, not history). Denial receipts may
+/// legitimately name nobody — the early denials (excess approvals, expired
+/// window) record the presented approvals without crediting anyone — but may
+/// never name a trustee who did not sign.
+pub fn verify_trustee_attribution(
+    policy: &QuorumPolicy,
+    receipt: &BreakGlassReceipt,
+    approvals: &[Approval],
+) -> Result<()> {
+    let mut valid_ids = std::collections::HashSet::new();
+    for approval in approvals {
+        if approval.request_hash != receipt.request_hash {
+            continue;
+        }
+        let Some(trustee) = policy
+            .trustees
+            .iter()
+            .find(|t| t.id.0 == approval.trustee.0)
+        else {
+            continue;
+        };
+        if verify_approval(
+            &trustee.public_key,
+            &receipt.request_hash,
+            &approval.signature,
+        ) {
+            valid_ids.insert(approval.trustee.0.clone());
+        }
+    }
+    for used in &receipt.trustees_used {
+        if !valid_ids.contains(&used.0) {
+            return Err(anyhow!(
+                "receipt names trustee '{}' as approving, but no valid approval from them \
+                 over this request exists — false signature attribution",
+                used.0
+            ));
+        }
+    }
+    if matches!(receipt.outcome, BreakGlassOutcome::Granted) {
+        let used_ids: std::collections::HashSet<&str> =
+            receipt.trustees_used.iter().map(|t| t.0.as_str()).collect();
+        for id in &valid_ids {
+            if !used_ids.contains(id.as_str()) {
+                return Err(anyhow!(
+                    "receipt omits trustee '{}' whose valid approval it carries — a Granted \
+                     receipt must name exactly the trustees whose approvals verify",
+                    id
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A proposed change to the stored quorum policy. Consent to it is a distinct
@@ -433,10 +636,139 @@ pub struct BreakGlassReceipt {
     #[serde(default = "zero_policy_commitment")]
     pub policy_commitment: [u8; 32],
     pub outcome: BreakGlassOutcome,
+    /// §3.6: the request's free-text narrative, recorded so the receipt —
+    /// not anyone's memory — answers "why". `None` on receipts written
+    /// before the field existed.
+    #[serde(default)]
+    pub purpose: Option<String>,
+    /// §3.6 operator context as presented (and trustee-consented, when the
+    /// request carried it — the request hash binds it).
+    #[serde(default)]
+    pub context: Option<OperatorContext>,
+    /// The bucket the REQUEST was opened in (the receipt's own `time_bucket`
+    /// is the authorization bucket; for an expired-window denial the two
+    /// differ). Recorded so `request_hash` can be re-derived from receipt
+    /// fields alone at audit time.
+    #[serde(default)]
+    pub request_bucket: Option<TimeBucket>,
 }
 
 fn zero_policy_commitment() -> [u8; 32] {
     [0u8; 32]
+}
+
+/// Render a bucket instant for human review at the granularity receipts
+/// carry — minute precision, never seconds (display only; never part of any
+/// hashed or signed material).
+fn bucket_utc_label(bucket: TimeBucket) -> String {
+    let (y, m, d, hh, mm, _ss) = crate::epoch_civil_utc(bucket.start_epoch_s);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02} UTC ({}s window)",
+        y, m, d, hh, mm, bucket.size_s
+    )
+}
+
+impl BreakGlassReceipt {
+    /// §3.6 binding audit: when this receipt records its request's context
+    /// (purpose + request bucket, optionally operator context), re-derive
+    /// the request hash from those recorded fields and require it to equal
+    /// the stored `request_hash` — the exact hash every trustee approval
+    /// signs. `Ok(true)` when the context is recorded and binds; `Ok(false)`
+    /// for a pre-§3.6 receipt that recorded nothing (nothing to bind — the
+    /// chain hash and device signature remain its tamper evidence); `Err`
+    /// when the recorded context does not re-derive the consented hash, or
+    /// is only partially recorded.
+    pub fn verify_context_binding(&self) -> Result<bool> {
+        let (purpose, bucket) = match (&self.purpose, self.request_bucket) {
+            (Some(purpose), Some(bucket)) => (purpose, bucket),
+            (None, None) if self.context.is_none() => return Ok(false),
+            _ => {
+                return Err(anyhow!(
+                    "receipt records a partial request context — purpose, operator context, \
+                     and request bucket travel together or not at all"
+                ))
+            }
+        };
+        let mut request =
+            UnlockRequest::new(&self.vault_envelope_id, self.ruleset_hash, purpose, bucket)?;
+        if let Some(context) = &self.context {
+            context.validate()?;
+            request.context = Some(context.clone());
+        }
+        if request.request_hash() != self.request_hash {
+            return Err(anyhow!(
+                "recorded request context does not re-derive the receipt's request hash — \
+                 the purpose/operator context on file is not what the trustees consented to"
+            ));
+        }
+        Ok(true)
+    }
+
+    /// Deterministic human-readable rendering — the 21 CFR 11.50 triad for
+    /// every signature this receipt represents: printed name, UTC time, and
+    /// the meaning each signing carries. A pure function of the receipt's
+    /// fields (display only; never hashed or signed), so two tools rendering
+    /// the same receipt print the same record.
+    pub fn render_human(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "Disclosure record — vault envelope {}\n",
+            self.vault_envelope_id
+        ));
+        match &self.outcome {
+            BreakGlassOutcome::Granted => out.push_str(&format!(
+                "  Outcome: GRANTED at {}\n",
+                bucket_utc_label(self.time_bucket)
+            )),
+            BreakGlassOutcome::Denied { reason } => out.push_str(&format!(
+                "  Outcome: DENIED at {} — {}\n",
+                bucket_utc_label(self.time_bucket),
+                reason
+            )),
+        }
+        match &self.context {
+            Some(ctx) => {
+                out.push_str(&format!(
+                    "  Requested by: {} — reason code: {}\n",
+                    ctx.requester_name, ctx.reason_code
+                ));
+                if let Some(case_ref) = &ctx.case_ref {
+                    out.push_str(&format!("  Case reference: {}\n", case_ref));
+                }
+                if let Some(key) = &ctx.requester_key {
+                    out.push_str(&format!(
+                        "  Requester key (claimed, consent-bound): {}\n",
+                        key
+                    ));
+                }
+            }
+            None => out.push_str(
+                "  Requested by: (operator context not recorded — request predates §3.6 fields)\n",
+            ),
+        }
+        if let Some(purpose) = &self.purpose {
+            out.push_str(&format!("  Stated purpose: {}\n", purpose));
+        }
+        out.push_str("  Signatures and their meaning:\n");
+        let trustee_bucket = self.request_bucket.unwrap_or(self.time_bucket);
+        for trustee in &self.trustees_used {
+            out.push_str(&format!(
+                "    - {}: signed approval of this request as trustee (one of the n-of-m \
+                 quorum consents), during {}\n",
+                trustee.0,
+                bucket_utc_label(trustee_bucket)
+            ));
+        }
+        if self.trustees_used.is_empty() {
+            out.push_str("    - (no valid trustee approvals were counted)\n");
+        }
+        out.push_str(&format!(
+            "    - device key: sealed this outcome into the hash-chained receipt ledger, \
+             during {}\n",
+            bucket_utc_label(self.time_bucket)
+        ));
+        out
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -688,6 +1020,9 @@ impl BreakGlass {
                 outcome: BreakGlassOutcome::Denied {
                     reason: reason.clone(),
                 },
+                purpose: Some(request.purpose.clone()),
+                context: request.context.clone(),
+                request_bucket: Some(request.time_bucket),
             };
             (Err(anyhow!(reason)), receipt)
         };
@@ -775,6 +1110,9 @@ impl BreakGlass {
             approvals_commitment,
             policy_commitment: policy.commitment(),
             outcome: outcome.clone(),
+            purpose: Some(request.purpose.clone()),
+            context: request.context.clone(),
+            request_bucket: Some(request.time_bucket),
         };
 
         match outcome {
@@ -927,6 +1265,9 @@ mod tests {
             outcome: BreakGlassOutcome::Denied {
                 reason: "test".to_string(),
             },
+            purpose: None,
+            context: None,
+            request_bucket: None,
         };
 
         let json = serde_json::to_string(&receipt).unwrap();
@@ -1525,5 +1866,256 @@ mod tests {
             count_valid_distinct_approvals(&policy, &rh, &[good, bob_ok]),
             2
         );
+    }
+
+    // ---------- §3.6 operator context ----------
+
+    fn test_bucket() -> TimeBucket {
+        TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        }
+    }
+
+    fn test_context() -> OperatorContext {
+        OperatorContext::new(
+            "Alice Operator",
+            "incident-review",
+            Some("case-2026-0042"),
+            None,
+        )
+        .unwrap()
+    }
+
+    /// A context-free request must hash byte-identically to the pre-§3.6
+    /// derivation — otherwise every approval collected by an older tool (and
+    /// every stored request_hash in old receipts) would falsely mismatch.
+    #[test]
+    fn context_free_request_hash_matches_legacy_framing() {
+        let request = UnlockRequest::new("vault:1", [7u8; 32], "incident", test_bucket()).unwrap();
+        let mut hasher = Sha256::new();
+        let envelope_bytes = request.vault_envelope_id.as_bytes();
+        hasher.update((envelope_bytes.len() as u32).to_le_bytes());
+        hasher.update(envelope_bytes);
+        hasher.update(request.ruleset_hash);
+        let purpose_bytes = request.purpose.as_bytes();
+        hasher.update((purpose_bytes.len() as u32).to_le_bytes());
+        hasher.update(purpose_bytes);
+        hasher.update(request.time_bucket.start_epoch_s.to_le_bytes());
+        hasher.update(request.time_bucket.size_s.to_le_bytes());
+        let legacy: [u8; 32] = hasher.finalize().into();
+        assert_eq!(request.request_hash(), legacy);
+    }
+
+    #[test]
+    fn context_binds_into_request_hash() {
+        let bare = UnlockRequest::new("vault:1", [7u8; 32], "incident", test_bucket()).unwrap();
+        let with_ctx = bare.clone().with_context(test_context()).unwrap();
+        assert_ne!(bare.request_hash(), with_ctx.request_hash());
+
+        // Every context field moves the hash.
+        let mut other = test_context();
+        other.requester_name = "Mallory Operator".to_string();
+        let renamed = bare.clone().with_context(other).unwrap();
+        assert_ne!(with_ctx.request_hash(), renamed.request_hash());
+
+        let no_case =
+            OperatorContext::new("Alice Operator", "incident-review", None, None).unwrap();
+        let without_case = bare.clone().with_context(no_case).unwrap();
+        assert_ne!(with_ctx.request_hash(), without_case.request_hash());
+
+        // The requester key is hashed as decoded BYTES: hex case variants of
+        // the same key must produce the same consented hash.
+        let key_hex = hex::encode([0xABu8; 32]);
+        let lower = OperatorContext::new("A", "drill", None, Some(&key_hex)).unwrap();
+        let upper =
+            OperatorContext::new("A", "drill", None, Some(&key_hex.to_ascii_uppercase())).unwrap();
+        let h_lower = bare.clone().with_context(lower).unwrap().request_hash();
+        let h_upper = bare.clone().with_context(upper).unwrap().request_hash();
+        assert_eq!(h_lower, h_upper);
+    }
+
+    #[test]
+    fn reason_code_vocabulary_is_closed() {
+        // Administrative/observable codes only; anything outside the closed
+        // list is refused, so tools cannot invent intent-attributing entries.
+        assert!(OperatorContext::new("A", "totally-legit-reason", None, None).is_err());
+        assert!(OperatorContext::new("A", "", None, None).is_err());
+        assert!(OperatorContext::new("", "drill", None, None).is_err());
+        assert!(OperatorContext::new("A", "drill", None, Some("not-hex")).is_err());
+        assert!(OperatorContext::new("A", "drill", None, Some("abcd")).is_err());
+        for code in REASON_CODES {
+            assert!(OperatorContext::new("A", code, None, None).is_ok());
+        }
+    }
+
+    #[test]
+    fn receipt_context_binding_round_trip_and_tamper() {
+        let bucket = test_bucket();
+        let request = UnlockRequest::new("vault:ctx", [3u8; 32], "incident", bucket)
+            .unwrap()
+            .with_context(test_context())
+            .unwrap();
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let approval = Approval::signed(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            &signing_key,
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        assert!(result.is_ok());
+
+        // The receipt records the full context, and it re-derives the exact
+        // hash the trustee signed.
+        assert_eq!(receipt.purpose.as_deref(), Some("incident"));
+        assert_eq!(receipt.context.as_ref(), Some(&test_context()));
+        assert_eq!(receipt.request_bucket, Some(bucket));
+        assert!(receipt.verify_context_binding().unwrap());
+
+        // A swapped narrative no longer re-derives the consented hash.
+        let mut tampered = receipt.clone();
+        tampered.purpose = Some("routine maintenance, nothing to see".to_string());
+        assert!(tampered.verify_context_binding().is_err());
+
+        // A swapped requester likewise.
+        let mut renamed = receipt.clone();
+        if let Some(ctx) = &mut renamed.context {
+            ctx.requester_name = "Someone Else".to_string();
+        }
+        assert!(renamed.verify_context_binding().is_err());
+
+        // A pre-§3.6 receipt recorded nothing: nothing to bind, not an error.
+        let mut legacy = receipt.clone();
+        legacy.purpose = None;
+        legacy.context = None;
+        legacy.request_bucket = None;
+        assert!(!legacy.verify_context_binding().unwrap());
+
+        // A partial recording is a defect, never silently accepted.
+        let mut partial = receipt.clone();
+        partial.request_bucket = None;
+        assert!(partial.verify_context_binding().is_err());
+    }
+
+    /// The rendered record says "X signed" — so X must actually have signed.
+    /// A device-key holder who writes a receipt naming a trustee whose valid
+    /// approval does not exist (or omitting one whose approval does) is
+    /// refused at every audit surface.
+    #[test]
+    fn false_trustee_attribution_is_rejected() {
+        let bucket = test_bucket();
+        let request = UnlockRequest::new("vault:attr", [3u8; 32], "incident", bucket).unwrap();
+        let alice_key = SigningKey::from_bytes(&[11u8; 32]);
+        let bob_key = SigningKey::from_bytes(&[12u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: alice_key.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: bob_key.verifying_key().to_bytes(),
+                },
+            ],
+        )
+        .unwrap();
+        let alice_approval =
+            Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice_key);
+        let approvals = vec![alice_approval];
+
+        let honest = BreakGlassReceipt {
+            vault_envelope_id: "vault:attr".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [3u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![TrusteeId::new("alice")],
+            approvals_commitment: approvals_commitment(&approvals),
+            policy_commitment: policy.commitment(),
+            outcome: BreakGlassOutcome::Granted,
+            purpose: None,
+            context: None,
+            request_bucket: None,
+        };
+        assert!(verify_trustee_attribution(&policy, &honest, &approvals).is_ok());
+
+        // Alice's valid approval rendered as Bob's signature: refused.
+        let mut misattributed = honest.clone();
+        misattributed.trustees_used = vec![TrusteeId::new("bob")];
+        let err = verify_trustee_attribution(&policy, &misattributed, &approvals).unwrap_err();
+        assert!(
+            err.to_string().contains("false signature attribution"),
+            "{err}"
+        );
+
+        // A Granted receipt that OMITS the trustee whose approval it carries
+        // misrepresents the record the other way: refused too.
+        let mut understated = honest.clone();
+        understated.trustees_used = vec![];
+        assert!(verify_trustee_attribution(&policy, &understated, &approvals).is_err());
+
+        // An early DENIAL legitimately credits nobody while still committing
+        // to the presented approvals — that stays valid...
+        let mut denial = honest.clone();
+        denial.outcome = BreakGlassOutcome::Denied {
+            reason: "request time window expired".to_string(),
+        };
+        denial.trustees_used = vec![];
+        assert!(verify_trustee_attribution(&policy, &denial, &approvals).is_ok());
+
+        // ...but a denial may never NAME a trustee who did not sign.
+        denial.trustees_used = vec![TrusteeId::new("bob")];
+        assert!(verify_trustee_attribution(&policy, &denial, &approvals).is_err());
+    }
+
+    /// The human rendering is a pure function of the receipt (deterministic)
+    /// and carries the 21 CFR 11.50 triad: printed name, UTC time, meaning
+    /// of each signature.
+    #[test]
+    fn render_human_is_deterministic_and_carries_the_triad() {
+        let bucket = test_bucket();
+        let request = UnlockRequest::new("vault:ctx", [3u8; 32], "incident", bucket)
+            .unwrap()
+            .with_context(test_context())
+            .unwrap();
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let approval = Approval::signed(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            &signing_key,
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (_, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        let rendered = receipt.render_human();
+        assert_eq!(rendered, receipt.render_human());
+        assert!(rendered.contains("Alice Operator"), "{rendered}");
+        assert!(rendered.contains("incident-review"), "{rendered}");
+        assert!(rendered.contains("case-2026-0042"), "{rendered}");
+        assert!(rendered.contains("1970-01-01 00:00 UTC"), "{rendered}");
+        assert!(
+            rendered.contains("alice: signed approval of this request as trustee"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("device key: sealed this outcome"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("GRANTED"), "{rendered}");
     }
 }

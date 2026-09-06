@@ -76,6 +76,15 @@ pub trait BreakGlassOps {
 struct OpenReq {
     envelope: String,
     purpose: String,
+    /// §3.6 operator context — optional at this wire so pre-§3.6 clients
+    /// (the HA add-on wizard among them) keep working; when absent the
+    /// receipt records the disclosure without a named requester.
+    #[serde(default)]
+    requested_by: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    case_ref: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -127,7 +136,15 @@ fn policy_reply(policy: &QuorumPolicy) -> HttpReply {
         .collect();
     HttpReply::json(
         200,
-        json!({ "n": policy.n, "m": policy.m, "trustees": trustees }),
+        json!({
+            "n": policy.n,
+            "m": policy.m,
+            "trustees": trustees,
+            // The closed §3.6 reason vocabulary, served so the console's
+            // dropdown has ONE source of truth (core::REASON_CODES) and the
+            // page never hardcodes a copy.
+            "reason_codes": crate::break_glass::REASON_CODES,
+        }),
     )
 }
 
@@ -145,11 +162,39 @@ fn open_request<O: BreakGlassOps>(
     if req.envelope.len() > MAX_FIELD_LEN || req.purpose.len() > MAX_FIELD_LEN {
         return HttpReply::error(400, "field_too_long");
     }
+    if [&req.requested_by, &req.reason, &req.case_ref]
+        .iter()
+        .any(|f| f.as_deref().is_some_and(|v| v.len() > MAX_FIELD_LEN))
+    {
+        return HttpReply::error(400, "field_too_long");
+    }
     let request =
         match UnlockRequest::new(&req.envelope, ops.ruleset_hash(), &req.purpose, now_bucket) {
             Ok(r) => r,
             Err(_) => return HttpReply::error(400, "invalid_request"),
         };
+    // §3.6 operator context: requested_by and reason travel together (both
+    // bind into the hash trustees sign); a partial pair is a caller bug, not
+    // something to guess about.
+    let request = match (&req.requested_by, &req.reason) {
+        (Some(requested_by), Some(reason)) => {
+            let context = match crate::break_glass::OperatorContext::new(
+                requested_by,
+                reason,
+                req.case_ref.as_deref(),
+                None,
+            ) {
+                Ok(c) => c,
+                Err(_) => return HttpReply::error(400, "invalid_operator_context"),
+            };
+            match request.with_context(context) {
+                Ok(r) => r,
+                Err(_) => return HttpReply::error(400, "invalid_operator_context"),
+            }
+        }
+        (None, None) => request,
+        _ => return HttpReply::error(400, "partial_operator_context"),
+    };
     let request_hash = session.open(request);
     HttpReply::json(
         200,
@@ -361,6 +406,102 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
         assert_eq!(v["needed"], 2);
         v["request_hash"].as_str().unwrap().to_string()
+    }
+
+    /// §3.6 over the wire: context fields ride into the session's request
+    /// (so the eventual receipt records them), the policy reply serves the
+    /// closed reason vocabulary, and a partial pair is refused.
+    #[test]
+    fn open_request_carries_operator_context() {
+        let (_alice, _bob, policy) = two_of_two();
+        let mut ops = MockOps::new(policy);
+        let mut session = BreakGlassSession::new();
+
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "GET",
+            "/breakglass/policy",
+            b"",
+        );
+        assert_eq!(reply.status, 200);
+        let v: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(
+            v["reason_codes"]
+                .as_array()
+                .expect("policy reply serves the reason vocabulary")
+                .len(),
+            crate::break_glass::REASON_CODES.len()
+        );
+
+        let body = json!({
+            "envelope": "vault:1",
+            "purpose": "incident",
+            "requested_by": "Alice Operator",
+            "reason": "incident-review",
+            "case_ref": "case-9"
+        })
+        .to_string()
+        .into_bytes();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/request",
+            &body,
+        );
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        let stored = session.request().expect("session holds the request");
+        let context = stored.context.as_ref().expect("context recorded");
+        assert_eq!(context.requester_name, "Alice Operator");
+        assert_eq!(context.reason_code, "incident-review");
+        assert_eq!(context.case_ref.as_deref(), Some("case-9"));
+
+        // requested_by without reason: refused, nothing opened over it.
+        let mut session2 = BreakGlassSession::new();
+        let partial = json!({
+            "envelope": "vault:1",
+            "purpose": "incident",
+            "requested_by": "Alice Operator"
+        })
+        .to_string()
+        .into_bytes();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session2,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/request",
+            &partial,
+        );
+        assert_eq!(reply.status, 400);
+        assert!(reply.body.contains("partial_operator_context"));
+
+        // An unknown reason code is refused too — the vocabulary is closed.
+        let bogus = json!({
+            "envelope": "vault:1",
+            "purpose": "incident",
+            "requested_by": "Alice Operator",
+            "reason": "definitely-not-a-code"
+        })
+        .to_string()
+        .into_bytes();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session2,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/request",
+            &bogus,
+        );
+        assert_eq!(reply.status, 400);
+        assert!(reply.body.contains("invalid_operator_context"));
     }
 
     #[test]

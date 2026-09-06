@@ -1133,6 +1133,16 @@ pub(crate) fn verify_receipt_quorum(
     receipt: &BreakGlassReceipt,
     approvals: &[Approval],
 ) -> Result<()> {
+    // §3.6 context binding: a receipt that records its request's purpose and
+    // operator context must re-derive the exact request hash the trustee
+    // approvals signed — otherwise the recorded "who asked and why" is not
+    // what was consented to. Independent of policy-era resolution (needs no
+    // policy), so it runs even for legacy-era receipts; receipts that
+    // recorded nothing (pre-§3.6 rows) have nothing to bind and pass.
+    receipt
+        .verify_context_binding()
+        .map_err(|e| anyhow!("receipt context binding failed: {}", e))?;
+
     let Some(policy) = resolve_receipt_policy(current_policy, history, receipt)? else {
         // Legacy, unresolvable era: keep the pre-history behavior (do not
         // re-derive). The chain hash and device signature the caller already
@@ -1180,6 +1190,10 @@ pub(crate) fn verify_receipt_quorum(
             policy.n
         ));
     }
+    // §3.6 truthful attribution: the trustees the receipt NAMES must be the
+    // trustees whose approvals verify — a valid quorum from Alice must not
+    // render as "Bob signed".
+    crate::break_glass::verify_trustee_attribution(policy, receipt, approvals)?;
     Ok(())
 }
 
@@ -1419,13 +1433,27 @@ mod tests {
             approvals_commitment: approvals_commitment(&[]),
             policy_commitment: policy.commitment(),
             outcome: BreakGlassOutcome::Granted,
+            purpose: None,
+            context: None,
+            request_bucket: None,
         };
         assert!(verify_receipt_quorum(&policy, &[], &forged, &[]).is_err());
 
-        // Legit: the same Granted receipt WITH a real trustee approval passes.
+        // Legit: the same Granted receipt WITH a real trustee approval passes
+        // — and it must NAME that trustee (authorize always does; a Granted
+        // receipt naming nobody while carrying alice's approval is the
+        // attribution forgery shape, refused).
         let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
+        let legit = BreakGlassReceipt {
+            trustees_used: vec![TrusteeId::new("alice")],
+            ..forged.clone()
+        };
         assert!(
-            verify_receipt_quorum(&policy, &[], &forged, std::slice::from_ref(&approval)).is_ok()
+            verify_receipt_quorum(&policy, &[], &legit, std::slice::from_ref(&approval)).is_ok()
+        );
+        assert!(
+            verify_receipt_quorum(&policy, &[], &forged, std::slice::from_ref(&approval)).is_err(),
+            "a Granted receipt omitting the trustee whose approval it carries must be refused"
         );
 
         // A Denied receipt carries no quorum floor — empty approvals are fine.
@@ -1436,6 +1464,63 @@ mod tests {
             ..forged.clone()
         };
         assert!(verify_receipt_quorum(&policy, &[], &denied, &[]).is_ok());
+    }
+
+    /// §3.6: a receipt that RECORDS its request's purpose/context must
+    /// re-derive the stored request hash from those fields — the audit
+    /// refuses a receipt whose recorded "who asked and why" is not what the
+    /// trustee approvals actually signed, even when the approvals themselves
+    /// are valid.
+    #[test]
+    fn receipt_with_context_that_does_not_rederive_its_hash_is_rejected() {
+        use crate::break_glass::{OperatorContext, TrusteeEntry, TrusteeId, UnlockRequest};
+        use crate::TimeBucket;
+
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let key = SigningKey::from_bytes(&[1u8; 32]);
+        let context =
+            OperatorContext::new("Alice Operator", "incident-review", None, None).unwrap();
+        let request = UnlockRequest::new("vault:v", [1u8; 32], "incident", bucket)
+            .unwrap()
+            .with_context(context.clone())
+            .unwrap();
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
+
+        let honest = BreakGlassReceipt {
+            vault_envelope_id: "vault:v".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [1u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![TrusteeId::new("alice")],
+            approvals_commitment: approvals_commitment(std::slice::from_ref(&approval)),
+            policy_commitment: policy.commitment(),
+            outcome: BreakGlassOutcome::Granted,
+            purpose: Some("incident".to_string()),
+            context: Some(context),
+            request_bucket: Some(bucket),
+        };
+        assert!(
+            verify_receipt_quorum(&policy, &[], &honest, std::slice::from_ref(&approval)).is_ok()
+        );
+
+        // Identical valid approvals, but the recorded narrative was swapped
+        // after the fact: the binding check refuses it.
+        let mut swapped = honest.clone();
+        swapped.purpose = Some("routine maintenance".to_string());
+        assert!(
+            verify_receipt_quorum(&policy, &[], &swapped, std::slice::from_ref(&approval)).is_err()
+        );
     }
 
     // ─── the era guard is not a bypass: a receipt claiming a policy era that
@@ -1475,6 +1560,9 @@ mod tests {
             approvals_commitment: approvals_commitment(&[]),
             policy_commitment: [0x99u8; 32],
             outcome: BreakGlassOutcome::Granted,
+            purpose: None,
+            context: None,
+            request_bucket: None,
         };
         // history contains only the real current policy's era.
         let history = vec![policy.clone()];
