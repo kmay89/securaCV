@@ -138,6 +138,14 @@ break_glass request \
   --output-request unlock.request
 ```
 
+Every consent-bound text field (envelope id, purpose, requester name, case
+reference) is capped at 512 bytes and may not contain control characters,
+line or paragraph separators, or bidirectional/format override characters —
+these strings are shown to trustees before they sign and rendered into the
+permanent record, so no field may forge a line or hide a character. Tools
+display them through `display_safe`, which neutralizes anything a record
+from another build could carry.
+
 Send trustees the **context file** (format `securacv-unlock-request:v2`),
 not a bare hash — their tool can then show them exactly what they are
 consenting to. v1 files from older tools are still accepted, with a notice
@@ -175,6 +183,14 @@ break_glass approve \
 `--request-hash <hex>` remains available for compatibility; it is **blind
 signing** — the tool cannot show what it authorizes — and prints a warning
 saying so. (Design rationale: `spec/quorum_unseal_v2.md` §3.2.)
+
+On the served console, the trustee signing link carries every field the hash
+binds (as the server normalized them) and the signer page recomputes the
+request hash from those fields in the browser before enabling the signature;
+a link whose fields do not produce its hash is refused, and a link carrying
+only a hash is labeled as blind signing. The status endpoint likewise
+exposes the bound operator context, so the served surface shows what the
+hash covers rather than only the hash.
 
 Approvals are collected by the operator and passed to the authorization step.
 

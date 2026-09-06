@@ -4158,9 +4158,21 @@ pub fn break_glass_receipt_outcome_for_verifier(
         // records its request's purpose/operator context must re-derive the
         // exact request hash the approvals signed — otherwise the recorded
         // "who asked and why" is not what the trustees consented to.
-        receipt
+        let context_recorded = receipt
             .verify_context_binding()
             .map_err(|e| anyhow!("break-glass receipt context binding failed: {}", e))?;
+        // Absence of context is not a free pass at the gate: every receipt
+        // this build writes records its purpose and request bucket, and a
+        // token only lives inside the bucket it was minted in, so a Granted
+        // receipt with all three fields missing is not one a legitimately
+        // minted token can reference — it is a re-signed row with the
+        // consent-bound context stripped. Fail closed; re-authorize.
+        if !context_recorded {
+            return Err(anyhow!(
+                "break-glass receipt records no request context (purpose/request bucket) — a \
+                 token-referenced receipt always does; refusing (re-authorize)"
+            ));
+        }
         let policy = crate::verify::load_break_glass_policy(conn)?
             .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
         // Unlike the audit path (which tolerates historical policy eras), the

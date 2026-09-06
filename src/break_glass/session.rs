@@ -11,6 +11,7 @@
 //! It is deliberately pure logic (no I/O, no network) so the authorization rules
 //! are unit-tested in isolation; the HTTP layer is a thin wrapper over this.
 
+use crate::TimeBucket;
 use ed25519_dalek::VerifyingKey;
 
 use super::core::{verify_approval, Approval, QuorumPolicy, UnlockRequest};
@@ -47,6 +48,16 @@ impl ApprovalRejection {
 pub struct SessionStatus {
     pub envelope: String,
     pub purpose: String,
+    /// §3.6 operator context bound into the request hash, when the request
+    /// carried it — surfaced so the served wire can SHOW trustees what the
+    /// hash they sign covers (WYSIWYS), not just the hash.
+    pub requested_by: Option<String>,
+    pub reason: Option<String>,
+    pub case_ref: Option<String>,
+    /// hex-encoded ruleset hash the request binds (a trustee recomputing the
+    /// request hash needs it).
+    pub ruleset_hash_hex: String,
+    pub time_bucket: TimeBucket,
     /// hex-encoded request hash trustees must sign.
     pub request_hash_hex: String,
     /// Quorum threshold (n).
@@ -167,9 +178,15 @@ impl BreakGlassSession {
             .collect();
         collected.sort();
         collected.dedup();
+        let context = pending.request.context.as_ref();
         Some(SessionStatus {
             envelope: pending.request.vault_envelope_id.clone(),
             purpose: pending.request.purpose.clone(),
+            requested_by: context.map(|c| c.requester_name.clone()),
+            reason: context.map(|c| c.reason_code.clone()),
+            case_ref: context.and_then(|c| c.case_ref.clone()),
+            ruleset_hash_hex: hex::encode(pending.request.ruleset_hash),
+            time_bucket: pending.request.time_bucket,
             request_hash_hex: hex::encode(pending.request_hash),
             needed: policy.n,
             ready: collected.len() >= policy.n as usize,

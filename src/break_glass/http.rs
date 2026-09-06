@@ -26,8 +26,9 @@ use super::core::{Approval, QuorumPolicy, TrusteeId, UnlockRequest};
 use super::session::BreakGlassSession;
 use crate::TimeBucket;
 
-/// Upper bound on operator-supplied strings, to keep request bodies bounded.
-const MAX_FIELD_LEN: usize = 512;
+// One bound for every consent-bound text field, owned by core so the CLI,
+// the request file, and this wire agree.
+use crate::break_glass::MAX_FIELD_LEN;
 
 /// A ready-to-send JSON reply. `status` is the HTTP status code.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,18 +193,30 @@ fn open_request<O: BreakGlassOps>(
                 Err(_) => return HttpReply::error(400, "invalid_operator_context"),
             }
         }
-        (None, None) => request,
+        // A case reference without the requester/reason pair would be silently
+        // dropped from the permanent record — the same caller bug as a
+        // partial pair, refused the same way.
+        (None, None) if req.case_ref.is_none() => request,
         _ => return HttpReply::error(400, "partial_operator_context"),
     };
+    // Echo every field the hash binds — as NORMALIZED (trimmed) by
+    // construction, since those are the bytes the hash covers — plus the
+    // ruleset hash, so the console can hand trustees the full preimage of
+    // the hash they sign, not a bare hash.
+    let echo = json!({
+        "envelope": request.vault_envelope_id,
+        "purpose": request.purpose,
+        "ruleset_hash": hex::encode(request.ruleset_hash),
+        "time_bucket": { "start_epoch_s": now_bucket.start_epoch_s, "size_s": now_bucket.size_s },
+        "requested_by": request.context.as_ref().map(|c| c.requester_name.clone()),
+        "reason": request.context.as_ref().map(|c| c.reason_code.clone()),
+        "case_ref": request.context.as_ref().and_then(|c| c.case_ref.clone()),
+    });
     let request_hash = session.open(request);
-    HttpReply::json(
-        200,
-        json!({
-            "request_hash": hex::encode(request_hash),
-            "time_bucket": { "start_epoch_s": now_bucket.start_epoch_s, "size_s": now_bucket.size_s },
-            "needed": policy.n,
-        }),
-    )
+    let mut reply = echo;
+    reply["request_hash"] = json!(hex::encode(request_hash));
+    reply["needed"] = json!(policy.n);
+    HttpReply::json(200, reply)
 }
 
 fn status_reply(session: &BreakGlassSession, policy: &QuorumPolicy) -> HttpReply {
@@ -214,6 +227,11 @@ fn status_reply(session: &BreakGlassSession, policy: &QuorumPolicy) -> HttpReply
             json!({
                 "envelope": s.envelope,
                 "purpose": s.purpose,
+                "requested_by": s.requested_by,
+                "reason": s.reason,
+                "case_ref": s.case_ref,
+                "ruleset_hash": s.ruleset_hash_hex,
+                "time_bucket": { "start_epoch_s": s.time_bucket.start_epoch_s, "size_s": s.time_bucket.size_s },
                 "request_hash": s.request_hash_hex,
                 "needed": s.needed,
                 "collected": s.collected,
@@ -455,11 +473,56 @@ mod tests {
             &body,
         );
         assert_eq!(reply.status, 200, "{}", reply.body);
+        let opened: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(opened["ruleset_hash"], hex::encode(RULESET));
+        assert_eq!(opened["requested_by"], "Alice Operator");
         let stored = session.request().expect("session holds the request");
         let context = stored.context.as_ref().expect("context recorded");
         assert_eq!(context.requester_name, "Alice Operator");
         assert_eq!(context.reason_code, "incident-review");
         assert_eq!(context.case_ref.as_deref(), Some("case-9"));
+
+        // The served wire SHOWS what the hash binds — status carries the
+        // context plus the ruleset hash and bucket a trustee needs to
+        // recompute the request hash (WYSIWYS on the served path).
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session,
+            "/out",
+            bucket(),
+            "GET",
+            "/breakglass/status",
+            b"",
+        );
+        assert_eq!(reply.status, 200);
+        let s: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(s["requested_by"], "Alice Operator");
+        assert_eq!(s["reason"], "incident-review");
+        assert_eq!(s["case_ref"], "case-9");
+        assert_eq!(s["ruleset_hash"], hex::encode(RULESET));
+        assert_eq!(s["time_bucket"]["start_epoch_s"], bucket().start_epoch_s);
+
+        // A case reference WITHOUT the pair would be dropped from the record:
+        // refused like a partial pair.
+        let mut session3 = BreakGlassSession::new();
+        let orphan = json!({
+            "envelope": "vault:1",
+            "purpose": "incident",
+            "case_ref": "case-9"
+        })
+        .to_string()
+        .into_bytes();
+        let reply = handle_break_glass(
+            &mut ops,
+            &mut session3,
+            "/out",
+            bucket(),
+            "POST",
+            "/breakglass/request",
+            &orphan,
+        );
+        assert_eq!(reply.status, 400);
+        assert!(reply.body.contains("partial_operator_context"));
 
         // requested_by without reason: refused, nothing opened over it.
         let mut session2 = BreakGlassSession::new();

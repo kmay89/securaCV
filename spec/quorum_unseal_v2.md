@@ -15,11 +15,12 @@ and it upgrades — never replaces — the shipped v1 protocol in
 
 **Maturity:** ⚪ spec-only, with four exceptions that are implemented and
 normative as of this revision: **quorum-gated policy mutation** (§3.1),
-**WYSIWYS approval** (§3.2), and **human-context fields** (§3.6) — all
-documented operationally in `break_glass.md` — plus **`court export` for
-event-export bundles** (§5, see its inline annotation). Everything else
-here is design: treat it as the agreed direction, not a shipped contract. Known gaps this design closes are tracked
-canonically in
+**WYSIWYS approval** (§3.2), and **human-context fields** (§3.6, break-glass
+path — see its inline annotation) — all documented operationally in
+`break_glass.md` — plus **`court export` for event-export bundles** (§5, see
+its inline annotation). Everything else here is design: treat it as the
+agreed direction, not a shipped contract. Known gaps this design closes are
+tracked canonically in
 [`docs/security/ENTERPRISE_CUSTODY.md`](../docs/security/ENTERPRISE_CUSTODY.md);
 this spec is the "how", that tracker is the "whether it shipped yet".
 

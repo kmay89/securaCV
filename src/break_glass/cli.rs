@@ -645,7 +645,22 @@ const UNLOCK_REQUEST_FILE_FORMAT: &str = "securacv-unlock-request:v2";
 /// re-validated, request hash recomputed and cross-checked against the
 /// file's claimed hash. The file's own hashes are never trusted — the caller
 /// signs (or authorizes) what this tool derived from what it displays.
+/// A request file is a few hundred bytes of JSON; refuse anything that is
+/// not, before parsing it (mirrors the served wire's request-body cap).
+const MAX_REQUEST_FILE_BYTES: u64 = 64 * 1024;
+
 fn load_unlock_request_file(path: &str) -> Result<(UnlockRequestFile, UnlockRequest)> {
+    let size = std::fs::metadata(path)
+        .map_err(|e| anyhow!("failed to read request file {}: {}", path, e))?
+        .len();
+    if size > MAX_REQUEST_FILE_BYTES {
+        return Err(anyhow!(
+            "request file {} is {} bytes — larger than any request context ({} max); refusing",
+            path,
+            size,
+            MAX_REQUEST_FILE_BYTES
+        ));
+    }
     let json = std::fs::read_to_string(path)
         .map_err(|e| anyhow!("failed to read request file {}: {}", path, e))?;
     let file: UnlockRequestFile =
@@ -727,17 +742,22 @@ fn load_unlock_request_file(path: &str) -> Result<(UnlockRequestFile, UnlockRequ
 /// Print the reviewable fields of a request — the WYSIWYS display both
 /// `approve --request` and `authorize --request` show before acting.
 fn print_request_fields(file: &UnlockRequestFile, recomputed_hash: &[u8; 32]) {
-    println!("Envelope:     {}", file.envelope);
-    println!("Purpose:      {}", file.purpose);
+    // This is the screen a trustee relies on before signing: every
+    // operator-supplied string is display_safe'd so no field can forge a
+    // line or hide a character (construction already refuses them; a file
+    // is not trusted to have gone through construction).
+    use crate::break_glass::display_safe;
+    println!("Envelope:     {}", display_safe(&file.envelope));
+    println!("Purpose:      {}", display_safe(&file.purpose));
     match (&file.requested_by, &file.reason) {
         (Some(name), Some(reason)) => {
-            println!("Requested by: {}", name);
-            println!("Reason code:  {}", reason);
+            println!("Requested by: {}", display_safe(name));
+            println!("Reason code:  {}", display_safe(reason));
             if let Some(case_ref) = &file.case_ref {
-                println!("Case ref:     {}", case_ref);
+                println!("Case ref:     {}", display_safe(case_ref));
             }
             if let Some(key) = &file.requester_key {
-                println!("Requester key (claimed): {}", key);
+                println!("Requester key (claimed): {}", display_safe(key));
             }
         }
         _ => println!("Requested by: (not recorded — pre-§3.6 request)"),
@@ -985,15 +1005,17 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
                     args.ruleset_id
                 ));
             }
-            // authorize() itself enforces the same-bucket redemption rule
-            // (with a receipted denial); this early check just explains it
-            // before a denial receipt is written for a stale file.
+            // authorize() enforces the same-bucket redemption rule with a
+            // RECEIPTED denial (spec/break_glass.md: every attempt, granted
+            // or denied, leaves a receipt). Explain the coming denial here,
+            // then fall through so the attempt is on the record.
             if request.time_bucket != args.bucket {
-                return Err(anyhow!(
-                    "request file window {} is not the current bucket — approvals redeem only \
-                     in the bucket the request was opened in; open a fresh request",
+                eprintln!(
+                    "NOTICE: request file window {} has rolled over — approvals redeem only in \
+                     the bucket the request was opened in. This attempt will be DENIED and \
+                     receipted; open a fresh request.",
                     bucket_window(&request.time_bucket)
-                ));
+                );
             }
             print_request_fields(&file, &request.request_hash());
             request
@@ -1018,6 +1040,13 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
                     request.with_context(context)?
                 }
                 (None, None) => {
+                    if case_ref.is_some() || requester_key.is_some() {
+                        return Err(anyhow!(
+                            "--case-ref/--requester-key bind into the operator context and need \
+                             --requested-by and --reason — without them they cannot be \
+                             recorded; pass all of them, or prefer `authorize --request <file>`"
+                        ));
+                    }
                     eprintln!(
                         "NOTICE: authorizing without operator context (--requested-by/--reason). \
                          If the request was created WITH context, these approvals will not \
@@ -2367,14 +2396,15 @@ fn cmd_receipts(
             status
         );
         if let Some(context) = &receipt.context {
+            use crate::break_glass::display_safe;
             println!(
                 "  requested by: {} (reason: {}{})",
-                context.requester_name,
-                context.reason_code,
+                display_safe(&context.requester_name),
+                display_safe(&context.reason_code),
                 context
                     .case_ref
                     .as_deref()
-                    .map(|case_ref| format!(", case {}", case_ref))
+                    .map(|case_ref| format!(", case {}", display_safe(case_ref)))
                     .unwrap_or_default()
             );
         }
@@ -3321,6 +3351,172 @@ mod tests {
         assert!(
             cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path).is_err(),
             "a swapped requester name must be refused — it is consent-bound"
+        );
+        Ok(())
+    }
+
+    /// `authorize --request <file>` — the documented preferred path — grants
+    /// from the file's own fields, and a stale file is DENIED WITH A RECEIPT
+    /// (every attempt is on the record), never refused silently.
+    #[test]
+    fn authorize_from_request_file_grants_and_stale_file_is_receipted() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_auth_file_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db_path = temp.join("witness.db");
+        let ruleset_id = "ruleset:test";
+        let device_key_seed = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
+        let alice = SigningKey::from_bytes(&[31u8; 32]);
+        let entry = format!("alice:{}", hex_encode(alice.verifying_key().to_bytes()));
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            None,
+            None,
+            &db_path.to_string_lossy(),
+            ruleset_id,
+            device_key_seed,
+        )?;
+
+        // Operator: request WITH context, written to the portable file.
+        let req_path = temp.join("unlock.request").to_string_lossy().to_string();
+        cmd_request(
+            "vault:file",
+            "incident response",
+            crate::break_glass::OperatorContext::new(
+                "Alice Operator",
+                "incident-review",
+                Some("case-7"),
+                None,
+            )?,
+            ruleset_id,
+            Some(&req_path),
+        )?;
+        // Trustee: approve from the file (WYSIWYS).
+        let key_path = temp.join("alice.key").to_string_lossy().to_string();
+        let approval_path = temp.join("alice.approval").to_string_lossy().to_string();
+        std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
+        cmd_approve(Some(&req_path), None, "alice", &key_path, &approval_path)?;
+
+        // Operator: authorize FROM THE FILE — reproduces the consented hash,
+        // context included, so the approval counts.
+        let (_, request) = load_unlock_request_file(&req_path)?;
+        let args = AuthorizeArgs {
+            source: AuthorizeRequestSource::File(req_path.clone()),
+            approvals_arg: &approval_path,
+            db_path: &db_path.to_string_lossy(),
+            ruleset_id,
+            device_key_seed,
+            output_token: None,
+            bucket: request.time_bucket,
+        };
+        cmd_authorize_with_bucket(args)?;
+
+        // The receipt carries the context, verbatim.
+        let cfg = kernel_config(&db_path.to_string_lossy(), ruleset_id, device_key_seed);
+        let kernel = Kernel::open(&cfg)?;
+        let count = |k: &Kernel| -> Result<i64> {
+            Ok(k.conn
+                .query_row("SELECT COUNT(*) FROM break_glass_receipts", [], |r| {
+                    r.get(0)
+                })?)
+        };
+        assert_eq!(count(&kernel)?, 1);
+        let payload: String = kernel.conn.query_row(
+            "SELECT payload_json FROM break_glass_receipts ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )?;
+        let receipt: crate::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        assert!(matches!(receipt.outcome, BreakGlassOutcome::Granted));
+        assert_eq!(
+            receipt.context.as_ref().map(|c| c.requester_name.as_str()),
+            Some("Alice Operator")
+        );
+        assert!(receipt.verify_context_binding()?);
+        drop(kernel);
+
+        // The same file in a LATER bucket: denied — and the denial is on the
+        // record as a receipt, not a silent refusal.
+        let later = TimeBucket {
+            start_epoch_s: request.time_bucket.start_epoch_s + 600,
+            size_s: request.time_bucket.size_s,
+        };
+        let args = AuthorizeArgs {
+            source: AuthorizeRequestSource::File(req_path.clone()),
+            approvals_arg: &approval_path,
+            db_path: &db_path.to_string_lossy(),
+            ruleset_id,
+            device_key_seed,
+            output_token: None,
+            bucket: later,
+        };
+        let err = cmd_authorize_with_bucket(args).expect_err("stale file must be denied");
+        assert!(err.to_string().contains("time window expired"), "{err}");
+        let kernel = Kernel::open(&cfg)?;
+        assert_eq!(
+            count(&kernel)?,
+            2,
+            "the stale attempt must leave a denial receipt"
+        );
+        let payload: String = kernel.conn.query_row(
+            "SELECT payload_json FROM break_glass_receipts ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )?;
+        let denial: crate::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        assert!(matches!(denial.outcome, BreakGlassOutcome::Denied { .. }));
+        assert!(denial.trustees_used.is_empty());
+        assert_eq!(denial.request_bucket, Some(request.time_bucket));
+        assert!(denial.verify_context_binding()?);
+        Ok(())
+    }
+
+    /// Orphan context flags never vanish silently: a case reference or
+    /// requester key without the requester/reason pair is refused, because
+    /// the pair is what carries them into the hash and the record.
+    #[test]
+    fn authorize_refuses_orphan_context_flags() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_orphan_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db_path = temp.join("witness.db");
+        let ruleset_id = "ruleset:test";
+        let device_key_seed = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
+        let alice = SigningKey::from_bytes(&[32u8; 32]);
+        let entry = format!("alice:{}", hex_encode(alice.verifying_key().to_bytes()));
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            None,
+            None,
+            &db_path.to_string_lossy(),
+            ruleset_id,
+            device_key_seed,
+        )?;
+        let approval_path = temp.join("none.approval").to_string_lossy().to_string();
+        std::fs::write(
+            &approval_path,
+            serde_json::to_string(&Approval::new(TrusteeId::new("alice"), [0u8; 32], vec![]))?,
+        )?;
+        let args = AuthorizeArgs {
+            source: AuthorizeRequestSource::Fields {
+                envelope: "vault:1".to_string(),
+                purpose: "audit".to_string(),
+                requested_by: None,
+                reason: None,
+                case_ref: Some("case-9".to_string()),
+                requester_key: None,
+            },
+            approvals_arg: &approval_path,
+            db_path: &db_path.to_string_lossy(),
+            ruleset_id,
+            device_key_seed,
+            output_token: None,
+            bucket: TimeBucket::now_10min()?,
+        };
+        let err = cmd_authorize_with_bucket(args).expect_err("orphan --case-ref must refuse");
+        assert!(
+            err.to_string().contains("--requested-by and --reason"),
+            "{err}"
         );
         Ok(())
     }

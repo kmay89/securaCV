@@ -173,6 +173,72 @@ pub const REASON_CODES: &[&str] = &[
     "drill",
 ];
 
+/// Upper bound (bytes) on every free-text field that enters the request hash
+/// and the receipt ledger — envelope id, purpose, requester name, case
+/// reference. Owned here so the CLI, the request file, and the HTTP wire all
+/// enforce one bound: a receipt row is permanent, so an unbounded field is a
+/// permanent-ledger bloat vector.
+pub const MAX_FIELD_LEN: usize = 512;
+
+fn is_forbidden_text_char(c: char) -> bool {
+    // C0/C1 controls (newline, carriage return, ESC, DEL, ...), Unicode line
+    // and paragraph separators, zero-width and byte-order marks, and the
+    // bidirectional embedding/override/isolate controls that reorder or hide
+    // what a reader sees.
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
+}
+
+/// Field hygiene for consent-bound text. These strings are displayed to
+/// trustees before they sign (WYSIWYS) and rendered into the 21 CFR 11.50
+/// record, so they must not be able to forge a line, hide a character, or
+/// reorder what is shown. Rejects control and text-direction characters and
+/// enforces the shared length cap.
+pub fn check_text_field(label: &str, value: &str) -> Result<()> {
+    if value.len() > MAX_FIELD_LEN {
+        return Err(anyhow!(
+            "{} exceeds {} bytes ({} given)",
+            label,
+            MAX_FIELD_LEN,
+            value.len()
+        ));
+    }
+    if let Some(c) = value.chars().find(|&c| is_forbidden_text_char(c)) {
+        return Err(anyhow!(
+            "{} contains a control or text-direction character (U+{:04X}) — not allowed in \
+             a consent-bound field",
+            label,
+            c as u32
+        ));
+    }
+    Ok(())
+}
+
+/// Render a consent-bound field for display, neutralizing anything a record
+/// written by another build could carry: every forbidden character becomes
+/// U+FFFD, so a rendered line can never be forged or hidden.
+pub fn display_safe(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if is_forbidden_text_char(c) {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 /// §3.6 operator context: WHO is asking and under WHAT process, in
 /// structured form. Bound into the request hash (so trustee consent covers
 /// it) and recorded inside the signed receipt (and only there —
@@ -203,6 +269,10 @@ impl OperatorContext {
     ) -> Result<Self> {
         if requester_name.trim().is_empty() {
             return Err(anyhow!("requester name cannot be empty"));
+        }
+        check_text_field("requester name", requester_name.trim())?;
+        if let Some(case_ref) = case_ref {
+            check_text_field("case reference", case_ref.trim())?;
         }
         let reason = reason_code.trim();
         if !REASON_CODES.contains(&reason) {
@@ -249,6 +319,26 @@ impl OperatorContext {
         )
         .map(|_| ())
     }
+
+    /// The structural properties hashing depends on, and nothing more: a
+    /// present requester key must decode to 32 bytes. Vocabulary membership
+    /// and field hygiene are construction-time rules — a verifier built
+    /// before a reason code was added must still re-derive the binding of a
+    /// receipt that used it (hash equality is the tamper evidence; the
+    /// vocabulary is not).
+    pub fn check_shape(&self) -> Result<()> {
+        if let Some(key) = &self.requester_key {
+            let bytes = hex::decode(key)
+                .map_err(|e| anyhow!("recorded requester key is not valid hex: {}", e))?;
+            if bytes.len() != 32 {
+                return Err(anyhow!(
+                    "recorded requester key is {} bytes, expected 32",
+                    bytes.len()
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -277,6 +367,8 @@ impl UnlockRequest {
         if purpose.trim().is_empty() {
             return Err(anyhow!("purpose cannot be empty"));
         }
+        check_text_field("vault envelope id", vault_envelope_id.trim())?;
+        check_text_field("purpose", purpose.trim())?;
         Ok(Self {
             vault_envelope_id: vault_envelope_id.trim().to_string(),
             ruleset_hash,
@@ -292,6 +384,28 @@ impl UnlockRequest {
         context.validate()?;
         self.context = Some(context);
         Ok(self)
+    }
+
+    /// Rebuild a request from fields a RECEIPT recorded, verbatim and without
+    /// the admission policy (`new` trims, caps, and rejects display-unsafe
+    /// characters). Audit re-derivation must reproduce the bytes that were
+    /// hashed when the receipt was written — a receipt an older build wrote
+    /// with a 600-byte purpose is still a valid receipt, and the hygiene
+    /// rules govern what this build ACCEPTS, not what history contains.
+    pub fn from_recorded(
+        vault_envelope_id: &str,
+        ruleset_hash: [u8; 32],
+        purpose: &str,
+        time_bucket: TimeBucket,
+        context: Option<OperatorContext>,
+    ) -> Self {
+        Self {
+            vault_envelope_id: vault_envelope_id.to_string(),
+            ruleset_hash,
+            purpose: purpose.to_string(),
+            time_bucket,
+            context,
+        }
     }
 
     pub fn request_hash(&self) -> [u8; 32] {
@@ -689,12 +803,16 @@ impl BreakGlassReceipt {
                 ))
             }
         };
-        let mut request =
-            UnlockRequest::new(&self.vault_envelope_id, self.ruleset_hash, purpose, bucket)?;
         if let Some(context) = &self.context {
-            context.validate()?;
-            request.context = Some(context.clone());
+            context.check_shape()?;
         }
+        let request = UnlockRequest::from_recorded(
+            &self.vault_envelope_id,
+            self.ruleset_hash,
+            purpose,
+            bucket,
+            self.context.clone(),
+        );
         if request.request_hash() != self.request_hash {
             return Err(anyhow!(
                 "recorded request context does not re-derive the receipt's request hash — \
@@ -711,9 +829,12 @@ impl BreakGlassReceipt {
     /// the same receipt print the same record.
     pub fn render_human(&self) -> String {
         let mut out = String::new();
+        // Every string below is display_safe'd: this build refuses control
+        // and text-direction characters at construction, but a row written
+        // by another build must still render as one line per field.
         out.push_str(&format!(
             "Disclosure record — vault envelope {}\n",
-            self.vault_envelope_id
+            display_safe(&self.vault_envelope_id)
         ));
         match &self.outcome {
             BreakGlassOutcome::Granted => out.push_str(&format!(
@@ -723,31 +844,39 @@ impl BreakGlassReceipt {
             BreakGlassOutcome::Denied { reason } => out.push_str(&format!(
                 "  Outcome: DENIED at {} — {}\n",
                 bucket_utc_label(self.time_bucket),
-                reason
+                display_safe(reason)
             )),
         }
         match &self.context {
             Some(ctx) => {
+                let vocabulary_note = if REASON_CODES.contains(&ctx.reason_code.as_str()) {
+                    ""
+                } else {
+                    " (not in this build's reason vocabulary)"
+                };
                 out.push_str(&format!(
-                    "  Requested by: {} — reason code: {}\n",
-                    ctx.requester_name, ctx.reason_code
+                    "  Requested by: {} — reason code: {}{}\n",
+                    display_safe(&ctx.requester_name),
+                    display_safe(&ctx.reason_code),
+                    vocabulary_note
                 ));
                 if let Some(case_ref) = &ctx.case_ref {
-                    out.push_str(&format!("  Case reference: {}\n", case_ref));
+                    out.push_str(&format!("  Case reference: {}\n", display_safe(case_ref)));
                 }
                 if let Some(key) = &ctx.requester_key {
                     out.push_str(&format!(
                         "  Requester key (claimed, consent-bound): {}\n",
-                        key
+                        display_safe(key)
                     ));
                 }
             }
             None => out.push_str(
-                "  Requested by: (operator context not recorded — request predates §3.6 fields)\n",
+                "  Requested by: (operator context not recorded — the requesting client did \
+                 not supply the §3.6 fields)\n",
             ),
         }
         if let Some(purpose) = &self.purpose {
-            out.push_str(&format!("  Stated purpose: {}\n", purpose));
+            out.push_str(&format!("  Stated purpose: {}\n", display_safe(purpose)));
         }
         out.push_str("  Signatures and their meaning:\n");
         let trustee_bucket = self.request_bucket.unwrap_or(self.time_bucket);
@@ -755,7 +884,7 @@ impl BreakGlassReceipt {
             out.push_str(&format!(
                 "    - {}: signed approval of this request as trustee (one of the n-of-m \
                  quorum consents), during {}\n",
-                trustee.0,
+                display_safe(&trustee.0),
                 bucket_utc_label(trustee_bucket)
             ));
         }
@@ -1212,6 +1341,15 @@ mod tests {
             }
             _ => panic!("a stale request must be denied"),
         }
+        // The denial still records the request's own context and window,
+        // and that record re-derives the hash the approval signed.
+        assert_eq!(receipt.purpose.as_deref(), Some("incident"));
+        assert_eq!(receipt.request_bucket, Some(opened));
+        assert_eq!(receipt.time_bucket, later);
+        assert!(receipt.verify_context_binding().unwrap());
+        assert!(
+            verify_trustee_attribution(&policy, &receipt, std::slice::from_ref(&approval)).is_ok()
+        );
 
         // Same approvals inside the window still grant.
         let (result, _) = BreakGlass::authorize(&policy, &request, &[approval], opened);
@@ -2117,5 +2255,254 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("GRANTED"), "{rendered}");
+    }
+
+    /// Consent-bound text can forge no lines and hide no characters: control
+    /// characters, line/paragraph separators, and bidirectional overrides are
+    /// refused at construction; so is anything over the shared byte cap.
+    #[test]
+    fn text_field_hygiene_rejects_control_and_direction_characters() {
+        for bad in [
+            "Alice\nRequested by: Mallory",
+            "Alice\r\nReason code: drill",
+            "Alice\u{1b}[2K",
+            "Alice\u{202e}ecilA",
+            "Alice\u{2028}x",
+            "Alice\u{200b}",
+            "\u{feff}Alice",
+        ] {
+            assert!(
+                OperatorContext::new(bad, "drill", None, None).is_err(),
+                "requester name {:?} must be refused",
+                bad
+            );
+            assert!(
+                OperatorContext::new("Alice", "drill", Some(bad), None).is_err(),
+                "case ref {:?} must be refused",
+                bad
+            );
+            assert!(
+                UnlockRequest::new(bad, [0u8; 32], "purpose", test_bucket()).is_err(),
+                "envelope {:?} must be refused",
+                bad
+            );
+            assert!(
+                UnlockRequest::new("vault:1", [0u8; 32], bad, test_bucket()).is_err(),
+                "purpose {:?} must be refused",
+                bad
+            );
+        }
+        let at_cap = "a".repeat(MAX_FIELD_LEN);
+        let over_cap = "a".repeat(MAX_FIELD_LEN + 1);
+        assert!(OperatorContext::new(&at_cap, "drill", Some(&at_cap), None).is_ok());
+        assert!(OperatorContext::new(&over_cap, "drill", None, None).is_err());
+        assert!(OperatorContext::new("Alice", "drill", Some(&over_cap), None).is_err());
+        assert!(UnlockRequest::new(&at_cap, [0u8; 32], &at_cap, test_bucket()).is_ok());
+        assert!(UnlockRequest::new(&over_cap, [0u8; 32], "p", test_bucket()).is_err());
+        assert!(UnlockRequest::new("vault:1", [0u8; 32], &over_cap, test_bucket()).is_err());
+        // Ordinary names — accents, spaces, punctuation — are fine.
+        assert!(OperatorContext::new("José Álvarez-Núñez, Esq.", "drill", None, None).is_ok());
+        // And display_safe neutralizes what a foreign record could carry.
+        assert_eq!(display_safe("a\nb\u{202e}c"), "a\u{fffd}b\u{fffd}c");
+    }
+
+    /// The expired-window denial is the one receipt shape whose request
+    /// bucket differs from its authorization bucket: its recorded context
+    /// must still re-derive the consented hash, and the audit must accept
+    /// its empty trustee list beside the presented approvals.
+    #[test]
+    fn cross_bucket_denial_receipt_binds_its_context() {
+        let opened = test_bucket();
+        let later = TimeBucket {
+            start_epoch_s: 600,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:late", [3u8; 32], "incident", opened)
+            .unwrap()
+            .with_context(test_context())
+            .unwrap();
+        let key = SigningKey::from_bytes(&[21u8; 32]);
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), later);
+        assert!(result.is_err());
+        match &receipt.outcome {
+            BreakGlassOutcome::Denied { reason } => {
+                assert!(reason.contains("time window expired"), "{reason}")
+            }
+            _ => panic!("must be denied"),
+        }
+        assert_eq!(receipt.request_bucket, Some(opened));
+        assert_eq!(receipt.time_bucket, later);
+        assert_eq!(receipt.context.as_ref(), Some(&test_context()));
+        assert!(receipt.verify_context_binding().unwrap());
+        assert!(
+            verify_trustee_attribution(&policy, &receipt, std::slice::from_ref(&approval)).is_ok()
+        );
+        // Serialized and re-read (the audit path), it still binds.
+        let json = serde_json::to_string(&receipt).unwrap();
+        let reread: BreakGlassReceipt = serde_json::from_str(&json).unwrap();
+        assert!(reread.verify_context_binding().unwrap());
+    }
+
+    /// Binding is hash equality, not vocabulary membership: a verifier built
+    /// before a reason code existed must still re-derive a receipt that used
+    /// it (the code is rendered with an advisory, never a tamper alarm).
+    #[test]
+    fn context_binding_is_independent_of_the_reason_vocabulary() {
+        let bucket = test_bucket();
+        let mut request = UnlockRequest::new("vault:vocab", [3u8; 32], "incident", bucket).unwrap();
+        // Bypass construction to simulate a code this build does not know.
+        request.context = Some(OperatorContext {
+            requester_name: "Alice Operator".to_string(),
+            reason_code: "future-code".to_string(),
+            case_ref: None,
+            requester_key: None,
+        });
+        let key = SigningKey::from_bytes(&[22u8; 32]);
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        assert!(result.is_ok());
+        assert!(receipt.verify_context_binding().unwrap());
+        assert!(receipt
+            .render_human()
+            .contains("future-code (not in this build's reason vocabulary)"));
+        // A malformed recorded key IS structural (hashing depends on it).
+        let mut bad_key = receipt.clone();
+        if let Some(ctx) = &mut bad_key.context {
+            ctx.requester_key = Some("zz".to_string());
+        }
+        assert!(bad_key.verify_context_binding().is_err());
+    }
+
+    /// Hygiene governs what this build ACCEPTS, not what history contains: a
+    /// receipt an older build wrote with an over-cap purpose (or a character
+    /// this build now refuses) must still re-derive its hash and audit VALID.
+    #[test]
+    fn historical_receipt_outside_todays_admission_policy_still_binds() {
+        let bucket = test_bucket();
+        let long_purpose = "p".repeat(MAX_FIELD_LEN + 100);
+        // An older build hashed these bytes exactly as given.
+        let request = UnlockRequest::from_recorded(
+            "vault:old\u{200b}",
+            [4u8; 32],
+            &long_purpose,
+            bucket,
+            None,
+        );
+        let receipt = BreakGlassReceipt {
+            vault_envelope_id: "vault:old\u{200b}".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [4u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![],
+            approvals_commitment: [0u8; 32],
+            policy_commitment: [0u8; 32],
+            outcome: BreakGlassOutcome::Denied {
+                reason: "insufficient".to_string(),
+            },
+            purpose: Some(long_purpose.clone()),
+            context: None,
+            request_bucket: Some(bucket),
+        };
+        assert!(receipt.verify_context_binding().unwrap());
+        // ...while the same strings are refused at admission today.
+        assert!(UnlockRequest::new("vault:old\u{200b}", [4u8; 32], "p", bucket).is_err());
+        assert!(UnlockRequest::new("vault:old", [4u8; 32], &long_purpose, bucket).is_err());
+    }
+
+    /// A receipt written by another build could carry forged lines; the
+    /// rendering neutralizes them so one field is always one line.
+    #[test]
+    fn render_human_neutralizes_forged_lines_from_foreign_records() {
+        let receipt = BreakGlassReceipt {
+            vault_envelope_id: "vault:x".to_string(),
+            request_hash: [0u8; 32],
+            ruleset_hash: [0u8; 32],
+            time_bucket: test_bucket(),
+            trustees_used: vec![TrusteeId::new("alice\nbob")],
+            approvals_commitment: [0u8; 32],
+            policy_commitment: [0u8; 32],
+            outcome: BreakGlassOutcome::Denied {
+                reason: "unrecognized trustee approvals: mallory\n  Outcome: GRANTED".to_string(),
+            },
+            purpose: Some("p\n  Requested by: Forged Name".to_string()),
+            context: Some(OperatorContext {
+                requester_name: "Alice\u{202e}".to_string(),
+                reason_code: "drill".to_string(),
+                case_ref: Some("T-1\nReason code: drill".to_string()),
+                requester_key: None,
+            }),
+            request_bucket: Some(test_bucket()),
+        };
+        let rendered = receipt.render_human();
+        // Line-based: the forged text survives as TEXT inside its own field's
+        // line (neutralized), but never becomes a line of its own.
+        let starts = |prefix: &str| {
+            rendered
+                .lines()
+                .filter(|l| l.trim_start().starts_with(prefix))
+                .count()
+        };
+        assert_eq!(starts("Requested by:"), 1, "{rendered}");
+        assert_eq!(starts("Outcome:"), 1, "{rendered}");
+        assert_eq!(starts("Reason code:"), 0, "{rendered}");
+        assert_eq!(starts("Stated purpose:"), 1, "{rendered}");
+        assert!(rendered
+            .lines()
+            .any(|l| l.contains("Outcome: DENIED") && l.contains("\u{fffd}  Outcome: GRANTED")));
+        assert!(!rendered.contains('\u{202e}'));
+        assert!(
+            !rendered.contains("\n\n"),
+            "no blank lines from embedded newlines: {rendered}"
+        );
+    }
+
+    /// Pinned cross-language vector: the console's trustee signer recomputes
+    /// this exact framing in JavaScript (breakglass.test.js asserts the same
+    /// constants). If the framing ever changes, both tests move together.
+    #[test]
+    fn request_hash_vectors_match_the_console_signer() {
+        let bucket = TimeBucket {
+            start_epoch_s: 1_700_000_000,
+            size_s: 600,
+        };
+        let ruleset_hash: [u8; 32] = Sha256::digest(b"ruleset:test").into();
+        let bare = UnlockRequest::new("vault:vector", ruleset_hash, "incident", bucket).unwrap();
+        assert_eq!(
+            hex::encode(bare.request_hash()),
+            "5b53aba1db18b602be473b5b2710805f0ed4874fca5cf7f70b0ec90be9c34f73"
+        );
+        let with_ctx = bare
+            .with_context(
+                OperatorContext::new(
+                    "Alice Operator",
+                    "incident-review",
+                    Some("case-2026-0042"),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            hex::encode(with_ctx.request_hash()),
+            "d9c3c3667e4176e50c332cec28eae6d8fb04f6c175861a51df77e64be7ef262d"
+        );
     }
 }

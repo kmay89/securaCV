@@ -211,7 +211,7 @@ QUORUM = {
         {"title": "Always audited", "detail": "every decision — Granted or Denied — is appended to a hash-chained, device-signed receipt log; the CLI `receipts` command re-verifies the chain, signatures and quorum."},
     ],
     "flow": [
-        {"n": 1, "title": "Request", "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket) and publishes its request_hash."},
+        {"n": 1, "title": "Request", "detail": "an operator opens an UnlockRequest (envelope id, purpose, ruleset hash, time bucket, and the operator context: their printed name, a reason code from a closed vocabulary, an optional case reference) and publishes its request_hash — which binds every one of those fields."},
         {"n": 2, "title": "Approve", "detail": "each trustee signs that request_hash with their own Ed25519 key, under the trustee-approval domain. Keys never leave the trustee."},
         {"n": 3, "title": "Count", "detail": "the kernel counts distinct valid approvals for the request. Below n → Denied (still logged). At n → Granted."},
         {"n": 4, "title": "Mint + burn", "detail": "a single-use BreakGlassToken is device-signed, its nonce burned durably, and a signed receipt is chained."},
@@ -219,8 +219,8 @@ QUORUM = {
     ],
     "http": [
         {"method": "GET", "path": "/breakglass/policy", "desc": "the policy (public keys only): {n, m, trustees}"},
-        {"method": "POST", "path": "/breakglass/request", "desc": "open a session; returns request_hash, time_bucket, needed"},
-        {"method": "GET", "path": "/breakglass/status", "desc": "{envelope, purpose, request_hash, needed, collected, ready}"},
+        {"method": "POST", "path": "/breakglass/request", "desc": "open a session ({envelope, purpose, requested_by, reason, case_ref?}); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"},
+        {"method": "GET", "path": "/breakglass/status", "desc": "{envelope, purpose, requested_by, reason, case_ref, ruleset_hash, time_bucket, request_hash, needed, collected, ready}"},
         {"method": "POST", "path": "/breakglass/approve", "desc": "verify + count one trustee's Ed25519 signature"},
         {"method": "POST", "path": "/breakglass/unseal", "desc": "only if ready → authorize + unseal to an operator dir"},
         {"method": "POST", "path": "/breakglass/close", "desc": "discard the session + approvals"},
@@ -283,9 +283,9 @@ TERMINAL = {
          "steps": [
              {"cmd": "break_glass policy show",
               "out": ["{ \"n\": 2, \"m\": 3, \"trustees\": [\"avery\",\"bailey\",\"cameron\"] }"], "note": "2 of 3 must approve."},
-             {"cmd": "break_glass request --envelope cam-porch-0007 --purpose 'insurance claim'",
-              "out": ["request_hash = 8b1d…e07  (send this to the trustees)"], "note": "each trustee signs THIS hash."},
-             {"cmd": "break_glass authorize --approval avery.json --approval bailey.json --output-token tok",
+             {"cmd": "break_glass request --envelope cam-porch-0007 --purpose 'insurance claim' --requested-by 'Avery' --reason legal-request --output-request unlock.request",
+              "out": ["request_hash = 8b1d…e07", "Request context written to: unlock.request  (send the FILE to the trustees)"], "note": "the hash binds envelope, purpose, requester, and reason — trustees recompute it from the file before signing."},
+             {"cmd": "break_glass authorize --request unlock.request --approvals avery.json,bailey.json --output-token tok",
               "out": ["distinct approvals: 2/2  → GRANTED", "receipt chained + signed; token written to tok (0600)"], "note": "1 approval short → Denied (still logged)."},
              {"cmd": "break_glass unseal --token tok --envelope cam-porch-0007",
               "out": ["nonce burned (single-use)", "wrote cam-porch-0007.raw (0600)"], "note": "re-running is refused — the nonce is spent."},

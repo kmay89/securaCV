@@ -131,26 +131,33 @@ actually execute break-glass, and to let trustees practice the flow with zero ri
 ## Break-glass unseal workflow
 
 Ensure a quorum policy is stored first (`break_glass policy set`). Then create an unlock request,
-gather trustee approvals, and authorize the request before unsealing. The authorization step logs
-a receipt (granted or denied) and issues a sensitive token file via `--output-token`. The unseal
+gather trustee approvals, and authorize the request before unsealing. A request names who is
+asking (`--requested-by`, your printed name) and why, as a reason code from a closed vocabulary
+(`--reason`; pass an invalid value to see the list) plus free text (`--purpose`); all of it is
+bound into the hash trustees sign and recorded in the receipt. The authorization step logs a
+receipt (granted or denied) and issues a sensitive token file via `--output-token`. The unseal
 command writes the clear envelope to `--output-dir` (default: `vault/unsealed`).
 
 ```bash
 cargo run --bin break_glass -- request \
   --envelope <envelope_id> \
   --purpose "incident response" \
-  --ruleset-id ruleset:v0.3.0
+  --requested-by "Alice Operator" \
+  --reason incident-review \
+  --ruleset-id ruleset:v0.3.0 \
+  --output-request unlock.request
 
+# Each trustee, on their own machine — the tool recomputes the hash from the
+# file's fields and shows them before signing (never a dictated hash):
 cargo run --bin break_glass -- approve \
-  --request-hash <request_hash> \
+  --request unlock.request \
   --trustee alice \
   --signing-key /path/to/alice.signing.key \
   --output alice.approval
 
 DEVICE_KEY_SEED=devkey:your-seed \
   cargo run --bin break_glass -- authorize \
-  --envelope <envelope_id> \
-  --purpose "incident response" \
+  --request unlock.request \
   --approvals alice.approval,bob.approval \
   --db witness.db \
   --ruleset-id ruleset:v0.3.0 \
@@ -171,12 +178,16 @@ cargo run --bin break_glass -- unseal \
 that walks the same four phases without file shuffling:
 
 1. **Connect** with the capability token from the server's token file.
-2. **Open a request** — the server computes the request hash; the page now also produces a
-   **trustee signing link** (`…/breakglass#sign&hash=…`) to send to each trustee.
+2. **Open a request** — you name the envelope, the purpose, yourself, and a reason code; the
+   server computes the request hash over all of it, and the page produces a **trustee signing
+   link** (`…/breakglass#sign&hash=…&envelope=…&purpose=…&by=…`) carrying every field the hash
+   binds, to send to each trustee.
 3. **Collect approvals** — each trustee opens their link, which shows a signer-only page
-   (no token needed; it makes no server calls — the fragment never leaves their browser),
-   signs the request hash in-browser with their key seed, and sends you back the signature
-   to paste. Offline trustees can keep using `break_glass approve`.
+   (no token needed; it makes no server calls — the fragment never leaves their browser). The
+   page displays the request's fields, **recomputes the request hash from them in the browser**,
+   and enables signing only if it matches the hash in the link — a link whose fields were altered
+   is refused. The trustee signs in-browser with their key seed and sends you back the signature
+   to paste. Offline trustees can keep using `break_glass approve --request`.
 4. **Quorum & unseal** — status now auto-refreshes every few seconds with a per-trustee
    signed/pending table and a progress bar; **Unseal** enables when quorum is met.
 
