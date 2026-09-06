@@ -31,6 +31,38 @@ enum WristCache {
     }
 }
 
+/// The last Canary the user went FINDING for, remembered watch-side so the
+/// Find complication has a one-tap target. Written by the wrist's Find
+/// screen when a search actually starts, read by the widget provider — the
+/// same app-group discipline as the snapshot cache above.
+enum WristLastFind {
+    static let key = "wrist_last_find_id_v1"
+    /// The Find complication's kind — the app reloads exactly this timeline
+    /// when a new search starts, so the face shows the new target now.
+    static let widgetKind = "SecuraCVFindCanary"
+
+    static func remember(_ witnessID: String, in defaults: UserDefaults? = nil) {
+        (defaults ?? UserDefaults(suiteName: WristCache.appGroupID))?
+            .set(witnessID, forKey: key)
+    }
+
+    static func load(from defaults: UserDefaults? = nil) -> String? {
+        (defaults ?? UserDefaults(suiteName: WristCache.appGroupID))?
+            .string(forKey: key)
+    }
+
+    /// The row the complication may honestly deep-link to — the remembered
+    /// id, IF it still names a row in the cached snapshot AND that row's
+    /// beacon can be recognized (fingerprint known). Anything less and the
+    /// complication opens the app plainly instead of promising a search it
+    /// can't run: an unpaired, renamed, or older-phone row is a nil here,
+    /// never a dead-end screen. Pure, host-tested.
+    static func findableTarget(id: String?, in snapshot: WristSnapshot?) -> WristWitness? {
+        guard let id, let snapshot else { return nil }
+        return snapshot.witnesses.first { $0.id == id && $0.fingerprint != nil }
+    }
+}
+
 /// The PHONE-side twin: written by FleetStore into the iPhone app group
 /// (`group.com.securacv.witness` — the one the app and widget entitlements
 /// have carried since day one, now actually earning its keep), read by the

@@ -20,6 +20,9 @@ struct FleetView: View {
     @State private var pairing: DiscoveredCanary?
     @State private var query = ""
     @State private var showingFleetWiFi = false
+    /// The deep-linked finding target (`securacv://find?witness=…` — the
+    /// shell lands the route on this tab; this view consumes the anchor).
+    @State private var findTarget: Witness?
     @AppStorage("fleet_view_style") private var styleRaw = FleetViewStyle.auto.rawValue
 
     /// The comb starts earning its keep around a handful of cells.
@@ -126,8 +129,29 @@ struct FleetView: View {
             .navigationDestination(for: Witness.self) { DeviceDetailView(witness: $0) }
             .sheet(item: $pairing) { PairView(canary: $0) }
             .sheet(isPresented: $showingFleetWiFi) { FleetWiFiSheet(store: store) }
+            // The find deep link's landing (the complication's door): the
+            // search itself, straight away — the row and detail screen are
+            // stops the tap already skipped past on purpose. A route naming
+            // a witness this fleet doesn't hold consumes to nothing.
+            .sheet(item: $findTarget) { target in
+                NavigationStack { FindCanaryView(witness: target) }
+            }
+            .onAppear { consumeFindRoute() }
+            .onChange(of: store.pendingRoute) { _, _ in consumeFindRoute() }
             .modifier(FleetSearchModifier(query: $query,
                                           enabled: store.witnesses.count >= Self.searchThreshold))
+        }
+    }
+
+    /// Take a pending find route, if one is ours: resolve the witness and
+    /// open the search. Cleared either way — a route that named a witness
+    /// this fleet doesn't hold is spent, not left to re-fire on every
+    /// appearance.
+    private func consumeFindRoute() {
+        guard case .find(let id)? = store.pendingRoute else { return }
+        store.pendingRoute = nil
+        if let target = store.witnesses.first(where: { $0.id == id }) {
+            findTarget = target
         }
     }
 

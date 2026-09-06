@@ -33,19 +33,41 @@ struct SecuraCVWatchApp: App {
     }
 }
 
+/// The four vertical pages, named so a deep link can land on one.
+enum WristTab: Hashable {
+    case glance, alerts, heartbeat, about
+}
+
 struct WristRootView: View {
     @EnvironmentObject var store: WristStore
+    @State private var tab: WristTab = .glance
 
     var body: some View {
-        TabView {
-            FleetGlanceView()
+        TabView(selection: $tab) {
+            FleetGlanceView().tag(WristTab.glance)
             // Second, right after the glance: "how is the fleet now?" and
             // "what needed me?" are the two questions a wrist gets asked, and
             // the second one used to have no answer anywhere on the watch.
-            AlertsListView()
-            HeartbeatView()
-            AboutView()
+            AlertsListView().tag(WristTab.alerts)
+            HeartbeatView().tag(WristTab.heartbeat)
+            AboutView().tag(WristTab.about)
         }
         .tabViewStyle(.verticalPage)
+        // The complication's door. Same securacv:// dialect as the phone
+        // (Shared/AppRoute — one vocabulary, host-tested), same division of
+        // labor as the phone's shell: this switches the page, the glance
+        // view consumes the find anchor and pushes the search itself.
+        .onOpenURL { url in
+            guard let route = AppRoute(url: url) else { return }
+            switch route {
+            case .today:
+                tab = .glance
+            case .alerts:
+                tab = .alerts
+            case .find(let witnessID):
+                store.pendingFindID = witnessID
+                tab = .glance
+            }
+        }
     }
 }

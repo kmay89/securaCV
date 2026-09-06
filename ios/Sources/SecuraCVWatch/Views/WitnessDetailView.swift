@@ -62,9 +62,9 @@ struct WitnessDetailView: View {
             // itself carries the honest gates for consent and Bluetooth.
             if live.fingerprint != nil {
                 Section {
-                    NavigationLink {
-                        WristFindView(witness: live)
-                    } label: {
+                    // Value-based, so this link and the complication's deep
+                    // link travel through the one registered destination.
+                    NavigationLink(value: WristFindRoute(witness: live)) {
                         Label("Find", systemImage: "location.north.circle")
                     }
                 } footer: {

@@ -17,7 +17,8 @@ final class AppRouteTests: XCTestCase {
     func testEveryRouteRoundTripsThroughItsOwnURL() {
         for route in [AppRoute.today,
                       .alerts(witnessID: nil),
-                      .alerts(witnessID: "canary-porch-01")] {
+                      .alerts(witnessID: "canary-porch-01"),
+                      .find(witnessID: "canary-porch-01")] {
             XCTAssertEqual(AppRoute(url: route.url), route,
                            "\(route.url) does not parse back to \(route)")
         }
@@ -29,6 +30,16 @@ final class AppRouteTests: XCTestCase {
                        "securacv://alerts")
         XCTAssertEqual(AppRoute.alerts(witnessID: "abc").url.absoluteString,
                        "securacv://alerts?witness=abc")
+        XCTAssertEqual(AppRoute.find(witnessID: "abc").url.absoluteString,
+                       "securacv://find?witness=abc")
+    }
+
+    func testFindWithNobodyToFindIsNotADestination() {
+        // Unlike the alerts anchor (a hint that degrades to the tab), find's
+        // witness is required: a search needs a target, so a bare or empty
+        // find link renders as nothing.
+        XCTAssertNil(AppRoute(url: URL(string: "securacv://find")!))
+        XCTAssertNil(AppRoute(url: URL(string: "securacv://find?witness=")!))
     }
 
     // MARK: - the closed vocabulary (nil, never a guess)

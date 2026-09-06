@@ -24,6 +24,12 @@ enum AppRoute: Equatable, Sendable {
     /// The Alerts tab, optionally anchored at one witness's newest record.
     /// nil = the tab itself is the answer (storm summaries, away wakes).
     case alerts(witnessID: String?)
+    /// The hot/cold search for ONE witness — the complication's door. The id
+    /// is required: "find" with nobody to find is not a destination, and the
+    /// anchor rule holds here too — routing can only open a search over a
+    /// fleet the user already owns; a link can never make a radio scan for
+    /// anything else (consent and the Bluetooth permission still gate).
+    case find(witnessID: String)
 
     /// The scheme widgets and links speak. Registered in Info.plist
     /// (CFBundleURLTypes) — change both together.
@@ -42,6 +48,12 @@ enum AppRoute: Equatable, Sendable {
                 .first(where: { $0.name == "witness" })?
                 .value
             self = .alerts(witnessID: (witness?.isEmpty == false) ? witness : nil)
+        case "find":
+            guard let witness = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "witness" })?
+                .value, !witness.isEmpty else { return nil }
+            self = .find(witnessID: witness)
         default:
             return nil
         }
@@ -60,6 +72,9 @@ enum AppRoute: Equatable, Sendable {
             if let witnessID, !witnessID.isEmpty {
                 parts.queryItems = [URLQueryItem(name: "witness", value: witnessID)]
             }
+        case .find(let witnessID):
+            parts.host = "find"
+            parts.queryItems = [URLQueryItem(name: "witness", value: witnessID)]
         }
         // A components set built only from the closed vocabulary above always
         // yields a URL; the fallback exists so a future case can't crash.
