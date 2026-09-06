@@ -138,17 +138,23 @@ struct FleetView: View {
             }
             .onAppear { consumeFindRoute() }
             .onChange(of: store.pendingRoute) { _, _ in consumeFindRoute() }
+            // A cold-launch link can outrun the first refresh; the fold's
+            // arrival retries the still-pending route.
+            .onChange(of: store.witnesses) { _, _ in consumeFindRoute() }
             .modifier(FleetSearchModifier(query: $query,
                                           enabled: store.witnesses.count >= Self.searchThreshold))
         }
     }
 
     /// Take a pending find route, if one is ours: resolve the witness and
-    /// open the search. Cleared either way — a route that named a witness
-    /// this fleet doesn't hold is spent, not left to re-fire on every
-    /// appearance.
+    /// open the search. On a cold launch the link can outrun the first
+    /// refresh, so an EMPTY fleet keeps the route pending (the fold's
+    /// arrival retries via onChange) — but once a fold exists, the route is
+    /// spent either way: a witness this fleet doesn't hold consumes to
+    /// nothing rather than re-firing on every appearance.
     private func consumeFindRoute() {
         guard case .find(let id)? = store.pendingRoute else { return }
+        guard !store.witnesses.isEmpty else { return }
         store.pendingRoute = nil
         if let target = store.witnesses.first(where: { $0.id == id }) {
             findTarget = target

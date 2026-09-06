@@ -52,14 +52,18 @@ enum WristLastFind {
     }
 
     /// The row the complication may honestly deep-link to — the remembered
-    /// id, IF it still names a row in the cached snapshot AND that row's
-    /// beacon can be recognized (fingerprint known). Anything less and the
-    /// complication opens the app plainly instead of promising a search it
-    /// can't run: an unpaired, renamed, or older-phone row is a nil here,
-    /// never a dead-end screen. Pure, host-tested.
+    /// id, IF every gate the Find screen itself enforces would let a search
+    /// actually start: discovery consent granted (the phone's choice, in
+    /// the snapshot), the row still present, its beacon recognizable
+    /// (fingerprint known), and no suffix twin (the screen refuses the
+    /// signal for twins). Anything less and the complication carries no
+    /// link and opens the app plainly, instead of a "Find <name>" tap that
+    /// lands on a refusal message. Pure, host-tested.
     static func findableTarget(id: String?, in snapshot: WristSnapshot?) -> WristWitness? {
-        guard let id, let snapshot else { return nil }
-        return snapshot.witnesses.first { $0.id == id && $0.fingerprint != nil }
+        guard let id, let snapshot, snapshot.discoveryConsented == true else { return nil }
+        return snapshot.witnesses.first {
+            $0.id == id && $0.fingerprint != nil && $0.suffixAmbiguous != true
+        }
     }
 }
 
