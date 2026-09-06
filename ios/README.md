@@ -138,6 +138,13 @@ Four rules keep "beautiful" from decaying into "busy":
   thing — "You're closer to Kitchen right now" — because every beacon's
   fingerprint suffix ties it to its named row. Finding requires discovery
   consent, and says so instead of listening to a radio that's off.
+  The ambient half needs no screen at all: the fleet quietly knows which
+  Canary you're nearest (`Shared/NearnessKeeper`, host-tested — margin +
+  dwell + staleness, so the claim never flickers between rooms), whispered
+  as a small glyph on that one row and a "Nearby" line in its detail.
+  NEVER an ordering — severity owns the sort — and never for demo rows or
+  ambiguous twins; no fresh beacon simply means no badge, the honest
+  default.
 - **The fleet moves to new Wi-Fi as one flow, pilot-first.** Fleet tab →
   Options → "Update fleet Wi-Fi…". The staged plan (`FleetWiFiRollout`,
   host-tested) sends ONE pilot Canary first and touches nothing else until

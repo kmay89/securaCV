@@ -84,6 +84,14 @@ final class FleetStore: ObservableObject {
     /// widgets — reload their timelines only when the truth changed.
     private var lastGlanceFingerprint: Data?
 
+    /// The ambient "you're standing near this one" — the Canary whose beacon
+    /// this phone hears strongest, decided by the calm rules in
+    /// Shared/NearnessKeeper (margin + dwell + staleness, host-tested). A
+    /// whisper on the row, NEVER an ordering: severity owns the sort.
+    /// Nil whenever no fresh beacon can honestly back the claim.
+    @Published private(set) var nearestWitnessID: String?
+    private var nearness = NearnessKeeper()
+
     var worstSeverity: Severity { witnesses.map(\.effectiveSeverity).max() ?? .ok }
     var allQuiet: Bool { worstSeverity == .ok }
 
@@ -584,10 +592,33 @@ final class FleetStore: ObservableObject {
     /// (poll, sentinel, mute, ack) fans out identically, and the mood folds
     /// FIRST so the character and the numbers always ship together.
     private func republishGlanceSurfaces() {
+        updateNearness()
         updateCanaryMood()
         pushLiveActivity()
         WatchLink.shared.pushCurrent()   // content-deduped; free when nothing moved
         publishGlanceCache()             // ditto, for the iPhone widgets
+    }
+
+    /// Feed the nearness keeper the freshest beacon per witness and re-pick.
+    /// Matching is by fingerprint suffix and refuses twins (the shared
+    /// ambiguity rule): a beacon two fleet members could both own can't
+    /// honestly crown either. Demo rows never wear a real-radio badge, and
+    /// running on EVERY republish path gives the claim its natural decay —
+    /// a quiet radio takes the badge off within the staleness window.
+    private func updateNearness() {
+        let cutoff = Date().addingTimeInterval(-NearnessKeeper.staleAfter)
+        let fingerprints = witnesses.map(\.fingerprint)
+        for sighting in ble.freshSightings where sighting.lastHeard >= cutoff {
+            guard let w = witnesses.first(where: {
+                !$0.fingerprint.isEmpty
+                    && !$0.id.hasPrefix(DemoFleet.idPrefix)
+                    && sighting.beacon.matches(fingerprint: $0.fingerprint)
+                    && !ProximityRanger.isSuffixAmbiguous(fingerprint: $0.fingerprint,
+                                                          among: fingerprints)
+            }) else { continue }
+            nearness.observe(id: w.id, rssiDBM: sighting.rssiDBM, at: sighting.lastHeard)
+        }
+        nearestWitnessID = nearness.evaluate()
     }
 
     /// Felt once, at the crossing — never on the cycles that stay there.
