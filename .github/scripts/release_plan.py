@@ -7,7 +7,8 @@ shipping — every app and every firmware — and, just as importantly, does
 so it lives here as a pure function over explicit inputs instead of inside YAML
 where it can't be tested.
 
-The rule, per target, generalized from `firmware-release-if-changed.yml`:
+The rule, per target (it began life as the firmware-only button
+`firmware-release-if-changed.yml`, retired 2026-09-08 once this covered it):
 
   * nothing published yet            → RELEASE (cut the first one)
   * source version NEWER than latest → RELEASE
@@ -201,7 +202,21 @@ def decide(
         )
 
     if force:
-        return make(RELEASE, f"Force requested — re-cutting {source_version}.", source_version)
+        reason = f"Force requested — re-cutting {source_version}."
+        if latest_version is not None and compare(source_version, latest_version) == 0:
+            # The trap the retired one-click launcher used to preflight: an app
+            # workflow publishing a version that is already tagged rewrites that
+            # release's assets instead of cutting a new download, so no installed
+            # updater ever sees it. Firmware refuses an existing tag outright.
+            # Say so in the summary row rather than leaving it to memory.
+            reason += (
+                f" {source_version} is already released: an app workflow will"
+                " OVERWRITE that release's assets rather than cut a new download"
+                " (no installed updater sees it), and firmware-release.yml refuses"
+                " an existing tag. Bump the version first unless a re-upload after"
+                " a packaging fix is exactly what you want."
+            )
+        return make(RELEASE, reason, source_version)
 
     if latest_version is None:
         return make(

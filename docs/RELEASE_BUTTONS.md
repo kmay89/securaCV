@@ -43,22 +43,23 @@ knows the whole graph.
 version, and it doesn't go red for telling you a version needs bumping — that's
 information, not failure. Tick **`plan_only`** to see the plan and dispatch
 nothing. The decision engine is unit-tested (`.github/scripts/test_release_plan.py`,
-47 cases) because this decision *is* the product.
+49 cases) because this decision *is* the product.
+
+**Narrowing it.** Two inputs replace the launchers this button retired:
+
+- **`only`** limits the run to one target. `only: firmware` is the old
+  "release firmware if it moved" check — same rule, same watched paths.
+- **`force`** re-cuts the named targets whether or not they moved: one name,
+  comma-separated names (`flasher,lab`), or `all`. With `publish` unchecked
+  that is a **build-only smoke run of exactly those apps**; with it ticked, a
+  real re-publish. Forcing a version that is **already tagged overwrites that
+  release's assets instead of cutting a new download** — the plan row says so
+  when it applies — so bump first unless a re-upload after a packaging fix is
+  the point. See *An app release that already exists* below.
 
 ---
 
 ## When you want exactly one thing
-
-### Release — one click (firmware + apps + web)
-
-Runs a chosen set **unconditionally**, no "does it need it?" reasoning.
-
-**Use it:** you know precisely what you want, e.g. re-cutting the apps after a
-packaging fix with no version change.
-
-**Don't:** use it as your default. It will happily publish an app whose version
-is already released, which **overwrites that release's assets instead of cutting
-a new download** — see *An app release that already exists* below.
 
 ### Firmware Release
 
@@ -82,13 +83,6 @@ ship without them. On the tag-push path (which has no inputs), set the
 `ALLOW_DROPPED_PRODUCTS` repository variable instead, re-run the failed job,
 then clear the variable. Dev-channel builds only report; they never block on
 this.
-
-### Firmware Release — if changed
-
-The firmware-only version of the master button.
-
-**Use it:** you only care about firmware and want the "release if it moved"
-behavior. Otherwise the master button already covers it.
 
 ### Flasher Factory Images
 
@@ -129,11 +123,6 @@ manifest published after the ceremony isn't a weaker install, it's an
 uninstallable one (the flashers' policy becomes `require-signature` and they
 reject the whole manifest).
 
-### Build Mac apps (Flasher + Lab)
-
-The two desktop app pipelines, nothing else. Superseded by the master button for
-most purposes; keep for a macOS-only smoke run.
-
 ### Publish the Lab (draft → live)
 
 Takes the Lab's newest `app-v*` **draft** and finishes it: publishes it (never
@@ -156,6 +145,33 @@ can't be *triggered* by a CI publish — they have to be **called**. This
 workflow calls both, and calls the pointer as a reusable workflow so a broken
 updater manifest fails the publish run instead of passing quietly. (A human
 clicking Publish in the UI *does* fire the event, so that path still works.)
+
+---
+
+## Retired buttons, and what to press instead
+
+Four dispatch-only launchers were deleted on 2026-09-08 after sixty days
+unpressed. Three were one input combination of the master button, kept "for
+when you know exactly what you want", and a second place every new target had
+to be wired; the fourth had never produced a build. If muscle memory reaches
+for one:
+
+| You used to press | Press instead |
+|---|---|
+| **Release — one click (firmware + apps + web)** — a ticked set, unconditionally | the master button with **`force`** naming the targets (`flasher,lab`, `web`, or `all`). A dev-channel firmware build was never a smoke run: dispatch **Firmware Release** directly with `channel: dev` and the `-dev.N` version. |
+| **Firmware Release — if changed** | the master button with **`only: firmware`** — it is the same rule, generalized (`.github/scripts/release_plan.py`) |
+| **Build Mac apps (Flasher + Lab)** | the master button with **`force: flasher,lab`**; leave `publish` unchecked for the build-only smoke run, tick it to publish the Flasher and cut the Lab draft |
+| **Mobile (iOS) build** — the Lab as a Tauri iOS shell | nothing: it never produced a build (one gated no-op run), and the iPhone + iPad app that ships is the native companion, through **iOS release** — the `ios` target row. The local recipe and the revive path (a target row, not a launcher) are in [`desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md). |
+
+The one thing only the one-click launcher did — warn that publishing an
+already-tagged app version overwrites the shipped release — now lives in the
+plan itself: the forced target's summary row says it.
+
+**The rule going forward:** a new thing to ship is a **row in
+[`.github/release-targets.yml`](../.github/release-targets.yml)**, never a new
+launcher. The per-target workflow keeps its build logic, signing and
+concurrency guard; the button, the summary and the catalog tests pick the row
+up with no YAML branch. (`.github/RELEASE_LESSONS.md`, 2026-09-08.)
 
 ---
 

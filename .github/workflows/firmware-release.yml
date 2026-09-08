@@ -32,7 +32,8 @@ on:
   push:
     tags:
       - 'fw-v*'
-  # Path B — one-click from the Actions tab (or the whole-pipeline launcher).
+  # Path B — dispatched from the Actions tab, by hand or by the "Update
+  # everything (only what needs it)" button.
   # Same build, same signing, same guards; it just creates the tag for you
   # from the version you pick, so the tag and the commit can never disagree.
   # The channel is a safety cross-check against the version's grammar

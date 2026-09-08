@@ -2,7 +2,7 @@
 
 Read this before touching **any** app build/release workflow: the SecuraCV
 Flasher, the Lab, and the mobile/TV targets (**iPhone, iPad, tvOS, Mac**).
-It applies to every `*-release.yml` and the one-click launcher. Each entry is
+It applies to every `*-release.yml` and the "Update everything" launcher. Each entry is
 a real failure we paid for once — the point is to never pay for it twice, on
 any platform.
 
@@ -85,21 +85,21 @@ declare it, and let the app render what the device says it has.
 3. **Prove the bundle before you publish.** Every app workflow has a
    build-only path — run it first, publish only after it's green:
    - `desktop-flasher-release.yml` → `dry_run: true` (build only)
-   - `desktop-release.yml` (Lab), `ios-release.yml`, `tvos-release.yml`,
-     `desktop-mobile-release.yml` → `publish: false` (build only)
+   - `desktop-release.yml` (Lab), `ios-release.yml`, `tvos-release.yml` →
+     `publish: false` (build only)
 4. **Verify a bundled resource exists in the copy step**, so the failure is
    a clear line in *that* step, not an opaque bundler abort 3 minutes later:
    `test -s "$res/bootfiles.bin" || { echo "::error::payload missing"; exit 1; }`
-5. **One button for the whole pipeline.** `release-one-click.yml`
-   ("Release — one click (firmware + apps + web)") fans out to the **firmware
-   release** (the OTA `.bin` images *and* the browser-flasher factory images
-   + `manifest-flash.json`), the desktop app builds, and the GitHub Pages web
-   deploy. `firmware` = none / dev / release (opt-in — a firmware release is
-   always a publish); the apps' `publish` off = dev smoke run, on = real
-   releases; `deploy_web` redeploys the site. Prefer it over triggering the
-   per-target workflows by hand. `firmware-release.yml` also takes the same
-   `channel` + `version` inputs directly (Actions → "Firmware Release"),
-   which is what the launcher dispatches.
+5. **One button for the whole pipeline — and it is the master button.** The
+   whole-pipeline launcher used to be `release-one-click.yml`, which ran a
+   ticked set unconditionally; it was retired on 2026-09-08 (entry below)
+   because every combination it offered is an `only:` / `force:` setting of
+   "Update everything (only what needs it)" (Principle 10). The firmware
+   release — the OTA `.bin` images *and* the browser-flasher factory images +
+   `manifest-flash.json` — is one of its targets like any other, and is
+   always a publish, never a smoke run. `firmware-release.yml` also takes
+   `channel` + `version` directly (Actions → "Firmware Release"), which is
+   what the button dispatches and the only path to a dev-channel build.
 6. **`releases/latest` belongs to the firmware — the apps must never take it.**
    Every Canary polls `releases/latest/download/manifest-<product>.json`
    (each project's `config.h` `SECURACV_OTA_MANIFEST_URL`), and GitHub's
@@ -137,17 +137,18 @@ declare it, and let the app render what the device says it has.
    (`.github/scripts/release_plan.py`) is unit-tested, and the suite also
    validates the catalog against the repo, so a renamed workflow or moved
    version file fails CI instead of failing a release. Prefer it over pressing
-   per-target buttons and guessing what moved. `release-one-click.yml` remains
-   the unconditional "run these now" launcher for when you know exactly what
-   you want.
+   per-target buttons and guessing what moved. `force:` (a target name,
+   comma-separated names, or `all`) is the unconditional "run these now" mode
+   for when you know exactly what you want, and `only:` narrows the run to one
+   target — the two knobs that made the separate launchers redundant.
 11. **A new board reaches the flasher when a release carries it.** The
    in-browser flasher lights a product up from `manifest-flash.json` in the
    release it reads (`releases/latest`, or `fw-dev-latest` via
    `?channel=dev`). Adding a board to `flash.json` + the release workflows is
    necessary but *not sufficient* — the product stays "unavailable" until the
    **next firmware release is actually cut**. After adding a board, cut a
-   release (one-click above) or it will never appear, no matter how correct
-   the wiring is.
+   release (the master button, Principle 10) or it will never appear, no matter
+   how correct the wiring is.
 12. **A button must know its own preconditions.** "Release the firmware" with no
    signing key isn't a release, it's a 20-second failure in a different run with
    the real consequence three inferences away. Preconditions the repo can check
@@ -629,7 +630,9 @@ Two independent failures, one release day, both invisible-by-design.
     sent someone hunting a flag that was never the problem. Four new unit tests.
   - `release-one-click.yml` **refuses** a firmware dispatch without the key
     (it means "do exactly this", so skipping would be wrong), and warns when a
-    publish would overwrite an already-released app version.
+    publish would overwrite an already-released app version. (Retired
+    2026-09-08; the gate row and the forced-target overwrite note in the
+    master button's plan carry both jobs now.)
   - `desktop/scripts/check_app_versions.py` holds all three version files
     together, for both apps, on every PR.
   - Both flashers now name the pinned tag instead of shrugging.
@@ -840,7 +843,8 @@ Two independent failures, one release day, both invisible-by-design.
   built from the catalog *as of the tagged commit* — so the live release
   simply didn't contain them. (2) Cutting a new firmware release was a
   local-only `git tag && git push` ceremony: the one-click launcher
-  (`release-one-click.yml`) shipped the apps + web but **not** the firmware,
+  (`release-one-click.yml`, since retired — 2026-09-08 below) shipped the
+  apps + web but **not** the firmware,
   so there was no low-friction way to publish the release that would surface
   the boards. Correct wiring + no release = invisible.
 - **Fix:** made `firmware-release.yml` dispatchable (Actions → "Firmware
@@ -1409,8 +1413,8 @@ Two independent failures, one release day, both invisible-by-design.
   `MARKETING_VERSION` and ship the next one.
 - **Applies to:** `ios-release.yml`, `ios-selfheal.yml`,
   `tvos-release.yml`, `tvos.yml` (all fixed), `desktop-mobile-release.yml`
-  (already on `macos-latest`, which tracks new images). Watch for the same
-  aging on the next annual Xcode requirement.
+  (already on `macos-latest`, which tracks new images; retired 2026-09-08).
+  Watch for the same aging on the next annual Xcode requirement.
 
 ### 2026-07-28 (i) — Non-blocking build loops rot silently: watch/dash/dash-modes missing from every firmware release ever cut
 
@@ -1555,8 +1559,9 @@ Two independent failures, one release day, both invisible-by-design.
   stopped shipping.
 - **Cause:** `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` were read by
   **six** workflows that need **different certificates**. The Apple-native
-  pipelines (`ios-release`, `tvos-release`, `desktop-mobile-release`) sign
-  for the **App Store** and want an **Apple Distribution** identity; the
+  pipelines (`ios-release`, `tvos-release`, `desktop-mobile-release` — the
+  last since retired, 2026-09-08) sign for the **App Store** and want an
+  **Apple Distribution** identity; the
   Tauri desktop pipelines (`desktop-flasher-release`, `desktop-release`)
   produce a **notarized DMG downloaded outside the App Store**, which
   requires **Developer ID Application** — `desktop/SIGNING.md` even says in
@@ -2492,3 +2497,86 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   matrix in `firmware.yml` does too (`fromJSON` over `flavors.json`). When
   a release step names more than one env, product or target by hand, the
   question is which file owns that list and why the step is not reading it.
+
+### 2026-09-08 (b) — Four release buttons nobody had pressed in sixty days, and three of them were the master button in disguise
+
+- **Symptom:** the Actions sidebar offered eight dispatch-only release
+  launchers. Four had not run since July: `release-one-click.yml` (one run,
+  2026-07-26, failed, never retried), `firmware-release-if-changed.yml` (one
+  run, 2026-07-24), `mac-apps-release.yml` (five runs, the last 2026-07-25,
+  every one build-only) and `desktop-mobile-release.yml` (one run,
+  2026-07-24). None was dispatched by "Update everything";
+  `docs/RELEASE_BUTTONS.md` described three of them, and each description
+  ended in some form of "…but the master button already covers it".
+- **Cause:** each was an earlier answer to the same question.
+  `firmware-release-if-changed` was the first "release only if it moved"
+  logic, for firmware alone — `release_plan.py` is that logic generalized to
+  every target, and its docstring said so. `mac-apps-release` fanned out to
+  the two desktop app workflows; `release-one-click` extended that fan-out to
+  the firmware and the site, unconditionally. Once `release-targets.yml`,
+  `only:` and `force:` existed, all three were one input combination of the
+  master button, kept "for when you know exactly what you want" — and for
+  sixty days nobody did, because the master button states what it is about to
+  do before it does it. An unpressed launcher is not free: it is a second
+  place every new target has to be wired (one-click and mac-apps both
+  hard-coded the app workflow list, so a row added to the catalog was
+  invisible to them), and a second set of preflights to keep in step
+  (one-click's "you are about to overwrite a shipped release" warning existed
+  nowhere else).
+- **Fix:** the three redundant launchers are deleted. `docs/RELEASE_BUTTONS.md`
+  maps each retired button to the surviving inputs — `only: firmware` for the
+  firmware-only check; `force: flasher,lab` with `publish` unchecked for the
+  build-only smoke run of both desktop apps (ticked, a real re-publish);
+  `firmware-release.yml` dispatched directly with `channel: dev` for a
+  dev-channel build, which was never a smoke run on any button. The one
+  capability no survivor had — one-click's overwrite preflight — moved into
+  the plan: a forced target whose version is already tagged now says so in
+  its summary row (`release_plan.py`, two new unit tests), and the `force`
+  input's help text says it takes comma-separated names, which the CLI
+  always accepted. `desktop-mobile-release.yml` is a different case — the
+  Lab as a Tauri iOS shell is a capability no survivor has — and is handled
+  in its own entry and its own commit, so that decision can be reversed on
+  its own.
+- **Rule:** a new thing to ship is a **row in `.github/release-targets.yml`**,
+  never a new `workflow_dispatch` launcher. The per-target workflow keeps its
+  build logic, signing and concurrency guard; the button, the summary and the
+  catalog tests pick the row up with no YAML branch. If an input combination
+  of the master button is awkward, improve the master button — do not fork it.
+- **Applies to:** every future "just a button that dispatches X and Y" idea.
+  Before adding one, write down which `only:` / `force:` / `publish` setting
+  it equals. If you can, it already exists.
+
+### 2026-09-08 (c) — The Lab's Tauri iOS shell had a release workflow and never a build
+
+- **Symptom:** `desktop-mobile-release.yml` ("Mobile (iOS) build") sat in the
+  Actions sidebar beside `ios-release.yml`, both gated on `ENABLE_IOS_BUILD`,
+  both signing with the same Apple secrets — and only one of them had ever
+  produced an `.ipa`. The Lab one had been dispatched once (2026-07-24, with
+  the gate off, so it printed a notice and exited green) and never again.
+- **Cause:** it was the CI half of `desktop-lab/MOBILE.md`, the plan to wrap
+  the web Lab in a Tauri v2 mobile shell for iPad. The plan was scaffolded
+  (`npm run ios:init` / `ios:build` scripts, the capability seam) and then the
+  *living-with-it* iPhone / iPad app was built native instead
+  (`docs/design/iphone_companion_app.md`, "Why native, not the scaffolded
+  Tauri-mobile shell?"), because CoreBluetooth, Secure Enclave custody and
+  background notifications are exactly what a WebView fights. Nothing marked
+  the shell's workflow as superseded: `src-tauri/gen/apple` was never
+  committed, `tauri.conf.json` has no iOS section, and the workflow was not
+  in `release-targets.yml`, so the master button never planned it and the
+  catalog tests never asked whether it worked. Unlike the three launchers in
+  (b), this is not a duplicate of the master button — it is a capability no
+  survivor has, which is why it is a separate entry and a separate commit.
+- **Fix:** retired on its own, so the decision can be reversed on its own.
+  `MOBILE.md` keeps the local recipe (which is where the shell was always
+  going to be built first — it needs an Apple account no runner has) and now
+  states the revive path: a per-target workflow running that recipe plus a
+  row in `release-targets.yml` (version from `tauri.conf.json`, its own tag
+  prefix, `gate_var: ENABLE_IOS_BUILD`), never a launcher. `ios-release.yml`,
+  `ios/README.md`, `docs/tvos/AUTOPIPELINE.md` and the Lab's `Cargo.toml`
+  comment no longer describe it as the reference Apple pipeline.
+- **Applies to:** every scaffold that grows a release workflow before it has a
+  build. A gated workflow that has only ever no-op'd verifies nothing
+  (Principle 9), and one outside `release-targets.yml` is invisible to the
+  only button that reports what it is doing. Either give the scaffold a
+  catalog row and an ungated dev build the day it lands, or don't give it a
+  workflow yet.
