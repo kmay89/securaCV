@@ -121,6 +121,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Hardware guides & BOMs](hardware/README.md) — build plans, bring-up benches, enclosures, per-device guides
 - [Board ownership research](board_market_research.md) — installed-base numbers (ESP32 vs Pi vs Arduino vs the rest) and which boards deserve firmware first; names the classic ESP32 (ESP32-CAM / WROOM-32) as the highest-value next port
 - [Firmware OTA](firmware_ota.md) — signed pull-updates with rollback
+- [Firmware variant audit](FIRMWARE_VARIANT_AUDIT.md) — per-variant truth for capabilities that are easy to claim fleet-wide: today the MQTT broker TLS row (which product verifies the broker's CA, which can pin its certificate, which refuses, and what an already-flashed unit sees), test tier stated per cell
 - [Parity by architecture](FLEET_PARITY.md) — how a fleet-wide capability (like the `/api/fleet` self-report) lives in one host-tested `common/` core so one edit reaches every board, never a per-board copy-paste
 - [Which button do I press?](RELEASE_BUTTONS.md) — the operator's index: every release button, when to press it, when not to, and the three failures that cost us time (no signing key, a dark flasher, an app version that already shipped)
 - [Release process & channels](RELEASE_PROCESS.md) — tags → releases; how the dev channel stays invisible to release devices

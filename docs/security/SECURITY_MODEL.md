@@ -191,6 +191,16 @@ Only someone with **all three** of the following:
 All communication between your phone/computer and the device is
 encrypted with TLS (the same encryption used by banks and secure websites).
 
+**One link is yours to encrypt: the MQTT broker.** A Canary that publishes
+to a broker opens that socket in plain text by default, so the broker
+username and password cross your LAN unencrypted until you provision TLS —
+verified against a CA you supply, or pinned to the broker certificate's
+SHA-256 fingerprint (which products support which is in
+[`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
+incomplete TLS setup refuses to connect rather than quietly downgrading, and
+the unverified "lab" mode exists only as a mode chosen by name that warns on
+every connect. This is compile-tested, not yet bench-tested.
+
 ---
 
 ## Who Cannot Access Your Data
@@ -201,7 +211,7 @@ encrypted with TLS (the same encryption used by banks and secure websites).
 | **Law enforcement** (without the physical device) | The device makes no network connections. There is no server to subpoena. |
 | **Network observers** | The device creates no outbound traffic to intercept. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | No internet connection, no exposed services, TLS on all local traffic. |
+| **Remote attackers** | No internet connection, no exposed services, TLS on the device's own API; the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -216,6 +226,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
 | Transport encryption | TLS 1.2+ (RSA-2048) | mbedTLS (ESP-IDF) |
+| Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification or SHA-256 certificate pin | mbedTLS via WiFiClientSecure (display/sense/vision) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 
 No custom cryptographic implementations are used. All primitives come
