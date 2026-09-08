@@ -259,6 +259,16 @@ jobs:
       run: cargo clippy --all-targets --features alert-relay -- -D warnings
     - name: Test (alert-relay)
       run: "cargo test --verbose --features alert-relay relay::"
+    # The tsa feature swaps in the online request loop of log_anchor (`request`,
+    # `anchor-all`); nothing else in the default build compiles it, so without
+    # this step a ureq bump or a signature change in that loop would only fail
+    # for an operator building with --features tsa. The CLI tests touch no
+    # network: the feature only changes which request body links, and the tests
+    # drive the offline query/import/verify path on a local database.
+    - name: Clippy (tsa)
+      run: cargo clippy --all-targets --features tsa -- -D warnings
+    - name: Test (tsa, offline)
+      run: cargo test --verbose --features tsa --test log_anchor_cli
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)

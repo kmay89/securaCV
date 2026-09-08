@@ -2,6 +2,96 @@
 
 ## [Unreleased]
 
+### Anchoring: typed subjects, TSA identity from the token, and the two-TSA policy
+
+- **An anchor row says which ledger head it covers.** `log_anchor --subject`
+  takes `chain_head` (default), `export_receipt_head`,
+  `break_glass_receipt_head`, or `policy_head`; `--digest <hex>` and the new
+  `--file <path>` (SHA-256 of the file's bytes, computed in-tool — the digest
+  `court_export` looks for) store a bare `digest`. The stored literal is the
+  same string everywhere: the CLI, the policy file, `list`/`verify` output, and
+  the court-kit file name. `verify` checks membership in the ledger the row
+  declares (`in export-receipt chain history`, `in policy-change history`, …),
+  and `import` labels a response by the ledger its imprint is found in. The
+  label is what a row claims; every consumer re-derives what it can.
+- **TSA identity is read from the token, never from `tsa_url`.** A separate
+  best-effort reader extracts the embedded signing certificate and
+  `SignerInfo` identity; `list` shows `signer cert sha256:… (CN)`, `verify`
+  re-derives it every time and fails a row whose cached identity disagrees
+  with its token, and a token the reader cannot follow still imports with
+  empty identity columns. `tsa_url` stays operator text. Four nullable columns
+  (`tsa_name`, `signer_cert_sha256`, `signer_sid`, `ledger_id`) are added;
+  the table's `CREATE TABLE` text and `token_der` as a bare CMS token are
+  unchanged.
+- **Anchor policy, `anchor-all`, and `verify --policy`.** A format-tagged JSON
+  file (`securacv-anchor-policy:v1`) declares the TSAs, each one's CA and
+  declared role (`qualified` / `independent`), the ledger heads to anchor, and
+  the coverage rule. `anchor-all --policy` is the cron entry (online with
+  `--features tsa`, or `--offline-dir` to write one `.tsq` per subject);
+  `import --policy` infers the TSA from the `{subject}.{name}.tsr` file name
+  and, with `openssl` on `PATH`, refuses a response that fails under its
+  declared CA; `verify --policy` attributes each row to the entry whose CA
+  validates its countersignature, checks count and distinctness, and prints
+  `covered by … / NOT covered — …` per subject, `current head: yes|NO`, and
+  `anchor policy <file>: SATISFIED` or `NOT SATISFIED`. `qualified` and
+  `independent` are the operator's declarations; the tool checks
+  countersignatures, count and distinctness, not legal status, and says so
+  once per run. `cert_sha256` pins attribute a row only after
+  `openssl ts -verify` succeeded under that entry's CA and only to break a tie
+  between overlapping CA bundles; otherwise they can only contradict. `verify
+  --policy` refuses to run without the `openssl` CLI rather than degrade.
+- **Scheduled anchoring sends a constant number of requests (Invariant III).**
+  `anchor-all` requests every configured subject at every configured TSA on
+  every run — `|subjects| × |TSAs|` — and anchors an empty ledger over a fixed
+  per-subject sentinel digest, so the request count never tracks whether an
+  export, an unseal, or a policy change happened. Duplicate rows over an
+  unchanged head and `digest` rows over sentinels are therefore expected;
+  coverage dedupes by hash and sentinels never count. The TSA still sees the
+  imprints; that residual is documented in `docs/timestamping.md` and
+  assigned to the Merkle-tree work.
+- **`--url` and `--ca` repeat.** `request --url A --url B` anchors at both in
+  one run (rows from the TSAs that answered stay stored; a failure exits
+  non-zero naming the count); `verify --ca a.pem --ca b.pem` records which CA
+  validated each row (`under <ca>`).
+- **Retention keeps anchored chain heads.** Pruning writes one device-signed
+  checkpoint row per anchored head inside the prune range, before the real
+  cutoff checkpoint and in the same transaction, so `verify` keeps saying
+  `in chain history` for what a third party countersigned. Only hashes that
+  already have an anchor row when retention runs are preserved. The pruner
+  never consults anchors to decide whether to prune.
+- **The court kit packages by hash.** A token whose `subject_hash` equals the
+  disclosure's own export-receipt `entry_hash` is packaged as covering the
+  receipt — whatever its stored subject, including a legacy `digest` row made
+  by following the old runbook — and the manifest gains `receipt_anchored`
+  and an `anchors` array (`file`, `subject`, `covers`, the TSA's declared name
+  and signer-certificate SHA-256). Break-glass and policy heads, sentinels,
+  later export-receipt heads, and other digests are never packaged and leave
+  no trace. `VERIFICATION.md` now says the receipt entry hash is recomputable
+  from the evidence file alone and no longer implies step 4 does that.
+- **`log_anchor` and `court_export` ship in the images and the release
+  tarball.** The offline flow and the structural `list`/`verify` checks work
+  there; no image enables the `tsa` feature or carries the `openssl` CLI, so
+  online `request`/`anchor-all` and `verify --ca`/`--policy` run from an
+  operator host. (`release.yml`'s `-f` guard silently skips a binary that
+  did not build; both are default-build binaries.) CI now compiles and tests
+  the `tsa` build offline.
+- **Upgrade note.** `list`, `verify`, and `query` open the database read-only
+  and no longer create `tsa_anchors` (a missing table reads as `no anchors
+  stored`); `import` labels receipt heads by ledger — earlier imports stay
+  `digest` with no membership check and no policy credit, so re-anchor them
+  with typed subjects for policy credit (the kit already packages a legacy
+  `digest` row over the disclosure's own receipt by hash). Chain heads pruned
+  before this release survive only via `log_anchor relabel --id N --subject
+  digest`, which records that membership is no longer asserted without
+  touching the token and refuses a head newer than the signed retention
+  cutoff. **Upgrade `witnessd` before anchoring chain heads with these
+  tools** — an older `witnessd` keeps pruning anchored heads at every
+  retention pass, and the planned fold of anchors into the ledger verdict
+  will fail after each prune until it is upgraded. Offline responses must be
+  imported within the retention window (`[retention]`, default 7 days); a
+  head pruned before import can only be stored as `digest`. The full
+  reader/writer compatibility matrix is in `docs/timestamping.md`.
+
 ### Break-glass: who asked, and why, is part of what the trustees sign (§3.6)
 
 - **Operator context is bound into the request hash.** An unlock request now

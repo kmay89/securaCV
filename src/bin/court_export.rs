@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use witness_kernel::crypto::signatures::SignatureMode;
+use witness_kernel::tsa::AnchorSubject;
 use witness_kernel::{
     hash_entry, tsa, verify_export_bundle, verify_helpers, ExportAuthMode, ExportBundle,
 };
@@ -65,13 +66,43 @@ struct Args {
     ui: String,
 }
 
+/// What a packaged token covers — decided by HASH equality (the bundle
+/// bytes, this disclosure's own export receipt entry hash), never by the
+/// row's subject text; chain-head tokens are the only label-selected kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Covers {
+    BundleBytes,
+    ReceiptEntry,
+    ChainHead,
+}
+
+impl Covers {
+    fn as_str(self) -> &'static str {
+        match self {
+            Covers::BundleBytes => "bundle_bytes",
+            Covers::ReceiptEntry => "receipt_entry",
+            Covers::ChainHead => "chain_head",
+        }
+    }
+}
+
 /// One packaged anchor token, with what it proves.
 struct KitAnchor {
     file_name: String,
+    /// The row's stored subject literal (reported, not re-derived).
     subject: String,
     gen_time: String,
     tsa_url: String,
-    covers_bundle: bool,
+    covers: Covers,
+    /// The anchor-policy entry name the operator declared, if any.
+    declared_tsa: Option<String>,
+    /// SHA-256 of the signing certificate embedded in the token, if any.
+    signer_cert_sha256: Option<String>,
+    /// The embedded certificate's commonName, display only.
+    signer_cn: Option<String>,
+    /// The token's `SignerInfo` identity (`TsaSigner::sid_hex`), for the
+    /// custody record when no certificate is embedded.
+    signer_sid: Option<String>,
 }
 
 fn open_db(args: &Args) -> Result<Connection> {
@@ -220,34 +251,35 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
     Ok((chain_position, total))
 }
 
-/// Copy every stored RFC 3161 anchor token into `anchors/`, marking which
-/// tokens cover the exact bundle bytes (subject_hash == SHA-256(bundle file)).
-/// Chain-head anchors are included too: they fix the chain that contains the
-/// export receipt, which is the second, indirect leg of the timing proof.
+/// Copy the relevant stored RFC 3161 anchor tokens into `anchors/`: tokens
+/// over the exact bundle bytes (subject_hash == SHA-256(bundle file)), tokens
+/// over this disclosure's own signed export receipt entry hash, and
+/// chain-head anchors (they fix the chain that contains the export receipt,
+/// the second, indirect leg of the timing proof).
 fn package_anchors(
     conn: &Connection,
     kit_dir: &Path,
     bundle_sha256: &[u8; 32],
+    receipt_entry_hash: &[u8; 32],
 ) -> Result<Vec<KitAnchor>> {
     // The database is opened read-only, so the anchors table cannot be
     // created here; a database that never anchored simply has no table.
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tsa_anchors' LIMIT 1",
-            [],
-            |_| Ok(true),
-        )
-        .optional()?
-        .unwrap_or(false);
-    if !table_exists {
+    if !tsa::anchor_table_exists(conn)? {
         return Ok(Vec::new());
     }
     let anchors = tsa::list_anchors(conn)?;
-    // Include ONLY what proves something about THIS disclosure: tokens over
-    // the bundle's exact bytes, and chain-head tokens (they fix the chain
-    // that contains the export receipt). Digest anchors for OTHER exports
-    // prove nothing here and would over-disclose that those exports exist,
-    // their hashes, and when they were anchored — so they stay out.
+    // Include ONLY what proves something about THIS disclosure, decided by
+    // hash first and label last: tokens over the bundle's exact bytes (any
+    // subject text), tokens over this disclosure's own export receipt entry
+    // hash (any subject text — `export_receipt_head`, a legacy `digest` row
+    // made by anchoring the receipt hash by hand, or unknown text; that hash
+    // is already proven a member of the verified chain by
+    // `locate_receipt_in_chain`, so packaging it discloses nothing beyond the
+    // kit's own contents), and chain-head tokens. Everything else — digest
+    // anchors for OTHER exports, later export-receipt heads, break-glass and
+    // policy heads, empty-ledger sentinels — proves nothing here and would
+    // over-disclose that those acts exist, their hashes, and when they were
+    // anchored, so it stays out silently: no terminal line names it.
     //
     // And a token only proves what IT embeds: the anchor row's subject_hash
     // is a database column, not the token. Before any token is packaged (or
@@ -263,11 +295,17 @@ fn package_anchors(
     // repeat the same "trust the row, not the token" mistake the imprint check
     // above exists to prevent. We already parse the token here, so take its
     // genTime while we have it. (Carried alongside each kept anchor.)
-    let mut relevant: Vec<(tsa::AnchorRecord, String)> = Vec::new();
+    let mut relevant: Vec<(tsa::AnchorRecord, String, Covers)> = Vec::new();
     for a in anchors {
-        if !(&a.subject_hash == bundle_sha256 || a.subject == "chain_head") {
+        let covers = if &a.subject_hash == bundle_sha256 {
+            Covers::BundleBytes
+        } else if &a.subject_hash == receipt_entry_hash {
+            Covers::ReceiptEntry
+        } else if a.subject_kind_or_digest() == AnchorSubject::ChainHead {
+            Covers::ChainHead
+        } else {
             continue;
-        }
+        };
         let token_gen_time = match tsa::parse_token(&a.token_der) {
             Ok(token) if token.imprint.as_slice() == a.subject_hash.as_slice() => token.gen_time,
             Ok(token) => {
@@ -291,9 +329,10 @@ fn package_anchors(
                 continue;
             }
         };
-        if a.subject == "chain_head"
-            && &a.subject_hash != bundle_sha256
-            && !tsa::hash_in_history(conn, &a.subject_hash)?
+        // `ReceiptEntry` needs no history check: `locate_receipt_in_chain`
+        // already proved that hash is a verified row of this chain.
+        if covers == Covers::ChainHead
+            && tsa::hash_in_ledger(conn, &a.subject_hash, AnchorSubject::ChainHead)?.is_none()
         {
             eprintln!(
                 "WARNING: anchor #{} excluded from the kit: it claims to anchor a chain \
@@ -303,7 +342,7 @@ fn package_anchors(
             );
             continue;
         }
-        relevant.push((a, token_gen_time));
+        relevant.push((a, token_gen_time, covers));
     }
     if relevant.is_empty() {
         return Ok(Vec::new());
@@ -311,8 +350,10 @@ fn package_anchors(
     let dir = kit_dir.join("anchors");
     std::fs::create_dir_all(&dir)?;
     let mut out = Vec::new();
-    for (anchor, token_gen_time) in relevant {
-        let covers_bundle = &anchor.subject_hash == bundle_sha256;
+    for (anchor, token_gen_time, covers) in relevant {
+        // Identity as the TOKEN states it (best-effort, unvalidated here;
+        // the kit's openssl step is what validates the countersignature).
+        let signer = tsa::parse_token_signer(&anchor.token_der).ok();
         // The subject is database-supplied TEXT: sanitize before it becomes a
         // path component, so a tampered row cannot steer the write outside
         // `anchors/`.
@@ -340,7 +381,17 @@ fn package_anchors(
             subject: anchor.subject,
             gen_time: token_gen_time,
             tsa_url: anchor.tsa_url,
-            covers_bundle,
+            covers,
+            declared_tsa: anchor.tsa_name,
+            signer_cert_sha256: signer
+                .as_ref()
+                .and_then(|s| s.cert_sha256.map(hex::encode))
+                .or(anchor.signer_cert_sha256),
+            signer_sid: signer
+                .as_ref()
+                .map(|s| s.sid_hex.clone())
+                .or(anchor.signer_sid),
+            signer_cn: signer.and_then(|s| s.cert_subject_cn),
         });
     }
     Ok(out)
@@ -446,10 +497,14 @@ fn main() -> Result<()> {
 
     let anchors = {
         let _stage = ui.stage("Package anchor tokens");
-        package_anchors(&conn, kit, &bundle_sha256)?
+        package_anchors(&conn, kit, &bundle_sha256, &bundle.receipt_entry.entry_hash)?
     };
-    let digest_anchors: Vec<&KitAnchor> = anchors.iter().filter(|a| a.covers_bundle).collect();
+    let digest_anchors: Vec<&KitAnchor> = anchors
+        .iter()
+        .filter(|a| a.covers == Covers::BundleBytes)
+        .collect();
     let anchored = !digest_anchors.is_empty();
+    let receipt_anchored = anchors.iter().any(|a| a.covers == Covers::ReceiptEntry);
 
     let receipt = &bundle.receipt_entry.receipt;
     let bundle_hex = hex::encode(bundle_sha256);
@@ -494,7 +549,14 @@ fn main() -> Result<()> {
             chain_length,
             &anchors,
         )?;
-        write_verification(kit, &bundle_file_name, &bundle_hex, &anchors)?;
+        write_verification(
+            kit,
+            &bundle_file_name,
+            &bundle_hex,
+            &entry_hash_hex,
+            receipt_anchored,
+            &anchors,
+        )?;
         write_certifications(kit, &bundle_file_name, &bundle_hex, &artifact_hash_hex)?;
         write_manifest(
             kit,
@@ -506,6 +568,7 @@ fn main() -> Result<()> {
             &device_key_hex,
             receipt.auth_mode,
             anchored,
+            receipt_anchored,
             &anchors,
         )?;
     }
@@ -518,9 +581,13 @@ fn main() -> Result<()> {
         chain_position, chain_length
     );
     println!(
-        "  anchors:   {} token(s), {} covering the bundle bytes",
+        "  anchors:   {} token(s), {} covering the bundle bytes, {} covering this disclosure's export receipt",
         anchors.len(),
-        digest_anchors.len()
+        digest_anchors.len(),
+        anchors
+            .iter()
+            .filter(|a| a.covers == Covers::ReceiptEntry)
+            .count()
     );
     if !anchored {
         println!();
@@ -531,6 +598,10 @@ fn main() -> Result<()> {
         println!(
             "  log_anchor request --db {} --url https://freetsa.org/tsr --digest {}",
             args.db, bundle_hex
+        );
+        println!(
+            "  (offline: log_anchor query --db {} --file {} --out bundle.tsq, submit it, then log_anchor import --response bundle.tsr)",
+            args.db, args.bundle
         );
         if args.db_key.is_some() || args.device_key_seed.is_some() {
             println!(
@@ -667,16 +738,38 @@ fn write_custody_record(
         anchor_rows.push_str("(none recorded)\n");
     } else {
         for a in anchors {
+            let issuer = match (&a.signer_cert_sha256, &a.signer_cn) {
+                (Some(cert), cn) => format!(
+                    "TSA certificate sha256:{}… ({})",
+                    &cert[..16.min(cert.len())],
+                    cn.as_deref().unwrap_or("no commonName")
+                ),
+                (None, _) => match a.signer_sid.as_deref() {
+                    Some(sid) => format!(
+                        "TSA (no certificate embedded; signer id {}…)",
+                        &sid[..16.min(sid.len())]
+                    ),
+                    None => "TSA (identity not readable from the token)".to_string(),
+                },
+            };
+            let declared = match &a.declared_tsa {
+                Some(name) => format!("; declared TSA `{name}`"),
+                None => String::new(),
+            };
             anchor_rows.push_str(&format!(
-                "- `anchors/{}` — subject `{}`, issued {} by {}{}\n",
+                "- `anchors/{}` — subject `{}`, issued {} by {}; recorded URL {}{}{}\n",
                 a.file_name,
                 a.subject,
                 a.gen_time,
+                issuer,
                 a.tsa_url,
-                if a.covers_bundle {
-                    " — **covers the evidence file's exact bytes**"
-                } else {
-                    ""
+                declared,
+                match a.covers {
+                    Covers::BundleBytes => " — **covers the evidence file's exact bytes**",
+                    Covers::ReceiptEntry => {
+                        " — **covers this disclosure's export receipt (entry hash above)**"
+                    }
+                    Covers::ChainHead => "",
                 }
             ));
         }
@@ -752,10 +845,15 @@ fn write_verification(
     kit: &Path,
     bundle_file_name: &str,
     bundle_hex: &str,
+    entry_hash_hex: &str,
+    receipt_anchored: bool,
     anchors: &[KitAnchor],
 ) -> Result<()> {
     let mut anchor_steps = String::new();
-    let covering: Vec<&KitAnchor> = anchors.iter().filter(|a| a.covers_bundle).collect();
+    let covering: Vec<&KitAnchor> = anchors
+        .iter()
+        .filter(|a| a.covers == Covers::BundleBytes)
+        .collect();
     if covering.is_empty() {
         anchor_steps.push_str(
             "**No timestamp token in this kit covers the evidence file itself.** The \
@@ -764,6 +862,12 @@ fn write_verification(
              the SecuraCV tooling path in step 4. Timing for the evidence file \
              otherwise rests on the device's own clock and key.\n",
         );
+        if receipt_anchored {
+            anchor_steps.push_str(
+                "A token over this disclosure's export receipt is present below; it fixes \
+                 the signed receipt, not the file bytes.\n",
+            );
+        }
     } else {
         for a in &covering {
             anchor_steps.push_str(&format!(
@@ -781,6 +885,25 @@ fn write_verification(
                 a.gen_time, a.tsa_url, bundle_hex, a.file_name
             ));
         }
+    }
+    for a in anchors.iter().filter(|a| a.covers == Covers::ReceiptEntry) {
+        anchor_steps.push_str(&format!(
+            "```sh\n\
+             # Token issued {} over this disclosure's signed export receipt (its entry hash)\n\
+             openssl ts -verify -digest {} -in anchors/{} -token_in -CAfile <tsa-ca.pem>\n\
+             ```\n\
+             The digest is the export receipt's entry hash printed in \
+             `CUSTODY_AND_CONTROL.md`: SHA-256 over the receipt's chain link (`prev_hash`) \
+             followed by the receipt JSON, both embedded, signed, in `evidence/{}`. \
+             `court_export` recomputed it from the evidence file alone when it assembled \
+             this kit (`verify_export_bundle`), and anyone can repeat that recomputation \
+             from the evidence file with the open-source SecuraCV offline viewer or the \
+             `witness_kernel` library — no producing database is involved (the \
+             database-side tools in step 4 are a separate, deeper check). This token fixes \
+             the receipt (and the artifact hash it commits to) in time; the evidence file's \
+             own bytes are covered only by a bundle-bytes token.\n\n",
+            a.gen_time, entry_hash_hex, a.file_name, bundle_file_name
+        ));
     }
     let text = format!(
         "# Verification instructions\n\
@@ -812,7 +935,10 @@ fn write_verification(
          signature, the artifact hash, and every ledger end to end. These checks \
          run at the PRODUCING side — they need the producing database, which is \
          not part of this kit: `export_verify` cross-checks the bundle against \
-         that database, and `log_verify` re-derives its chains. A party without \
+         that database, and `log_verify` re-derives its chains. A bundle-only \
+         recheck (receipt signature, entry hash, artifact hash) needs no database \
+         at all: the offline viewer's export-bundle mode or the library's \
+         verify_export_bundle. A party without \
          database access relies on steps 1-3 (which are the trust-critical \
          checks) or requests supervised verification. Two independent verifier \
          implementations (Rust and JavaScript) exist so no single \
@@ -914,6 +1040,7 @@ fn write_manifest(
     device_key_hex: &str,
     auth_mode: Option<ExportAuthMode>,
     anchored: bool,
+    receipt_anchored: bool,
     anchors: &[KitAnchor],
 ) -> Result<()> {
     // Enumerate every file the kit contains (the manifest itself excluded) and
@@ -965,6 +1092,21 @@ fn write_manifest(
         },
         "anchored": anchored,
         "anchor_count": anchors.len(),
+        "receipt_anchored": receipt_anchored,
+        "anchors": anchors
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "file": format!("anchors/{}", a.file_name),
+                    "subject": a.subject,
+                    "covers": a.covers.as_str(),
+                    "tsa": {
+                        "declared_name": a.declared_tsa,
+                        "signer_cert_sha256": a.signer_cert_sha256,
+                    },
+                })
+            })
+            .collect::<Vec<_>>(),
         "files": files,
     });
     std::fs::write(

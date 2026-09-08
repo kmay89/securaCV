@@ -354,6 +354,23 @@ duplicated as constants across Rust, Python, JavaScript, and firmware C++.
 `scripts/lint_dictionary_sync.py` parses the real source in each language and
 fails CI if any copy drifts. To change a vocabulary, edit the dictionary first.
 
+**Anchor subject** — What an RFC 3161 anchor row says it covers: `chain_head`,
+`export_receipt_head`, `break_glass_receipt_head`, `policy_head`, or a bare
+`digest`. A label the tools re-derive from the token and the ledgers, never
+trust — a court kit packages by hash, not by label.
+→ [timestamping](timestamping.md)
+
+**Anchor policy** — The operator's JSON declaration
+(`securacv-anchor-policy:v1`) of which TSAs anchor which ledger heads and in
+which declared role (`qualified` / `independent`); `log_anchor verify --policy`
+checks countersignatures, count and distinctness against it, never legal
+status. → [timestamping](timestamping.md)
+
+**Empty-ledger sentinel** — The fixed per-subject digest `anchor-all` requests
+when a ledger has no head yet, so a scheduled run always sends the same number
+of requests. Stored as a `digest` anchor; proves nothing about any ledger.
+→ [timestamping](timestamping.md)
+
 **Parity by architecture** — The rule that a fleet-wide capability lives in one
 host-tested `common/` core so a single edit reaches every board — never a
 per-board copy-paste. → [`docs/FLEET_PARITY.md`](FLEET_PARITY.md)

@@ -79,7 +79,9 @@ By design, the system:
 - Cannot emit stable device identifiers in shared telemetry.
 - Cannot vary network behavior in proportion to event occurrence unless explicitly configured for cover traffic.
 In the absence of explicit cover traffic configuration, the system SHOULD batch
-and delay exports to reduce event-correlated network signals.
+and delay exports to reduce event-correlated network signals (scheduled
+anchoring, `log_anchor anchor-all`, satisfies this by sending a fixed number of
+requests per run — see docs/timestamping.md).
 
 ---
 

@@ -47,6 +47,7 @@ use crate::crypto::signatures::PqSecretKey;
 use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
 
 pub mod adapter;
+pub mod anchor_policy;
 pub mod api;
 pub mod break_glass;
 pub mod bridge;
@@ -7552,6 +7553,154 @@ mod tests {
             matches!(outcome, BreakGlassOutcome::Granted),
             "a pre-rotation receipt must stay resolvable after rotation"
         );
+        Ok(())
+    }
+
+    /// The fixture token from tests/fixtures/tsa, for anchor rows in tests.
+    fn tsa_fixture_token() -> crate::tsa::TimestampToken {
+        let path = format!(
+            "{}/tests/fixtures/tsa/reply.tsr",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        crate::tsa::parse_response(&std::fs::read(&path).expect("reading TSA fixture"))
+            .expect("fixture token parses")
+    }
+
+    fn sealed_event_hashes(kernel: &Kernel) -> Result<Vec<(i64, [u8; 32])>> {
+        let mut stmt = kernel
+            .conn
+            .prepare("SELECT id, entry_hash FROM sealed_events ORDER BY id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, h) = row?;
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&h);
+            out.push((id, hash));
+        }
+        Ok(out)
+    }
+
+    fn checkpoint_rows(kernel: &Kernel) -> Result<Vec<(i64, i64, [u8; 32])>> {
+        let mut stmt = kernel
+            .conn
+            .prepare("SELECT id, cutoff_event_id, chain_head_hash FROM checkpoints ORDER BY id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, cutoff, h) = row?;
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&h);
+            out.push((id, cutoff, hash));
+        }
+        Ok(out)
+    }
+
+    #[test]
+    fn retention_checkpoints_at_anchored_heads() -> Result<()> {
+        // An anchored chain head is a hash a third party countersigned:
+        // pruning must leave it recognizable as chain history, as a
+        // device-signed checkpoint row, written before the real cutoff.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        seal_one_event(&mut kernel, &cfg, "zone:c")?;
+        let events = sealed_event_hashes(&kernel)?;
+        assert_eq!(events.len(), 3);
+        let (_, h1) = events[0];
+        let (_, h2) = events[1];
+        let (_, h3) = events[2];
+
+        crate::tsa::ensure_anchor_table(&kernel.conn)?;
+        let id = crate::tsa::insert_anchor(
+            &kernel.conn,
+            "chain_head",
+            &h2,
+            "(offline)",
+            &tsa_fixture_token(),
+        )?;
+        let rows = crate::tsa::list_anchors(&kernel.conn)?;
+        assert_eq!(rows[0].id, id);
+        assert_eq!(
+            rows[0].ledger_id,
+            Some(2),
+            "ledger position recorded at insert"
+        );
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+
+        let checkpoints = checkpoint_rows(&kernel)?;
+        assert_eq!(checkpoints.len(), 2, "one anchored head + the real cutoff");
+        assert_eq!((checkpoints[0].1, checkpoints[0].2), (2, h2));
+        assert_eq!((checkpoints[1].1, checkpoints[1].2), (3, h3));
+        assert!(checkpoints[0].0 < checkpoints[1].0, "ascending id order");
+        let latest = crate::verify::latest_checkpoint(&kernel.conn)?;
+        assert_eq!(latest.cutoff_event_id, Some(3));
+        assert_eq!(latest.chain_head_hash, Some(h3));
+
+        assert!(crate::tsa::hash_in_history(&kernel.conn, &h2)?);
+        assert!(!crate::tsa::hash_in_history(&kernel.conn, &h1)?);
+        assert_eq!(
+            crate::tsa::hash_in_ledger(&kernel.conn, &h2, crate::tsa::AnchorSubject::ChainHead)?,
+            Some(crate::tsa::HistoryWitness::CheckpointHead {
+                checkpoint_id: checkpoints[0].0
+            })
+        );
+
+        let report = crate::verify_runner::run_full_verify(
+            &kernel.conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            |_| {},
+        )?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        Ok(())
+    }
+
+    #[test]
+    fn retention_without_anchor_table_writes_one_checkpoint() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0].1, 2);
+        // The store never creates the anchors table.
+        let has_table: bool = kernel.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tsa_anchors')",
+            [],
+            |r| r.get(0),
+        )?;
+        assert!(!has_table);
+        Ok(())
+    }
+
+    #[test]
+    fn retention_with_empty_anchor_table_writes_one_checkpoint() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        crate::tsa::ensure_anchor_table(&kernel.conn)?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0].1, 2);
+        let report = crate::verify_runner::run_full_verify(
+            &kernel.conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            |_| {},
+        )?;
+        assert!(report.chain_valid, "{:?}", report.error);
         Ok(())
     }
 
