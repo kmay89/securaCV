@@ -121,6 +121,7 @@ PRINT_SETTINGS = {
 # filename-substring → note (first match wins). Sources: scad comments.
 PART_NOTES = [
     ("gasket", "TPU 90–95A, 100% infill, slow — the seal is the print"),
+    ("_hood", "prints drip-edge-down, spigot up — press into the front's groove and bond (neutral-cure silicone)"),
     ("lid", "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)"),
     ("base", "prints flat, open side up — no supports"),
     ("_drum", "prints open-face-up; keyhole pockets in the back (canary_watch_station.scad)"),

@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.3
+//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.4
 // @env cer=2 ip="~IP54 (button ~IP65)"
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
@@ -145,7 +145,8 @@ tol_press = 0.10;    // core_tol_press()
 tol_hole  = 0.30;    // core_tol_hole()
 
 /* [Engineering] (see README "Engineering & materials") */
-screw_insert = false;  // M2 brass heat-set inserts in the corner posts
+screw_insert = false;  // M2 brass heat-set inserts in the corner posts AND the security boss (the one
+                       // screw undone at every service — self-tapped plastic strips there first)
 insert_d     = 3.5;
 insert_h     = 4.0;
 lid_ribs     = true;   // perimeter rib ring under the face
@@ -252,7 +253,13 @@ clip_stack  = clip_clear + clip_t;
 vm_standoff = stack_sock_h + xiao_below;
 cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3);
 
-inner_x = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5);
+// screw_insert grows the posts (pd) by 1.5, which walked the bottom pair into
+// the button nut's arc — the option asserted itself dead. The cavity widens
+// by what the nut arc needs instead (the posts stay 1.0 off the walls; they
+// cannot move down, and up is toward the nut)
+inner_x = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5,
+              screw_insert ? 2*(sqrt(max(0, pow(btn_nut_ac/2 + pd/2 + 0.5, 2) - pow(zone_btn/2 - pd/2 - 1.0, 2)))
+                                + pd/2 + 1.0) + 0.1 : 0);
 inner_y = zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top;
 cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra, btn_body_l - lid_t + 1);
 
@@ -300,6 +307,8 @@ assert(btn_bez_d == 0 || btn_bez_d > btn_d + 2, "btn_bez_d must exceed the butto
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the face");
 assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5, "pan-head seat needs more than 1.5 mm of inside pad — thicken lid_t");
 assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
+assert(!e_seal || opt_vent || opt_weep,
+       "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 // the button's panel nut must clear the bottom posts (their inner edge vs the nut's corner radius)
 assert(len([for (p = post_xy()) if (sqrt(pow(p[0], 2) + pow(p[1] - btn_cy, 2)) < btn_nut_ac/2 + pd/2 + 0.5) 1]) == 0,
@@ -407,8 +416,10 @@ module body() {
                 weep_cut(7.0, -inner_y/2, floor_t + weep_d/2 + 0.2, "-y", wall_eff, weep_d);
         }
         // internal boss backing the security screw (~7 mm thread engagement);
-        // kept below z=5 so it clears the button body's tip
-        translate([-4, -inner_y/2 - 0.1, 0]) cube([8, 4.1, 5]);
+        // kept below z=5 so it clears the button body's tip. With screw_insert
+        // it grows to carry an insert (1.2 mm of stock around the bore)
+        sec_boss_h = screw_insert ? max(5, 3.0 + (ins_od - 0.3)/2 + 1.2) : 5;
+        translate([-4, -inner_y/2 - 0.1, 0]) cube([8, 4.1, sec_boss_h]);
         // face-screw posts, gusseted into the nearest walls (a mid-span post only
         // to its own wall); shortened by the face's head pads
         difference() {
@@ -462,7 +473,13 @@ module body() {
     // through into the cavity on any config with wall_eff < 2.4 — a "blind"
     // pilot that opened the case it was securing.
     translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0])
-        cylinder(d = sec_screw_d - 0.5, h = wall_eff + 3.1);
+        cylinder(d = screw_insert ? scr_nominal(screw_size) + 0.3 : sec_screw_d - 0.5, h = wall_eff + 3.1);
+    // screw_insert: the security screw's heat-set insert seats from the OUTER
+    // face (the plate's L-foot sits under it and the screw passes up through
+    // the foot into the insert) — same bag as the corner posts' inserts
+    if (screw_insert)
+        translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0])
+            cylinder(d = ins_od - 0.3, h = ins_h + 0.1);
     }
 }
 

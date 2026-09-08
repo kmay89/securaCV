@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.1
+//  SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.2
 // @env cer=2 ip="radome (sheltered)"
 //  Hardware: Seeed MR60BHA2 60 GHz mmWave kit — radar carrier board with a
 //  XIAO ESP32-C6 seated in its stacking socket (design doc:
@@ -118,6 +118,8 @@ lp_d   = 3.0;        // WS2812 light pipe (press fit)
 lp_dx  = 13.0;
 lp_dy  = -14.0;
 lux_d  = 3.5;        // BH1750 light aperture (open hole; glue a clear disc behind it when sealing)
+lux_disc_d = 0;      // 0 = bare hole; > 0 cuts a recessed seat on the outer face for a glued clear
+                     // disc of that diameter (6 mm x 1 mm is easy to find) — use it with opt_seal
 lux_dx = -13.0;
 lux_dy = -14.0;
 vent_pad_d     = 12.0;
@@ -314,7 +316,8 @@ function post_xy() = concat([
 function _win_clear(dx, dy, d) =
     max(abs(vm_cx + dx - rad_cx) - rad_win_x/2, abs(vm_cy + dy - rad_cy) - rad_win_y/2) >= d/2 + 1.0;
 assert(!opt_led || _win_clear(lp_dx, lp_dy, lp_d + 2*tol_press), "the LED light pipe sits inside the radome window");
-assert(!opt_lux || _win_clear(lux_dx, lux_dy, lux_d), "the lux aperture sits inside the radome window");
+assert(!opt_lux || _win_clear(lux_dx, lux_dy, max(lux_d, lux_disc_d)), "the lux aperture sits inside the radome window");
+assert(lux_disc_d == 0 || lux_disc_d > lux_d + 1.5, "lux_disc_d must overlap the aperture by >= 0.75 a side");
 assert(!opt_vent || _win_clear(vent_dx, vent_dy, vent_pad_d), "the vent cluster sits inside the radome window");
 assert(!opt_tamper || _win_clear(mag_dx, mag_dy, mag_d + 2*tol_press + 2.4),
        "the tamper magnet sits inside the radome window — NdFeB in the beam; move mag_dx/mag_dy");
@@ -323,6 +326,8 @@ assert(radome_t >= 1.3 && radome_t < lid_t,
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the front");
 assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5, "pan-head seat needs more than 1.5 mm of inside pad — thicken lid_t");
 assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
+assert(!e_seal || opt_vent || opt_weep,
+       "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 assert(usb_axis - usb_h/2 >= 0.6, "the XIAO port opening breaches the floor — raise xiao_below");
 assert(lid_rib_h <= cav_extra, "lid_rib_h must stay within cav_extra, the headroom over the carrier's tallest part");
@@ -521,15 +526,19 @@ module back() {
         for (s = [1, -1])
             translate([vm_cx + s*(vm_w/2 - 4) - 1.5, vm_cy + vm_l/2 + board_clear, floor_t])
                 cube([3, 2.0, vm_standoff + pcb_t + 1.0]);
-        // carrier rails (notched at the clips); the stacked XIAO hangs beneath
+        // carrier rails (notched at the clips); the stacked XIAO hangs beneath.
+        // TWO clips per edge, at the quarter points: one hook at mid-span let
+        // the carrier's ends rock 4 mm about the hook line in a drop
         for (s = [1, -1]) {
             difference() {
                 translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
                     cube([3, vm_l - 1, vm_standoff]);
-                translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy, floor_t + vm_standoff/2])
-                    cube([5, clip_w + 2, vm_standoff + 1], center = true);
+                for (dy = [-vm_l/4, vm_l/4])
+                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy + dy, floor_t + vm_standoff/2])
+                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
             }
-            edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
+            for (dy = [-vm_l/4, vm_l/4])
+                edgeclip(vm_cx + s*vm_w/2, vm_cy + dy, s > 0 ? 0 : 180, vm_standoff);
         }
     }
 }
@@ -565,7 +574,12 @@ module front() {
                 linear_extrude(lid_t - radome_t + 1)
                     rrect2d(rad_win_x, rad_win_y, 3);
             if (opt_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
-            if (opt_lux) translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
+            if (opt_lux) {
+                translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
+                if (lux_disc_d > 0)   // recessed seat on the outer face for a glued clear disc
+                    translate([vm_cx + lux_dx, vm_cy + lux_dy, lid_t - 1.2])
+                        cylinder(d = lux_disc_d + 2*tol_slide, h = 1.3);
+            }
             if (opt_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
                                               vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats by the head in the bag (canary_core_lib): flat floor for

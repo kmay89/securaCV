@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.7
+//  SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.8
 //  @env cer=2 ip="~IP54" basis="weather preset"
 //  Board: Seeed XIAO ESP32-S3 Sense + optional LiPo (placed beside the board)
 //  Features: light-pipe port, buzzer/pressure vent, camera/sensor window with
@@ -399,6 +399,11 @@ assert(standoff_h > 0, "standoff_h must be positive");
 assert(lip_h < cav_h, "lip_h must be less than the cavity height or the lid bottoms out");
 assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the lid");
+// a sealed box with no pressure path pumps air past its gasket on every
+// thermal cycle (field_ratings.md): the buzzer cluster's membrane seat or a
+// weep must be in the build — nothing asserted this before
+assert(!e_seal || e_buzzer || e_weep,
+       "seal mode with no pressure path — enable opt_buzzer (the vent cluster + GORE seat) or opt_weep");
 assert(!head_seal || screw_head == "pan",
        "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\" (a flat head's cone ejects the ring)");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode (opt_seal / the weather preset)");

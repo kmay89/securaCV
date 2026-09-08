@@ -167,6 +167,7 @@ CURATED = [
             "gasket": "Gasket ring — print in TPU",
             "bracket": "Wall bracket",
             "knob": "Hinge knob",
+            "hood": "Rain hood",
         },
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
@@ -180,6 +181,8 @@ CURATED = [
             "bracket": "The wall bracket the hinge clicks into — four screws "
                        "into the wall, then aim and lock.",
             "knob": "The thumbscrew that locks the hinge at your angle.",
+            "hood": "The rain & glare hood — its own part: press it into the "
+                    "groove on the front and bond it. Switch the hood ON first.",
         },
         "labels": {
             "part": "Part to print", "preset": "Quick preset",

@@ -1451,7 +1451,7 @@
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3448,
+     "triangles": 3536,
      "mm": [
       57.2,
       78.697,
@@ -1723,7 +1723,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_devkit_indoor_back.stl",
-     "triangles": 3848,
+     "triangles": 4296,
      "mm": [
       74.8,
       96.497,
@@ -2418,7 +2418,7 @@
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3448,
+     "triangles": 3536,
      "mm": [
       57.2,
       78.697,

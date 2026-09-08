@@ -302,9 +302,17 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "pry_notch",
+     "type": "bool",
+     "label": "a fingernail notch in the bezel's TOP (+Y) wall rear rim, centered — the only wall",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
-   "engineering_param_count": 73,
+   "engineering_param_count": 74,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -313,8 +321,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 3,
-    "user_options": 3,
+    "options": 4,
+    "user_options": 4,
     "variant_axes": 2
    }
   },
@@ -706,7 +714,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 18,
+   "engineering_param_count": 21,
    "alternatives": [
     "field_case",
     "relay_solar"
@@ -966,7 +974,7 @@
   {
    "id": "relay_solar",
    "scad": "canary_relay_solar.scad",
-   "title": "Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -983,7 +991,7 @@
     {
      "id": "solar-lora-relay-pod",
      "name": "Solar LoRa relay pod",
-     "for": "off-grid mesh backhaul: LoRa board + 18650, SMA top, solar roof bracket, pole straps",
+     "for": "off-grid mesh backhaul: LoRa board + 18650, SMA top on a washer land, solar roof bracket with a drained panel bed, pole straps, weeps",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -1007,6 +1015,38 @@
      "default": true
     },
     {
+     "id": "opt_weep",
+     "type": "bool",
+     "label": "Ø2 drains, angled down through the BOTTOM wall (the pod hangs USB-down on",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "sma_boss",
+     "type": "bool",
+     "label": "raised Ø(sma_d + 6) x 1.0 land around the SMA on the sky wall: the EPDM",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "roof_ribs",
+     "type": "bool",
+     "label": "rib_lib loop + two spines under the panel bed (a 76 x 114 x 2 plate on two struts)",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
+     "id": "seal_mid_posts",
+     "type": "bool",
+     "label": "one extra lid screw mid-way along each long (±X) wall: four corner screws",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_mark",
      "type": "bool",
      "label": "deboss the house wordmark on the lid (canary_mark_lib)",
@@ -1015,7 +1055,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 47,
+   "engineering_param_count": 50,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1024,8 +1064,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 2,
-    "user_options": 2,
+    "options": 6,
+    "user_options": 6,
     "variant_axes": 0
    }
   },
@@ -1601,6 +1641,14 @@
      "default": true
     },
     {
+     "id": "pry_notch",
+     "type": "bool",
+     "label": "fingernail notches in the bezel's BOTTOM (-Y) wall rear rim, either side of the USB",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_stand",
      "type": "bool",
      "label": "opt_stand",
@@ -1609,7 +1657,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 58,
+   "engineering_param_count": 60,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -1618,15 +1666,15 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 6,
-    "user_options": 6,
+    "options": 7,
+    "user_options": 7,
     "variant_axes": 0
    }
   },
   {
    "id": "sense_enclosure",
    "scad": "canary_sense_enclosure.scad",
-   "title": "SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.1",
+   "title": "SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.2",
    "family": "canary-sense",
    "device_compat": [
     "canary-sense"
@@ -1844,7 +1892,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 135,
+   "engineering_param_count": 136,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -1882,7 +1930,7 @@
     "plate"
    ],
    "options": [],
-   "engineering_param_count": 20,
+   "engineering_param_count": 21,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2013,16 +2061,24 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "back_ribs",
+     "type": "bool",
+     "label": "rib_lib loop + two cross ribs on the BACK (rib_h tall): a 110 x 70 x 3 sheet stays",
+     "consequence": "",
+     "audience": "user",
+     "default": false
     }
    ],
-   "engineering_param_count": 11,
+   "engineering_param_count": 12,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 1,
-    "user_options": 1,
+    "options": 2,
+    "user_options": 2,
     "variant_axes": 0
    }
   },
@@ -2114,7 +2170,7 @@
   {
    "id": "vision_doorbell",
    "scad": "canary_vision_doorbell.scad",
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.3",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.4",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2226,7 +2282,7 @@
     {
      "id": "screw_insert",
      "type": "bool",
-     "label": "M2 brass heat-set inserts in the corner posts",
+     "label": "M2 brass heat-set inserts in the corner posts AND the security boss (the one",
      "consequence": "",
      "audience": "engineering",
      "default": false
@@ -2248,7 +2304,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 130,
+   "engineering_param_count": 129,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2262,7 +2318,7 @@
   {
    "id": "vision_enclosure",
    "scad": "canary_vision_enclosure.scad",
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.3",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.4",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision"
@@ -2341,6 +2397,10 @@
        "file": "canary_vision_enclosure_xiao_weather_front.stl"
       },
       {
+       "name": "hood",
+       "file": "canary_vision_enclosure_xiao_weather_hood.stl"
+      },
+      {
        "name": "gasket",
        "file": "canary_vision_enclosure_xiao_weather_gasket.stl"
       }
@@ -2393,7 +2453,8 @@
     "front",
     "gasket",
     "bracket",
-    "knob"
+    "knob",
+    "hood"
    ],
    "options": [
     {
@@ -2431,7 +2492,7 @@
     {
      "id": "opt_hood",
      "type": "bool",
-     "label": "rain/glare hood over the lens window",
+     "label": "rain/glare hood over the lens window — its OWN part (part=\"hood\"), pressed into a groove on the front and bonded",
      "consequence": "",
      "audience": "user",
      "default": false
@@ -2552,7 +2613,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 167,
+   "engineering_param_count": 168,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2615,7 +2676,7 @@
   {
    "id": "wap_enclosure",
    "scad": "canary_wap_enclosure.scad",
-   "title": "SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.7",
+   "title": "SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.8",
    "family": "canary-wap",
    "device_compat": [
     "canary-wap"
@@ -3052,9 +3113,17 @@
      "bom": [
       "W-BT1"
      ]
+    },
+    {
+     "id": "pry_notch",
+     "type": "bool",
+     "label": "a fingernail notch in the drum rim at pry_ang (mid-wall between two snap windows,",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
-   "engineering_param_count": 62,
+   "engineering_param_count": 63,
    "alternatives": [
     "s3_touch169",
     "c6_display"
@@ -3063,8 +3132,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 1,
-    "user_options": 1,
+    "options": 2,
+    "user_options": 2,
     "variant_axes": 0
    }
   },

@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.2-dev)
 // @env cer=2 ip="CER-2 (→3 after test)"
 //  Off-grid backhaul for remote witnesses (LoRa-mesh adapter, PR #747): a
 //  pole-mounted sealed pod for a LoRa dev board (default: Heltec V3-class)
@@ -30,6 +30,19 @@
 //              Vision's print-validated lesson — the old shallow cone left
 //              the head standing on the show face). New opt_mark knob
 //              debosses the house wordmark (default off).
+//  2026-09-08: DRAINAGE (v0.2-dev) — the audit found a pole pod with no drain:
+//              its only floor opening was the USB the README says to plug.
+//              Now: opt_weep drains (Ø2, angled down through the bottom wall —
+//              one in the LoRa column beside the rails, one under the 18650
+//              bay); the ePTFE vent's spot-face is on the INNER face (it was
+//              cut on the show face — a 0.9 mm cup on the membrane); a raised
+//              sealing-washer land around the SMA on the sky wall (sma_boss)
+//              so the thread stands above the water film; the roof's panel
+//              bed is as long as the panel (bed_l = pan_l + stop — at 75 % of
+//              pan_l a 110 mm panel overhung the root by 27 mm, into the top
+//              wall and the antenna), its stop sits below the panel's top
+//              face so water sheds over it, three drain notches at bed level
+//              through the stop, and rib_lib ribs under the bed.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge lid, screw seats — the shared idiom
@@ -39,12 +52,21 @@ use <canary_board_lib.scad>  // board registry — the LoRa knob defaults cite
                              // brd_l/brd_w/brd_t("heltec_v3") (spec rung; the
                              // MEASURE-yours duty stays until calipers upgrade it)
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
+use <canary_rib_lib.scad>    // plate_ribs under the roof's panel bed
 
 /* [What to render] */
 part = "all";        // ["body","lid","roof","gasket","all"]
 
 /* [Options] */
 opt_seal = true;
+opt_weep = true;         // Ø2 drains, angled down through the BOTTOM wall (the pod hangs USB-down on
+                         // its pole): condensate leaves the floor corners instead of pooling under the
+                         // LoRa board and the 18650. The pressure path is the lid's ePTFE vent.
+sma_boss = true;         // raised Ø(sma_d + 6) x 1.0 land around the SMA on the sky wall: the EPDM
+                         // sealing washer seats on it above the water film, not in it
+roof_ribs = true;        // rib_lib loop + two spines under the panel bed (a 76 x 114 x 2 plate on two struts)
+seal_mid_posts = true;   // one extra lid screw mid-way along each long (±X) wall: four corner screws
+                         // cannot hold 20 % gasket squeeze across 84 mm of 2 mm lid
 
 /* [LoRa board] — Heltec WiFi LoRa 32 V3-class. MEASURE yours */
 lb_l  = 51.0;        // board length (Y, USB end down)
@@ -66,6 +88,8 @@ pan_w = 70.0;        // panel width
 pan_l = 110.0;       // panel length
 pan_t = 3.0;         // panel thickness (slides into the rails)
 roof_ang = 30;       // panel angle  // [15:5:45]
+roof_stop_t = 3.0;   // the stop at the bed's low end the panel rests on under gravity
+roof_drain_w = 6.0;  // three drain notches at bed level through that stop (0 = none)  // [0:1:12]
 
 /* [Pole mount] — two channels for hose clamps / heavy zip ties */
 strap_w = 9.0;       // strap width
@@ -121,19 +145,33 @@ bh_cx =  inner_x/2 - post_corner - col_bh/2;
 lb_cy = -inner_y/2 + board_clear + lb_l/2;
 bh_cy = -inner_y/2 + board_clear + bh_l/2;
 usb_zc = floor_t + standoff_h + pcb_t + port_usbc_shell_h()/2;   // on the connector AXIS, not PCB-top + h/2
+// drains: one in the gap between the LoRa rail and the battery bay wall, one
+// under the 18650 bay (its ring wall is a dam: the bay is a cup without it)
+weep_x_gap = lb_cx + lb_w/2 + 0.75 + weep_d()/2;
+function weep_xs() = [weep_x_gap, bh_cx];
+assert(!opt_weep || weep_x_gap + weep_d()/2 + 0.5 <= bh_cx - (bh_w + 3)/2,
+       "the gap weep runs into the battery bay wall — widen post_corner or move it");
+assert(!opt_weep || weep_x_gap - weep_d()/2 >= lb_cx + usb_w/2 + 1.0,
+       "the gap weep merges with the USB opening");
 
 skirt_gap = tol_slide + 0.2;
 plate_x = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
 plate_y = e_seal ? out_y + 2*(skirt_gap + skirt_t) : out_y;
 plate_r = e_seal ? corner_r + skirt_gap + skirt_t : corner_r;
 
-function post_xy() = [
+function post_xy() = concat([
     [ inner_x/2 - pd/2 - 0.2,  inner_y/2 - pd/2 - 0.2],
     [-inner_x/2 + pd/2 + 0.2,  inner_y/2 - pd/2 - 0.2],
     [ inner_x/2 - pd/2 - 0.2, -inner_y/2 + pd/2 + 0.2],
     [-inner_x/2 + pd/2 + 0.2, -inner_y/2 + pd/2 + 0.2],
-];
+], (e_seal && seal_mid_posts) ? [[inner_x/2 - pd/2 - 0.2, 0], [-inner_x/2 + pd/2 + 0.2, 0]] : []);
+// the mid posts stand outboard of the LoRa rails and the battery bay walls
+assert(!(e_seal && seal_mid_posts) || (inner_x/2 - pd + 0.2 > bh_cx + (bh_w + 3)/2 + 0.5
+                                       && -(inner_x/2 - pd + 0.2) < lb_cx - lb_w/2 - clip_stack - 0.5),
+       "a mid-span post lands on a cradle — widen post_corner");
 assert(lip_h < cav_d, "lip_h vs cavity");
+assert(roof_drain_w == 0 || 3*roof_drain_w + 12 <= pan_w, "roof_drain_w: three notches do not fit across the stop");
+assert(!sma_boss || sma_d + 6 <= cav_d, "the SMA washer land is taller than the sky wall — shrink it");
 assert(!opt_mark || (mark_depth > 0 && mark_depth < lid_t),
        "mark_depth must be between 0 and lid_t");
 // the wordmark's two gates, from the mark library's measured type metrics:
@@ -148,7 +186,7 @@ assert(!opt_mark || mark_word_ink_w("securaCV", mark_size) <= plate_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", mark_size),
            " mm at mark_size ", mark_size, " on a ", plate_x,
            " mm lid (2 mm margin per side) — shrink mark_size"));
-echo(str("Canary solar relay pod v0.1-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t,
+echo(str("Canary solar relay pod v0.2-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t,
          " mm, panel ", pan_w, "x", pan_l, " @ ", roof_ang, " deg  (IN DEVELOPMENT)"));
 
 // rrect2d/rrect come from canary_core_lib; only file-specific geometry stays local
@@ -178,6 +216,12 @@ module body() {
                 rrect(out_x, out_y, corner_r, base_d);
                 // thickened back hosts the strap channels WITHOUT breaching the floor
                 translate([0, 0, -strap_t]) rrect(out_x, out_y, corner_r, strap_t + 0.01);
+                // SMA sealing-washer land, 1.0 proud of the sky wall: a bulkhead
+                // nut torqued onto a flat wall seats its washer IN the film of
+                // water that wall carries; on a land it seats above it
+                if (sma_boss)
+                    translate([lb_cx, out_y/2 - 0.01, floor_t + cav_d/2]) rotate([-90, 0, 0])
+                        cylinder(d = sma_d + 6, h = 1.01);
             }
             translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
             // SMA bulkhead, top wall, over the LoRa column. D-FLAT bore: the
@@ -201,6 +245,10 @@ module body() {
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
+            // drains at the floor corners of the BOTTOM wall, angled down and
+            // out (canary_core_lib weep_cut) — the wall the pod hangs on
+            if (opt_weep) for (x = weep_xs())
+                weep_cut(x, -inner_y/2, floor_t + weep_d()/2 + 0.2, "-y", wall_eff, weep_d());
             // pole strap channels, cut only within the added back slab (seal-safe)
             for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4 - strap_w/2, -strap_t - 0.1])
                 cube([out_x + 2, strap_w, strap_t + 0.1]);
@@ -223,7 +271,7 @@ module body() {
                     sx = sign(p[0]); sy = sign(p[1]);
                     hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
                              translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
-                    hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
+                    if (sy != 0) hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
                              translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
                 }
             }
@@ -275,8 +323,11 @@ module lid() {
             // patch (Ø10) — the most thermally-cycled design in the folder
             // pumps ~14 % of its volume past the gasket per day/night cycle
             // without a membrane (field_ratings.md rule). Roof-shaded face.
+            // the spot-face is on the INNER face (z=0 side): the patch is bonded
+            // inside, the bore faces the weather. Cut on the show face (as it
+            // was) it left a 0.9 mm cup pooling water ON the membrane.
             translate([lb_cx, -inner_y/4, -1]) cylinder(d = 3.0, h = lid_t + 2);
-            translate([lb_cx, -inner_y/4, lid_t - 0.9]) cylinder(d = 5.4, h = 1.0);
+            translate([lb_cx, -inner_y/4, -0.1]) cylinder(d = 10.6, h = 0.6 + 0.1);
             // the house wordmark (opt_mark), debossed on the show face by the
             // first-layer machinery — canary_mark_lib owns the word and its
             // metrics, this file only places it (mark_dx/dy/rot/size/depth)
@@ -313,7 +364,10 @@ module lid() {
 // the root end before the roof goes on. Screws to the lid's top posts (swap
 // the two TOP lid screws for M2 x 12 through the roof feet).
 module roof() {
-    bed_l = pan_l * 0.75;
+    // the bed is as long as the panel plus its stop: at 0.75 x pan_l the panel
+    // overhung the ROOT end, straight into the top wall and the antenna
+    bed_l = pan_l + tol_slide + roof_stop_t;
+    stop_h = pan_t - 0.4;   // BELOW the panel's top face: water sheds over the stop, not against it
     difference() {
         union() {
             // two feet matching the top lid-screw posts
@@ -325,8 +379,18 @@ module roof() {
                     cube([3, bed_l, pan_t + 2]);                                              // side rails
                 for (s = [1, -1]) translate([s*(pan_w/2 - 1.2) + (s < 0 ? -1.8 : 0), 0, 2 + pan_t + 0.2])
                     cube([1.8, bed_l, 1.4]);   // retaining lips: 1.2 mm OVER the panel edge, rooted in the rails
-                // stop at the FAR (lower, outboard) end: gravity pulls the panel onto it
-                translate([-pan_w/2 - 3, bed_l - 3, 2 - 0.01]) cube([pan_w + 6, 3, pan_t + 2.01]);
+                // stop at the FAR (lower, outboard) end: gravity pulls the panel onto
+                // it; drain notches at bed level let what runs under the panel out
+                difference() {
+                    translate([-pan_w/2 - 3, bed_l - roof_stop_t, 2 - 0.01]) cube([pan_w + 6, roof_stop_t, stop_h + 0.01]);
+                    if (roof_drain_w > 0) for (x = [-pan_w/3, 0, pan_w/3])
+                        translate([x - roof_drain_w/2, bed_l - roof_stop_t - 1, 2 - 0.02]) cube([roof_drain_w, roof_stop_t + 2, 1.2]);
+                }
+                // stiffening under the bed (rib_lib): a peripheral loop and two
+                // spines along the slope, 4 mm on 1.6 — the bed is a 2 mm plate
+                // on two struts with a panel and the wind on it
+                if (roof_ribs)
+                    translate([0, bed_l/2, 0.01]) mirror([0, 0, 1]) plate_ribs(pan_w + 6, bed_l, 2, 4.0, r = 1.0, inset = 2.0, n = 2);
             }
             // struts from the feet up INTO the bed's underside, 12 mm along it
             // from the root (bed point (0, 12, 0) -> world (0, inner_y/2 - 2 - 12 cos(a), 12 sin(a)))

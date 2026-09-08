@@ -890,7 +890,7 @@
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
     "steps": [
-     "Screw the OV5647 to the four posts inside the front face (M2 self-tappers, lens through the aperture); bond the clear disc into the seat.",
+     "Screw the OV5647 to the four posts inside the front face (M2 self-tappers, lens through the aperture); bond the clear disc into the seat. (weather) Press the hood's spigot into the groove around the window (open side down) and bond it with neutral-cure silicone.",
      "(xiao host) Seat the XIAO in the module's socket — both USB-C ports must face the same direction; backwards seating feeds power into GPIO and can kill either board (device guide §3). Click the stack into the tall side rails, module up, both ports aligned to the two bottom-wall openings (model port above, firmware port below). (devkit host) Click the Vision AI V2 and the DevKitM-1 into their snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the module's own USB-C faces the middle gap — open the case to reflash models.",
      "Route the camera FPC to the module's CSI connector (and, devkit host, the Grove cable across the middle gap to the DevKit pins).",
      "(weather) Seat the TPU gasket in the rim groove.",

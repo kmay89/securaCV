@@ -155,6 +155,10 @@ snap_play = 0.15;    // window clearance per side — the catalog default (a
                      // printed window comes out a hair small and the skirt
                      // still has to enter)
 snap_h = 1.6; snap_depth = 2.6; snap_proud = 0.5;
+pry_notch = true;    // fingernail notches in the bezel's BOTTOM (-Y) wall rear rim, either side of the USB
+                     // channel: the back snaps closed on a flush parting line with nothing to lift it by
+                     // (0.6 into the wall, 0.8 below the rim)
+pry_w = 4.0;         // notch width  // [3:0.5:8]
 skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed back_stack (see assert)
 
 /* [Stand] */
@@ -224,6 +228,12 @@ assert(land_x >= 0.8 && land_y >= 0.8,
 assert(glass_relief < face_t - 0.5, "glass relief eats the bezel face — check glass_relief/face_t");
 assert(pcb_w < glass_w && pcb_h < glass_h, "PCB should be smaller than the glass slab — check dims");
 assert(skirt_dep <= back_stack + 0.01, "skirt_dep > back_stack — the skirt would drive into the PCB; cap it at back_stack");
+// the pry notches sit 1.5 outboard of the USB channel's edge (or flank the
+// center when there is no USB), and must end before the corner radius begins
+pry_x = (opt_usb ? abs(usb_dx) + usb_ch_w/2 + 1.5 : 4.0) + pry_w/2;
+assert(!pry_notch || pry_x + pry_w/2 <= xo/2 - r_out,
+       "no straight wall left for a pry notch beside the USB channel — narrow pry_w");
+assert(!pry_notch || wall - 0.6 >= 1.2, "the pry notch leaves under 1.2 mm of wall");
 assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth) — raise skirt_dep or lower snap_depth");
 // the mated plug's overmold sweeps a spec-height band about the shell axis;
 // it must ride OVER the glass slab (which is wider than the PCB, so it stands
@@ -313,6 +323,10 @@ module bezel() {
         for (sx = [1, -1], yy = nub_ys())
             translate([sx*xo/2, yy, bez_h - snap_depth])
                 cube([wall*3, snap_w, snap_h], center = true);
+        // pry notches: the ±Y walls' rear rim at both ends, inboard of the
+        // corner radius and outboard of the USB channel / button holes
+        if (pry_notch) for (sx = [1, -1])
+            translate([sx*pry_x, -yo/2, bez_h]) cube([pry_w, 2*0.6, 2*0.8], center = true);
     }
 }
 module bezel_print() { bezel(); }
@@ -393,15 +407,36 @@ module back() {
 // ----------------------------------------------------------------------------
 //  STAND — free-standing desk cradle (prints flat)
 // ----------------------------------------------------------------------------
+// The slab (thickness T = bez_h + back_t) rests on its bottom REAR edge at the
+// rail's front face and leans back stand_ang; everything else is derived from
+// that line: the fin's front face contains the slab's back plane, and the
+// front lip's back face is a wedge parallel to the slab's front face, 0.2
+// clear. (v0.1 typed a 14.7 channel for a 12.7 slab: it wedged at ~11° and
+// the fin never touched the slab at all.)
 module stand() {
-    chan_w = (bez_h + back_t) + 2.0;
+    T   = bez_h + back_t;
+    a   = stand_ang;
+    fw  = stand_w - 16;
+    yr  = -stand_d/2 + 20;                  // rail front face = the slab's rear-bottom edge
+    cy  = yr - T*cos(a);  cz = stand_t + T*sin(a);   // the slab's lifted front-bottom corner
+    // front face of the slab at height z (z >= cz): y = cy + (z - cz)*tan(a)
+    function yf(z) = cy + (z - cz)*tan(a) - 0.2;
+    lip_h = 10;
     linear_extrude(stand_t) rrect2d(stand_w, stand_d, 6);
-    // reclined back fin
-    translate([0, stand_d/2 - 10, stand_t - 0.01]) rotate([-stand_ang, 0, 0])
-        translate([-stand_w/2 + 8, -4, 0]) cube([stand_w - 16, 8, 34]);
-    // front lip + back rail form the bottom-edge channel
-    translate([-stand_w/2 + 8, -stand_d/2 + 12 - 3, stand_t - 0.01]) cube([stand_w - 16, 3, 10]);
-    translate([-stand_w/2 + 8, -stand_d/2 + 12 + chan_w, stand_t - 0.01]) cube([stand_w - 16, 3, 9]);
+    // front lip: a wedge whose back face follows the slab's front face
+    hull() {
+        translate([-fw/2, yf(stand_t) - 3, stand_t - 0.01]) cube([fw, 3, 0.02]);
+        translate([-fw/2, yf(stand_t + lip_h) - 3, stand_t + lip_h - 0.02]) cube([fw, 3, 0.02]);
+    }
+    // back rail: the slab's rear edge sits against its front face
+    translate([-fw/2, yr, stand_t - 0.01]) cube([fw, 3, 9]);
+    // reclined fin: front face through the rear-bottom edge, leaning stand_ang
+    hull() {
+        translate([-fw/2, yr - 0.01, stand_t - 0.01]) cube([fw, 8, 0.02]);
+        translate([-fw/2, yr - 0.01 + 34*tan(a), stand_t + 34 - 0.02]) cube([fw, 8, 0.02]);
+    }
+    assert(yr + 3 + 34*tan(a) + 8 <= stand_d/2, "the fin's top runs off the stand's back edge — deepen stand_d or lower stand_ang");
+    assert(yf(stand_t) - 3 >= -stand_d/2 + 2, "the front lip runs off the stand's front edge — deepen stand_d");
 }
 
 // ----------------------------------------------------------------------------

@@ -464,6 +464,10 @@
        "file": "canary_vision_enclosure_xiao_weather_front.stl"
       },
       {
+       "name": "hood",
+       "file": "canary_vision_enclosure_xiao_weather_hood.stl"
+      },
+      {
        "name": "gasket",
        "file": "canary_vision_enclosure_xiao_weather_gasket.stl"
       }
@@ -909,6 +913,14 @@
      "bom": [
       "W-BT1"
      ]
+    },
+    {
+     "id": "pry_notch",
+     "group": "Snap bezel",
+     "label": "a fingernail notch in the drum rim at pry_ang (mid-wall between two snap windows,",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
    "packages": [
