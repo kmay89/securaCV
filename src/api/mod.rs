@@ -288,6 +288,13 @@ pub struct ApiConfig {
     /// non-loopback bind no longer needs the insecure override). Without the
     /// feature, configuring this is a startup error.
     pub tls: ApiTlsConfig,
+    /// The fleet peer summary `event_mqtt_bridge --fleet-peers-path` writes
+    /// (`crate::fleet_peers`). When set, `/api/fleet` lists the Canaries the
+    /// bridge has heard beside the kernel's own row; unset (the default) or
+    /// missing on disk, the document is the kernel alone. Read per request,
+    /// never cached, so a bridge restart or a deleted file takes effect on
+    /// the next poll.
+    pub fleet_peers_path: Option<PathBuf>,
 }
 
 /// Generous for legitimate clients — the HA coordinator polls every 30 s and
@@ -304,6 +311,7 @@ impl Default for ApiConfig {
             allow_insecure: false,
             rate_limit_per_minute: DEFAULT_API_RATE_LIMIT_PER_MINUTE,
             tls: ApiTlsConfig::default(),
+            fleet_peers_path: None,
         }
     }
 }
@@ -792,7 +800,9 @@ fn handle_connection(
         // see (the kernel is up; its own chain verdict, if one was computed);
         // no event, zone, or key material — those stay behind the token.
         ("OPTIONS", "/api/fleet") => {
-            write_response_with_headers(&mut stream, 204, "application/json", b"", FLEET_CORS)?;
+            let cors = fleet_cors_headers(request.headers.get("origin").map(String::as_str));
+            let cors: Vec<(&str, &str)> = cors.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            write_response_with_headers(&mut stream, 204, "application/json", b"", &cors)?;
             return Ok(());
         }
         ("GET", "/api/fleet") => {}
@@ -856,14 +866,19 @@ fn handle_connection(
         // the anyone-who-asks surface, and it is served before the token
         // machinery so an unauthenticated poll never counts as an auth
         // failure against the caller's address.
-        let body = fleet_document(last_verify.as_ref());
-        write_response_with_headers(
-            &mut stream,
-            200,
-            "application/json",
-            body.as_bytes(),
-            FLEET_CORS,
-        )?;
+        let now_epoch_s = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let peers = cfg
+            .fleet_peers_path
+            .as_deref()
+            .map(|path| crate::fleet_peers::load_rows(path, now_epoch_s))
+            .unwrap_or_default();
+        let body = fleet_document(last_verify.as_ref().map(|r| r.chain_valid), &peers);
+        let cors = fleet_cors_headers(request.headers.get("origin").map(String::as_str));
+        let cors: Vec<(&str, &str)> = cors.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        write_response_with_headers(&mut stream, 200, "application/json", body.as_bytes(), &cors)?;
         return Ok(());
     }
 
@@ -1226,37 +1241,95 @@ fn write_response<S: Write>(
     write_response_with_headers(stream, status, content_type, body, &[])
 }
 
-/// The CORS headers `/api/fleet` (and only `/api/fleet`) carries — the
-/// contract's "CORS is the whole trick": a browser page on another origin
-/// cannot read the fleet document without them. Every other route stays
-/// same-origin-only on purpose (the capability token must never be readable
-/// by a cross-origin script, so nothing that requires it may be CORS-open).
-const FLEET_CORS: &[(&str, &str)] = &[
-    ("Access-Control-Allow-Origin", "*"),
-    ("Access-Control-Allow-Methods", "GET, OPTIONS"),
-    ("Access-Control-Allow-Headers", "accept"),
-];
+/// Browser origins allowed to read `/api/fleet` cross-origin. The contract's
+/// "CORS is the whole trick" (`tvos/discovery/DISCOVERY.md`) used to be a
+/// wildcard, which let any page a household member happened to open read who
+/// is home. The native readers — the Witness Wall on tvOS and the iPhone app,
+/// both `URLSession` — send no `Origin` and need no CORS header, so this list
+/// is only for the browser pages that genuinely render the fleet:
+///
+/// * `https://kmay89.github.io` — the in-browser Lab and flasher (the
+///   `flasher.url` origin in `firmware/build_matrix.json`), whose post-flash
+///   discovery and Witness Wall emulator read a hub;
+/// * `https://securacv.com` — the public site's Witness Wall emulator, for a
+///   kernel served over TLS with a trusted certificate (a plain-`http` kernel
+///   is mixed content for it regardless of CORS);
+/// * `http://localhost[:port]` and `http://127.0.0.1[:port]` — a local
+///   checkout of either site (`python3 -m http.server`), the "try it in 30
+///   seconds" path in the contract doc. Matched by `fleet_origin_is_local`
+///   with an exact host, so `localhost.example` is not local.
+///
+/// Every other `Origin` gets no `Access-Control-Allow-Origin` at all and the
+/// browser refuses the read. No config surface carries origins today, so the
+/// list is a constant rather than a new key nobody asked for; the response
+/// always carries `Vary: Origin` because it differs by requester.
+pub const FLEET_ALLOWED_ORIGINS: &[&str] = &["https://kmay89.github.io", "https://securacv.com"];
+
+/// `http://localhost` / `http://127.0.0.1`, with or without a numeric port.
+fn fleet_origin_is_local(origin: &str) -> bool {
+    let Some(host_port) = origin.strip_prefix("http://") else {
+        return false;
+    };
+    let (host, port) = match host_port.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (host_port, None),
+    };
+    let host_ok = host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1";
+    let port_ok =
+        port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+    host_ok && port_ok
+}
+
+/// Whether a request `Origin` may read `/api/fleet` from a browser. Scheme
+/// and host are compared case-insensitively (browsers serialize them in
+/// lowercase; a hand-written client may not).
+pub fn fleet_origin_allowed(origin: &str) -> bool {
+    let origin = origin.trim().to_ascii_lowercase();
+    FLEET_ALLOWED_ORIGINS.contains(&origin.as_str()) || fleet_origin_is_local(&origin)
+}
+
+/// The CORS headers for one `/api/fleet` response (GET or the OPTIONS
+/// preflight): `Vary: Origin` always; the allow-list's echo of the origin,
+/// plus the methods and headers a preflight asks about, only for an allowed
+/// one. No `Origin` (native clients, curl) means no CORS header is needed and
+/// none is sent. Every other route stays same-origin-only on purpose: the
+/// capability token must never be readable by a cross-origin script, so
+/// nothing that requires it may be CORS-open.
+fn fleet_cors_headers(origin: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut headers = vec![("Vary", "Origin".to_string())];
+    if let Some(origin) = origin.filter(|o| fleet_origin_allowed(o)) {
+        headers.push(("Access-Control-Allow-Origin", origin.trim().to_string()));
+        headers.push(("Access-Control-Allow-Methods", "GET, OPTIONS".to_string()));
+        headers.push(("Access-Control-Allow-Headers", "accept".to_string()));
+    }
+    headers
+}
 
 /// The `/api/fleet` body: the kernel reporting itself as one fleet member in
 /// the shape `firmware/common/fleet_selfreport/fleet_selfreport.h` writes for
-/// a Canary. `chain` is the kernel's LAST computed verdict (`/verify`, or the
-/// boot verify witnessd records) and is omitted when none has run — a silent
-/// key is never a claim (DISCOVERY.md). `verified_through` is "now", exactly
-/// what firmware sends: it is the device's self-report, and the Wall labels
-/// it as reported rather than as something the Wall measured.
-fn fleet_document(last_verify: Option<&VerifyReport>) -> String {
+/// a Canary, followed by the peers the MQTT bridge has heard
+/// (`crate::fleet_peers::fleet_rows`, already projected to the contract's
+/// words). `self_chain_ok` is the kernel's LAST computed verdict (`/verify`,
+/// or the boot verify witnessd records) and the key is omitted when none has
+/// run — a silent key is never a claim (DISCOVERY.md). `verified_through` is
+/// "now", exactly what firmware sends: it is the device's self-report, and the
+/// Wall labels it as reported rather than as something the Wall measured.
+fn fleet_document(self_chain_ok: Option<bool>, peers: &[serde_json::Value]) -> String {
     let mut me = serde_json::Map::new();
     me.insert("name".into(), serde_json::Value::from("Witness kernel"));
     me.insert("online".into(), serde_json::Value::from(true));
     me.insert("product".into(), serde_json::Value::from("witness-kernel"));
-    if let Some(report) = last_verify {
-        let chain = if report.chain_valid { "ok" } else { "degraded" };
+    if let Some(chain_valid) = self_chain_ok {
+        let chain = if chain_valid { "ok" } else { "degraded" };
         me.insert("chain".into(), serde_json::Value::from(chain));
     }
+    let mut devices = Vec::with_capacity(1 + peers.len());
+    devices.push(serde_json::Value::Object(me));
+    devices.extend(peers.iter().cloned());
     let doc = serde_json::json!({
         "kernel": "witness-kernel",
         "verified_through": "now",
-        "devices": [serde_json::Value::Object(me)],
+        "devices": devices,
     });
     doc.to_string()
 }
@@ -1489,16 +1562,26 @@ mod tests {
     impl SealedLogTestApi {
         /// Spawn the API server over a kernel DB prepared by `prepare`.
         fn spawn(prepare: impl FnOnce(&mut Kernel, &KernelConfig) -> Result<()>) -> Result<Self> {
+            Self::spawn_with(prepare, |_, _| {})
+        }
+
+        /// Like [`Self::spawn`], with a hook to adjust the [`ApiConfig`]
+        /// (handed the temp dir so a test can point paths inside it).
+        fn spawn_with(
+            prepare: impl FnOnce(&mut Kernel, &KernelConfig) -> Result<()>,
+            configure: impl FnOnce(&mut ApiConfig, &std::path::Path),
+        ) -> Result<Self> {
             let dir = tempfile::tempdir()?;
             let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
             let mut kernel = Kernel::open(&cfg)?;
             prepare(&mut kernel, &cfg)?;
             drop(kernel);
 
-            let api_config = ApiConfig {
+            let mut api_config = ApiConfig {
                 addr: "127.0.0.1:0".to_string(),
                 ..ApiConfig::default()
             };
+            configure(&mut api_config, dir.path());
             let api_handle = ApiServer::new(api_config, cfg).spawn()?;
             Ok(Self {
                 _dir: dir,
@@ -1513,6 +1596,18 @@ mod tests {
         }
 
         fn request(&self, method: &str, path: &str, with_token: bool) -> Result<(String, String)> {
+            self.request_with_headers(method, path, with_token, "")
+        }
+
+        /// `extra` is raw header lines, each `\r\n`-terminated (e.g. an
+        /// `Origin:` a browser would add).
+        fn request_with_headers(
+            &self,
+            method: &str,
+            path: &str,
+            with_token: bool,
+            extra: &str,
+        ) -> Result<(String, String)> {
             let mut stream = TcpStream::connect(self.handle().addr)?;
             let token_header = if with_token {
                 format!("X-Witness-Token: {}\r\n", self.handle().token)
@@ -1520,7 +1615,7 @@ mod tests {
                 String::new()
             };
             let request =
-                format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n{token_header}\r\n");
+                format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n{token_header}{extra}\r\n");
             stream.write_all(request.as_bytes())?;
             let mut response = String::new();
             stream.read_to_string(&mut response)?;
@@ -1593,16 +1688,19 @@ mod tests {
     }
 
     #[test]
-    fn fleet_is_open_cors_enabled_and_never_claims_a_chain_it_did_not_verify() -> Result<()> {
+    fn fleet_is_open_and_never_claims_a_chain_it_did_not_verify() -> Result<()> {
         let api = SealedLogTestApi::spawn(|kernel, cfg| seal_event(kernel, cfg, "zone:a"))?;
 
-        // No token, and readable from another origin: the contract's two rules.
+        // No token: the contract's first rule. No `Origin` (the Wall and the
+        // iPhone are native URLSession clients): served as before, and with
+        // no CORS header, because none is needed and none was asked for.
         let (headers, body) = api.get("/api/fleet", false)?;
         assert!(headers.contains("200 OK"), "headers: {headers}");
         assert!(
-            headers.contains("Access-Control-Allow-Origin: *"),
+            !headers.contains("Access-Control-Allow-Origin"),
             "headers: {headers}"
         );
+        assert!(headers.contains("Vary: Origin"), "headers: {headers}");
         let doc: serde_json::Value = serde_json::from_str(&body)?;
         assert_eq!(doc["kernel"], "witness-kernel");
         let devices = doc["devices"].as_array().expect("devices array");
@@ -1625,25 +1723,232 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_str(&body)?;
         assert_eq!(doc["devices"][0]["chain"], "ok", "body: {body}");
 
-        // The preflight a browser sends first, and the method the contract
-        // does not allow.
-        let (headers, _) = api.request("OPTIONS", "/api/fleet", false)?;
-        assert!(headers.contains("204 No Content"), "headers: {headers}");
-        assert!(
-            headers.contains("Access-Control-Allow-Methods: GET, OPTIONS"),
-            "headers: {headers}"
-        );
+        // The method the contract does not allow.
         let (headers, _) = api.request("POST", "/api/fleet", false)?;
         assert!(
             headers.contains("405 Method Not Allowed"),
             "headers: {headers}"
         );
 
-        // Every other route stays same-origin: no CORS header escapes.
-        let (headers, _) = api.get("/api/sealed-log", true)?;
+        // Every other route stays same-origin: no CORS header escapes, even
+        // when an allowed origin asks.
+        let (headers, _) = api.request_with_headers(
+            "GET",
+            "/api/sealed-log",
+            true,
+            "Origin: https://securacv.com\r\n",
+        )?;
         assert!(
             !headers.contains("Access-Control-Allow-Origin"),
             "headers: {headers}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fleet_origin_allow_list_is_exact() {
+        for allowed in [
+            "https://kmay89.github.io",
+            "https://securacv.com",
+            "http://localhost",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://127.0.0.1",
+            "HTTP://LOCALHOST:3000",
+        ] {
+            assert!(fleet_origin_allowed(allowed), "{allowed} should be allowed");
+        }
+        for foreign in [
+            "https://evil.example",
+            "http://kmay89.github.io", // scheme matters
+            "https://kmay89.github.io.evil.example",
+            "https://securacv.com.evil.example",
+            "https://www.securacv.com", // not the site's origin
+            "http://localhost.evil.example",
+            "http://localhost:80a",
+            "http://127.0.0.1.evil.example",
+            "http://192.168.1.20:8080", // a LAN page is not "local"
+            "https://localhost:8080",   // the local Lab is plain http
+            "null",
+            "",
+        ] {
+            assert!(
+                !fleet_origin_allowed(foreign),
+                "{foreign} must not be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn fleet_cors_echoes_only_allowed_origins_for_get_and_preflight() -> Result<()> {
+        let api = SealedLogTestApi::spawn(|kernel, cfg| seal_event(kernel, cfg, "zone:a"))?;
+
+        for allowed in ["https://kmay89.github.io", "http://localhost:8080"] {
+            let origin = format!("Origin: {allowed}\r\n");
+            // GET: echoed exactly, never `*`, with Vary.
+            let (headers, body) = api.request_with_headers("GET", "/api/fleet", false, &origin)?;
+            assert!(headers.contains("200 OK"), "headers: {headers}");
+            assert!(
+                headers.contains(&format!("Access-Control-Allow-Origin: {allowed}\r\n")),
+                "headers: {headers}"
+            );
+            assert!(!headers.contains("Access-Control-Allow-Origin: *"));
+            assert!(headers.contains("Vary: Origin"), "headers: {headers}");
+            assert!(
+                body.contains("\"kernel\":\"witness-kernel\""),
+                "body: {body}"
+            );
+            // OPTIONS preflight: the same echo plus the methods.
+            let (headers, _) = api.request_with_headers("OPTIONS", "/api/fleet", false, &origin)?;
+            assert!(headers.contains("204 No Content"), "headers: {headers}");
+            assert!(
+                headers.contains(&format!("Access-Control-Allow-Origin: {allowed}\r\n")),
+                "headers: {headers}"
+            );
+            assert!(
+                headers.contains("Access-Control-Allow-Methods: GET, OPTIONS"),
+                "headers: {headers}"
+            );
+            assert!(headers.contains("Vary: Origin"), "headers: {headers}");
+        }
+
+        // A foreign origin: served (it is the open surface) but with no
+        // Access-Control header at all, so the browser refuses the read.
+        for foreign in ["https://evil.example", "http://192.168.1.20:8080"] {
+            let origin = format!("Origin: {foreign}\r\n");
+            let (headers, _) = api.request_with_headers("GET", "/api/fleet", false, &origin)?;
+            assert!(headers.contains("200 OK"), "headers: {headers}");
+            assert!(!headers.contains("Access-Control-"), "headers: {headers}");
+            assert!(headers.contains("Vary: Origin"), "headers: {headers}");
+            let (headers, _) = api.request_with_headers("OPTIONS", "/api/fleet", false, &origin)?;
+            assert!(headers.contains("204 No Content"), "headers: {headers}");
+            assert!(!headers.contains("Access-Control-"), "headers: {headers}");
+        }
+
+        // No origin at all: the preflight still answers (harmless), also
+        // without CORS headers.
+        let (headers, _) = api.request("OPTIONS", "/api/fleet", false)?;
+        assert!(headers.contains("204 No Content"), "headers: {headers}");
+        assert!(!headers.contains("Access-Control-"), "headers: {headers}");
+        Ok(())
+    }
+
+    /// A summary the bridge could have written: one peer proven present by a
+    /// signed publish 30 s ago with a fresh room reading, one heard only over
+    /// unsigned heartbeats, both carrying the bridge's private bookkeeping
+    /// (the pinned key) that must never be served.
+    fn planted_peer_summary(now: u64) -> crate::fleet_peers::PeerSummaryFile {
+        let json = serde_json::json!({
+            "schema": crate::fleet_peers::FLEET_PEERS_SCHEMA,
+            "written_at_epoch_s": now,
+            "peers": [
+                {
+                    "device_id": "canary-sense-01",
+                    "name": "Bedroom",
+                    "device_type": "canary-sense",
+                    "last_seen_epoch_s": now - 10,
+                    "last_signed_epoch_s": now - 30,
+                    "chain": "ok",
+                    "pinned_key_hex": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+                    "presence": "present",
+                    "occupants": "1",
+                    "breathing": true,
+                    "wellbeing_epoch_s": now - 10
+                },
+                {
+                    "device_id": "canary-wap-porch",
+                    "device_type": "canary-wap",
+                    "last_seen_epoch_s": now - 5,
+                    "chain": "unknown"
+                }
+            ]
+        });
+        crate::fleet_peers::PeerSummaryFile::from_json(json.to_string().as_bytes())
+            .expect("planted summary parses")
+    }
+
+    #[test]
+    fn fleet_lists_the_peers_the_bridge_heard_from_the_summary_file() -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let api = SealedLogTestApi::spawn_with(
+            |kernel, cfg| seal_event(kernel, cfg, "zone:a"),
+            |api_config, dir| {
+                let path = dir.join("fleet_peers.json");
+                planted_peer_summary(now)
+                    .write_atomic(&path)
+                    .expect("summary written");
+                api_config.fleet_peers_path = Some(path);
+            },
+        )?;
+        let (headers, body) = api.get("/api/fleet", false)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let doc: serde_json::Value = serde_json::from_str(&body)?;
+        let devices = doc["devices"].as_array().expect("devices array");
+        assert_eq!(devices.len(), 3, "body: {body}");
+        assert_eq!(devices[0]["product"], "witness-kernel");
+        assert_eq!(devices[1]["name"], "Bedroom");
+        assert_eq!(devices[1]["online"], true);
+        assert_eq!(devices[1]["chain"], "ok");
+        assert_eq!(devices[1]["product"], "canary-sense");
+        assert_eq!(devices[1]["presence"], "present");
+        assert_eq!(devices[1]["occupants"], "1");
+        assert_eq!(devices[1]["breathing"], true);
+        assert_eq!(devices[2]["name"], "canary-wap-porch");
+        assert_eq!(
+            devices[2]["online"], false,
+            "unsigned heartbeats prove nothing"
+        );
+        assert!(
+            devices[2].get("chain").is_none(),
+            "unknown is not a claim: {body}"
+        );
+        assert!(devices[2].get("presence").is_none());
+        for forbidden in [
+            "pinned_key",
+            "public_key",
+            "device_id",
+            "last_seen",
+            "last_signed",
+            "wellbeing_epoch",
+            "3b6a27bc",
+            "\"fp\"",
+        ] {
+            assert!(!body.contains(forbidden), "{forbidden} in body: {body}");
+        }
+        Ok(())
+    }
+
+    /// The kernel's aggregated document, pinned to the SAME vector file the
+    /// Apple TV core replays (`tvos/witness-core/tests/fixtures/
+    /// fleet_contract_vectors.json`): the bytes this kernel serves for one
+    /// planted peer are that vector's `input`, and the Wall's normalizer must
+    /// hand Swift its `normalized`. Neither side can move the contract alone.
+    #[test]
+    fn fleet_document_matches_the_shared_two_row_vector() -> Result<()> {
+        const NAME: &str =
+            "the kernel's aggregated document (fleet_document, verbatim): itself plus one Canary the bridge heard";
+        const NOW: u64 = 1_700_000_000;
+        let mut summary = planted_peer_summary(NOW);
+        summary.peers.truncate(1);
+        let peers = crate::fleet_peers::fleet_rows(&summary, NOW);
+        let served = fleet_document(Some(true), &peers);
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tvos/witness-core/tests/fixtures/fleet_contract_vectors.json");
+        let vectors: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        let vector = vectors["vectors"]
+            .as_array()
+            .and_then(|v| v.iter().find(|v| v["name"] == NAME))
+            .unwrap_or_else(|| panic!("no vector named {NAME:?} in {}", path.display()));
+        assert_eq!(
+            vector["input"].as_str().unwrap_or(""),
+            served,
+            "the kernel's /api/fleet bytes drifted from the shared fleet contract vector; \
+             if the contract changed on purpose, update DISCOVERY.md, then the vector's \
+             `input` to the served string above and its `normalized` to match, and expect \
+             the Apple TV core's fleet_contract test to check the other half"
         );
         Ok(())
     }

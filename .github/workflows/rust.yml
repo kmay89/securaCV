@@ -18,6 +18,9 @@ on:
       - 'integrations/ha_frigate_mqtt/**'
       - 'docs/witness-kernel.html'
       - 'tools/gen_kernel_status.py'
+      # The kernel's fleet_document test pins its /api/fleet bytes to this
+      # vector, shared with the Apple TV core (src/api tests).
+      - 'tvos/witness-core/tests/fixtures/fleet_contract_vectors.json'
       - '.github/workflows/rust.yml'
   pull_request:
     branches: [ "main" ]
@@ -33,6 +36,9 @@ on:
       - 'integrations/ha_frigate_mqtt/**'
       - 'docs/witness-kernel.html'
       - 'tools/gen_kernel_status.py'
+      # The kernel's fleet_document test pins its /api/fleet bytes to this
+      # vector, shared with the Apple TV core (src/api tests).
+      - 'tvos/witness-core/tests/fixtures/fleet_contract_vectors.json'
       - '.github/workflows/rust.yml'
 
 env:
@@ -68,6 +74,15 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-targets -- -D warnings
+    # The brief's "cargo doc (no warnings)" gate, enforced rather than asked
+    # for: a broken intra-doc link or a stray `<tag>` in a doc comment fails
+    # here instead of rotting. Private items are documented too — most of the
+    # kernel's explanatory comments sit on private functions and the check is
+    # only worth having if it reads them. Same flags as desktop-hub-core.yml.
+    - name: Docs (warnings are errors, private items included)
+      run: cargo doc --no-deps --document-private-items
+      env:
+        RUSTDOCFLAGS: "-D warnings"
     - name: Build
       run: cargo build --verbose
     - name: Run tests
