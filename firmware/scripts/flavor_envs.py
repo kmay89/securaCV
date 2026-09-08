@@ -107,7 +107,21 @@ SHARD_LABEL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 GUARD_BIN_RE = re.compile(r"^\.pio/build/([^/]+)/")
 
 
+# The file the current run actually read — `--flavors PATH` (flasher-release's
+# overlay) must be what the error messages name, not the default.
+_READ_FROM: Path = FLAVORS
+
+
+def _source() -> str:
+    try:
+        return str(_READ_FROM.relative_to(REPO))
+    except ValueError:
+        return str(_READ_FROM)
+
+
 def load_flavors(path: Path = FLAVORS) -> list[dict]:
+    global _READ_FROM
+    _READ_FROM = path
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -118,7 +132,7 @@ def find_product(flavors: list[dict], name: str) -> dict:
     known = ", ".join(e.get("name", "?") for e in flavors)
     raise SystemExit(
         f"flavor_envs.py: no product named '{name}' in "
-        f"{FLAVORS.relative_to(REPO)} (known: {known})"
+        f"{_source()} (known: {known})"
     )
 
 
@@ -201,7 +215,7 @@ def ordered_release_envs(entry: dict) -> list[str]:
     if envs is None:
         raise SystemExit(
             f"flavor_envs.py: product '{entry.get('name')}' declares no "
-            f"`release_envs` in {FLAVORS.relative_to(REPO)} — add the subset "
+            f"`release_envs` in {_source()} — add the subset "
             f"of build_envs the release workflows publish"
         )
     named: list[str] = []
@@ -272,6 +286,17 @@ def validate(flavors: list[dict]) -> list[str]:
                     f"{name}: build env(s) {', '.join(missing)} are in no shard "
                     f"— once `shards` is declared every build_env must land in "
                     f"exactly one leg, or CI quietly stops compiling it")
+            # build_legs() narrows size_guards to the envs of each leg by the
+            # env in the guard's `bin` path; a guard whose bin does not parse
+            # (or names an env outside build_envs) would land in NO leg and
+            # silently stop running. Refuse that here, where the shards are.
+            for guard in entry.get("size_guards") or []:
+                genv = guard_env(guard)
+                if genv is None or genv not in build_set:
+                    problems.append(
+                        f"{name}: size_guard bin '{guard.get('bin')}' does not sit "
+                        f"under .pio/build/<env>/ for an env in build_envs — with "
+                        f"`shards` declared it would be dropped from every leg")
         release = entry.get("release_envs")
         if release is None:
             continue

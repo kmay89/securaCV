@@ -471,6 +471,13 @@ jobs:
         # The assignment form matters: a failing command substitution inside
         # `echo` does not fail the step, and an empty matrix would let every
         # display product drop out with nothing but ::warning lines.
+        #
+        # Deliberately no overlay here (flasher-release.yml has one because
+        # it REBUILDS older tags): a signed release is cut from the tree the
+        # tag points at, and a tree that predates `release_envs` or this
+        # script fails this step outright rather than shipping a guessed
+        # list. Re-cutting such an old tag is a deliberate act; use the
+        # flasher's rebuild button for its factory images.
         run: |
           set -euo pipefail
           python3 firmware/scripts/flavor_envs.py canary-display --release --with-core
@@ -690,13 +697,17 @@ jobs:
           # and product-string guards to every display flavor identically. A
           # missing .pio build (its env failed above) simply stages nothing
           # and the loop's existing "produced no binary" warning covers it.
-          for E in $(jq -r '.[].short' <<<"$DISPLAY_ENVS"); do
-            SRC="firmware/projects/canary-display/.pio/build/canary-display-${E}/firmware.bin"
+          # `.env` names the build dir (never rebuilt from `.short`, which
+          # equals the env only while every release env carries the
+          # canary-display- prefix); `.short` names the staging dir the
+          # signing loop keys on.
+          while IFS=$'\t' read -r ENV_NAME E; do
+            SRC="firmware/projects/canary-display/.pio/build/${ENV_NAME}/firmware.bin"
             if [ -s "$SRC" ]; then
               mkdir -p "/tmp/display-${E}-build"
               cp "$SRC" "/tmp/display-${E}-build/canary_display.ino.bin"
             fi
-          done
+          done < <(jq -r '.[] | [.env, .short] | @tsv' <<<"$DISPLAY_ENVS")
 
           DISPLAY_INDEX=""
           # <product name>:<staging dir> — the three arduino-cli profile

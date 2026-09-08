@@ -369,6 +369,13 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
         flasher_col = "—"
         fl = m.get("flasher")
         if fl:
+            # gen_flash.py reads the product's flash size from board.flash_mb
+            # and refuses to run without it; the schema leaves the key optional
+            # because a device nobody flashes needs none. Catch it here, in
+            # the lint every PR runs, not only in the generator's gate.
+            if "flash_mb" not in board:
+                err(f"{slug}: has a flasher block but board.flash_mb is missing — "
+                    f"gen_flash.py takes the product's flash size from it")
             products = [fl["product"], *fl.get("variants", [])]
             flasher_col = fl["product"] + (f" +{len(products) - 1}" if len(products) > 1 else "")
             for pid in products:

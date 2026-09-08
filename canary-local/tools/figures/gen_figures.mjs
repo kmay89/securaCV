@@ -719,8 +719,9 @@ for (const id of Object.keys(HARDWARE_FIGURE)) {
  *     figure is a DISPUTE: two boards publish that device type with two
  *     shapes. Which picture a shared type draws (or whether it should draw
  *     any) is a person's decision, so a dispute is recorded in
- *     CONFIG_FIGURE_DISPUTED with the decision pending, and a new one — or a
- *     stale entry — fails the build.
+ *     CONFIG_FIGURE_DISPUTED with the decision pending — keyed by config,
+ *     valued by exactly who disputes it — and a new dispute (a new config, or
+ *     a new disputant on a recorded one), or a stale entry, fails the build.
  *
  * Today's one dispute: canary-vision/default. The DevKit host got its own
  * figure (device.canary-vision-devkit — the Grove-cabled housing is not the
@@ -731,7 +732,9 @@ for (const id of Object.keys(HARDWARE_FIGURE)) {
  * publishing it agrees") the honest outcome may be to unmap the type, which
  * moves fleet_figures.h and FleetFigures.swift and is therefore a decision,
  * not a refactor. */
-const CONFIG_FIGURE_DISPUTED = new Set(['canary-vision/default']);
+const CONFIG_FIGURE_DISPUTED = new Map([
+  ['canary-vision/default', ['devices/canary-vision-devkit: device.canary-vision-devkit']],
+]);
 const configsWithType = new Set(deviceTypes.map((c) => `${c.family}/${c.flavor}`));
 const manifestsOfFamily = new Map();
 for (const m of manifests) {
@@ -772,14 +775,17 @@ for (const key of Object.keys(CONFIG_FIGURE)) {
   }
 }
 for (const [key, who] of configDisputed) {
-  if (!CONFIG_FIGURE_DISPUTED.has(key)) {
+  const recorded = CONFIG_FIGURE_DISPUTED.get(key);
+  const actual = [...who].sort();
+  if (!recorded || JSON.stringify([...recorded].sort()) !== JSON.stringify(actual)) {
     throw new Error(`figures: ${key} is drawn as "${CONFIG_FIGURE[key]}" here, but `
-      + `${who.join(', ')} also compile it with a different figure. Decide which picture the `
-      + 'shared device type draws (or unmap it) and record the outcome in CONFIG_FIGURE / '
-      + 'CONFIG_FIGURE_DISPUTED.');
+      + `${actual.join(', ')} also compile it with a different figure`
+      + (recorded ? ` (recorded dispute: ${[...recorded].sort().join(', ')})` : '')
+      + '. Decide which picture the shared device type draws (or unmap it) and record the '
+      + 'outcome in CONFIG_FIGURE / CONFIG_FIGURE_DISPUTED.');
   }
 }
-for (const key of CONFIG_FIGURE_DISPUTED) {
+for (const key of CONFIG_FIGURE_DISPUTED.keys()) {
   if (!configDisputed.has(key)) {
     throw new Error(`figures: CONFIG_FIGURE_DISPUTED lists ${key}, but no manifest disputes it `
       + 'any more — remove the entry.');

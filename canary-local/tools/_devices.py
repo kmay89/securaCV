@@ -52,6 +52,9 @@ def by_flasher_product(manifests: dict[str, dict]) -> dict[str, dict]:
         fl = m.get("flasher")
         if not fl:
             continue
+        if not fl.get("product"):
+            die(f"devices/{slug}: flasher block has no `product` — name the flash.json "
+                f"product this device installs onto, or drop the block")
         for pid in [fl["product"], *fl.get("variants", [])]:
             if pid in out:
                 die(f"flasher product '{pid}' is claimed by devices/{out[pid]['slug']} and "

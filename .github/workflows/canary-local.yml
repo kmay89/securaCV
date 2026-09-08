@@ -41,6 +41,13 @@ on:
       - "firmware/common/core/fleet_figures.h"
       - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
+      # devices/<slug>/device.json is a generator input since the device
+      # package's wave 2 (gen_flash.py reads chip / flash size / board /
+      # project from it; gen_figures.mjs builds the hardware→figure map from
+      # it), and boards.json is cross-checked by both — so a manifest-only
+      # change must run the byte gates below.
+      - "devices/**"
+      - "firmware/boards/boards.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"
@@ -115,6 +122,13 @@ on:
       - "firmware/common/core/fleet_figures.h"
       - "docs/design/FLEET_FIGURES.md"
       - "firmware/flavors.json"
+      # devices/<slug>/device.json is a generator input since the device
+      # package's wave 2 (gen_flash.py reads chip / flash size / board /
+      # project from it; gen_figures.mjs builds the hardware→figure map from
+      # it), and boards.json is cross-checked by both — so a manifest-only
+      # change must run the byte gates below.
+      - "devices/**"
+      - "firmware/boards/boards.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"

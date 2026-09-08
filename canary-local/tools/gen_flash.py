@@ -2254,7 +2254,16 @@ def main() -> None:
     validate_we2_guide()
 
     out = CANARY_LOCAL / "devices/flash.json"
-    out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    rendered = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+    if "--check" in sys.argv[1:]:
+        current = out.read_text(encoding="utf-8") if out.exists() else ""
+        if current != rendered:
+            die(f"{out.relative_to(REPO)} is stale — run python3 canary-local/tools/gen_flash.py "
+                f"and commit the result", code=1)
+        print(f"{out.relative_to(REPO)} is up to date — {len(products_out)} products, "
+              f"chips: {', '.join(sorted(chips_used))}")
+        return
+    out.write_text(rendered, encoding="utf-8")
     print(f"wrote {out.relative_to(REPO)} — {len(products_out)} products, "
           f"chips: {', '.join(sorted(chips_used))}")
 

@@ -131,6 +131,8 @@ class JsonMatrix(unittest.TestCase):
                     fe.main(["--flavors", str(alt), "canary-display", "--release", "--json"]), 0)
         self.assertEqual(json.loads(out.getvalue()),
                          [{"env": "canary-display-zz", "short": "zz", "core": "default"}])
+
+
 class BuildMatrixShards(unittest.TestCase):
     def test_unsharded_product_is_one_leg_with_its_own_name(self):
         entry = {"name": "canary-wap", "dir": "x", "build_envs": ["a", "b"],

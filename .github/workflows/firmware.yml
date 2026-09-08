@@ -160,7 +160,8 @@ jobs:
         # shard — so a shard list that drops an env fails HERE instead of
         # quietly not compiling it.
         run: |
-          echo "matrix=$(jq -c . firmware/flavors.json)" >> "$GITHUB_OUTPUT"
+          MATRIX=$(jq -c . firmware/flavors.json)
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
           BUILD_MATRIX=$(python3 firmware/scripts/flavor_envs.py --build-matrix)
           echo "build_matrix=${BUILD_MATRIX}" >> "$GITHUB_OUTPUT"
 

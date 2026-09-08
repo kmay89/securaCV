@@ -214,8 +214,11 @@ declare it, and let the app render what the device says it has.
   list it ran from. The release path's product-drop gate catches a product
   that vanishes between two firmware releases; nothing yet compares the
   two workflows' lists to each other, so the grep is the gate. *(Closed
-  2026-09-08: neither workflow carries a list any more — both derive it
-  from `firmware/flavors.json`; see that entry.)*
+  2026-09-08 for the PlatformIO env half: both workflows derive that list
+  from `firmware/flavors.json`; see that entry. Still typed in both: the
+  arduino-cli profile flavors (watch / dash / modes), and
+  `build_flash_manifest.py` still types the product → build-dir map — for
+  those the grep is still the gate.)*
 
 ### 2026-08-22 — The upload succeeded, the tag was cut, and TestFlight showed nothing: the tvOS plist never declared export compliance
 
