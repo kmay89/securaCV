@@ -276,10 +276,14 @@ one-header change instead of a per-board copy-paste.
     the Wall must not call it more than that.
   - The roll-call holds at most 64 ids (`FLEET_PEER_MAX`). At the cap a
     newcomer displaces the least useful id — never-proven first, then least
-    recently heard — ids not heard for 30 days are forgotten with their
-    pins, and a displaced Canary is re-pinned on its next `health`.
-    Membership is therefore broker-writable: a flood of invented ids can
-    crowd the Wall for as long as it lasts, and no longer.
+    recently heard — and a displaced Canary is re-pinned on its next
+    `health`. A never-proven id unheard for 30 days is forgotten; a proven
+    Canary's pin is never expired by the clock (it leaves only by
+    displacement at the cap, or when the operator deletes the file), and no
+    expiry runs at all across an implausible clock jump, so a host whose
+    clock lands weeks ahead for an hour keeps every pin it had. Membership
+    is therefore broker-writable: a flood of invented ids can crowd the Wall
+    for as long as it lasts, and no longer.
   - The wellbeing words (`presence`, `occupants`, `breathing`) ride on a
     peer's row only while it is proven online **and** the reading is fresh
     (a live `state` publish within the same window); a retained `state` is

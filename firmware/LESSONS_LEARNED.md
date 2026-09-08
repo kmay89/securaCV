@@ -1573,9 +1573,13 @@
   existing `whoami` canonical, left open. Same review, same module: the
   summary file holding per-room words was `0644` → `0600` + fsync; a
   first-come id cap with no eviction let 64 invented ids lock every real
-  Canary out until the file was deleted → evict least-useful, prune at 30
-  days; an unsigned `health` could permanently revoke a device's trust →
-  only a signing second key is a conflict.
+  Canary out until the file was deleted → evict least-useful; never-proven
+  ids age out at 30 days but a proven pin is never the clock's to expire,
+  and no expiry runs across a clock jump (the first cut pruned at startup
+  by wall clock — a host booting 30 days ahead would have erased every pin
+  and written the loss to disk; Codex caught it on the PR); an unsigned
+  `health` could permanently revoke a device's trust → only a signing
+  second key is a conflict.
 - **Regression check:** `cargo test --lib fleet` —
   `a_replayed_signed_publish_proves_nothing_new`,
   `an_unsigned_health_with_another_key_changes_no_verdict_by_itself`,

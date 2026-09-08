@@ -51,9 +51,10 @@
 //! with its own key (the pin is TOFU, so such a row is indistinguishable from
 //! a real Canary), and can hold a real id in the sticky `degraded` verdict by
 //! announcing a second key and signing under it. [`FLEET_PEER_MAX`] bounds the
-//! table and eviction bounds a flood's effect to its duration; none of it is
-//! a liveness proof, and `tvos/discovery/DISCOVERY.md` says so in the same
-//! words. A liveness challenge would use the firmware's `whoami` canonical,
+//! table and eviction bounds a flood's effect to its duration; the clock
+//! never expires a proven pin (only never-proven ids age out, and not across
+//! a clock jump); none of it is a liveness proof, and
+//! `tvos/discovery/DISCOVERY.md` says so in the same words. A liveness challenge would use the firmware's `whoami` canonical,
 //! which nothing here drives yet.
 //!
 //! The pin is TOFU, not pairing: "chain: ok" means the last chain publish
@@ -92,16 +93,32 @@ pub const FLEET_PEER_RECENT_SECS: u64 = 180;
 
 /// Cap on distinct device ids the table keeps. Above the display's 24-pin
 /// store with headroom for a hub. At the cap a new id displaces one — first
-/// anything not heard for [`FLEET_PEER_FORGET_SECS`], then the least recently
-/// heard id that never produced a verified signature, then the least recently
-/// heard id of all — so a broker flood can crowd the roll-call only while it
-/// lasts, never lock real Canaries out until someone deletes the file. An
-/// evicted id loses its pin and is re-pinned on its next `health`.
+/// any never-proven id unheard for [`FLEET_PEER_FORGET_SECS`], then the least
+/// recently heard id that never produced a verified signature, then the least
+/// recently heard id of all — so a broker flood can crowd the roll-call only
+/// while it lasts, never lock real Canaries out until someone deletes the
+/// file. Eviction is driven by broker activity (a new id arriving), never by
+/// the clock alone. An evicted id loses its pin and is re-pinned on its next
+/// `health`.
 pub const FLEET_PEER_MAX: usize = 64;
 
-/// How long an id stays in the table without being heard at all before it is
-/// forgotten (pin included): 30 days, pruned on every flush and on rehydrate.
+/// How long a NEVER-PROVEN id (no chain publish ever verified against its
+/// pin) stays in the table without being heard before it is forgotten: 30
+/// days, checked on every flush. A proven Canary's pin is never expired by
+/// the clock — it leaves only by displacement at the cap or by the operator
+/// deleting the file — and no expiry runs at all across an implausible clock
+/// jump (see [`FLEET_PEER_CLOCK_JUMP_SECS`]): a host whose clock lands 30
+/// days ahead for an hour must not come back to a fleet re-pinned by whoever
+/// published first.
 pub const FLEET_PEER_FORGET_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// The largest step the table's clock may take between two things it did
+/// (an observation, a flush, the file's own write stamp) before expiry is
+/// skipped for that call: one day. Nothing the bridge does legitimately goes
+/// a day without touching the table while the broker delivers, so a larger
+/// step is a corrected RTC, a bad NTP answer or a long outage — in every case
+/// a moment to keep what is known, not to forget it.
+pub const FLEET_PEER_CLOCK_JUMP_SECS: u64 = 24 * 60 * 60;
 
 /// The most the kernel will read of a summary file. [`FLEET_PEER_MAX`] fully
 /// populated records pretty-print to a few tens of kilobytes; anything past
@@ -480,6 +497,11 @@ pub struct PeerTable {
     /// Ids displaced at the cap since this table was built (the bridge logs
     /// each increase — an eviction drops that id's pin).
     evictions: u64,
+    /// The latest moment this table has evidence of: the summary's write
+    /// stamp on rehydrate, then every observation and flush. [`Self::prune`]
+    /// compares its `now` against this, not against the peers, to notice a
+    /// clock that jumped.
+    clock_hint: u64,
 }
 
 impl PeerTable {
@@ -496,6 +518,7 @@ impl PeerTable {
         Self {
             peers,
             evictions: 0,
+            clock_hint: summary.written_at_epoch_s,
         }
     }
 
@@ -514,15 +537,37 @@ impl PeerTable {
         self.evictions
     }
 
-    /// Forget every id not heard within [`FLEET_PEER_FORGET_SECS`], pin
-    /// included. Returns how many were dropped. A stamp from the future is a
-    /// damaged record, not a recent one, and is kept only until it ages out
-    /// like any other.
+    /// Forget every NEVER-PROVEN id not heard within
+    /// [`FLEET_PEER_FORGET_SECS`]. Returns how many were dropped. Nothing is
+    /// dropped when `now` is more than [`FLEET_PEER_CLOCK_JUMP_SECS`] past
+    /// the last moment this table knew of — a clock that jumped forward would
+    /// otherwise expire the whole roll-call in one call, the bridge would
+    /// write that loss to disk, and correcting the clock could not bring the
+    /// pins back. A proven peer (one verified signature, ever) is never
+    /// expired here: its pin is the one thing the file exists to keep, and
+    /// the cap's eviction is what bounds a table of proven ids. A stamp from
+    /// the future is a damaged record, not a recent one; it is kept and ages
+    /// out like any other once the clock passes it.
     pub fn prune(&mut self, now: u64) -> usize {
+        let jumped = now > self.clock_hint.saturating_add(FLEET_PEER_CLOCK_JUMP_SECS);
+        self.clock_hint = self.clock_hint.max(now);
+        if jumped {
+            return 0;
+        }
         let before = self.peers.len();
-        self.peers
-            .retain(|_, p| now.saturating_sub(p.last_seen_epoch_s) <= FLEET_PEER_FORGET_SECS);
+        self.peers.retain(|_, p| {
+            p.last_signed_epoch_s.is_some()
+                || p.last_verified_length.is_some()
+                || now.saturating_sub(p.last_seen_epoch_s) <= FLEET_PEER_FORGET_SECS
+        });
         before - self.peers.len()
+    }
+
+    /// Whether the last [`Self::prune`] declined to expire anything because
+    /// `now` had jumped — the bridge logs that once, since a fleet that
+    /// suddenly reads stale may be a clock, not a fleet.
+    pub fn clock_jumped_since(&self, now: u64) -> bool {
+        now > self.clock_hint.saturating_add(FLEET_PEER_CLOCK_JUMP_SECS)
     }
 
     /// The id to displace for a newcomer at the cap: never proven before
@@ -562,6 +607,7 @@ impl PeerTable {
                 self.evictions += 1;
             }
         }
+        self.clock_hint = self.clock_hint.max(now);
         let rec = self
             .peers
             .entry(device_id.to_string())
@@ -1254,12 +1300,71 @@ mod tests {
                 .iter()
                 .any(|p| p.device_id == format!("late-{i}")));
         }
-        // A file full of stale ids is pruned on rehydrate, so a lockout
-        // cannot outlive the flood by more than FLEET_PEER_FORGET_SECS.
+        // Rehydrate the file (written at NOW + 600) and jump the clock past
+        // the forget window in one step: that is a clock, not a fleet, so
+        // NOTHING is expired — every pin survives.
         let mut rehydrated = PeerTable::from_summary(summary);
         let much_later = NOW + 600 + FLEET_PEER_FORGET_SECS + 1;
-        assert_eq!(rehydrated.prune(much_later), FLEET_PEER_MAX);
-        assert!(rehydrated.is_empty());
+        assert!(rehydrated.clock_jumped_since(much_later));
+        assert_eq!(rehydrated.prune(much_later), 0);
+        assert_eq!(rehydrated.len(), FLEET_PEER_MAX);
+        // Time flowing normally (an observation every 12 h) past the window:
+        // the never-proven ghosts age out, the proven porch is kept even
+        // though it has been silent just as long.
+        let mut t = NOW + 600;
+        while t < NOW + 600 + FLEET_PEER_FORGET_SECS {
+            t += 12 * 3600;
+            rehydrated.observe("securacv/keeper/status", b"{}", false, t);
+        }
+        // keeper's first observation arrived at the cap and displaced one
+        // never-proven ghost, so 62 stale ghosts remain to age out — never
+        // porch, and not keeper (heard within the window).
+        let dropped = rehydrated.prune(t + 1);
+        assert_eq!(
+            dropped,
+            FLEET_PEER_MAX - 2,
+            "the stale never-proven ghosts, not porch"
+        );
+        let left = rehydrated.summary(t + 1);
+        assert!(left.peers.iter().any(|p| p.device_id == "porch"));
+        assert!(left.peers.iter().any(|p| p.device_id == "keeper"));
+        assert_eq!(left.peers.len(), 2);
+    }
+
+    #[test]
+    fn a_clock_jump_never_erases_pins_and_a_proven_pin_never_expires() {
+        let key = signer();
+        let mut table = PeerTable::default();
+        table.observe("securacv/porch/health", &health(&key), false, NOW);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&key, "porch", 1),
+            false,
+            NOW + 1,
+        );
+        table.observe("securacv/ghost/status", b"{}", false, NOW + 1);
+        // The bridge restarts with the host clock 40 days ahead (a bad RTC or
+        // NTP answer) and prunes at open: nothing goes, including the ghost.
+        let mut reopened = PeerTable::from_summary(table.summary(NOW + 2));
+        let ahead = NOW + 2 + 40 * 86_400;
+        assert_eq!(reopened.prune(ahead), 0);
+        assert_eq!(reopened.len(), 2);
+        assert!(reopened
+            .summary(ahead)
+            .peers
+            .iter()
+            .any(|p| { p.device_id == "porch" && p.pinned_key_hex.is_some() }));
+        // With the clock flowing normally for 31 days of silence, the proven
+        // pin is still not the clock's to expire; the ghost is.
+        let mut t = NOW + 2;
+        while t < NOW + 2 + FLEET_PEER_FORGET_SECS + 3600 {
+            t += 6 * 3600;
+            table.observe("securacv/other/status", b"{}", false, t);
+        }
+        assert_eq!(table.prune(t), 1);
+        let left = table.summary(t);
+        assert!(left.peers.iter().any(|p| p.device_id == "porch"));
+        assert!(!left.peers.iter().any(|p| p.device_id == "ghost"));
     }
 
     #[test]

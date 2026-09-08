@@ -54,7 +54,10 @@
   re-cleans every served field and caps the rows at 64; at the cap a new id
   displaces the least useful one (never-proven first, then least recently
   heard) instead of locking real Canaries out until someone deletes the
-  file, and ids unheard for 30 days are forgotten; the canary-wap's LWT
+  file; never-proven ids unheard for 30 days are forgotten, a proven pin is
+  never expired by the clock and no expiry runs across a clock jump (a
+  Codex review finding on the first cut, which pruned everything at startup
+  under a clock 30 days ahead); the canary-wap's LWT
   (`{"online":false}` on `status`) now counts as offline; the bridge's
   inbound queue is bounded and only the topics it handles are queued;
   `http://[::1]` joins the local origins; `src/fleet_peers.rs` is

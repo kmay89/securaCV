@@ -35,7 +35,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use witness_kernel::fleet_peers::{
-    PeerSummaryFile, PeerTable, FLEET_PEER_FORGET_SECS, FLEET_PEER_MAX, FLEET_PEER_TOPIC_FILTERS,
+    PeerSummaryFile, PeerTable, FLEET_PEER_CLOCK_JUMP_SECS, FLEET_PEER_FORGET_SECS, FLEET_PEER_MAX,
+    FLEET_PEER_TOPIC_FILTERS,
 };
 use witness_kernel::transport::{
     parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
@@ -894,21 +895,25 @@ struct FleetPeerTracker {
     last_flush: Option<Instant>,
     /// Evictions already reported, so each displacement is logged once.
     evictions_logged: u64,
+    /// A clock jump has been reported (once per process).
+    jump_logged: bool,
 }
 
 impl FleetPeerTracker {
     fn open(path: PathBuf) -> Self {
         let table = match PeerSummaryFile::read(&path) {
             Ok(Some(summary)) => {
-                let mut table = PeerTable::from_summary(summary);
-                let forgotten = table.prune(unix_now_secs());
+                // No expiry at startup: the file's pins are the one thing a
+                // restart must keep, and a host clock that is wrong at boot
+                // (a dead RTC, a bad NTP answer) would otherwise expire the
+                // whole fleet and write that loss straight back to disk.
+                // Never-proven ids age out at the first flush after the
+                // clock has shown itself to be flowing normally.
+                let table = PeerTable::from_summary(summary);
                 log::info!(
-                    "fleet roll-call: rehydrated {} peer(s) from {} ({} not heard for \
-                     {} days, forgotten)",
+                    "fleet roll-call: rehydrated {} peer(s) from {}",
                     table.len(),
-                    path.display(),
-                    forgotten,
-                    FLEET_PEER_FORGET_SECS / 86_400
+                    path.display()
                 );
                 table
             }
@@ -930,6 +935,7 @@ impl FleetPeerTracker {
             dirty: true,
             last_flush: None,
             evictions_logged: 0,
+            jump_logged: false,
         }
     }
 
@@ -955,7 +961,22 @@ impl FleetPeerTracker {
     }
 
     fn flush_if_due(&mut self, force: bool) {
-        if self.table.prune(unix_now_secs()) > 0 {
+        let now = unix_now_secs();
+        if self.table.clock_jumped_since(now) && !self.jump_logged {
+            log::warn!(
+                "fleet roll-call: the clock moved more than {} h since the table last saw it; \
+                 no id is expired this round (pins are kept across a clock jump)",
+                FLEET_PEER_CLOCK_JUMP_SECS / 3600
+            );
+            self.jump_logged = true;
+        }
+        let forgotten = self.table.prune(now);
+        if forgotten > 0 {
+            log::info!(
+                "fleet roll-call: {} never-proven id(s) unheard for {} days forgotten",
+                forgotten,
+                FLEET_PEER_FORGET_SECS / 86_400
+            );
             self.dirty = true;
         }
         if !self.dirty {
