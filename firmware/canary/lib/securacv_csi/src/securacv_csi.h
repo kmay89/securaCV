@@ -7,7 +7,12 @@
  *
  * PRIVACY INVARIANTS (enforced by the implementation, asserted at compile time):
  *   1. The source MAC and BSSID are scrubbed from the raw frame before the
- *      frame enters any buffer that outlives a single callback.
+ *      frame enters any buffer that outlives a single callback. The
+ *      transmitter filter reads info->mac in place (a 6-byte compare
+ *      against the associated AP's BSSID) and copies nothing; that BSSID
+ *      is the ONE identifier the HAL holds — one static, never exported,
+ *      never logged, wiped on deinit(). Same contract as the canonical
+ *      firmware/common/csi/src/csi_hal.h, which documents it in full.
  *   2. Only aggregated, non-identifying features cross this interface.
  *   3. No subcarrier sample is exported — only the compressed feature vector.
  *   4. Features are bucketed (int8) so fine-grained side channels are lost.
@@ -80,13 +85,19 @@ typedef struct {
   uint8_t  bandwidth_mhz;      /* 20 or 40 — advisory only */
   uint16_t max_frame_rate_hz;  /* rate-limit; 0 = unlimited */
   int8_t   rssi_floor_dbm;     /* drop frames with RSSI below this dBm */
+  /* Transmitter filter (appended): accept frames only from the associated
+   * AP's BSSID; the rest are counted under frames_dropped_foreign. Default
+   * true via CSI_CONFIG_DEFAULT — a positional initializer without the
+   * field gets false (filter off). */
+  bool     filter_foreign;
 } csi_config_t;
 
 #define CSI_CONFIG_DEFAULT { \
     /*.channel*/           0, \
     /*.bandwidth_mhz*/     20, \
     /*.max_frame_rate_hz*/ 20, \
-    /*.rssi_floor_dbm*/    CSI_RSSI_NOISE_FLOOR_DBM \
+    /*.rssi_floor_dbm*/    CSI_RSSI_NOISE_FLOOR_DBM, \
+    /*.filter_foreign*/    true \
 }
 
 typedef struct {
@@ -104,6 +115,10 @@ typedef struct {
   uint32_t windows_held;      /* grid slots filled by holding the previous sample (late closes) */
   uint32_t windows_merged;    /* closes averaged into an already-filled slot (early closes) */
   uint32_t window_period_ms;  /* mean close-to-close interval, ms; 0 until two closes */
+  /* Transmitter filter (appended): frames from a transmitter other than the
+   * associated AP's BSSID — neighbor beacons, other stations. A count,
+   * never an address. */
+  uint32_t frames_dropped_foreign;
 } csi_stats_t;
 
 #ifdef __cplusplus
@@ -130,6 +145,21 @@ namespace csi {
   /* Introspection */
   uint32_t get_caps();
   bool     get_stats(csi_stats_t* out);
+
+  /* Transmitter filter — the canonical csi_hal.h ("TRANSMITTER FILTER")
+   * carries the full note; this HAL mirrors the BSSID half of it.
+   *   refresh_associated_bssid(): re-read the associated AP's BSSID from
+   *     the driver. MAIN-LOOP context only (single writer; driver call).
+   *   request_bssid_refresh(): ask process() to do that on its next tick;
+   *     safe from any task (the Wi-Fi event task's STA_GOT_IP handler).
+   *   has_associated_bssid(): false until the STA has associated — while
+   *     false every frame is accepted (AP-only installs keep working).
+   *   set/get_filter_foreign(): runtime mirror of csi_config_t::filter_foreign. */
+  bool refresh_associated_bssid();
+  void request_bssid_refresh();
+  bool has_associated_bssid();
+  void set_filter_foreign(bool on);
+  bool get_filter_foreign();
 
   /* Conformance helper: heuristic scan of internal ring buffer for byte runs
    * that look like a MAC address. The structural guarantee is that the HAL

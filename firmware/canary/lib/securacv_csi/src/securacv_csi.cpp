@@ -13,9 +13,18 @@
  *
  * PRIVACY BARRIER:
  *   The ESP-IDF wifi_csi_info_t carries the source MAC, BSSID, frame header,
- *   and payload pointers. We touch ONLY rx_ctrl.rssi/channel/cwb and the
- *   subcarrier sample buffer. info->mac, info->dmac, info->hdr, info->payload
- *   are never read or copied.
+ *   and payload pointers. We copy ONLY rx_ctrl.rssi/channel/cwb and the
+ *   subcarrier sample buffer. info->dmac, info->hdr, info->payload are never
+ *   read. info->mac is READ IN PLACE by the transmitter filter — a 6-byte
+ *   memcmp against the associated AP's BSSID — and never copied into a slot,
+ *   a stat, a log line or a wire format. That BSSID is the one identifier
+ *   this HAL holds (s_assoc_bssid): read back from esp_wifi_sta_get_ap_info()
+ *   on the main loop, never exported or logged, wiped on deinit(). It is the
+ *   household's own router — the link the sensor listens on, not a device
+ *   it observes; Invariant F (spec/canary_free_signals_v0.md) is untouched.
+ *   The canonical firmware/common/csi/src/csi_hal.{h,cpp} carries the same
+ *   filter with its host test (csi_hal_transmitter_filter_test.cpp); this
+ *   copy mirrors the BSSID half (no peer hook — this tree has no csi_probe).
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -109,6 +118,20 @@ static uint32_t s_window_frames = 0;
 
 static uint32_t s_rate_last_ms = 0;
 static uint32_t s_rate_min_gap_ms = 0;
+
+/* Transmitter-filter state. s_assoc_bssid is THE ONE identifier this HAL
+ * holds (see the barrier note at the top). Single writer
+ * (refresh_associated_bssid, main loop); the Wi-Fi task reads it through
+ * s_bssid_known — the flag is dropped around a rewrite so the reader never
+ * compares against a torn value (it accepts that one frame instead). */
+static uint8_t               s_assoc_bssid[6] = {0, 0, 0, 0, 0, 0};
+static std::atomic<bool>     s_bssid_known{false};
+static std::atomic<bool>     s_bssid_refresh_requested{false};
+static std::atomic<bool>     s_filter_foreign{true};
+static uint32_t              s_bssid_poll_last_ms = 0;
+static std::atomic<uint32_t> s_frames_dropped_foreign{0};
+static constexpr uint32_t    BSSID_POLL_KNOWN_MS   = 10000;
+static constexpr uint32_t    BSSID_POLL_UNKNOWN_MS = 1000;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * FEATURE EXTRACTOR — internal
@@ -633,7 +656,18 @@ static inline void extract_scrubbed_metadata(const wifi_csi_info_t* info,
   slot->rssi_dbm       = info->rx_ctrl.rssi;
   slot->channel        = info->rx_ctrl.channel;
   slot->bandwidth_code = (info->rx_ctrl.cwb == 1) ? 1 : 0;
-  /* Explicitly do NOT touch info->mac / info->dmac / info->hdr / info->payload. */
+  /* Explicitly do NOT touch info->mac / info->dmac / info->hdr / info->payload
+   * here — the only read of info->mac is the compare in transmitter_accepted(). */
+}
+
+/* Transmitter filter (Wi-Fi task). Compare-only: the six bytes at
+ * info->mac are read in place and never copied. Runs BEFORE the RSSI floor
+ * and the rate limiter so foreign bursts cannot spend our link's rate
+ * budget. Filter off, or no BSSID held yet: every frame passes. */
+static inline bool transmitter_accepted(const wifi_csi_info_t* info) {
+  if (!s_filter_foreign.load(std::memory_order_relaxed)) return true;
+  if (!s_bssid_known.load(std::memory_order_acquire)) return true;
+  return memcmp(info->mac, s_assoc_bssid, sizeof(s_assoc_bssid)) == 0;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -642,6 +676,11 @@ static inline void extract_scrubbed_metadata(const wifi_csi_info_t* info,
 
 static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
   if (info == nullptr || info->buf == nullptr || info->len == 0) return;
+
+  if (!transmitter_accepted(info)) {
+    s_frames_dropped_foreign.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
 
   const int8_t rssi = info->rx_ctrl.rssi;
   if (rssi < s_cfg.rssi_floor_dbm) {
@@ -705,6 +744,13 @@ bool init(const csi_config_t& cfg) {
   s_head.store(0);
   s_tail.store(0);
 
+  /* Transmitter filter: no BSSID held yet; process() learns it. */
+  s_filter_foreign.store(cfg.filter_foreign, std::memory_order_relaxed);
+  s_bssid_known.store(false, std::memory_order_release);
+  secure_wipe(s_assoc_bssid, sizeof(s_assoc_bssid));
+  s_bssid_refresh_requested.store(false, std::memory_order_relaxed);
+  s_bssid_poll_last_ms = 0;
+
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
              "CSI HAL initialized", "scrub barrier active");
@@ -727,7 +773,72 @@ void deinit() {
   stop();
   secure_wipe(s_ring, sizeof(s_ring));
   s_cb = nullptr;
+  /* The one identifier the HAL held goes with it. */
+  s_bssid_known.store(false, std::memory_order_release);
+  secure_wipe(s_assoc_bssid, sizeof(s_assoc_bssid));
   s_initialized = false;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRANSMITTER FILTER PUBLIC API  (main-loop context)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool refresh_associated_bssid() {
+  s_bssid_refresh_requested.store(false, std::memory_order_relaxed);
+#if SECURACV_HAVE_CSI_API
+  /* The record also carries the SSID and RSSI; only the six BSSID bytes
+   * are kept and the whole record is wiped before returning. */
+  wifi_ap_record_t rec;
+  memset(&rec, 0, sizeof(rec));
+  const esp_err_t err = esp_wifi_sta_get_ap_info(&rec);
+  if (err == ESP_OK) {
+    const bool known = s_bssid_known.load(std::memory_order_acquire);
+    if (!known || memcmp(rec.bssid, s_assoc_bssid, sizeof(s_assoc_bssid)) != 0) {
+      s_bssid_known.store(false, std::memory_order_release);
+      memcpy(s_assoc_bssid, rec.bssid, sizeof(s_assoc_bssid));
+      s_bssid_known.store(true, std::memory_order_release);
+      /* Deliberately no bytes in this line. */
+      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+                 known ? "CSI transmitter filter: associated BSSID changed"
+                       : "CSI transmitter filter: associated BSSID learned",
+                 nullptr);
+    }
+  }
+  /* Not connected (or any other failure): keep what we had. */
+  secure_wipe(&rec, sizeof(rec));
+#endif
+  return s_bssid_known.load(std::memory_order_relaxed);
+}
+
+void request_bssid_refresh() {
+  s_bssid_refresh_requested.store(true, std::memory_order_relaxed);
+}
+
+bool has_associated_bssid() {
+  return s_bssid_known.load(std::memory_order_relaxed);
+}
+
+void set_filter_foreign(bool on) {
+  s_filter_foreign.store(on, std::memory_order_relaxed);
+}
+
+bool get_filter_foreign() {
+  return s_filter_foreign.load(std::memory_order_relaxed);
+}
+
+static void transmitter_filter_poll(uint32_t now_ms) {
+  if (!s_filter_foreign.load(std::memory_order_relaxed)) return;
+  if (s_bssid_refresh_requested.load(std::memory_order_relaxed)) {
+    s_bssid_poll_last_ms = now_ms;
+    refresh_associated_bssid();
+    return;
+  }
+  const uint32_t period = s_bssid_known.load(std::memory_order_relaxed)
+                        ? BSSID_POLL_KNOWN_MS : BSSID_POLL_UNKNOWN_MS;
+  if ((now_ms - s_bssid_poll_last_ms) >= period) {
+    s_bssid_poll_last_ms = now_ms;
+    refresh_associated_bssid();
+  }
 }
 
 static int try_enable_csi_now() {
@@ -856,6 +967,10 @@ int process() {
 
   if (!s_running) return 0;
 
+  /* Transmitter filter: learn (or re-learn) the associated BSSID — main
+   * loop, the only writer of the held value. */
+  transmitter_filter_poll(millis());
+
   /* Drain available frames into the feature aggregator. */
   for (;;) {
     const uint32_t tail = s_tail.load(std::memory_order_relaxed);
@@ -932,6 +1047,8 @@ bool get_stats(csi_stats_t* out) {
   out->windows_held     = features::held_windows();
   out->windows_merged   = features::merged_windows();
   out->window_period_ms = features::window_period_ms();
+  out->frames_dropped_foreign =
+      s_frames_dropped_foreign.load(std::memory_order_relaxed);
   return true;
 }
 
