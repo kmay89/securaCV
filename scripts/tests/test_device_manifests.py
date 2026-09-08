@@ -30,6 +30,11 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "lint_device_manifests.py"
 DEVICES = REPO / "devices"
 
+# The lint imports its ini resolver from scripts/_device_join.py the way it
+# runs in CI (`python3 scripts/lint_device_manifests.py` puts scripts/ at
+# sys.path[0]); loading it from a file needs the same path.
+if str(SCRIPT.parent) not in sys.path:
+    sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location("lint_device_manifests", SCRIPT)
 ldm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ldm)  # type: ignore[union-attr]
