@@ -806,6 +806,24 @@ static inline bool provisioning_gate_is_open() {
   return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
 }
 
+#if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
+// BLE OTA break-glass = the same physical-presence gate. A legacy (v1) BLE
+// OTA header, or a v2 image below the anti-rollback floor, is admitted only
+// if the owner short-tapped BOOT within the last PROVISIONING_GATE_TTL_MS —
+// the identical act that reveals the provisioning receipt. Single-use: the
+// one BEGIN it admits closes the gate. Runs on the NimBLE host task, hence
+// the same __atomic_* access as the HTTP-side receipt handler. ble_ota.cpp
+// writes the health-log line that names what was bypassed; this only
+// records that the gate was spent on it.
+static bool ble_ota_break_glass_take() {
+  if (!provisioning_gate_is_open()) return false;
+  __atomic_store_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_RELAXED);
+  log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
+             "Provisioning gate spent on BLE OTA break-glass", "BOOT button");
+  return true;
+}
+#endif
+
 // WiFi provisioning state
 static WiFiCredentials g_wifi_creds;
 static WiFiStatus g_wifi_status;
@@ -10961,6 +10979,13 @@ static void ble_bringup_task(void*) {
     // characteristics get baked during service creation; setting these
     // afterwards has no effect until the next reinit.
     bluetooth_channel::set_device_metadata(FIRMWARE_VERSION, g_device.fingerprint_hex);
+    #if __has_include(<NimBLEDevice.h>)
+    // BLE OTA policy: product binding + the anti-rollback floor shared with
+    // the pull engine, and the owner's break-glass hook for the rescue case
+    // (a legacy v1 header or a below-floor image). Bound BEFORE init() so
+    // the service never registers unconfigured.
+    ble_ota::configure(OTA_PRODUCT, FIRMWARE_VERSION, ble_ota_break_glass_take);
+    #endif
     if (bluetooth_channel::init()) {
       Serial.println("[OK] Bluetooth initialized");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);

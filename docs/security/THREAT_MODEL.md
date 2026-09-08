@@ -139,7 +139,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Bluetooth | REMOVED at compile time (no binary blobs) |
 | USB Serial | Disabled in production |
 | JTAG | Disabled via eFuse |
-| OTA | User-initiated only, signed binaries |
+| OTA | User-initiated only, signed binaries. The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
 | Cloud | No outbound connections |
 | mDNS | Local AP only |
 | HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only" |

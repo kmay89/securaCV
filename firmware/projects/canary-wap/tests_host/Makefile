@@ -167,6 +167,17 @@ EVVERIFY_SOURCES = test_evidence_update_verify.cpp \
                    $(SRC_DIR)/evidence_update_verify.cpp \
                    $(SRC_DIR)/securacv_ota.cpp
 
+# BLE OTA protocol-v2 header policy (ble_ota_policy.h): the 168-byte
+# header's layout and strict parse, the domain-separated canonical message
+# pinned against the fixture shared with firmware/scripts/test_ota_release.py,
+# and the accept / refuse / break-glass decision matrix — product binding,
+# the anti-rollback floor shared with the pull engine, the legacy v1 header
+# admitted only when armed — with real Ed25519 (OpenSSL). Links the OTA
+# engine's pure subset for securacv_ota_update_decision().
+BLEOTA_BIN     = test_ble_ota_policy
+BLEOTA_SOURCES = test_ble_ota_policy.cpp \
+                 $(SRC_DIR)/securacv_ota.cpp
+
 $(BIN): $(SOURCES)
 	$(CXX) $(CXXFLAGS) -o $@ $(SOURCES)
 
@@ -227,6 +238,9 @@ $(EVDRIVE_BIN): $(EVDRIVE_SOURCES)
 $(EVVERIFY_BIN): $(EVVERIFY_SOURCES)
 	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto
 
+$(BLEOTA_BIN): $(BLEOTA_SOURCES)
+	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(BLEOTA_SOURCES) -lcrypto
+
 # Help QR: the verdict → Help Desk URL composer (help_qr_logic.h) — the
 # probe-namespace bridge, worst-first precedence, and overflow refusal.
 HELPQR_BIN = test_help_qr_logic
@@ -285,7 +299,7 @@ TAMPER_SOURCES = test_tamper_events_logic.cpp \
 $(TAMPER_BIN): $(TAMPER_SOURCES)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -Wno-unused-parameter -I $(SRC_DIR) -o $@ $(TAMPER_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -306,6 +320,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(FLEET_BEACON_BIN)
 	./$(EVDRIVE_BIN)
 	./$(EVVERIFY_BIN)
+	./$(BLEOTA_BIN)
 	./$(HELPQR_BIN)
 	./$(CSI_SUBC_BIN)
 	for b in $(CSI_COMPAT_BINS); do ./$$b || exit 1; done
@@ -313,4 +328,4 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(TAMPER_BIN)
 
 clean:
-	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+	rm -f $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)

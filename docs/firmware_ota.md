@@ -119,18 +119,26 @@ at a stable URL (`releases/latest/download/manifest-<variant>.json`):
   "size": 1048576,
   "signature": "<128 hex>",
   "manifest_signature": "<128 hex>",
+  "ble_signature": "<128 hex>",
   "signing_key_id": "<16 hex>",
   "release_notes": "Improved detection accuracy",
   "release_url": "https://github.com/.../releases/tag/fw-v2.2.0"
 }
 ```
 
+`ble_signature` (added with BLE OTA protocol v2) is the same key's
+signature over the BLE header's canonical message — see [Signature
+scheme](#signature-scheme). The pull engine ignores it. Manifests from
+earlier releases lack it; a BLE client then has only the legacy v1 header,
+which a current device refuses unless break-glass is armed, and
+`ota_release.py verify` reports such a manifest as incomplete.
+
 `manifest-index.json` maps products to their manifest URLs for tooling and
 future variants. Devices fetch only their own flat manifest.
 
 `firmware/scripts/ota_release.py` is the single source of truth for this
-format (`keygen` / `sign` / `manifest` / `index` / `verify`), reused by the
-release workflow and the local mock server.
+format (`keygen` / `sign` / `manifest` / `index` / `verify` /
+`ble-header`), reused by the release workflow and the local mock server.
 
 ## Signature scheme
 
@@ -140,11 +148,13 @@ message   = image_size as uint32 little-endian (4 bytes)
 signature = Ed25519.sign(message)              (64 bytes)
 ```
 
-Identical to the BLE OTA path (`ble_ota.cpp`), so **one release key signs
-every update channel**. The device verifies against the public key compiled
-into `firmware/common/ota/src/ota_release_key.h` — and critically, it
-verifies over the digest it computed from the **actual flash contents**,
-not the manifest's claim.
+This is the pull path's image signature (and what the legacy BLE OTA v1
+header carried). The device verifies against the public key compiled into
+`firmware/common/ota/src/ota_release_key.h` — and critically, it verifies
+over the digest it computed from the **actual flash contents**, not the
+manifest's claim. **One release key signs every update channel**: the BLE
+OTA v2 header below is signed by the same key, over a message built with
+the same convention as the manifest signature.
 
 **The manifest itself is signed too** (`manifest_signature`, same key) over
 a canonical NUL-separated field string:
@@ -160,6 +170,74 @@ Assistant, the version offered, or the download URL. The byte layout is
 pinned by a cross-language fixture (`test_ota_release.py` ⇄
 `test_ota_logic.cpp`): if the Python signer and the C verifier ever
 drift, both test suites fail.
+
+### BLE OTA protocol v2
+
+The WAP's GATT push path (`ble_ota.cpp` under
+`firmware/projects/canary-wap/arduino/canary_wap/`, policy in
+`ble_ota_policy.h` beside it) opens a session with a `BEGIN_V2` write:
+command byte `0x03` followed by a 168-byte header —
+
+| offset | size | field |
+|---|---|---|
+| 0 | 2 | magic `"SC"` (`0x53 0x43`) |
+| 2 | 1 | header version `0x02` |
+| 3 | 1 | reserved, must be `0x00` |
+| 4 | 32 | product id, NUL-terminated, zero-padded |
+| 36 | 32 | semantic version, NUL-terminated, zero-padded |
+| 68 | 4 | image size, uint32 little-endian |
+| 72 | 32 | SHA-256 of the image |
+| 104 | 64 | Ed25519 signature over the canonical message |
+
+The signature covers a domain-separated canonical message with the
+manifest signature's NUL-separated convention, which the device rebuilds
+from the **parsed** fields (never the raw wire bytes):
+
+```
+"scv-ble-ota-v2\0" product "\0" version "\0" size-as-decimal "\0"
+sha256hex-lowercase "\0"
+```
+
+`ota_release.py` emits that signature into every manifest as
+`ble_signature`; the companion PWA (and `ota_release.py ble-header`) builds
+the header from the manifest's product / version / size / sha256 plus that
+field. The device then, before it accepts a single image byte:
+
+1. verifies the signature against the release key (an all-zero key refuses,
+   as everywhere else);
+2. requires `product` to equal the running product (never bypassed — a
+   signed image for another product is a brick, not a rescue);
+3. runs `version` through the pull engine's own decision,
+   `securacv_ota_update_decision()`, against `max(running version,
+   NVS floor)`. At or above the floor is accepted (re-flashing the running
+   version is a repair and cannot move the floor); below it is a rollback.
+
+Field hygiene is strict: 1–31 printable ASCII bytes, no spaces, zero
+padding after the NUL, and a numeric `MAJOR.MINOR` prefix on the version,
+so an unparseable string can never rank "equal to the floor". Anything else
+is `header malformed`. The layout is pinned by `static_assert` and by a
+cross-language fixture (`test_ota_release.py` ⇄
+`tests_host/test_ble_ota_policy.cpp`).
+
+**Break-glass (the rescue case).** A legacy v1 header (`BEGIN`, `0x01`, the
+132-byte header signed over `size || sha256` only, no product, unsigned
+version) or a v2 header below the floor is refused by default with a
+distinct reason (`v1 header refused: protocol v2 required (not armed)` /
+`version below anti-rollback floor (not armed)`). It is accepted only when
+the owner has **armed break-glass through the existing physical-presence
+surface**: a short tap of the BOOT button opens the same single-use, 30 s
+provisioning gate that reveals the provisioning receipt, and the one BEGIN
+it admits closes it. Every such acceptance writes a health-log line naming
+what was bypassed and against which floor (`OTA break-glass: anti-rollback
+floor bypassed`), and `/api/bluetooth/ota` reports `break_glass: true` for
+that session. A bad signature or a product mismatch is never bypassed — the
+gate relaxes the floor, not the key.
+
+The floor is raised the same way for both channels: the install records
+`securacv_ota_mark_pending_install()`, and the new image raises the floor
+to its own compiled version only once its boot self-test confirms it.
+Raising it at install time would, after a rollback, block ever re-offering
+that version.
 
 An **all-zero public key fail-closes**: both pull-OTA installs and BLE OTA
 refuse every image until a real key is provisioned.
@@ -208,6 +286,14 @@ signed but older image — e.g. replayed by a hostile mirror — is rejected
 even after a physical downgrade, because the floor only ever rises. The
 decision logic is host-tested (`firmware/common/ota/test_ota_logic.cpp`).
 
+BLE OTA enforces the **same floor through the same function** since
+protocol v2 (`securacv_ota_update_decision()` against `max(running, NVS
+floor)`, read through `securacv_ota_get_min_version()`), plus the product
+binding the pull path already had. The one exception is the owner-armed
+break-glass rescue described under [BLE OTA protocol
+v2](#ble-ota-protocol-v2): a below-floor image or a legacy v1 header needs
+a BOOT-button tap within 30 s, is admitted once, and is logged as a bypass.
+
 ## Transport policy & local hosting
 
 - **Public URLs require HTTPS** (certificate bundle; GitHub works out of
@@ -223,18 +309,14 @@ air-gapped installs don't need a certificate authority. With manifests
 signed, the worst a hostile mirror can do is **withhold updates** (serve a
 stale-but-genuine manifest or nothing) — indistinguishable from having no
 network, and recoverable the moment the device reaches a honest server.
-Known residual notes:
-
-- The **BLE OTA header's version string is outside the signed message**
-  (the signature covers `size || sha256`). The string is sanitized and
-  only labels the update-outcome record — what actually runs is exactly
-  the signed image, and the "applied" determination compares against the
-  firmware's own compiled version. Binding the version into the signed
-  message is the BLE protocol-v2 follow-up.
-- **BLE OTA deliberately has no version floor**: it is the
-  physical-proximity recovery channel (pairing + a validly signed image
-  required), so it can intentionally downgrade a device the pull path
-  would refuse.
+BLE OTA follows the same rules since protocol v2 — product and version are
+inside the signed header, the product must match, and the version must be
+at or above the floor. The one deliberate exception is the **break-glass
+rescue** (a legacy v1 header or a below-floor image, admitted only after a
+BOOT-button tap and logged as a bypass); see [BLE OTA protocol
+v2](#ble-ota-protocol-v2). A hostile party holding a manifest can still only
+withhold: stripping `ble_signature` leaves a BLE client with the v1 header,
+which the device refuses without the owner's hands on the button.
 
 ### Hosting updates locally (air-gapped / privacy-strict)
 
@@ -379,8 +461,12 @@ come with the engine — don't reimplement them.
 
 ## Testing
 
-- Host: `pytest firmware/scripts/test_ota_release.py` and the
-  `test_ota_logic.cpp` host build (both run in `firmware.yml`).
+- Host: `pytest firmware/scripts/test_ota_release.py`, the
+  `test_ota_logic.cpp` host build, and the BLE OTA header policy suite
+  (`tests_host/test_ble_ota_policy.cpp`, run by
+  `make -C firmware/projects/canary-wap/tests_host`; real Ed25519 via
+  OpenSSL — the accept / refuse / break-glass matrix and the canonical bytes
+  shared with the Python signer). All run in `firmware.yml`.
 - Bench (real device): build with a dev key embedded, serve a
   newer-versioned image from `mock_ota_server.py`
   (`SECURACV_OTA_SKIP_CERT_VERIFY=1` dev builds accept the self-signed

@@ -1539,6 +1539,26 @@ jobs:
           /tmp/beacon_audit_recover | tee /tmp/beacon_audit_recover.log
           grep -q "ALL .* PASSED" /tmp/beacon_audit_recover.log
 
+      - name: Build + run canary-wap BLE OTA policy host test
+        # BLE OTA protocol v2 (ble_ota_policy.h): the 168-byte header's
+        # layout and strict parse, the domain-separated canonical message
+        # pinned against the fixture shared with test_ota_release.py, and
+        # the accept / refuse / break-glass decision matrix — product
+        # binding, the anti-rollback floor shared with the pull engine
+        # (securacv_ota_update_decision), and the legacy v1 header admitted
+        # only when the owner has armed break-glass — with real Ed25519
+        # signatures (libcrypto is preinstalled on ubuntu-latest).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+              -DSECURACV_OTA_HOST_BUILD \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_ble_ota_policy.cpp \
+              firmware/projects/canary-wap/arduino/canary_wap/securacv_ota.cpp \
+              -lcrypto -o /tmp/ble_ota_policy
+          /tmp/ble_ota_policy | tee /tmp/ble_ota_policy.log
+          grep -q "ALL .* PASSED" /tmp/ble_ota_policy.log
+
       - name: Build + run canary-wap camera gate logic host test
         # Camera power management decisions (camera_gate_logic.h): the
         # peek-surface gate precedence (broken camera > thermal > battery
@@ -1673,8 +1693,9 @@ jobs:
 
       - name: Build + run canary-wap project host tests
         # The canary-wap project keeps its own host-test Makefile (mesh
-        # coexistence, chirp/beacon invariants, device signature, and the
-        # captive-portal DNS response builder). Its `run` target builds and
+        # coexistence, chirp/beacon invariants, device signature, the
+        # captive-portal DNS response builder, the BLE OTA header policy).
+        # Its `run` target builds and
         # runs every suite; each test exits non-zero on failure, so make's
         # exit code gates the job. Needs libcrypto for the beacon tamper
         # suite — preinstalled on ubuntu-latest.
