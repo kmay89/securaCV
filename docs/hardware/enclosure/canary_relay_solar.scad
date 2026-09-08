@@ -216,6 +216,20 @@ module edgeclip(px, py, ang, soff) {
 
 module body() {
     posts = post_xy();
+    // the drains are cut LAST, from the finished body: the 18650 bay's ring
+    // wall lands on the bottom wall's inner face after the shell is cut, and a
+    // weep subtracted before it was plugged by 1.2 mm of that ring (review
+    // catch) — the bay stayed the cup the second drain exists to empty
+    difference() {
+        body_solid();
+        // drains at the floor corners of the BOTTOM wall, angled down and out
+        // (canary_core_lib weep_cut) — the wall the pod hangs on
+        if (opt_weep) for (x = weep_xs())
+            weep_cut(x, -inner_y/2, floor_t + weep_d()/2 + 0.2, "-y", wall_eff, weep_d());
+    }
+}
+module body_solid() {
+    posts = post_xy();
     union() {
         difference() {
             union() {
@@ -252,10 +266,6 @@ module body() {
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
-            // drains at the floor corners of the BOTTOM wall, angled down and
-            // out (canary_core_lib weep_cut) — the wall the pod hangs on
-            if (opt_weep) for (x = weep_xs())
-                weep_cut(x, -inner_y/2, floor_t + weep_d()/2 + 0.2, "-y", wall_eff, weep_d());
             // pole strap channels, cut only within the added back slab (seal-safe)
             for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4 - strap_w/2, -strap_t - 0.1])
                 cube([out_x + 2, strap_w, strap_t + 0.1]);

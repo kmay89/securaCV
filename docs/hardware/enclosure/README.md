@@ -1087,7 +1087,9 @@ the walk-up). The body drops onto the plate's two **printed T-studs** (the
 same blind, seal-safe pockets as the keyhole system) and locks with a hidden
 **security screw** driven up through the plate's bottom foot into a blind
 boss — Ring-style tool-only removal, and the pilot never breaches the seal
-envelope.
+envelope. With `screw_insert = true` that boss takes a fifth M2 insert from
+the outer face (the BOM's INS1 counts it) and the security screw becomes the
+machine-thread variant of SCR8 — a self-tapper strips brass.
 
 **Power:** USB-C from the stack's ports loops through the internal cable well
 and exits an oval in the **back**, through the matching plate hole, into the

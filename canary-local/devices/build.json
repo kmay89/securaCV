@@ -812,14 +812,14 @@
      },
      {
       "ref": "INS1",
-      "qty": "4",
+      "qty": "5",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
+      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm (4x front corners + 1x doorbell security boss)",
       "mpn": "M2-HSI-3.5X4",
       "mfr": "Generic",
-      "usd": 0.4,
-      "notes": "Service-grade front threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners",
+      "usd": 0.5,
+      "notes": "Service-grade threads: set screw_insert=true (posts auto-fatten; the doorbell cavity widens for the nut arc), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners AND the security screw (SCR8 machine variant). Vision case builds need 4; the fifth seats in the doorbell body's security boss from the outer face",
       "orderable": false
      },
      {
@@ -839,11 +839,11 @@
       "qty": "1",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 x 10 security screw (Torx pin / tri-wing), self-tapping",
+      "desc": "M2 x 10 security screw (Torx pin / tri-wing): self-tapping thread for the default body, MACHINE thread when screw_insert=true",
       "mpn": "M2X10-SEC-TX",
       "mfr": "Generic",
       "usd": 0.3,
-      "notes": "Doorbell anti-theft lock: drives up through the wall plate's foot into the body's blind boss - tool-only removal, Ring-style",
+      "notes": "Doorbell anti-theft lock: drives up through the wall plate's foot into the body's blind boss - tool-only removal, Ring-style. With screw_insert=true the boss carries INS1's fifth insert, so use the M2 machine-thread variant (a self-tapper strips brass)",
       "orderable": false
      },
      {
@@ -860,9 +860,9 @@
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 80.15,
+    "full_usd": 80.25,
     "required_usd_live": 29.49,
-    "full_usd_live": 91.83,
+    "full_usd_live": 91.93,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
