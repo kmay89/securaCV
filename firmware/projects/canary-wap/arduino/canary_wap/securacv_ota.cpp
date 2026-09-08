@@ -755,6 +755,15 @@ static esp_err_t nvs_load_min_version(char *buf, size_t buf_len)
     return nvs_load_str(NVS_KEY_MIN_VERSION, buf, buf_len);
 }
 
+esp_err_t securacv_ota_get_min_version(char *buf, size_t buf_len)
+{
+    if (buf == NULL || buf_len == 0) return ESP_ERR_INVALID_ARG;
+    buf[0] = '\0';
+    esp_err_t err = nvs_load_min_version(buf, buf_len);
+    if (err != ESP_OK) buf[0] = '\0';
+    return err;
+}
+
 /** True while this boot's image is still awaiting self-test confirmation. */
 static bool running_image_pending_verify(void)
 {

@@ -169,6 +169,10 @@ inline esp_err_t handle_bluetooth_ota_status(httpd_req_t* req) {
   doc["bytes_received"] = ble_ota::get_bytes_received();
   const char* err = ble_ota::last_error();
   if (err && err[0]) doc["last_error"] = err;
+  // True when the most recent accepted BEGIN went through break-glass
+  // (owner-armed rescue past the anti-rollback floor) — an operator
+  // reading the dashboard should not have to find the health log first.
+  doc["break_glass"] = ble_ota::last_break_glass();
 
   char buffer[256];
   serializeJson(doc, buffer);

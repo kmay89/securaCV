@@ -1575,6 +1575,39 @@
   bodies, so a no-WiFi/no-HTTP/no-SD build needs a fencing repair first.
 - **Date learned:** 2026-09
 
+## OTA: every install channel runs the same policy, or the policy is prose
+
+### An "informational" field in a signed header is an unsigned field, and "no floor on the rescue channel" was a rule nothing enforced
+- **What happened:** The BLE OTA v1 header signed only `size || sha256`.
+  Its version string sat outside the signature (labeled informational and
+  sanitized), it carried no product id at all, and the channel skipped the
+  anti-rollback floor on purpose as the "physical-proximity rescue path".
+  So any paired client holding a validly signed older image — for any
+  product — could downgrade a device the pull path would refuse, and
+  nothing recorded it as a bypass.
+- **Root cause:** Two policies lived only in prose. The pull engine's floor
+  and product check are code in `securacv_ota.cpp`; BLE OTA built its own
+  36-byte message and never called them. "Deliberate" in a doc is not the
+  same as "enforced in code, with the exception audited".
+- **Fix:** BLE OTA protocol v2 (`ble_ota_policy.h`): a 168-byte header
+  whose product, version, size and digest are all under one
+  domain-separated signature (`"scv-ble-ota-v2\0"` + NUL-separated
+  fields — the manifest-signature convention, so `ota_release.py` signs it
+  with the same key as `ble_signature`). The device verifies first, binds
+  the product, and runs the header's version through the pull engine's own
+  `securacv_ota_update_decision()` against `max(running, NVS floor)`. A v1
+  header or a below-floor v2 image is admitted only through the existing
+  BOOT-button provisioning gate (single-use, 30 s), and every such
+  acceptance writes a health-log line naming the bypass. The floor is still
+  raised only when the booted image is confirmed — raising it at install
+  time would, after a rollback, block re-offering that version.
+- **Regression check:** `tests_host/test_ble_ota_policy.cpp` (real Ed25519
+  via OpenSSL; canonical bytes pinned against the `test_ota_release.py`
+  fixture; product mismatch and bad signatures refused even when armed),
+  and `ota_release.py verify`, which refuses a manifest without
+  `ble_signature`.
+- **Date learned:** 2026-09
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

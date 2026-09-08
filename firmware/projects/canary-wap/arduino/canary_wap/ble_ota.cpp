@@ -39,6 +39,13 @@ static bool                        g_sha_active      = false;
 static char                        g_last_error[64]  = {0};
 static uint32_t                    g_last_notify_pct = 0;
 
+// Policy inputs bound by configure(). NULL until the sketch binds them,
+// and every BEGIN is refused until then (fail closed).
+static const char*                 g_product         = nullptr;
+static const char*                 g_running_version = nullptr;
+static BreakGlassHook              g_break_glass     = nullptr;
+static bool                        g_last_break_glass = false;
+
 static NimBLEService*             g_service = nullptr;
 static NimBLECharacteristic*      g_control = nullptr;
 static NimBLECharacteristic*      g_data    = nullptr;
@@ -83,9 +90,13 @@ static void abort_ota(const char* reason) {
 }
 
 static bool pubkey_provisioned() {
-  if (!g_pubkey) return false;
-  for (int i = 0; i < 32; i++) if (g_pubkey[i] != 0) return true;
-  return false;
+  return policy_detail::pubkey_provisioned(g_pubkey);
+}
+
+// Crypto's Ed25519::verify behind the policy's injected-primitive shape.
+static bool ed25519_verify_adapter(const uint8_t sig[64], const uint8_t pub[32],
+                                   const uint8_t* msg, size_t msg_len) {
+  return Ed25519::verify(sig, pub, msg, msg_len);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -100,13 +111,13 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
     uint8_t cmd = (uint8_t)val[0];
 
     // ── ABORT ────────────────────────────────────────────────────────────
-    if (cmd == 0x02) {
+    if (cmd == CMD_ABORT) {
       if (g_state != OTA_IDLE) abort_ota("aborted by client");
       return;
     }
 
-    // ── BEGIN ────────────────────────────────────────────────────────────
-    if (cmd != 0x01) {
+    // ── BEGIN / BEGIN_V2 ─────────────────────────────────────────────────
+    if (cmd != CMD_BEGIN_V1 && cmd != CMD_BEGIN_V2) {
       abort_ota("unknown command");
       return;
     }
@@ -125,27 +136,47 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
       return;
     }
 
-    if (val.size() < 1 + sizeof(OtaHeader)) {
-      abort_ota("BEGIN payload truncated");
-      return;
-    }
-
     if (!pubkey_provisioned()) {
-      abort_ota("OTA disabled — release pubkey not provisioned");
+      abort_ota(REASON_UNPROVISIONED);
       return;
     }
 
-    OtaHeader hdr;
-    memcpy(&hdr, val.data() + 1, sizeof(hdr));
+    // Parse the header for the command that announced it. Everything the
+    // policy acts on comes from the parsed copy, never the raw bytes.
+    ParsedHeader hdr;
+    const uint8_t* payload = (const uint8_t*)val.data() + 1;
+    const size_t   payload_len = val.size() - 1;
+    const bool parsed = (cmd == CMD_BEGIN_V2)
+                          ? parse_v2(payload, payload_len, &hdr)
+                          : parse_v1(payload, payload_len, &hdr);
+    if (!parsed) {
+      abort_ota(cmd == CMD_BEGIN_V2 ? REASON_MALFORMED : "BEGIN payload truncated");
+      return;
+    }
 
-    // Verify Ed25519 signature over (size_LE32 || sha256). Doing this BEFORE
-    // touching the OTA partition means a forged BEGIN can't even start an
-    // erase cycle on the inactive partition.
-    uint8_t signed_msg[4 + 32];
-    memcpy(signed_msg + 0, &hdr.image_size, 4);
-    memcpy(signed_msg + 4, hdr.sha256, 32);
-    if (!Ed25519::verify(hdr.signature, g_pubkey, signed_msg, sizeof(signed_msg))) {
-      abort_ota("signature invalid");
+    // Verify the release signature and apply product binding + the
+    // anti-rollback floor BEFORE touching the OTA partition, so a forged
+    // or stale BEGIN can't even start an erase cycle on the inactive
+    // partition. The floor is the pull engine's: max(running, NVS floor).
+    char nvs_floor[SECURACV_OTA_VERSION_MAX] = {0};
+    securacv_ota_get_min_version(nvs_floor, sizeof(nvs_floor));
+
+    PolicyDeps deps;
+    deps.ed25519_verify  = ed25519_verify_adapter;
+    deps.release_pubkey  = g_pubkey;
+    deps.product         = g_product;
+    deps.running_version = g_running_version;
+    deps.nvs_floor       = nvs_floor;
+
+    Verdict verdict = decide(hdr, deps);
+    if (verdict.decision == DECISION_NEEDS_BREAK_GLASS) {
+      // Only now is the owner's arming consulted — and consumed, if set.
+      // A v2 header at or above the floor never reaches this line.
+      const bool armed = (g_break_glass != nullptr) && g_break_glass();
+      verdict = apply_break_glass(verdict, armed);
+    }
+    if (verdict.decision == DECISION_REFUSE) {
+      abort_ota(verdict.reason);
       return;
     }
 
@@ -169,20 +200,28 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
     g_image_size = hdr.image_size;
     g_received   = 0;
     memcpy(g_expected_sha, hdr.sha256, 32);
-    // hdr.version is OUTSIDE the signed message (the signature covers
-    // size||sha256 only) — treat it as untrusted display data: printable
-    // ASCII only, NUL-terminated. It labels the update-outcome record on
-    // the next boot; the "applied" determination itself never trusts it
-    // (that compares the marker against the firmware's own compiled
-    // version). Binding the version into the signed message is the
-    // protocol-v2 follow-up tracked in docs/firmware_ota.md.
-    {
-      size_t o = 0;
-      for (size_t i = 0; i < sizeof(hdr.version) && hdr.version[i] != '\0'; i++) {
-        char c = hdr.version[i];
-        g_version[o++] = (c >= 0x20 && c < 0x7f) ? c : '_';
+    // v2: the version is inside the signed canonical message, so it is
+    // the release's own claim and labels the update-outcome record on the
+    // next boot. v1: parse_v1 sanitized it to printable ASCII and it is
+    // display data only — the "applied" determination never trusts it
+    // (that compares the marker against the firmware's compiled version).
+    snprintf(g_version, sizeof(g_version), "%s", hdr.version);
+
+    g_last_break_glass = (verdict.decision == DECISION_ACCEPT_BREAK_GLASS);
+    if (g_last_break_glass) {
+      // The one line the audit trail needs: WHAT was bypassed, for WHICH
+      // version, against WHICH floor. No key material, no signature bytes.
+      char detail[96];
+      if (verdict.need == BG_V1) {
+        snprintf(detail, sizeof(detail),
+                 "v1 header, product/floor unchecked, version=%.31s", g_version);
+      } else {
+        snprintf(detail, sizeof(detail),
+                 "v2 %.31s below floor (running %.15s, nvs %.15s)",
+                 g_version, g_running_version, nvs_floor[0] ? nvs_floor : "-");
       }
-      g_version[o] = '\0';
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 "OTA break-glass: anti-rollback floor bypassed", detail);
     }
 
     cleanup_sha();
@@ -196,9 +235,9 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
     g_state = OTA_RECEIVING;
     g_last_error[0] = '\0';
     g_last_notify_pct = 0;
-    char detail[40];
-    snprintf(detail, sizeof(detail), "%u bytes, version=%.31s",
-             (unsigned)g_image_size, hdr.version);
+    char detail[56];
+    snprintf(detail, sizeof(detail), "%s %u bytes, version=%.31s",
+             hdr.kind == HDR_V2 ? "v2" : "v1", (unsigned)g_image_size, g_version);
     log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "OTA session begun", detail);
     notify_status();
   }
@@ -300,6 +339,12 @@ static DataCallbacks    g_data_cb;
 // PUBLIC API
 // ════════════════════════════════════════════════════════════════════════════
 
+void configure(const char* product, const char* running_version, BreakGlassHook hook) {
+  g_product         = product;
+  g_running_version = running_version;
+  g_break_glass     = hook;
+}
+
 bool init(NimBLEServer* server, const uint8_t release_pubkey[32]) {
   if (!server || !release_pubkey) return false;
   if (g_service) return true;  // already registered
@@ -338,6 +383,10 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]) {
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                "BLE OTA registered but disabled — release pubkey is all zeros",
                nullptr);
+  } else if (!g_product || !g_running_version) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "BLE OTA registered but disabled — policy not configured",
+               nullptr);
   } else {
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE OTA service ready", nullptr);
   }
@@ -353,6 +402,7 @@ uint32_t    get_progress_percent()   {
 uint32_t    get_image_size()         { return g_image_size; }
 uint32_t    get_bytes_received()     { return g_received; }
 const char* last_error()             { return g_last_error; }
+bool        last_break_glass()       { return g_last_break_glass; }
 
 const char* state_name(OtaState s) {
   switch (s) {
