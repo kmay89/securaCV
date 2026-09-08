@@ -200,6 +200,14 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "lid_key",
+     "group": "Shell",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
    "packages": [
@@ -462,6 +470,10 @@
       {
        "name": "front",
        "file": "canary_vision_enclosure_xiao_weather_front.stl"
+      },
+      {
+       "name": "hood",
+       "file": "canary_vision_enclosure_xiao_weather_hood.stl"
       },
       {
        "name": "gasket",
@@ -740,6 +752,14 @@
      ]
     },
     {
+     "id": "lid_key",
+     "group": "Shell",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_mark",
      "group": "Aesthetics",
      "label": "deboss the house wordmark instead of a custom label (exclusive with label_text)",
@@ -909,6 +929,14 @@
      "bom": [
       "W-BT1"
      ]
+    },
+    {
+     "id": "pry_notch",
+     "group": "Snap bezel",
+     "label": "a fingernail notch in the drum rim at pry_ang (mid-wall between two snap windows,",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
    "packages": [

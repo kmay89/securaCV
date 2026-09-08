@@ -141,6 +141,26 @@ jobs:
           # the pan head is one Customizer click away and puts the pad back in
           # the wall on a case whose default head is flat — so it is gated too
           chk wap_pan        -D 'check="wap_pan"'      -D 'preset="battery_full"' -D 'screw_head="pan"'
+          # the CONTROL: the lid turned 180° must COLLIDE (the lip lands on the
+          # key rib). A fit gate that has never been seen to fail has proved
+          # nothing; this run shows it can, once per family.
+          hit() {
+            label=$1; shift
+            rm -f /tmp/fc.stl
+            out=$(openscad --export-format binstl -o /tmp/fc.stl -D 'turned=true' "$@" \
+                  canary_case_fitcheck.scad 2>&1) || true
+            if printf '%s' "$out" | grep -qE 'ERROR|WARNING'; then
+              echo "::error::$label (turned) — dirty render, nothing was verified"; status=1
+            elif [ -f /tmp/fc.stl ]; then
+              echo "ok: $label turned 180° lands on the key — the lid fits one way"
+            else
+              echo "::error::$label — the lid seats turned 180°: the key is missing or the slot is where the rib is"; status=1
+            fi
+          }
+          hit sense     -D 'check="sense"'
+          hit vision    -D 'check="vision_indoor"' -D 'host="xiao"' -D 'preset="vision_indoor"'
+          hit doorbell  -D 'check="doorbell"'
+          hit wap       -D 'check="wap_compact"'   -D 'preset="compact_plain"'
           exit $status
 
       - name: Verify STLs are watertight, with the expected number of parts

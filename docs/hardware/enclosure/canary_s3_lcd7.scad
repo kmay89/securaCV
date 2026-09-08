@@ -4684,6 +4684,12 @@ module lcd7_assembly(blow = 0) {
     translate([0, 0, glass_guard - blow]) panel_mock(PANEL, blow * 0.18);
 }
 
+// The two-part bezel + tray predates the registered panel: its tray bosses
+// stand where the panel's own M3 standoffs are, and its screws would drive
+// from under the bonded glass. The FRAME is the printable; these stay for
+// the gauges and the legacy fit gates.
+if (part == "bezel" || part == "back" || part == "gauge_bezel" || part == "gauge_tray")
+    echo("LEGACY: the two-part bezel/tray cannot accept the bonded 7in panel (tray bosses collide with the panel's standoffs) — print part=\"frame\"");
 if      (part == "bezel") bezel_print();
 else if (part == "back")  back();
 // the frame and its gauge EXPORT back-plate-down: the print orientation the

@@ -52,6 +52,7 @@ the website's carried copies after a CAD change.
 - [Which printer to buy or support](./printer_selection.md) — what these parts actually demand, upfront vs running vs maintenance cost, and the decision
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
+- [Design rules](./DESIGN_RULES.md) — the plastics-engineering checklist every shell here is held to (walls, coves, ribs, bosses, snaps, seals, drains, keys, lead-ins, print pose), each rule with the library module or CI gate that enforces it and the file-by-file status
 - [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
 - Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v04) · [Doorbell](#canary-vision--doorbell-v04) · [Sense radome](#canary-sense--radome-enclosure-v02)
 
@@ -132,7 +133,7 @@ minutes.
 | **WAP · weather** | battery build + TPU gasket seal, drip-edge lid, keyhole mounts (CER‑2 / ~IP54 target — [ratings](./field_ratings.md)) | <img src="./preview_weather.png" width="260"> | [base](./canary_wap_enclosure_weather_base.stl) · [lid](./canary_wap_enclosure_weather_lid.stl) · [gasket](./canary_wap_enclosure_weather_gasket.stl) |
 | **WAP · clip coupon** | **print first** — 15 min snap-fit tuner | <img src="./preview_coupon.png" width="260"> | [coupon](./canary_wap_enclosure_clip_coupon.stl) |
 | **Vision · xiao indoor** | stacked XIAO host (recommended), hinge mount, desk/shelf | <img src="./preview_vision_xiao_indoor.png" width="260"> | [back](./canary_vision_enclosure_xiao_indoor_back.stl) · [front](./canary_vision_enclosure_xiao_indoor_front.stl) |
-| **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
+| **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [hood](./canary_vision_enclosure_xiao_weather_hood.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
 | **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
 | **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
 | **Vision · DOORBELL** | Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) |
@@ -152,7 +153,7 @@ measurements welcome.
 | **Sense bedside stand** — weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m) | ballast pockets, GoPro-compatible head | <img src="./preview_dev_stand.png" width="230"> | [`canary_sense_stand.scad`](./canary_sense_stand.scad) |
 | **Sense in-wall plate** — single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only) | one-piece plate, 6-32 slots | <img src="./preview_dev_gang.png" width="230"> | [`canary_sense_gang.scad`](./canary_sense_gang.scad) |
 | **Outlet cradle** — collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
-| **Solar LoRa relay pod** — off-grid mesh backhaul: LoRa board + 18650, SMA top, solar roof bracket, pole straps | sealed body + roof | <img src="./preview_dev_relay.png" width="230"> | [`canary_relay_solar.scad`](./canary_relay_solar.scad) |
+| **Solar LoRa relay pod** — off-grid mesh backhaul: LoRa board + 18650, SMA top on a washer land, solar roof bracket with a drained panel bed, pole straps, weeps | sealed body + roof | <img src="./preview_dev_relay.png" width="230"> | [`canary_relay_solar.scad`](./canary_relay_solar.scad) |
 | **Combo witness** — Vision + Sense stacks in one face (lens + radome); radar-confirmed camera events | dual column, 3 USB ports | <img src="./preview_dev_combo.png" width="230"> | [`canary_combo.scad`](./canary_combo.scad) |
 | **Hub (Pi 5, DIN rail)** — vented tray + cover for the server side; printed DIN spring clip | chimney vents, HAT headroom | <img src="./preview_dev_hub.png" width="230"> | [`canary_hub_din.scad`](./canary_hub_din.scad) |
 | **Hammond chassis plates** — bring the Canary rail/clip cradles into the ENC1 polycarbonate route (`stack` = wap/vision/sense) | boss grid: MEASURE your box | <img src="./preview_dev_hammond.png" width="230"> | [`canary_hammond_chassis.scad`](./canary_hammond_chassis.scad) |
@@ -194,7 +195,15 @@ protocols that earn each level — see
   in-plane. Both shells print so the service loads — lid pry, wall impact,
   screw clamp — act *in-plane*; the bottom edge (the classic delamination
   initiation site) gets a 45° **`foot_cham`** chamfer that also removes
-  elephant-foot.
+  elephant-foot, and the floor-to-wall junction *inside* the cavity is a 45°
+  **`floor_cove`** (0.8 mm) rather than the square notch a corner drop
+  hinges the floor about.
+- **It only goes together one way.** Four corner posts fit a lid two ways
+  and every lid feature lines up one way, so each shell carries a
+  **`lid_key`**: a rib on the +Y cavity wall inside the lip zone and a slot
+  in the lip. Turned round, the lid stands `lip_h` proud. The lip's tip
+  carries a 45° lead-in so it finds the cavity blind. CI seats every
+  released lid turned 180° and requires the collision.
 - **Service-grade fastening.** The M2 self-tappers are fine for ~10 open/close
   cycles at ≤0.3 N·m. For a serviced fleet, set **`screw_insert = true`**: the
   corner posts auto-fatten (≥1.2 mm wall around the bore) for **M2 brass
@@ -945,7 +954,8 @@ off the seam, **flanged USB plug recess** on the bottom wall, plus two
 camera-specific items:
 
 - **Rain/glare hood** (`opt_hood`): a ~220° collar over the lens window, open
-  at the bottom — keeps rain and skylight off the glass.
+  at the bottom — keeps rain and skylight off the glass. A separate part
+  (`part="hood"`) that presses into a groove on the front and is bonded.
 - **Lens window**: bond a **14 × 1 mm clear PMMA/PC disc** into the recessed
   seat with **neutral-cure** silicone (full-circle bead in weather mode).
 
@@ -962,8 +972,8 @@ pressure equalization, and treat the result as **rain/splash-resistant
 | **vision_weather** | seal + hood + GORE vent + hinge **and** keyholes |
 
 `host` is independent of the preset — any combination works. `part` = `back` /
-`front` / `all` / `gasket` / `bracket` / `knob`. Committed STLs:
-`xiao_indoor`, `xiao_weather` (+ gasket) and `devkit_indoor`; other combos
+`front` / `all` / `gasket` / `bracket` / `knob` / `hood`. Committed STLs:
+`xiao_indoor`, `xiao_weather` (+ hood + gasket) and `devkit_indoor`; other combos
 render via the Customizer or CLI. Outer sizes: xiao ≈ **43 × 75 × 23 mm**
 (weather ≈ 47 × 79 × 30), devkit ≈ 75 × 76 × 18.5 (+20 mm prongs on all).
 
@@ -978,13 +988,20 @@ port is derived from the seated stack (the registry's measured 6.5) with
 over the keyhole slab); the Pi-cam lens holder gets the post height it needs
 (`cam_lens_h`); seal cheeks are 1.2 mm; and `opt_weep`, `seal_mid_posts`,
 `head_seal`, `screw_size` / `screw_head`, `hinge_clear` and `cam_fov` are new.
-**A hooded front (`opt_hood`, the weather preset) exports FACE-UP** — the hood
-stands 9 mm off the show face, so it cannot print face-down.
+**The rain hood is its own part** (`part="hood"`, committed for `xiao_weather`).
+Grown on the front it had no printable pose at all — face-down it stood on
+9 mm of hood, face-up the whole inner face was an unsupported ceiling over
+four post tips. The front now carries a `hood_seat` groove on its show face
+and prints face-down in every preset; the hood prints drip-edge-down, spigot
+up, presses into the groove (`tol_press`) and is bonded with neutral-cure
+silicone.
 
 ## Assembly
 
 1. Screw the **OV5647** to the four posts inside the front face (M2
    self-tappers, lens through the aperture); bond the clear disc into the seat.
+   *(weather)* Press the **hood**'s spigot into the groove around the window
+   (open side down) and bond it with neutral-cure silicone.
 2. *(xiao host)* Seat the **XIAO** in the module's socket — **both USB-C ports
    must face the same direction; backwards seating feeds power into GPIO and
    can kill either board** (device guide §3). Click the stack into the tall
@@ -1070,7 +1087,9 @@ the walk-up). The body drops onto the plate's two **printed T-studs** (the
 same blind, seal-safe pockets as the keyhole system) and locks with a hidden
 **security screw** driven up through the plate's bottom foot into a blind
 boss — Ring-style tool-only removal, and the pilot never breaches the seal
-envelope.
+envelope. With `screw_insert = true` that boss takes a fifth M2 insert from
+the outer face (the BOM's INS1 counts it) and the security screw becomes the
+machine-thread variant of SCR8 — a self-tapper strips brass.
 
 **Power:** USB-C from the stack's ports loops through the internal cable well
 and exits an oval in the **back**, through the matching plate hole, into the

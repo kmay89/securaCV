@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.3
+//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.4
 // @env cer=2 ip="~IP54" basis="weather preset"
 //  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (40 x 20)
 //         + a selectable HOST:
@@ -46,8 +46,7 @@
 //      6.5, and the XIAO gets xiao_below of air for a plug's overmold — the
 //      1.5 mm it had could not pass a plug at all;
 //    * the hinge fins start on the bed in the weather preset (they floated
-//      3 mm over the keyhole slab); the hooded front exports face-UP (the
-//      hood was below the plate); the skirt's hinge notch only opens when
+//      3 mm over the keyhole slab); the skirt's hinge notch only opens when
 //      the fins need it; the Pi-cam lens holder (8.5 sq, 5.5 tall) gets the
 //      post height it needs instead of hitting the front at 4.0;
 //    * seal mode: 1.2 mm cheeks either side of the groove (were 0.8), an
@@ -57,6 +56,12 @@
 //      hinge_clear on the bracket slots, cs 90° cone for the bracket's
 //      flat-head wall screws (was a 98° cone), M5 nut pocket 8.4 AF, and
 //      the tripod nut's 0.6 mm web is now 2.9.
+//  v0.4 follow-up (2026-09-08): the rain hood is its OWN part (part="hood").
+//      Grown on the front it had no printable pose — face-down it stood on
+//      9 mm of hood, face-up the whole inner face was an unsupported ceiling
+//      over four post tips (32.7 mm2 of first layer under a 16.8 mm part).
+//      The front now carries a hood_seat groove on its show face and prints
+//      face-down again in every preset; the collar presses in and bonds.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
@@ -70,7 +75,7 @@ use <canary_mark_lib.scad>   // THE BIRD — opt_mark's front deboss
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
-part   = "all";       // ["back","front","all","gasket","bracket","knob"]
+part   = "all";       // ["back","front","all","gasket","bracket","knob","hood"]
 
 /* [Preset] — quick configs; choose "custom" to use the option checkboxes */
 preset = "custom";    // ["custom","vision_indoor","vision_weather"]
@@ -80,7 +85,7 @@ opt_led    = true;    // status LED        -> light-pipe port on the front
 opt_buzzer = false;   // piezo buzzer      -> shares the vent cluster (firmware: unpopulated on Vision)
 opt_vent   = false;   // GORE vent cluster -> pressure equalization (recommended with opt_seal)
 opt_tamper = false;   // reed/Hall + magnet -> magnet pocket on the front underside
-opt_hood   = false;   // rain/glare hood over the lens window
+opt_hood   = false;   // rain/glare hood over the lens window — its OWN part (part="hood"), pressed into a groove on the front and bonded
 opt_seal   = false;   // perimeter TPU gasket + drip-edge front + USB plug recess (splash-resistant, NOT immersion)
 opt_mount  = true;    // mounting features per mount_style
 mount_style = "hinge"; // ["hinge","keyhole","both"]
@@ -153,6 +158,11 @@ lid_t    = 2.0;    // front face thickness
 lip_h    = 4.0;    // front lip insertion into the back shell
 lip_t    = 1.2;    // lip wall thickness
 corner_r = 3.0;    // outside corner radius
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 standoff_h = 3.5;  // PCBs sit this high off the back (RAISE if DevKit has soldered pin headers!)
                    // 3.5, not 3.0: the devkit clip beam is standoff + PCB, and at 4.5 mm it
                    // inserts at 3.7 % strain — 4.0 ran 4.7 % against the 4.5 % budget
@@ -238,8 +248,12 @@ usb_cover     = true;
 usb_cov_pad   = 2.0;
 usb_cov_dep   = 1.0;
 weep_d        = 2.0;  // weep bore (canary_core_lib weep_d)  // [1.5:0.5:3]
-hood_len      = 9.0;  // rain-hood protrusion from the front face (a hooded front exports FACE-UP)
+hood_len      = 9.0;  // rain-hood protrusion from the front face  // [5:0.5:15]
 hood_t        = 1.8;  // hood wall thickness
+hood_seat     = 0.6;  // groove in the front's show face the hood's spigot presses into (tol_press); bond with
+                      // neutral-cure silicone. The hood is its OWN part: a hood grown on the front had no
+                      // printable orientation (face-down it stood on 9 mm of hood; face-up the whole
+                      // 4,000 mm2 inner face was an unsupported ceiling over four post tips)  // [0.4:0.1:1.0]
 
 /* [Front-face features] — offsets are measured FROM THE MODULE CENTER so they
    stay valid for both hosts. Measure your build! */
@@ -355,8 +369,11 @@ base_d = floor_t + cav_d;
 // MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
 // interference: coplanar faces intersect to a zero-volume patch that CGAL
 // reports as non-2-manifold, which is a dirty render, not a pass.
-module vision_fitcheck(lift = 0.1) {
-    intersection() { translate([0, 0, base_d + lift]) front(); back(); }
+// `turned` seats the lid rotated 180° about Z — the poka-yoke CONTROL: with
+// lid_key on, this must NOT be empty (the lip lands on the key rib). A gate
+// that can only pass has proved nothing; this is the case it must fail.
+module vision_fitcheck(lift = 0.1, turned = false) {
+    intersection() { translate([0, 0, base_d + lift]) rotate([0, 0, turned ? 180 : 0]) front(); back(); }
 }
 
 cam_cx = has_dk ? -inner_x/2 + post_corner + col_cam/2 : 0;
@@ -396,9 +413,18 @@ assert(standoff_h > 0, "standoff_h must be positive");
 assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
 assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the front");
+lid_headroom = cav_extra + (cav_d - cav_d_min);
+assert(!lid_ribs || lid_rib_h <= lid_headroom,
+       str("lid_rib_h ", lid_rib_h, " reaches past the ", lid_headroom, " mm headroom over the stack — the ribs land on a component"));
+assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the structural wall floor");
+key_x = inner_x/2 - post_corner - 2.5;   // lid key: on the +Y wall, inboard of the +X corner post
 assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5,
        "pan-head seat needs more than 1.5 mm of inside pad — thicken lid_t instead");
 assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
+// a sealed box needs a pressure path (a vent membrane or a weep) or it pumps
+// air past the gasket on every thermal cycle — field_ratings.md
+assert(!e_seal || e_vent || e_buzzer || e_weep,
+       "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the front lip depth");
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
@@ -417,6 +443,11 @@ assert(cam_ap_d >= cam_need,
            " mm behind the disc — needs ", round(cam_need*10)/10, " mm"));
 assert(!e_hood || atan((cam_disc_d/2 + 2.5)/(hood_len + cam_throw)) > cam_fov/2 + 3,
        str("the rain hood clips a ", cam_fov, "° lens — shorten hood_len or widen cam_disc_d"));
+// the hood's groove must leave a floor under it (it sits over the rib ring and the
+// disc seat's land) and must not run into the disc seat cut from the same face
+assert(!e_hood || hood_seat + 0.8 <= lid_t, "hood_seat leaves under 0.8 mm of front beneath the hood groove — thicken lid_t");
+assert(!e_hood || cam_disc_d/2 + 2.5 - hood_t/2 >= cam_disc_d/2 + tol_slide + 1.0,
+       "the hood groove runs into the clear-disc seat");
 assert(2*fin_r <= base_d + mount_extra + 0.01, "fin_r too large — prongs must not exceed the shell depth");
 assert(host == "devkit" || usb_zc - xiao_usb_zc >= usb_h + 1.2,
        "the module and XIAO USB openings merge — no web left between them (stack_sock_h / xiao_below)");
@@ -441,7 +472,7 @@ if (!has_dk)
     echo(str("USB openings (bottom wall): module port axis ", usb_zc, " mm, XIAO port axis ", xiao_usb_zc,
              " mm above the back face, at x ", usb_cx, " / ", vm_cx + xiao_usb_dx, " — MEASURE both"));
 if (e_hood)
-    echo("opt_hood: the front exports FACE-UP (the hood stands 9 mm off the show face) — print it that way");
+    echo("opt_hood: the hood is its own part — render part=\"hood\", press its spigot into the front's groove and bond it (the front still prints face-down)");
 if (e_seal && !seal_mid_posts && inner_y - 2*post_corner > 40*lid_t)
     echo(str("seal mode: ", inner_y - 2*post_corner, " mm between corner screws on a ", lid_t,
              " mm front — the gasket opens mid-span; set seal_mid_posts=true"));
@@ -570,8 +601,8 @@ module back() {
                 if (e_mount && (m_style == "hinge" || m_style == "both"))
                     case_hinge();
             }
-            translate([0, 0, floor_t])
-                rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
+                cavity_cut(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1, floor_cove);
             // seam reveal — the shadow line under the parting line
             // (canary_core_lib): the indoor builds close front-on-back at the
             // exact same footprint, a raw butt joint on a show surface. The
@@ -646,6 +677,8 @@ module back() {
                          "-y", wall_eff, weep_d);
         }
 
+        // lid key (canary_core_lib): a rib on the +Y wall inside the lip zone
+        if (lid_key) lid_key_rib(key_x, inner_y/2, 270, base_d, lip_h);
         // screw posts, gusseted to both walls (same pattern as the WAP case); a
         // mid-span post (y = 0) has only its own wall to gusset to
         difference() {
@@ -677,10 +710,15 @@ module back() {
         // xiao host: two tall side rails under the module's X edges — the rail
         // gap clears the stacked XIAO hanging beneath it.
         if (has_dk) {
-            ringped(dk_cx, dk_cy, dk_w, dk_l);
+            // DevKit: four corner pads, not a perimeter ring — the DevKitM-1's
+            // header rows run along its long edges and a ring there sat under
+            // the solder stubs; the clips hook the pad-free corners
+            for (sx = [1, -1], sy = [1, -1])
+                translate([dk_cx + sx*(dk_w/2 - 3.5), dk_cy + sy*(dk_l/2 - 3.5), floor_t])
+                    cylinder(d = 5.0, h = standoff_h);
             ringped(vm_cx, vm_cy, vm_w, vm_l);
             for (s = [1, -1]) {
-                for (dy = [-dk_l/4, dk_l/4])
+                for (dy = [-(dk_l/2 - 4.5), dk_l/2 - 4.5])
                     edgeclip(dk_cx + s*dk_w/2, dk_cy + dy, s > 0 ? 0 : 180);
                 edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180);
             }
@@ -742,6 +780,10 @@ module front() {
             if (cam_disc_t > 0 && cam_disc_d > 0)
                 translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
                     cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
+            // the hood's seat: a hood_seat-deep groove in the show face on the
+            // collar's own footprint (a first-layer void on the face-down print)
+            if (e_hood)
+                translate([lens_x, lens_y, lid_t - hood_seat]) linear_extrude(hood_seat + 1) hood_ring2d();
             if (e_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
             if (e_vent || e_buzzer) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
                                               vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
@@ -771,17 +813,6 @@ module front() {
                         mark_bird(mark_h, mark_rib);
         }
 
-        // rain/glare hood: ~220° collar over the window, open at the bottom
-        if (e_hood)
-            translate([lens_x, lens_y, lid_t - 0.1]) linear_extrude(hood_len + 0.1)
-                difference() {
-                    circle(d = cam_disc_d + 5 + 2*hood_t);
-                    circle(d = cam_disc_d + 5);   // +5 (was +3): keeps the hood outside the
-                                                  // OV5647's 72° diagonal FOV even with ±0.7 mm
-                                                  // lens decentration — no corner vignette
-                    translate([-(cam_disc_d/2 + hood_t + 2), -2*(cam_disc_d + hood_t)])
-                        square([cam_disc_d + 2*hood_t + 4, 2*(cam_disc_d + hood_t) - cam_disc_d*0.18]);
-                }
 
         // camera-board posts on the inner face (Pi-cam v1.3 21 x 12.5 grid), tall
         // enough that the lens holder sits wholly behind the front
@@ -826,15 +857,11 @@ module front() {
 
         // front lip nesting into the back shell, cleared at posts + USB notch
         difference() {
-            translate([0, 0, -lip_h])
-                difference() {
-                    rrect(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
-                          max(0.1, corner_r - wall_eff - tol_slide), lip_h);
-                    rrect(inner_x - 2*tol_slide - 2*lip_t, inner_y - 2*tol_slide - 2*lip_t,
-                          0.1, lip_h + 1);
-                }
+            lip_ring(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
+                     max(0.1, corner_r - wall_eff - tol_slide), lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
             for (p = post_xy())
                 translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            if (lid_key) lid_key_slot(key_x, inner_y/2, 270, lip_h, lip_t);
             translate([usb_cx, -inner_y/2, -lip_h/2])
                 cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
         }
@@ -933,6 +960,32 @@ module bracket() {
 //  KNOB — printable M5 thumbscrew head (captive hex nut), or buy a GoPro
 //  M5 knurled thumbscrew. Pair with an M5 x 25 bolt.
 // ----------------------------------------------------------------------------
+//  HOOD — the rain/glare collar over the lens window, as its OWN part.
+//  ~220° arc open at the bottom, a spigot on its root that presses into the
+//  front's groove (tol_press a side; bond with neutral-cure silicone). It
+//  exports drip-edge-DOWN, spigot up: a C-shaped extrusion with no overhang.
+//  Grown on the front it could not be printed in either pose (audit 2026-09).
+// ----------------------------------------------------------------------------
+module hood_ring2d(inset = 0) {
+    difference() {
+        circle(d = cam_disc_d + 5 + 2*hood_t - 2*inset);
+        circle(d = cam_disc_d + 5 + 2*inset);   // +5 (was +3): keeps the hood outside the
+                                                // OV5647's 72° diagonal FOV even with ±0.7 mm
+                                                // lens decentration — no corner vignette
+        translate([-(cam_disc_d/2 + hood_t + 2), -2*(cam_disc_d + hood_t)])
+            square([cam_disc_d + 2*hood_t + 4, 2*(cam_disc_d + hood_t) - cam_disc_d*0.18 + inset]);
+    }
+}
+module hood() {
+    assert(e_hood, "the hood needs opt_hood=true (or preset=vision_weather) so its collar matches the front's groove");
+    union() {
+        linear_extrude(hood_len) hood_ring2d();
+        // spigot: 0.1 shy of the groove's floor so the collar's root seats on the face
+        translate([0, 0, -(hood_seat - 0.1)]) linear_extrude(hood_seat - 0.1 + 0.01) hood_ring2d(tol_press);
+    }
+}
+
+// ----------------------------------------------------------------------------
 module knob() {
     difference() {
         cylinder(d = 22, h = 8);
@@ -949,12 +1002,8 @@ module knob() {
 //  Layout
 // ----------------------------------------------------------------------------
 if      (part == "back")    back();
-else if (part == "front") {
-    // face-down is the show-face print; a hooded front stands its hood 9 mm
-    // off that face, so it goes face-UP (lip, posts and hood all print upward)
-    if (e_hood) front();
-    else translate([0, 0, lid_t]) rotate([180, 0, 0]) front();
-}
+else if (part == "front") translate([0, 0, lid_t]) rotate([180, 0, 0]) front();   // face-down, hood or not
+else if (part == "hood")  translate([0, 0, hood_len]) rotate([180, 0, 0]) hood();   // drip edge on the bed, spigot up
 else if (part == "gasket") {
     assert(e_seal, "the gasket needs opt_seal=true (or preset=vision_weather) so its ring matches the groove");
     gasket();
@@ -966,7 +1015,9 @@ else {
     // color() is preview-only — single-part exports are byte-identical
     color(cw_body(colorway)) back();
     color(cw_body(colorway)) translate([0, -(out_y/2 + plate_y/2 + hinge_off + fin_r + 10), 0])
-        if (e_hood) front(); else translate([0, 0, lid_t]) rotate([180, 0, 0]) front();
+        translate([0, 0, lid_t]) rotate([180, 0, 0]) front();
+    if (e_hood) color(cw_body(colorway))
+        translate([-(out_x/2 + br_x/2 + 16), -(out_y/2 + plate_y/2 + hinge_off + fin_r + 10), hood_seat - 0.1]) hood();
     color(cw_body(colorway)) translate([out_x/2 + br_x/2 + 14, 0, 0]) bracket();
     color(cw_ink(colorway))  translate([out_x/2 + br_x/2 + 14, br_y/2 + 22, 0]) knob();
     if (e_seal) color(cw_light(colorway)) translate([-(out_x/2 + br_x/2 + 16), 0, 0]) gasket();

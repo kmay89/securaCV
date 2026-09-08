@@ -388,6 +388,73 @@ module inner_cove_ring(l, w, r, fil, z0 = 0) {
     }
 }
 
+// The cavity CUTTER with the cove built in: subtract this instead of a bare
+// rrect and the cove is left standing at the floor-wall junction, while every
+// other cut in the same difference (weeps, knockouts, ports) still lands —
+// a cove ADDED after the cavity cut would need the whole cut list re-ordered.
+// Zero adopters of inner_cove_ring existed a year after it was written; this
+// is the one-line form that gets it adopted.
+module cavity_cut(l, w, r, depth, fil = core_floor_cove()) {
+    difference() {
+        rrect(l, w, r, depth);
+        if (fil > 0) inner_cove_ring(l, w, r, fil, 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Lid key — poka-yoke for a symmetric screw pattern.
+//
+//  Four posts at the cavity corners fit a lid two ways, and every released
+//  lid has a port notch, a light pipe, a vent or a window that only lines up
+//  one way. The key is a short rib on the cavity wall inside the lip zone and
+//  a matching slot through the lip: turned 180 degrees the lip lands on the
+//  rib and the lid stands lip_h proud, which nobody can miss. The rib lives in
+//  the annulus the lip already sweeps, so whatever the lip clears, the key
+//  clears — no new clearance check for the adopter.
+//
+//    x, y   — a point ON the cavity wall's inner face
+//    ang    — the wall's inward normal (0 = +X, 90 = +Y, 180 = -X, 270 = -Y)
+//    z_top  — the rim plane the lid seats on (base frame)
+//  The rib's underside is a 45 degree ramp, so it prints on an upright shell.
+// ---------------------------------------------------------------------------
+function core_key_w() = 3.0;
+function core_key_d() = 0.8;
+module lid_key_rib(x, y, ang, z_top, lip_h, w = core_key_w(), d = core_key_d()) {
+    h = lip_h - 0.5;
+    translate([x, y, z_top]) rotate([0, 0, ang]) hull() {
+        translate([-0.3, -w/2, -h])     cube([0.31, w, h]);        // rooted 0.3 into the wall
+        translate([-0.3, -w/2, -h + d]) cube([0.3 + d, w, h - d]);  // full depth above the ramp
+    }
+}
+// the slot through the lid's lip (lid frame: plate at z >= 0, lip below it)
+module lid_key_slot(x, y, ang, lip_h, lip_t, w = core_key_w(), play = core_tol_slide()) {
+    translate([x, y, -lip_h - 0.1]) rotate([0, 0, ang])
+        translate([-(lip_t + 1.0), -(w/2 + play), 0]) cube([2*(lip_t + 1.0), w + 2*play, lip_h + 0.11]);
+}
+
+// ---------------------------------------------------------------------------
+//  Lip ring — the lid's nesting lip, with a lead-in on its tip.
+//
+//  Every lid drew its lip as one rrect minus another: a square-edged ring
+//  that has to find a cavity 0.2 mm wider than itself, blind, with a gasket
+//  under it. A 45 degree chamfer on the tip's OUTER edge is the lead-in that
+//  lets the lip find the wall and the screws pull it home square. Lid frame:
+//  plate at z >= 0, lip from -lip_h to 0; l, w, r are the lip's outer outline.
+// ---------------------------------------------------------------------------
+function core_lip_cham() = 0.4;
+module lip_ring(l, w, r, lip_h, lip_t, cham = core_lip_cham()) {
+    translate([0, 0, -lip_h]) intersection() {
+        difference() {
+            rrect(l, w, r, lip_h);
+            translate([0, 0, -0.5]) rrect(l - 2*lip_t, w - 2*lip_t, max(0.1, r - lip_t), lip_h + 1);
+        }
+        hull() {
+            rrect(l - 2*cham, w - 2*cham, max(0.1, r - cham), 0.01);
+            translate([0, 0, cham]) rrect(l, w, r, lip_h);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 //  Seam reveal — a shadow line under a parting line.
 //
@@ -598,6 +665,10 @@ module core_selfcheck() {
         assert(abs(r[2] - 0.8*r[1]) < 0.11, str("core: \"", r[0], "\": self-tap pilot is 0.8 x nominal"));
     }
     assert(oring_gland_h(1.0) == 0.75, "core: the O-ring gland squeezes 25 %");
+    assert(core_key_d() < core_wall() - core_min_wall() + 1e-9 && core_key_w() >= 2*core_extrusion(),
+           "core: the lid key rib must fit the lip annulus and print as at least two lines");
+    assert(core_lip_cham() < core_min_wall() / 2, "core: the lip lead-in must leave most of the lip's tip");
+    assert(core_floor_cove() >= 2*core_extrusion() - 1e-9, "core: the floor cove is at least two extrusions");
     // the house look: the second stage is what makes the edge read as a
     // roundover rather than a bevel, and it spent its life defaulted off
     assert(core_face_edge() > 0 && core_face_edge2() > 0,

@@ -45,6 +45,11 @@ wall_t = 2.2;  floor_t = 2.2;  lid_t = 2.4;   // deviates: service-box duty buil
 inner_pad = 8.0;     // interior margin around the board (wiring room)
 corner_r = 2.0;      // deviates: squared, utilitarian — the service box reads as gear, not decor
 lip_h = 3.0;  lip_t = 1.2;
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true 1/2" boss needs a taller shell)
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.6;
@@ -115,7 +120,8 @@ module body() {
                     translate([i*out_l/4, sy*(out_w/2 - 0.01), base_h/2])
                         rotate([-sy*90, 0, 0]) cylinder(d = boss_d, h = boss_l);
             }
-            translate([0, 0, floor_t]) rrect(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1);
+            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
+                cavity_cut(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1, floor_cove);
             // USB pass-through slot, low on the -X short wall: route a pigtail
             // through it (a plug cannot reach the recessed connector) and dress
             // the cable as conduit. Sheltered mounting only - the slot is open.
@@ -124,6 +130,8 @@ module body() {
             translate([-out_l/2, 0, floor_t + standoff_h + board_h + port_usbc_shell_h()/2])
                 cube([wall_t*3, usb_w, usb_h], center = true);
         }
+        // lid key (canary_core_lib): a rib on the +Y wall, centered, inside the lip zone
+        if (lid_key) lid_key_rib(0, inner_w/2, 270, base_h, lip_h);
         // posts + board clips (compact-WAP idiom)
         difference() {
             for (p = post_xy()) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_h);
@@ -163,11 +171,9 @@ module lid() {
             }
         }
         difference() {   // lip
-            translate([0, 0, -lip_h]) difference() {
-                rrect(inner_l - 2*tol_slide, inner_w - 2*tol_slide, 0.5, lip_h);
-                rrect(inner_l - 2*tol_slide - 2*lip_t, inner_w - 2*tol_slide - 2*lip_t, 0.3, lip_h + 1);
-            }
+            lip_ring(inner_l - 2*tol_slide, inner_w - 2*tol_slide, 0.5, lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
             for (p = post_xy()) translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            if (lid_key) lid_key_slot(0, inner_w/2, 270, lip_h, lip_t);
             translate([-inner_l/2, 0, -lip_h/2]) cube([lip_t*4, usb_w + 4, lip_h + 0.2], center = true);
         }
     }

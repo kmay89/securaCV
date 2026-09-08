@@ -75,19 +75,21 @@ check = "sense";   // ["sense","vision_indoor","vision_weather","vision_devkit",
 
 /* [Tuning] */
 seat_lift = 0.1;   // hover the front this far off its seat, so face-on-face contact is not read as interference  // [0.05:0.05:0.5]
+turned    = false; // the CONTROL: seat the lid rotated 180° — with lid_key on this must come out NON-empty
+                   // (the lip lands on the key rib). Run it once per family so the gate is known to be able to fail
 
 /* [Hidden] */
 
 // The variants (Vision's host/preset, the WAP's preset and screw_head) are
 // selected on the command line exactly as render.sh selects them, so each
 // family below is one call and the caller picks which build it is checking.
-if      (check == "sense")               sense_fitcheck(seat_lift);
+if      (check == "sense")               sense_fitcheck(seat_lift, turned);
 else if (check == "vision_indoor"
       || check == "vision_weather"
-      || check == "vision_devkit")       vision_fitcheck(seat_lift);
-else if (check == "doorbell")            doorbell_fitcheck(seat_lift);
+      || check == "vision_devkit")       vision_fitcheck(seat_lift, turned);
+else if (check == "doorbell")            doorbell_fitcheck(seat_lift, turned);
 else if (check == "wap_battery"
       || check == "wap_compact"
       || check == "wap_weather"
-      || check == "wap_pan")             wap_fitcheck(seat_lift);
+      || check == "wap_pan")             wap_fitcheck(seat_lift, turned);
 else assert(false, str("canary_case_fitcheck: unknown check \"", check, "\""));

@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.3
+//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.4
 // @env cer=2 ip="~IP54 (button ~IP65)"
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
@@ -126,6 +126,11 @@ lid_t    = 2.2;      // face thickness (the visible surface)
 lip_h    = 4.0;
 lip_t    = 1.2;
 cav_extra = 1.0;     // headroom over the tallest component
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 zone_top = 8.0;      // margin above the camera (top posts live here)
 zone_gap = 2.0;      // camera <-> module gap
 zone_well = 12.0;    // cable well between module and button (USB plugs live here)
@@ -145,7 +150,8 @@ tol_press = 0.10;    // core_tol_press()
 tol_hole  = 0.30;    // core_tol_hole()
 
 /* [Engineering] (see README "Engineering & materials") */
-screw_insert = false;  // M2 brass heat-set inserts in the corner posts
+screw_insert = false;  // M2 brass heat-set inserts in the corner posts AND the security boss (the one
+                       // screw undone at every service — self-tapped plastic strips there first)
 insert_d     = 3.5;
 insert_h     = 4.0;
 lid_ribs     = true;   // perimeter rib ring under the face
@@ -252,7 +258,13 @@ clip_stack  = clip_clear + clip_t;
 vm_standoff = stack_sock_h + xiao_below;
 cam_post_eff = (cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3);
 
-inner_x = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5);
+// screw_insert grows the posts (pd) by 1.5, which walked the bottom pair into
+// the button nut's arc — the option asserted itself dead. The cavity widens
+// by what the nut arc needs instead (the posts stay 1.0 off the walls; they
+// cannot move down, and up is toward the nut)
+inner_x = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5,
+              screw_insert ? 2*(sqrt(max(0, pow(btn_nut_ac/2 + pd/2 + 0.5, 2) - pow(zone_btn/2 - pd/2 - 1.0, 2)))
+                                + pd/2 + 1.0) + 0.1 : 0);
 inner_y = zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top;
 cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra, btn_body_l - lid_t + 1);
 
@@ -269,8 +281,11 @@ base_d = floor_t + cav_d;
 // MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
 // interference: coplanar faces intersect to a zero-volume patch that CGAL
 // reports as non-2-manifold, which is a dirty render, not a pass.
-module doorbell_fitcheck(lift = 0.1) {
-    intersection() { translate([0, 0, base_d + lift]) face(); body(); }
+// `turned` seats the lid rotated 180° about Z — the poka-yoke CONTROL: with
+// lid_key on, this must NOT be empty (the lip lands on the key rib). A gate
+// that can only pass has proved nothing; this is the case it must fail.
+module doorbell_fitcheck(lift = 0.1, turned = false) {
+    intersection() { translate([0, 0, base_d + lift]) rotate([0, 0, turned ? 180 : 0]) face(); body(); }
 }
 rr     = min(db_r, out_x/2 - 0.1);          // pill radius, clamped to the width
 
@@ -300,6 +315,8 @@ assert(btn_bez_d == 0 || btn_bez_d > btn_d + 2, "btn_bez_d must exceed the butto
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the face");
 assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5, "pan-head seat needs more than 1.5 mm of inside pad — thicken lid_t");
 assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
+assert(!e_seal || opt_vent || opt_weep,
+       "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 // the button's panel nut must clear the bottom posts (their inner edge vs the nut's corner radius)
 assert(len([for (p = post_xy()) if (sqrt(pow(p[0], 2) + pow(p[1] - btn_cy, 2)) < btn_nut_ac/2 + pd/2 + 0.5) 1]) == 0,
@@ -312,6 +329,10 @@ assert(!(e_seal && seal_mid_posts) || abs(usb_exit_dx) + usb_exit_w/2 <= inner_x
 assert(btn_body_l - lid_t + 1 <= cav_d, "button too deep — raise btn_body_l budget or cavity");
 assert(zone_btn >= btn_bez_d + 3, "zone_btn too short for the button bezel");
 assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
+lid_headroom = cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra));
+assert(!lid_ribs || lid_rib_h <= lid_headroom,
+       str("lid_rib_h ", lid_rib_h, " reaches past the ", lid_headroom, " mm headroom over the stack — the ribs land on a component"));
+assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the structural wall floor");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lip");
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
        str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
@@ -380,7 +401,8 @@ module body() {
                 rrect(out_x, out_y, rr, base_d);
                 translate([0, 0, -kh_extra]) rrect(out_x, out_y, rr, kh_extra);  // stud-pocket back
             }
-            translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, rr - wall_eff), cav_d + 1);
+            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
+                cavity_cut(inner_x, inner_y, max(0.1, rr - wall_eff), cav_d + 1, floor_cove);
             // oval cable exit through the back (aligns with the plate hole; offset
             // sideways/up so it clears the lower T-stud pocket)
             translate([usb_exit_dx, well_cy + usb_exit_dy, 0]) hull()
@@ -406,9 +428,14 @@ module body() {
             if (opt_weep)
                 weep_cut(7.0, -inner_y/2, floor_t + weep_d/2 + 0.2, "-y", wall_eff, weep_d);
         }
+        // lid key (canary_core_lib): a rib on the +Y (camera-end) wall, centered,
+        // inside the lip zone — the face fits one way (lens up, button down)
+        if (lid_key) lid_key_rib(0, inner_y/2, 270, base_d, lip_h);
         // internal boss backing the security screw (~7 mm thread engagement);
-        // kept below z=5 so it clears the button body's tip
-        translate([-4, -inner_y/2 - 0.1, 0]) cube([8, 4.1, 5]);
+        // kept below z=5 so it clears the button body's tip. With screw_insert
+        // it grows to carry an insert (1.2 mm of stock around the bore)
+        sec_boss_h = screw_insert ? max(5, 3.0 + (ins_od - 0.3)/2 + 1.2) : 5;
+        translate([-4, -inner_y/2 - 0.1, 0]) cube([8, 4.1, sec_boss_h]);
         // face-screw posts, gusseted into the nearest walls (a mid-span post only
         // to its own wall); shortened by the face's head pads
         difference() {
@@ -462,7 +489,13 @@ module body() {
     // through into the cavity on any config with wall_eff < 2.4 — a "blind"
     // pilot that opened the case it was securing.
     translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0])
-        cylinder(d = sec_screw_d - 0.5, h = wall_eff + 3.1);
+        cylinder(d = screw_insert ? scr_nominal(screw_size) + 0.3 : sec_screw_d - 0.5, h = wall_eff + 3.1);
+    // screw_insert: the security screw's heat-set insert seats from the OUTER
+    // face (the plate's L-foot sits under it and the screw passes up through
+    // the foot into the insert) — same bag as the corner posts' inserts
+    if (screw_insert)
+        translate([0, -out_y/2 - 0.1, 3.0]) rotate([-90, 0, 0])
+            cylinder(d = ins_od - 0.3, h = ins_h + 0.1);
     }
 }
 
@@ -572,14 +605,11 @@ module face() {
                 }
         // lip, cleared at posts
         difference() {
-            translate([0, 0, -lip_h])
-                difference() {
-                    rrect(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
-                          max(0.1, rr - wall_eff - tol_slide), lip_h);
-                    rrect(inner_x - 2*tol_slide - 2*lip_t, inner_y - 2*tol_slide - 2*lip_t, 0.1, lip_h + 1);
-                }
+            lip_ring(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
+                     max(0.1, rr - wall_eff - tol_slide), lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
             for (p = post_xy())
                 translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            if (lid_key) lid_key_slot(0, inner_y/2, 270, lip_h, lip_t);
         }
         // drip-edge skirt (no notch needed — no wall ports on a doorbell)
         if (e_seal)

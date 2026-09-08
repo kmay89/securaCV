@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "1be54c0ee234bcbd8f25bc710f4a7c08c008eb96ef711b8d533d03340ffd1045",
+      "sha256": "498fccb4fd3f24cc47a25a31380eb70baa0e8109e242016b3aadac816f14c8d5",
       "groups": [
         {
           "name": "What to render",
@@ -662,6 +662,18 @@
               "type": "number",
               "default": 3.0,
               "desc": "outside corner radius"
+            },
+            {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
             }
           ]
         },
@@ -1087,7 +1099,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1151,7 +1163,8 @@
         "front": "Front face",
         "gasket": "Gasket ring — print in TPU",
         "bracket": "Wall bracket",
-        "knob": "Hinge knob"
+        "knob": "Hinge knob",
+        "hood": "Rain hood"
       },
       "part_info": {
         "all": "Every part in place, for looking around — pick a single part when you want an STL to print.",
@@ -1159,7 +1172,8 @@
         "front": "The face with the lens aperture and clear-disc seat — screws into the back with 4× M2.",
         "gasket": "The soft seal ring for weather builds — print in TPU; switch Weather seal ON first.",
         "bracket": "The wall bracket the hinge clicks into — four screws into the wall, then aim and lock.",
-        "knob": "The thumbscrew that locks the hinge at your angle."
+        "knob": "The thumbscrew that locks the hinge at your angle.",
+        "hood": "The rain & glare hood — its own part: press it into the groove on the front and bond it. Switch the hood ON first."
       },
       "labels": {
         "part": "Part to print",
@@ -1191,7 +1205,7 @@
         }
       },
       "units": {},
-      "sha256": "4c646cc61a66e9c8b11f0d0ff372717a11580ff287b01f09776dedd6a5735484",
+      "sha256": "d4421a83bd253c18b50733140b1b30446bf3266bebb3281d7c68677415d3c244",
       "groups": [
         {
           "name": "What to render",
@@ -1206,7 +1220,8 @@
                 "all",
                 "gasket",
                 "bracket",
-                "knob"
+                "knob",
+                "hood"
               ],
               "desc": ""
             }
@@ -1259,7 +1274,7 @@
               "name": "opt_hood",
               "type": "bool",
               "default": false,
-              "desc": "rain/glare hood over the lens window"
+              "desc": "rain/glare hood over the lens window — its OWN part (part=\"hood\"), pressed into a groove on the front and bonded"
             },
             {
               "name": "opt_seal",
@@ -1527,6 +1542,18 @@
               "type": "number",
               "default": 3.0,
               "desc": "outside corner radius"
+            },
+            {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
             },
             {
               "name": "standoff_h",
@@ -1913,13 +1940,22 @@
               "name": "hood_len",
               "type": "number",
               "default": 9.0,
-              "desc": "rain-hood protrusion from the front face (a hooded front exports FACE-UP)"
+              "min": 5,
+              "step": 0.5,
+              "max": 15,
+              "desc": "rain-hood protrusion from the front face"
             },
             {
               "name": "hood_t",
               "type": "number",
               "default": 1.8,
               "desc": "hood wall thickness"
+            },
+            {
+              "name": "hood_seat",
+              "type": "number",
+              "default": 0.6,
+              "desc": "groove in the front's show face the hood's spigot presses into (tol_press); bond with"
             }
           ]
         },
@@ -2137,7 +2173,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2215,7 +2251,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "1e30d0121d3067681e5ecaafa972d224a1858c29a84511649ec227d4e015c8eb",
+      "sha256": "9652987439c2f592be36a60d3ab4a6b81a528381323337c905e9f2d96b2fa69e",
       "groups": [
         {
           "name": "What to render",
@@ -2510,6 +2546,18 @@
               "desc": "headroom over the tallest component"
             },
             {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+            },
+            {
               "name": "zone_top",
               "type": "number",
               "default": 8.0,
@@ -2588,7 +2636,7 @@
               "name": "screw_insert",
               "type": "bool",
               "default": false,
-              "desc": "M2 brass heat-set inserts in the corner posts"
+              "desc": "M2 brass heat-set inserts in the corner posts AND the security boss (the one"
             },
             {
               "name": "insert_d",
@@ -2971,7 +3019,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3063,7 +3111,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "960c1490993dbb42824cc35558ec0d44400703b517b82c8be92529254a5a5108",
+      "sha256": "6d22d6d41134e6ece4e06cf65541fd2b87ce6bd0610faf41d359a427dc97739d",
       "groups": [
         {
           "name": "What to render",
@@ -3310,6 +3358,12 @@
               "desc": "BH1750 light aperture (open hole; glue a clear disc behind it when sealing)"
             },
             {
+              "name": "lux_disc_d",
+              "type": "number",
+              "default": 0,
+              "desc": "0 = bare hole; > 0 cuts a recessed seat on the outer face for a glued clear"
+            },
+            {
               "name": "lux_dx",
               "type": "number",
               "default": -13.0
@@ -3418,6 +3472,18 @@
               "name": "cav_extra",
               "type": "number",
               "default": 1.0
+            },
+            {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
             }
           ]
         },
@@ -3845,7 +3911,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4263,7 +4329,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",

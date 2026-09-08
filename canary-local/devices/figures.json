@@ -1451,7 +1451,7 @@
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3448,
+     "triangles": 3624,
      "mm": [
       57.2,
       78.697,
@@ -1460,7 +1460,7 @@
     },
     {
      "file": "canary_sense_front.stl",
-     "triangles": 2308,
+     "triangles": 2356,
      "mm": [
       57.2,
       58.2,
@@ -1620,7 +1620,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_back.stl",
-     "triangles": 3468,
+     "triangles": 3556,
      "mm": [
       43.2,
       95.097,
@@ -1629,7 +1629,7 @@
     },
     {
      "file": "canary_vision_enclosure_xiao_indoor_front.stl",
-     "triangles": 3416,
+     "triangles": 3464,
      "mm": [
       43.2,
       74.6,
@@ -1723,7 +1723,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_devkit_indoor_back.stl",
-     "triangles": 3848,
+     "triangles": 4380,
      "mm": [
       74.8,
       96.497,
@@ -1732,7 +1732,7 @@
     },
     {
      "file": "canary_vision_enclosure_devkit_indoor_front.stl",
-     "triangles": 3416,
+     "triangles": 3464,
      "mm": [
       74.8,
       76,
@@ -1837,7 +1837,7 @@
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5624,
+     "triangles": 5916,
      "mm": [
       34.2,
       115.6,
@@ -1846,7 +1846,7 @@
     },
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 10080,
+     "triangles": 10428,
      "mm": [
       38.2,
       119.6,
@@ -1997,7 +1997,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_base.stl",
-     "triangles": 2000,
+     "triangles": 2092,
      "mm": [
       33.7,
       36.6,
@@ -2006,7 +2006,7 @@
     },
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 3296,
+     "triangles": 3336,
      "mm": [
       33.7,
       36.6,
@@ -2093,7 +2093,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 5624,
+     "triangles": 5916,
      "mm": [
       34.2,
       115.6,
@@ -2179,7 +2179,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 10080,
+     "triangles": 10428,
      "mm": [
       38.2,
       119.6,
@@ -2418,7 +2418,7 @@
    "traced_to": [
     {
      "file": "canary_sense_back.stl",
-     "triangles": 3448,
+     "triangles": 3624,
      "mm": [
       57.2,
       78.697,
@@ -2485,7 +2485,7 @@
    "traced_to": [
     {
      "file": "canary_sense_front.stl",
-     "triangles": 2308,
+     "triangles": 2356,
      "mm": [
       57.2,
       58.2,
@@ -2571,7 +2571,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_back.stl",
-     "triangles": 3468,
+     "triangles": 3556,
      "mm": [
       43.2,
       95.097,
@@ -2743,7 +2743,7 @@
    "traced_to": [
     {
      "file": "canary_vision_enclosure_xiao_indoor_front.stl",
-     "triangles": 3416,
+     "triangles": 3464,
      "mm": [
       43.2,
       74.6,
@@ -2992,7 +2992,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_base.stl",
-     "triangles": 2000,
+     "triangles": 2092,
      "mm": [
       33.7,
       36.6,
@@ -3069,7 +3069,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_battery_base.stl",
-     "triangles": 2168,
+     "triangles": 2276,
      "mm": [
       104.5,
       39,
@@ -3223,7 +3223,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 3296,
+     "triangles": 3336,
      "mm": [
       33.7,
       36.6,

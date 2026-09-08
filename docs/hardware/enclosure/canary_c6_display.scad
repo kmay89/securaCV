@@ -199,6 +199,11 @@ ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
    back_t + snap_depth so it lands on the skirt AND lines up with the bezel
    window; keep snap_depth + snap_h/2 ≤ skirt_dep. */
 snap_n = 4; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
+pry_notch = true;    // a fingernail notch in the bezel's TOP (+Y) wall rear rim, centered — the only wall
+                     // with no opening (USB below, buttons and vents on the sides): the back snaps closed
+                     // on a flush parting line with nothing to lift it by. 0.6 into the wall, 0.8 below
+                     // the rim; the lid stays flippable (the notch is the bezel's, the skirt passes inside)
+pry_w = 6.0;         // notch width  // [4:1:10]
 // THE WINDOW IS DERIVED FROM THE RIDGE (canary_snap_lib's rule; the C3
 // sibling's lid-slide print taught it). One knob — snap_w — used to place the
 // ridge's end plates AND size the window, but the end plates draw 1.0 in from
@@ -312,6 +317,8 @@ assert(z_usb + usb_h/2 <= face_t + cav_d - 0.8,
        "no printable bridge left between the USB opening and the rear rim — raise back_stack/hdr_drop or lower usb_dz");
 assert(z_btn + btn_d/2 <= face_t + cav_d, "button hole overruns the cavity depth — check btn_dz/back_stack");
 assert(skirt_dep <= stack_eff + 0.01, "skirt_dep > component clearance — the skirt would drive into the PCB");
+assert(!pry_notch || pry_w/2 <= xo/2 - r_out - 1.0, "pry_w runs into the corner radii — narrow it");
+assert(!pry_notch || wall - 0.6 >= 1.2, "the pry notch leaves under 1.2 mm of wall");
 assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth)");
 assert(stand_len >= 0.6, "press bosses shorter than 0.6 — brass_h nearly fills the cavity; check hdr_drop/brass_h");
 assert(headers != "male" || hdr_drop >= brass_h + 0.5,
@@ -414,6 +421,9 @@ module bezel() {
         for (sx = [1, -1], yc0 = nub_ys())
             translate([sx*xo/2, yc0, bez_h - snap_depth])
                 cube([wall*3, snap_w, snap_h], center = true);
+        // pry notches: the ±Y walls' rear rim, both ends, outboard of the USB
+        // span and inboard of the corner radius
+        if (pry_notch) translate([0, yo/2, bez_h]) cube([pry_w, 2*0.6, 2*0.8], center = true);
     }
 }
 module bezel_print() { bezel(); }   // already in print (face-down) orientation
