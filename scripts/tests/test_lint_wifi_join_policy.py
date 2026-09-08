@@ -23,6 +23,13 @@ pinned below:
    because its reboot goes through `wifi_next_action`; only an adversarial case
    surfaced it.
 
+The second half pins the "direct consumer" rules: a supervisor must include
+the shared header itself, keep a `WifiRetry`, feed the policy its board's
+tunables by name, and carry no local schedule. The emulator was the file that
+needed those rules — it reached the header transitively while keeping its own
+copy of the outage decision, and the copy had drifted — so one test holds
+`emu_net.cpp` to the display's exact policy spelling.
+
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
 
@@ -104,7 +111,8 @@ void wifi_loop(uint32_t now_ms) {
 }"""))
 
     def test_emulator_flag_spelling(self):
-        # The emulator names it g_wifi_ever_up, not ever_online.
+        # The emulator's FORMER flag name (g_wifi_ever_up); it now keeps a
+        # WifiRetry like the boards, but the spelling stays accepted.
         self.assertTrue(gated("""
 void wifi_loop(uint32_t now_ms) {
   if (g_wifi_ever_up && now_ms - g_wifi_down_since >= LIMIT) {
@@ -181,13 +189,141 @@ void wifi_loop(uint32_t now_ms) {
 }"""))
 
 
+# A supervisor that does everything the lint asks. Each DirectConsumers case
+# breaks exactly one thing about it.
+GOOD = """\
+#include "canary/config.h"
+#include "network/wifi_join_policy.h"
+
+/* A block comment that mentions WIFI_OUTAGE_REBOOT_MS must not count,
+   nor may it shift the line numbers in a message. */
+static canary::net::WifiRetryPolicy retry_policy() {
+  canary::net::WifiRetryPolicy p;
+  p.base_ms          = WIFI_RETRY_BASE_MS;
+  p.max_ms           = WIFI_RETRY_MAX_MS;
+  p.outage_reboot_ms = WIFI_OUTAGE_REBOOT_MS;  // the board's own numbers
+  return p;
+}
+
+void wifi_loop(uint32_t now_ms) {
+  canary::net::WifiRetry st;
+  st.ever_online = s_ever_online;
+  switch (canary::net::wifi_next_action(retry_policy(), st, now_ms, j)) {
+    case canary::net::WifiAction::Reboot:
+      ESP.restart();
+      break;
+    case canary::net::WifiAction::Retry:
+      break;
+    case canary::net::WifiAction::Wait:
+      break;
+  }
+}
+"""
+
+
+def problems_of(src: str) -> list[str]:
+    return lint.check_text("fixture.cpp", src)
+
+
+class DirectConsumers(unittest.TestCase):
+    """A supervisor must consume the shared header directly, not re-derive it."""
+
+    def test_a_direct_consumer_is_clean(self):
+        self.assertEqual(problems_of(GOOD), [])
+
+    def test_transitive_include_is_not_enough(self):
+        # The emulator's old state: the header arrived through wifi_mgr.h and
+        # the file spoke the vocabulary, while keeping its own outage rule.
+        src = GOOD.replace('#include "network/wifi_join_policy.h"',
+                           '#include "canary/net/wifi_mgr.h"')
+        found = problems_of(src)
+        self.assertTrue(any("wifi_join_policy.h" in p and "itself" in p for p in found), found)
+
+    def test_flattened_arduino_spelling_is_accepted(self):
+        src = (GOOD.replace('#include "network/wifi_join_policy.h"',
+                            '#include "wifi_join_policy.h"')
+                   .replace('#include "canary/config.h"', '#include "config.h"'))
+        self.assertEqual(problems_of(src), [])
+
+    def test_hand_rolled_outage_check_is_flagged(self):
+        # Gated on ever_online, so the restart rule is satisfied — but the
+        # deadline itself is being decided beside the header. That is the copy.
+        src = GOOD + """
+void outage_watch(uint32_t now_ms) {
+  if (s_ever_online &&
+      (int32_t)(now_ms - s_lost_since_ms) >= (int32_t)WIFI_OUTAGE_REBOOT_MS) {
+    ESP.restart();
+  }
+}
+"""
+        found = problems_of(src)
+        self.assertTrue(any("outside the WifiRetryPolicy assignment" in p for p in found), found)
+        self.assertFalse(any("no evidence it is gated" in p for p in found), found)
+
+    def test_local_backoff_table_is_flagged(self):
+        src = GOOD + "static const uint32_t kBackoffMs[] = {2000, 4000, 8000, 16000, 30000};\n"
+        found = problems_of(src)
+        self.assertTrue(any("local backoff schedule" in p for p in found), found)
+
+    def test_doubling_on_the_attempt_counter_is_flagged(self):
+        src = GOOD + "static uint32_t wait_ms() { return 2000u << (s_attempts - 1); }\n"
+        found = problems_of(src)
+        self.assertTrue(any("local backoff schedule" in p for p in found), found)
+
+    def test_policy_built_from_a_literal_is_flagged(self):
+        src = GOOD.replace("p.base_ms          = WIFI_RETRY_BASE_MS;",
+                           "p.base_ms          = 2000;")
+        found = problems_of(src)
+        self.assertTrue(any("expected:" in p and "found:" in p and "2000" in p for p in found),
+                        found)
+
+    def test_policy_fed_the_wrong_symbol_is_flagged(self):
+        src = GOOD.replace("p.max_ms           = WIFI_RETRY_MAX_MS;",
+                           "p.max_ms           = WIFI_RETRY_BASE_MS;")
+        found = problems_of(src)
+        self.assertTrue(any("not built from the board's tunables" in p for p in found), found)
+
+    def test_missing_shared_state_is_flagged(self):
+        src = GOOD.replace("canary::net::WifiRetry st;", "auto st = current_state();")
+        found = problems_of(src)
+        self.assertTrue(any("no WifiRetry" in p for p in found), found)
+
+    def test_unrelated_arrays_and_comments_are_not_schedules(self):
+        # Shapes that exist in the real supervisors and must stay legal.
+        src = GOOD + """
+char token[device_pseudonym::HEX_LEN + 1] = {0};
+char g_referral_host[64] = {0};
+// we used to compare against WIFI_OUTAGE_REBOOT_MS right here
+"""
+        self.assertEqual(problems_of(src), [])
+
+
+class EmulatorRunsTheDisplaysPolicy(unittest.TestCase):
+    """canary.local previews the display; its Wi-Fi schedule must BE the display's."""
+
+    EMULATOR = "canary-local/emulator/src/emu_net.cpp"
+    DISPLAY = "firmware/projects/canary-display/src/net/wifi_mgr.cpp"
+
+    def test_same_header_same_symbols(self):
+        emu = (REPO / self.EMULATOR).read_text(encoding="utf-8")
+        glass = (REPO / self.DISPLAY).read_text(encoding="utf-8")
+        self.assertRegex(emu, lint.REQUIRED_INCLUDE)
+        self.assertRegex(emu, lint.CONFIG_INCLUDE)
+        self.assertEqual(lint.policy_assignments(emu), lint.POLICY_FIELDS)
+        self.assertEqual(lint.policy_assignments(emu), lint.policy_assignments(glass))
+        self.assertIn(self.EMULATOR, lint.WIFI_SUPERVISORS)
+
+
 class RealTreeStaysClean(unittest.TestCase):
     def test_every_listed_supervisor_passes_today(self):
         # If this fails, either a board regressed or the lint did. Both are
-        # worth stopping for.
+        # worth stopping for. The generated Arduino copy joins when present.
         problems: list[str] = []
         for rel in lint.WIFI_SUPERVISORS:
             problems.extend(lint.check_file(rel))
+        for rel in lint.GENERATED_COPIES:
+            if (REPO / rel).exists():
+                problems.extend(lint.check_file(rel))
         self.assertEqual(problems, [], "\n".join(problems))
 
 
