@@ -94,7 +94,12 @@ jobs:
         #    basis volume and that a qty-1 price yields UNRESOLVED, not GO.
         #  • BOM pricing — a distributor miss must demote, never republish stale
         #    data as live; every exception kind fires only when its condition holds.
-        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+        #  • Firmware SBOM (test_gen_firmware_sbom.py) — imports the generator,
+        #    which reads the Arduino core pins out of workflow YAML, so PyYAML
+        #    is installed here as well as in the byte-gate step below.
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
