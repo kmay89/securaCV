@@ -2,6 +2,91 @@
 
 ## [Unreleased]
 
+### The device manifests drive the generators, and the release env list is derived
+
+- **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read
+  `devices/<slug>/device.json`.** The flasher catalog takes each product's
+  chip, flash size, registry board and PlatformIO project from the manifest
+  that claims it (the hand-typed `BOARD_CHIP` / `BOARD_FLASH_MB` tables are
+  gone); the fleet figures build the exact hardware→figure map from the
+  manifests and validate the coarse config→device-type map against them,
+  recording one dispute (`canary-vision/default`: DevKit vs XIAO drawings
+  under one device type) for a maintainer to settle; the build-matrix lint
+  applies the matrix's side of the join through the shared
+  `scripts/_device_join.py`. Every generated output is byte-identical.
+- **Both release workflows derive the Canary Display env list from
+  `firmware/flavors.json`** ("Resolve the canary-display release envs",
+  `flavor_envs.py --release --json`, consumed through `fromJSON`) instead of
+  typing it twice; `flavor_envs.py --check-workflows` fails a workflow that
+  types a `pio run -e canary-display-<env>` back in, and
+  `check_ota_channels.py` reads the same derivation. Host-tested only —
+  watch the first real release run (`.github/RELEASE_LESSONS.md`,
+  2026-09-08).
+
+### Kernel: `/api/fleet` has an origin allow-list and lists the Canaries the bridge heard
+
+- **No more CORS wildcard.** `/api/fleet` echoes an `Origin` only from
+  `FLEET_ALLOWED_ORIGINS` (the Lab/flasher origin, `https://securacv.com`,
+  and `http://localhost` / `http://127.0.0.1` on any port); native readers
+  send no Origin and get no CORS header; anything else gets none and the
+  browser blocks the read. A Lab page served from a LAN host can no longer
+  read the kernel's fleet (`tvos/discovery/DISCOVERY.md`). Firmware boards
+  still answer `*`.
+- **Peer aggregation, opt-in.** `event_mqtt_bridge --fleet-peers-path` (or
+  `WITNESS_FLEET_PEERS_PATH`) keeps a table of the Canaries it hears on
+  `securacv/<id>/{availability,status,health,chain,state,meta}`, pins each
+  device's public key on first `health` (a second key is a sticky conflict),
+  and verifies chain publishes with Ed25519; `api.fleet_peers_path` makes
+  the kernel serve those rows beside its own. `online` is proven only by a
+  live chain publish verified against the pin within 180 s; wellbeing words
+  ride only on such a row while fresh. The two-row document is a shared
+  vector with the Apple TV core, and its bytes come from typed rows so they
+  cannot move with `serde_json`'s feature set.
+- **CI: rustdoc warnings fail the Rust build** (`cargo doc --no-deps
+  --document-private-items` with `RUSTDOCFLAGS=-D warnings`); the two
+  failures it found are fixed.
+
+### BLE OTA protocol v2: product and version under the signature, the floor enforced over Bluetooth
+
+- The 168-byte `BEGIN_V2` header carries product, version, size and digest
+  under one domain-separated Ed25519 signature (`scv-ble-ota-v2`), emitted by
+  `ota_release.py` as the manifest's `ble_signature`. The Canary verifies
+  first, refuses an image for another product, and runs the version through
+  the pull engine's own decision against max(running, NVS floor) — the same
+  rule as network updates. Rescue downgrades and legacy v1 headers still work
+  through the BOOT-button gate (short tap within 30 s, single use); every such
+  acceptance is logged as a floor bypass and shown as `break_glass` in
+  `/api/bluetooth/ota`. The companion page sends v2 automatically and says
+  when an older manifest can only be installed via that rescue path.
+  Host-tested with real Ed25519 (255 checks); device path compile-tested.
+
+### CI: a sharded display build, composite toolchain actions, a derived SBOM
+
+- **The canary-display PlatformIO build runs as five parallel legs by board
+  family** (`flavors.json` `shards`; `flavor_envs.py --build-matrix`
+  derives the matrix and per-leg size guards, and refuses a partition that
+  drops an env). The display's check is now five checks named `PlatformIO
+  Build (canary-display/<shard>)`.
+- **PlatformIO, Emscripten, libseccomp and the freshness workflows' issue
+  fallback are each provisioned by one composite action** under
+  `.github/actions/`; `CI.md` R10 is machine-checked, and R9 recognizes a
+  composite that carries `setup-python`.
+- **The firmware SBOM is generated from the build inputs and committed**
+  (`scripts/gen_firmware_sbom.py` → `sbom/sbom-firmware.cdx.json`, byte-gated
+  in `lint.yml`, resolver cross-checked against `pio project config` in
+  `sbom.yml`) instead of typed into a workflow; a platform pin that moves
+  without `PLATFORM_FACTS` fails generation.
+
+### Lab / emulator: the preview runs the firmware's Wi-Fi join policy
+
+- `emu_net.cpp` includes `common/network/wifi_join_policy.h` directly and
+  drives its retry through it with the display's own constants; the local
+  copy of the outage decision is gone. An emulator booted with Wi-Fi off no
+  longer reboots after five minutes, and the serial and wire logs show the
+  firmware's real reconnect cadence. `scripts/lint_wifi_join_policy.py` now
+  refuses any supervisor that does not consume the shared header directly or
+  regrows a local schedule.
+
 ### Break-glass: who asked, and why, is part of what the trustees sign (§3.6)
 
 - **Operator context is bound into the request hash.** An unlock request now
