@@ -1044,8 +1044,18 @@ export function buildNvsWifiImage(ssid, pass, partitionSize) {
 // keys are written as a unit only when a broker host is given. Validates like native
 // (throws on a bad value); pure + host-tested. The parity of the KEY SET with native
 // is drift-gated in tests/desktop_parity.test.js.
+//
+// Broker TLS (firmware/common/network/mqtt_transport_logic.h): `mqttTls` is
+// the mode byte — 0 plain (default, nothing written), 1 CA-verified, 2
+// fingerprint-pinned, 3 lab/unverified — written as u8 `mqtt_tls`; `mqttCa`
+// (PEM) → string `mqtt_ca`; `mqttFp` (SHA-256, 64 hex digits, ':' optional)
+// → string `mqtt_fp`. The firmware FAILS CLOSED on an incomplete pair (mode 1
+// with no CA, mode 2 with no pin), so this refuses the same combinations up
+// front rather than seeding a board that will refuse to connect. The mode
+// names are accepted too ("plain" | "ca" | "fingerprint" | "insecure").
+export const MQTT_TLS_MODES = Object.freeze({ plain: 0, ca: 1, fingerprint: 2, insecure: 3 });
 export function mqttProvisioningToNvs(p = {}) {
-  const strings = {}, u16 = {};
+  const strings = {}, u16 = {}, u8 = {};
   const enc = new TextEncoder();
   const blen = (v) => enc.encode(v).length;
   const str = (v) => (v == null ? "" : String(v));
@@ -1069,8 +1079,28 @@ export function mqttProvisioningToNvs(p = {}) {
     const pass = str(p.mqttPass);
     if (blen(pass) > 64) throw new Error("MQTT password must be ≤64 bytes");
     if (pass) strings.mqtt_pass = pass;
+
+    let mode = p.mqttTls == null || p.mqttTls === "" ? 0 : p.mqttTls;
+    if (typeof mode === "string" && mode in MQTT_TLS_MODES) mode = MQTT_TLS_MODES[mode];
+    mode = Number(mode);
+    if (!Number.isInteger(mode) || mode < 0 || mode > 3)
+      throw new Error("MQTT TLS mode must be 0 (plain), 1 (CA), 2 (fingerprint) or 3 (lab)");
+    const ca = str(p.mqttCa).trim();
+    const fp = str(p.mqttFp).trim();
+    if (ca) {
+      if (blen(ca) > 3070) throw new Error("MQTT broker CA must be ≤3070 bytes of PEM");
+      if (!ca.includes("-----BEGIN CERTIFICATE-----") || !ca.includes("-----END CERTIFICATE-----"))
+        throw new Error("MQTT broker CA must be a PEM certificate (BEGIN/END CERTIFICATE lines)");
+    }
+    if (fp && !/^(?:[0-9a-fA-F]{2}(?:[: ]?)){31}[0-9a-fA-F]{2}$/.test(fp))
+      throw new Error("MQTT broker fingerprint must be a SHA-256 (64 hex digits, ':' separators optional)");
+    if (mode === MQTT_TLS_MODES.ca && !ca) throw new Error("MQTT TLS mode 'CA' needs the broker CA certificate");
+    if (mode === MQTT_TLS_MODES.fingerprint && !fp) throw new Error("MQTT TLS mode 'fingerprint' needs the broker fingerprint");
+    if (mode !== 0) u8.mqtt_tls = mode;
+    if (ca) strings.mqtt_ca = ca + "\n";
+    if (fp) strings.mqtt_fp = fp;
   }
-  return { strings, u16 };
+  return { strings, u16, u8 };
 }
 
 // ── the device's local-API bearer credential ────────────────────────────────
