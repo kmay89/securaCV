@@ -128,7 +128,8 @@ tag after this merges deserves a look at its logs), and rebuild the emulator
 `dist/` (dispatched to the pinned-emsdk workflow). What was left — 7 rows in
 full and 2 in part — was hardware-bound (items 2, 22 and the §5 bench steps),
 Apple-toolchain-bound (5, 6, 13), a maintainer decision (30's version spread,
-42, 51), and the device package's Parametrize wave.
+42, and — until it landed later the same day with its premise corrected, see
+the row — 51), and the device package's Parametrize wave.
 
 ### Landed in wave 4
 
@@ -174,7 +175,9 @@ the rows above**: what is still open is hardware-, Apple-, decision- or
 refactor-bound, and a docs pass cannot reach it. (The nearest miss is 51
 — the wave's new mirror brief records `brand/` as mirror-owned, but the
 row's open half, moving those assets to the HACS brands repo and out of
-the mirror, is the maintainer decision it always was.) Recorded here so
+the mirror, is the maintainer decision it always was. Row 51 landed on
+2026-09-08 with that premise corrected — `brand/` is carried, not
+mirror-owned; see the row.) Recorded here so
 the ledger stays complete:
 
 - **Monorepo (#1647), docs, comments and lint scripts only.** Wrong or
