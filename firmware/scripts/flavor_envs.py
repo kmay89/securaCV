@@ -29,13 +29,22 @@ This script is the one place a workflow gets that list from:
         the same list with the `canary-display-` prefix stripped — the short
         names the release's staging/signing loops key on
 
+    python3 firmware/scripts/flavor_envs.py --build-matrix
+        firmware.yml's `build-platformio` matrix as one line of JSON: every
+        product from flavors.json, with a product that declares `shards`
+        expanded into one leg per shard (see build_legs). The `flavors` job
+        runs this; the manifest is validated first, so a shard list that
+        drops an env fails that job instead of silently not building it.
+
     python3 firmware/scripts/flavor_envs.py --check-workflows
         the lint: every literal `canary-display-<x>` token in any workflow
         under .github/workflows/ must name an env flavors.json declares, so a
         typo'd or retired env can't hide in a workflow; also validates that
-        `release_envs` is a subset of `build_envs` and that every release env
-        has its flasher catalog product (canary-local/devices/flash.json).
-        Exit 1 with every problem listed. Run from lint.yml.
+        `release_envs` is a subset of `build_envs`, that every release env
+        has its flasher catalog product (canary-local/devices/flash.json),
+        and that a product's `shards` partition its build_envs exactly with
+        one PLATFORMIO_CORE_DIR class per shard. Exit 1 with every problem
+        listed. Run from lint.yml.
 
 stdlib only. Run from any directory (the repo root is resolved from this
 file's own location).
@@ -67,6 +76,11 @@ LINTED_PRODUCTS = ("canary-display",)
 DEFAULT_CORE = "default"
 ISOLATED_CORE = "isolated"
 
+# A shard label names a job leg ("PlatformIO Build (<product>/<label>)") and a
+# cache key component (<product>-shard-<label>); keep it to what both accept.
+SHARD_LABEL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+GUARD_BIN_RE = re.compile(r"^\.pio/build/([^/]+)/")
+
 
 def load_flavors() -> list[dict]:
     return json.loads(FLAVORS.read_text(encoding="utf-8"))
@@ -93,6 +107,58 @@ def core_of(entry: dict, env: str) -> str:
     if env in (entry.get("isolated_core_envs") or []):
         return ISOLATED_CORE
     return DEFAULT_CORE
+
+
+def shards_of(entry: dict) -> dict[str, list[str]] | None:
+    """The product's `shards` — label -> env list, in manifest order — or None
+    when the product builds as one leg."""
+    shards = entry.get("shards")
+    if shards is None:
+        return None
+    return {str(label): list(envs or []) for label, envs in shards.items()}
+
+
+def guard_env(guard: dict) -> str | None:
+    """The env whose build dir a size guard's bin sits in (.pio/build/<env>/)."""
+    m = GUARD_BIN_RE.match(str(guard.get("bin", "")))
+    return m.group(1) if m else None
+
+
+def build_legs(entry: dict) -> list[dict]:
+    """firmware.yml's `build-platformio` matrix entries for one product.
+
+    Without `shards`: one leg — the manifest entry plus `leg`, `shard` and
+    `cache_name`, so the workflow reads the same fields for every product and
+    the cache key of an unsharded product is byte-identical to what it was.
+    With `shards`: one leg per shard, `build_envs` narrowed to that shard's
+    envs in BUILD_ENVS order (the order the single job always built them in,
+    which is also what keeps a shard on one PLATFORMIO_CORE_DIR — validate()
+    refuses a shard that mixes classes), and `size_guards` narrowed to the
+    bins those envs produce: a guard fires right after its env in the build
+    loop, so a guard for another leg's env could never fire here anyway, and
+    narrowing keeps each leg's FLAVOR_JSON honest about what it checks.
+    """
+    name = str(entry.get("name"))
+    shards = shards_of(entry)
+    if shards is None:
+        return [dict(entry, leg=name, shard="", cache_name=name)]
+    build = list(entry.get("build_envs") or [])
+    legs: list[dict] = []
+    for label, envs in shards.items():
+        chosen = [env for env in build if env in envs]
+        guards = [g for g in (entry.get("size_guards") or [])
+                  if guard_env(g) in chosen]
+        leg = dict(entry, build_envs=chosen, size_guards=guards,
+                   leg=f"{name}/{label}", shard=label,
+                   cache_name=f"{name}-shard-{label}")
+        leg.pop("shards", None)
+        legs.append(leg)
+    return legs
+
+
+def build_matrix(flavors: list[dict]) -> list[dict]:
+    """Every product's legs, in manifest order — the whole build matrix."""
+    return [leg for entry in flavors for leg in build_legs(entry)]
 
 
 def ordered_release_envs(entry: dict) -> list[str]:
@@ -148,6 +214,39 @@ def validate(flavors: list[dict]) -> list[str]:
             if env not in build_set:
                 problems.append(f"{name}: core_dir_groups names '{env}', "
                                 f"which is not in build_envs")
+        shards = shards_of(entry)
+        if shards is not None:
+            home: dict[str, str] = {}
+            for label, envs in shards.items():
+                if not SHARD_LABEL_RE.match(label):
+                    problems.append(f"{name}: shard label '{label}' must match "
+                                    f"[a-z0-9][a-z0-9-]* — it names a job leg "
+                                    f"and a cache key")
+                if not envs:
+                    problems.append(f"{name}: shard '{label}' is empty")
+                classes = sorted({core_of(entry, e) for e in envs if e in build_set})
+                if len(classes) > 1:
+                    problems.append(
+                        f"{name}: shard '{label}' mixes PLATFORMIO_CORE_DIR "
+                        f"classes {classes} — one shard, one toolchain "
+                        f"download; split it along the core_dir_groups / "
+                        f"isolated_core_envs line")
+                for env in envs:
+                    if env not in build_set:
+                        problems.append(f"{name}: shard '{label}' names '{env}', "
+                                        f"which is not in build_envs")
+                    elif env in home:
+                        problems.append(f"{name}: '{env}' is in shards "
+                                        f"'{home[env]}' and '{label}' — an env "
+                                        f"builds in exactly one leg")
+                    else:
+                        home[env] = label
+            missing = [env for env in build if env not in home]
+            if missing:
+                problems.append(
+                    f"{name}: build env(s) {', '.join(missing)} are in no shard "
+                    f"— once `shards` is declared every build_env must land in "
+                    f"exactly one leg, or CI quietly stops compiling it")
         release = entry.get("release_envs")
         if release is None:
             continue
@@ -213,9 +312,21 @@ def main(argv: list[str] | None = None) -> int:
                     help="strip the '<product>-' prefix from each env")
     ap.add_argument("--check-workflows", action="store_true",
                     help="lint: workflows name only envs flavors.json declares")
+    ap.add_argument("--build-matrix", action="store_true",
+                    help="print firmware.yml's build-platformio matrix (shards "
+                         "expanded) as one line of JSON")
     args = ap.parse_args(argv)
 
     flavors = load_flavors()
+
+    if args.build_matrix:
+        problems = validate(flavors)
+        if problems:
+            for p in problems:
+                print(f"::error::{p}", file=sys.stderr)
+            return 1
+        print(json.dumps(build_matrix(flavors), separators=(",", ":")))
+        return 0
 
     if args.check_workflows:
         problems = validate(flavors) + check_workflows(flavors)
@@ -227,13 +338,16 @@ def main(argv: list[str] | None = None) -> int:
                   f"set must be a subset of what CI builds.")
             return 1
         n = sum(len(e.get("release_envs") or []) for e in flavors)
+        legs = len(build_matrix(flavors))
         print(f"flavor_envs.py --check-workflows: OK — workflows name only "
               f"declared envs; {n} release env(s) all in build_envs with a "
-              f"flasher product.")
+              f"flasher product; {len(flavors)} product(s) build as {legs} "
+              f"matrix leg(s).")
         return 0
 
     if not args.product:
-        ap.error("a product name is required unless --check-workflows is given")
+        ap.error("a product name is required unless --check-workflows or "
+                 "--build-matrix is given")
     entry = find_product(flavors, args.product)
     envs = ordered_release_envs(entry) if args.release else list(entry.get("build_envs") or [])
     prefix = f"{args.product}-"
