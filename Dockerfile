@@ -58,12 +58,16 @@ COPY --from=build /app/target/release/witnessd /usr/local/bin/witnessd
 # log/vault this container owns under /data, without copying the encrypted
 # database out of the volume. Already compiled by the build above (none of
 # these are feature-gated); adds binaries only, no extra runtime deps and
-# no new listening ports.
+# no new listening ports. (`log_anchor` here is the offline flow plus
+# `list`/`verify` structural checks: this image has neither the `tsa` feature
+# nor the `openssl` CLI.)
 COPY --from=build /app/target/release/log_verify /usr/local/bin/log_verify
 COPY --from=build /app/target/release/export_events /usr/local/bin/export_events
 COPY --from=build /app/target/release/export_verify /usr/local/bin/export_verify
 COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_verify
 COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
+COPY --from=build /app/target/release/log_anchor /usr/local/bin/log_anchor
+COPY --from=build /app/target/release/court_export /usr/local/bin/court_export
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799
 # The default build of this image terminates no TLS in-process, so witnessd

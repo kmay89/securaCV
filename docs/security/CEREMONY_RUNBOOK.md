@@ -65,7 +65,7 @@ The KSK ceremony roles, mapped onto ours. "Trustee" is the SecuraCV word;
 | Internal Witness | **Ceremony witness** — a person who is neither trustee nor operator | the exceptions register | nothing on the kernel | approve, operate | **PROC** → §3.4 witness co-signature. No kernel principal exists for this role |
 | Safe Security Controller | **Device-key custodian**; in keyguard mode also the **Vault-passphrase custodian** | where `DEVICE_KEY_SEED` lives; `SECURACV_VAULT_PASSPHRASE` (environment or secrets manager, never on disk) | sets the environment for the operator's commands | — | **CODE** for the on-disk part (the keyguard never writes the plaintext key); custody itself **PROC** |
 | Recovery Key Share Holder | **none** | — | — | — | **GAP** → §2.3 recovery quorum. If fewer than *n* current trustees remain, there is no in-band recovery |
-| External witness / auditor | **Observer** | `device.pub` (the genesis public key), `tsa-ca.pem`, and the **database key** from the operator's `break_glass db-key` (passed as `--db-key` / `SECURACV_DB_KEY`) — never `DEVICE_KEY_SEED` | `receipts --public-key-file`, `policy history --public-key-file`, `policy show`, `log_verify --public-key-file`, `log_anchor verify --ca` | change anything; hold the signing seed | **CODE** — every one of these opens the database with the database key alone and writes nothing (except `log_anchor`, which creates its table if missing); the database key signs nothing, so an observer cannot forge what they audit |
+| External witness / auditor | **Observer** | `device.pub` (the genesis public key), `tsa-ca.pem` (or the anchor policy file and each TSA's CA), and the **database key** from the operator's `break_glass db-key` (passed as `--db-key` / `SECURACV_DB_KEY`) — never `DEVICE_KEY_SEED` | `receipts --public-key-file`, `policy history --public-key-file`, `policy show`, `log_verify --public-key-file`, `log_anchor verify --ca`, `log_anchor verify --policy` | change anything; hold the signing seed | **CODE** — every one of these opens the database with the database key alone and writes nothing (`log_anchor list` / `verify` / `query` open it read-only); the database key signs nothing, so an observer cannot forge what they audit |
 
 Vocabulary: a *ceremony witness* is a person. The *witness kernel* and a
 *tlog witness* are software. Beacon/Chirp co-signing is unrelated.
@@ -135,7 +135,7 @@ Common to every ceremony; each ceremony adds its own preconditions.
 | Ledger verdict | `log_verify --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --public-key-file device.pub [--high-water-mark hwm.bin]` (an observer passes `--db-key` instead of the seed) | verdict `valid` — not `self-consistent; identity unverified` | **CODE** labels; distributing `device.pub` out of band is **PROC** |
 | Roster matches the CPS | `break_glass policy show --db witness.db --device-key-seed "$DEVICE_KEY_SEED"` | ids and fingerprints match CPS App. C | **CODE** prints; the comparison is **PROC** |
 | History intact | `break_glass policy history --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --public-key-file device.pub` | `Verifying key: pinned out of band …` then `History chain VALID (<k> entries).` — rows signed before a key rotation verify under the lineage | **CODE** |
-| Anchors | `log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" verify --ca tsa-ca.pem` | no anchor `UNVERIFIED`; note the newest anchor's age | **CODE** |
+| Anchors | `log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" verify --ca tsa-ca.pem` or `verify --policy anchor-policy.json` | no anchor `UNVERIFIED`; with a policy, `anchor policy anchor-policy.json: SATISFIED`; note the newest anchor's age | **CODE** |
 | Receipt baseline | `break_glass receipts --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --public-key-file device.pub` | `Verifying key: pinned out of band …`, `Total: <k>`, no INVALID; record *k*. Without `--public-key-file` the tool says `self-consistent; identity unverified` and the baseline is not evidence | **CODE** |
 | Room | attendance, roles, channel check, script hash distributed, clock check, `BUILD.md` written | — | **PROC** |
 
@@ -203,9 +203,10 @@ decided in advance (see step 2).
 Key-reuse refusal → not an exception; choose another key. A trustee who cannot
 confirm their fingerprint → do not enroll them (E-entry).
 
-**Close-out.** §6. Note that the policy-history chain has no printed head
-hash today (**GAP**): anchor the sealed-log chain head and record the history
-row count.
+**Close-out.** §6. Anchor the sealed-log chain head and the policy-change
+head (`--subject policy_head`) and record the history row count (the head is
+not printed by `policy history` yet — **GAP** for the display, **CODE** for the
+anchor).
 
 **Retain.** The draft (public data), the key-custody record (never the keys),
 `policy history` and `policy show` captures, the drill output.
@@ -413,45 +414,96 @@ is never evidence.
 
 ### C5 — Anchoring (RFC 3161)
 
-**Subjects** (**CODE**): `chain_head` (default — the newest sealed-event
-entry hash) and `digest` (`--digest <hex>`: an export envelope's digest, or a
-receipt head taken from the last `entry_hash` printed by
-`receipts --verbose`).
+**Subjects** (**CODE**): `chain_head` (default), `export_receipt_head`,
+`break_glass_receipt_head`, `policy_head` (`--subject`), and `digest`
+(`--digest <hex>` / `--file <path>`). A head subject anchors the newest
+`entry_hash` of that ledger; `--file` hashes a file's bytes in-tool (the
+export-bundle digest `court_export` looks for). The subject is what the row
+*claims*; `verify` re-derives membership from the ledger the row names.
 
-**Steps, online** (a build with `--features tsa`):
+**Anchor policy** (`anchor-policy.json`, format `securacv-anchor-policy:v1`;
+example in `docs/timestamping.md`): names each TSA, its CA file, and the role
+the operator *declares* for it — `qualified` or `independent` — plus the
+ledger heads to anchor and the coverage rule (`require_roles`,
+`min_distinct_tsas`). The roles are declarations: whether a TSA is
+eIDAS-qualified is checked against the trusted list by a person and written
+into the entry's `declaration` (**PROC**; see `PROVENANCE_INTEROP.md` §1.1).
+Count, distinctness, and which TSA a token is attributed to are checked
+(**CODE**): a row is attributed to the entry whose CA validates its
+countersignature under `openssl ts -verify`; `cert_sha256` pins break
+CA-overlap ties (two TSAs chaining to one public root) only after that
+countersignature check has succeeded, and otherwise only contradict.
+
+**Steps, online** (a build with `--features tsa`; the cron entry):
 ```sh
-log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" request --url https://freetsa.org/tsr
-log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" request --url <second, independent TSA>
+log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" anchor-all --policy anchor-policy.json
 ```
-One of the two should be eIDAS-qualified (**PROC**; see `PROVENANCE_INTEROP.md`
-§1.1).
+Every run sends `|subjects| × |TSAs|` requests — an empty ledger is anchored
+over its sentinel — so the schedule carries no signal (**CODE**); the imprints
+themselves are visible to the TSA (**PROC**: fixed schedule, and see
+`timestamping.md` for the residual). A second token over an unchanged head is
+an expected duplicate row, not a defect. Single heads can still be anchored
+by hand with `request --url A --url B [--subject S]`; a hand-run request is
+not a schedule, so the manual verbs refuse an empty ledger rather than
+anchoring its sentinel.
 
 **Steps, offline / air-gapped:**
 ```sh
-log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" query --out chain.tsq
-# move chain.tsq to a connected machine, submit it, bring chain.tsr back
-log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" import --response chain.tsr --url <TSA>
+log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" anchor-all --policy anchor-policy.json --offline-dir out/
+# move out/*.tsq to a connected machine, submit every .tsq to every TSA (the
+# tool prints one curl line per pair), bring out/*.tsr back
+log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" import --policy anchor-policy.json --response out/*.tsr
+log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" verify --policy anchor-policy.json
 ```
-`import` labels the anchor by whether the response's imprint is in this
-database's chain history: a hit is stored as `chain_head`; a miss is stored
-as a generic `digest` anchor with the stderr note `imprint … is not in this
-DB's chain history` (**CODE**). Nothing is refused — and a receipt-head
-anchor always takes the `digest` branch, so that note is the expected
-outcome of step 2 in §6, not a failed step.
+Bring the responses back within the retention window (default 7 days); a
+head pruned before import can only be stored as `digest`. `import` labels the
+anchor by the ledger the response's imprint is found in: a hit in any ledger
+is stored under that ledger's head subject; a miss is stored as `digest` with
+the stderr note `imprint … is not in this DB's chain or receipt-ledger
+history`; a sentinel is named as such (**CODE**). Nothing is refused for a
+miss; with `--policy` and `openssl` on `PATH`, a response that does not
+verify under its declared TSA's CA is refused (**CODE**). Receipt heads
+imported before this release stay `digest` — no membership check, no policy
+credit; re-anchor them with typed subjects at the next C5 for policy credit
+(the court kit already packages a `digest` row over the disclosure's own
+receipt by hash).
 
-**Check:** `log_anchor … list`, then `log_anchor … verify --ca tsa-ca.pem` →
-each anchor OK or `UNVERIFIED` (**CODE** — without `--ca` nothing is
-cryptographically verified and the tool says so).
+**Check:** `log_anchor … list`, then `log_anchor … verify --policy
+anchor-policy.json` → `anchor policy anchor-policy.json: SATISFIED` and no
+anchor `UNVERIFIED` (**CODE** — without `--ca` or `--policy` nothing is
+cryptographically verified and the tool says so; `verify --policy` refuses to
+run without the `openssl` CLI rather than degrade). `current head: NO` is
+normal between ceremonies (the chain head moves with every heartbeat); at
+close-out pass `--require-current`.
+
+**Version mix:** upgrade `witnessd` before anchoring chain heads with these
+tools — an older `witnessd` prunes anchored heads at every retention pass
+(only this release's `witnessd` keeps an anchored chain head as a signed
+checkpoint row). A head already lost that way reports `anchored hash is not
+in chain history`; `log_anchor … relabel --id <n> --subject digest` records
+that membership is no longer asserted without touching the token (it refuses
+a head newer than the signed retention cutoff — that shape is truncation, not
+a legacy prune — and never upgrades a subject) (**CODE**). Record every
+`relabel` in the exceptions register (**PROC**).
+
+**`policy_head` note:** the policy-change history is empty only on a database
+whose policy came solely through the ungated library API (fixtures, `drill`
+sandboxes); every runbook path (`policy set`, guided setup, the served
+console) is gated and writes the history row. `anchor-all` anchors the
+sentinel for an empty ledger; the manual verbs report
+`policy-change history is empty: nothing to anchor`.
 
 **Honest scope.** Anchors are checked only by `log_anchor verify`: imprint
-against the row for every anchor, chain membership for `chain_head` anchors,
-and the countersignature when `--ca` is given. No anchor of either kind is
+against the row for every anchor, membership in the declared ledger for every
+head subject, the countersignature when `--ca` or `--policy` is given, and
+two-TSA count / distinctness under `--policy`. No anchor of any kind is
 cross-bound into `log_verify` / `run_full_verify` — a `valid` verdict there
 says nothing about the anchors table (**GAP** → §4; `ENTERPRISE_CUSTODY.md`
 §2). The anchors table is not itself chained: export `tsa_anchors.token_der`
 with every backup (**PROC**). An OpenTimestamps leg and clock-provenance
-events are **GAP** (§4). Anchor on a fixed schedule, never in reaction to
-incidents, so timing carries no signal (**PROC**).
+events are **GAP** (§4). No shipped image carries the `openssl` CLI or the
+`tsa` feature: online `anchor-all` and `verify --ca` / `--policy` run from an
+operator host (**PROC**).
 
 ### C6 — Keyguard issuance (vault passphrase)
 
@@ -550,9 +602,8 @@ rotate per bucket automatically.
    `policy history --public-key-file …`, and
    `log_verify [--high-water-mark …] --public-key-file …`, captured; counts
    before and after the ceremony.
-2. Anchor (C5): the sealed-log chain head, and the newest receipt
-   `entry_hash` as a `digest` anchor; then `log_anchor verify --ca` — nothing
-   `UNVERIFIED`.
+2. Anchor (C5): `anchor-all --policy` then `verify --policy
+   --require-current` — `SATISFIED`, nothing `UNVERIFIED`.
 3. `CLOSEOUT.md`: participants, script hash, every artifact with its SHA-256
    (`MANIFEST.sha256`), the exceptions summary, the witness statement, anchor
    ids and TSA `genTime`.
@@ -593,7 +644,10 @@ rotate per bucket automatically.
 | Human-readable receipt rendering | **CODE** | `receipts --verbose` |
 | Keyguard container for a new vault | **CODE** | `SECURACV_VAULT_PASSPHRASE` → MKG1 |
 | Signed high-water-mark; fail-closed verify | **CODE** | `SECURACV_HWM_PATH`; `log_verify --high-water-mark` |
-| Anchor verification labeling | **CODE** | `log_anchor verify --ca`; `UNVERIFIED` otherwise |
+| Anchor verification labeling | **CODE** | `log_anchor verify --ca …` / `--policy`; `UNVERIFIED` otherwise |
+| Two-TSA distinctness, count, and declared roles | **CODE** (attribution by CA under openssl; pins for CA overlap) / **PROC** (legal qualification) | `log_anchor verify --policy` |
+| Receipt heads anchored as typed subjects | **CODE** | `--subject`, `anchor-all` |
+| Constant per-run anchor request count (no event-correlated egress) | **CODE** | `anchor-all`: subjects × TSAs, empty-ledger sentinel |
 | Verdict honesty | **CODE** | `valid` vs `self-consistent; identity unverified`; `receipts` / `policy history` print `Verifying key: pinned out of band` vs `read from the audited database` |
 | Observer verification without the signing seed | **CODE** | `--db-key` / `SECURACV_DB_KEY` on every verifier, including `policy history` / `policy show`; `break_glass db-key` derives it |
 | History verified under the rotation lineage | **CODE** | `policy history` checks each row against every validated lineage key |
@@ -608,7 +662,7 @@ rotate per bucket automatically.
 | Trustee key wrapping, hardware keys, enrollment attestation | **GAP** → §3.7 | plaintext 0600 key files; read-back |
 | Recovery quorum | **GAP** → §2.3 | none — loss of quorum has no in-band recovery |
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
-| Anchors cross-bound into full verify (`log_verify`) | **GAP** → §4 | `log_anchor verify` only; `digest` anchors of receipt heads |
+| Anchors cross-bound into full verify (`log_verify`) | **GAP** → §4 | `log_anchor verify` only; receipt heads are typed subjects there but not part of the ledger verdict |
 | Handoff sidecars for unseal outputs | **GAP** → §5 | `CLOSEOUT.md` digests |
 | Device-key rotation and database re-key commands | **GAP** | library APIs only |
 | Trustee key generation / public-key helper | **GAP** | external Ed25519 tool |

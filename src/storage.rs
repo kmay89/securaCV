@@ -277,6 +277,70 @@ pub fn ensure_columns(
     Ok(())
 }
 
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let mut stmt =
+        conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1")?;
+    let mut rows = stmt.query(params![name])?;
+    Ok(rows.next()?.is_some())
+}
+
+/// Write one device-signed checkpoint row `(cutoff_id, head)`. The cutoff is
+/// bound into the signature (`log::checkpoint_message`): after a
+/// full-retention prune it is what the high-water-mark check reconciles
+/// against, so it cannot stay an unsigned column. Used once for the real
+/// cutoff and once per anchored head inside the prune range — same signer,
+/// same `created_at`, identical PQ columns.
+fn write_checkpoint(
+    store: &mut SqliteSealedLogStore,
+    head: &[u8; 32],
+    cutoff_id: i64,
+    created_at: i64,
+    signature_keys: &SignatureKeys<'_>,
+) -> Result<()> {
+    let checkpoint_sig = sign_entry(
+        signature_keys,
+        &crate::log::checkpoint_message(head, cutoff_id),
+        DOMAIN_CHECKPOINT,
+    )?;
+    let checkpoint_pq_signature = checkpoint_sig
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.signature.clone());
+    let checkpoint_pq_scheme = checkpoint_sig
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.scheme_id.clone());
+
+    // Record which device key signed this checkpoint so verification picks the correct
+    // key after a signing-key rotation (and can seed the chain when earlier events are pruned).
+    let signer_public_key = signature_keys.ed25519.verifying_key().to_bytes().to_vec();
+
+    store.conn.execute(
+        r#"
+        INSERT INTO checkpoints(
+            created_at,
+            cutoff_event_id,
+            chain_head_hash,
+            signature,
+            pq_signature,
+            pq_scheme,
+            signer_public_key
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "#,
+        params![
+            created_at,
+            cutoff_id,
+            head.to_vec(),
+            checkpoint_sig.ed25519_signature,
+            checkpoint_pq_signature,
+            checkpoint_pq_scheme,
+            signer_public_key
+        ],
+    )?;
+    Ok(())
+}
+
 impl SealedLogStore for SqliteSealedLogStore {
     fn append_record(
         &mut self,
@@ -350,6 +414,18 @@ impl SealedLogStore for SqliteSealedLogStore {
         Ok(())
     }
 
+    /// Prune events older than `retention` behind a device-signed checkpoint.
+    ///
+    /// An anchored chain head is a hash a third party countersigned; pruning
+    /// must not make it unrecognizable, so it survives as a signed checkpoint
+    /// row — the structure every verifier already treats as chain history.
+    /// One extra checkpoint `(cutoff_event_id = e, chain_head_hash = H)` is
+    /// written for every anchored hash `H` at event `e` inside the prune
+    /// range, in ascending id order, before the real cutoff checkpoint, all
+    /// inside the one transaction. Only hashes that already have an anchor
+    /// row are preserved (an offline query with no response yet is not). The
+    /// store never creates `tsa_anchors`; its absence means no anchors. The
+    /// pruner never consults anchors to decide *whether* to prune.
     fn enforce_retention_with_checkpoint(
         &mut self,
         retention: Duration,
@@ -377,52 +453,41 @@ impl SealedLogStore for SqliteSealedLogStore {
         }
         let mut head = [0u8; 32];
         head.copy_from_slice(&head_bytes);
+        drop(rows);
+        drop(stmt);
 
-        // The cutoff is bound into the signature (log::checkpoint_message): after
-        // a full-retention prune it is what the high-water-mark check reconciles
-        // against, so it cannot stay an unsigned column.
-        let checkpoint_sig = sign_entry(
-            signature_keys,
-            &crate::log::checkpoint_message(&head, cutoff_id),
-            DOMAIN_CHECKPOINT,
-        )?;
-        let checkpoint_pq_signature = checkpoint_sig
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.signature.clone());
-        let checkpoint_pq_scheme = checkpoint_sig
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.scheme_id.clone());
         let created_at = now_s()? as i64;
 
-        // Record which device key signed this checkpoint so verification picks the correct
-        // key after a signing-key rotation (and can seed the chain when earlier events are pruned).
-        let signer_public_key = signature_keys.ed25519.verifying_key().to_bytes().to_vec();
-
-        store.conn.execute(
-            r#"
-            INSERT INTO checkpoints(
-                created_at,
-                cutoff_event_id,
-                chain_head_hash,
-                signature,
-                pq_signature,
-                pq_scheme,
-                signer_public_key
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-            params![
-                created_at,
-                cutoff_id,
-                head.to_vec(),
-                checkpoint_sig.ed25519_signature,
-                checkpoint_pq_signature,
-                checkpoint_pq_scheme,
-                signer_public_key
-            ],
-        )?;
+        // Anchored heads inside the prune range (any subject: a `digest` row
+        // over a chain head is still a countersigned head), ascending, so
+        // the real cutoff checkpoint keeps the highest id and stays what
+        // `latest_checkpoint` reads.
+        let anchored: Vec<(i64, [u8; 32])> = if table_exists(&store.conn, "tsa_anchors")? {
+            let mut stmt = store.conn.prepare(
+                "SELECT DISTINCT e.id, e.entry_hash FROM sealed_events e
+                 WHERE e.id < ?1
+                   AND EXISTS (SELECT 1 FROM tsa_anchors a WHERE a.subject_hash = e.entry_hash)
+                 ORDER BY e.id ASC",
+            )?;
+            let rows = stmt.query_map(params![cutoff_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (id, hash) = row?;
+                let hash: [u8; 32] = hash
+                    .try_into()
+                    .map_err(|_| anyhow!("corrupt sealed log: entry_hash size"))?;
+                out.push((id, hash));
+            }
+            out
+        } else {
+            Vec::new()
+        };
+        for (event_id, anchored_head) in anchored {
+            write_checkpoint(store, &anchored_head, event_id, created_at, signature_keys)?;
+        }
+        write_checkpoint(store, &head, cutoff_id, created_at, signature_keys)?;
 
         store.conn.execute(
             "DELETE FROM sealed_events WHERE id <= ?1",

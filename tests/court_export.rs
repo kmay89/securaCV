@@ -3,6 +3,9 @@
 //! a foreign database), attest every kit file by hash in the manifest, and
 //! say honestly whether any RFC 3161 token covers the evidence bytes.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -581,5 +584,297 @@ fn tampered_interior_receipt_row_is_refused() -> Result<()> {
         "stderr: {stderr}"
     );
     assert!(!kit.join("MANIFEST.json").exists());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Receipt-head packaging (hash-keyed) and the privacy rule for other kinds.
+// ---------------------------------------------------------------------------
+
+fn bundle_entry_hash(bundle: &Path) -> Result<[u8; 32]> {
+    let parsed: witness_kernel::ExportBundle = serde_json::from_slice(&std::fs::read(bundle)?)?;
+    Ok(parsed.receipt_entry.entry_hash)
+}
+
+fn read_manifest(kit: &Path) -> Result<serde_json::Value> {
+    Ok(serde_json::from_str(&std::fs::read_to_string(
+        kit.join("MANIFEST.json"),
+    )?)?)
+}
+
+#[test]
+fn receipt_head_anchor_is_packaged_and_marked() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let entry_hash = bundle_entry_hash(&bundle)?;
+    let entry_hash_hex = hex::encode(entry_hash);
+
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &entry_hash,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&entry_hash),
+    )?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit_receipt");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(kit
+        .join("anchors/anchor-0001-export_receipt_head.der")
+        .exists());
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["anchored"], false);
+    assert_eq!(manifest["receipt_anchored"], true);
+    assert_eq!(manifest["anchor_count"], 1);
+    assert_eq!(manifest["anchors"][0]["covers"], "receipt_entry");
+    assert_eq!(manifest["anchors"][0]["subject"], "export_receipt_head");
+    assert_eq!(
+        manifest["anchors"][0]["file"],
+        "anchors/anchor-0001-export_receipt_head.der"
+    );
+    assert_eq!(
+        manifest["anchors"][0]["tsa"]["declared_name"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        manifest["anchors"][0]["tsa"]["signer_cert_sha256"],
+        "fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542"
+    );
+
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("covers this disclosure's export receipt"),
+        "{custody}"
+    );
+    assert!(
+        custody.contains("by TSA certificate sha256:fbf1c838f80923a0… (SecuraCV Test TSA)"),
+        "{custody}"
+    );
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    let line = verification
+        .lines()
+        .find(|l| l.starts_with(&format!("openssl ts -verify -digest {entry_hash_hex}")))
+        .expect("VERIFICATION.md names the openssl invocation over the entry hash");
+    assert!(line.contains("-token_in"), "{line}");
+    assert!(
+        verification.contains("no producing database is involved"),
+        "{verification}"
+    );
+    assert!(
+        verification.contains("need the producing database"),
+        "{verification}"
+    );
+    assert!(
+        verification.contains("A token over this disclosure's export receipt is present below"),
+        "{verification}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("1 covering this disclosure's export receipt"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("WARNING: no RFC 3161 anchor covers"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("(offline: log_anchor query --db"),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn legacy_digest_row_over_own_receipt_is_packaged_by_hash() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let first = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    let second = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    let bundle_path = temp.path().join("witness_export.json");
+    std::fs::write(&bundle_path, serde_json::to_vec(&second)?)?;
+    let own = second.receipt_entry.entry_hash;
+    let other = first.receipt_entry.entry_hash;
+    assert_ne!(own, other);
+
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    // The pre-typed-subject runbook shape: the receipt hash anchored by hand
+    // as a plain digest.
+    tsa::insert_anchor(
+        &kernel.conn,
+        "digest",
+        &own,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&own),
+    )?;
+    // A digest row over a DIFFERENT receipt's entry hash: not this
+    // disclosure's business.
+    tsa::insert_anchor(
+        &kernel.conn,
+        "digest",
+        &other,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&other),
+    )?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit_legacy");
+    let out = run_court_export(&db_path, &bundle_path, &kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["anchor_count"], 1);
+    assert_eq!(manifest["receipt_anchored"], true);
+    assert_eq!(manifest["anchored"], false);
+    assert_eq!(manifest["anchors"][0]["covers"], "receipt_entry");
+    assert_eq!(manifest["anchors"][0]["subject"], "digest");
+    assert!(kit.join("anchors/anchor-0001-digest.der").exists());
+    assert!(!kit.join("anchors/anchor-0002-digest.der").exists());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("excluded"), "{stderr}");
+    assert!(!stderr.contains(&hex::encode(other)), "{stderr}");
+    Ok(())
+}
+
+/// A token really minted over the receipt entry hash verifies with the exact
+/// line the kit prints. Skipped when openssl is not on PATH.
+#[test]
+fn real_receipt_token_verifies_from_kit() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let Some(tsa_srv) = common::ThrowawayTsa::new(&temp.path().join("tsa"), "SecuraCV Test TSA")
+    else {
+        eprintln!("skipping: openssl not available");
+        return Ok(());
+    };
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let entry_hash = bundle_entry_hash(&bundle)?;
+    let token = tsa_srv.mint(&entry_hash);
+
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &entry_hash,
+        "https://tsa.example/tsr",
+        &token,
+    )?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit_real_receipt");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    let printed = verification
+        .lines()
+        .find(|l| {
+            l.starts_with(&format!(
+                "openssl ts -verify -digest {}",
+                hex::encode(entry_hash)
+            ))
+        })
+        .expect("VERIFICATION.md names the openssl invocation for the receipt token");
+    let filled = printed.replace("<tsa-ca.pem>", &tsa_srv.ca_path());
+    let argv: Vec<&str> = filled.split_whitespace().collect();
+    let run = Command::new(argv[0])
+        .current_dir(&kit)
+        .args(&argv[1..])
+        .output()?;
+    assert!(
+        run.status.success() && String::from_utf8_lossy(&run.stdout).contains("Verification: OK"),
+        "`{filled}` -> stdout {} stderr {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn break_glass_policy_sentinel_and_later_receipt_heads_are_never_packaged() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let fixture_digest: [u8; 32] = Sha256::digest(b"securacv-fixture").into();
+
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    let url = "https://tsa.example/tsr";
+    tsa::insert_anchor(
+        &kernel.conn,
+        "break_glass_receipt_head",
+        &fixture_digest,
+        url,
+        &fixture_token(),
+    )?;
+    tsa::insert_anchor(
+        &kernel.conn,
+        "policy_head",
+        &fixture_digest,
+        url,
+        &fixture_token(),
+    )?;
+    let sentinel = witness_kernel::tsa::AnchorSubject::BreakGlassReceiptHead
+        .empty_ledger_sentinel()
+        .unwrap();
+    tsa::insert_anchor(
+        &kernel.conn,
+        "digest",
+        &sentinel,
+        url,
+        &common::spliced_token(&sentinel),
+    )?;
+    let later = [0x77u8; 32];
+    tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &later,
+        url,
+        &common::spliced_token(&later),
+    )?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit_private");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!kit.join("anchors").exists(), "nothing may be packaged");
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["anchor_count"], 0);
+    assert_eq!(manifest["receipt_anchored"], false);
+    assert_eq!(manifest["anchors"].as_array().unwrap().len(), 0);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("excluded"), "{stderr}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("break_glass"), "{stdout}");
+    assert!(!stdout.contains("policy"), "{stdout}");
+    assert!(!stdout.contains("sentinel"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "0 token(s), 0 covering the bundle bytes, 0 covering this disclosure's export receipt"
+        ),
+        "{stdout}"
+    );
     Ok(())
 }

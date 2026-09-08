@@ -109,6 +109,8 @@ COPY --from=builder /build/target/release/break_glass /usr/local/bin/
 COPY --from=builder /build/target/release/log_verify /usr/local/bin/
 COPY --from=builder /build/target/release/export_events /usr/local/bin/
 COPY --from=builder /build/target/release/export_verify /usr/local/bin/
+COPY --from=builder /build/target/release/log_anchor /usr/local/bin/
+COPY --from=builder /build/target/release/court_export /usr/local/bin/
 
 # Copy add-on scripts and wizard
 COPY privacy_witness_kernel/run.sh /run.sh

@@ -54,7 +54,7 @@ where to look for the evidence behind a claim:
 | Policy-change history (rows `bootstrap` / `change`, prior-era approvals) | `break_glass policy history` | 1.3, 3.2, 4.5, 5.3, 5.6, 7.4, App. C |
 | Break-glass receipts (outcome, `trustees_used`, `policy_commitment`, purpose, operator context, `entry_hash`, human rendering) | `break_glass receipts --verbose` | 4.6, 4.7, 5.4, 7.3, 8.4 |
 | Export receipts (`auth_mode`, `window`, `artifact_hash`) | `export_verify` | 4.8, 7.5 |
-| Anchors (`tsa_anchors` rows, `token_der`, `.tsr` files) | `log_anchor list` / `log_anchor verify --ca` | 4.3, 6.8, 7.6, 8.4 |
+| Anchors (`tsa_anchors` rows, `token_der`, `.tsr` files, the anchor policy file) | `log_anchor list` / `log_anchor verify --ca` / `--policy` | 4.3, 6.8, 7.6, 8.4 |
 | Signed high-water-mark (`SCVHWM01`) | `SECURACV_HWM_PATH`; `log_verify --high-water-mark` | 5.4, 5.7, 7.7 |
 | Device key lineage (genesis `device_metadata.public_key`, rotation records, `device_key_history`) | `log_verify --lineage` | 3.4, 5.6, 6.3, 7.8 |
 | Vault health and key state | `break_glass doctor` | 6.2, 8.4 |
@@ -171,7 +171,7 @@ meanings are restated because a CPS is read by people outside the project:
 |---|---|---|---|
 | 4.1 | Creation and sealing | shipped | Events are signed and hash-chained at creation, bucketed to 10 minutes, bound to `ruleset_hash`. This is the object of custody, not a ceremony. |
 | 4.2 | Retention and pruning | shipped | Checkpoints and the retention window; the key lineage survives pruning. `{{ops.retention_policy}}` |
-| 4.3 | Anchoring | shipped (primitives) / procedural (cadence) | Runbook C5. Cadence `{{ops.anchor_cadence}}`; TSAs `{{ops.tsa_primary}}` (eIDAS-qualified: `{{yes/no}}`) and `{{ops.tsa_secondary}}`; subjects anchored: chain head, export digests, receipt heads as `digest`. Offline flow used: `{{yes/no}}`. `token_der` exported with every backup. OpenTimestamps leg: **not provided**. |
+| 4.3 | Anchoring | shipped (primitives, anchor policy, two-TSA distinctness check, constant per-run request count) / procedural (cadence, qualification) | Runbook C5. Cadence `{{ops.anchor_cadence}}`; TSAs `{{ops.tsa_primary}}` (declared eIDAS-qualified: `{{yes/no}}`) and `{{ops.tsa_secondary}}` (declared independent); subjects anchored: chain head, export digests (bundle bytes), export-receipt / break-glass-receipt / policy heads as typed subjects; anchor policy file `{{ops.anchor_policy_sha256}}` (roles are the operator's declarations). Offline flow used: `{{yes/no}}`. `token_der` exported with every backup. OpenTimestamps leg: **not provided**. |
 | 4.4 | Access requests | shipped | Who may request: `{{ops.requesters}}`. Requests carry a reason from `REASON_CODES` (`incident-review`, `legal-request`, `legal-hold`, `owner-recovery`, `safety-check`, `maintenance-audit`, `drill`), a printed name, and optional case reference; envelopes eligible: `{{ops.eligible_envelopes}}`. Runbook C3. |
 | 4.5 | Approval | shipped / procedural | n-of-m from the **current** roster (`{{n}}`-of-`{{m}}`); trustees sign what their own tool displays (WYSIWYS, shipped); blind signing (`--request-hash`) policy: `{{ops.blind_signing_policy}}`. Cooling-off, notify-all, single-trustee veto, emergency profile: **procedural** until spec §3.5 ships — the deployment's rule: `{{ops.cooling_off_rule}}`. Each receipt records the policy era it was authorized under (`policy_commitment`). |
 | 4.6 | Authorization and token handling | shipped | Single-use, bucket-bounded token written with `--output-token` (mode 0600); destroyed after use per `{{ops.token_disposal}}`; denied attempts are receipted and retained. |
@@ -218,7 +218,7 @@ meanings are restated because a CPS is read by people outside the project:
 | 7.3 Break-glass receipt | JSON payload, chained | envelope id, `request_hash`, `ruleset_hash`, `time_bucket`, `trustees_used`, `approvals_commitment`, `policy_commitment`, outcome, purpose, operator context, `request_bucket` | `spec/break_glass.md` | `break_glass receipts --verbose` |
 | 7.4 Policy-change record | JSON payload, chained | previous and new policy, `change_hash`, approvals, `bootstrap` flag, device signature | `spec/break_glass.md` | `break_glass policy history` |
 | 7.5 Export receipt | JSON payload, chained | `auth_mode`, `window`, `artifact_hash` | `spec/evidence_envelope.md` §8 | `export_verify` |
-| 7.6 Anchor record | `tsa_anchors` row + DER token | `subject` (`chain_head` / `digest`), `subject_hash`, `tsa_url`, `gen_time`, `token_der` | [`../timestamping.md`](../timestamping.md) | `log_anchor verify --ca` |
+| 7.6 Anchor record | `tsa_anchors` row + DER token | `subject` (`chain_head` / `digest` / `export_receipt_head` / `break_glass_receipt_head` / `policy_head`), `subject_hash`, `ledger_id`, `tsa_url` (recorded), `tsa_name` (declared), `signer_cert_sha256` / `signer_sid` (from the token), `gen_time`, `token_der` | [`../timestamping.md`](../timestamping.md) | `log_anchor verify --ca` / `--policy` |
 | 7.7 High-water-mark | `SCVHWM01` | `seq`, head, bucket, signer, signature | `ENTERPRISE_CUSTODY.md` §2 | `log_verify --high-water-mark` |
 | 7.8 Key-rotation record | sealed record + `device_key_history` row | new-key attestation, previous-key authorization | `spec/evidence_envelope.md` §11 step 2b | `log_verify --lineage` |
 | 7.9 Ceremony files | `securacv-unlock-request:v2`, approval JSON, proposal, policy-approval, token (sensitive), setup draft | as named | `spec/break_glass.md` | the commands that consume them |
@@ -229,7 +229,7 @@ meanings are restated because a CPS is read by people outside the project:
 |---|---|---|
 | 8.1 | Frequency | Per ceremony (the witness) and periodically (an observer): `{{audit.cadence}}`. |
 | 8.2–8.3 | Who; independence | `{{audit.who}}`; independent of trustees and operator: `{{yes/no, why}}`. |
-| 8.4 | Topics | `break_glass receipts --public-key-file` VALID and `policy history --public-key-file` `History chain VALID`, both under the pinned key (a run without one is labeled `self-consistent; identity unverified` and does not count); every anchor checked with `--ca` and none `UNVERIFIED`; high-water-mark checked; `log_verify` verdict `valid` under the out-of-band key; drill and recorded-rehearsal evidence on file; exceptions register reviewed; retention table met; CPS-versus-practice deltas listed. |
+| 8.4 | Topics | `break_glass receipts --public-key-file` VALID and `policy history --public-key-file` `History chain VALID`, both under the pinned key (a run without one is labeled `self-consistent; identity unverified` and does not count); every anchor checked with `--ca` and none `UNVERIFIED`; `verify --policy` SATISFIED; high-water-mark checked; `log_verify` verdict `valid` under the out-of-band key; drill and recorded-rehearsal evidence on file; exceptions register reviewed; retention table met; CPS-versus-practice deltas listed. |
 | 8.5 | Action on deficiency | `{{audit.deficiency}}` |
 | 8.6 | Communication of results | `{{audit.results_to}}` |
 | 8.7 | External regimes | Mapping is "designed to be compatible with" only: 21 CFR Part 11 / ALCOA+, BS 10008, FIPS 140-3 split-knowledge vocabulary, FRE 902(13)/(14), eIDAS — see `PROVENANCE_INTEROP.md`. Never "certified", "compliant", or "admissible". |
@@ -287,6 +287,7 @@ log_verify --db witness.db --public-key-file device.pub [--high-water-mark hwm.b
 break_glass receipts --db witness.db --public-key-file device.pub --verbose
 break_glass policy history --db witness.db --public-key-file device.pub
 log_anchor --db witness.db verify --ca tsa-ca.pem
+log_anchor --db witness.db verify --policy anchor-policy.json
 sha256sum <disclosed files>            # against CLOSEOUT.md / MANIFEST.sha256
 # a full TSA response as retained from the offline flow (.tsr):
 openssl ts -verify -digest <hex> -in <anchor>.tsr -CAfile tsa-ca.pem
@@ -298,4 +299,6 @@ Expected results: verdict `valid` (not `self-consistent; identity unverified`);
 receipts and history VALID under `Verifying key: pinned out of band` (the same
 tools print `read from the audited database — … self-consistent; identity
 unverified` when no key file is given, and that verdict is not evidence of
-identity); no anchor `UNVERIFIED`; digests matching.
+identity); no anchor `UNVERIFIED`; policy `SATISFIED`; digests matching. A
+relying party also receives the anchor policy file and each TSA's CA; the roles
+in it are the operator's declarations, not findings.

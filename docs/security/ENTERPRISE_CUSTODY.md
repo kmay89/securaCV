@@ -132,9 +132,13 @@ truncation but can never cause a false verify failure.
   longer prints "OK" for a cryptographically unverified anchor — it prints
   `UNVERIFIED` — but anchor checking is still a separate command; folding it in
   makes truncation-past-an-anchor a hard verify failure.
-- **Cross-bind the receipt chains.** Anchor the break-glass and export receipt
-  chain heads into the sealed-event chain (or a signed manifest of all three
-  heads) so the Invariant-V/IV audit trail cannot be truncated independently.
+- **Cross-bind the receipt chains.** *Partly shipped:* every receipt-ledger
+  head is an anchor subject of its own (`log_anchor --subject`, `anchor-all`),
+  `court_export` packages the disclosure's own receipt-head token, and
+  `log_anchor verify --policy` checks two-TSA distinctness (qualification
+  remains a declaration). Binding the heads *into* the sealed-event chain
+  (Merkle leaves) remains tracked — it is also what removes the last
+  TSA-visible imprint residual of scheduled anchoring.
 
 ---
 
