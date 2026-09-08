@@ -189,8 +189,8 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_dictionary_sync.py` | Rust/Python/JS/firmware vocabularies match `spec/witness_dictionary.json` |
 | `scripts/gen_agent_entrypoints.py --check` | Vendor agent files match this file's brief block |
 | `scripts/lint_no_impersonation.sh` | No red, no reserved emergency tones, no official-alert phrasing |
-| `scripts/lint_build_matrix.py` | `build_matrix.json` matches `platformio.ini` + `canary_config.h` |
-| `scripts/lint_device_manifests.py` | Every `devices/<slug>/device.json` validates and its env / board / figure / flasher / emulator / CAD joins hold; every `flavors.json` build env is claimed or explained |
+| `scripts/lint_build_matrix.py` | `build_matrix.json` matches `platformio.ini` + `canary_config.h`; every product lane resolves to one `devices/<slug>/device.json`, whose envs are real |
+| `scripts/lint_device_manifests.py` | Every `devices/<slug>/device.json` validates and its env / board / figure / flasher / emulator / CAD joins hold; every `flavors.json` build env is claimed or explained. Since wave 2 the generators read the manifests (`gen_flash.py`, `gen_figures.mjs`), so a stale join also moves a generated file |
 | `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
 | `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
 | `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |
