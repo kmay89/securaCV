@@ -904,9 +904,13 @@ test("flasher publishing signs once a key is in force, and refuses to ship a ref
     "key is pinned");
   assert.match(wf, /OTA_SIGNING_KEY_PEM/,
     "flasher-release.yml can't sign without reading the OTA_SIGNING_KEY_PEM secret");
-  assert.match(wf, /pip install[^\n]*cryptography/,
-    "signing needs `cryptography` (ota_release.py imports it) — install it, or " +
-    "the sign path dies after the build instead of before it");
+  // Provisioning moved into .github/actions/setup-platformio (CI.md R10), so
+  // the requirement is expressed as that action's `extras:` input; an inline
+  // `pip install` is the pre-R10 shape and still counts if it ever returns.
+  assert.match(wf, /pip install[^\n]*cryptography|extras:[^\n]*cryptography/,
+    "signing needs `cryptography` (ota_release.py imports it) — install it " +
+    "(setup-platformio `extras:`), or the sign path dies after the build " +
+    "instead of before it");
 
   // The script's own contract, which the above depends on: --signing-key is
   // optional and its absence means checksum-only, not a crash.
