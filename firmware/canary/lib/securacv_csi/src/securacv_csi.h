@@ -59,6 +59,15 @@ namespace csi {
    * runs (csi_hal.h). Always returns true; logs anything suspicious. */
   bool conformance_check_no_mac_in_buffers();
 
+  /* Transmitter filter (csi_hal.h "TRANSMITTER FILTER"; the canonical HAL
+   * holds the associated AP's BSSID and compares, never copies, a frame's
+   * transmitter against it). request_bssid_refresh() is safe from any task
+   * (the Wi-Fi event task's STA_GOT_IP handler) — process() re-reads the
+   * BSSID on its next tick; has_associated_bssid() is false until the STA
+   * has associated, and while false every frame is accepted. */
+  void request_bssid_refresh();
+  bool has_associated_bssid();
+
 }  /* namespace csi */
 
 #endif  /* __cplusplus */

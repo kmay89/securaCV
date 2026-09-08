@@ -41,7 +41,8 @@ survived only if a majority could not. The counts:
 | Landed in the follow-up wave (PR #1635, mirror #9, website #184) | 13 in full, 2 in part |
 | Closed by the documentation wave (PR #1647, mirror #11, website #189) | 0 — a fresh docs audit, not this list; see §3 |
 | Landed in wave 3 (PR #1664) | 10 in full (four of them rows that were "in part") |
-| Still open | 7 in full, 2 in part |
+| Landed after wave 3 (the CSI transmitter filter) | 1 in full (item 2, host-tested; bench in §5) |
+| Still open | 6 in full, 2 in part |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -124,10 +125,21 @@ every byte gate proving nothing moved — leaving only wave 3 (Parametrize)
 open on that row. Two things this wave could not do here: run a real release
 (the derived env list and the composite actions are host-tested, so the first
 tag after this merges deserves a look at its logs), and rebuild the emulator
-`dist/` (dispatched to the pinned-emsdk workflow). What is left — 7 rows in
-full and 2 in part — is hardware-bound (items 2, 22 and the §5 bench steps),
-Apple-toolchain-bound (5, 6, 13), a maintainer decision (30's version spread,
-42, 51), and the device package's Parametrize wave.
+`dist/` (dispatched to the pinned-emsdk workflow). What is left — 6 rows in
+full and 2 in part — is hardware-bound (item 22 and the §5 bench steps; item
+2's filter landed after this wave, host-tested, and only its bench
+confirmation remains in §5), Apple-toolchain-bound (5, 6, 13), a maintainer
+decision (30's version spread, 42, 51), and the device package's Parametrize
+wave.
+
+### Landed after wave 3
+
+The CSI transmitter filter (item 2) landed on 2026-09-08 as one package: the
+canonical `csi_hal.{h,cpp}`, its byte-identical sketch copy, the BSSID half
+in the canary tree's `securacv_csi.cpp`, the settings/status surfaces, and a
+host test that drives the shipped HAL through a stubbed ESP-IDF surface. The
+row says exactly what did and did not land; it is `host-tested`, and the
+bench pass in §5 step 3 is what makes it a claim about a room.
 
 ### The documentation wave
 
@@ -194,8 +206,8 @@ the ledger stays complete:
 
 | # | Item | Why it matters | Fix | Effort |
 |---|---|---|---|---|
-| 1 | **(landed)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Landed in two steps. The kernel serves `GET /api/fleet` in the firmware's self-report shape with the anti-drift vector (follow-up wave). Wave 3: it also lists the Canaries its MQTT bridge has heard — `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` / `WITNESS_FLEET_PEERS_PATH` and read by the API through `api.fleet_peers_path` (schema `securacv/fleet_peers/v1`, one file both processes point at). A peer is `online` only when a live (not broker-retained) chain publish verifies against the key pinned for it on first `health` **and** advances the chain length past the last one verified (a replay proves nothing new; a second key that actually signs for the id is a sticky conflict) within 180 s — stronger than a heartbeat, weaker than a liveness proof, and the contract doc says what a peer with broker publish rights can still do; wellbeing words ride only on such a row while fresh; the summary file is `0600`, size-bounded on read and re-cleaned on projection, and the table evicts at its cap instead of locking real Canaries out; the two-row document is a shared vector in `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, and its bytes are produced from typed rows so they do not move with `serde_json`'s feature set. Open: wire the flag into the HA add-on's `run.sh` (two JSON config blocks plus one argv entry) so an add-on install lights the Wall up unaided; the Docker sidecar needs a shared volume with witnessd first. | M |
-| 2 | **CSI mixes every transmitter into one window.** Neighbor-AP beacons, peer Canaries' ESP-NOW probes and router echoes all land in the same 64-frame window; per-subcarrier variance across alternating links reads as motion. | The presence detector's false-positive floor is set by the neighborhood's Wi-Fi, not by the room. | Filter `rx_cb` on the transmitter address: accept the associated BSSID (and, when the probe layer is up, registered peers) and count the rest under a new `frames_dropped_foreign` stat. `csi_hal.cpp` already has `info->mac`. | S |
+| 1 | **(landed)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Landed in two steps. The kernel serves `GET /api/fleet` in the firmware's self-report shape with the anti-drift vector (follow-up wave). Wave 3: it also lists the Canaries its MQTT bridge has heard — `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` / `WITNESS_FLEET_PEERS_PATH` and read by the API through `api.fleet_peers_path` (schema `securacv/fleet_peers/v1`, one file both processes point at). A peer is `online` only when a live (not broker-retained) chain publish verifies against the key pinned for it on first `health` (a second key is a sticky conflict) within 180 s; wellbeing words ride only on such a row while fresh; the two-row document is a shared vector in `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, and its bytes are produced from typed rows so they do not move with `serde_json`'s feature set. Open: wire the flag into the HA add-on's `run.sh` (two JSON config blocks plus one argv entry) so an add-on install lights the Wall up unaided; the Docker sidecar needs a shared volume with witnessd first. | M |
+| 2 | **(landed)** **CSI mixes every transmitter into one window.** Neighbor-AP beacons, peer Canaries' ESP-NOW probes and router echoes all land in the same 64-frame window; per-subcarrier variance across alternating links reads as motion. | The presence detector's false-positive floor is set by the neighborhood's Wi-Fi, not by the room. | Landed, host-tested (2026-09-08). `csi_hal.cpp`'s callback compares each frame's transmitter address, in place, against the BSSID of the AP the station is associated with — read back from `esp_wifi_sta_get_ap_info()` on the main loop (polled, and refreshed at once from the STA got-IP handler), held in one static that is never exported or logged and is wiped on `deinit()` — and, on the WAP, against `csi_probe::has_peer()`; everything else is counted under `frames_dropped_foreign` (appended to `csi_stats_t`; on `/api/status` beside the other drop counters with `filter_foreign` / `filter_armed`; on the canary webui's driver-health tile) and never buffered. `filter_foreign` is a persisted `/api/settings` key, default on. Until the STA associates there is nothing to compare against and every frame passes, so AP-only installs sense as before. The staged sketch copy is byte-identical; the canary tree's `securacv_csi.cpp` carries the BSSID half (no probe layer there). **What did not land:** peers are accepted only through the WAP's probe table, which nothing fills yet (the probe is broadcast-only), so a Canary-only install with no association still hears every transmitter; and nothing here is bench-verified — §5 step 3 has to show `frames_dropped_foreign` climbing while the presence floor drops. Host test: `csi_hal_transmitter_filter_test.cpp` compiles the shipped HAL against `host_stubs/`, feeds two transmitters, and scans the ring, the stats and the emitted feature vector for either address (two planted leaks fail it). | S |
 | 3 | **(landed)** **Breathing envelope is raw magnitude the driver's AGC removes.** The host test passes because synthetic frames have no automatic scaling. | `quiet` presence and `unusual_breathing` will not fire on a real device. | Landed: the envelope is now each subcarrier band's share of the per-frame-normalized row (four rotation bands, the Goertzel bank run per band, each bin keeping its strongest band), which per-packet gain cannot move; the host tests drive a 0.25 Hz breath through a simulated per-packet AGC into bin 3 and read zero in every bin through 80 s of ±30 % gain flicker. Host-tested on synthetic frames only — the bench pass (§5 step 3) is still what turns this into a claim about a room. | S |
 | 4 | **(landed)** **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Landed: every window close carries its timestamp and the envelope is resampled onto a fixed 1 Hz grid (a close inside the previous slot is averaged into it, a gap is bridged with held copies), and `csi_stats_t` reports `windows_held`, `windows_merged` and `window_period_ms` (appended, both status endpoints surface them). Host tests: 700 ms and 1300 ms cadences both keep 12 BPM in bin 2 with the counters reporting the real pace; a 3 s stall holds two copies. The three copies (common, the sketch mirror, the embedded extractor) moved together. | S |
 | 5 | **A TLS-enabled WAP is unreachable from the iOS app.** `URLSession.shared` never answers the server-trust challenge and the receipt's `tls_cert_fp` pin is discarded. | The one configuration that protects the router password in transit is the one the app cannot talk to. | A `URLSessionDelegate` that pins the receipt fingerprint (`ios/Sources/SecuraCV/Transport/DeviceAPI.swift`); reject on mismatch with a user-readable error. | M |
@@ -362,8 +374,11 @@ with one file at the front instead of five.
 The September pass made the CSI stack portable and correct in its indexing;
 it did not make it *validated*. The path from here, in order:
 
-1. **Transmitter filtering** (P0 item 2) — without it nothing downstream can
-   be tuned against a real room.
+1. **Transmitter filtering** (P0 item 2) — **landed** 2026-09-08, host-tested:
+   one link per window (the associated router's BSSID, plus registered peers
+   on the WAP), with `frames_dropped_foreign` saying how much of the
+   neighborhood was kept out. Step 3 is what shows the false-positive floor
+   actually moved.
 2. **AGC-aware envelope and fixed-cadence Goertzel** (items 3 and 4) — **landed** in the follow-up wave, host-tested on synthetic frames; step 3 is what makes it a claim about a room.
 3. **Bench pass on three boards** — S3, C3 and C6 (the HE path is compile-only
    today), following [`csi_quickstart.md`](csi_quickstart.md), with the

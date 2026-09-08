@@ -3406,8 +3406,13 @@ static esp_err_t handle_status(httpd_req_t* req) {
   // ESP-IDF callback; `frames_received` rising = radio is producing data;
   // `windows_emitted` rising = main-loop pump is draining and finalizing
   // 1 Hz windows; `frames_dropped_full` = pump is being starved (should be
-  // 0 in normal operation); `snapshot_valid` = a v1 module has committed
-  // at least one event since boot.
+  // 0 in normal operation); `frames_dropped_foreign` = frames from
+  // transmitters other than the associated router / registered peers
+  // (neighbor beacons — expected to climb; a count, never an address);
+  // `filter_foreign` = the setting, `filter_armed` = the HAL holds the
+  // associated BSSID so the filter is comparing (false on an AP-only
+  // install, where every frame passes); `snapshot_valid` = a v1 module
+  // has committed at least one event since boot.
   JsonObject csi = doc["csi"].to<JsonObject>();
   csi["running"] = csi_integration::csi_running();
   csi["snapshot_valid"] = csi_integration::snapshot_valid();
@@ -3418,6 +3423,9 @@ static esp_err_t handle_status(httpd_req_t* req) {
     csi["frames_dropped_full"] = (uint32_t)cs.frames_dropped_full;
     csi["frames_dropped_rate"] = (uint32_t)cs.frames_dropped_rate;
     csi["frames_dropped_rssi"] = (uint32_t)cs.frames_dropped_rssi;
+    csi["frames_dropped_foreign"] = (uint32_t)cs.frames_dropped_foreign;
+    csi["filter_foreign"] = csi_integration::csi_filter_foreign();
+    csi["filter_armed"] = csi_integration::csi_filter_armed();
     csi["windows_degraded"] = (uint32_t)cs.windows_degraded;
     // Breathing-envelope cadence: how far the loop's real window pace was
     // from the 1 Hz grid the feature layer resamples onto.
@@ -9328,6 +9336,10 @@ static void wifi_init_provisioning() {
   if (!s_wifi_event_registered) {
     WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t /*info*/) {
       if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        // CSI transmitter filter: follow the (re)association now rather
+        // than at the HAL's next poll. Flag only — the driver read happens
+        // on the main loop.
+        csi_integration::on_wifi_sta_connected();
         MDNS.end();
         if (MDNS.begin(g_device.mdns_hostname)) {
           MDNS.addService("http", "tcp", 80);

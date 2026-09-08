@@ -1145,6 +1145,41 @@
   code, without ever being started.
 - **Date learned:** 2026-07
 
+### A sensor that sums frames from every transmitter measures the neighborhood, not the room
+- **What happened:** The September 2026 audit (docs/IMPROVEMENT_ROADMAP.md
+  row 2) found the presence detector's false-positive floor was set by the
+  neighborhood's Wi-Fi: neighbor APs' beacons, other households' stations,
+  peer Canaries' ESP-NOW probes and the router's echo replies all landed in
+  the same 1 s window.
+- **Root cause:** `csi_rx_cb` accepted every frame the PHY decoded. Each
+  link has its own channel response, so a window that alternates between
+  links measures the *difference between links*, and per-subcarrier
+  variance across that difference is indistinguishable from motion. The
+  DSP was right; its input was several rooms' worth of radio.
+- **Fix:** a transmitter filter at the top of the callback, before the RSSI
+  floor and the rate limiter (so a foreign burst cannot spend our link's
+  rate budget): a 6-byte compare of `info->mac`, in place, against the
+  BSSID of the AP the station is associated with (read back from
+  `esp_wifi_sta_get_ap_info()` on the main loop, polled and refreshed from
+  the STA got-IP handler), plus a hook into `csi_probe::has_peer()` for
+  registered peers. Everything else is counted under
+  `frames_dropped_foreign` and never buffered. Until a BSSID is known every
+  frame passes, so an AP-only install is unchanged. The BSSID is the one
+  identifier the HAL holds — one static, never exported or logged, wiped on
+  `deinit()`; the transmitter address is never copied anywhere.
+- **The lesson:** a HAL that has to know its own link needs exactly one
+  identifier. Hold it in one named place, compare in place, say so where
+  the "we never read this" claim used to be (that claim was now half
+  false), and let a test scan everything else for the bytes.
+- **Regression check:** `firmware/common/csi/csi_hal_transmitter_filter_test.cpp`
+  (the `CSI Privacy Invariants` job in firmware.yml) compiles the shipped
+  `csi_hal.cpp` against `host_stubs/`, feeds two transmitters, asserts the
+  associated one is processed and the other dropped and counted, and byte-
+  scans the ring, the stats and the emitted feature vector for either
+  address. Two planted leaks (a copy into a slot's trailing bytes, a copy
+  into the feature vector) each fail exactly one scan.
+- **Date learned:** 2026-09
+
 ### A feature that only exists in dev builds fails silently in the field
 - **What happened:** A user pressed their smoke alarm's TEST button next to
   a production Canary; nothing happened — no event, no log, no error. The

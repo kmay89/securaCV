@@ -521,6 +521,25 @@ void apply_privacy_ceiling_from_nvs() {
   csi_event_set_privacy_ceiling(ceiling);
 }
 
+/* Transmitter filter (csi_hal.h): accept CSI frames only from the router
+ * this station is associated with (and registered peer Canaries). On by
+ * default; the /api/settings key "filter_foreign" turns it off for an
+ * install whose frame supply is something else. Same namespace as the
+ * module settings, own key (not a module tunable). */
+constexpr const char* NVS_KEY_FILTER_FOREIGN = "csi.ff";
+
+bool read_filter_foreign_from_nvs() {
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return true;
+  const bool on = prefs.getBool(NVS_KEY_FILTER_FOREIGN, true);
+  prefs.end();
+  return on;
+}
+
+void apply_filter_foreign_from_nvs() {
+  csi_hal::set_filter_foreign(read_filter_foreign_from_nvs());
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * EVENT-ID FLOOR — NVS persistence
  *
@@ -1021,6 +1040,8 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
    * keeps in sync) so we always echo what's on disk, not what the
    * chokepoint thinks. */
   const int32_t privacy_raw = prefs.getInt("cp.pc", (int32_t)CSI_PRIVACY_P0);
+  /* Transmitter filter (default on). */
+  const bool    filter_foreign = prefs.getBool(NVS_KEY_FILTER_FOREIGN, true);
   prefs.end();
 
   /* Map preset index back to a stable string for the dashboard. The
@@ -1038,10 +1059,10 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   snprintf(buf, sizeof(buf),
     "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld,"
      "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld},"
-     "\"privacy_ceiling\":\"%s\"}",
+     "\"privacy_ceiling\":\"%s\",\"filter_foreign\":%s}",
     pet_mode ? "true" : "false", preset_str, (long)sensitivity,
     qh_enabled ? "true" : "false", (long)qh_start, (long)qh_end,
-    privacy_str);
+    privacy_str, filter_foreign ? "true" : "false");
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
@@ -1208,6 +1229,21 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     }
   }
 
+  /* "filter_foreign": true|false → csi.ff (bool). Applied to the HAL below
+   * so the next frame sees it; no reboot. */
+  bool filter_changed = false;
+  if (const char* k = strstr(body, "\"filter_foreign\"")) {
+    if (const char* v = strchr(k, ':')) {
+      v++;
+      while (*v == ' ' || *v == '\t' || *v == '"') v++;
+      if (strncmp(v, "true", 4) == 0) {
+        prefs.putBool(NVS_KEY_FILTER_FOREIGN, true);  wrote_anything = true; filter_changed = true;
+      } else if (strncmp(v, "false", 5) == 0) {
+        prefs.putBool(NVS_KEY_FILTER_FOREIGN, false); wrote_anything = true; filter_changed = true;
+      }
+    }
+  }
+
   prefs.end();
 
   if (!wrote_anything) {
@@ -1231,6 +1267,8 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * /api/csi/window or /api/tune/* reflects the new ceiling without a
    * reboot. Cheap (single int compare + atomic store). */
   if (ceiling_changed) apply_privacy_ceiling_from_nvs();
+
+  if (filter_changed) apply_filter_foreign_from_nvs();
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, "{\"ok\":true}", -1);
@@ -2110,6 +2148,14 @@ void probe_pump() {
     pc.idle_rate_hz            = CSI_PROBE_BROADCAST_HZ;
     if (!csi_probe::init(pc)) return;   /* ESP-NOW not ready — retry */
     csi_probe::start();
+    /* Transmitter filter: frames from registered peer Canaries are the
+     * other legitimate link. The hook compares against the probe layer's
+     * own RAM table in place — the HAL keeps no copy (csi_hal.h). Today
+     * the WAP registers no peers (broadcast-only probe), so this is the
+     * wiring for when the mesh layer fills that table. */
+    csi_hal::set_peer_filter([](const uint8_t* mac) {
+      return csi_probe::has_peer(mac);
+    });
     s_probe_up = true;
     Serial.printf("[CSI] active probe up — %u Hz ESP-NOW broadcast "
                   "(peer Canaries sense off these frames)\n",
@@ -2815,6 +2861,10 @@ bool init(httpd_handle_t server, const char* api_token) {
   csi_hal::Config cfg = csi_hal::Config::defaults();
   cfg.bandwidth_mhz     = 20;
   cfg.max_frame_rate_hz = 20;
+  /* Transmitter filter: persisted choice, default on. The HAL learns the
+   * associated BSSID itself from process(); the STA got-IP handler in
+   * canary_wap.ino calls on_wifi_sta_connected() to make that immediate. */
+  cfg.filter_foreign    = read_filter_foreign_from_nvs();
   g_hal_ready = csi_hal::init(cfg);
   if (g_hal_ready) {
     csi_set_features_callback(on_csi_window, nullptr);
@@ -3089,6 +3139,16 @@ bool csi_running() {
 bool csi_get_stats(csi_stats_t* out) {
   if (!out) return false;
   return csi_hal::get_stats(out);
+}
+
+bool csi_filter_foreign() { return csi_hal::get_filter_foreign(); }
+
+bool csi_filter_armed() { return csi_hal::has_associated_bssid(); }
+
+void on_wifi_sta_connected() {
+  /* Runs on the Arduino Wi-Fi event task: only flag it; csi_hal::process()
+   * does the driver call on the main loop. */
+  if (g_hal_ready) csi_hal::request_bssid_refresh();
 }
 
 /* Single source of truth for lowercase hex encoding. Moved out of the

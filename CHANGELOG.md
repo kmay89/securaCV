@@ -82,6 +82,31 @@
   watchdog firing on `csi::process()`. Host-tested only; the canary envs are
   compile-tested by `firmware.yml`'s PlatformIO leg.
 
+### CSI: one transmitter per window
+
+- **The CSI HAL filters on the transmitter address.** Every decoded frame on
+  the channel used to land in the same 1 s window — neighbor APs' beacons,
+  other households' stations, peer probes, router echoes — and the variance
+  between links' channel responses read as motion. `csi_hal.cpp` now compares
+  each frame's transmitter address, in place, against the BSSID of the AP the
+  station is associated with (and, on the WAP, against the probe layer's peer
+  table) and drops the rest before anything is buffered, counting them under
+  `frames_dropped_foreign`. Until the STA associates there is nothing to
+  compare against and every frame passes, so an AP-only install senses as
+  before. The BSSID is the one identifier the HAL holds: one static, read
+  back from `esp_wifi_sta_get_ap_info()` on the main loop, never exported or
+  logged, wiped on `deinit()`; the transmitter address itself is never copied
+  into a slot, a stat, a log line or a wire format. Surfaces: `/api/status`
+  gains `frames_dropped_foreign`, `filter_foreign` and `filter_armed`;
+  `/api/settings` gains `filter_foreign` (bool, default on, persisted); the
+  canary webui's driver-health tile gains "Drop: other transmitters". The
+  canary tree's `securacv_csi.cpp` carries the BSSID half. Host-tested
+  (`csi_hal_transmitter_filter_test.cpp` drives the shipped HAL through a
+  stubbed ESP-IDF surface and scans ring, stats and feature vector for both
+  addresses); the device path is compile-tested at best and the bench pass in
+  `docs/IMPROVEMENT_ROADMAP.md` §5 is what shows the false-positive floor
+  moved.
+
 ### The device manifests drive the generators, and the release env list is derived
 
 - **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read

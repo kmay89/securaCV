@@ -148,13 +148,21 @@ typedef struct {
 
   /** Drop frames whose RSSI is below this (dBm, negative). 0 = use default. */
   int8_t   rssi_floor_dbm;
+
+  /** Transmitter filter (appended). Accept frames only from the associated
+   *  AP's BSSID and registered peers; the rest are counted under
+   *  csi_stats_t::frames_dropped_foreign and never buffered. Default true
+   *  via CSI_CONFIG_DEFAULT — a caller that builds this struct positionally
+   *  without the field gets false (filter off). See csi_hal.h. */
+  bool     filter_foreign;
 } csi_config_t;
 
 #define CSI_CONFIG_DEFAULT { \
     .channel = 0, \
     .bandwidth_mhz = 20, \
     .max_frame_rate_hz = 20, \
-    .rssi_floor_dbm = CSI_RSSI_NOISE_FLOOR_DBM \
+    .rssi_floor_dbm = CSI_RSSI_NOISE_FLOOR_DBM, \
+    .filter_foreign = true \
 }
 
 /**
@@ -232,6 +240,11 @@ typedef struct {
   uint32_t windows_held;     /* Grid slots filled by holding the previous sample (late closes). */
   uint32_t windows_merged;   /* Closes averaged into an already-filled slot (early closes). */
   uint32_t window_period_ms; /* Mean close-to-close interval, ms; 0 until two timed closes. */
+  /* Transmitter filter (appended). Frames whose transmitter was neither the
+   * associated AP's BSSID nor a registered peer: neighbor APs' beacons,
+   * other households' stations, unregistered Canaries. A count, never an
+   * address. */
+  uint32_t frames_dropped_foreign;
 } csi_stats_t;
 
 bool csi_get_stats(csi_stats_t* out);

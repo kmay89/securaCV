@@ -300,6 +300,11 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
         // AP and STA interfaces. Without this the home-WiFi side
         // can't resolve canary.local.
         start_mdns(s_mdns_device_id);
+#if FEATURE_CSI
+        // CSI transmitter filter: follow the (re)association on the next
+        // csi::process() tick. Flag only — no driver call on this task.
+        csi::request_bssid_refresh();
+#endif
       }
     });
     s_event_registered = true;
@@ -2536,6 +2541,10 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   st["frames_dropped_rssi"] = stats.frames_dropped_rssi;
   st["frames_dropped_rate"] = stats.frames_dropped_rate;
   st["frames_dropped_full"] = stats.frames_dropped_full;
+  // Transmitter filter: frames from a transmitter other than the associated
+  // router (neighbor beacons, other stations). A count, never an address.
+  st["frames_dropped_foreign"] = stats.frames_dropped_foreign;
+  st["filter_armed"]        = csi::has_associated_bssid();
   st["windows_emitted"]     = stats.windows_emitted;
   st["windows_degraded"]    = stats.windows_degraded;
   // Breathing-envelope cadence: how far the loop's real window pace was

@@ -45,6 +45,7 @@ static csi_hal::Config to_hal_config(const csi_config_t& cfg) {
   c.bandwidth_mhz     = cfg.bandwidth_mhz;
   c.max_frame_rate_hz = cfg.max_frame_rate_hz;
   c.rssi_floor_dbm    = cfg.rssi_floor_dbm;
+  c.filter_foreign    = cfg.filter_foreign;
   return c;
 }
 
@@ -72,5 +73,9 @@ int  process()                                   { return csi_hal::process(); }
 uint32_t get_caps()                              { return csi_hal::get_caps(); }
 bool get_stats(csi_stats_t* out)                 { return csi_hal::get_stats(out); }
 bool conformance_check_no_mac_in_buffers()       { return csi_hal::conformance_check_no_mac_in_buffers(); }
+/* Transmitter filter (csi_hal.h "TRANSMITTER FILTER"): the got-IP handler
+ * flags a refresh; process() does the driver call on the main loop. */
+void request_bssid_refresh()                     { csi_hal::request_bssid_refresh(); }
+bool has_associated_bssid()                      { return csi_hal::has_associated_bssid(); }
 
 }  /* namespace csi */
