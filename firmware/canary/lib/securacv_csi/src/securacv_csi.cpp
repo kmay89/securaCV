@@ -122,8 +122,11 @@ static uint32_t s_rate_min_gap_ms = 0;
 /* Transmitter-filter state. s_assoc_bssid is THE ONE identifier this HAL
  * holds (see the barrier note at the top). Single writer
  * (refresh_associated_bssid, main loop); the Wi-Fi task reads it through
- * s_bssid_known — the flag is dropped around a rewrite so the reader never
- * compares against a torn value (it accepts that one frame instead). */
+ * s_bssid_known — the flag is dropped around a rewrite so a reader that
+ * checks it mid-rewrite accepts the frame instead of comparing. Not a lock:
+ * a reader already past the check can race the memcpy, and the exposure is
+ * one misjudged frame per reassociation (the canonical csi_hal.cpp says the
+ * same). */
 static uint8_t               s_assoc_bssid[6] = {0, 0, 0, 0, 0, 0};
 static std::atomic<bool>     s_bssid_known{false};
 static std::atomic<bool>     s_bssid_refresh_requested{false};

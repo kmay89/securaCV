@@ -82,10 +82,11 @@ bool csi_running();
 bool csi_get_stats(csi_stats_t* out);
 
 /** Transmitter filter (csi_hal.h). csi_filter_foreign(): the persisted
- *  on/off choice (default on). csi_filter_armed(): the HAL holds the
- *  associated AP's BSSID, so the filter is actually comparing — false on
- *  an AP-only install or before the STA associates, when every frame
- *  passes. Both booleans; neither exposes an address. */
+ *  on/off choice (default on). csi_filter_armed(): the setting is on AND
+ *  the HAL holds the associated AP's BSSID, so the filter is actually
+ *  comparing — false with the setting off, on an AP-only install, or
+ *  before the STA associates; in all three every frame passes. Both
+ *  booleans; neither exposes an address. */
 bool csi_filter_foreign();
 bool csi_filter_armed();
 

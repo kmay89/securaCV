@@ -249,7 +249,7 @@ not the full module-tunable surface):
 | `"preset"` | string | `"sensitive"` / `"balanced"` / `"quiet"`. |
 | `"sensitivity"` | int 0..100 | Slider; ±20 around the preset baseline. |
 | `"quiet_hours"` | object | `{ "enabled": bool, "start_min": int 0..1439, "end_min": int 0..1439 }`. |
-| `"filter_foreign"` | bool | CSI transmitter filter: accept frames only from the router this Canary is associated with (and registered peer Canaries); everything else is counted under `frames_dropped_foreign` on `/api/status` and never buffered. Default on. Off restores every decoded frame on the channel. Applied to the HAL at once and persisted; `/api/status` reports `filter_armed` (the Canary has associated, so the filter is comparing). |
+| `"filter_foreign"` | bool | CSI transmitter filter: accept frames only from the router this Canary is associated with (and registered peer Canaries); everything else is counted under `frames_dropped_foreign` on `/api/status` and never buffered. Default on. Off restores every decoded frame on the channel. Applied to the HAL at once and persisted; `/api/status` reports `filter_armed` (the setting is on and the Canary has associated, so the filter is comparing). |
 
 ```bash
 curl -X POST http://canary.local/api/settings \

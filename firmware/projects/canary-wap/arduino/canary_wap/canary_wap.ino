@@ -3409,9 +3409,10 @@ static esp_err_t handle_status(httpd_req_t* req) {
   // 0 in normal operation); `frames_dropped_foreign` = frames from
   // transmitters other than the associated router / registered peers
   // (neighbor beacons — expected to climb; a count, never an address);
-  // `filter_foreign` = the setting, `filter_armed` = the HAL holds the
-  // associated BSSID so the filter is comparing (false on an AP-only
-  // install, where every frame passes); `snapshot_valid` = a v1 module
+  // `filter_foreign` = the setting, `filter_armed` = the setting is on and
+  // the HAL holds the associated BSSID, so the filter is comparing (false
+  // with the setting off or on an AP-only install — every frame passes);
+  // `snapshot_valid` = a v1 module
   // has committed at least one event since boot.
   JsonObject csi = doc["csi"].to<JsonObject>();
   csi["running"] = csi_integration::csi_running();

@@ -175,8 +175,11 @@ static uint32_t s_watchdog_recovery_count = 0;
  * by refresh_associated_bssid() (main loop, single writer) and read by
  * csi_rx_cb (Wi-Fi task) through s_bssid_known — acquire/release on the
  * flag brackets the six-byte write, and the flag is dropped for the
- * duration of a rewrite so the reader never compares against a torn
- * value (it accepts instead, for that one frame). It is never copied
+ * duration of a rewrite so a reader that checks it mid-rewrite accepts
+ * the frame instead of comparing. A reader already past the check can
+ * still race the memcpy; the whole exposure is one misjudged frame per
+ * reassociation (ours dropped or a foreign one passed), and the bytes it
+ * compared against are published nowhere. It is never copied
  * anywhere else, never formatted into a log line, never serialized, and
  * secure_wipe()d in deinit(). The s_peer_filter hook points at a table the
  * probe layer owns; the HAL keeps no copy of peer addresses. */
@@ -635,8 +638,10 @@ bool refresh_associated_bssid() {
   if (err == ESP_OK) {
     const bool known = s_bssid_known.load(std::memory_order_acquire);
     if (!known || memcmp(rec.bssid, s_assoc_bssid, sizeof(s_assoc_bssid)) != 0) {
-      /* Drop the flag around the rewrite so the Wi-Fi task never compares
-       * against a half-written value (it accepts the frame instead). */
+      /* Drop the flag around the rewrite so a Wi-Fi-task reader that checks
+       * it now accepts the frame instead of comparing against a half-written
+       * value. Not a lock: see the state block above for the one-frame race
+       * that remains. */
       s_bssid_known.store(false, std::memory_order_release);
       memcpy(s_assoc_bssid, rec.bssid, sizeof(s_assoc_bssid));
       s_bssid_known.store(true, std::memory_order_release);
