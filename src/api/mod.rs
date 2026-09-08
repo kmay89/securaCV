@@ -863,8 +863,10 @@ fn handle_connection(
     }
 
     if request.path == "/api/fleet" {
-        // Rate-limited like every route past /health, but no token: this is
-        // the anyone-who-asks surface, and it is served before the token
+        // The GET is rate-limited like every route past /health (the OPTIONS
+        // preflight above is answered before the limiter: no I/O, a 204, and
+        // a 429 there would block the GET it precedes), but no token: this
+        // is the anyone-who-asks surface, and it is served before the token
         // machinery so an unauthenticated poll never counts as an auth
         // failure against the caller's address.
         let now_epoch_s = std::time::SystemTime::now()
@@ -1255,10 +1257,12 @@ fn write_response<S: Write>(
 /// * `https://securacv.com` — the public site's Witness Wall emulator, for a
 ///   kernel served over TLS with a trusted certificate (a plain-`http` kernel
 ///   is mixed content for it regardless of CORS);
-/// * `http://localhost[:port]` and `http://127.0.0.1[:port]` — a local
-///   checkout of either site (`python3 -m http.server`), the "try it in 30
-///   seconds" path in the contract doc. Matched by `fleet_origin_is_local`
-///   with an exact host, so `localhost.example` is not local.
+/// * `http://localhost[:port]`, `http://127.0.0.1[:port]` and
+///   `http://[::1][:port]` — a local checkout of either site
+///   (`python3 -m http.server`, with or without `--bind ::1`), the "try it
+///   in 30 seconds" path in the contract doc. Matched by
+///   `fleet_origin_is_local` with an exact host, so `localhost.example` is
+///   not local, and a numeric port that parses as one.
 ///
 /// Every other `Origin` gets no `Access-Control-Allow-Origin` at all and the
 /// browser refuses the read. No config surface carries origins today, so the
@@ -1266,18 +1270,36 @@ fn write_response<S: Write>(
 /// always carries `Vary: Origin` because it differs by requester.
 pub const FLEET_ALLOWED_ORIGINS: &[&str] = &["https://kmay89.github.io", "https://securacv.com"];
 
-/// `http://localhost` / `http://127.0.0.1`, with or without a numeric port.
+/// `http://localhost` / `http://127.0.0.1` / `http://[::1]`, with or without
+/// a port. The IPv6 loopback arrives bracketed (`Origin: http://[::1]:8000`),
+/// so the host is split off at the closing bracket, not the first colon.
 fn fleet_origin_is_local(origin: &str) -> bool {
     let Some(host_port) = origin.strip_prefix("http://") else {
         return false;
     };
-    let (host, port) = match host_port.split_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (host_port, None),
+    let (host, port) = if let Some(bracketed) = host_port.strip_prefix('[') {
+        let Some((host, rest)) = bracketed.split_once(']') else {
+            return false;
+        };
+        match rest.strip_prefix(':') {
+            Some(port) => (host, Some(port)),
+            None if rest.is_empty() => (host, None),
+            None => return false,
+        }
+    } else {
+        match host_port.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (host_port, None),
+        }
     };
-    let host_ok = host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1";
-    let port_ok =
-        port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+    let host_ok = host.eq_ignore_ascii_case("localhost")
+        || host == "127.0.0.1"
+        || host == "::1"
+        || host == "0:0:0:0:0:0:0:1";
+    // Digits only (u16's parser would take a leading `+`), and a real port.
+    let port_ok = port.is_none_or(|p| {
+        !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok()
+    });
     host_ok && port_ok
 }
 
@@ -1769,6 +1791,9 @@ mod tests {
             "http://127.0.0.1:8080",
             "http://127.0.0.1",
             "HTTP://LOCALHOST:3000",
+            "http://[::1]",
+            "http://[::1]:8000",
+            "http://[0:0:0:0:0:0:0:1]:8000",
         ] {
             assert!(fleet_origin_allowed(allowed), "{allowed} should be allowed");
         }
@@ -1780,9 +1805,17 @@ mod tests {
             "https://www.securacv.com", // not the site's origin
             "http://localhost.evil.example",
             "http://localhost:80a",
+            "http://localhost:99999", // five digits, not a port
+            "http://localhost:+80",   // u16 would parse it; a browser never sends it
+            "http://localhost:",
             "http://127.0.0.1.evil.example",
             "http://192.168.1.20:8080", // a LAN page is not "local"
             "https://localhost:8080",   // the local Lab is plain http
+            "http://[::2]",
+            "http://[::1",
+            "http://[::1]x",
+            "http://[::1]:",
+            "http://[fe80::1]:8000",
             "null",
             "",
         ] {

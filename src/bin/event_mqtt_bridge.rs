@@ -35,7 +35,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use witness_kernel::fleet_peers::{
-    PeerSummaryFile, PeerTable, FLEET_PEER_MAX, FLEET_PEER_TOPIC_FILTERS,
+    PeerSummaryFile, PeerTable, FLEET_PEER_CLOCK_JUMP_SECS, FLEET_PEER_FORGET_SECS, FLEET_PEER_MAX,
+    FLEET_PEER_TOPIC_FILTERS,
 };
 use witness_kernel::transport::{
     parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
@@ -262,7 +263,17 @@ struct EventStatePayload {
 /// Command publishes forwarded to the daemon poll loop as (topic, payload).
 /// `(topic, payload, retained)` — `retained` is the wire flag the broker sets
 /// only when replaying a retained message to a new subscription.
-type CommandTx = mpsc::Sender<(String, Vec<u8>, bool)>;
+///
+/// Bounded: the eventloop thread `try_send`s and drops on a full queue, so a
+/// broker that floods the fleet filters while the poll loop is inside an HTTP
+/// round trip costs at most [`COMMAND_QUEUE_DEPTH`] messages of memory, not
+/// an unbounded backlog. A dropped fleet publish is a missed observation the
+/// next one repairs; a dropped verify command is re-issued by the interval.
+type CommandTx = mpsc::SyncSender<(String, Vec<u8>, bool)>;
+
+/// Depth of the eventloop → poll-loop queue. Sized for a burst of every
+/// fleet topic from a full [`FLEET_PEER_MAX`]-device table with headroom.
+const COMMAND_QUEUE_DEPTH: usize = 512;
 
 /// Daemon-mode eventloop wiring. Bundled so the reconnect handler can, on
 /// every ConnAck, both re-subscribe the command filter (clean-start drops
@@ -273,6 +284,9 @@ type CommandTx = mpsc::Sender<(String, Vec<u8>, bool)>;
 /// first reconnect.
 struct DaemonWiring {
     commands: CommandTx,
+    /// `<prefix>/cmd/` — the subtree `cmd_filter` subscribes to, used to
+    /// decide what is worth queueing.
+    cmd_prefix: String,
     cmd_filter: String,
     availability_topic: String,
     /// The fleet roll-call filters (`FLEET_PEER_TOPIC_FILTERS`) when
@@ -324,6 +338,13 @@ impl MqttRuntime {
             const BACKOFF_CAP: Duration = Duration::from_secs(60);
             let mut backoff = BACKOFF_START;
             let mut outage_logged = false;
+            // One warn/info pair per full episode of the inbound queue: set on
+            // the first drop, cleared when a publish is accepted again after
+            // QUEUE_DRAIN_QUIET of no drops (so a queue hovering at full does
+            // not flap the pair on every message).
+            let mut queue_full_logged = false;
+            let mut queue_last_full: Option<Instant> = None;
+            const QUEUE_DRAIN_QUIET: Duration = Duration::from_secs(5);
             for event in connection.iter() {
                 if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
@@ -335,6 +356,7 @@ impl MqttRuntime {
                             outage_logged = false;
                         }
                         backoff = BACKOFF_START;
+                        queue_full_logged = false;
                         thread_connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         if let Some(w) = &daemon {
                             // Re-assert availability (broker holds the retained
@@ -371,11 +393,44 @@ impl MqttRuntime {
                                 Ok(topic) => topic.to_string(),
                                 Err(_) => continue,
                             };
-                            if w.commands
-                                .send((topic, publish.payload.to_vec(), publish.retain))
-                                .is_err()
-                            {
-                                break;
+                            // Only what the poll loop handles is queued at
+                            // all: the command subtree, and the fleet
+                            // roll-call topics when that is on.
+                            let wanted = topic.starts_with(&w.cmd_prefix)
+                                || (!w.fleet_filters.is_empty() && topic.starts_with("securacv/"));
+                            if !wanted {
+                                continue;
+                            }
+                            match w.commands.try_send((
+                                topic,
+                                publish.payload.to_vec(),
+                                publish.retain,
+                            )) {
+                                Ok(()) => {
+                                    if queue_full_logged
+                                        && queue_last_full
+                                            .is_some_and(|t| t.elapsed() >= QUEUE_DRAIN_QUIET)
+                                    {
+                                        log::info!(
+                                            "MQTT inbound queue drained; publishes are \
+                                             being queued again"
+                                        );
+                                        queue_full_logged = false;
+                                    }
+                                }
+                                Err(mpsc::TrySendError::Full(_)) => {
+                                    queue_last_full = Some(Instant::now());
+                                    if !queue_full_logged {
+                                        log::warn!(
+                                            "MQTT inbound queue full ({} messages); \
+                                             dropping publishes until the poll loop \
+                                             catches up",
+                                            COMMAND_QUEUE_DEPTH
+                                        );
+                                        queue_full_logged = true;
+                                    }
+                                }
+                                Err(mpsc::TrySendError::Disconnected(_)) => break,
                             }
                         }
                     }
@@ -603,7 +658,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         ctx.args.verify_interval_secs
     );
 
-    let (cmd_tx, cmd_rx) = mpsc::channel::<(String, Vec<u8>, bool)>();
+    let (cmd_tx, cmd_rx) = mpsc::sync_channel::<(String, Vec<u8>, bool)>(COMMAND_QUEUE_DEPTH);
     // Scoped to the command subtree only — this daemon must never consume
     // event or sensor traffic. Subscribed from the eventloop thread on every
     // ConnAck so it survives broker reconnects. The one opt-in beyond it is
@@ -634,6 +689,7 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
             ctx.availability_topic,
             Some(DaemonWiring {
                 commands: cmd_tx,
+                cmd_prefix: format!("{}/cmd/", ctx.args.mqtt_topic_prefix),
                 cmd_filter,
                 availability_topic: ctx.availability_topic.to_string(),
                 fleet_filters,
@@ -855,13 +911,22 @@ struct FleetPeerTracker {
     table: PeerTable,
     dirty: bool,
     last_flush: Option<Instant>,
-    cap_logged: bool,
+    /// Evictions already reported, so each displacement is logged once.
+    evictions_logged: u64,
+    /// A clock jump has been reported (once per process).
+    jump_logged: bool,
 }
 
 impl FleetPeerTracker {
     fn open(path: PathBuf) -> Self {
         let table = match PeerSummaryFile::read(&path) {
             Ok(Some(summary)) => {
+                // No expiry at startup: the file's pins are the one thing a
+                // restart must keep, and a host clock that is wrong at boot
+                // (a dead RTC, a bad NTP answer) would otherwise expire the
+                // whole fleet and write that loss straight back to disk.
+                // Never-proven ids age out at the first flush after the
+                // clock has shown itself to be flowing normally.
                 let table = PeerTable::from_summary(summary);
                 log::info!(
                     "fleet roll-call: rehydrated {} peer(s) from {}",
@@ -887,7 +952,8 @@ impl FleetPeerTracker {
             // pointed at the path sees a valid (possibly empty) summary.
             dirty: true,
             last_flush: None,
-            cap_logged: false,
+            evictions_logged: 0,
+            jump_logged: false,
         }
     }
 
@@ -897,16 +963,44 @@ impl FleetPeerTracker {
             .observe(topic, payload, retained, unix_now_secs())
         {
             self.dirty = true;
-        } else if self.table.len() >= FLEET_PEER_MAX && !self.cap_logged {
+        }
+        let evictions = self.table.evictions();
+        // Each displacement drops that id's pin; say so, because a steady
+        // stream of these is what a broker flood looks like — but a flood
+        // must not turn into one warning per inbound publish, so the line is
+        // emitted on the first displacement and then each time the count
+        // doubles (1, 2, 4, 8, …), which keeps the journal readable while the
+        // number stays honest.
+        if evictions > self.evictions_logged && evictions >= self.evictions_logged * 2 {
             log::warn!(
-                "fleet roll-call: {} device ids tracked (the cap); further ids are ignored",
-                FLEET_PEER_MAX
+                "fleet roll-call: at the {}-id cap, {} id(s) displaced so far \
+                 (a displaced Canary is re-pinned on its next health publish)",
+                FLEET_PEER_MAX,
+                evictions
             );
-            self.cap_logged = true;
+            self.evictions_logged = evictions;
         }
     }
 
     fn flush_if_due(&mut self, force: bool) {
+        let now = unix_now_secs();
+        if self.table.clock_jumped_since(now) && !self.jump_logged {
+            log::warn!(
+                "fleet roll-call: the clock moved more than {} h since the table last saw it; \
+                 no id is expired this round (pins are kept across a clock jump)",
+                FLEET_PEER_CLOCK_JUMP_SECS / 3600
+            );
+            self.jump_logged = true;
+        }
+        let forgotten = self.table.prune(now);
+        if forgotten > 0 {
+            log::info!(
+                "fleet roll-call: {} never-proven id(s) unheard for {} days forgotten",
+                forgotten,
+                FLEET_PEER_FORGET_SECS / 86_400
+            );
+            self.dirty = true;
+        }
         if !self.dirty {
             return;
         }

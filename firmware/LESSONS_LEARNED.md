@@ -1546,6 +1546,50 @@
   table, and the web page shows it read-only with the on-glass path.
 - **Date learned:** 2026-09
 
+### A signature over a nonce-free canonical proves authorship, not liveness
+
+- **What happened:** The kernel's fleet roll-call (`src/fleet_peers.rs`)
+  claimed a Canary `online` when a live `chain` publish verified against
+  its pinned key within 180 s, and the docs called that "a proof, not a
+  heartbeat". An adversarial review replayed one captured, byte-identical
+  `chain` publish a week later (non-retained, from a client with broker
+  publish rights) and the powered-off Canary read `online: true`; an older
+  publish worked too. The signature separated nothing: anyone who could
+  publish the unsigned heartbeats could replay the signed one.
+- **Root cause:** The chain canonical
+  (`securacv-canary-sig|v1|chain|<id>|<len>|<hash>`) binds no nonce or
+  timestamp, and the verifier did not require the chain to move — every
+  verifying publish reset the presence clock. A signature answers "who
+  said this", never "when", unless the canonical carries something the
+  verifier chose.
+- **Fix:** Record the highest chain `length` verified per peer (persisted)
+  and advance presence only when a live verified publish exceeds it; the
+  retained head, a capture, or an older publish proves nothing new. State
+  the honest semantics everywhere the claim lived ("stronger than a
+  heartbeat, weaker than a liveness proof") together with what a peer on the
+  broker can still do (one window per chain advance the bridge missed;
+  invented ids; a `degraded` verdict on a real id by signing under a second
+  announced key). The real fix is a challenge–response over the firmware's
+  existing `whoami` canonical, left open. Same review, same module: the
+  summary file holding per-room words was `0644` → `0600` + fsync; a
+  first-come id cap with no eviction let 64 invented ids lock every real
+  Canary out until the file was deleted → evict least-useful; never-proven
+  ids age out at 30 days but a proven pin is never the clock's to expire,
+  and no expiry runs across a clock jump (the first cut pruned at startup
+  by wall clock — a host booting 30 days ahead would have erased every pin
+  and written the loss to disk; Codex caught it on the PR); an unsigned
+  `health` could permanently revoke a device's trust → only a signing
+  second key is a conflict.
+- **Regression check:** `cargo test --lib fleet` —
+  `a_replayed_signed_publish_proves_nothing_new`,
+  `an_unsigned_health_with_another_key_changes_no_verdict_by_itself`,
+  `at_the_cap_a_newcomer_displaces_the_least_useful_id_never_a_real_lockout`,
+  `the_summary_file_is_written_private`; and
+  `scripts/lint_dictionary_sync.py` now pins the module's `SIG_PREFIX` /
+  `SCHEMA_V` to the dictionary (it passed before only because the file was
+  invisible to it).
+- **Date learned:** 2026-09
+
 ## Build profiles: a configuration nobody compiles is a configuration that rots
 
 ### Every offered BUILD_PROFILE and hardware target needs its own CI leg
@@ -1605,7 +1649,9 @@
   via OpenSSL; canonical bytes pinned against the `test_ota_release.py`
   fixture; product mismatch and bad signatures refused even when armed),
   and `ota_release.py verify`, which refuses a manifest without
-  `ble_signature`.
+  `ble_signature` for any product whose id fits the header's 31-byte slot
+  (`ble_header_fits()`; the seven longer display ids carry none and are not
+  asked for one).
 - **Date learned:** 2026-09
 
 ## How to Add an Entry

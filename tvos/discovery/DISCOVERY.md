@@ -119,8 +119,9 @@ answer it differently today:
   Allowed today: `https://kmay89.github.io` (the in-browser Lab and flasher,
   the `flasher.url` origin in `firmware/build_matrix.json`),
   `https://securacv.com` (the public site's emulator), and `http://localhost`
-  / `http://127.0.0.1` on any port (a local checkout of either site — the
-  "try it in ~30 seconds" path below). The list is a constant with a comment
+  / `http://127.0.0.1` / `http://[::1]` on any port (a local checkout of
+  either site — the "try it in ~30 seconds" path below — whichever loopback
+  `python3 -m http.server` bound). The list is a constant with a comment
   per entry; there is no config key for it because nothing else in the
   kernel's config carries origins. Note the two `https` origins only matter
   for a kernel served over TLS with a trusted certificate — a plain-`http`
@@ -226,29 +227,66 @@ one-header change instead of a per-board copy-paste.
     (`securacv/fleet_peers/v1`) with an atomic rename. The kernel reads that
     file on every request and projects it through an allowlist
     (`src/fleet_peers.rs`, `fleet_rows`): the file is local bookkeeping and
-    nothing in it — the pinned key, the device id, timestamps — reaches the
-    wire unless the projection names it. A file rather than a kernel
-    endpoint because the event API's parser is header-only by design (no
-    request bodies), and because the token already crosses between the two
-    processes as a path on the same host.
+    nothing in it — the pinned key, the device id, timestamps, and the
+    per-room wellbeing words it holds beside them — reaches the wire unless
+    the projection names it, and what it names is cleaned again on the way
+    out (name and product alphabets, the wellbeing vocabulary, a 64-row
+    cap). Because it holds room words, the file is written `0600` and
+    fsynced, and the kernel refuses to read one past 256 KiB. A file rather
+    than a kernel endpoint because the event API's parser is header-only by
+    design (no request bodies), and because the token already crosses
+    between the two processes as a path on the same host.
   - `name` is the owner's name from the retained `meta` topic, else the
     device id (exactly what a Canary calls itself in its own self-report);
-    `product` is the announced `device_type`.
-  - `online: true` is a **proof, not a heartbeat**: a LIVE (not
-    broker-retained) `chain` publish whose signature verified against the
-    pin within the last 180 s (`FLEET_PEER_RECENT_SECS`, the display's own
-    `stale_after_ms`), with no LWT `offline` since. `status`/`availability`
+    `product` is the announced `device_type`. No firmware in this repo
+    publishes `meta` yet, so today `name` is the device id — and since the
+    topic is writable by anyone on the broker, a name is stripped of control,
+    zero-width and bidi-override characters and bounded (48 characters, 96
+    bytes) before it reaches the Wall.
+  - `online: true` is **stronger than a heartbeat and weaker than a
+    liveness proof**, and the Wall must call it neither more nor less: a
+    LIVE (not broker-retained) `chain` publish whose signature verified
+    against the pin **and whose chain length advanced past the last one the
+    bridge verified**, within the last 180 s (`FLEET_PEER_RECENT_SECS`, the
+    display's own `stale_after_ms`), with no `offline` since — an LWT
+    `offline` on `availability`, `{"status":"offline"}` on `status`, or the
+    canary-wap's will, `{"online":false}` on `status`. `status`/`availability`
     heartbeats are unsigned — anyone on the broker can publish them — so they
-    never prove presence. Because Canaries sign on each record they seal
-    rather than on a timer, a quiet Canary honestly reads `online: false`,
-    which this contract defines as "not claimed present", never as "claimed
-    absent".
+    never prove presence. The signature does not move the trust boundary off
+    the broker either: the chain canonical carries no nonce or timestamp, so
+    a peer with publish rights can replay a captured signed publish. The
+    length rule means a replay can hold a Canary `online` for at most one
+    window per chain advance the bridge itself missed, never indefinitely;
+    the same peer can also invent device ids and sign for them with its own
+    key, and trust-on-first-use cannot tell those rows from real Canaries. A
+    challenge–response (the firmware's `whoami` canonical) would close that;
+    nothing drives it from the bridge yet. Because Canaries sign on each
+    record they seal rather than on a timer, a quiet Canary honestly reads
+    `online: false`, which this contract defines as "not claimed present",
+    never as "claimed absent".
   - `chain` is `"ok"` when the last signed chain publish verified against
-    the pin, `"degraded"` when a signature failed or a second key appeared
-    for a pinned id (sticky; only deleting the summary file clears it), and
-    absent when nothing signed has been checkable. This is verification
-    against a key pinned on first sight, which is weaker than a key pinned at
-    pairing; the Wall must not call it more than that.
+    the pin, `"degraded"` when the last one did not — or when a second key
+    that a `health` announced has actually **signed** for the id, which is
+    sticky: the bridge cannot tell a re-keyed device from an impersonation,
+    so it claims neither `ok` nor `online` for that id until the summary
+    file is deleted. A second key merely announced (an unsigned `health`,
+    which anyone can publish) changes nothing by itself. `chain` is absent
+    when nothing signed has been checkable. This is verification against a
+    key pinned on first sight, which is weaker than a key pinned at pairing;
+    the Wall must not call it more than that.
+  - The roll-call holds at most 64 ids (`FLEET_PEER_MAX`). At the cap a
+    newcomer displaces the least useful id — never-proven first, then least
+    recently heard — and a displaced Canary is re-pinned on its next
+    `health`. A never-proven id unheard for 30 days is forgotten; a proven
+    Canary's pin is never expired by the clock (it leaves only by
+    displacement at the cap, or when the operator deletes the file), and no
+    expiry runs at all across an implausible clock jump, so a host whose
+    clock lands weeks ahead for an hour keeps every pin it had. Membership
+    is therefore broker-writable: a flood of invented ids can crowd the Wall
+    while it lasts, and the ids it leaves behind stay on the Wall as
+    `online: false` rows until a newcomer displaces them (or, if they never
+    signed anything, until they go unheard for 30 days) — what ends with the
+    flood is the lockout of real Canaries, not the ghosts' rows.
   - The wellbeing words (`presence`, `occupants`, `breathing`) ride on a
     peer's row only while it is proven online **and** the reading is fresh
     (a live `state` publish within the same window); a retained `state` is
@@ -263,4 +301,8 @@ one-header change instead of a per-board copy-paste.
   and the optional coarse wellbeing WORDS above, nothing finer — documented
   public in the canary-wap route-security allowlist. Anything that touches
   sealed evidence stays behind the Bearer-gated `/api/fleet-scan` and
-  break-glass paths, never here.
+  break-glass paths, never here. On the hub, "coarse" now spans every Canary
+  the bridge heard, room words included, so it is worth saying plainly: the
+  origin allow-list stops other websites' scripts, not a client that can
+  reach the kernel's port. The port stays loopback by default and is the
+  owner's to expose (`docs/security/THREAT_MODEL.md` §7).
