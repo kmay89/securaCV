@@ -1159,6 +1159,16 @@
        "comment": "outside corner radius"
       },
       {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+      },
+      {
        "name": "tol_slide",
        "default": "0.20",
        "comment": "sliding fits: lid lip <-> base, drip skirt, camera-disc seat — core_tol_slide()"
@@ -1646,6 +1656,15 @@
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
       },
       {
+       "name": "lid_headroom",
+       "default": "1.0 + (cav_h - cav_h_min)"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_l/2 - post_corner - 2.5",
+       "comment": "lid key: on the +Y wall, inboard of the +X corner post"
+      },
+      {
        "name": "cam_throw",
        "default": "base_h + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0) - (pcb_z + board_h + cam_lens_h)"
       },
@@ -1978,6 +1997,16 @@
        "name": "corner_r",
        "default": "3.0",
        "comment": "outside corner radius"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       },
       {
        "name": "standoff_h",
@@ -2631,6 +2660,15 @@
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
       },
       {
+       "name": "lid_headroom",
+       "default": "cav_extra + (cav_d - cav_d_min)"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: on the +Y wall, inboard of the +X corner post"
+      },
+      {
        "name": "cam_throw",
        "default": "(cam_post_eff - cam_lens_h) + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0)"
       },
@@ -2888,6 +2926,16 @@
        "name": "cav_extra",
        "default": "1.0",
        "comment": "headroom over the tallest component"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       },
       {
        "name": "zone_top",
@@ -3366,6 +3414,10 @@
       {
        "name": "plate_r",
        "default": "e_seal ? rr + skirt_gap + skirt_t : rr"
+      },
+      {
+       "name": "lid_headroom",
+       "default": "cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra))"
       }
      ]
     }
@@ -3689,6 +3741,16 @@
       {
        "name": "cav_extra",
        "default": "1.0"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       }
      ]
     },
@@ -4195,6 +4257,11 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: on the +Y wall, inboard of the +X corner post"
       }
      ]
     }
@@ -5154,6 +5221,16 @@
       {
        "name": "foot_cham",
        "default": "0.5"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       }
      ]
     },
@@ -5294,6 +5371,11 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: +Y wall, inboard of the +X corner post (battery side)"
       }
      ]
     }
@@ -5397,6 +5479,16 @@
      "name": "Shared",
      "note": "",
      "params": [
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+      },
       {
        "name": "lid_edge",
        "default": "0.8",
@@ -5562,6 +5654,11 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: +Y wall, inboard of the +X corner post"
       }
      ]
     }
@@ -6209,6 +6306,16 @@
        "name": "corner_r",
        "default": "2.0",
        "comment": "deviates: squared, utilitarian — the service box reads as gear, not decor"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       },
       {
        "name": "boss_d",

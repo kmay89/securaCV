@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "bde60a71e9b873ac51ad385b0639ce557b568c93b225077b68fa6be754e5762e",
+      "sha256": "498fccb4fd3f24cc47a25a31380eb70baa0e8109e242016b3aadac816f14c8d5",
       "groups": [
         {
           "name": "What to render",
@@ -662,6 +662,18 @@
               "type": "number",
               "default": 3.0,
               "desc": "outside corner radius"
+            },
+            {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
             }
           ]
         },
@@ -1087,7 +1099,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1193,7 +1205,7 @@
         }
       },
       "units": {},
-      "sha256": "3c0795d0daa241b57ed0f34786028e18fab7659540cb99730e23a9dfecddaff9",
+      "sha256": "d4421a83bd253c18b50733140b1b30446bf3266bebb3281d7c68677415d3c244",
       "groups": [
         {
           "name": "What to render",
@@ -1530,6 +1542,18 @@
               "type": "number",
               "default": 3.0,
               "desc": "outside corner radius"
+            },
+            {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
             },
             {
               "name": "standoff_h",
@@ -2149,7 +2173,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2227,7 +2251,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "3825906e2800ccdc350594819249bec763e82f204b0aece4c48b5b49ba67e556",
+      "sha256": "9652987439c2f592be36a60d3ab4a6b81a528381323337c905e9f2d96b2fa69e",
       "groups": [
         {
           "name": "What to render",
@@ -2520,6 +2544,18 @@
               "type": "number",
               "default": 1.0,
               "desc": "headroom over the tallest component"
+            },
+            {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
             },
             {
               "name": "zone_top",
@@ -2983,7 +3019,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3075,7 +3111,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "e544fe40b7487973ff866f7be794500c8408ebfdbc678f0ca2c833b68e38b4ba",
+      "sha256": "6d22d6d41134e6ece4e06cf65541fd2b87ce6bd0610faf41d359a427dc97739d",
       "groups": [
         {
           "name": "What to render",
@@ -3436,6 +3472,18 @@
               "name": "cav_extra",
               "type": "number",
               "default": 1.0
+            },
+            {
+              "name": "floor_cove",
+              "type": "number",
+              "default": 0.8,
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+            },
+            {
+              "name": "lid_key",
+              "type": "bool",
+              "default": true,
+              "desc": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
             }
           ]
         },
@@ -3863,7 +3911,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4281,7 +4329,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f4cc53d4490a8a2be3f395c0e6543be63cc48f868f8a90ae0ffb84cfb13788c5"
+          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
         },
         {
           "file": "canary_mount_lib.scad",

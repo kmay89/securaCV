@@ -391,6 +391,14 @@
      "default": true
     },
     {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_mount",
      "type": "bool",
      "label": "blind keyholes in the back",
@@ -407,14 +415,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 43,
+   "engineering_param_count": 45,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 5,
-    "user_options": 5,
+    "options": 6,
+    "user_options": 6,
     "variant_axes": 0
    }
   },
@@ -870,16 +878,24 @@
      "consequence": "",
      "audience": "user",
      "default": false
+    },
+    {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
-   "engineering_param_count": 17,
+   "engineering_param_count": 18,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 3,
-    "user_options": 3,
+    "options": 4,
+    "user_options": 4,
     "variant_axes": 0
    }
   },
@@ -1047,6 +1063,14 @@
      "default": true
     },
     {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "opt_mark",
      "type": "bool",
      "label": "deboss the house wordmark on the lid (canary_mark_lib)",
@@ -1055,7 +1079,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 50,
+   "engineering_param_count": 52,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1064,8 +1088,8 @@
    "counts": {
     "variants": 1,
     "released": 0,
-    "options": 6,
-    "user_options": 6,
+    "options": 7,
+    "user_options": 7,
     "variant_axes": 0
    }
   },
@@ -1836,6 +1860,14 @@
      "default": "hinge"
     },
     {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "screw_insert",
      "type": "bool",
      "label": "screw_insert",
@@ -1892,14 +1924,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 136,
+   "engineering_param_count": 138,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 17,
-    "user_options": 11,
+    "options": 18,
+    "user_options": 12,
     "variant_axes": 1
    }
   },
@@ -2280,6 +2312,14 @@
      "default": false
     },
     {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "screw_insert",
      "type": "bool",
      "label": "M2 brass heat-set inserts in the corner posts AND the security boss (the one",
@@ -2304,14 +2344,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 129,
+   "engineering_param_count": 131,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 1,
     "released": 1,
-    "options": 10,
-    "user_options": 8,
+    "options": 11,
+    "user_options": 9,
     "variant_axes": 0
    }
   },
@@ -2557,6 +2597,14 @@
      "default": false
     },
     {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "screw_insert",
      "type": "bool",
      "label": "M2 brass heat-set inserts in the corner posts (service-grade threads)",
@@ -2613,14 +2661,14 @@
      "default": false
     }
    ],
-   "engineering_param_count": 168,
+   "engineering_param_count": 171,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 4,
     "released": 4,
-    "options": 18,
-    "user_options": 12,
+    "options": 19,
+    "user_options": 13,
     "variant_axes": 2
    }
   },
@@ -3015,6 +3063,14 @@
      "default": true
     },
     {
+     "id": "lid_key",
+     "type": "bool",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
+    },
+    {
      "id": "screw_insert",
      "type": "bool",
      "label": "M2 brass heat-set inserts in the corner posts (service-grade threads;",
@@ -3047,14 +3103,14 @@
      "default": true
     }
    ],
-   "engineering_param_count": 159,
+   "engineering_param_count": 162,
    "alternatives": [],
    "remix_of": null,
    "counts": {
     "variants": 5,
     "released": 5,
-    "options": 21,
-    "user_options": 16,
+    "options": 22,
+    "user_options": 17,
     "variant_axes": 1
    }
   },

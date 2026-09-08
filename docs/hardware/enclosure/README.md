@@ -52,6 +52,7 @@ the website's carried copies after a CAD change.
 - [Which printer to buy or support](./printer_selection.md) — what these parts actually demand, upfront vs running vs maintenance cost, and the decision
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - [Catalog architecture](./CATALOG_ARCHITECTURE.md) — how models, versions, flavors, options, fit, and remixes are organized, and how a user picks the right case (the selection UX)
+- [Design rules](./DESIGN_RULES.md) — the plastics-engineering checklist every shell here is held to (walls, coves, ribs, bosses, snaps, seals, drains, keys, lead-ins, print pose), each rule with the library module or CI gate that enforces it and the file-by-file status
 - [Audit, 2026-09](./AUDIT_2026_09.md) — an eleven-dimension design audit of every `.scad` here (ribs, drop, weather, openings, clearances, printability, assembly, repairability, parametric UX, aesthetics): what was found, what was fixed, and what is still open — each finding proved by a rendered probe rather than by reading a comment
 - Device deep-dives: [WAP](#canary-wap--enclosure-v08) · [Vision](#canary-vision--enclosure-v04) · [Doorbell](#canary-vision--doorbell-v04) · [Sense radome](#canary-sense--radome-enclosure-v02)
 
@@ -194,7 +195,15 @@ protocols that earn each level — see
   in-plane. Both shells print so the service loads — lid pry, wall impact,
   screw clamp — act *in-plane*; the bottom edge (the classic delamination
   initiation site) gets a 45° **`foot_cham`** chamfer that also removes
-  elephant-foot.
+  elephant-foot, and the floor-to-wall junction *inside* the cavity is a 45°
+  **`floor_cove`** (0.8 mm) rather than the square notch a corner drop
+  hinges the floor about.
+- **It only goes together one way.** Four corner posts fit a lid two ways
+  and every lid feature lines up one way, so each shell carries a
+  **`lid_key`**: a rib on the +Y cavity wall inside the lip zone and a slot
+  in the lip. Turned round, the lid stands `lip_h` proud. The lip's tip
+  carries a 45° lead-in so it finds the cavity blind. CI seats every
+  released lid turned 180° and requires the collision.
 - **Service-grade fastening.** The M2 self-tappers are fine for ~10 open/close
   cycles at ≤0.3 N·m. For a serviced fleet, set **`screw_insert = true`**: the
   corner posts auto-fatten (≥1.2 mm wall around the bore) for **M2 brass

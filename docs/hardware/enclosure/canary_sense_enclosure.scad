@@ -144,6 +144,11 @@ lip_h    = 4.0;
 lip_t    = 1.2;
 corner_r = 3.0;
 cav_extra = 1.0;
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
 /* [Print tolerances] — defaults = the catalog trio (core_tol_*(), canary_core_lib), dialed on the fit coupon */
 tol_slide = 0.20;    // sliding fits: front lip, drip skirt — core_tol_slide()
@@ -282,8 +287,11 @@ base_d = floor_t + cav_d;
 // MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
 // interference: coplanar faces intersect to a zero-volume patch that CGAL
 // reports as non-2-manifold, which is a dirty render, not a pass.
-module sense_fitcheck(lift = 0.1) {
-    intersection() { translate([0, 0, base_d + lift]) front(); back(); }
+// `turned` seats the lid rotated 180° about Z — the poka-yoke CONTROL: with
+// lid_key on, this must NOT be empty (the lip lands on the key rib). A gate
+// that can only pass has proved nothing; this is the case it must fail.
+module sense_fitcheck(lift = 0.1, turned = false) {
+    intersection() { translate([0, 0, base_d + lift]) rotate([0, 0, turned ? 180 : 0]) front(); back(); }
 }
 
 vm_cx  = 0;
@@ -331,6 +339,8 @@ assert(!e_seal || opt_vent || opt_weep,
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 assert(usb_axis - usb_h/2 >= 0.6, "the XIAO port opening breaches the floor — raise xiao_below");
 assert(lid_rib_h <= cav_extra, "lid_rib_h must stay within cav_extra, the headroom over the carrier's tallest part");
+assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the structural wall floor");
+key_x = inner_x/2 - post_corner - 2.5;   // lid key: on the +Y wall, inboard of the +X corner post
 assert(2*fin_r <= base_d + mount_extra + 0.01, "fin_r too large — prongs must not exceed the shell depth");
 assert(rad_gap >= 3.0, "antenna-to-radome gap < 3 mm — raise cav_extra");
 assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y + 2*abs(rad_dy) <= vm_l,
@@ -452,7 +462,8 @@ module back() {
                 if (e_mount && (m_style == "hinge" || m_style == "both"))
                     case_hinge();
             }
-            translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
+                cavity_cut(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1, floor_cove);
             // seam reveal — the shadow line under the parting line
             // (canary_core_lib): the indoor build closes front-on-back at the
             // exact same footprint, a raw butt joint on a show surface. The
@@ -520,6 +531,8 @@ module back() {
                 for (p = posts) translate([p[0], p[1], floor_t + cav_d - head_pad - ins_h - 0.5])
                     cylinder(d = ins_od - 0.3, h = ins_h + 1);
         }
+        // lid key (canary_core_lib): a rib on the +Y wall inside the lip zone
+        if (lid_key) lid_key_rib(key_x, inner_y/2, 270, base_d, lip_h);
         // +Y end stops: two bumps just past the carrier's top edge, so the board
         // (hooked only on its ±X edges) cannot slide up and take the antenna array
         // out from under its window — it had 8 mm of travel
@@ -640,14 +653,11 @@ module front() {
         }
         // lip, cleared at posts + USB notch
         difference() {
-            translate([0, 0, -lip_h])
-                difference() {
-                    rrect(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
-                          max(0.1, corner_r - wall_eff - tol_slide), lip_h);
-                    rrect(inner_x - 2*tol_slide - 2*lip_t, inner_y - 2*tol_slide - 2*lip_t, 0.1, lip_h + 1);
-                }
+            lip_ring(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
+                     max(0.1, corner_r - wall_eff - tol_slide), lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
             for (p = post_xy())
                 translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            if (lid_key) lid_key_slot(key_x, inner_y/2, 270, lip_h, lip_t);
             translate([usb_cx, -inner_y/2, -lip_h/2])
                 cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
         }

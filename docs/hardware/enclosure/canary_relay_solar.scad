@@ -106,6 +106,11 @@ standoff_h = 3.0;
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
 foot_cham = 0.5;
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
 /* [Aesthetics] */
 // Placed by mark_dx/dy/rot/size/depth, gated by the library's measured type
@@ -170,6 +175,7 @@ assert(!(e_seal && seal_mid_posts) || (inner_x/2 - pd + 0.2 > bh_cx + (bh_w + 3)
                                        && -(inner_x/2 - pd + 0.2) < lb_cx - lb_w/2 - clip_stack - 0.5),
        "a mid-span post lands on a cradle — widen post_corner");
 assert(lip_h < cav_d, "lip_h vs cavity");
+key_x = inner_x/2 - post_corner - 2.5;   // lid key: +Y wall, inboard of the +X corner post (battery side)
 assert(roof_drain_w == 0 || 3*roof_drain_w + 12 <= pan_w, "roof_drain_w: three notches do not fit across the stop");
 assert(!sma_boss || sma_d + 6 <= cav_d, "the SMA washer land is taller than the sky wall — shrink it");
 assert(!opt_mark || (mark_depth > 0 && mark_depth < lid_t),
@@ -223,7 +229,8 @@ module body() {
                     translate([lb_cx, out_y/2 - 0.01, floor_t + cav_d/2]) rotate([-90, 0, 0])
                         cylinder(d = sma_d + 6, h = 1.01);
             }
-            translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
+                cavity_cut(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1, floor_cove);
             // SMA bulkhead, top wall, over the LoRa column. D-FLAT bore: the
             // 1/4-36 thread is Ø6.35, and nut torque on a plain round bore
             // spins the jack and chews the print. Fit an EPDM sealing washer
@@ -263,6 +270,9 @@ module body() {
             if (foot_cham > 0)
                 foot_chamfer_ring(out_x, out_y, corner_r, foot_cham, -strap_t);
         }
+        // lid key (canary_core_lib): a rib on the +Y (sky) wall inside the lip zone,
+        // on the battery side — the SMA lives on the LoRa side of that wall
+        if (lid_key) lid_key_rib(key_x, inner_y/2, 270, base_d, lip_h);
         // posts + gussets
         difference() {
             union() {
@@ -337,12 +347,10 @@ module lid() {
                         mark_wordmark(mark_size);
         }
         difference() {   // lip
-            translate([0, 0, -lip_h]) difference() {
-                rrect(inner_x - 2*tol_slide, inner_y - 2*tol_slide, max(0.1, corner_r - wall_eff - tol_slide), lip_h);
-                rrect(inner_x - 2*tol_slide - 2*lip_t, inner_y - 2*tol_slide - 2*lip_t, 0.1, lip_h + 1);
-            }
+            lip_ring(inner_x - 2*tol_slide, inner_y - 2*tol_slide, max(0.1, corner_r - wall_eff - tol_slide), lip_h, lip_t);
             for (p = post_xy()) translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
             translate([lb_cx, -inner_y/2, -lip_h/2]) cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
+            if (lid_key) lid_key_slot(key_x, inner_y/2, 270, lip_h, lip_t);
         }
         if (e_seal) difference() {   // drip skirt
             translate([0, 0, -skirt_h]) linear_extrude(skirt_h) difference() {

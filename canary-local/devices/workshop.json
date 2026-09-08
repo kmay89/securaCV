@@ -200,6 +200,14 @@
      "consequence": "",
      "audience": "user",
      "default": true
+    },
+    {
+     "id": "lid_key",
+     "group": "Shell",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     }
    ],
    "packages": [
@@ -742,6 +750,14 @@
       "keyhole",
       "both"
      ]
+    },
+    {
+     "id": "lid_key",
+     "group": "Shell",
+     "label": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit",
+     "consequence": "",
+     "audience": "user",
+     "default": true
     },
     {
      "id": "opt_mark",
