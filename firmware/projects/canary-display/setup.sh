@@ -133,6 +133,10 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    # The broker socket decision + its WiFiClientSecure half (mqtt_mgr.cpp
+    # includes the transport, which includes the logic bare, same directory).
+    "${FIRMWARE_ROOT}/common/network/mqtt_transport_logic.h"
+    "${FIRMWARE_ROOT}/common/network/mqtt_transport.h"
     "${FIRMWARE_ROOT}/common/power/power_events.h"
     # The LAN-multicast band's wire contract (group/port/TTL). fleet_beacon.h
     # comes with it because the transport header includes it — the constants

@@ -4107,7 +4107,7 @@ async function startFlash(opts) {
         const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
-        const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {} };
+        const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {}, u8: {} };
         // Blob-scheme boards (canary/wap) load their local-API bearer token
         // from NVS before deriving one — so mint it HERE and seed it, and the
         // owner leaves with the credential in hand instead of digging it out
@@ -4121,7 +4121,7 @@ async function startFlash(opts) {
           { wifi: opts.wifi || null,
             wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
             strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
-            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 },
+            u8: { ...dInts.u8, ...prov.u8 }, u32: { ...dInts.u32, ...rInts.u32 },
             // The OTA opt-in, seeded into the engine's own namespace
             // ("securacv_ota"/auto_upd) — null means the checkbox never
             // appeared (rescue, local file), and nothing is written.

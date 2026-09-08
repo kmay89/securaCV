@@ -191,6 +191,36 @@ cataloged in
   watch's last page (hold), the portrait faces' gear corner (day), the
   dash's transparency sheet.
 
+## Broker link: TLS (optional, fail-closed)
+
+The broker socket is plain by default — exactly what every unit shipped with
+— and can be switched to TLS per unit through three NVS keys in the same
+`securacv` namespace as `mqtt_host` / `mqtt_port` / `mqtt_user` / `mqtt_pass`
+(the flashers' NVS builders seed them; there is no form field or on-device
+setting yet):
+
+| NVS key | Type | Meaning |
+|---|---|---|
+| `mqtt_tls` | u8 | `0` plain (default) · `1` verify the broker against a CA · `2` pin the broker certificate's SHA-256 fingerprint · `3` lab: encrypt but do not verify (a warning is logged on **every** connect) |
+| `mqtt_ca` | string | the CA certificate, PEM (`-----BEGIN CERTIFICATE-----` … `-----END CERTIFICATE-----`), up to 3071 bytes — required by mode `1` |
+| `mqtt_fp` | string | the broker certificate's SHA-256 fingerprint, 64 hex digits, `:` separators optional (`openssl x509 -in broker.crt -noout -fingerprint -sha256`) — required by mode `2` |
+
+Set `mqtt_port` yourself (TLS brokers normally listen on 8883); nothing
+rewrites it. The decision is the fleet-wide one in
+`firmware/common/network/mqtt_transport_logic.h` (host-tested) and it fails
+closed: mode `1` without a CA, mode `2` without a pin, a malformed PEM, or an
+unknown mode byte **refuses to connect** and logs why — it never falls back
+to plain or unverified. A failed TLS connect names its reason on the serial
+log (`tls-ca: the broker's certificate did not verify against the
+provisioned CA (mbedtls -0x2700)`, `… did not speak TLS on this port`, `…
+fingerprint does not match the provisioned pin`) without ever printing the
+CA, the pin or a credential. Status per product, and what is still open,
+in [`docs/FIRMWARE_VARIANT_AUDIT.md`](../../../docs/FIRMWARE_VARIANT_AUDIT.md).
+Compile-tested; not yet bench-tested against a TLS broker.
+Fleet **referrals and broker gossip** rebind the host and port only; the
+provisioned TLS mode stays, so a gossiped plain `1883` broker on a TLS-mode
+display fails closed rather than downgrading.
+
 ## Build
 
 This is the canonical **PlatformIO** tree. An Arduino-IDE-buildable **parity

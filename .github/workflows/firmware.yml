@@ -703,6 +703,17 @@ jobs:
           chmod +x firmware/scripts/check_provision_core_sync.sh
           firmware/scripts/check_provision_core_sync.sh
 
+      - name: Verify mqtt_transport_logic.h stays identical in common/ and the canary-wap sketch
+        # The broker-socket decision (plain / verified-CA TLS / pinned /
+        # explicit lab opt-in, fail-closed otherwise) lives once in
+        # common/network and is host-tested there; the wap sketch carries a
+        # byte-identical staged copy for its esp_mqtt bridge, like every other
+        # staged family above. Drift here means two products disagree about
+        # whether a provisioning is safe to connect with.
+        run: |
+          chmod +x firmware/scripts/check_mqtt_transport_sync.sh
+          firmware/scripts/check_mqtt_transport_sync.sh
+
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
         # draws a hollow box for anything else — no build error, and the browser

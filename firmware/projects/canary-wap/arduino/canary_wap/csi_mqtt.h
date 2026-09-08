@@ -63,11 +63,22 @@ constexpr const char* NVS_KEY_PASS      = "mqtt.pass";
 constexpr const char* NVS_KEY_PREFIX    = "mqtt.prefix";
 constexpr const char* NVS_KEY_TLS       = "mqtt.tls";
 constexpr const char* NVS_KEY_DISCOVERY = "mqtt.disc";
+/* Broker TLS: the MODE byte the shared decision header reads
+ * (mqtt_transport_logic.h — 0 plain, 1 CA-verified, 3 lab/unverified; 2,
+ * fingerprint pinning, is refused on this esp_mqtt transport) and the CA
+ * in PEM form. The older `mqtt.tls` bool is still written, derived as
+ * (mode != 0), so nothing that read it breaks; when ONLY the bool exists
+ * it reads back as CA mode, which the decision layer REFUSES until a CA is
+ * provided — the encrypted-but-unverified socket that bool used to produce
+ * never comes back by default (lab mode must be chosen by name). */
+constexpr const char* NVS_KEY_TLS_MODE  = "mqtt.tlsmode";
+constexpr const char* NVS_KEY_CA        = "mqtt.ca";
 
 constexpr size_t MAX_HOST_LEN   = 128;
 constexpr size_t MAX_USER_LEN   = 64;
 constexpr size_t MAX_PASS_LEN   = 128;
 constexpr size_t MAX_PREFIX_LEN = 32;
+constexpr size_t MAX_CA_LEN     = 3071;   /* PEM bytes, NUL excluded (mqtt_transport_logic.h kCaPemMax) */
 
 /* Configuration mirror of the NVS row. password is loaded but
  * intentionally never returned by handle_config_get. */
@@ -78,7 +89,9 @@ struct Config {
   char     user[MAX_USER_LEN + 1];
   char     pass[MAX_PASS_LEN + 1];
   char     prefix[MAX_PREFIX_LEN + 1];
-  bool     tls;
+  bool     tls;        /* derived: tls_mode != 0 (kept for older readers) */
+  uint8_t  tls_mode;   /* canary::net::mqtt_tls::Mode as a byte */
+  bool     ca_set;     /* a CA PEM is on file under NVS_KEY_CA (never loaded into this struct) */
   /* When true, publish HA MQTT auto-discovery payloads on
    * homeassistant/{component}/canary_<device_id>/{object_id}/config
    * the moment we connect to the broker. HA picks them up
@@ -93,6 +106,17 @@ struct Config {
 
 bool config_load(Config* out);
 bool config_save(const Config& cfg);
+
+/* Store (or, with an empty/null PEM, remove) the broker CA under
+ * NVS_KEY_CA. Callers validate the PEM shape first
+ * (canary::net::mqtt_tls::ca_pem_looks_valid); init() re-reads it. */
+bool ca_save(const char* pem);
+
+/* What the socket is doing right now ("plain", "tls-ca", "tls-insecure",
+ * "refused") and the last transport-level failure in words (empty when
+ * none) — constants only, never the CA or a credential. */
+const char* transport_name();
+const char* last_error();
 
 /**
  * Cold-boot init. Reads NVS, opens the esp_mqtt client if enabled, and

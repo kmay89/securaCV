@@ -7,6 +7,8 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
+#include "network/mqtt_transport.h"  // plain / TLS-CA / pinned broker socket, decided once fleet-wide
+
 #include "canary/config.h"
 #include "canary/log.h"
 #include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
@@ -25,6 +27,10 @@ namespace canary::net {
 
 static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
+// The socket PubSubClient actually rides is rebound in mqtt_init once NVS
+// is readable: this object hands back a plain WiFiClient or a configured
+// WiFiClientSecure per the provisioned TLS mode (network/mqtt_transport.h).
+static canary::net::mqtt_tls::BrokerTransport s_broker_tls;
 
 // Bound a stuck MQTT connect/read to well under the task watchdog budget
 // instead of resting on PubSubClient's library default, so the socket
@@ -236,6 +242,18 @@ void mqtt_init(const Topics& topics) {
   mqtt.setBufferSize(MQTT_BUFFER_BYTES);
   mqtt.setSocketTimeout(MQTT_SOCKET_TIMEOUT_SEC);
   mqtt.setCallback(on_mqtt_message);
+  // Broker transport: plain unless NVS carries a TLS mode (CA-verified,
+  // fingerprint-pinned, or the explicit lab opt-in). Decided ONCE here by the
+  // shared header so every product answers identically; the BrokerTransport owns
+  // the CA buffer setCACert() keeps a pointer to. A refused decision is
+  // logged now and again on every connect attempt, never silently plain.
+  {
+    const auto& tls = s_broker_tls.load("securacv");
+    mqtt.setClient(s_broker_tls.client());
+    log_header("MQTT");
+    canary::dbg_serial().printf("Broker transport: %s\n", s_broker_tls.name());
+    if (!tls.allowed()) log_line("MQTT", canary::net::mqtt_tls::reason_text(tls.reason));
+  }
 }
 
 bool mqtt_connected() { return mqtt.connected(); }
@@ -444,6 +462,22 @@ bool mqtt_connect_attempt() {
   // wifi_loop() supervision owns that recovery.
   if (!wifi_connected()) return false;
 
+  // Broker transport gate (shared decision, network/mqtt_transport.h): a
+  // REFUSED decision never reaches the socket, and the lab opt-in is named on
+  // every attempt — the condition that makes an unverified socket acceptable
+  // at all. The text is secret-free by construction (constants only).
+  char tls_msg[224];
+  switch (s_broker_tls.prepare(tls_msg, sizeof(tls_msg))) {
+    case canary::net::mqtt_tls::Prepared::Refused:
+      log_line("MQTT", tls_msg);
+      return false;
+    case canary::net::mqtt_tls::Prepared::OkWarnInsecure:
+      log_line("MQTT", tls_msg);
+      break;
+    case canary::net::mqtt_tls::Prepared::Ok:
+      break;
+  }
+
   char lwtPayload[160];
   snprintf(lwtPayload, sizeof(lwtPayload),
            "{"
@@ -475,6 +509,10 @@ bool mqtt_connect_attempt() {
   if (!ok) {
     log_header("MQTT");
     canary::dbg_serial().printf("Connect FAIL rc=%d — retrying on the main-loop backoff.\n", mqtt.state());
+    // A TLS socket that failed to come up says WHY (pin mismatch, CA verify
+    // failure, plaintext listener on a TLS port) — the reason a person can
+    // act on, never the CA or the credential.
+    if (s_broker_tls.describe_failure(tls_msg, sizeof(tls_msg))) log_line("MQTT", tls_msg);
     return false;
   }
 
