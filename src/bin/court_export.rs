@@ -97,7 +97,9 @@ struct KitAnchor {
     /// The anchor-policy entry name the operator declared, if any.
     declared_tsa: Option<String>,
     /// SHA-256 of the signing certificate embedded in the token, if any.
-    signer_cert_sha256: Option<String>,
+    /// SHA-256 of the TSA signing certificate embedded in the token, when readable
+    /// (manifest key `signer_fingerprint`).
+    signer_fingerprint: Option<String>,
     /// The embedded certificate's commonName, display only.
     signer_cn: Option<String>,
     /// The token's `SignerInfo` identity (`TsaSigner::sid_hex`), for the
@@ -383,15 +385,15 @@ fn package_anchors(
             tsa_url: anchor.tsa_url,
             covers,
             declared_tsa: anchor.tsa_name,
-            signer_cert_sha256: signer
+            signer_fingerprint: signer
                 .as_ref()
-                .and_then(|s| s.cert_sha256.map(hex::encode))
-                .or(anchor.signer_cert_sha256),
+                .and_then(|s| s.signer_fingerprint.map(hex::encode))
+                .or(anchor.signer_fingerprint),
             signer_sid: signer
                 .as_ref()
                 .map(|s| s.sid_hex.clone())
                 .or(anchor.signer_sid),
-            signer_cn: signer.and_then(|s| s.cert_subject_cn),
+            signer_cn: signer.and_then(|s| s.signer_common_name),
         });
     }
     Ok(out)
@@ -738,10 +740,10 @@ fn write_custody_record(
         anchor_rows.push_str("(none recorded)\n");
     } else {
         for a in anchors {
-            let issuer = match (&a.signer_cert_sha256, &a.signer_cn) {
-                (Some(cert), cn) => format!(
+            let issuer = match (&a.signer_fingerprint, &a.signer_cn) {
+                (Some(fp), cn) => format!(
                     "TSA certificate sha256:{}… ({})",
-                    &cert[..16.min(cert.len())],
+                    &fp[..16.min(fp.len())],
                     cn.as_deref().unwrap_or("no commonName")
                 ),
                 (None, _) => match a.signer_sid.as_deref() {
@@ -1102,7 +1104,7 @@ fn write_manifest(
                     "covers": a.covers.as_str(),
                     "tsa": {
                         "declared_name": a.declared_tsa,
-                        "signer_cert_sha256": a.signer_cert_sha256,
+                        "signer_cert_sha256": a.signer_fingerprint,
                     },
                 })
             })

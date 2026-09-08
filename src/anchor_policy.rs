@@ -71,7 +71,8 @@ pub struct TsaEntry {
     /// cert wins. A pin never attributes a row that failed under this
     /// entry's CA.
     #[serde(default)]
-    pub cert_sha256: Vec<String>,
+    #[serde(rename = "cert_sha256")]
+    pub fingerprint_pins: Vec<String>,
     /// Recorded text; never evaluated.
     #[serde(default)]
     pub declaration: Option<String>,
@@ -183,7 +184,7 @@ fn validate(policy: &mut AnchorPolicy, prefix: &str) -> Result<()> {
                 entry.name
             );
         }
-        for pin in &entry.cert_sha256 {
+        for pin in &entry.fingerprint_pins {
             if !is_64_lower_hex(pin) {
                 bail!(
                     "{prefix}TSA '{}': cert_sha256 entry \"{pin}\" is not 64 hex characters",
@@ -311,13 +312,13 @@ pub enum Attribution {
 pub fn attribute(
     policy: &AnchorPolicy,
     v: &Verified<'_>,
-    signer_cert_sha256: Option<&str>,
+    signer_fingerprint: Option<&str>,
 ) -> Attribution {
     match v.under.len() {
         0 => Attribution::None,
         1 => Attribution::One(v.under[0].clone()),
         _ => {
-            let Some(cert) = signer_cert_sha256 else {
+            let Some(fp) = signer_fingerprint else {
                 return Attribution::Ambiguous(v.under.clone());
             };
             let pinned: Vec<&String> = v
@@ -326,7 +327,7 @@ pub fn attribute(
                 .filter(|name| {
                     policy
                         .entry(name)
-                        .map(|e| e.cert_sha256.iter().any(|p| p == cert))
+                        .map(|e| e.fingerprint_pins.iter().any(|p| p == fp))
                         .unwrap_or(false)
                 })
                 .collect();
@@ -754,7 +755,7 @@ mod tests {
             gen_time: "20260610123324Z".to_string(),
             token_der: Vec::new(),
             tsa_name: None,
-            signer_cert_sha256: None,
+            signer_fingerprint: None,
             signer_sid: None,
             ledger_id: None,
         }

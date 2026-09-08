@@ -100,7 +100,7 @@ fn anchor_rows_round_trip_and_track_chain_history() {
     assert_eq!(anchors[0].created_bucket.size_s, 600);
     // Identity is cached from the token; the ledger position from the chain.
     assert_eq!(
-        anchors[0].signer_cert_sha256.as_deref(),
+        anchors[0].signer_fingerprint.as_deref(),
         Some("fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542")
     );
     assert_eq!(
@@ -312,7 +312,7 @@ fn legacy_anchor_table_lists_read_only_and_migrates() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].subject, "chain_head");
     assert_eq!(rows[0].tsa_name, None);
-    assert_eq!(rows[0].signer_cert_sha256, None);
+    assert_eq!(rows[0].signer_fingerprint, None);
     assert_eq!(rows[0].signer_sid, None);
     assert_eq!(rows[0].ledger_id, None);
     let cols: i64 = ro

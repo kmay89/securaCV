@@ -278,7 +278,7 @@ impl ThrowawayTsa {
 
     /// SHA-256 of this TSA's signing certificate DER — what a
     /// `cert_sha256` pin holds.
-    pub fn cert_sha256_hex(&self) -> String {
+    pub fn fingerprint_hex(&self) -> String {
         let out = Command::new("openssl")
             .args(["x509", "-in", &self.leaf_path(), "-outform", "DER"])
             .output()

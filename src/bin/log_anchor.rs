@@ -380,7 +380,7 @@ fn resolve_subject(
 /// the token itself says about its signer.
 fn signer_summary(token_der: &[u8]) -> String {
     match tsa::parse_token_signer(token_der) {
-        Ok(s) => match s.cert_sha256 {
+        Ok(s) => match s.signer_fingerprint {
             Some(cert) => format!("signer cert sha256:{}…", &hex::encode(cert)[..16]),
             None => format!(
                 "signer sid:{}… (no certificate embedded)",
@@ -853,16 +853,17 @@ fn list(conn: &Connection) -> Result<()> {
         // rows) it is re-derived from the token. Display only — `verify`
         // re-derives always.
         let signer = tsa::parse_token_signer(&a.token_der).ok();
-        let cert = a
-            .signer_cert_sha256
-            .clone()
-            .or_else(|| signer.as_ref().and_then(|s| s.cert_sha256.map(hex::encode)));
+        let fp = a.signer_fingerprint.clone().or_else(|| {
+            signer
+                .as_ref()
+                .and_then(|s| s.signer_fingerprint.map(hex::encode))
+        });
         let sid = a
             .signer_sid
             .clone()
             .or_else(|| signer.as_ref().map(|s| s.sid_hex.clone()));
-        let cn = signer.as_ref().and_then(|s| s.cert_subject_cn.clone());
-        let signer_text = match (cert, sid) {
+        let cn = signer.as_ref().and_then(|s| s.signer_common_name.clone());
+        let signer_text = match (fp, sid) {
             (Some(c), _) => match cn {
                 Some(cn) => format!("cert sha256:{}… ({cn})", &c[..16.min(c.len())]),
                 None => format!("cert sha256:{}…", &c[..16.min(c.len())]),
@@ -995,13 +996,15 @@ fn verify(
 
         // 2. Cached identity vs the token (the token is the authority).
         let signer = tsa::parse_token_signer(&a.token_der).ok();
-        let token_cert = signer.as_ref().and_then(|s| s.cert_sha256.map(hex::encode));
-        if let (Some(row_cert), Some(tok_cert)) = (&a.signer_cert_sha256, &token_cert) {
-            if row_cert != tok_cert {
+        let token_fp = signer
+            .as_ref()
+            .and_then(|s| s.signer_fingerprint.map(hex::encode));
+        if let (Some(row_fp), Some(tok_fp)) = (&a.signer_fingerprint, &token_fp) {
+            if row_fp != tok_fp {
                 problems.push(format!(
                     "row records signer cert sha256:{}… but the token embeds {}…",
-                    &row_cert[..16.min(row_cert.len())],
-                    &tok_cert[..16]
+                    &row_fp[..16.min(row_fp.len())],
+                    &tok_fp[..16]
                 ));
             }
         }
@@ -1050,7 +1053,7 @@ fn verify(
                 }
             }
             let v = Verified { anchor: a, under };
-            let attribution = anchor_policy::attribute(p, &v, token_cert.as_deref());
+            let attribution = anchor_policy::attribute(p, &v, token_fp.as_deref());
             let name = match attribution {
                 Attribution::One(n) => {
                     under_label = Some(format!("{n}'s CA"));
@@ -1090,9 +1093,9 @@ fn verify(
                     }
                 }
                 if let Some(entry) = p.entry(n) {
-                    if !entry.cert_sha256.is_empty() {
-                        match &token_cert {
-                            Some(c) if entry.cert_sha256.iter().any(|pin| pin == c) => {}
+                    if !entry.fingerprint_pins.is_empty() {
+                        match &token_fp {
+                            Some(c) if entry.fingerprint_pins.iter().any(|pin| pin == c) => {}
                             Some(c) => problems.push(format!(
                                 "signer certificate sha256:{}… is not among the cert_sha256 pins \
                                  declared for '{n}'",
@@ -1126,7 +1129,7 @@ fn verify(
                         if let Some((_, n)) = attributed.last().filter(|(i, _)| *i == idx) {
                             entry.insert(n.clone());
                         }
-                    } else if let Some(c) = &token_cert {
+                    } else if let Some(c) = &token_fp {
                         entry.insert(c.clone());
                     }
                     if !head_order.contains(&key) {

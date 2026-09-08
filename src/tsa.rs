@@ -585,11 +585,11 @@ pub struct TsaSigner {
     pub serial_hex: Option<String>,
     /// SHA-256 over the matching embedded certificate's DER, exactly as
     /// embedded; `None` when no embedded certificate matches the sid.
-    pub cert_sha256: Option<[u8; 32]>,
+    pub signer_fingerprint: Option<[u8; 32]>,
     /// First `2.5.4.3` (commonName) of the matching certificate's subject;
     /// printable ASCII only, control characters become `?`, at most 64
     /// characters. Display only.
-    pub cert_subject_cn: Option<String>,
+    pub signer_common_name: Option<String>,
 }
 
 /// id-at-commonName (2.5.4.3), body only.
@@ -620,7 +620,7 @@ fn signed_data_reader(token_der: &[u8]) -> Result<(Der<'_>, &[u8])> {
 }
 
 /// The fields of one embedded X.509 certificate that identity matching needs.
-struct EmbeddedCert<'a> {
+struct EmbeddedSigner<'a> {
     raw: &'a [u8],
     serial: &'a [u8],
     issuer_raw: &'a [u8],
@@ -668,7 +668,7 @@ fn subject_key_identifier<'a>(t: &mut Der<'a>) -> Result<Option<&'a [u8]>> {
     Ok(None)
 }
 
-fn parse_embedded_cert(raw: &[u8]) -> Result<EmbeddedCert<'_>> {
+fn parse_embedded_signer(raw: &[u8]) -> Result<EmbeddedSigner<'_>> {
     // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signature }
     let cert = Der::new(raw).expect(0x30, "Certificate")?;
     let tbs = Der::new(cert).expect(0x30, "TBSCertificate")?;
@@ -690,7 +690,7 @@ fn parse_embedded_cert(raw: &[u8]) -> Result<EmbeddedCert<'_>> {
         bail!("DER: expected subject Name (tag 0x30), got 0x{tag:02x}");
     }
     let ski = subject_key_identifier(&mut t).unwrap_or(None);
-    Ok(EmbeddedCert {
+    Ok(EmbeddedSigner {
         raw,
         serial,
         issuer_raw,
@@ -717,21 +717,23 @@ enum SignerId<'a> {
 /// that certificate carries no SKI extension is it taken as the signer (the
 /// identifier cannot then be checked against anything, and a lone embedded
 /// certificate in a `certReq` reply is the signer by RFC 3161 §2.4.1).
-fn match_signer_cert<'c, 'a>(
+fn resolve_signer<'c, 'a>(
     sid: &SignerId<'_>,
-    certs: &'c [EmbeddedCert<'a>],
-) -> Option<&'c EmbeddedCert<'a>> {
+    embedded: &'c [EmbeddedSigner<'a>],
+) -> Option<&'c EmbeddedSigner<'a>> {
     match sid {
-        SignerId::IssuerSerial { issuer_raw, serial } => certs.iter().find(|c| {
+        SignerId::IssuerSerial { issuer_raw, serial } => embedded.iter().find(|c| {
             c.issuer_raw == *issuer_raw && uint_normalize(c.serial) == uint_normalize(serial)
         }),
-        SignerId::Ski(ski) => certs
-            .iter()
-            .find(|c| c.ski == Some(*ski))
-            .or_else(|| match certs {
-                [only] if only.ski.is_none() => Some(only),
-                _ => None,
-            }),
+        SignerId::Ski(ski) => {
+            embedded
+                .iter()
+                .find(|c| c.ski == Some(*ski))
+                .or_else(|| match embedded {
+                    [only] if only.ski.is_none() => Some(only),
+                    _ => None,
+                })
+        }
     }
 }
 
@@ -787,14 +789,14 @@ pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
 
     // certificates [0] IMPLICIT CertificateSet OPTIONAL — collect every
     // element that is a Certificate SEQUENCE (other choices are skipped).
-    let mut certs: Vec<&[u8]> = Vec::new();
+    let mut embedded: Vec<&[u8]> = Vec::new();
     if sd.peek_tag() == Some(0xa0) {
         let (_, set, _) = sd.tlv()?;
         let mut cs = Der::new(set);
         while cs.has_more() {
             let (tag, _, raw) = cs.tlv()?;
             if tag == 0x30 {
-                certs.push(raw);
+                embedded.push(raw);
             }
         }
     }
@@ -840,11 +842,11 @@ pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
         _ => bail!("SignerInfo.sid is neither issuerAndSerialNumber nor subjectKeyIdentifier"),
     };
 
-    let parsed_certs = certs
+    let parsed_signers = embedded
         .iter()
-        .map(|raw| parse_embedded_cert(raw))
+        .map(|raw| parse_embedded_signer(raw))
         .collect::<Result<Vec<_>>>()?;
-    let matched = match_signer_cert(&sid, &parsed_certs);
+    let matched = resolve_signer(&sid, &parsed_signers);
 
     let (sid_hex, issuer_sha256, serial_hex) = match sid {
         SignerId::IssuerSerial { issuer_raw, serial } => {
@@ -866,7 +868,7 @@ pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
         }
     };
 
-    let (cert_sha256, cert_subject_cn) = match matched {
+    let (signer_fingerprint, signer_common_name) = match matched {
         Some(c) => (
             Some(Sha256::digest(c.raw).into()),
             name_common_name(c.subject_raw)?,
@@ -878,8 +880,8 @@ pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
         sid_hex,
         issuer_sha256,
         serial_hex,
-        cert_sha256,
-        cert_subject_cn,
+        signer_fingerprint,
+        signer_common_name,
     })
 }
 
@@ -907,7 +909,7 @@ pub struct AnchorRecord {
     /// Cached SHA-256 (64 lowercase hex) of the token's embedded signer
     /// certificate; verifiers re-derive it from the token and a mismatch is
     /// `FAIL`.
-    pub signer_cert_sha256: Option<String>,
+    pub signer_fingerprint: Option<String>,
     /// Cached `TsaSigner::sid_hex`; re-derived by verifiers likewise.
     pub signer_sid: Option<String>,
     /// Ledger row id of the anchored head AT INSERT TIME; `None` for digest
@@ -1003,7 +1005,9 @@ fn insert_anchor_row(
     // Identity is read from the token, never from `tsa_url`; a signer that
     // cannot be parsed leaves the cache columns NULL (the caller may warn).
     let signer = parse_token_signer(&token.token_der).ok();
-    let signer_cert_sha256 = signer.as_ref().and_then(|s| s.cert_sha256.map(hex::encode));
+    let signer_fingerprint = signer
+        .as_ref()
+        .and_then(|s| s.signer_fingerprint.map(hex::encode));
     let signer_sid = signer.as_ref().map(|s| s.sid_hex.clone());
     let ledger_id = ledger_position(conn, AnchorSubject::from_row(subject), subject_hash)?;
     conn.execute(
@@ -1019,7 +1023,7 @@ fn insert_anchor_row(
             token.gen_time,
             token.token_der,
             tsa_name,
-            signer_cert_sha256,
+            signer_fingerprint,
             signer_sid,
             ledger_id,
         ],
@@ -1087,7 +1091,7 @@ fn decode_anchor_row(raw: RawAnchorRow) -> std::result::Result<AnchorRecord, Str
         gen_time,
         token_der,
         tsa_name,
-        signer_cert_sha256,
+        signer_fingerprint,
         signer_sid,
         ledger_id,
     ) = raw;
@@ -1111,7 +1115,7 @@ fn decode_anchor_row(raw: RawAnchorRow) -> std::result::Result<AnchorRecord, Str
         gen_time,
         token_der,
         tsa_name,
-        signer_cert_sha256,
+        signer_fingerprint,
         signer_sid,
         ledger_id,
     })
@@ -1583,10 +1587,13 @@ mod tests {
             Some("45c7728db49cb1c57be1b8f3fe5970522be1f00c")
         );
         assert_eq!(
-            hex::encode(signer.cert_sha256.unwrap()),
+            hex::encode(signer.signer_fingerprint.unwrap()),
             "fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542"
         );
-        assert_eq!(signer.cert_subject_cn.as_deref(), Some("SecuraCV Test TSA"));
+        assert_eq!(
+            signer.signer_common_name.as_deref(),
+            Some("SecuraCV Test TSA")
+        );
         // The token's own serial is untouched: TSTInfo serial, not the cert's.
         assert_eq!(parse_token(&der).unwrap().serial_hex, "02");
         // The embedded certificate is byte-equal to the committed tsa.crt.
@@ -1596,10 +1603,10 @@ mod tests {
         ))
         .unwrap();
         let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
-        let cert_der = base64_decode(&b64);
-        assert_eq!(cert_der.len(), 448);
-        let cert_sha: [u8; 32] = Sha256::digest(&cert_der).into();
-        assert_eq!(Some(cert_sha), signer.cert_sha256);
+        let signer_der = base64_decode(&b64);
+        assert_eq!(signer_der.len(), 448);
+        let signer_sha: [u8; 32] = Sha256::digest(&signer_der).into();
+        assert_eq!(Some(signer_sha), signer.signer_fingerprint);
     }
 
     #[test]
@@ -1615,9 +1622,9 @@ mod tests {
         ))
         .unwrap();
         let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
-        let cert_der = base64_decode(&b64);
-        let cert = parse_embedded_cert(&cert_der).unwrap();
-        let ski = cert
+        let signer_der = base64_decode(&b64);
+        let signer = parse_embedded_signer(&signer_der).unwrap();
+        let ski = signer
             .ski
             .expect("fixture certificate carries an SKI extension");
         assert_eq!(
@@ -1625,20 +1632,20 @@ mod tests {
             "fed9bb53d2a050b14064eeb457004ad3a2d96b69",
             "openssl x509 -ext subjectKeyIdentifier"
         );
-        let certs = vec![cert];
-        let hit = match_signer_cert(&SignerId::Ski(ski), &certs).expect("SKI matches");
-        assert_eq!(hit.raw, cert_der.as_slice());
+        let embedded = vec![signer];
+        let hit = resolve_signer(&SignerId::Ski(ski), &embedded).expect("SKI matches");
+        assert_eq!(hit.raw, signer_der.as_slice());
         assert!(
-            match_signer_cert(&SignerId::Ski(b"not-this-key"), &certs).is_none(),
+            resolve_signer(&SignerId::Ski(b"not-this-key"), &embedded).is_none(),
             "a certificate with a different SKI is not the signer, even when it is the only one"
         );
         // The issuerAndSerialNumber form still matches the same certificate.
-        let by_serial = match_signer_cert(
+        let by_serial = resolve_signer(
             &SignerId::IssuerSerial {
-                issuer_raw: certs[0].issuer_raw,
-                serial: certs[0].serial,
+                issuer_raw: embedded[0].issuer_raw,
+                serial: embedded[0].serial,
             },
-            &certs,
+            &embedded,
         );
         assert!(by_serial.is_some());
     }
@@ -1735,7 +1742,7 @@ mod tests {
         assert_eq!(rows[2].0, good2);
         let last = rows[2].1.as_ref().unwrap();
         assert_eq!(
-            last.signer_cert_sha256.as_deref(),
+            last.signer_fingerprint.as_deref(),
             Some("fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542")
         );
         assert_eq!(last.ledger_id, None);

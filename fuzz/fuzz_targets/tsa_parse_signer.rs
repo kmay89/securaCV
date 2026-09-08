@@ -15,7 +15,7 @@ use witness_kernel::tsa;
 fuzz_target!(|data: &[u8]| {
     if let Ok(signer) = tsa::parse_token_signer(data) {
         assert!(
-            !(signer.cert_sha256.is_none() && signer.cert_subject_cn.is_some()),
+            !(signer.cert_sha256.is_none() && signer.signer_common_name.is_some()),
             "a commonName was reported without the certificate it was read from"
         );
         assert_eq!(signer.sid_hex.len(), 64, "sid_hex is always a SHA-256 hex digest");

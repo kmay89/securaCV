@@ -1025,7 +1025,7 @@ fn verify_policy_satisfied_and_not() -> Result<()> {
     assert!(
         text.contains(&format!(
             "    signer certificate sha256:{}… is not among the cert_sha256 pins declared for 'alpha'",
-            &alpha.cert_sha256_hex()[..16]
+            &alpha.fingerprint_hex()[..16]
         )),
         "{text}"
     );
@@ -1213,8 +1213,8 @@ fn verify_policy_shared_root_needs_pins() -> Result<()> {
     assert!(!text.contains(": OK ("), "{text}");
 
     // Pin each leaf to its entry: the chain-validated cert breaks the tie.
-    let alpha_pin = alpha.cert_sha256_hex();
-    let beta_pin = beta.cert_sha256_hex();
+    let alpha_pin = alpha.fingerprint_hex();
+    let beta_pin = beta.fingerprint_hex();
     assert_ne!(alpha_pin, beta_pin);
     write(
         std::slice::from_ref(&alpha_pin),
