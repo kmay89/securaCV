@@ -30,6 +30,24 @@
   stays, and `MOBILE.md` says how to bring a CI build back (a per-target
   workflow plus a `release-targets.yml` row, not a launcher).
 
+### The Home Assistant integration carries its own icon, and the HACS mirror carries it too
+
+- **`custom_components/securacv/brand/` is part of the integration.** The
+  icon (256 and 512 px) and logo moved byte-for-byte from `brands/submission/`
+  into the integration directory. Home Assistant 2026.3 and newer serves them
+  at `/api/brands/integration/securacv/…` (a local file takes priority over
+  the brands CDN; no manifest key needed), and HACS's `brands` validation
+  accepts the same folder — so `homeassistant-mirror.yml` no longer excludes
+  it, the mirror's `check_mirror_sync.py` no longer special-cases it, the
+  whole directory is one byte-exact copy, and the monorepo's `validate.yml`
+  runs the brands check instead of ignoring it. The unused root
+  `custom_components/securacv/icon.png` / `icon@2x.png` (read by nothing) are
+  gone. Older Home Assistant shows the generic placeholder; nothing has been
+  submitted to home-assistant/brands — `brands/home-assistant/README.md`
+  records the sizes and the optional recipe. Closes roadmap row 51 with its
+  premise corrected: the mirror README's "HACS does not read `brand/`" was
+  the false claim, not the folder.
+
 ### The device manifests drive the generators, and the release env list is derived
 
 - **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read

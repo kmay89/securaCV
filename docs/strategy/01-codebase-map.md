@@ -41,7 +41,7 @@ Camera (RTSP / V4L2 / ESP32 / Frigate-MQTT)
 | `tests/` | Rust integration tests (mqtt e2e, hardening, frigate, tract) | Rust | — | `cargo test` |
 | `tools/` | Dev tools (artwork, serial-monitor, flipper) | mixed | — | dev only |
 | `sbom/` | SBOM generation process doc (CI-generated, none checked in) | Markdown | — | reference |
-| `brands/` (incl. `brands/submission/`) | Logo assets + HA brands-repo submission package | PNG / docs | — | release/distribution |
+| `brands/` (incl. `brands/home-assistant/`) | Logo assets; the HA integration's own icon lives in `custom_components/securacv/brand/`, and `brands/home-assistant/README.md` records the brands-repo submission status | PNG / docs | — | release/distribution |
 
 ## Where to start, by role
 

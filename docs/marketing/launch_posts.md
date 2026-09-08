@@ -130,8 +130,9 @@ then, the [social preview image](../social_preview.png).)
 ## 5. Directory listings (one-time, compounding)
 
 - **HACS default repository** — submit once stable; HACS users discover integrations
-  in-app far more often than via GitHub search. ([`brands/submission/`](../../brands/submission/)
-  is already prepared.)
+  in-app far more often than via GitHub search. (The integration already ships its
+  own icon in `custom_components/securacv/brand/`, so no brands-repo PR gates this;
+  [`brands/home-assistant/README.md`](../../brands/home-assistant/README.md) has the status.)
 - **awesome-selfhosted** (PR under *Video Surveillance*), **awesome-home-assistant** — one
   PR each, evergreen traffic.
 - **Frigate community discussions** — a "works with Frigate" post; Frigate's user base is
