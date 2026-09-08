@@ -217,6 +217,14 @@ fingerprint does not match the provisioned pin`) without ever printing the
 CA, the pin or a credential. Status per product, and what is still open,
 in [`docs/FIRMWARE_VARIANT_AUDIT.md`](../../../docs/FIRMWARE_VARIANT_AUDIT.md).
 Compile-tested; not yet bench-tested against a TLS broker.
+
+**Except the nightstand-c6.** That image is built with
+`CANARY_MQTT_PLAIN_ONLY` (`firmware/envs/platformio/canary-display.ini`):
+with the TLS transport in, it measured 1,568 bytes over its 0x1F0000 OTA
+slot, so it keeps the plain socket every C6 shipped with. It still reads
+`mqtt_tls` and **refuses to connect** if the byte names a TLS mode, with the
+reason on the serial log — never a plaintext socket in place of the one you
+asked for. The option returns with the next size cut or a grown slot.
 Fleet **referrals and broker gossip** rebind the host and port only; the
 provisioned TLS mode stays, so a gossiped plain `1883` broker on a TLS-mode
 display fails closed rather than downgrading.

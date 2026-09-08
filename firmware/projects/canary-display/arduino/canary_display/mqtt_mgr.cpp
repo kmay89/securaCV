@@ -23,7 +23,14 @@
 // this TU (canary-local/emulator/build.sh) against a shim WiFi.h with no
 // WiFiClientSecure and has no broker to reach, so under EMU_BUILD_FLAVOR the
 // plain client stays exactly as it was and dist/ does not move.
-#if !defined(EMU_BUILD_FLAVOR)
+//
+// CANARY_MQTT_PLAIN_ONLY (a flavor's build flag — today the nightstand-c6,
+// whose 0x1F0000 OTA slot has no room for the TLS client) compiles the
+// transport out as well. Plain-only is NOT a silent downgrade: such a build
+// still reads the provisioned mode byte and refuses to connect if it names
+// a TLS mode, with the reason on the log, so a TLS provisioning can never be
+// answered with a plaintext socket by any build of this file.
+#if !defined(EMU_BUILD_FLAVOR) && !defined(CANARY_MQTT_PLAIN_ONLY)
 // Named here, not only inside mqtt_transport.h: PlatformIO's chain-mode LDF
 // follows #includes in project sources, not in headers reached via -I, so
 // this line is what pulls the WiFiClientSecure / NetworkClientSecure library
@@ -33,6 +40,11 @@
 #define CANARY_MQTT_TLS 1
 #else
 #define CANARY_MQTT_TLS 0
+#endif
+#if defined(CANARY_MQTT_PLAIN_ONLY) && !defined(EMU_BUILD_FLAVOR)
+#define CANARY_MQTT_PLAIN_ONLY_GUARD 1
+#else
+#define CANARY_MQTT_PLAIN_ONLY_GUARD 0
 #endif
 
 #include "power_events_glue.h"
@@ -62,6 +74,23 @@ static PubSubClient mqtt(wifiClient);
 // is readable: this object hands back a plain WiFiClient or a configured
 // WiFiClientSecure per the provisioned TLS mode (network/mqtt_transport.h).
 static canary::net::mqtt_tls::BrokerTransport s_broker_tls;
+#endif
+#if CANARY_MQTT_PLAIN_ONLY_GUARD
+// The provisioned mode byte (NVS "securacv"/"mqtt_tls", the same key the
+// flashers seed) on a build that carries no TLS transport. Non-zero means
+// the owner asked for TLS this image cannot give — refuse, say so, and keep
+// refusing on every attempt; never connect plain in its place.
+static uint8_t s_plain_only_mode = 0;
+static bool plain_only_refuses() {
+  if (s_plain_only_mode == 0) return false;
+  log_header("MQTT");
+  canary::dbg_serial().printf(
+      "Refusing to connect: NVS mqtt_tls=%u asks for TLS, but this flavor is "
+      "built plain-only (OTA slot budget, CANARY_MQTT_PLAIN_ONLY). Set "
+      "mqtt_tls=0 for a plain broker, or use a flavor with the TLS transport.\n",
+      (unsigned)s_plain_only_mode);
+  return true;
+}
 #endif
 static Topics g_topics{};
 
@@ -506,6 +535,15 @@ void mqtt_init(const Topics& topics) {
     canary::dbg_serial().printf("Broker transport: %s\n", s_broker_tls.name());
     if (!tls.allowed()) log_line("MQTT", canary::net::mqtt_tls::reason_text(tls.reason));
   }
+#elif CANARY_MQTT_PLAIN_ONLY_GUARD
+  {
+    Preferences prefs;
+    if (prefs.begin("securacv", /*readOnly=*/true)) {
+      s_plain_only_mode = prefs.getUChar("mqtt_tls", 0);
+      prefs.end();
+    }
+    (void)plain_only_refuses();  // say it at boot, not only at the first attempt
+  }
 #endif
 }
 
@@ -659,6 +697,9 @@ bool mqtt_connect_attempt() {
   // wifi_loop() supervision owns that recovery.
   if (!wifi_connected()) return false;
 
+#if CANARY_MQTT_PLAIN_ONLY_GUARD
+  if (plain_only_refuses()) return false;
+#endif
 #if CANARY_MQTT_TLS
   // Broker transport gate (shared decision, network/mqtt_transport.h): a
   // REFUSED decision never reaches the socket, and the lab opt-in is named on

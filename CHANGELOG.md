@@ -87,7 +87,10 @@
   unchanged), CA-verified (PEM), SHA-256 certificate-fingerprint pin, or an
   explicit lab mode that logs a warning on every connect. canary-display,
   canary-sense and canary-vision use it through a `WiFiClientSecure`
-  transport header; canary-wap's esp_mqtt bridge applies the same decision
+  transport header (every display flavor but the nightstand-c6, whose
+  0x1F0000 OTA slot has no room for the TLS client: that image is built
+  plain-only and refuses a provisioned TLS mode with the reason rather than
+  connecting plain); canary-wap's esp_mqtt bridge applies the same decision
   from a drift-gated staged copy, with plain and CA-verified only: esp_mqtt
   has no fingerprint hook, and the pinned core's esp-tls cannot skip
   verification, so both of those modes are refused there at save time and
