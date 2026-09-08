@@ -19,6 +19,10 @@
  *   - PlatformIO: pulled in via -I PROJECT_DIR/../../common (set in
  *     envs/platformio/canary-wap.ini); .cpp picked up by the
  *     common-tree source filter that already exists in canary-wap.ini.
+ *   - PlatformIO, canary product (firmware/canary/platformio.ini): -I
+ *     ../common/csi/src plus csi_hal.cpp + csi_features.cpp named in
+ *     build_src_filter. Its lib/securacv_csi/ is a thin csi:: adapter over
+ *     csi_hal:: — one HAL, one csi_features_t (roadmap 22).
  *   - Arduino CLI: pass --libraries firmware/common (the canary-wap Makefile
  *     does this); library.properties in this directory makes it discoverable.
  *   - Arduino IDE: a libraries/csi symlink next to the canary-wap sketch

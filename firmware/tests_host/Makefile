@@ -277,6 +277,26 @@ STORY_DIR  = ../common/story
 STORY_HDRS = $(STORY_DIR)/story.h $(STORY_DIR)/story_scripts.h
 STORY_BIN  = $(BUILD_DIR)/test_story
 
+# The canary product's CSI adapter over the canonical HAL (roadmap 22):
+# canary/lib/securacv_csi/src/securacv_csi.cpp is the csi:: spelling of
+# csi_hal::, and the canary PlatformIO envs compile common/csi/src/csi_hal.cpp
+# + csi_features.cpp beside it. This links all three against a stubbed
+# esp_wifi CSI driver (stubs/csi_hal/) and pushes frames through the one
+# registered callback: the adapter resolves to the canonical symbols (a HAL
+# body that grew back under the same external name fails to link), the
+# canary/include/health_log.h bridge answers csi_hal.cpp's __has_include
+# probe, v[25] (dropped-frame estimate) is filled, and the silence watchdog
+# fires on the csi::process() path. Host-only — the device build is
+# firmware.yml's PlatformIO leg; check_csi_sync.sh is the shape gate.
+CSIHAL_DIR  = ../common/csi/src
+CSIHAL_ADP  = ../canary/lib/securacv_csi/src
+CSIHAL_SRC  = $(CSIHAL_ADP)/securacv_csi.cpp \
+              $(CSIHAL_DIR)/csi_hal.cpp $(CSIHAL_DIR)/csi_features.cpp
+CSIHAL_HDRS = $(CSIHAL_ADP)/securacv_csi.h ../canary/include/health_log.h \
+              $(CSIHAL_DIR)/csi_hal.h $(CSIHAL_DIR)/csi_features.h \
+              $(CSIHAL_DIR)/csi_types.h $(wildcard stubs/csi_hal/*.h)
+CSIHAL_BIN  = $(BUILD_DIR)/test_csi_hal_adapter
+
 .PHONY: all run clean
 all: run
 
@@ -373,7 +393,12 @@ $(CALMATH_BIN): test_calendar_math.cpp $(CALMATH_HDR) Makefile | $(BUILD_DIR)
 $(WXCORE_BIN): test_wx_core.cpp $(WXCORE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../projects/canary-display/include test_wx_core.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN)
+$(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCONFIG_IDF_TARGET_ESP32S3=1 -DCONFIG_ESP_WIFI_CSI_ENABLED=1 \
+	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
+	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -404,6 +429,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FIGART_BIN)
 	./$(CALMATH_BIN)
 	./$(WXCORE_BIN)
+	./$(CSIHAL_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

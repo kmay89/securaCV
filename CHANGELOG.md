@@ -48,6 +48,40 @@
   premise corrected: the mirror README's "HACS does not read `brand/`" was
   the false claim, not the folder.
 
+### Firmware: one CSI HAL — the canary library is an adapter over `common/csi`
+
+- **`firmware/canary/lib/securacv_csi` no longer carries its own copy of the
+  CSI HAL and feature extractor** (roadmap 22). `securacv_csi.cpp` went from
+  1146 lines to a 76-line `csi::` adapter that delegates to `csi_hal::`, and
+  `securacv_csi.h` includes the canonical `csi_types.h` instead of declaring a
+  twin `csi_features_t`. `firmware/canary/platformio.ini` compiles
+  `common/csi/src/csi_hal.cpp` + `csi_features.cpp` directly, so the image has
+  exactly one `esp_wifi_set_csi_rx_cb` registration.
+- **Three behaviors the canary copy had and canonical lacked moved into
+  `csi_hal.cpp`** (both products get them): `stop()` drains the ring by
+  advancing the consumer's own index; `get_caps()` honors
+  `CONFIG_IDF_TARGET_ESP32S3` as well as the sketch's board macro; and
+  `process()` fills `v[25]` (dropped_estimate) from the configured frame
+  rate — the canary's `/api/sensing` read it, canonical had left it 0, so
+  canary-wap's `wifi.channel_activity` module now sees a real supply-drop
+  cue too.
+- **The canary PIO build's CSI watchdog now runs.** The old `csi_hal::` shim
+  checked it only inside a `csi_hal::process()` nobody called, so the
+  5 s-silence recovery `csi_modules_integration.cpp` configures had never
+  fired there. `firmware/canary/include/health_log.h` answers the HAL's
+  `__has_include` probe so its diagnostics keep landing in the canary health
+  log rather than only on the serial console.
+- **`firmware/scripts/check_csi_sync.sh` guards the shape:** a name-based
+  check that the adapter defines nothing the canonical HAL or extractor
+  defines (limits stated in the script), no direct driver calls, a 120-line
+  budget, the header must consume `csi_types.h`, and the ini must compile the
+  HAL. `firmware/tests_host/test_csi_hal_adapter.cpp` (run by `make -C
+  firmware/tests_host`) links the adapter against the real `csi_hal.cpp` +
+  `csi_features.cpp` over a stubbed esp_wifi driver and pushes frames through
+  the one registered callback — single registration, `v[25]`, and the
+  watchdog firing on `csi::process()`. Host-tested only; the canary envs are
+  compile-tested by `firmware.yml`'s PlatformIO leg.
+
 ### The device manifests drive the generators, and the release env list is derived
 
 - **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read
