@@ -243,6 +243,17 @@ jobs:
         # `flavor_envs.py --release --with-core` is the follow-up
         # (docs/IMPROVEMENT_ROADMAP.md item 23).
         run: python3 firmware/scripts/flavor_envs.py --check-workflows
+      - name: Firmware SBOM is derived from the build inputs
+        # sbom/sbom-firmware.cdx.json is generated and committed
+        # (scripts/gen_firmware_sbom.py). It used to be a heredoc in sbom.yml
+        # naming a core the shipped images had left behind. A platform pin,
+        # lib_deps line, library manifest, Arduino core pin or firmware
+        # version that moves without the file is a bill of materials naming
+        # the wrong parts; this byte-compares it on every PR. PyYAML: the
+        # Arduino core pins live in workflow YAML.
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/gen_firmware_sbom.py --check
       - name: common/ library manifests are LDF-consistent
         run: python3 scripts/lint_common_lib_manifests.py
       - name: BOM CSVs — schema-clean and wired into the generator
