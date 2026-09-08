@@ -90,18 +90,43 @@ is separate — and gated: the sealed log is how a *display* gets to say
 something cryptographic instead of repeating the wire, and the full coarse
 record is more than "anyone who asks" should hold.
 
-### CORS is the whole trick
+### CORS is the whole trick — for browsers, and only known ones
 
-Because a browser page and the kernel are different origins, the kernel MUST
-send:
+A browser page and the kernel are different origins, so without an
+`Access-Control-Allow-Origin` the browser refuses to read the response even
+when the source replies. Native readers — the Witness Wall on tvOS and the
+iPhone app, both `URLSession` — send no `Origin` header and need no CORS at
+all. So the header exists for browser pages, and the two kinds of source
+answer it differently today:
 
-```
-Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, OPTIONS
-```
+- **Firmware boards** (`canary-wap`, `canary-display`) still answer with
+  `Access-Control-Allow-Origin: *` and the matching `OPTIONS` preflight, so a
+  single Canary is readable from any page on the LAN. The display already
+  narrows what that audience gets: a cross-site `Origin` is served liveness,
+  product and hub state only, and the room/breathing words ride only on
+  requests with no `Origin` or a same-site one (`glass_web.cpp`).
+- **The kernel** (`src/api/mod.rs`, `FLEET_ALLOWED_ORIGINS`) answers from an
+  origin allow-list instead of a wildcard, because the aggregated document
+  says who is home and a drive-by page a household member happens to open
+  must not learn that:
+  - no `Origin` (native apps, curl) → served, no CORS header;
+  - an allowed `Origin` → served with that origin echoed back (never `*`),
+    `Access-Control-Allow-Methods: GET, OPTIONS`, and `Vary: Origin`; the
+    `OPTIONS` preflight answers the same way;
+  - any other `Origin` → served, but with no `Access-Control-*` header at
+    all, so the browser blocks the read.
 
-and answer a `OPTIONS /api/fleet` preflight with the same. Without CORS the
-browser refuses to read the response even when the kernel replies.
+  Allowed today: `https://kmay89.github.io` (the in-browser Lab and flasher,
+  the `flasher.url` origin in `firmware/build_matrix.json`),
+  `https://securacv.com` (the public site's emulator), and `http://localhost`
+  / `http://127.0.0.1` on any port (a local checkout of either site — the
+  "try it in ~30 seconds" path below). The list is a constant with a comment
+  per entry; there is no config key for it because nothing else in the
+  kernel's config carries origins. Note the two `https` origins only matter
+  for a kernel served over TLS with a trusted certificate — a plain-`http`
+  kernel is mixed content for an `https` page whatever the CORS headers say
+  (the table below). `tvos/discovery/mock-kernel.py` still answers `*`; it is
+  a mock.
 
 ## Where it actually works (the honest part)
 
@@ -111,7 +136,8 @@ strict page policy blocks reaching other hosts. So discovery works when:
 | Scenario | Works? | Why |
 |---|---|---|
 | Emulator served **from the kernel/hub** itself (same origin) | ✅ | Same origin — no CORS, no mixed content, no CSP hop |
-| Emulator opened **on the LAN over `http://`**, kernel on `http://` | ✅ | Same scheme; kernel just needs CORS |
+| Emulator opened **on the LAN over `http://`**, source on `http://` | ✅ firmware · ❌ kernel | Same scheme, and a firmware board's `*` allows it; the kernel's allow-list does not know a LAN page's origin (`http://192.168.…`), so it serves the row but the browser cannot read it — serve the page on `localhost` instead, or from the hub itself |
+| Emulator on **`http://localhost:<port>`** (a local site checkout), kernel on `http://` | ✅ | Same scheme; `localhost` / `127.0.0.1` are on the kernel's allow-list |
 | The **desktop app** (native mDNS, no browser sandbox) | ✅ | It discovers `canary.local` natively and hands the list to the UI |
 | Kernel serves **`https://` with a trusted cert**, page is `https://` | ✅ | Same scheme; CORS allows the read |
 | The **public `https://securacv.com`** page → your `http://` LAN device | ❌ | Mixed-content is blocked, and the site's `connect-src` policy only allows itself |
@@ -181,12 +207,58 @@ one-header change instead of a per-board copy-paste.
   display holds no witness chain of its own, so it honestly reports
   `chain: "unknown"`.
 - **The hub/kernel** (Rust, `src/api/mod.rs`) serves `GET /api/fleet` and its
-  `OPTIONS` preflight with the CORS headers above, open and rate-limited like
-  the rest of its surface but with no token: one row, itself, `product:
-  "witness-kernel"`, and `chain` only once a verify pass has actually run
-  (the key is absent before that — a silent key is never a claim). It does
-  not yet aggregate the Canaries it hears; that is the open half, and the
-  same open/append/close shape is how it would list them.
+  `OPTIONS` preflight with the allow-list CORS above, open and rate-limited
+  like the rest of its surface but with no token. Its first row is itself —
+  `product: "witness-kernel"`, and `chain` only once a verify pass has
+  actually run (the key is absent before that — a silent key is never a
+  claim). **The rows after it are the Canaries the hub has heard**, which is
+  what makes the Wall light up against a kernel:
+  - The kernel never speaks MQTT; `event_mqtt_bridge --fleet-peers-path
+    <file>` does (both processes also read the same environment variable,
+    `WITNESS_FLEET_PEERS_PATH`, so one export points them at one file). With
+    that flag the bridge subscribes to each Canary's
+    `securacv/<device_id>/{availability,status,health,chain,state,meta}`
+    topics — never `events`, `sensing` or `counts` — pins the public key from
+    the first `health` it sees per device id (trust on first use, as the
+    display's NVS pin store does; here the pin lives in the summary file and
+    survives a bridge restart with it), verifies the Ed25519 signature on
+    every `chain` publish against that pin, and writes that summary file
+    (`securacv/fleet_peers/v1`) with an atomic rename. The kernel reads that
+    file on every request and projects it through an allowlist
+    (`src/fleet_peers.rs`, `fleet_rows`): the file is local bookkeeping and
+    nothing in it — the pinned key, the device id, timestamps — reaches the
+    wire unless the projection names it. A file rather than a kernel
+    endpoint because the event API's parser is header-only by design (no
+    request bodies), and because the token already crosses between the two
+    processes as a path on the same host.
+  - `name` is the owner's name from the retained `meta` topic, else the
+    device id (exactly what a Canary calls itself in its own self-report);
+    `product` is the announced `device_type`.
+  - `online: true` is a **proof, not a heartbeat**: a LIVE (not
+    broker-retained) `chain` publish whose signature verified against the
+    pin within the last 180 s (`FLEET_PEER_RECENT_SECS`, the display's own
+    `stale_after_ms`), with no LWT `offline` since. `status`/`availability`
+    heartbeats are unsigned — anyone on the broker can publish them — so they
+    never prove presence. Because Canaries sign on each record they seal
+    rather than on a timer, a quiet Canary honestly reads `online: false`,
+    which this contract defines as "not claimed present", never as "claimed
+    absent".
+  - `chain` is `"ok"` when the last signed chain publish verified against
+    the pin, `"degraded"` when a signature failed or a second key appeared
+    for a pinned id (sticky; only deleting the summary file clears it), and
+    absent when nothing signed has been checkable. This is verification
+    against a key pinned on first sight, which is weaker than a key pinned at
+    pairing; the Wall must not call it more than that.
+  - The wellbeing words (`presence`, `occupants`, `breathing`) ride on a
+    peer's row only while it is proven online **and** the reading is fresh
+    (a live `state` publish within the same window); a retained `state` is
+    history, not a reading. Only the contract's words cross — an unknown
+    word is dropped at the bridge, never republished. `seeing` has no MQTT
+    producer yet, same as on firmware.
+  - Pinned to the shared vector: the kernel's two-row bytes (itself plus one
+    Canary) are the `input` of a vector in
+    `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, checked
+    from both sides (`src/api` tests and the core's `fleet_contract.rs`).
 - It is **coarse and unauthenticated-read** by design — presence, health,
   and the optional coarse wellbeing WORDS above, nothing finer — documented
   public in the canary-wap route-security allowlist. Anything that touches

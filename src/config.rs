@@ -112,6 +112,7 @@ struct ApiConfigFile {
     addr: Option<String>,
     token_path: Option<PathBuf>,
     rate_limit_per_minute: Option<u32>,
+    fleet_peers_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -253,6 +254,10 @@ pub struct WitnessdConfig {
     pub ruleset_id: String,
     pub api_addr: String,
     pub api_token_path: Option<PathBuf>,
+    /// The fleet peer summary `event_mqtt_bridge --fleet-peers-path` writes;
+    /// when set, `/api/fleet` lists the Canaries the bridge has heard. See
+    /// [`crate::fleet_peers`].
+    pub api_fleet_peers_path: Option<PathBuf>,
     /// Per-IP request cap for the event API (0 disables). See
     /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
     pub api_rate_limit_per_minute: u32,
@@ -280,6 +285,10 @@ pub struct WitnessApiConfig {
     pub ruleset_id: String,
     pub api_addr: String,
     pub api_token_path: Option<PathBuf>,
+    /// The fleet peer summary `event_mqtt_bridge --fleet-peers-path` writes;
+    /// when set, `/api/fleet` lists the Canaries the bridge has heard. See
+    /// [`crate::fleet_peers`].
+    pub api_fleet_peers_path: Option<PathBuf>,
     /// Per-IP request cap for the event API (0 disables). See
     /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
     pub api_rate_limit_per_minute: u32,
@@ -438,6 +447,10 @@ impl WitnessdConfig {
             .as_ref()
             .and_then(|api| api.rate_limit_per_minute)
             .unwrap_or(crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE);
+        let api_fleet_peers_path = file
+            .api
+            .as_ref()
+            .and_then(|api| api.fleet_peers_path.clone());
         let api_token_path = file.api.and_then(|api| api.token_path);
         let ingest_config = file.ingest.unwrap_or_default();
         let ingest_backend = ingest_config
@@ -631,6 +644,7 @@ impl WitnessdConfig {
             ruleset_id,
             api_addr,
             api_token_path,
+            api_fleet_peers_path,
             api_rate_limit_per_minute,
             ingest,
             rtsp,
@@ -657,6 +671,11 @@ impl WitnessdConfig {
         if let Ok(path) = std::env::var("WITNESS_API_TOKEN_PATH") {
             if !path.trim().is_empty() {
                 self.api_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(path) = std::env::var("WITNESS_FLEET_PEERS_PATH") {
+            if !path.trim().is_empty() {
+                self.api_fleet_peers_path = Some(PathBuf::from(path));
             }
         }
         if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
@@ -1012,6 +1031,10 @@ impl WitnessApiConfig {
             .as_ref()
             .and_then(|api| api.rate_limit_per_minute)
             .unwrap_or(crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE);
+        let api_fleet_peers_path = file
+            .api
+            .as_ref()
+            .and_then(|api| api.fleet_peers_path.clone());
         let api_token_path = file.api.and_then(|api| api.token_path);
         let sensitive_zones = file
             .zones
@@ -1027,6 +1050,7 @@ impl WitnessApiConfig {
             ruleset_id,
             api_addr,
             api_token_path,
+            api_fleet_peers_path,
             api_rate_limit_per_minute,
             sensitive_zones,
             retention,
@@ -1042,6 +1066,11 @@ impl WitnessApiConfig {
         if let Ok(path) = std::env::var("WITNESS_API_TOKEN_PATH") {
             if !path.trim().is_empty() {
                 self.api_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(path) = std::env::var("WITNESS_FLEET_PEERS_PATH") {
+            if !path.trim().is_empty() {
+                self.api_fleet_peers_path = Some(PathBuf::from(path));
             }
         }
         if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
