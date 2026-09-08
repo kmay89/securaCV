@@ -922,11 +922,11 @@ impl FleetPeerTracker {
         let table = match PeerSummaryFile::read(&path) {
             Ok(Some(summary)) => {
                 // No expiry at startup: the file's pins are the one thing a
-                // restart must keep, and a host clock that is wrong at boot
-                // (a dead RTC, a bad NTP answer) would otherwise expire the
-                // whole fleet and write that loss straight back to disk.
-                // Never-proven ids age out at the first flush after the
-                // clock has shown itself to be flowing normally.
+                // restart must keep. Expiry (flush time) can only ever forget
+                // ids that hold neither a pin nor a verified length, and the
+                // pass that straddles a clock jump is skipped besides — so a
+                // host clock that is wrong at boot (a dead RTC, a bad NTP
+                // answer) cannot cost a single pin.
                 let table = PeerTable::from_summary(summary);
                 log::info!(
                     "fleet roll-call: rehydrated {} peer(s) from {}",
@@ -987,7 +987,7 @@ impl FleetPeerTracker {
         if self.table.clock_jumped_since(now) && !self.jump_logged {
             log::warn!(
                 "fleet roll-call: the clock moved more than {} h since the table last saw it; \
-                 no id is expired this round (pins are kept across a clock jump)",
+                 no id is expired this round (a pinned id is never expired by the clock)",
                 FLEET_PEER_CLOCK_JUMP_SECS / 3600
             );
             self.jump_logged = true;
