@@ -2492,3 +2492,38 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   matrix in `firmware.yml` does too (`fromJSON` over `flavors.json`). When
   a release step names more than one env, product or target by hand, the
   question is which file owns that list and why the step is not reading it.
+
+### 2026-09-08 (b) — an audit row asked to delete the integration's icon, and the "unused folder" was the one thing a green check was reading
+
+- **Symptom:** Roadmap row 51 said the HACS mirror's
+  `custom_components/securacv/brand/` was dead weight ("HACS does not read
+  it") and asked for it to be deleted and the PNGs submitted to
+  `home-assistant/brands`; the mirror's README had been rewritten on
+  2026-09-02 to say the same. Both were wrong. The 2026-08-08 commit that
+  added the folder ("satisfy the HACS brands check with in-repo assets") was
+  right, and the docs pass that "corrected" it replaced a true statement
+  with a plausible one.
+- **Cause:** Two facts were asserted without reading the platform. Home
+  Assistant 2026.3 added local brand images — the loader sets `has_branding`
+  when a `brand` entry exists in the integration directory and serves
+  `/api/brands/integration/<domain>/<image>` with local files ahead of the
+  CDN (home-assistant/core#163960) — and HACS's `brands` validator looks for
+  `brand/icon.png` in the repository tree before it consults `domains.json`.
+  Deleting the folder would have removed a working icon from every 2026.3+
+  install and turned the mirror's HACS validation red in the same PR. The
+  tell was in plain sight: the mirror's `validate.yml` has never ignored the
+  brands check, and it has been green since the folder arrived.
+- **Fix:** The folder is carried, not mirror-only — the PNGs live in the
+  monorepo's integration directory (moved from `brands/submission/`, same
+  bytes as the mirror's), the mirror sync no longer excludes it, the mirror's
+  sync check no longer skips it, and the monorepo's `validate.yml` dropped
+  `ignore: brands`. The prose now says where the icon comes from and what
+  older Home Assistant shows. `release.yml` keeps its `ignore: brands` until
+  validate.yml has been seen green on `main` with the check enabled.
+- **Applies to:** any "this file is unused, delete it" row about a
+  distribution artifact. Before removing something a platform might read,
+  find the platform's own lookup (the loader, the validator source) and ask
+  which of the repository's green gates would go red — a check that passes
+  today is evidence about what is being read today. A roadmap row is a claim
+  to verify, not an instruction to execute, and a docs pass that reverses a
+  commit's stated reason has to show why that reason was wrong.
