@@ -40,8 +40,8 @@ survived only if a majority could not. The counts:
 | Open list items landed in the same PR before merge | 34 |
 | Landed in the follow-up wave (PR #1635, mirror #9, website #184) | 13 in full, 2 in part |
 | Closed by the documentation wave (PR #1647, mirror #11, website #189) | 0 — a fresh docs audit, not this list; see §3 |
-| Landed in wave 3 (PR #1664) | 9 in full (four of them rows that were "in part") |
-| Still open | 8 in full, 2 in part |
+| Landed in wave 3 (PR #1664) | 10 in full (four of them rows that were "in part") |
+| Still open | 7 in full, 2 in part |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -110,9 +110,11 @@ shipped and where it deviates from the row's original proposal.
 A third pass on 2026-09-08 (monorepo PR #1664) took the larger firmware and
 CI refactors the follow-up wave had left, again one package per worktree with
 the merged diff reviewed adversarially. Landed in full: 9 (BLE OTA protocol
-v2), 26 (the emulator runs the shared Wi-Fi join policy), 34 (the display
-build sharded by board family), 35 (a derived, byte-gated SBOM), 38 (four
-composite actions, R10 machine-checked); and four rows that had been "in
+v2), 12 (a verified TLS option for every broker link, fail-closed, with the
+premise corrected: the WAP's old flag was an unverified handshake), 26 (the
+emulator runs the shared Wi-Fi join policy), 34 (the display build sharded by
+board family), 35 (a derived, byte-gated SBOM), 38 (four composite actions,
+R10 machine-checked); and four rows that had been "in
 part" are now whole: 1 (the kernel's `/api/fleet` lists the Canaries its MQTT
 bridge heard, presence proven by signed chain publishes), 11 (the CORS
 wildcard is an origin allow-list), 23 (both release workflows derive the
@@ -122,11 +124,10 @@ every byte gate proving nothing moved — leaving only wave 3 (Parametrize)
 open on that row. Two things this wave could not do here: run a real release
 (the derived env list and the composite actions are host-tested, so the first
 tag after this merges deserves a look at its logs), and rebuild the emulator
-`dist/` (dispatched to the pinned-emsdk workflow). What is left — 8 rows in
+`dist/` (dispatched to the pinned-emsdk workflow). What is left — 7 rows in
 full and 2 in part — is hardware-bound (items 2, 22 and the §5 bench steps),
 Apple-toolchain-bound (5, 6, 13), a maintainer decision (30's version spread,
-42, 51), the headless MQTT TLS option (12), and the device package's
-Parametrize wave.
+42, 51), and the device package's Parametrize wave.
 
 ### The documentation wave
 
@@ -209,7 +210,7 @@ the ledger stays complete:
 | 9 | **(landed)** **BLE OTA bypasses the anti-downgrade floor and has no product binding.** Documented as deliberate for rescue, but nothing else enforces it. | A paired phone can push an older signed image with a known bug. | Landed as BLE OTA protocol v2 (`firmware/projects/canary-wap/arduino/canary_wap/ble_ota_policy.h`): the 168-byte BEGIN_V2 header puts product, version, size and digest under one domain-separated Ed25519 signature (`scv-ble-ota-v2`, the manifest-signature convention, emitted by `ota_release.py` as the manifest's `ble_signature`); the device verifies first, binds the product, and runs the version through the pull engine's own `securacv_ota_update_decision()` against max(running, NVS floor). A legacy v1 header or a below-floor image is admitted only through the existing BOOT-button provisioning gate (single-use, 30 s), every such acceptance is logged as a floor bypass and surfaced as `break_glass` in `/api/bluetooth/ota`, and the companion page sends v2 automatically. Host-tested with real Ed25519 (`tests_host/test_ble_ota_policy.cpp`, 255 checks; canonical bytes pinned against `test_ota_release.py`); the device path is compile-tested only. Manifests cut before this lack `ble_signature`, so a phone holding one lands on the break-glass path by design. | M |
 | 10 | **(landed)** **`glass_web` OTA check/install skip the Origin+CSRF guard** the comment says they share. | A LAN web page can start an update on a display. | Route both handlers through the existing write guard in `net/glass_web.cpp`. | S |
 | 11 | **(landed)** **`/api/fleet` is served with `Access-Control-Allow-Origin: *`** and now carries per-peer presence, occupant count and breathing state. | Any drive-by web page on the LAN can read who is home. | Landed. `/api/fleet` no longer sends `Access-Control-Allow-Origin: *`: the kernel answers from `FLEET_ALLOWED_ORIGINS` in `src/api/mod.rs` (the Lab/flasher origin from `firmware/build_matrix.json`, `https://securacv.com`, and `http://localhost` / `http://127.0.0.1` on any port, exact host); native readers send no Origin and get no CORS header; anything else gets none and the browser blocks the read; preflight matches. Consequence, documented in `tvos/discovery/DISCOVERY.md`: a Lab page served from a LAN host cannot read the kernel's fleet any more. Firmware boards still answer `*` — narrowing them the same way is the remaining piece of this row's original scope, and the display's coarse-rows rule is the other honest answer. | S |
-| 12 | **Headless MQTT variants (display/sense/vision) have no TLS option** while canary-wap does; the gap is undocumented. | A broker credential crosses the LAN in the clear on three of four products. | Port the WAP's `mqtt_mgr` TLS branch into `firmware/common/network/`, and say so in `FIRMWARE_VARIANT_AUDIT.md` until it lands. | M |
+| 12 | **(landed)** **Headless MQTT variants (display/sense/vision) have no TLS option** while canary-wap does; the gap is undocumented. | A broker credential crosses the LAN in the clear on three of four products. | Landed, with the premise corrected: canary-wap's `tls` bool produced an unverified `mqtts://` handshake, so no product had a verified option. One shared decision (`firmware/common/network/mqtt_transport_logic.h`, host-tested) and a `WiFiClientSecure` transport header used by canary-display / -sense / -vision, applied by canary-wap's esp_mqtt bridge from a drift-gated staged copy. Modes: plain (default — every flashed unit is unchanged), CA-verified, SHA-256 certificate-fingerprint pin (not on the WAP, which has no esp_mqtt hook for it), and an explicit lab mode that warns on every connect. Anything incomplete refuses to connect and names the reason without the secret. NVS keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` (products) and `mqtt.tlsmode` / `mqtt.ca` (WAP); both flashers' NVS builders seed them, parity-gated; the WAP's `/mqtt` page gained the controls. **Breaking for WAP units that had "Use TLS" on with no CA:** they now refuse until a CA is uploaded or lab mode is chosen by name. Compile-tested and host-tested; no bench pass against a TLS broker. Per-variant table: `docs/FIRMWARE_VARIANT_AUDIT.md`. Open: form fields for the three keys in both flasher frontends; `firmware/canary`'s `securacv_mqtt` client is still plain; a Mosquitto TLS-listener step for the hub seed plan. | M |
 | 13 | **Fleet Wi-Fi rollout sends the router password over cleartext HTTP** without telling the user, while the BLE rescue path is bonded. | The user believes the app is the safe path. | Prefer BLE when bonded; otherwise show the disclosure once and require the TLS receipt (item 5). | S |
 | 14 | **(landed)** **`PinnedKeyStore.pin` swallows the Keychain error**, so a failed pin leaves the device permanently "Signed" with no signal. | The trust ladder silently stalls one rung down. | Surface the error and retry on next launch. | S |
 | 15 | **(landed)** **The Wall's mDNS TXT `host` is used unvalidated as a URL host** and discovered sources are never pruned. | A hostile advertiser steers the TV to any host, forever. | Validate against the same private-host rules the iOS app now uses; expire sources not seen for 30 days. | S |

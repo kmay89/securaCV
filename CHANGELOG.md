@@ -77,6 +77,33 @@
   `sbom.yml`) instead of typed into a workflow; a platform pin that moves
   without `PLATFORM_FACTS` fails generation.
 
+### MQTT: a verified TLS option for every broker link, fail-closed
+
+- **One shared decision, four products.** `firmware/common/network/
+  mqtt_transport_logic.h` (host-tested) decides the broker transport from
+  the provisioned mode: plain (the default — every already-flashed unit is
+  unchanged), CA-verified (PEM), SHA-256 certificate-fingerprint pin, or an
+  explicit lab mode that logs a warning on every connect. canary-display,
+  canary-sense and canary-vision use it through a `WiFiClientSecure`
+  transport header; canary-wap's esp_mqtt bridge applies the same decision
+  from a drift-gated staged copy (no fingerprint mode there — esp_mqtt has
+  no hook for it). Anything incomplete — CA mode without a CA, pin mode
+  without a pin, a malformed PEM or pin, an unknown mode byte — refuses to
+  connect and names the reason without printing the secret.
+- **Provisioning.** NVS keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` on the
+  products, `mqtt.tlsmode` / `mqtt.ca` on the WAP; both flashers' NVS
+  builders seed them byte-alike (parity-gated), and the WAP's `/mqtt` page
+  gained an encryption selector and CA upload. Flasher form fields for the
+  new keys are a follow-up, in both frontends at once.
+- **Breaking, on purpose, for canary-wap units that had "Use TLS" on with
+  no CA:** that setting produced an unverified `mqtts://` handshake that
+  looked secured. Such units now refuse to connect until a CA is uploaded
+  on the `/mqtt` page or lab mode is chosen by name; the reason is on the
+  page and the serial log. `SECURITY_MODEL.md` no longer claims TLS on all
+  local traffic; the per-variant truth table is
+  `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested and host-tested; no
+  bench pass against a TLS broker yet.
+
 ### Lab / emulator: the preview runs the firmware's Wi-Fi join policy
 
 - `emu_net.cpp` includes `common/network/wifi_join_policy.h` directly and
