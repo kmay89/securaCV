@@ -12,6 +12,27 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-08 — A registry probe must accept every manifest media type the builder writes
+
+- **Symptom:** `Add-on image` → *Verify publicly installable* red on every
+  `main` run from 2026-08-30 to 2026-09-08 with HTTP 404 for all four
+  arch/tag pairs, while both build legs had pushed successfully. The first
+  fix (2026-09-03) read the 404s as a private package and added an
+  authenticated cross-probe; the next run then said *not pushed*.
+- **Cause:** the probe's `Accept` header listed the OCI *index* and the two
+  Docker manifest types but not `application/vnd.oci.image.manifest.v1+json`.
+  buildx with `provenance: false` pushes a single-arch image as a plain OCI
+  manifest, and GHCR answers a missing type with 404 whose body reads "OCI
+  manifest found, but Accept header does not support OCI manifests" — the
+  same status a genuinely missing tag returns, so the script's own
+  classification could not see the difference.
+- **Fix:** `privacy_witness_kernel/verify_published_image.sh` accepts all
+  four media types; run from an anonymous client it now reports every image
+  public and pullable. When a registry probe returns 404, read the response
+  body before believing the status.
+- **Applies to:** every workflow that probes a registry manifest (the add-on
+  gate today; the container-images workflow if it ever grows one).
+
 ## 2026-08-09 — a wire field that only the firmware could read
 
 **Symptom.** Every display in the fleet drew a generic symbol in the iPhone

@@ -141,8 +141,11 @@
   instead of under QEMU, which had been hitting the 90-minute timeout on
   `main`. `verify_published_image.sh` now cross-probes GHCR with the workflow
   token, so it can say whether a package is private (a one-time visibility
-  flip by the owner) or a tag was never pushed — the 30 August failure was the
-  former, and the anonymous probe alone could not tell.
+  flip by the owner) or a tag was never pushed. The 30 August failure turned
+  out to be neither: the probe's `Accept` list lacked the OCI manifest media
+  type buildx writes for single-arch images, so GHCR answered 404 for images
+  that were public and present. That type is now in the list, and the gate
+  reports all four images pullable from an anonymous client.
 - **`homeassistant-mirror.yml` pushes `custom_components/securacv/` to the HACS
   mirror as a PR on every `main` change**, proving the copy exact with the
   mirror's own check. It needs a `MIRROR_PAT` secret; without one the run stays
