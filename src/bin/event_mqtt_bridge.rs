@@ -338,7 +338,13 @@ impl MqttRuntime {
             const BACKOFF_CAP: Duration = Duration::from_secs(60);
             let mut backoff = BACKOFF_START;
             let mut outage_logged = false;
+            // One warn/info pair per full episode of the inbound queue: set on
+            // the first drop, cleared when a publish is accepted again after
+            // QUEUE_DRAIN_QUIET of no drops (so a queue hovering at full does
+            // not flap the pair on every message).
             let mut queue_full_logged = false;
+            let mut queue_last_full: Option<Instant> = None;
+            const QUEUE_DRAIN_QUIET: Duration = Duration::from_secs(5);
             for event in connection.iter() {
                 if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
@@ -400,8 +406,20 @@ impl MqttRuntime {
                                 publish.payload.to_vec(),
                                 publish.retain,
                             )) {
-                                Ok(()) => {}
+                                Ok(()) => {
+                                    if queue_full_logged
+                                        && queue_last_full
+                                            .is_some_and(|t| t.elapsed() >= QUEUE_DRAIN_QUIET)
+                                    {
+                                        log::info!(
+                                            "MQTT inbound queue drained; publishes are \
+                                             being queued again"
+                                        );
+                                        queue_full_logged = false;
+                                    }
+                                }
                                 Err(mpsc::TrySendError::Full(_)) => {
+                                    queue_last_full = Some(Instant::now());
                                     if !queue_full_logged {
                                         log::warn!(
                                             "MQTT inbound queue full ({} messages); \
@@ -947,9 +965,13 @@ impl FleetPeerTracker {
             self.dirty = true;
         }
         let evictions = self.table.evictions();
-        if evictions > self.evictions_logged {
-            // Each displacement drops that id's pin; say so, because a
-            // steady stream of these is what a broker flood looks like.
+        // Each displacement drops that id's pin; say so, because a steady
+        // stream of these is what a broker flood looks like — but a flood
+        // must not turn into one warning per inbound publish, so the line is
+        // emitted on the first displacement and then each time the count
+        // doubles (1, 2, 4, 8, …), which keeps the journal readable while the
+        // number stays honest.
+        if evictions > self.evictions_logged && evictions >= self.evictions_logged * 2 {
             log::warn!(
                 "fleet roll-call: at the {}-id cap, {} id(s) displaced so far \
                  (a displaced Canary is re-pinned on its next health publish)",

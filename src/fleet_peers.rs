@@ -401,15 +401,25 @@ impl PeerSummaryFile {
     /// kernel serves this per request, so the file's size is the response's.
     pub fn read(path: &Path) -> Result<Option<Self>> {
         use std::io::Read;
-        let file = match std::fs::File::open(path) {
+        let file = match open_for_read(path) {
             Ok(file) => file,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err).with_context(|| format!("opening {}", path.display())),
         };
-        let declared = file
+        // A FIFO, a device or a directory at the path is a damaged or hostile
+        // setup, never a summary: refuse before reading a byte (the open
+        // above is non-blocking, so a FIFO with no writer cannot wedge the
+        // kernel's accept loop either).
+        let meta = file
             .metadata()
-            .with_context(|| format!("sizing {}", path.display()))?
-            .len();
+            .with_context(|| format!("sizing {}", path.display()))?;
+        if !meta.file_type().is_file() {
+            return Err(anyhow!(
+                "fleet peers summary {} is not a regular file",
+                path.display()
+            ));
+        }
+        let declared = meta.len();
         if declared > FLEET_PEERS_MAX_FILE_BYTES {
             return Err(anyhow!(
                 "fleet peers summary {} is {declared} bytes, over the \
@@ -442,6 +452,15 @@ impl PeerSummaryFile {
         let mut tmp = path.as_os_str().to_owned();
         tmp.push(".tmp");
         let tmp = std::path::PathBuf::from(tmp);
+        // The temp name is ours: whatever is squatting there (a symlink, a
+        // FIFO, a stale file from a crash) is removed rather than followed,
+        // written through, or left to fail every later write.
+        if let Ok(meta) = std::fs::symlink_metadata(&tmp) {
+            if !meta.file_type().is_file() {
+                std::fs::remove_file(&tmp)
+                    .with_context(|| format!("removing a non-file at {}", tmp.display()))?;
+            }
+        }
         write_private_file(&tmp, json.as_bytes())
             .with_context(|| format!("writing {}", tmp.display()))?;
         std::fs::rename(&tmp, path)
@@ -462,9 +481,29 @@ impl PeerSummaryFile {
     }
 }
 
+/// Open `path` for reading without blocking: a FIFO with no writer opens
+/// at once (and reads as empty) instead of parking the caller, which on the
+/// kernel side is the API's single accept loop. `O_NONBLOCK` is a no-op for
+/// a regular file.
+#[cfg(unix)]
+fn open_for_read(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_for_read(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
 /// Create-or-truncate `path` with mode `0600`, refuse to follow a symlink in
-/// its place, write, and fsync. `.mode()` applies only when the file is
-/// created, so a temp file left by a crash mid-write is re-narrowed
+/// its place, refuse anything that is not a regular file, write, and fsync.
+/// `O_NONBLOCK` turns a writer-side open of a reader-less FIFO into an
+/// immediate `ENXIO` instead of a hang. `.mode()` applies only when the file
+/// is created, so a temp file left by a crash mid-write is re-narrowed
 /// explicitly (the pattern `break_glass::cli::write_secret_file` documents).
 #[cfg(unix)]
 fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -475,8 +514,11 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .write(true)
         .truncate(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
+    if !file.metadata()?.file_type().is_file() {
+        return Err(std::io::Error::other("temp path is not a regular file"));
+    }
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     file.write_all(bytes)?;
     file.sync_all()
@@ -486,6 +528,9 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut file = std::fs::File::create(path)?;
+    if !file.metadata()?.file_type().is_file() {
+        return Err(std::io::Error::other("temp path is not a regular file"));
+    }
     file.write_all(bytes)?;
     file.sync_all()
 }
@@ -1568,14 +1613,45 @@ mod tests {
         let mode = std::fs::metadata(&path)?.permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "the summary holds room words and pins");
         assert!(!tmp.exists());
-        // A symlink planted at the temp path is refused, not followed.
+        // A symlink planted at the temp path is removed, never followed: the
+        // write succeeds, the link's target is untouched, and the next write
+        // is not doomed by a squatter.
         let elsewhere = dir.path().join("elsewhere");
         std::os::unix::fs::symlink(&elsewhere, &tmp)?;
-        assert!(PeerTable::default()
-            .summary(NOW)
-            .write_atomic(&path)
-            .is_err());
+        PeerTable::default().summary(NOW).write_atomic(&path)?;
         assert!(!elsewhere.exists());
+        assert!(!tmp.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_at_either_path_is_refused_without_blocking() -> Result<()> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir()?;
+        let mkfifo = |p: &Path| {
+            let c = CString::new(p.as_os_str().as_bytes()).expect("path");
+            // SAFETY: a valid NUL-terminated path; mkfifo has no other
+            // preconditions.
+            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo");
+        };
+        // A FIFO squatting at the temp path: removed, then the write lands.
+        let path = dir.path().join("fleet_peers.json");
+        mkfifo(&dir.path().join("fleet_peers.json.tmp"));
+        PeerTable::default().summary(NOW).write_atomic(&path)?;
+        assert!(PeerSummaryFile::read(&path)?.is_some());
+        // A FIFO at the summary path itself: the kernel refuses it at once
+        // instead of parking its accept loop on a reader-less open.
+        let fifo = dir.path().join("summary.fifo");
+        mkfifo(&fifo);
+        let err = PeerSummaryFile::read(&fifo).unwrap_err();
+        assert!(format!("{err:#}").contains("regular file"), "{err:#}");
+        assert!(load_rows(&fifo, NOW).is_empty());
+        // Writing to a FIFO at the SUMMARY path replaces it: rename is atomic
+        // and never opens the target.
+        PeerTable::default().summary(NOW).write_atomic(&fifo)?;
+        assert!(std::fs::metadata(&fifo)?.file_type().is_file());
         Ok(())
     }
 
