@@ -1906,10 +1906,17 @@ const SVC_WITNESS    = '8fc1cefa-b162-4401-9607-c8ac21383e90';
 const CHR_WIT_HEAD   = '8fc1cefb-b162-4401-9607-c8ac21383e90';
 const CHR_WIT_RECORD = '8fc1cefc-b162-4401-9607-c8ac21383e90';
 
-// ble_ota (PR #327): write+notify CONTROL (BEGIN+OtaHeader / ABORT),
-// write+write_nr DATA (firmware bytes streamed), read+notify STATUS
-// (8-byte tuple: {state, pct, bytes_left:u32}). All bonded; OTA hard-
-// disabled until SECURACV_OTA_RELEASE_PUBKEY is provisioned (default zero).
+// ble_ota (PR #327): write+notify CONTROL (BEGIN_V2+OtaHeaderV2 /
+// BEGIN+OtaHeader / ABORT), write+write_nr DATA (firmware bytes streamed),
+// read+notify STATUS (8-byte tuple: {state, pct, bytes_left:u32}). All
+// bonded; OTA hard-disabled until SECURACV_OTA_RELEASE_PUBKEY is
+// provisioned (default zero).
+// Protocol v2: BEGIN_V2 (0x03) carries a 168-byte header whose product,
+// version, size and sha256 are all under one release signature (the
+// manifest's `ble_signature`, see ble_ota_policy.h); the firmware binds
+// the product and enforces its anti-rollback floor before accepting a
+// byte. The legacy BEGIN (0x01) + 132-byte header is refused by current
+// firmware unless the owner armed break-glass (BOOT short-tap, 30 s).
 const SVC_OTA          = '8fc1ced0-b162-4401-9607-c8ac21383e90';
 const CHR_OTA_CONTROL  = '8fc1ced1-b162-4401-9607-c8ac21383e90';
 const CHR_OTA_DATA     = '8fc1ced2-b162-4401-9607-c8ac21383e90';
@@ -1939,7 +1946,7 @@ let witHead = null, witRecord = null;
 let witHeadData = null, witRecordData = null;
 let otaControl = null, otaData = null, otaStatus = null;
 let otaBinFile = null;        // File object for the .bin
-let otaManifest = null;       // parsed JSON {sha256, signature, version}
+let otaManifest = null;       // parsed JSON {sha256, signature, version, product, bleSignature}
 let otaInProgress = false;
 /* Track the last announced OTA state so we only push to the live region
  * on actual state transitions, not on every status notification (which
@@ -2558,7 +2565,26 @@ async function loadOtaInputs(){
       if (new TextEncoder().encode(m.version).length > 31) {
         throw new Error('version must be ≤ 31 UTF-8 bytes');
       }
-      otaManifest = { sha256: sha, signature: sig, version: m.version };
+      // Protocol v2 (BEGIN_V2): the manifest's ble_signature is the release
+      // key's Ed25519 over the canonical message binding product + version
+      // + size + sha256 (ble_ota_policy.h). Its fields are what the firmware
+      // parses strictly: 1-31 printable ASCII bytes, no spaces. Manifests
+      // from releases before v2 lack ble_signature; the Canary then refuses
+      // the legacy v1 header unless the owner has armed break-glass (BOOT
+      // short-tap within 30 s), so say that up front, not after the transfer.
+      let bleSig = null;
+      if (typeof m.ble_signature === 'string' && m.ble_signature.length) {
+        bleSig = hexToBytes(m.ble_signature);
+        if (!bleSig || bleSig.length !== 64) throw new Error('ble_signature must be 128 hex chars');
+        if (typeof m.product !== 'string') throw new Error('manifest with ble_signature must name its product');
+        if (!/^[\x21-\x7e]{1,31}$/.test(m.product)) throw new Error('product must be 1-31 printable ASCII characters');
+        if (!/^[0-9]+\.[0-9]+[\x21-\x7e]{0,29}$/.test(m.version) || m.version.length > 31) {
+          throw new Error('version must be MAJOR.MINOR… in 1-31 printable ASCII characters');
+        }
+      }
+      otaManifest = { sha256: sha, signature: sig, version: m.version,
+                      product: (typeof m.product === 'string') ? m.product : '',
+                      bleSignature: bleSig };
     } catch (e) {
       otaManifest = null;
       const me = $('ota-error');
@@ -2580,7 +2606,10 @@ async function loadOtaInputs(){
     $('ota-meta').textContent =
       'Image: ' + otaBinFile.name + ' (' + otaBinFile.size + ' B)\n' +
       'Version: ' + otaManifest.version + '\n' +
-      'SHA-256: ' + bytesToHex(otaManifest.sha256);
+      'SHA-256: ' + bytesToHex(otaManifest.sha256) + '\n' +
+      (otaManifest.bleSignature
+        ? 'Protocol: v2 (product ' + otaManifest.product + '; the Canary checks product + version floor)'
+        : 'Protocol: v1 legacy manifest — the Canary refuses it unless you short-tap BOOT within 30 s before Start (break-glass rescue; logged)');
   } else {
     $('ota-meta').classList.add('hidden');
   }
@@ -2620,24 +2649,51 @@ async function startOta(){
       throw new Error('local SHA-256 of image does not match manifest');
     }
 
-    // Build the 132-byte OtaHeader (see ble_ota.h).
-    //   [0..3]    image_size (u32 LE)
-    //   [4..35]   sha256
-    //   [36..99]  signature (Ed25519, 64 B)
-    //   [100..131] version (null-terminated, max 31 chars + NUL)
-    const header = new Uint8Array(132);
-    const dv = new DataView(header.buffer);
-    dv.setUint32(0, imageBuf.byteLength, /*littleEndian=*/true);
-    header.set(otaManifest.sha256, 4);
-    header.set(otaManifest.signature, 36);
-    const verBytes = new TextEncoder().encode(otaManifest.version);
-    header.set(verBytes.subarray(0, Math.min(31, verBytes.length)), 100);
-    // bytes 100+verLen..131 stay zero (NUL terminator + padding)
+    let beginPkt;
+    if (otaManifest.bleSignature) {
+      // Build the 168-byte OtaHeaderV2 (see ble_ota_policy.h).
+      //   [0..1]     magic "SC"
+      //   [2]        hdr_version 0x02
+      //   [3]        reserved 0x00
+      //   [4..35]    product (NUL-terminated, zero-padded)
+      //   [36..67]   version (NUL-terminated, zero-padded)
+      //   [68..71]   image_size (u32 LE)
+      //   [72..103]  sha256
+      //   [104..167] ble_signature (Ed25519 over the canonical message)
+      // product/version were validated to ≤31 printable ASCII bytes in
+      // loadOtaInputs, so the slots always keep their NUL terminator.
+      const header = new Uint8Array(168);
+      const dv = new DataView(header.buffer);
+      header[0] = 0x53; header[1] = 0x43; header[2] = 0x02; header[3] = 0x00;
+      header.set(new TextEncoder().encode(otaManifest.product), 4);
+      header.set(new TextEncoder().encode(otaManifest.version), 36);
+      dv.setUint32(68, imageBuf.byteLength, /*littleEndian=*/true);
+      header.set(otaManifest.sha256, 72);
+      header.set(otaManifest.bleSignature, 104);
+      // BEGIN_V2: command byte 0x03 followed by the header (169 bytes total).
+      beginPkt = new Uint8Array(1 + header.length);
+      beginPkt[0] = 0x03;
+      beginPkt.set(header, 1);
+    } else {
+      // Legacy 132-byte OtaHeader (see ble_ota_policy.h) — break-glass only.
+      //   [0..3]    image_size (u32 LE)
+      //   [4..35]   sha256
+      //   [36..99]  signature (Ed25519, 64 B)
+      //   [100..131] version (null-terminated, max 31 chars + NUL)
+      const header = new Uint8Array(132);
+      const dv = new DataView(header.buffer);
+      dv.setUint32(0, imageBuf.byteLength, /*littleEndian=*/true);
+      header.set(otaManifest.sha256, 4);
+      header.set(otaManifest.signature, 36);
+      const verBytes = new TextEncoder().encode(otaManifest.version);
+      header.set(verBytes.subarray(0, Math.min(31, verBytes.length)), 100);
+      // bytes 100+verLen..131 stay zero (NUL terminator + padding)
 
-    // BEGIN: command byte 0x01 followed by the header (133 bytes total).
-    const beginPkt = new Uint8Array(1 + header.length);
-    beginPkt[0] = 0x01;
-    beginPkt.set(header, 1);
+      // BEGIN: command byte 0x01 followed by the header (133 bytes total).
+      beginPkt = new Uint8Array(1 + header.length);
+      beginPkt[0] = 0x01;
+      beginPkt.set(header, 1);
+    }
     setOtaState('receiving', 0, imageBuf.byteLength);
     await otaControl.writeValue(beginPkt);
 

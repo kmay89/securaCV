@@ -45,6 +45,7 @@ fn main() -> Result<()> {
     let api_config = ApiConfig {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
+        fleet_peers_path: config.api_fleet_peers_path.clone(),
         rate_limit_per_minute: config.api_rate_limit_per_minute,
         // Explicit opt-in required to expose the plaintext API off-loopback.
         allow_insecure: env_flag("WITNESS_API_ALLOW_INSECURE"),

@@ -8,6 +8,10 @@ a tokenizer without tests is a rule that drifts the first time someone adds a
 `sudo -E` or an `echo "python3 ..."`. R3's eviction half is a single string
 test on the group name; the cases below pin what counts as a per-commit group
 and what an exemption looks like, so the rule cannot silently widen or narrow.
+R10 reuses the same tokenizer for "is this job installing a toolchain inline";
+its cases pin that the composite actions' callers (which `source` the emsdk
+env, or pass pins as inputs) are NOT flagged, and that the inline copies the
+rule exists to retire ARE.
 """
 
 from __future__ import annotations
@@ -132,6 +136,127 @@ class R9SetupPython(unittest.TestCase):
         self.assertTrue(any("R9" in p for p in _problems(wf)))
         policy = dict(BASE_POLICY, system_python_ok=["wf.yml:j"])
         self.assertFalse(any("R9" in p for p in _problems(wf, policy)))
+
+
+class R9LocalCompositeAction(unittest.TestCase):
+    """A local composite action that carries actions/setup-python inside it
+    satisfies R9 for the job using it — the shape .github/actions/setup-
+    platformio has, and the reason a PlatformIO job needs no setup-python
+    step of its own."""
+
+    WF = """
+        on: {workflow_dispatch: {}}
+        permissions: {contents: read}
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 5
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/%s
+              - run: python3 firmware/scripts/x.py
+    """
+
+    def _with_action(self, name: str, action_yaml: str, wf_body: str):
+        with tempfile.TemporaryDirectory() as d:
+            adir = os.path.join(d, ".github", "actions", name)
+            os.makedirs(adir)
+            with open(os.path.join(adir, "action.yml"), "w", encoding="utf-8") as f:
+                f.write(textwrap.dedent(action_yaml))
+            saved = cpc.REPO_ROOT
+            cpc.REPO_ROOT = d
+            try:
+                return cpc.check_workflow(_write_workflow(d, wf_body), BASE_POLICY)
+            finally:
+                cpc.REPO_ROOT = saved
+
+    def test_composite_with_setup_python_inside_satisfies_r9(self):
+        probs = self._with_action("setup-toolchain", """
+            name: t
+            runs:
+              using: composite
+              steps:
+                - uses: actions/setup-python@v7
+                  with: {python-version: '3.11'}
+                - shell: bash
+                  run: pip install --upgrade platformio
+        """, self.WF % "setup-toolchain")
+        self.assertFalse(any("R9" in p for p in probs), probs)
+
+    def test_composite_without_setup_python_does_not(self):
+        probs = self._with_action("setup-other", """
+            name: t
+            runs:
+              using: composite
+              steps:
+                - shell: bash
+                  run: echo hi
+        """, self.WF % "setup-other")
+        self.assertTrue(any("R9" in p and "`build`" in p for p in probs), probs)
+
+
+class R10InlineToolchains(unittest.TestCase):
+    def test_inline_installs_are_detected(self):
+        for run in (
+            "pip install --upgrade platformio intelhex",
+            'pip install "platformio==6.1.19" "cryptography==50.0.1"',
+            "python -m pip install platformio",
+            "python3 -m pip install --upgrade pip && pip3 install platformio",
+            "git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk",
+            "curl -sSL https://example.invalid/emsdk.tar.gz | tar xz",
+            "/tmp/emsdk/emsdk install 6.0.3",
+            "sudo /opt/emsdk/emsdk install latest",
+        ):
+            self.assertIsNotNone(cpc.inline_toolchain_in(run), run)
+
+    def test_callers_and_mentions_are_not_flagged(self):
+        for run in (
+            "source /tmp/emsdk/emsdk_env.sh\ncd canary-local/emulator\n./build.sh all",
+            "/tmp/emsdk/emsdk activate 6.0.3",
+            "# pip install platformio used to live here",
+            'echo "pip install platformio"',
+            "pip install pyyaml",
+            "python -m pip install --upgrade pip",
+            "pio run -e canary-display-watch",
+            "",
+        ):
+            self.assertIsNone(cpc.inline_toolchain_in(run), run)
+
+    def _wf(self, step: str) -> str:
+        return """
+            on: {workflow_dispatch: {}}
+            permissions: {contents: read}
+            jobs:
+              j:
+                runs-on: ubuntu-latest
+                timeout-minutes: 5
+                steps:
+                  - uses: actions/checkout@v7
+                  - uses: actions/setup-python@v7
+                    with: {python-version-file: pyproject.toml}
+                  - %s
+        """ % step
+
+    def test_inline_platformio_install_is_a_violation(self):
+        probs = _problems(self._wf("run: pip install --upgrade platformio"))
+        self.assertTrue(any("R10" in p and "`j`" in p for p in probs), probs)
+
+    def test_inline_emsdk_clone_is_a_violation(self):
+        probs = _problems(self._wf(
+            "run: git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk"))
+        self.assertTrue(any("R10" in p for p in probs), probs)
+
+    def test_composite_action_callers_pass(self):
+        probs = _problems(self._wf("uses: ./.github/actions/setup-platformio"))
+        self.assertFalse(any("R10" in p for p in probs), probs)
+        probs = _problems(self._wf("run: source /tmp/emsdk/emsdk_env.sh && emcc --version"))
+        self.assertFalse(any("R10" in p for p in probs), probs)
+
+    def test_exemption_is_per_job(self):
+        wf = self._wf("run: pip install platformio")
+        self.assertTrue(any("R10" in p for p in _problems(wf)))
+        policy = dict(BASE_POLICY, inline_toolchain_ok=["wf.yml:j"])
+        self.assertFalse(any("R10" in p for p in _problems(wf, policy)))
 
 
 class R3Eviction(unittest.TestCase):

@@ -7,8 +7,12 @@ proves the load-bearing cells against the ONLY files that actually decide them �
 firmware/canary/platformio.ini (per-env -DFEATURE_* lines) and
 firmware/canary/include/canary_config.h (the #ifndef defaults) — plus internal
 consistency against flavors.json + boards.json (every flavors.json product
-must have a lane here, by id or by `flavor`). It is a cheap grep-style check
-(no PlatformIO), run in .github/workflows/lint.yml.
+must have a lane here, by id or by `flavor`), and against the device manifests
+(every product lane resolves to ONE devices/<slug>/device.json, and every
+manifest's board.envs is a real [env:NAME] of its family's PlatformIO project
+— the resolution and the ini reader are shared with lint_device_manifests.py
+through scripts/_device_join.py, so the two lints cannot disagree). It is a
+cheap grep-style check (no PlatformIO), run in .github/workflows/lint.yml.
 
 Exit non-zero on any drift, printing every problem.
 """
@@ -17,22 +21,14 @@ import re
 import sys
 from pathlib import Path
 
+from _device_join import (
+    load_manifests,
+    load_project_ini,
+    manifest_for_matrix_product,
+    unknown_envs,
+)
+
 ROOT = Path(__file__).resolve().parent.parent
-FW = ROOT / "firmware"
-
-errors = []
-
-
-def err(msg):
-    errors.append(msg)
-
-
-def load_json(path):
-    try:
-        return json.loads(path.read_text())
-    except Exception as e:  # noqa: BLE001
-        err(f"could not read/parse {path.relative_to(ROOT)}: {e}")
-        return None
 
 
 def env_sections(ini_text):
@@ -62,15 +58,63 @@ def flag_set(body, flag):
     return int(m.group(1)) if m else None
 
 
-def main():
-    matrix = load_json(FW / "build_matrix.json")
-    flavors = load_json(FW / "flavors.json")
-    boards = load_json(FW / "boards" / "boards.json")
-    flash_catalog = load_json(ROOT / "canary-local" / "devices" / "flash.json")
-    ini_path = FW / "canary" / "platformio.ini"
-    cfg_path = FW / "canary" / "include" / "canary_config.h"
+def device_join_errors(matrix: dict, flavors: list, manifests: list, root: Path) -> list[str]:
+    """The build matrix's side of the device join (devices/README.md, wave 2).
+
+    Two rules, both cheap and both fatal:
+      • every product lane resolves to exactly one manifest — devices/<id>/,
+        else the single manifest of its flavor claiming every env it builds;
+        a lane no manifest owns is a product the flasher catalog, the
+        figures and the board registry have no way to agree about;
+      • every manifest's board.envs is an [env:NAME] of its family's
+        PlatformIO project (platformio.ini with extra_configs resolved) — a
+        manifest naming an env CI cannot build is a join to nothing.
+    The manifest linter proves the rest (board, chip, figure, flasher, CAD).
+    """
+    errors: list[str] = []
+    for prod in matrix.get("products", []):
+        _target, why = manifest_for_matrix_product(prod, manifests)
+        if why:
+            errors.append(why)
+    flavor_dir = {f["name"]: f.get("dir") for f in flavors}
+    ini_cache: dict[str, dict] = {}
+    for m in manifests:
+        d = flavor_dir.get(m["family"])
+        if not d:
+            errors.append(f"devices/{m['slug']}: family '{m['family']}' is not a flavors.json "
+                          f"product — its envs cannot be checked against any platformio.ini")
+            continue
+        if d not in ini_cache:
+            ini_cache[d] = load_project_ini(root / d)
+        for env in unknown_envs(m, ini_cache[d]):
+            errors.append(f"devices/{m['slug']}: board.envs names '{env}', which is not an "
+                          f"[env:{env}] in {d}/platformio.ini (extra_configs included)")
+    return errors
+
+
+def collect(root: Path = ROOT) -> list[str]:
+    """Every problem in the tree under `root`, as one line each; [] is green."""
+    errors: list[str] = []
+    fw = root / "firmware"
+
+    def err(msg):
+        errors.append(msg)
+
+    def load_json(path):
+        try:
+            return json.loads(path.read_text())
+        except Exception as e:  # noqa: BLE001
+            err(f"could not read/parse {path.relative_to(root)}: {e}")
+            return None
+
+    matrix = load_json(fw / "build_matrix.json")
+    flavors = load_json(fw / "flavors.json")
+    boards = load_json(fw / "boards" / "boards.json")
+    flash_catalog = load_json(root / "canary-local" / "devices" / "flash.json")
+    ini_path = fw / "canary" / "platformio.ini"
+    cfg_path = fw / "canary" / "include" / "canary_config.h"
     if matrix is None or flavors is None or boards is None:
-        _finish()
+        return errors
     ini = ini_path.read_text()
     cfg = cfg_path.read_text()
     sections = env_sections(ini)
@@ -172,7 +216,7 @@ def main():
     # gauge and a die-temp sensor it has neither of (fixed 2026-09-05); closing
     # it properly needs a per-tree flag alias table, not a wider grep.
     extra_env_sections = {}
-    for extra_ini in sorted((FW / "envs" / "platformio").glob("*.ini")):
+    for extra_ini in sorted((fw / "envs" / "platformio").glob("*.ini")):
         for name, body in env_sections(extra_ini.read_text()).items():
             # Only env tables; [common]/[env] base tables would collide with
             # canary/platformio.ini's, which section 1 above depends on.
@@ -226,6 +270,17 @@ def main():
             f"whose `flavor` is '{name}' (the matrix must cover every product "
             f"that ships)")
 
+    # ── 2b-ter. every product lane is ONE device; every manifest env is real ──
+    # The device manifests (devices/<slug>/device.json) join this matrix to the
+    # flasher catalog, the figures and the board registry. A lane no manifest
+    # resolves to, or a manifest naming an env its project never defines,
+    # breaks that join at the source — so the matrix's own lint refuses it.
+    manifests, load_errs = load_manifests(root / "devices")
+    for e in load_errs:
+        err(e)
+    for e in device_join_errors(matrix, flavors, manifests, root):
+        err(e)
+
     # ── 2c. the default recommendation must resolve to a real product/level ───
     by_id = {p["id"]: p for p in matrix.get("products", [])}
     rec = matrix.get("recommended", {})
@@ -260,18 +315,20 @@ def main():
             if needed not in lv.get("full", {}).get("features", []):
                 err(f"canary.full must list '{needed}' (it's on in [env:full])")
 
-    _finish()
+    return errors
 
 
-def _finish():
+def main() -> int:
+    errors = collect()
     if errors:
         print("build_matrix.json lint FAILED:", file=sys.stderr)
         for e in errors:
             print(f"  ✗ {e}", file=sys.stderr)
-        sys.exit(1)
-    print("build_matrix.json lint OK — matrix matches platformio.ini + config.h")
-    sys.exit(0)
+        return 1
+    print("build_matrix.json lint OK — matrix matches platformio.ini + config.h, "
+          "and every lane is a device manifest")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

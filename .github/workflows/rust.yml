@@ -18,6 +18,9 @@ on:
       - 'integrations/ha_frigate_mqtt/**'
       - 'docs/witness-kernel.html'
       - 'tools/gen_kernel_status.py'
+      # The kernel's fleet_document test pins its /api/fleet bytes to this
+      # vector, shared with the Apple TV core (src/api tests).
+      - 'tvos/witness-core/tests/fixtures/fleet_contract_vectors.json'
       - '.github/workflows/rust.yml'
   pull_request:
     branches: [ "main" ]
@@ -33,6 +36,9 @@ on:
       - 'integrations/ha_frigate_mqtt/**'
       - 'docs/witness-kernel.html'
       - 'tools/gen_kernel_status.py'
+      # The kernel's fleet_document test pins its /api/fleet bytes to this
+      # vector, shared with the Apple TV core (src/api tests).
+      - 'tvos/witness-core/tests/fixtures/fleet_contract_vectors.json'
       - '.github/workflows/rust.yml'
 
 env:
@@ -63,11 +69,20 @@ jobs:
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     - name: Rustfmt
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-targets -- -D warnings
+    # The brief's "cargo doc (no warnings)" gate, enforced rather than asked
+    # for: a broken intra-doc link or a stray `<tag>` in a doc comment fails
+    # here instead of rotting. Private items are documented too — most of the
+    # kernel's explanatory comments sit on private functions and the check is
+    # only worth having if it reads them. Same flags as desktop-hub-core.yml.
+    - name: Docs (warnings are errors, private items included)
+      run: cargo doc --no-deps --document-private-items
+      env:
+        RUSTDOCFLAGS: "-D warnings"
     - name: Build
       run: cargo build --verbose
     - name: Run tests
@@ -94,7 +109,7 @@ jobs:
     - uses: actions/checkout@v7
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     # scripts/ci/conformance.sh existed but no workflow ran it — the one
     # end-to-end gate that generates a sealed-log fixture DB and drives the
     # shipping verifier binary over it (plus the compile-fail suite that
@@ -111,7 +126,7 @@ jobs:
     - uses: actions/checkout@v7
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     # The adapter surface is the kernel's primary untrusted-input boundary
     # (docs/strategy/12, finding A1). Every adapter feature is off by default,
     # so without this job their tests — including the security-critical
@@ -215,7 +230,7 @@ jobs:
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     - name: Clippy (ingest-esp32)
       run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
     - name: Clippy (adapters)

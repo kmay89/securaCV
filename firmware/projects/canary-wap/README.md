@@ -105,6 +105,14 @@ make monitor
    > **HTTPS (port 443)** and plain-HTTP requests are redirected; without a
    > cert the device runs HTTP-only. See the
    > [Arduino build README](arduino/canary_wap/README.md) for details.
+   > The **MQTT bridge** (`/mqtt` page) has its own encryption setting:
+   > *Off* (plain) or *On, check the broker's certificate* (paste the
+   > broker's CA in PEM form; port 8883). An "On" setting with no CA refuses
+   > to connect and says why on the page and the serial log. Neither
+   > fingerprint pinning nor an unverified "lab" socket is available on this
+   > device: its esp_mqtt transport has no pin hook, and the pinned Arduino
+   > core builds esp-tls without the option to skip verification. Per-variant
+   > status in [`docs/FIRMWARE_VARIANT_AUDIT.md`](../../../docs/FIRMWARE_VARIANT_AUDIT.md).
 3. View live device status on the web dashboard
 
 For the full walkthrough — discovery, naming devices, the `canary.local`

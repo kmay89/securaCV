@@ -15,8 +15,10 @@ that *this* env, *this* pins header, *this* figure, *this* flasher product and
 
 `devices/<slug>/device.json` is that join, one file per device. It carries the
 **id each of those files uses for one device** and nothing else: no dimensions,
-no feature lists, no prose, and — deliberately — no status. This is wave 1
-("Describe") of [the roadmap's §4](../docs/IMPROVEMENT_ROADMAP.md).
+no feature lists, no prose, and — deliberately — no status. Wave 1
+("Describe") of [the roadmap's §4](../docs/IMPROVEMENT_ROADMAP.md) wrote the
+manifests and the lint; wave 2 ("Consume") made the generators read them —
+see "What the manifests drive" below for exactly which facts, per generator.
 
 ## The manifest
 
@@ -64,7 +66,12 @@ python3 -m unittest scripts/tests/test_device_manifests.py -v
 CI runs the first in `.github/workflows/lint.yml` (Repo Lints) beside
 `lint_build_matrix.py`, and the second through `unittest discover -s
 scripts/tests`. The lint is grep-grade: it reads the ini files itself (no
-PlatformIO) and the emulator's `build.sh` (no emsdk).
+PlatformIO) and the emulator's `build.sh` (no emsdk). The ini resolver and
+the build-matrix→manifest resolution live once, in
+[`scripts/_device_join.py`](../scripts/_device_join.py), and both lints
+import them — `lint_build_matrix.py` applies the matrix's side of the join
+(every lane resolves to one manifest; every manifest env is a real
+`[env:NAME]`) so the two gates cannot disagree about which device a lane is.
 
 ## Decisions the manifests encode
 
@@ -99,16 +106,28 @@ PlatformIO) and the emulator's `build.sh` (no emsdk).
   that exist today (`canary-vision`, `canary-sense`, `canary-watch`) are
   named; no per-device page exists yet, so `site.page` is absent everywhere.
 
-## What the manifests do NOT drive yet
+## What the manifests drive
 
-Nothing reads them but the linter, so nothing existing can break. The
-roadmap's next waves, one generator per PR with the byte gates proving the
-output did not move:
+Wave 2 ("Consume") pointed the generators at the manifests one at a time,
+with each generator's byte gate proving its output did not move. Honestly,
+per generator — what is read from here, and what is still typed elsewhere:
 
-- **Wave 2 — Consume.** `canary-local/tools/gen_flash.py` reads `board` and
-  `flasher` instead of its own `PRODUCTS` table;
-  `canary-local/tools/figures/gen_figures.mjs` reads `figure`; `scripts/lint_build_matrix.py` requires
-  every env to be claimed here (today that rule lives in this linter).
+| Consumer | Reads from the manifest | Still its own |
+|---|---|---|
+| `canary-local/tools/gen_flash.py` (→ `flash.json`) | which device each flasher product installs onto (`flasher.product` / `variants` — a product no manifest claims refuses to generate); that device's `board.mcu` (the chip guard), `board.flash_mb`, `board.board_id` (the support tier, re-checked against `boards.json`'s `mcu`), and its `family` → the PlatformIO project. The build's pins header must be the manifest's `board_id` or a listed variant, and a resolved figure must equal the manifest's `figure`. Loader: [`canary-local/tools/_devices.py`](../canary-local/tools/_devices.py). | the human copy, `asset_stem`, `env`, the flasher's own `family` grouping, the PlatformIO `board` (still re-derived from the firmware tree and cross-checked); one `board_id` override for a product that installs onto a `board.variants` sibling (the modes build on the 4.3B); the WAP's `figure`, declared because its sketch compiles no pins header (kept in the table so `figure.via` stays a true sentence — checked against the manifest). |
+| `canary-local/tools/figures/gen_figures.mjs` (→ `figures.json`, `fleet_figures.h`, `FleetFigures.swift`, …) | the **hardware→figure map** (`hardware.mapped`, `figure_for_hardware()`): a manifest's `figure` draws its `board.board_id` — and only that; `variants` stay unmapped as different housings; two manifests drawing one board differently fail the build. | the coarse config→device-type map (`CONFIG_FIGURE`, feeding `device_types` / `configs_audit`), because a config directory is not one board and the WAP's envs compile no `configs/` include. The manifests **validate** it in both directions (every row backed by a device with that figure; every typed config a drawn device compiles has a row) and record its one **dispute**: `canary-vision/default` is compiled by the DevKit (own figure since its housing was traced) and the two XIAO hosts (the stacked-XIAO figure), all publishing device type `canary-vision`; the row keeps the XIAO figure pending a decision (unmapping the type moves the firmware and Swift tables). |
+| `scripts/lint_build_matrix.py` | every `build_matrix.json` lane resolves to one manifest (by id, else flavor + env — the same function this linter uses); every manifest's `board.envs` is an `[env:NAME]` of its family's project | the feature-flag cells, which are `platformio.ini` / `canary_config.h` facts, not device facts |
+| `.github/workflows/firmware-release.yml`, `flasher-release.yml` | (not the manifests — `firmware/flavors.json` `release_envs`, via `flavor_envs.py --release --json`; roadmap item 23, landed in the same wave: neither workflow types a display env any more) | — |
+
+**Still typed, deliberately:** the confidence ladder (derived from evidence
+by the figures generator, never here), the emulator twin aliases in
+`gen_flash.py` (`TWIN_ALIASES` — a per-product judgment that a sibling's
+build shows the same face, not a device fact), and `firmware/build_matrix.json`'s
+`board` / `mcu` cells (mirrored, and proven equal to the manifest by the
+linter; making the matrix generator read them is a wave of its own).
+
+## What comes next
+
 - **Wave 3 — Parametrize.** `cad.params` and an `envelope_mm` threaded into
   the SCAD sources and the website's glTF generators, so one dimension edit
   re-renders the enclosure, the AR model and the figure together. That wave
@@ -119,6 +138,8 @@ output did not move:
 1. Write `devices/<slug>/device.json` — copy the closest sibling, change only
    the ids. Every `flavors.json` build env for the new board goes in
    `board.envs`; a CI-only env goes in `unclaimed.json` with its reason.
+   A flasher product needs `board.flash_mb` (the flasher names the module
+   from chip + flash size; `gen_flash.py` refuses a manifest without it).
 2. `python3 scripts/lint_device_manifests.py` until it is green. Each error
    names the file that owns the fact it disagrees with.
 3. Then the regeneration order [`CLAUDE.md`](../CLAUDE.md) already

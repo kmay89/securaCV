@@ -159,8 +159,8 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  # GitHub Actions used across .github/workflows/ AND inside the two composite
-  # actions. `directory: "/"` only covers .github/workflows/*; a composite
+  # GitHub Actions used across .github/workflows/ AND inside every composite
+  # action. `directory: "/"` only covers .github/workflows/*; a composite
   # action's own `uses:` pins are invisible to it — which is how
   # keep-firmware-latest sat on github-script@v8 while every workflow had
   # moved to v9, and how the SHA-pinned arduino/setup-arduino-cli in
@@ -170,6 +170,10 @@ updates:
       - "/"
       - "/.github/actions/keep-firmware-latest"
       - "/.github/actions/setup-arduino-esp32"
+      - "/.github/actions/setup-platformio"
+      - "/.github/actions/setup-emsdk"
+      - "/.github/actions/setup-libseccomp"
+      - "/.github/actions/issue-dedup"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

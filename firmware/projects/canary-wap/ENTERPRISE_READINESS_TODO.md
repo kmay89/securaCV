@@ -157,10 +157,10 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   and `detect-eval.yml` install `libseccomp-dev` before building; the
   `Dockerfile` at the repo root is the containerized target.
 
-- [ ] **Required kernel quality gates in CI** (`rust.yml`)
+- [x] **Required kernel quality gates in CI** (`rust.yml`)
   - [x] `cargo test`
   - [x] `cargo clippy --all-targets -- -D warnings`
-  - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
+  - [x] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (`rust.yml` build job, after clippy)
   - [x] `--no-default-features` build (note: `Cargo.toml` defines no `default` feature, so this is the same build as the default one)
   - [x] `--features backend-tract` build
 

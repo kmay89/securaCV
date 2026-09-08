@@ -2,6 +2,124 @@
 
 ## [Unreleased]
 
+### The device manifests drive the generators, and the release env list is derived
+
+- **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read
+  `devices/<slug>/device.json`.** The flasher catalog takes each product's
+  chip, flash size, registry board and PlatformIO project from the manifest
+  that claims it (the hand-typed `BOARD_CHIP` / `BOARD_FLASH_MB` tables are
+  gone); the fleet figures build the exact hardware→figure map from the
+  manifests and validate the coarse config→device-type map against them,
+  recording one dispute (`canary-vision/default`: DevKit vs XIAO drawings
+  under one device type) for a maintainer to settle; the build-matrix lint
+  applies the matrix's side of the join through the shared
+  `scripts/_device_join.py`. Every generated output is byte-identical.
+- **Both release workflows derive the Canary Display env list from
+  `firmware/flavors.json`** ("Resolve the canary-display release envs",
+  `flavor_envs.py --release --json`, consumed through `fromJSON`) instead of
+  typing it twice; `flavor_envs.py --check-workflows` fails a workflow that
+  types a `pio run -e canary-display-<env>` back in, and
+  `check_ota_channels.py` reads the same derivation. Host-tested only —
+  watch the first real release run (`.github/RELEASE_LESSONS.md`,
+  2026-09-08).
+
+### Kernel: `/api/fleet` has an origin allow-list and lists the Canaries the bridge heard
+
+- **No more CORS wildcard.** `/api/fleet` echoes an `Origin` only from
+  `FLEET_ALLOWED_ORIGINS` (the Lab/flasher origin, `https://securacv.com`,
+  and `http://localhost` / `http://127.0.0.1` on any port); native readers
+  send no Origin and get no CORS header; anything else gets none and the
+  browser blocks the read. A Lab page served from a LAN host can no longer
+  read the kernel's fleet (`tvos/discovery/DISCOVERY.md`). Firmware boards
+  still answer `*`.
+- **Peer aggregation, opt-in.** `event_mqtt_bridge --fleet-peers-path` (or
+  `WITNESS_FLEET_PEERS_PATH`) keeps a table of the Canaries it hears on
+  `securacv/<id>/{availability,status,health,chain,state,meta}`, pins each
+  device's public key on first `health` (a second key is a sticky conflict),
+  and verifies chain publishes with Ed25519; `api.fleet_peers_path` makes
+  the kernel serve those rows beside its own. `online` is proven only by a
+  live chain publish verified against the pin within 180 s; wellbeing words
+  ride only on such a row while fresh. The two-row document is a shared
+  vector with the Apple TV core, and its bytes come from typed rows so they
+  cannot move with `serde_json`'s feature set.
+- **CI: rustdoc warnings fail the Rust build** (`cargo doc --no-deps
+  --document-private-items` with `RUSTDOCFLAGS=-D warnings`); the two
+  failures it found are fixed.
+
+### BLE OTA protocol v2: product and version under the signature, the floor enforced over Bluetooth
+
+- The 168-byte `BEGIN_V2` header carries product, version, size and digest
+  under one domain-separated Ed25519 signature (`scv-ble-ota-v2`), emitted by
+  `ota_release.py` as the manifest's `ble_signature` for every product whose
+  id and version fit the header's 31-byte slots (the longer display ids have
+  no Bluetooth OTA path and carry none). The Canary verifies
+  first, refuses an image for another product, and runs the version through
+  the pull engine's own decision against max(running, NVS floor) — the same
+  rule as network updates. Rescue downgrades and legacy v1 headers still work
+  through the BOOT-button gate (short tap within 30 s, single use); every such
+  acceptance is logged as a floor bypass and shown as `break_glass` in
+  `/api/bluetooth/ota`. The companion page sends v2 automatically and says
+  when an older manifest can only be installed via that rescue path.
+  Host-tested with real Ed25519 (255 checks); device path compile-tested.
+
+### CI: a sharded display build, composite toolchain actions, a derived SBOM
+
+- **The canary-display PlatformIO build runs as five parallel legs by board
+  family** (`flavors.json` `shards`; `flavor_envs.py --build-matrix`
+  derives the matrix and per-leg size guards, and refuses a partition that
+  drops an env). The display's check is now five checks named `PlatformIO
+  Build (canary-display/<shard>)`.
+- **PlatformIO, Emscripten, libseccomp and the freshness workflows' issue
+  fallback are each provisioned by one composite action** under
+  `.github/actions/`; `CI.md` R10 is machine-checked, and R9 recognizes a
+  composite that carries `setup-python`.
+- **The firmware SBOM is generated from the build inputs and committed**
+  (`scripts/gen_firmware_sbom.py` → `sbom/sbom-firmware.cdx.json`, byte-gated
+  in `lint.yml`, resolver cross-checked against `pio project config` in
+  `sbom.yml`) instead of typed into a workflow; a platform pin that moves
+  without `PLATFORM_FACTS` fails generation.
+
+### MQTT: a verified TLS option for every broker link, fail-closed
+
+- **One shared decision, four products.** `firmware/common/network/
+  mqtt_transport_logic.h` (host-tested) decides the broker transport from
+  the provisioned mode: plain (the default — every already-flashed unit is
+  unchanged), CA-verified (PEM), SHA-256 certificate-fingerprint pin, or an
+  explicit lab mode that logs a warning on every connect. canary-display,
+  canary-sense and canary-vision use it through a `WiFiClientSecure`
+  transport header (every display flavor but the nightstand-c6, whose
+  0x1F0000 OTA slot has no room for the TLS client: that image is built
+  plain-only and refuses a provisioned TLS mode with the reason rather than
+  connecting plain); canary-wap's esp_mqtt bridge applies the same decision
+  from a drift-gated staged copy, with plain and CA-verified only: esp_mqtt
+  has no fingerprint hook, and the pinned core's esp-tls cannot skip
+  verification, so both of those modes are refused there at save time and
+  at connect with the reason. Anything incomplete — CA mode without a CA, pin mode
+  without a pin, a malformed PEM or pin, an unknown mode byte — refuses to
+  connect and names the reason without printing the secret.
+- **Provisioning.** NVS keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` on the
+  products, `mqtt.tlsmode` / `mqtt.ca` on the WAP; both flashers' NVS
+  builders seed them byte-alike (parity-gated), and the WAP's `/mqtt` page
+  gained an encryption selector and CA upload. Flasher form fields for the
+  new keys are a follow-up, in both frontends at once.
+- **Breaking, on purpose, for canary-wap units that had "Use TLS" on with
+  no CA:** that setting produced an unverified `mqtts://` handshake that
+  looked secured. Such units now refuse to connect until a CA is uploaded
+  on the `/mqtt` page; the reason is on the page and the serial log. `SECURITY_MODEL.md` no longer claims TLS on all
+  local traffic; the per-variant truth table is
+  `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested and host-tested; no
+  bench pass against a TLS broker yet.
+
+### Lab / emulator: the preview runs the firmware's Wi-Fi join policy
+
+- `emu_net.cpp` includes `common/network/wifi_join_policy.h` directly and
+  drives its retry through it with the display's own constants; the local
+  copy of the outage decision is gone. An emulator booted with Wi-Fi off no
+  longer reboots after five minutes, and the serial and wire logs show the
+  firmware's real reconnect cadence. `scripts/lint_wifi_join_policy.py` now
+  refuses any supervisor that does not consume the shared header directly or
+  regrows a local schedule.
+
 ### Break-glass: who asked, and why, is part of what the trustees sign (§3.6)
 
 - **Operator context is bound into the request hash.** An unlock request now
@@ -141,8 +259,11 @@
   instead of under QEMU, which had been hitting the 90-minute timeout on
   `main`. `verify_published_image.sh` now cross-probes GHCR with the workflow
   token, so it can say whether a package is private (a one-time visibility
-  flip by the owner) or a tag was never pushed — the 30 August failure was the
-  former, and the anonymous probe alone could not tell.
+  flip by the owner) or a tag was never pushed. The 30 August failure turned
+  out to be neither: the probe's `Accept` list lacked the OCI manifest media
+  type buildx writes for single-arch images, so GHCR answered 404 for images
+  that were public and present. That type is now in the list, and the gate
+  reports all four images pullable from an anonymous client.
 - **`homeassistant-mirror.yml` pushes `custom_components/securacv/` to the HACS
   mirror as a PR on every `main` change**, proving the copy exact with the
   mirror's own check. It needs a `MIRROR_PAT` secret; without one the run stays
@@ -200,6 +321,12 @@
 - **`desktop/package-lock.json` is committed** and the Flasher release
   workflow installs with `npm ci`; the audit workflow and Dependabot cover it.
   Both Tauri apps now pin the same `@tauri-apps/cli` release.
+- **No compiled test binary in the tree.** A 20 KB x86-64 executable
+  (`canary-display/tests_host/test_motion`, built by `make`) had been committed
+  since #1566 because the host-test `.gitignore` listed binaries by name and
+  the list was two entries behind. It is untracked now, and the display and
+  tincan host-test directories ignore by shape (`test_*`, sources kept by
+  extension) so a new test needs no ignore edit.
 
 ### The website's carries are generated, not hand-mirrored
 

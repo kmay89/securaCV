@@ -58,6 +58,7 @@ pub mod crypto;
 pub mod detect;
 pub mod envelope;
 pub mod eval;
+pub mod fleet_peers;
 pub mod frame;
 pub mod ingest;
 pub mod inspect;

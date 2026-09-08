@@ -847,14 +847,37 @@ test("mqttProvisioningToNvs: maps the optional broker/identity fields to native'
     mqtt_user: "canary", mqtt_pass: "broker-secret",
   });
   assert.deepStrictEqual(full.u16, { mqtt_port: 1883 });
+  assert.deepStrictEqual(full.u8, {}, "plain broker writes no mqtt_tls byte (the firmware default)");
 
   // Every field is optional — empty in, omitted out (no empty NVS keys written).
-  assert.deepStrictEqual(mqttProvisioningToNvs({}), { strings: {}, u16: {} });
-  assert.deepStrictEqual(mqttProvisioningToNvs({ deviceId: "just_me" }), { strings: { dev_id: "just_me" }, u16: {} });
+  assert.deepStrictEqual(mqttProvisioningToNvs({}), { strings: {}, u16: {}, u8: {} });
+  assert.deepStrictEqual(mqttProvisioningToNvs({ deviceId: "just_me" }), { strings: { dev_id: "just_me" }, u16: {}, u8: {} });
   // A broker host with no user/pass (open broker) still writes host + port.
   assert.deepStrictEqual(
     mqttProvisioningToNvs({ mqttHost: "10.0.0.2", mqttPort: 1883 }),
-    { strings: { mqtt_host: "10.0.0.2" }, u16: { mqtt_port: 1883 } });
+    { strings: { mqtt_host: "10.0.0.2" }, u16: { mqtt_port: 1883 }, u8: {} });
+
+  // Broker TLS: the mode byte + CA / pin the firmware's shared decision
+  // header reads (mqtt_transport_logic.h). Incomplete pairs are refused HERE
+  // because the firmware fails closed on them — a seeded board that refuses
+  // to connect is a worse outcome than a form error.
+  const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+  const fp = "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9";
+  const ca = mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 1, mqttCa: pem });
+  assert.deepStrictEqual(ca.u8, { mqtt_tls: 1 });
+  assert.strictEqual(ca.strings.mqtt_ca, pem + "\n", "PEM is stored with its trailing newline");
+  assert.ok(!("mqtt_fp" in ca.strings));
+  const pinned = mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: "fingerprint", mqttFp: fp });
+  assert.deepStrictEqual(pinned.u8, { mqtt_tls: 2 });
+  assert.strictEqual(pinned.strings.mqtt_fp, fp);
+  assert.deepStrictEqual(mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: "insecure" }).u8, { mqtt_tls: 3 });
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 1 }), /needs the broker CA/);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 2 }), /needs the broker fingerprint/);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 1, mqttCa: fp }), /PEM certificate/);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 2, mqttFp: fp.slice(0, 40) }), /SHA-256/);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 7 }), /TLS mode/);
+  // No broker host → the TLS fields are ignored with the rest of the broker row.
+  assert.deepStrictEqual(mqttProvisioningToNvs({ mqttTls: 1, mqttCa: pem }), { strings: {}, u16: {}, u8: {} });
 
   // Validation mirrors native — bad values throw before anything is built.
   assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 0 }), /port/i);

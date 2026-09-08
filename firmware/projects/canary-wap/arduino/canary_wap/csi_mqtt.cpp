@@ -28,6 +28,7 @@
 #include "csi_event_log.h"
 #include "api_auth.h"
 #include "device_signature.h"
+#include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -88,6 +89,16 @@ std::atomic<int>         s_last_update_auto{-1};
  * between the last publish and the power cut either. */
 uint32_t                 s_last_published_event_id = 0;
 Config                   s_active_cfg   = {};
+/* Broker TLS state. The CA lives here (not in Config: a 3 KB PEM has no
+ * business on an httpd handler's stack) because esp_mqtt keeps the pointer
+ * it is given for the life of the client. The decision is made once per
+ * init() by the shared header; s_last_error is the transport failure in
+ * words for the serial log and the /mqtt page — constants only. It is
+ * written from the esp_mqtt task and read by httpd; a torn read is a
+ * garbled diagnostic, never a secret. */
+char                          s_ca_pem[MAX_CA_LEN + 1] = {};
+canary::net::mqtt_tls::Decision s_tls_decision;
+char                          s_last_error[192]  = {};
 char                     s_device_id[33]      = {};
 char                     s_firmware_version[24] = {};
 char                     s_public_key_hex[65]   = {};
@@ -127,6 +138,7 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
   switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED: {
       s_connected.store(true, std::memory_order_relaxed);
+      s_last_error[0] = '\0';
       Serial.println("[MQTT] connected");
       /* Replace the LWT-published "offline" with a fresh "online" so
        * a freshly-connecting HA sees the right state immediately. */
@@ -285,11 +297,34 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
       s_connected.store(false, std::memory_order_relaxed);
       Serial.println("[MQTT] disconnected (will retry)");
       break;
+    case MQTT_EVENT_BEFORE_CONNECT:
+      /* The lab opt-in is acceptable only because it is named on EVERY
+       * connect (mqtt_transport_logic.h) — esp_mqtt reconnects on its own
+       * task, so this event is the one hook that fires each time. */
+      if (s_tls_decision.warn_insecure()) {
+        Serial.printf("[MQTT] %s\n", canary::net::mqtt_tls::insecure_warning());
+      }
+      break;
     case MQTT_EVENT_ERROR:
       if (e && e->error_handle) {
         Serial.printf("[MQTT] error: type=%d esp_tls_err=0x%x\n",
                       (int)e->error_handle->error_type,
                       (unsigned)e->error_handle->esp_tls_last_esp_err);
+        /* Name the TLS reason (wrong CA, expired cert, plaintext listener
+         * on a TLS port) so the fix is in the log, not just a hex code.
+         * esp_tls_stack_err is the mbedTLS code; the verify flags are the
+         * X.509 result when the handshake got that far. */
+        if (s_tls_decision.tls() &&
+            e->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+          if (canary::net::mqtt_tls::format_failure(
+                  s_last_error, sizeof(s_last_error), s_tls_decision.transport,
+                  canary::net::mqtt_tls::Reason::None,
+                  (int)e->error_handle->esp_tls_stack_err,
+                  (uint32_t)e->error_handle->esp_tls_cert_verify_flags,
+                  /*fingerprint_mismatch=*/false) > 0) {
+            Serial.printf("[MQTT] %s\n", s_last_error);
+          }
+        }
       }
       break;
     default:
@@ -330,6 +365,14 @@ bool config_load(Config* out) {
   out->enabled = prefs.getBool (NVS_KEY_ENABLED, false);
   out->port    = (uint16_t)prefs.getUShort(NVS_KEY_PORT, DEFAULT_PORT);
   out->tls     = prefs.getBool (NVS_KEY_TLS,     false);
+  /* Mode byte wins; a row that predates it carries only the bool, which
+   * maps to CA mode — refused by init() until a CA is on file, so the old
+   * unverified mqtts:// never silently returns. */
+  out->tls_mode = prefs.isKey(NVS_KEY_TLS_MODE)
+                      ? prefs.getUChar(NVS_KEY_TLS_MODE, 0)
+                      : (out->tls ? (uint8_t)canary::net::mqtt_tls::Mode::Ca : 0);
+  out->tls    = out->tls_mode != 0;
+  out->ca_set = prefs.isKey(NVS_KEY_CA);
   /* Discovery defaults true on first boot — HA users get auto-pickup
    * without a separate toggle. Non-HA users flip it off via the /mqtt
    * settings page; the persisted bool then survives reboots. */
@@ -353,11 +396,52 @@ bool config_save(const Config& cfg) {
   prefs.putString(NVS_KEY_USER,      cfg.user);
   prefs.putString(NVS_KEY_PASS,      cfg.pass);
   prefs.putString(NVS_KEY_PREFIX,    cfg.prefix);
-  prefs.putBool  (NVS_KEY_TLS,       cfg.tls);
+  prefs.putUChar (NVS_KEY_TLS_MODE,  cfg.tls_mode);
+  prefs.putBool  (NVS_KEY_TLS,       cfg.tls_mode != 0);
   prefs.putBool  (NVS_KEY_DISCOVERY, cfg.discovery);
   prefs.end();
   return true;
 }
+
+bool ca_save(const char* pem) {
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
+  bool ok;
+  if (!pem || !pem[0]) {
+    /* remove() also reports false for a key that never existed — the
+     * readback is the truth. */
+    prefs.remove(NVS_KEY_CA);
+    ok = !prefs.isKey(NVS_KEY_CA);
+  } else {
+    ok = prefs.putString(NVS_KEY_CA, pem) > 0;
+  }
+  prefs.end();
+  return ok;
+}
+
+namespace {
+void ca_load() {
+  s_ca_pem[0] = '\0';
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/true)) return;
+  if (prefs.isKey(NVS_KEY_CA)) {
+    prefs.getString(NVS_KEY_CA, s_ca_pem, sizeof(s_ca_pem));
+    s_ca_pem[sizeof(s_ca_pem) - 1] = '\0';
+  }
+  prefs.end();
+}
+}  /* namespace */
+
+const char* transport_name() {
+  /* A bridge that is switched off, or has no broker host yet, never reaches
+   * the socket decision — say so rather than reporting the default
+   * Decision's "refused" for a device nobody has configured. */
+  if (!s_active_cfg.enabled) return "disabled";
+  if (!s_active_cfg.host[0]) return "unconfigured";
+  return canary::net::mqtt_tls::transport_name(s_tls_decision.transport);
+}
+
+const char* last_error() { return s_last_error; }
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Lifecycle
@@ -394,10 +478,36 @@ bool init(const char* device_id,
     return false;
   }
 
+  /* The socket decision is the shared header's, not this file's: plain or
+   * CA-verified — and REFUSED (with the reason in the log and on the /mqtt
+   * page) for a TLS mode with no usable CA. esp_mqtt has no fingerprint
+   * hook, so caps.fingerprint is false and a pinned provisioning is refused
+   * with "use the CA mode". caps.insecure is false too: the pinned Arduino
+   * core builds esp-tls WITHOUT CONFIG_ESP_TLS_INSECURE (sdkconfig of
+   * every chip in framework-arduinoespressif32-libs 3.3.8), so an mqtts://
+   * session with no verification option returns ESP_ERR_INVALID_STATE —
+   * the lab mode could never connect here, and the header's own
+   * InsecureUnsupported refusal says so instead of an opaque esp-tls error. */
+  ca_load();
+  {
+    using namespace canary::net::mqtt_tls;
+    Caps caps;
+    caps.fingerprint = false;
+    caps.insecure = false;
+    s_tls_decision = decide_u8(s_active_cfg.tls_mode, s_ca_pem, nullptr, caps);
+    if (!s_tls_decision.allowed()) {
+      format_failure(s_last_error, sizeof(s_last_error), Transport::Refused,
+                     s_tls_decision.reason, 0, 0, false);
+      Serial.printf("[MQTT] %s\n", s_last_error);
+      return false;
+    }
+    s_last_error[0] = '\0';
+  }
+
   /* Build the broker URI once; ESP-IDF accepts mqtt:// and mqtts://. */
   char uri[160];
   snprintf(uri, sizeof(uri), "%s://%s:%u",
-           s_active_cfg.tls ? "mqtts" : "mqtt",
+           canary::net::mqtt_tls::uri_scheme(s_tls_decision.transport),
            s_active_cfg.host,
            (unsigned)s_active_cfg.port);
 
@@ -415,6 +525,13 @@ bool init(const char* device_id,
   }
   if (s_active_cfg.pass[0]) {
     cfg.credentials.authentication.password = s_active_cfg.pass;
+  }
+  /* TlsCa: esp-tls verifies the broker's chain against this PEM (NUL-
+   * terminated, so certificate_len stays 0). Plain sets nothing. There is
+   * no TlsInsecure branch: decide() refuses that mode on this transport
+   * (caps.insecure above), so it never reaches the client config. */
+  if (s_tls_decision.transport == canary::net::mqtt_tls::Transport::TlsCa) {
+    cfg.broker.verification.certificate = s_ca_pem;
   }
   cfg.session.last_will.topic   = will_topic;
   cfg.session.last_will.msg     = will_msg;
@@ -435,7 +552,8 @@ bool init(const char* device_id,
     teardown_client();
     return false;
   }
-  Serial.printf("[MQTT] bridge started: %s prefix=%s\n", uri, s_active_cfg.prefix);
+  Serial.printf("[MQTT] bridge started: %s transport=%s prefix=%s\n", uri,
+                transport_name(), s_active_cfg.prefix);
   return true;
 }
 
@@ -1590,12 +1708,17 @@ esp_err_t handle_config_get(httpd_req_t* req) {
   /* Echo everything but the password — the password is write-only on
    * the wire so a casual attacker who somehow obtained a session
    * cookie can't read the broker creds back out of GET. */
-  char body[512];
+  char body[800];
   /* snprintf return value intentionally unchecked: we send via
    * HTTPD_RESP_USE_STRLEN below so a truncated payload still has a
    * NUL terminator and httpd_resp_send walks until it. Using
    * snprintf's return as the length would walk past the NUL on
-   * truncation and over-read. (PR #394 review r3213674558.) */
+   * truncation and over-read. (PR #394 review r3213674558.)
+   * tls_mode / ca_set / transport / last_error are the broker-TLS
+   * surface: the CA itself is never echoed (a page that can read it
+   * back is a page that can be tricked into showing it), and last_error
+   * is one of the header's constant strings — no quotes, no backslashes
+   * (the host suite asserts that), so it is JSON-safe as-is. */
   snprintf(body, sizeof(body),
     "{"
       "\"enabled\":%s,"
@@ -1604,6 +1727,10 @@ esp_err_t handle_config_get(httpd_req_t* req) {
       "\"user\":\"%s\","
       "\"prefix\":\"%s\","
       "\"tls\":%s,"
+      "\"tls_mode\":%u,"
+      "\"ca_set\":%s,"
+      "\"transport\":\"%s\","
+      "\"last_error\":\"%s\","
       "\"discovery\":%s,"
       "\"password_set\":%s,"
       "\"connected\":%s"
@@ -1614,6 +1741,10 @@ esp_err_t handle_config_get(httpd_req_t* req) {
     c.user,
     c.prefix,
     c.tls ? "true" : "false",
+    (unsigned)c.tls_mode,
+    c.ca_set ? "true" : "false",
+    transport_name(),
+    s_last_error,
     c.discovery ? "true" : "false",
     c.pass[0] ? "true" : "false",
     connected() ? "true" : "false");
@@ -1706,11 +1837,28 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* Body cap covers all fields including a 128-char password and a
-   * 128-char host; anything longer is rejected as oversized rather
-   * than silently truncated. */
-  char body[640];
-  const int got = httpd_req_recv(req, body, sizeof(body) - 1);
+  /* Body cap covers all fields including a 128-char password, a
+   * 128-char host and a JSON-escaped CA PEM (3071 bytes raw, newlines as
+   * \n); anything longer is rejected as oversized rather than silently
+   * truncated. Heap, not stack: 5 KB on the httpd task's stack is how a
+   * settings save becomes a reboot. */
+  struct HeapBuf {
+    char* p;
+    explicit HeapBuf(size_t n) : p((char*)malloc(n)) {}
+    ~HeapBuf() { free(p); }
+    HeapBuf(const HeapBuf&) = delete;
+    HeapBuf& operator=(const HeapBuf&) = delete;
+  };
+  constexpr size_t kBodyCap = 640 + 2 * MAX_CA_LEN + 64;
+  HeapBuf bodybuf(kBodyCap);
+  HeapBuf cabuf(MAX_CA_LEN + 1);
+  if (!bodybuf.p || !cabuf.p) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"out of memory\"}", -1);
+    return ESP_OK;
+  }
+  char* body = bodybuf.p;
+  const int got = httpd_req_recv(req, body, kBodyCap - 1);
   if (got <= 0) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
@@ -1724,8 +1872,58 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   config_load(&c);
 
   json_extract_bool  (body, "\"enabled\"",   &c.enabled);
-  json_extract_bool  (body, "\"tls\"",       &c.tls);
   json_extract_bool  (body, "\"discovery\"", &c.discovery);
+  /* Broker TLS mode. The numeric mode is the contract
+   * (mqtt_transport_logic.h); the legacy "tls" bool is still accepted
+   * from older pages as on→CA / off→plain. Fingerprint pinning (2) is
+   * refused here, at save time, with the reason — this transport cannot
+   * honor it and a silent save would only surface as "won't connect". */
+  {
+    bool legacy_tls = c.tls;
+    if (json_extract_bool(body, "\"tls\"", &legacy_tls)) {
+      c.tls_mode = legacy_tls ? (uint8_t)canary::net::mqtt_tls::Mode::Ca : 0;
+    }
+    long mode_l = -1;
+    if (json_extract_int(body, "\"tls_mode\"", &mode_l)) {
+      if (mode_l == (long)canary::net::mqtt_tls::Mode::Fingerprint) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req,
+          "{\"ok\":false,\"reason\":\"fingerprint pinning is not available on this device - use the CA mode\"}", -1);
+        return ESP_OK;
+      }
+      if (mode_l == (long)canary::net::mqtt_tls::Mode::InsecureLab) {
+        /* Same reason init() would refuse it (caps.insecure = false): the
+         * core's esp-tls cannot skip verification, so saving the mode would
+         * only surface later as "won't connect". */
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req,
+          "{\"ok\":false,\"reason\":\"unverified TLS is not available on this build - use the CA mode\"}", -1);
+        return ESP_OK;
+      }
+      bool known = false;
+      (void)canary::net::mqtt_tls::mode_from_u8((uint8_t)(mode_l & 0xFF), &known);
+      if (mode_l < 0 || mode_l > 255 || !known) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req, "{\"ok\":false,\"reason\":\"tls_mode must be 0 (off) or 1 (CA)\"}", -1);
+        return ESP_OK;
+      }
+      c.tls_mode = (uint8_t)mode_l;
+    }
+    c.tls = c.tls_mode != 0;
+  }
+  /* The CA: present-and-empty removes it, present-and-PEM replaces it,
+   * absent leaves it. Shape-checked before it can reach NVS so a pasted
+   * fingerprint or a half-copied PEM is a 400 here, not a -0x2180 later. */
+  bool ca_changed = false;
+  if (json_extract_string(body, "\"ca\"", cabuf.p, MAX_CA_LEN + 1)) {
+    if (cabuf.p[0] != '\0' && !canary::net::mqtt_tls::ca_pem_looks_valid(cabuf.p)) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req,
+        "{\"ok\":false,\"reason\":\"ca must be a PEM certificate (the BEGIN/END CERTIFICATE lines included)\"}", -1);
+      return ESP_OK;
+    }
+    ca_changed = true;
+  }
   long port_l = c.port;
   if (json_extract_int(body, "\"port\"", &port_l) && port_l > 0 && port_l <= 65535) {
     c.port = (uint16_t)port_l;
@@ -1768,7 +1966,7 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   if (!c.prefix[0]) strncpy(c.prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (c.port == 0)  c.port = c.tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;
 
-  if (!config_save(c)) {
+  if (!config_save(c) || (ca_changed && !ca_save(cabuf.p))) {
     httpd_resp_set_status(req, "500 Internal Server Error");
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
     return ESP_OK;
@@ -1805,12 +2003,14 @@ esp_err_t handle_test(httpd_req_t* req) {
   }
   const bool ok = s_connected.load(std::memory_order_relaxed);
   httpd_resp_set_type(req, "application/json");
-  char body[96];
+  char body[320];
   snprintf(body, sizeof(body),
-    "{\"ok\":%s,\"connected\":%s,\"waited_ms\":%lu}",
+    "{\"ok\":%s,\"connected\":%s,\"waited_ms\":%lu,\"transport\":\"%s\",\"last_error\":\"%s\"}",
     ok ? "true" : "false",
     ok ? "true" : "false",
-    (unsigned long)waited);
+    (unsigned long)waited,
+    transport_name(),
+    s_last_error);
   httpd_resp_send(req, body, -1);
   return ESP_OK;
 }
@@ -1828,7 +2028,7 @@ h1{font-weight:500;font-size:24px;margin:0 0 8px;}
 p{color:#3a311e;margin:8px 0 18px;}
 form{display:grid;gap:14px;}
 label{display:grid;gap:4px;font-size:13px;color:#6b6049;}
-input[type=text],input[type=password],input[type=number]{font:inherit;padding:10px;border:1px solid #d4c994;border-radius:8px;background:#fff;}
+input[type=text],input[type=password],input[type=number],select,textarea{font:inherit;padding:10px;border:1px solid #d4c994;border-radius:8px;background:#fff;}
 .pw-masked{-webkit-text-security:disc;text-security:disc;}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .row.toggle{grid-template-columns:auto auto;justify-content:start;align-items:center;gap:10px;}
@@ -1842,7 +2042,7 @@ button.test{background:transparent;color:#3a311e;border:1px solid #d4c994;}
 @media (prefers-color-scheme:dark){
   body{background:#1a1605;color:#fffbec;}
   p,label,.status{color:#a89e85;}
-  input[type=text],input[type=password],input[type=number]{background:#2a2310;color:#fffbec;border-color:#403718;}
+  input[type=text],input[type=password],input[type=number],select,textarea{background:#2a2310;color:#fffbec;border-color:#403718;}
   button.test{color:#fffbec;border-color:#403718;}
 }
 </style></head><body>
@@ -1862,8 +2062,18 @@ button.test{background:transparent;color:#3a311e;border:1px solid #d4c994;}
   </div>
   <div class="row">
     <label>Topic prefix<input type="text" id="prefix" value="securacv"></label>
-    <label class="row toggle"><input type="checkbox" id="tls"> Use TLS</label>
+    <label>Encryption<select id="tls_mode">
+      <option value="0">Off (plain, port 1883)</option>
+      <option value="1">On, check the broker's certificate (port 8883)</option>
+    </select></label>
   </div>
+  <div class="row">
+    <label>Broker CA certificate (PEM, for the "check" option)<textarea id="ca" rows="4" placeholder="-----BEGIN CERTIFICATE-----" spellcheck="false"></textarea></label>
+  </div>
+  <div class="status" id="ca_note"></div>
+  <label class="row toggle">
+    <input type="checkbox" id="ca_clear"> Forget the saved CA certificate
+  </label>
   <label class="row toggle">
     <input type="checkbox" id="discovery" checked>
     Let Home Assistant find the canary on its own
@@ -1886,11 +2096,17 @@ async function load(){
     port.value      = j.port || 1883;
     user.value      = j.user || '';
     prefix.value    = j.prefix || 'securacv';
-    tls.checked     = !!j.tls;
+    tls_mode.value  = String(j.tls_mode != null ? j.tls_mode : (j.tls ? 1 : 0));
     discovery.checked = j.discovery !== false;  /* default-on if missing */
     if (j.password_set) password.placeholder = '•••• saved (leave blank to keep)';
-    document.getElementById('status').textContent = j.connected ? 'Connected to broker.' : 'Not connected.';
-    document.getElementById('status').className = 'status ' + (j.connected ? 'good' : '');
+    ca_note.textContent = j.ca_set
+      ? 'A CA certificate is saved. Paste a new one to replace it.'
+      : 'No CA certificate saved yet.';
+    ca_clear.checked = false;
+    const why = j.last_error ? ' ' + j.last_error : '';
+    document.getElementById('status').textContent =
+      (j.connected ? 'Connected to broker (' + j.transport + ').' : 'Not connected.') + why;
+    document.getElementById('status').className = 'status ' + (j.connected ? 'good' : (why ? 'bad' : ''));
   } catch {}
 }
 load();
@@ -1902,19 +2118,22 @@ f.addEventListener('submit', async (e) => {
     port: parseInt(port.value, 10) || 1883,
     user: user.value,
     prefix: prefix.value.trim() || 'securacv',
-    tls: tls.checked,
+    tls_mode: parseInt(tls_mode.value, 10) || 0,
     discovery: discovery.checked,
   };
   if (password.value) body.password = password.value;
+  if (ca_clear.checked) body.ca = '';
+  else if (ca.value.trim()) body.ca = ca.value.trim() + '\n';
   const r = await cvFetch('/api/mqtt/config', {
     method: 'POST',
     headers: {'content-type': 'application/json'},
     body: JSON.stringify(body),
   });
   const ok = r.ok;
-  document.getElementById('status').textContent = ok ? 'Saved.' : 'Save failed.';
+  const j = await r.json().catch(() => ({}));
+  document.getElementById('status').textContent = ok ? 'Saved.' : ('Save failed. ' + (j.reason || ''));
   document.getElementById('status').className = 'status ' + (ok ? 'good' : 'bad');
-  if (ok) setTimeout(load, 600);
+  if (ok) { ca.value = ''; setTimeout(load, 600); }
 });
 document.getElementById('test').addEventListener('click', async () => {
   document.getElementById('status').textContent = 'Trying to reach the broker…';
@@ -1922,8 +2141,8 @@ document.getElementById('test').addEventListener('click', async () => {
   const r = await cvFetch('/api/mqtt/test', {method: 'POST'});
   const j = await r.json().catch(() => ({}));
   document.getElementById('status').textContent = j.ok
-    ? 'Reached the broker.'
-    : 'Could not reach the broker. Check host, port, and credentials.';
+    ? 'Reached the broker (' + j.transport + ').'
+    : ('Could not reach the broker. ' + (j.last_error || 'Check host, port, and credentials.'));
   document.getElementById('status').className = 'status ' + (j.ok ? 'good' : 'bad');
 });
 </script>

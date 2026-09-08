@@ -155,14 +155,18 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
     "flash-core.js buildNvsSeedImage lost the OTA auto-update seed — a browser-flashed " +
     "board would never keep itself updated");
   const { mqttProvisioningToNvs, apiTokenToNvs } = await import("../assets/flash-core.js");
-  const { strings, u16 } = mqttProvisioningToNvs({
+  // Broker TLS fields ride the same row: a CA-mode sample with a pin present
+  // exercises every key the builder can emit (mqtt_tls / mqtt_ca / mqtt_fp).
+  const { strings, u16, u8 } = mqttProvisioningToNvs({
     deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
+    mqttTls: 1, mqttCa: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----",
+    mqttFp: "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9",
   });
   // The API-token blobs ride the same seed (blob-scheme boards); their keys
   // are part of the contract the two flashers share.
   const { blobs } = apiTokenToNvs("cv_" + "a".repeat(32));
   const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en", "setup_ok", "auto_upd",
-    ...Object.keys(strings), ...Object.keys(u16), ...Object.keys(blobs)]);
+    ...Object.keys(strings), ...Object.keys(u16), ...Object.keys(u8), ...Object.keys(blobs)]);
 
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +
@@ -904,9 +908,13 @@ test("flasher publishing signs once a key is in force, and refuses to ship a ref
     "key is pinned");
   assert.match(wf, /OTA_SIGNING_KEY_PEM/,
     "flasher-release.yml can't sign without reading the OTA_SIGNING_KEY_PEM secret");
-  assert.match(wf, /pip install[^\n]*cryptography/,
-    "signing needs `cryptography` (ota_release.py imports it) — install it, or " +
-    "the sign path dies after the build instead of before it");
+  // Provisioning moved into .github/actions/setup-platformio (CI.md R10), so
+  // the requirement is expressed as that action's `extras:` input; an inline
+  // `pip install` is the pre-R10 shape and still counts if it ever returns.
+  assert.match(wf, /pip install[^\n]*cryptography|extras:[^\n]*cryptography/,
+    "signing needs `cryptography` (ota_release.py imports it) — install it " +
+    "(setup-platformio `extras:`), or the sign path dies after the build " +
+    "instead of before it");
 
   // The script's own contract, which the above depends on: --signing-key is
   // optional and its absence means checksum-only, not a crash.

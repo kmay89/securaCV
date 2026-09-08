@@ -7,7 +7,8 @@ Single source of truth for the OTA release format shared by:
   - the firmware-release GitHub Actions workflow,
   - the local mock/LAN server (firmware/projects/canary-ota/tools/mock_ota_server.py).
 
-Signature scheme (identical to ble_ota.cpp so one key signs every channel):
+Image signature (the pull path's `signature`; also what the legacy BLE OTA
+v1 header carried):
 
     message   = image_size as uint32 little-endian (4 bytes)
               || sha256(firmware.bin)              (32 bytes)
@@ -28,6 +29,29 @@ rebuilds the exact bytes from its parsed manifest without canonical-JSON
 machinery. Keep in sync with securacv_ota_build_manifest_message() in
 firmware/common/ota/src/securacv_ota.cpp.
 
+BLE OTA protocol-v2 header signature (the WAP's GATT push path,
+firmware/projects/canary-wap/arduino/canary_wap/ble_ota_policy.h): the same
+NUL-separated convention under its own domain prefix, so the header's
+product, version, size and digest are all under the release key — the
+device binds the product, checks the version against its anti-rollback
+floor, and only then streams bytes:
+
+    msg = "scv-ble-ota-v2\0" + product + "\0" + version + "\0"
+        + str(size) + "\0" + sha256hex + "\0"
+    ble_signature = Ed25519.sign(msg.encode())         (64 bytes, same key)
+
+The manifest carries it as `ble_signature` WHEN the header can carry the
+product and version at all — each is a 31-byte NUL-terminated slot, and
+seven of the Canary Display product ids are longer (they have no Bluetooth
+OTA path; the pull engine is their channel). ble_header_fits() is the one
+rule: a manifest whose product/version fit MUST carry the signature and
+`verify` requires it; one whose product does not fit carries none and
+`verify` asks for none. A BLE client (the companion PWA, or `ble-header`
+below) builds the 168-byte BEGIN_V2 payload from the manifest's product /
+version / size / sha256 plus that signature. Keep in sync with
+ble_ota::build_v2_message(); the cross-language fixture lives in
+test_ota_release.py and tests_host/test_ble_ota_policy.cpp.
+
 Manifest schema v1 (per-variant flat JSON, one file per product):
 
     {
@@ -40,6 +64,7 @@ Manifest schema v1 (per-variant flat JSON, one file per product):
       "size": 1048576,
       "signature": "<128 hex>",
       "manifest_signature": "<128 hex>",
+      "ble_signature": "<128 hex>",          (only when ble_header_fits())
       "signing_key_id": "<first 16 hex of sha256(pubkey)>",
       "release_notes": "...",
       "release_url": "https://.../releases/tag/fw-v2.2.0"
@@ -52,6 +77,7 @@ Commands:
     manifest        Emit a signed per-variant manifest JSON.
     index           Emit a manifest-index.json pointing at per-variant manifests.
     verify          Verify a manifest + binary against a public key.
+    ble-header      Emit the 168-byte BLE OTA BEGIN_V2 header for a manifest + binary.
 
 The private key must live OFF-DEVICE and outside the repository — on a
 release engineer's machine or in the OTA_SIGNING_KEY_PEM CI secret.
@@ -127,6 +153,105 @@ def manifest_signed_message(
     return b"scv-manifest-v1\0" + b"".join(f.encode() + b"\0" for f in fields)
 
 
+BLE_OTA_DOMAIN = b"scv-ble-ota-v2\0"
+BLE_OTA_HEADER_SIZE = 168
+BLE_OTA_FIELD_WIDTH = 32   # product / version slots, NUL terminator included
+BLE_OTA_MAGIC = b"SC"
+BLE_OTA_HDR_VERSION = 2
+
+
+def _check_ble_field(name: str, value: str) -> bytes:
+    """A BLE header string field: 1..31 printable ASCII bytes, no spaces.
+
+    Mirrors ble_ota::policy_detail::field_is_clean(); anything else is a
+    header the device rejects as malformed before it looks at the signature.
+    """
+    raw = value.encode("utf-8")
+    if not 0 < len(raw) < BLE_OTA_FIELD_WIDTH:
+        raise ValueError(f"{name} must be 1..{BLE_OTA_FIELD_WIDTH - 1} bytes, got {len(raw)}")
+    if any(c < 0x21 or c > 0x7E for c in raw):
+        raise ValueError(f"{name} must be printable ASCII without spaces")
+    return raw
+
+
+def ble_header_fits(product: str, version: str) -> bool:
+    """Whether the 168-byte BEGIN_V2 header can carry this product and version.
+
+    The rule that decides whether a manifest carries `ble_signature`: both
+    slots are 31 bytes of printable ASCII (no spaces) plus a NUL, mirrored
+    from ble_ota::policy_detail::field_is_clean(). A product id that does
+    not fit has no BLE OTA header, so signing one would be a claim about a
+    channel that cannot exist for it — and raising would abort the whole
+    release for a display board that has no Bluetooth.
+    """
+    try:
+        _check_ble_field("product", product)
+        _check_ble_field("version", version)
+    except ValueError:
+        return False
+    return True
+
+
+def ble_ota_signed_message(*, product: str, version: str, size: int, sha256_hex: str) -> bytes:
+    """Build the canonical byte string the BLE OTA v2 header signature covers.
+
+    Must stay byte-identical to ble_ota::build_v2_message() in
+    firmware/projects/canary-wap/arduino/canary_wap/ble_ota_policy.h
+    (cross-checked by the shared fixture in test_ota_release.py /
+    tests_host/test_ble_ota_policy.cpp).
+    """
+    _check_ble_field("product", product)
+    _check_ble_field("version", version)
+    if not 0 < size <= 0xFFFFFFFF:
+        raise ValueError("size out of range for uint32")
+    sha = sha256_hex.lower()
+    if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+        raise ValueError("sha256_hex must be 64 hex chars")
+    fields = [product, version, str(size), sha]
+    return BLE_OTA_DOMAIN + b"".join(f.encode() + b"\0" for f in fields)
+
+
+def sign_ble_ota(private_key: Ed25519PrivateKey, *, product: str, version: str,
+                 firmware: bytes) -> bytes:
+    """Return the 64-byte `ble_signature` for a firmware image."""
+    return private_key.sign(ble_ota_signed_message(
+        product=product,
+        version=version,
+        size=len(firmware),
+        sha256_hex=hashlib.sha256(firmware).hexdigest(),
+    ))
+
+
+def build_ble_ota_header(*, product: str, version: str, size: int, sha256_hex: str,
+                         ble_signature: bytes) -> bytes:
+    """Build the 168-byte BEGIN_V2 payload (layout: ble_ota_policy.h).
+
+        offset  size  field
+        0       2     magic "SC"
+        2       1     hdr_version 0x02
+        3       1     reserved 0x00
+        4       32    product, NUL-terminated, zero-padded
+        36      32    version, NUL-terminated, zero-padded
+        68      4     image_size, uint32 little-endian
+        72      32    sha256
+        104     64    ble_signature
+    """
+    ble_ota_signed_message(product=product, version=version, size=size, sha256_hex=sha256_hex)
+    if len(ble_signature) != 64:
+        raise ValueError(f"ble_signature must be 64 bytes, got {len(ble_signature)}")
+    header = (
+        BLE_OTA_MAGIC
+        + bytes([BLE_OTA_HDR_VERSION, 0])
+        + _check_ble_field("product", product).ljust(BLE_OTA_FIELD_WIDTH, b"\0")
+        + _check_ble_field("version", version).ljust(BLE_OTA_FIELD_WIDTH, b"\0")
+        + struct.pack("<I", size)
+        + bytes.fromhex(sha256_hex)
+        + ble_signature
+    )
+    assert len(header) == BLE_OTA_HEADER_SIZE
+    return header
+
+
 def signing_key_id(public_key: Ed25519PublicKey) -> str:
     """Short stable identifier for a release key: first 16 hex of sha256(pubkey)."""
     raw = public_key.public_bytes(
@@ -191,6 +316,9 @@ def build_manifest(
         "manifest_signature": manifest_sig.hex(),
         "signing_key_id": signing_key_id(private_key.public_key()),
     }
+    if ble_header_fits(product, version):
+        ble_sig = sign_ble_ota(private_key, product=product, version=version, firmware=firmware)
+        manifest["ble_signature"] = ble_sig.hex()
     if min_version:
         manifest["min_version"] = min_version
     if release_notes:
@@ -259,6 +387,28 @@ def verify_manifest(manifest: dict, firmware: bytes, public_key: Ed25519PublicKe
             ))
         except Exception:
             problems.append("manifest_signature verification failed")
+
+    # BLE OTA v2 header signature: without it a BLE client can only send the
+    # legacy v1 header, which current devices refuse unless the owner arms
+    # break-glass — so a release manifest that lacks it is a broken release,
+    # for every product whose id and version the header can carry. A product
+    # that does not fit (the longer display ids) has no BLE OTA channel and
+    # is not asked for one; a signature that IS present is always checked.
+    bsig_hex = manifest.get("ble_signature")
+    fits = ble_header_fits(str(manifest["product"]), str(manifest["version"]))
+    if not bsig_hex:
+        if fits:
+            problems.append("missing required field: ble_signature")
+    else:
+        try:
+            public_key.verify(bytes.fromhex(bsig_hex), ble_ota_signed_message(
+                product=manifest["product"],
+                version=manifest["version"],
+                size=manifest["size"],
+                sha256_hex=manifest["sha256"],
+            ))
+        except Exception:
+            problems.append("ble_signature verification failed")
 
     key_id = manifest.get("signing_key_id")
     if key_id and key_id != signing_key_id(public_key):
@@ -453,6 +603,46 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ble_header(args: argparse.Namespace) -> int:
+    manifest = json.loads(Path(args.manifest).read_text())
+    firmware = Path(args.firmware).read_bytes()
+    if args.pubkey:
+        problems = verify_manifest(manifest, firmware, load_public_key(args.pubkey))
+        if problems:
+            for problem in problems:
+                print(f"FAIL: {problem}", file=sys.stderr)
+            return 1
+    else:
+        # No key to verify against: at least bind the header to the binary
+        # in hand, so a mismatched pair fails here and not on the device.
+        digest = hashlib.sha256(firmware).hexdigest()
+        if manifest.get("size") != len(firmware) or str(manifest.get("sha256", "")).lower() != digest:
+            print("FAIL: manifest size/sha256 do not match the firmware binary", file=sys.stderr)
+            return 1
+    bsig_hex = manifest.get("ble_signature")
+    if not bsig_hex:
+        print(
+            "FAIL: manifest has no ble_signature (a release from before BLE OTA "
+            "protocol v2). A device refuses the legacy header unless the owner "
+            "arms break-glass; re-sign the release to get a v2 header.",
+            file=sys.stderr,
+        )
+        return 1
+    header = build_ble_ota_header(
+        product=manifest["product"],
+        version=manifest["version"],
+        size=manifest["size"],
+        sha256_hex=manifest["sha256"],
+        ble_signature=bytes.fromhex(bsig_hex),
+    )
+    Path(args.out).write_bytes(header)
+    print(
+        f"Wrote {args.out}: {len(header)}-byte BEGIN_V2 header for "
+        f"{manifest['product']} {manifest['version']} ({manifest['size']} bytes)"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -494,6 +684,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--manifest", required=True)
     p.add_argument("firmware")
     p.set_defaults(fn=cmd_verify)
+
+    p = sub.add_parser("ble-header", help="emit the 168-byte BLE OTA BEGIN_V2 header")
+    p.add_argument("--manifest", required=True, help="signed manifest carrying ble_signature")
+    p.add_argument("--pubkey", help="verify the manifest first (PEM, 64-hex, or ota_release_key.h)")
+    p.add_argument("--out", required=True, help="output path for the raw header bytes")
+    p.add_argument("firmware")
+    p.set_defaults(fn=cmd_ble_header)
 
     args = parser.parse_args(argv)
     return args.fn(args)

@@ -54,7 +54,11 @@ Two things stay yours, and the installer says so when it finishes:
    flip the example camera's `enabled: true`, and restart Frigate.
 2. **Point your Canaries at the broker.** Host `homeassistant.local`, port
    `1883`, username `canary`, password from the Mosquitto Logins page above —
-   Step 3 of the manual walkthrough covers the device side.
+   Step 3 of the manual walkthrough covers the device side. That link is
+   plain MQTT: the installer leaves Mosquitto on its default `1883`
+   listener, so the `canary` password crosses your LAN unencrypted unless
+   you add a TLS listener to the add-on and provision the Canaries for it
+   (Step 3 says how).
 
 ### Prefer clicking?
 
@@ -163,6 +167,23 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    - **Username/Password**: whatever your broker requires — the one-command
      installer mints a `canary` login for exactly this (password under
      **Settings → Apps → Mosquitto broker → Configuration → Logins**)
+   - **Encryption (optional, off by default)**: the broker link is plain
+     MQTT unless you say otherwise, and the username/password above then
+     cross your LAN in the clear. To encrypt it, give the Mosquitto add-on a
+     TLS listener (its `certfile` / `keyfile` options, port `8883`), then
+     provision each Canary with port `8883` and a TLS mode: **CA** (the PEM
+     certificate that signed the broker's certificate — the one that always
+     works) or, on canary-display / -sense / -vision, a **SHA-256
+     fingerprint pin** of the broker certificate. On canary-wap this is the
+     `/mqtt` page's "Encryption" setting; on the other three it is the NVS
+     keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` next to `mqtt_host` (the
+     flashers' NVS builders write them; form fields are still to come). A
+     Canary never falls back to plain or unverified on its own: an
+     incomplete TLS setup refuses to connect and names the reason on its
+     serial log. The unverified "lab" mode exists only as an explicit choice
+     on display / sense / vision and warns on every connect; the WAP offers
+     plain or CA-verified only. Per-variant status:
+     [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md).
 5. Save and reboot the Canary
 
 ### Step 4: Verify Discovery

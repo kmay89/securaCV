@@ -79,6 +79,7 @@ jobs:
           node --test canary-local/tests/build_it.test.js canary-local/tests/catalog.test.js canary-local/tests/workshop.test.js
 
       - name: Propose the refreshed snapshot as a PR
+        id: propose
         env:
           GH_TOKEN: ${{ secrets.FRESHNESS_PAT || github.token }}
         run: |
@@ -99,20 +100,33 @@ jobs:
               --body "Nightly distributor snapshot (Digi-Key + Mouser) and everything that rides on it — pricing.json, the Build-it catalog, the board design cost model. Gated by gen_board_design.py --check, lint_bom.py, lint_board_design.py and the catalog tests before this PR was opened. Force-pushed to the same branch each night while it stays open." \
             || {
               # Same fallback as homeassistant-freshness.yml: when the repo
-              # forbids Actions from opening PRs, deliver the branch as one
-              # deduplicated issue with the compare link instead of failing.
-              TITLE_PREFIX="BOM: nightly supply-chain snapshot"
-              TITLE="${TITLE_PREFIX} (needs a PR)"
-              OPEN=$(gh issue list --state open --search "\"${TITLE_PREFIX}\" in:title" --json number --jq '.[].number' | head -1)
-              LINK="https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1"
-              if [ -n "$OPEN" ]; then
-                gh issue comment "$OPEN" --body "Refreshed again on $(date -u +%Y-%m-%d): branch \`${BRANCH}\` was force-pushed with tonight's snapshot — [open the PR](${LINK})."
-              else
-                gh issue create --title "$TITLE" --body "The nightly supply-chain snapshot is pushed on branch [\`${BRANCH}\`](https://github.com/${GITHUB_REPOSITORY}/tree/${BRANCH}) and passed its gates, but this repo does not let Actions open pull requests, so a human has to: [open the PR](${LINK}). Enable *Allow GitHub Actions to create and approve pull requests* or add a \`FRESHNESS_PAT\` secret to make this automatic. Raised by \`bom-pricing.yml\`; reused while open."
-              fi
-              echo "::warning::PR creation refused; delivered the snapshot branch through an issue instead."
+              # forbids Actions from opening PRs, the next step delivers the
+              # branch as one deduplicated issue with the compare link
+              # (.github/actions/issue-dedup) instead of failing.
+              echo "pr_refused=true" >> "$GITHUB_OUTPUT"
+              echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+              echo "::warning::PR creation refused; delivering the snapshot branch through a deduplicated issue instead."
             }
           fi
+      - name: Deliver the branch as one deduplicated issue (PR creation refused)
+        if: steps.propose.outputs.pr_refused == 'true'
+        uses: ./.github/actions/issue-dedup
+        with:
+          token: ${{ secrets.FRESHNESS_PAT || github.token }}
+          title-prefix: "BOM: nightly supply-chain snapshot"
+          title: "BOM: nightly supply-chain snapshot (needs a PR)"
+          body: >-
+            The nightly supply-chain snapshot is pushed on branch
+            [`${{ steps.propose.outputs.branch }}`](https://github.com/${{ github.repository }}/tree/${{ steps.propose.outputs.branch }})
+            and passed its gates, but this repo does not let Actions open pull requests, so a
+            human has to: [open the PR](https://github.com/${{ github.repository }}/compare/main...${{ steps.propose.outputs.branch }}?expand=1).
+            Enable *Allow GitHub Actions to create and approve pull requests* or add a
+            `FRESHNESS_PAT` secret to make this automatic. Raised by `bom-pricing.yml`;
+            reused while open.
+          comment: >-
+            Refreshed again on {date}: branch `${{ steps.propose.outputs.branch }}` was
+            force-pushed with tonight's snapshot —
+            [open the PR](https://github.com/${{ github.repository }}/compare/main...${{ steps.propose.outputs.branch }}?expand=1).
 
       - name: Raise supply-chain exceptions as issues (deduplicated)
         env:

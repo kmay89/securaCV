@@ -137,25 +137,26 @@ jobs:
               echo "Firmware release version: $VERSION" ;;
           esac
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Python + build and signing tools (PlatformIO, cached)
+        # The shared composite action installs the interpreter, restores the
+        # PlatformIO cache and runs ONE pip install (CI.md R10). The pins stay
+        # here, in the job that holds the OTA release key: a PyPI install runs
+        # package code on the runner — the same rule ESPFLASH_VERSION applies
+        # to the flash engine — so every version is exact. Bump deliberately;
+        # Dependabot does not watch these lines.
+        #   cryptography — ota_release.py signing
+        #   intelhex     — esptool 4.11 (official espressif32 7.x platform)
+        #                  imports it without declaring it, as in firmware.yml
+        #   esptool      — the browser-flasher factory images (make_factory.py);
+        #                  stays <5 so the `merge_bin` subcommand name is stable
+        uses: ./.github/actions/setup-platformio
         with:
-          python-version: '3.11'
-
-      - name: Install build + signing tools
-        run: |
-          python -m pip install --upgrade pip
-          # Exact pins: this job holds the OTA release key, and a PyPI install
-          # runs package code on the runner — the same rule ESPFLASH_VERSION
-          # applies to the flash engine. Bump deliberately; Dependabot does not
-          # watch these lines.
-          pip install "platformio==6.1.19" "cryptography==50.0.1"
-          # esptool 4.11 (official espressif32 7.x platform) imports
-          # intelhex without declaring it — same workaround as firmware.yml.
-          pip install "intelhex==2.3.0"
-          # esptool for the browser-flasher factory images (make_factory.py).
-          # Stays <5 so the `merge_bin` subcommand name stays stable.
-          pip install "esptool==4.12.0"
+          platformio-version: "6.1.19"
+          extras: cryptography==50.0.1 intelhex==2.3.0 esptool==4.12.0
+          cache-key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-canary-release-
+            ${{ runner.os }}-pio-canary-
 
       - name: Verify the signing key matches the committed public key
         # Fail BEFORE building: artifacts signed with a drifted key would
@@ -200,15 +201,6 @@ jobs:
             diff /tmp/expected_bytes /tmp/committed_bytes || true
             exit 1
           fi
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v6
-        with:
-          path: ~/.platformio
-          key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
-          restore-keys: |
-            ${{ runner.os }}-pio-canary-release-
-            ${{ runner.os }}-pio-canary-
 
       - name: Build canary (release)
         working-directory: firmware/canary
@@ -462,26 +454,65 @@ jobs:
           done
           rm -f flavor_local.h
 
+      - name: Resolve the canary-display release envs (firmware/flavors.json)
+        id: display_envs
+        # The ONE place the display env list comes from: flavors.json
+        # `release_envs`, emitted by firmware/scripts/flavor_envs.py in the
+        # order the build step depends on — the named core-dir group first,
+        # then the default core dir, then the isolated envs — because a
+        # PLATFORMIO_CORE_DIR switch changes the project checksum and wipes
+        # .pio/build. This list used to be typed here AND in
+        # flasher-release.yml, and the two disagreed: the AMOLED shipped from
+        # the tag ceremony and was missing from every dev publish
+        # (RELEASE_LESSONS 2026-08-23). Now neither workflow types it, and
+        # `flavor_envs.py --check-workflows` (lint.yml) fails a literal
+        # `pio run -e canary-display-<env>` creeping back in.
+        #
+        # The assignment form matters: a failing command substitution inside
+        # `echo` does not fail the step, and an empty matrix would let every
+        # display product drop out with nothing but ::warning lines.
+        #
+        # Deliberately no overlay here (flasher-release.yml has one because
+        # it REBUILDS older tags): a signed release is cut from the tree the
+        # tag points at, and a tree that predates `release_envs` or this
+        # script fails this step outright rather than shipping a guessed
+        # list. Re-cutting such an old tag is a deliberate act; use the
+        # flasher's rebuild button for its factory images.
+        run: |
+          set -euo pipefail
+          python3 firmware/scripts/flavor_envs.py canary-display --release --with-core
+          MATRIX="$(python3 firmware/scripts/flavor_envs.py canary-display --release --json)"
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+
       - name: Build canary-display board envs (PlatformIO, non-blocking)
         working-directory: firmware/projects/canary-display
-        # The Nightstand Line boards (dash7 / nightstand-s3 / nightstand-c6)
-        # release from their PlatformIO envs — the same envs firmware.yml
-        # compiles on every push — because each board's pins and flash
-        # geometry live in the env, not in a sketch profile: there is no
-        # flavor_local.h staging to get wrong (the trap the `modes` profile
-        # comment above documents), and SECURACV_OTA_PRODUCT is compiled in
-        # per env so the product-string guard below stays meaningful.
+        # The board-env display products (the Nightstand Line and the rest
+        # of flavors.json `release_envs`) release from their PlatformIO envs
+        # — the same envs firmware.yml compiles on every push — because each
+        # board's pins and flash geometry live in the env, not in a sketch
+        # profile: there is no flavor_local.h staging to get wrong (the trap
+        # the `modes` profile comment above documents), and
+        # SECURACV_OTA_PRODUCT is compiled in per env so the product-string
+        # guard below stays meaningful.
         #
         # Non-blocking, like the profile builds above: a failed env drops
         # those products from this release instead of sinking the signed OTA
         # release around it.
         #
-        # The pioarduino core-3.x envs (dash7 for its RGB bounce buffers,
-        # the C6 for its chip) cannot share a core dir with the
-        # espressif32@6.9.0 envs — each pioarduino build gets its own
-        # PLATFORMIO_CORE_DIR, exactly as firmware.yml isolates them (the
-        # two platforms ship framework-arduinoespressif32 at incompatible
-        # versions and corrupt each other's core dir).
+        # The pioarduino core-3.x envs (the dash7/nightstand7 pair for their
+        # RGB bounce buffers, the C6 for its chip) cannot share a core dir
+        # with the espressif32@6.9.0 envs — the two platforms ship
+        # framework-arduinoespressif32 at incompatible versions and corrupt
+        # each other's core dir. Which core dir an env gets is the `core`
+        # word beside it in the resolved list (flavors.json core_dir_groups /
+        # isolated_core_envs): a group label → the shared
+        # `.pio-core-<label>`, `isolated` → its own `.pio-core-<env>`,
+        # `default` → the runner's ~/.platformio — exactly as firmware.yml
+        # isolates them.
+        env:
+          # fromJSON() round-trips the resolved list, so a malformed matrix
+          # fails here at expression time, not halfway through the builds.
+          DISPLAY_ENVS: ${{ toJSON(fromJSON(steps.display_envs.outputs.matrix)) }}
         run: |
           # Generic release build: placeholder secrets ON PURPOSE — same
           # NVS-backed runtime-config scheme as canary-vision above.
@@ -506,42 +537,33 @@ jobs:
           # so the packaging steps read the same .pio/build paths as always.
           STAGE=/tmp/pio-display-staged
           mkdir -p "$STAGE"
-          # dash7 rides the pioarduino core-3 platform (canary-display.ini —
-          # the RGB bounce-buffer pairing) and cannot share a core dir with
-          # the espressif32 envs, exactly like the C6. It builds FIRST: its
-          # CORE_DIR switch changes the project checksum and wipes
-          # .pio/build, so it must never run after an env whose outputs
-          # aren't staged yet.
-          if PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-display-pio3" \
-              pio run -e canary-display-dash7; then
-            rm -rf "${STAGE:?}/canary-display-dash7"
-            cp -R ".pio/build/canary-display-dash7" "$STAGE/canary-display-dash7"
-          else
-            echo "::warning::canary-display-dash7 build failed — its product is absent from this release"
+          # An empty list here is a broken resolve, not "no display products":
+          # the loop below would run zero times and every board-env product
+          # would vanish from the release behind ::warning lines.
+          if [ "$(jq -r 'length' <<<"$DISPLAY_ENVS")" -lt 1 ]; then
+            echo "::error::resolved display env list is empty — firmware/flavors.json release_envs / flavor_envs.py"
+            exit 1
           fi
-          # The bedside sibling on the SAME 7" glass rides the SAME core-3
-          # platform, so it must build inside this core dir too — right after
-          # dash7 and before the espressif32 envs below reclaim the default
-          # core dir.
-          if PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-display-pio3" \
-              pio run -e canary-display-nightstand7; then
-            rm -rf "${STAGE:?}/canary-display-nightstand7"
-            cp -R ".pio/build/canary-display-nightstand7" "$STAGE/canary-display-nightstand7"
-          else
-            echo "::warning::canary-display-nightstand7 build failed — its product is absent from this release"
-          fi
-          for E in canary-display-nightstand-s3 canary-display-touch169 canary-display-amoled241 canary-display-nightlight-c3; do
-            if pio run -e "$E"; then
+          # One env at a time, in the order the resolve step emitted (its
+          # comment says why the order is load-bearing). Every env's outputs
+          # are staged the moment it builds, because the next core-dir switch
+          # wipes .pio/build; everything is restored afterwards so the
+          # packaging steps read the same .pio/build paths as always.
+          # `</dev/null` keeps the build from swallowing the rest of the list
+          # on the loop's stdin.
+          while IFS=$'\t' read -r E CORE; do
+            case "$CORE" in
+              default)  PIO=(pio run -e "$E") ;;
+              isolated) PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$E" pio run -e "$E") ;;
+              *)        PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$CORE" pio run -e "$E") ;;
+            esac
+            if "${PIO[@]}" </dev/null; then
               rm -rf "${STAGE:?}/$E"
               cp -R ".pio/build/$E" "$STAGE/$E"
             else
               echo "::warning::${E} build failed — its product is absent from this release"
             fi
-          done
-          if ! PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-display-nightstand-c6" \
-              pio run -e canary-display-nightstand-c6; then
-            echo "::warning::canary-display-nightstand-c6 build failed — its product is absent from this release"
-          fi
+          done < <(jq -r '.[] | [.env, .core] | @tsv' <<<"$DISPLAY_ENVS")
           mkdir -p .pio/build
           cp -R "$STAGE"/. .pio/build/
 
@@ -550,6 +572,8 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           REPO: ${{ github.repository }}
           TAG: ${{ steps.ver.outputs.tag }}
+          # The same resolved display env list the build step iterated.
+          DISPLAY_ENVS: ${{ toJSON(fromJSON(steps.display_envs.outputs.matrix)) }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/release
@@ -666,23 +690,31 @@ jobs:
           # canary-display) have no sketch.yaml profile, so they have no published
           # channel yet — declared, not accidental: check_ota_channels.py holds
           # that list and fails if a NEW flavor appears with neither.
-          # Stage the PlatformIO board-env display builds (the Nightstand
-          # Line: dash7 / nightstand-s3 / nightstand-c6) into the same
-          # /tmp/display-<name>-build layout the profile builds use, so ONE
-          # loop below applies the version-string and product-string guards
-          # to every display flavor identically. A missing .pio build (its
-          # env failed above) simply stages nothing and the loop's existing
-          # "produced no binary" warning covers it.
-          for E in dash7 nightstand7 nightstand-s3 nightstand-c6 touch169 amoled241 nightlight-c3; do
-            SRC="firmware/projects/canary-display/.pio/build/canary-display-${E}/firmware.bin"
+          # Stage the PlatformIO board-env display builds (the release envs
+          # the resolve step listed — flavors.json `release_envs`, never
+          # typed here) into the same /tmp/display-<name>-build layout the
+          # profile builds use, so ONE loop below applies the version-string
+          # and product-string guards to every display flavor identically. A
+          # missing .pio build (its env failed above) simply stages nothing
+          # and the loop's existing "produced no binary" warning covers it.
+          # `.env` names the build dir (never rebuilt from `.short`, which
+          # equals the env only while every release env carries the
+          # canary-display- prefix); `.short` names the staging dir the
+          # signing loop keys on.
+          while IFS=$'\t' read -r ENV_NAME E; do
+            SRC="firmware/projects/canary-display/.pio/build/${ENV_NAME}/firmware.bin"
             if [ -s "$SRC" ]; then
               mkdir -p "/tmp/display-${E}-build"
               cp "$SRC" "/tmp/display-${E}-build/canary_display.ino.bin"
             fi
-          done
+          done < <(jq -r '.[] | [.env, .short] | @tsv' <<<"$DISPLAY_ENVS")
 
           DISPLAY_INDEX=""
-          for D in "watch:watch" "dash:dash" "dash-modes:modes" "dash7:dash7" "nightstand7:nightstand7" "nightstand-s3:nightstand-s3" "nightstand-c6:nightstand-c6" "touch169:touch169" "amoled241:amoled241" "nightlight-c3:nightlight-c3"; do
+          # <product name>:<staging dir> — the three arduino-cli profile
+          # builds (only `modes` stages under a different name), then every
+          # PlatformIO release env under its own short name.
+          # shellcheck disable=SC2046
+          for D in "watch:watch" "dash:dash" "dash-modes:modes" $(jq -r '.[] | "\(.short):\(.short)"' <<<"$DISPLAY_ENVS"); do
             NAME="${D%%:*}"; DIR="${D##*:}"
             SRC="/tmp/display-${DIR}-build/canary_display.ino.bin"
             OUT="/tmp/release/canary-display-${NAME}-${VERSION}.bin"

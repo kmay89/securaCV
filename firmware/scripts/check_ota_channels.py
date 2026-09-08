@@ -14,7 +14,9 @@ So the check is static and offline. It reads both sides of the contract:
 
   polled     — every SECURACV_OTA_MANIFEST_URL literal in the firmware tree
   published  — every manifest firmware-release.yml writes, including the ones
-               its display loop generates from its own product list
+               its display loop generates: the literals in the loop header
+               plus the release envs the workflow derives from
+               firmware/flavors.json (the same resolver, flavor_envs.py)
 
 and fails when a polled manifest is neither published nor explicitly declared
 as having no channel yet. Declaring is the escape hatch (UNPUBLISHED below) —
@@ -110,7 +112,7 @@ def polled_manifests() -> dict[str, list[str]]:
     return found
 
 
-def published_manifests() -> set[str]:
+def published_manifests(workflow: Path = RELEASE_WORKFLOW) -> set[str]:
     """Every manifest firmware-release.yml publishes for the release.
 
     Read from the **variant index** rather than from the `--out` paths. Several
@@ -120,19 +122,50 @@ def published_manifests() -> set[str]:
     IS the release's declared product catalog, so it is the honest side of the
     contract to check against.
     """
-    text = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    text = workflow.read_text(encoding="utf-8")
     names = set(
         re.findall(r'=\$\{DL\}/(manifest-[A-Za-z0-9._-]+\.json)"', text)
     )
 
     # The display flavors are appended to the index at runtime ($DISPLAY_INDEX),
-    # so take them from the loop header that drives it: a flavor added to or
-    # removed from that list moves this set with it.
-    loop = re.search(r'for D in ((?:"[a-z0-9-]+:[a-z0-9-]+"\s*)+); do', text)
-    if loop:
-        for flavor in re.findall(r'"([a-z0-9-]+):[a-z0-9-]+"', loop.group(1)):
-            names.add(f"manifest-canary-display-{flavor}.json")
+    # so take them from the loop header that drives it. That header holds two
+    # kinds of entry: quoted "<name>:<dir>" literals (the Arduino-built
+    # flavors) and, since the release envs stopped being typed into the
+    # workflow, one `$(jq … "$DISPLAY_ENVS")` expansion of the list the
+    # workflow derives from firmware/flavors.json. Read both through the same
+    # code the workflow runs, so a flavor added to or removed from either
+    # place moves this set with it — and refuse to guess if the loop is gone.
+    loops = re.findall(r"for D in (.+?); do", text)
+    if len(loops) != 1:
+        raise SystemExit(
+            f"check_ota_channels.py: expected exactly one `for D in …; do` "
+            f"display signing loop in {workflow}, "
+            f"found {len(loops)} — update published_manifests() to match the "
+            f"workflow's shape rather than letting every display flavor read "
+            f"as unpublished."
+        )
+    header = loops[0]
+    for flavor in re.findall(r'"([a-z0-9-]+):[a-z0-9-]+"', header):
+        names.add(f"manifest-canary-display-{flavor}.json")
+    if "DISPLAY_ENVS" in header:
+        for short in derived_display_release_shorts():
+            names.add(f"manifest-canary-display-{short}.json")
     return names
+
+
+def derived_display_release_shorts() -> list[str]:
+    """The Canary Display release envs the workflow resolves at run time,
+    as the short names its staging loops key on (`canary-display-dash7` →
+    `dash7`), from the same resolver: flavor_envs.py canary-display --release.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import flavor_envs  # noqa: E402  (sibling script, not a package)
+
+    product = "canary-display"
+    entry = flavor_envs.find_product(flavor_envs.load_flavors(), product)
+    prefix = f"{product}-"
+    return [env[len(prefix):] if env.startswith(prefix) else env
+            for env in flavor_envs.ordered_release_envs(entry)]
 
 
 def main() -> int:

@@ -12,6 +12,27 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-08 — A registry probe must accept every manifest media type the builder writes
+
+- **Symptom:** `Add-on image` → *Verify publicly installable* red on every
+  `main` run from 2026-08-30 to 2026-09-08 with HTTP 404 for all four
+  arch/tag pairs, while both build legs had pushed successfully. The first
+  fix (2026-09-03) read the 404s as a private package and added an
+  authenticated cross-probe; the next run then said *not pushed*.
+- **Cause:** the probe's `Accept` header listed the OCI *index* and the two
+  Docker manifest types but not `application/vnd.oci.image.manifest.v1+json`.
+  buildx with `provenance: false` pushes a single-arch image as a plain OCI
+  manifest, and GHCR answers a missing type with 404 whose body reads "OCI
+  manifest found, but Accept header does not support OCI manifests" — the
+  same status a genuinely missing tag returns, so the script's own
+  classification could not see the difference.
+- **Fix:** `privacy_witness_kernel/verify_published_image.sh` accepts all
+  four media types; run from an anonymous client it now reports every image
+  public and pullable. When a registry probe returns 404, read the response
+  body before believing the status.
+- **Applies to:** every workflow that probes a registry manifest (the add-on
+  gate today; the container-images workflow if it ever grows one).
+
 ## 2026-08-09 — a wire field that only the firmware could read
 
 **Symptom.** Every display in the fleet drew a generic symbol in the iPhone
@@ -192,7 +213,12 @@ declare it, and let the app render what the device says it has.
   (firmware release AND factory images) — one green run proves only the
   list it ran from. The release path's product-drop gate catches a product
   that vanishes between two firmware releases; nothing yet compares the
-  two workflows' lists to each other, so the grep is the gate.
+  two workflows' lists to each other, so the grep is the gate. *(Closed
+  2026-09-08 for the PlatformIO env half: both workflows derive that list
+  from `firmware/flavors.json`; see that entry. Still typed in both: the
+  arduino-cli profile flavors (watch / dash / modes), and
+  `build_flash_manifest.py` still types the product → build-dir map — for
+  those the grep is still the gate.)*
 
 ### 2026-08-22 — The upload succeeded, the tag was cut, and TestFlight showed nothing: the tvOS plist never declared export compliance
 
@@ -2412,3 +2438,57 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   like a caret in `package.json`. Dependabot does not see inline pins in
   workflow `run:` blocks, so a bump here is a deliberate maintainer action —
   which, on a signing path, is the point.
+
+### 2026-09-08 — the display env list is derived, not typed: the two release paths read one file (follow-up to 2026-08-23)
+
+- **Symptom:** the 2026-08-23 fix added the missing env to one workflow's
+  list and left the mechanism in place — two hand-typed copies of the
+  Canary Display release env list, one per release path, with a lint that
+  could say "this name is not an env" but not "these two lists differ".
+  The next board added to one and not the other would have dropped out of
+  one button's release exactly as the AMOLED did, still behind a green run.
+- **Cause:** the list lived in the workflows. `firmware/flavors.json`
+  already carried `release_envs` and `firmware/scripts/flavor_envs.py`
+  already printed it in the core-dir order the build step needs; the
+  workflows just did not read it.
+- **Fix:** each release workflow now has a "Resolve the canary-display
+  release envs" step that runs `flavor_envs.py canary-display --release
+  --json` and writes the list to `$GITHUB_OUTPUT`; the build step iterates
+  it (`jq … @tsv` into a `while read` loop, the `core` word picking the
+  `PLATFORMIO_CORE_DIR` exactly as the literal paths did), and
+  firmware-release.yml's staging and signing loops read the same output.
+  `flavor_envs.py --check-workflows` (lint.yml) now fails a release
+  workflow that lacks the derivation or types a `pio run -e
+  canary-display-<env>` back in. Three details that are load-bearing,
+  each proved with a fake `pio` on a runner-less host — none of this has
+  run on a real release yet, so the first tag after it lands deserves a
+  look at the resolve step's log:
+  - the matrix is captured as `MATRIX="$(…)"`, not inside `echo "…$(…)"` —
+    a failing command substitution inside `echo` does not fail the step,
+    and an empty list would let every display product drop out behind
+    `::warning` lines; the build step also refuses an empty list outright;
+  - the build command runs with `</dev/null`, or a tool that reads stdin
+    eats the rest of the env list from the loop;
+  - `flasher-release.yml` rebuilds a TAGGED tree, whose `flavors.json` may
+    predate `release_envs` (and the tag may predate the script), so the
+    tooling overlay copies both from the dispatch ref — the script in
+    place, today's `flavors.json` beside the tag's (`/tmp/flavors.today.json`,
+    read via `--flavors`), never over it. The list is today's; an env the
+    tag's ini lacks fails its `pio run` and warns away, as the typed list
+    used to.
+  - **a checker that parses the workflow is a consumer of the list too.**
+    `firmware/scripts/check_ota_channels.py` (Regression Guards) read the
+    signing loop's header with a regex that only matched quoted literals;
+    the first push with the `$(jq … "$DISPLAY_ENVS")` expansion in that
+    header made every display flavor read as unpublished, and the gate went
+    red on `main`'s own release list. It now reads the literals AND the
+    derived envs through `flavor_envs.py` (the workflow's own resolver), and
+    refuses to guess when the loop is not where it expects. Before you
+    change how a workflow names its products, grep the scripts that read
+    the workflow (`grep -rl firmware-release.yml scripts firmware/scripts`).
+- **Applies to:** every list a workflow types that another file already
+  owns. The flasher's factory-image product list (`build_flash_manifest.py`
+  reads `flash.json`) already works this way; the firmware `flavors`
+  matrix in `firmware.yml` does too (`fromJSON` over `flavors.json`). When
+  a release step names more than one env, product or target by hand, the
+  question is which file owns that list and why the step is not reading it.

@@ -93,6 +93,15 @@ the LVGL faces and `care/`/`fleet/`/`trust`, **not** the `net/` layer:
 - editing `common/fleet_selfreport/fleet_selfreport.h` → `dist/` does **not**
   change, even though `net/glass_web.cpp` includes it, because that file is
   never compiled into the emulator.
+- editing `common/network/wifi_join_policy.h` → `dist/` **changes**, for every
+  flavor, even though its firmware consumer `src/net/wifi_mgr.cpp` is not
+  compiled: the emulator's own `canary-local/emulator/src/emu_net.cpp`
+  includes that header directly and runs its Wi-Fi retry through it
+  (`scripts/lint_wifi_join_policy.py` requires exactly that, so the preview
+  cannot drift from the glass). The same goes for the `WIFI_RETRY_*` /
+  `WIFI_OUTAGE_REBOOT_MS` constants in `canary-display/include/canary/config.h`,
+  which `emu_net.cpp` feeds to the policy. Rule of thumb: everything under
+  `canary-local/emulator/src/` and `shim/` is dist by definition.
 - **bumping the firmware VERSION → `dist/` changes**, for every flavor, even
   if you touched no other line. `build.sh` compiles `src/net/mqtt_mgr.cpp`
   (which embeds `CANARY_FW_VERSION`) and stamps `fw_version` into each

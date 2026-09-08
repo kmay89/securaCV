@@ -98,6 +98,168 @@ class TestSignatureScheme:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# BLE OTA protocol-v2 header: must match ble_ota_policy.h byte for byte
+# ──────────────────────────────────────────────────────────────────────────
+
+class TestBleOtaHeader:
+    def test_canonical_message_cross_language_fixture(self):
+        # Shared with firmware/projects/canary-wap/tests_host/
+        # test_ble_ota_policy.cpp (test_canonical_fixture) — if either side
+        # drifts, every device refuses every signed BLE header.
+        msg = ota_release.ble_ota_signed_message(
+            product="securacv-canary-wap",
+            version="2.4.15-wap",
+            size=123456,
+            sha256_hex="AAbb" + "0" * 60,  # mixed case: must canonicalize lower
+        )
+        assert len(msg) == 118
+        assert msg.hex() == (
+            "7363762d626c652d6f74612d76320073656375726163762d63616e6172792d77617000"
+            "322e342e31352d7761700031323334353600"
+            "61616262303030303030303030303030303030303030303030303030303030303030"
+            "30303030303030303030303030303030303030303030303030303030303000"
+        )
+        assert msg.startswith(b"scv-ble-ota-v2\0")
+        # Distinct from the manifest domain: the same key never signs the
+        # same bytes for two purposes.
+        assert not msg.startswith(b"scv-manifest-v1")
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            dict(product="", version="1.0.0", size=1, sha256_hex="00" * 32),
+            dict(product="p" * 32, version="1.0.0", size=1, sha256_hex="00" * 32),
+            dict(product="has space", version="1.0.0", size=1, sha256_hex="00" * 32),
+            dict(product="ok", version="1.0.0\t", size=1, sha256_hex="00" * 32),
+            dict(product="ok", version="1.0.0", size=0, sha256_hex="00" * 32),
+            dict(product="ok", version="1.0.0", size=2**32, sha256_hex="00" * 32),
+            dict(product="ok", version="1.0.0", size=1, sha256_hex="00" * 31),
+            dict(product="ok", version="1.0.0", size=1, sha256_hex="zz" * 32),
+        ],
+    )
+    def test_canonical_message_rejects_bad_fields(self, kwargs):
+        with pytest.raises(ValueError):
+            ota_release.ble_ota_signed_message(**kwargs)
+
+    def test_header_layout(self, private_key):
+        sig = ota_release.sign_ble_ota(
+            private_key, product="securacv-canary-wap", version="2.4.15-wap", firmware=FIRMWARE
+        )
+        digest = hashlib.sha256(FIRMWARE).hexdigest()
+        header = ota_release.build_ble_ota_header(
+            product="securacv-canary-wap",
+            version="2.4.15-wap",
+            size=len(FIRMWARE),
+            sha256_hex=digest,
+            ble_signature=sig,
+        )
+        assert len(header) == 168 == ota_release.BLE_OTA_HEADER_SIZE
+        assert header[0:2] == b"SC"
+        assert header[2] == 2
+        assert header[3] == 0
+        assert header[4:36] == b"securacv-canary-wap".ljust(32, b"\0")
+        assert header[36:68] == b"2.4.15-wap".ljust(32, b"\0")
+        assert header[68:72] == struct.pack("<I", len(FIRMWARE))
+        assert header[72:104] == bytes.fromhex(digest)
+        assert header[104:168] == sig
+        # The signature in the header verifies over the canonical message
+        # rebuilt from the header's own fields — what the device does.
+        private_key.public_key().verify(
+            header[104:168],
+            ota_release.ble_ota_signed_message(
+                product="securacv-canary-wap",
+                version="2.4.15-wap",
+                size=len(FIRMWARE),
+                sha256_hex=digest,
+            ),
+        )
+
+    def test_header_rejects_bad_signature_length(self):
+        with pytest.raises(ValueError):
+            ota_release.build_ble_ota_header(
+                product="p", version="1.0.0", size=1, sha256_hex="00" * 32,
+                ble_signature=b"\0" * 63,
+            )
+
+    def test_manifest_carries_verifying_ble_signature(self, private_key):
+        manifest = ota_release.build_manifest(
+            private_key=private_key,
+            firmware=FIRMWARE,
+            product="securacv-canary-wap",
+            version="2.4.16-wap",
+            url="https://example.com/fw.bin",
+        )
+        assert "ble_signature" in manifest
+        private_key.public_key().verify(
+            bytes.fromhex(manifest["ble_signature"]),
+            ota_release.ble_ota_signed_message(
+                product="securacv-canary-wap",
+                version="2.4.16-wap",
+                size=len(FIRMWARE),
+                sha256_hex=manifest["sha256"],
+            ),
+        )
+        # The image signature and the BLE signature are different bytes
+        # over different messages, even though one key made both.
+        assert manifest["ble_signature"] != manifest["signature"]
+        assert ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()) == []
+
+    def test_verify_requires_ble_signature(self, private_key):
+        manifest = ota_release.build_manifest(
+            private_key=private_key,
+            firmware=FIRMWARE,
+            product="securacv-canary-wap",
+            version="2.4.16-wap",
+            url="https://example.com/fw.bin",
+        )
+        stale = dict(manifest)
+        del stale["ble_signature"]
+        problems = ota_release.verify_manifest(stale, FIRMWARE, private_key.public_key())
+        assert any("ble_signature" in p for p in problems)
+
+        tampered = dict(manifest)
+        tampered["ble_signature"] = ("0" if manifest["ble_signature"][0] != "0" else "1") + manifest["ble_signature"][1:]
+        problems = ota_release.verify_manifest(tampered, FIRMWARE, private_key.public_key())
+        assert any("ble_signature verification failed" in p for p in problems)
+
+        # A version edit after signing is caught by BOTH the manifest and
+        # the BLE signature: the header can't be re-labeled independently.
+        relabeled = dict(manifest)
+        relabeled["version"] = "2.4.17-wap"
+        problems = ota_release.verify_manifest(relabeled, FIRMWARE, private_key.public_key())
+        assert any("manifest_signature" in p for p in problems)
+        assert any("ble_signature" in p for p in problems)
+
+    def test_products_the_header_cannot_carry_sign_and_verify_without_a_ble_signature(self, private_key):
+        # The longest real OTA product id (37 bytes) — seven display ids exceed
+        # the header's 31-byte slot. Before ble_header_fits() the tool raised
+        # here, which aborted the release workflow's signing step mid-loop.
+        long_product = "securacv-canary-display-nightlight-c3"
+        assert len(long_product.encode()) > ota_release.BLE_OTA_FIELD_WIDTH - 1
+        assert not ota_release.ble_header_fits(long_product, "2.4.16")
+        manifest = ota_release.build_manifest(
+            private_key=private_key,
+            firmware=FIRMWARE,
+            product=long_product,
+            version="2.4.16",
+            url="https://example.com/fw.bin",
+        )
+        assert "ble_signature" not in manifest
+        assert ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()) == []
+        # Every OTA product the firmware polls must either carry the header or
+        # be provably unable to: the rule is the same function on both sides.
+        for product in ("securacv-canary", "securacv-canary-wap", "securacv-canary-sense",
+                        "securacv-canary-vision", "securacv-canary-display-dash",
+                        "securacv-canary-display-dash-modes", "securacv-canary-display-touch169",
+                        "securacv-canary-display-nightstand-c6"):
+            m = ota_release.build_manifest(private_key=private_key, firmware=FIRMWARE,
+                                           product=product, version="2.4.16",
+                                           url="https://example.com/fw.bin")
+            assert ("ble_signature" in m) == ota_release.ble_header_fits(product, "2.4.16")
+            assert ota_release.verify_manifest(m, FIRMWARE, private_key.public_key()) == []
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Manifest build + verify
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -302,6 +464,56 @@ class TestCli:
             "verify", "--pubkey", str(header), "--manifest", str(manifest), str(fw)
         )
         assert result.returncode == 1
+
+    def test_ble_header_cli(self, tmp_path):
+        key = tmp_path / "releaser.pem"
+        fw = tmp_path / "firmware.bin"
+        manifest = tmp_path / "manifest-canary-wap.json"
+        header = tmp_path / "ota_release_key.h"
+        out = tmp_path / "begin_v2.bin"
+        fw.write_bytes(FIRMWARE)
+        assert self.run_cli("keygen", "--private-key", str(key)).returncode == 0
+        assert self.run_cli(
+            "pubkey-header", "--private-key", str(key), "--out", str(header)
+        ).returncode == 0
+        result = self.run_cli(
+            "manifest",
+            "--private-key", str(key),
+            "--product", "securacv-canary-wap",
+            "--version", "2.4.16-wap",
+            "--url", "https://example.com/fw.bin",
+            "--out", str(manifest),
+            str(fw),
+        )
+        assert result.returncode == 0, result.stderr
+
+        result = self.run_cli(
+            "ble-header", "--manifest", str(manifest), "--pubkey", str(header),
+            "--out", str(out), str(fw),
+        )
+        assert result.returncode == 0, result.stderr
+        blob = out.read_bytes()
+        assert len(blob) == 168
+        assert blob[:2] == b"SC" and blob[2] == 2
+        assert blob[4:36].rstrip(b"\0") == b"securacv-canary-wap"
+        assert blob[68:72] == struct.pack("<I", len(FIRMWARE))
+        assert blob[104:] == bytes.fromhex(json.loads(manifest.read_text())["ble_signature"])
+
+        # Wrong binary for the manifest: refused before a header is written.
+        fw.write_bytes(FIRMWARE + b"!")
+        out.unlink()
+        result = self.run_cli("ble-header", "--manifest", str(manifest), "--out", str(out), str(fw))
+        assert result.returncode == 1
+        assert not out.exists()
+
+        # A pre-v2 manifest (no ble_signature) is named as the reason.
+        fw.write_bytes(FIRMWARE)
+        stale = json.loads(manifest.read_text())
+        del stale["ble_signature"]
+        manifest.write_text(json.dumps(stale))
+        result = self.run_cli("ble-header", "--manifest", str(manifest), "--out", str(out), str(fw))
+        assert result.returncode == 1
+        assert "ble_signature" in result.stderr
 
     def test_index(self, tmp_path):
         out = tmp_path / "manifest-index.json"

@@ -2,17 +2,27 @@
 """Generate canary-local/devices/flash.json — the browser flasher's catalog.
 
 Honest by construction, the canary.local way: the *facts* the flasher shows
-(which products exist, and which ESP32 chip each one runs on) are not typed
-here by hand and hoped to stay true. This generator carries an explicit
-product table that mirrors the release workflow, then RE-DERIVES each
-product's chip from the firmware's own PlatformIO board settings and refuses
-to write if they disagree. Change a board in firmware and forget to
-regenerate, and CI's drift gate fails — exactly like gen_start.py /
-gen_wap.py.
+(which products exist, which ESP32 chip each one runs on, how much flash it
+carries, which registry board it is) are not typed here by hand and hoped to
+stay true. This generator carries an explicit product table — the human copy
+and the release-asset names, mirroring the release workflow — and takes each
+product's silicon from the device manifest that claims it
+(devices/<slug>/device.json: board.mcu, board.flash_mb, board.board_id, the
+family whose PlatformIO project builds it). It then RE-DERIVES the product's
+PlatformIO board from the firmware tree and refuses to write if the table
+disagrees with it. Change a board in firmware and forget to regenerate, and
+CI's drift gate fails — exactly like gen_start.py / gen_wap.py.
 
 Sources of truth this reads:
-  - firmware/flavors.json .............. the variant list (dir per variant)
+  - devices/<slug>/device.json ......... which manifest claims each product
+                                         (flasher.product / .variants), and
+                                         its chip, flash size, board_id and
+                                         family (scripts/lint_device_manifests.py
+                                         proves those against boards.json and
+                                         the envs; _devices.py reads them)
+  - firmware/flavors.json .............. the variant list (dir per family)
   - firmware/**/platformio.ini + envs .. the `board =` per build env
+  - firmware/boards/boards.json ........ the support tier per board_id
   - .github/workflows/firmware-release.yml the published product ids + assets
   - canary-local/devices/registry.json . the firmware train (fw_train)
 
@@ -33,6 +43,7 @@ import re
 import sys
 from pathlib import Path
 
+from _devices import by_flasher_product, load_manifests
 from _tooling import die, repo_root
 
 REPO = repo_root()
@@ -77,42 +88,12 @@ def read_release_pubkey() -> str:
         die(f"{OTA_KEY_HEADER}: SECURACV_OTA_RELEASE_PUBKEY has {len(bytes_)} bytes, expected 32")
     return "".join(b.lower() for b in bytes_)
 
-# esptool's chip identity strings (ESPLoader.chip.CHIP_NAME), keyed by the
-# PlatformIO board id. This is the ONE place board→silicon is spelled out.
-BOARD_CHIP = {
-    "seeed_xiao_esp32s3": "ESP32-S3",
-    "seeed_xiao_esp32c3": "ESP32-C3",
-    "seeed_xiao_esp32c6": "ESP32-C6",
-    "esp32-c3-devkitm-1": "ESP32-C3",
-    "waveshare_esp32s3_lcd43": "ESP32-S3",  # the Dash's 4.3B host (generic S3 FQBN)
-    "esp32-s3-devkitc-1": "ESP32-S3",  # dash7 + nightstand-s3 envs (generic devkit profile)
-    "esp32-c6-devkitc-1": "ESP32-C6",  # nightstand-c6 env (generic devkit profile)
-    # Classic dual-core ESP32 — the Phase 0 reach ports (docs/strategy/30).
-    # esptool reports both as plain "ESP32"; the chip guard therefore cannot
-    # tell an ESP32-CAM from a WROOM DevKit, which is exactly why the family
-    # picker asks (their pick_labels name the visible difference: a camera).
-    "esp32cam": "ESP32",
-    "esp32dev": "ESP32",
-}
-
-# Flash silicon per board, in MB — the second half of board identification
-# (the chip guard is the first). The flasher reads the real flash size off
-# the connected board, so chip + size often names the module in the user's
-# hand without asking (XIAO-class S3 = 8 MB; the Waveshare panel module the
-# dash envs target overrides the generic devkit profile to its 16 MB part).
-# Same honesty rule as BOARD_CHIP: one place, verified nowhere else — if a
-# future product reuses a board id with different silicon, split the id.
-BOARD_FLASH_MB = {
-    "seeed_xiao_esp32s3": 8,
-    "seeed_xiao_esp32c3": 4,
-    "seeed_xiao_esp32c6": 4,
-    "esp32-c3-devkitm-1": 4,
-    "waveshare_esp32s3_lcd43": 16,  # dash profiles: FlashSize=16M / huge_app
-    "esp32-s3-devkitc-1": 16,  # both Waveshare boards on this id carry the 16 MB part (envs pin flash_size = 16MB)
-    "esp32-c6-devkitc-1": 4,   # Waveshare C6-LCD-1.47's 4 MB part (env pins flash_size = 4MB)
-    "esp32cam": 4,   # AI-Thinker module: 4 MB flash + 4 MB quad PSRAM
-    "esp32dev": 4,   # WROOM-32 family: 4 MB, no PSRAM (WROVER is a different board)
-}
+# Board → silicon (esptool's chip identity string, ESPLoader.chip.CHIP_NAME)
+# and board → flash size are NOT tabled here any more. Each product's manifest
+# carries them (devices/<slug>/device.json board.mcu / board.flash_mb), and
+# scripts/lint_device_manifests.py proves them against the board registry and
+# against the env's own `board =`. main() reads them off the manifest that
+# claims the product; a manifest without a flash size refuses to generate.
 
 # Per-chip human copy. Every Canary board through the C-series is native-USB
 # (the ESP32 chip's own USB, no CH340/CP210x bridge) so the download-mode
@@ -157,14 +138,25 @@ CHIP_INFO = {
 # (watch / dash / dash-modes), built there from the sketch's committed
 # profiles. `env` + `board` are re-verified against the firmware tree below;
 # `asset_stem` is the release binary name minus version and extension.
+#
+# Every `id` here must be claimed by exactly one device manifest
+# (devices/<slug>/device.json `flasher.product` or `flasher.variants`); that
+# manifest supplies the chip, the flash size, the registry board (`tier`)
+# and the firmware project — none of those is typed in this table. The two
+# keys a row may still declare about hardware, and why:
+#   board_id  ONLY when the product installs onto one of the manifest's
+#             `board.variants` rather than its `board_id` (the modes build
+#             targets the 4.3B, a SKU sibling of the plain 4.3 the Dash
+#             manifest names). Naming the manifest's own board_id is
+#             refused as a duplicate.
+#   figure    ONLY for a build that compiles no boards/<id>/pins header (the
+#             WAP's Arduino sketch), where nothing can derive it; checked to
+#             equal the manifest's `figure` and the ledger.
 # Order matters for the picker's recommendation: the sensing flagship stays
 # first per chip, so the display cards never outrank a witness by accident.
 PRODUCTS = [
     {
         "id": "securacv-canary",
-        # The canary project compiles no boards/<id>/pins include, so the
-        # registry row is declared here — and checked against it in board_tier().
-        "board_id": "xiao-esp32s3-sense",
         "family": "canary",
         # "Sense", spelled out: three products share the plain "Seeed XIAO
         # ESP32-S3" silicon, but only the Sense expansion board carries the
@@ -176,7 +168,6 @@ PRODUCTS = [
         "name": "Canary",
         "tagline": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
         "asset_stem": "canary",
-        "project": "firmware/canary",
         "env": "release_ha",
         "board": "seeed_xiao_esp32s3",
         "provisioning": "ap",
@@ -189,48 +180,36 @@ PRODUCTS = [
     # is the one place the honesty cannot be optional.
     {
         "id": "securacv-canary-esp32cam",
-        # The canary project compiles no boards/<id>/pins include, so the
-        # registry row is declared here — and checked against it in board_tier().
-        "board_id": "esp32cam-ai-thinker",
         "family": "canary",
         "board_label": "AI-Thinker ESP32-CAM",
         "pick_label": "ESP32-CAM — the $6 board with a camera on it",
         "name": "Canary · ESP32-CAM",
         "tagline": "The witness on the most-owned camera board there is — camera and Wi-Fi sensing, no mic.",
         "asset_stem": "canary-esp32cam",
-        "project": "firmware/canary",
         "env": "esp32cam",
         "board": "esp32cam",
         "provisioning": "ap",
     },
     {
         "id": "securacv-canary-wroom",
-        # The canary project compiles no boards/<id>/pins include, so the
-        # registry row is declared here — and checked against it in board_tier().
-        "board_id": "esp32-wroom-devkit",
         "family": "canary",
         "board_label": "ESP32-WROOM-32 DevKit",
         "pick_label": "A plain ESP32 DevKit — no camera on it",
         "name": "Canary · ESP32 DevKit",
         "tagline": "Turns the ESP32 in your drawer into a presence witness — it feels the room through Wi-Fi, with no camera at all.",
         "asset_stem": "canary-wroom",
-        "project": "firmware/canary",
         "env": "esp32-wroom",
         "board": "esp32dev",
         "provisioning": "ap",
     },
     {
         "id": "securacv-canary-freenove-s3",
-        # The canary project compiles no boards/<id>/pins include, so the
-        # registry row is declared here — and checked against it in board_tier().
-        "board_id": "freenove-esp32s3-cam",
         "family": "canary",
         "board_label": "Freenove ESP32-S3-WROOM CAM",
         "pick_label": "Freenove ESP32-S3 camera kit — the big black board",
         "name": "Canary · Freenove S3",
         "tagline": "The witness on the S3 camera kit most people are shipped — camera and Wi-Fi sensing, no SD yet.",
         "asset_stem": "canary-freenove-s3",
-        "project": "firmware/canary",
         "env": "freenove-s3",
         "board": "esp32-s3-devkitc-1",
         "provisioning": "ap",
@@ -239,18 +218,16 @@ PRODUCTS = [
         "id": "securacv-canary-wap",
         # The WAP's Arduino sketch compiles no boards/<id>/pins header, so
         # there is nothing to derive the figure from. Declared instead —
-        # checked against the ledger, and the one product here that is.
+        # checked against the manifest and the ledger, and the one product
+        # here that is. (Its registry board needs no declaration: the
+        # manifest's board_id is the row.)
         "figure": "device.canary-wap",
-        # Same reason as the figure above: an Arduino profile build has no
-        # boards/<id>/pins include to derive the registry row from.
-        "board_id": "xiao-esp32s3-sense",
         "family": "wap",
         # Sense board here too — same disambiguation as the flagship above.
         "board_label": "Seeed XIAO ESP32-S3 Sense",
         "name": "Canary WAP",
         "tagline": "Feels presence through the WiFi field itself — no camera. Sets itself up from a phone.",
         "asset_stem": "canary-wap",
-        "project": "firmware/projects/canary-wap",
         "env": "arduino:XIAO_ESP32S3",
         "board": "seeed_xiao_esp32s3",
         "provisioning": "ap",
@@ -263,7 +240,6 @@ PRODUCTS = [
         "name": "Canary Vision",
         "tagline": "Person detection on the camera module itself — only “someone is here” ever leaves the board.",
         "asset_stem": "canary-vision",
-        "project": "firmware/projects/canary-vision",
         "env": "canary-vision-default",
         "board": "esp32-c3-devkitm-1",
         "provisioning": "usb-secrets",
@@ -276,7 +252,6 @@ PRODUCTS = [
         "name": "Canary Vision · C3 Super Mini",
         "tagline": "The Vision witness on the cheapest board in the hobby.",
         "asset_stem": "canary-vision-c3-super-mini",
-        "project": "firmware/projects/canary-vision",
         "env": "canary-vision-c3-super-mini",
         "board": "esp32-c3-devkitm-1",
         "provisioning": "usb-secrets",
@@ -289,7 +264,6 @@ PRODUCTS = [
         "name": "Canary Vision · XIAO C3",
         "tagline": "The Vision witness on a Seeed XIAO ESP32-C3.",
         "asset_stem": "canary-vision-xiao-c3",
-        "project": "firmware/projects/canary-vision",
         "env": "canary-vision-xiao-c3",
         "board": "seeed_xiao_esp32c3",
         "provisioning": "usb-secrets",
@@ -302,7 +276,6 @@ PRODUCTS = [
         "name": "Canary Vision · XIAO S3",
         "tagline": "The Vision witness on a Seeed XIAO ESP32-S3.",
         "asset_stem": "canary-vision-xiao-s3",
-        "project": "firmware/projects/canary-vision",
         "env": "canary-vision-xiao-s3",
         "board": "seeed_xiao_esp32s3",
         "provisioning": "usb-secrets",
@@ -315,7 +288,6 @@ PRODUCTS = [
         "name": "Canary Sense",
         "tagline": "Radar-native presence on 60 GHz mmWave — no camera, no mic.",
         "asset_stem": "canary-sense",
-        "project": "firmware/projects/canary-sense",
         "env": "canary-sense-default",
         "board": "seeed_xiao_esp32c6",
         "provisioning": "usb-secrets",
@@ -328,7 +300,6 @@ PRODUCTS = [
         "name": "Canary Sense · Wellbeing",
         "tagline": "The mmWave witness with breathing/heartbeat sensing — a distinct privacy surface.",
         "asset_stem": "canary-sense-wellbeing",
-        "project": "firmware/projects/canary-sense",
         "env": "canary-sense-wellbeing",
         "board": "seeed_xiao_esp32c6",
         "provisioning": "usb-secrets",
@@ -341,7 +312,6 @@ PRODUCTS = [
         "name": "Canary Watch Station",
         "tagline": "The bedside glance — your whole fleet on one calm round glass.",
         "asset_stem": "canary-display-watch",
-        "project": "firmware/projects/canary-display",
         "env": "profile:watch",
         "board": "seeed_xiao_esp32s3",
         "provisioning": "on-glass",
@@ -354,14 +324,15 @@ PRODUCTS = [
         "name": "Canary Dash",
         "tagline": "The wall glass — quiet 4.3″ 800×480 truth for the whole house.",
         "asset_stem": "canary-display-dash",
-        "project": "firmware/projects/canary-display",
         "env": "profile:dash",
         "board": "waveshare_esp32s3_lcd43",
         "provisioning": "on-glass",
     },
     {
         "id": "securacv-canary-display-dash-modes",
-        # Arduino profile build (profile:modes) — declared, checked below.
+        # Arduino profile build (profile:modes) on the 4.3B — a SKU sibling
+        # the Dash manifest lists under board.variants, not its board_id, so
+        # the row says which one (see the PRODUCTS note above).
         "board_id": "waveshare-esp32s3-lcd43b",
         "family": "display",
         "board_label": "Waveshare 4.3B panel module",
@@ -369,7 +340,6 @@ PRODUCTS = [
         "name": "Canary Dash · Modes",
         "tagline": "The 4.3B multi-tool — the fleet face plus the bench, demo, debug and arcade gears.",
         "asset_stem": "canary-display-dash-modes",
-        "project": "firmware/projects/canary-display",
         "env": "profile:modes",
         "board": "waveshare_esp32s3_lcd43",
         "provisioning": "on-glass",
@@ -388,7 +358,6 @@ PRODUCTS = [
         "name": "Canary Dash 7",
         "tagline": "The 4.3″ Dash grown to 7″ — same quiet truth, room-scale glass.",
         "asset_stem": "canary-display-dash7",
-        "project": "firmware/projects/canary-display",
         "env": "canary-display-dash7",
         "board": "esp32-s3-devkitc-1",
         "provisioning": "on-glass",
@@ -405,7 +374,6 @@ PRODUCTS = [
         "name": "Canary Nightstand 7",
         "tagline": "The 7″ glass turned toward the bed — a big quiet clock, the day's weather, and a night light that never lies about your fleet.",
         "asset_stem": "canary-display-nightstand7",
-        "project": "firmware/projects/canary-display",
         "env": "canary-display-nightstand7",
         "board": "esp32-s3-devkitc-1",
         "provisioning": "on-glass",
@@ -418,7 +386,6 @@ PRODUCTS = [
         "name": "Canary Nightstand",
         "tagline": "The 1.47″ portrait glance with an ambient light — plugs straight into a USB port.",
         "asset_stem": "canary-display-nightstand-s3",
-        "project": "firmware/projects/canary-display",
         "env": "canary-display-nightstand-s3",
         "board": "esp32-s3-devkitc-1",
         "provisioning": "on-glass",
@@ -431,7 +398,6 @@ PRODUCTS = [
         "name": "Canary Nightstand Touch",
         "tagline": "The portrait glance you can touch \u2014 tap to peek, hold to acknowledge; runs on a battery.",
         "asset_stem": "canary-display-touch169",
-        "project": "firmware/projects/canary-display",
         "env": "canary-display-touch169",
         "board": "esp32-s3-devkitc-1",
         "provisioning": "on-glass",
@@ -449,7 +415,6 @@ PRODUCTS = [
         "name": "Canary Glance AMOLED",
         "tagline": "The flagship glance glass — true black, living color, touch, and the whole nightstand story.",
         "asset_stem": "canary-display-amoled241",
-        "project": "firmware/projects/canary-display",
         "env": "canary-display-amoled241",
         "board": "esp32-s3-devkitc-1",
         "provisioning": "on-glass",
@@ -462,7 +427,6 @@ PRODUCTS = [
         "name": "Canary Nightstand C6",
         "tagline": "The 1.47″ portrait glance on the Wi-Fi 6 pin-header board — breadboard-friendly.",
         "asset_stem": "canary-display-nightstand-c6",
-        "project": "firmware/projects/canary-display",
         "env": "canary-display-nightstand-c6",
         "board": "esp32-c6-devkitc-1",
         "provisioning": "on-glass",
@@ -482,7 +446,6 @@ PRODUCTS = [
         "name": "Canary Nightlight",
         "tagline": "A bedside clock with a friend living in it — a soft lamp, a 7-segment clock, and a canary who keeps your kid's rhythm.",
         "asset_stem": "canary-display-nightlight-c3",
-        "project": "firmware/projects/canary-display",
         "env": "canary-display-nightlight-c3",
         "board": "esp32-c3-devkitm-1",
         "provisioning": "on-glass",
@@ -1843,7 +1806,7 @@ TIER_COPY = {
 }
 
 
-def board_tier(p: dict) -> dict | None:
+def board_tier(p: dict, manifest: dict) -> dict | None:
     """This build's support tier, read from firmware/boards/boards.json.
 
     Keyed on the board the env actually compiles against (the same pins-header
@@ -1851,19 +1814,37 @@ def board_tier(p: dict) -> dict | None:
     describes: promoting a board in the registry moves the flasher card on the
     next generator run, and nothing else has to be remembered.
 
-    The `canary` project carries its pins in build flags rather than a
-    boards/<id>/pins include, so its envs have nothing to derive from; those
-    products declare `board_id` instead — declared, but checked against the
-    registry below, the same deal the WAP's `figure` gets. A product with
-    neither gets None and the card says nothing at all, which is honest: it
-    claims neither way.
+    The row is the device manifest's `board.board_id` — the same id the
+    linter proves each of the device's envs compiles (or, for the `canary`
+    tree, whose pins ride in build flags, the registry row it declares). One
+    exception, stated per row: a product that installs onto a `board.variants`
+    sibling (the modes build on the 4.3B) declares that sibling as `board_id`,
+    and anything else declared there is refused — the manifest's own board_id
+    as a duplicate, an unlisted board as a contradiction.
+
+    The registry row's silicon must also agree with the manifest's `mcu`, the
+    fact the chip guard is about to trust: the linter checks this too, but
+    the generator is the last thing between that fact and a person with a
+    board in hand, so it does not assume the linter ran.
     """
-    bid = p.get("board_id") or figure_hardware_for(p["project"], p["env"])
-    if not bid:
-        return None
+    board = manifest["board"]
+    bid = board["board_id"]
+    declared = p.get("board_id")
+    if declared:
+        if declared == bid:
+            die(f"{p['id']}: board_id '{declared}' is already the manifest's board_id "
+                f"(devices/{manifest['slug']}) — drop it from PRODUCTS")
+        if declared not in board.get("variants", []):
+            die(f"{p['id']}: board_id '{declared}' is neither devices/{manifest['slug']}'s "
+                f"board_id ({bid}) nor one of its variants — a product cannot install "
+                f"onto hardware its device does not list")
+        bid = declared
     for b in json.loads(read(BOARDS_REGISTRY)):
         if b.get("id") != bid:
             continue
+        if b.get("mcu") != board["mcu"]:
+            die(f"{p['id']}: boards.json {bid} is a {b.get('mcu')} but devices/{manifest['slug']} "
+                f"says board.mcu {board['mcu']} — the chip guard would trust the wrong silicon")
         copy = TIER_COPY.get(b.get("tier"))
         if not copy:
             die(f"board '{bid}' has tier '{b.get('tier')}' with no TIER_COPY entry")
@@ -1872,10 +1853,10 @@ def board_tier(p: dict) -> dict | None:
             out["evidence"] = b["tier_evidence"]
         return out
     die(f"{p['id']}: board '{bid}' is not in firmware/boards/boards.json — "
-        f"register it (firmware/PORTING.md) or fix the declared board_id")
+        f"register it (firmware/PORTING.md) or fix devices/{manifest['slug']}")
 
 
-def figure_block(p: dict) -> dict | None:
+def figure_block(p: dict, project: str, manifest: dict) -> dict | None:
     """The picker figure for one flash target, or None for the placeholder.
 
     Two ways a product can name a figure, in this order:
@@ -1885,13 +1866,23 @@ def figure_block(p: dict) -> dict | None:
          that compile no boards/ pins header, like the WAP's Arduino sketch)
     Either way the id is checked against the generated ledger, so a figure
     that has been renamed or removed fails the build here rather than showing
-    a blank slot to somebody holding a board.
+    a blank slot to somebody holding a board — and against the device
+    manifest, so the picker can never draw a device as something its own
+    manifest says it is not. A pins header the manifest does not list (as
+    board_id or a variant) is the same contradiction, caught the same way.
     """
     ledger = json.loads(read(FIGURES_LEDGER))
     picker = json.loads(read(FIGURES_PICKER))["figures"]
     by_hw = {m["hardware"]: m for m in ledger["hardware"]["mapped"]}
+    board = manifest["board"]
+    allowed = {board["board_id"], *board.get("variants", [])}
 
-    hw = figure_hardware_for(p["project"], p["env"])
+    hw = figure_hardware_for(project, p["env"])
+    if hw and hw not in allowed:
+        die(f"{p['id']}: the build compiles boards/{hw}/pins, but devices/{manifest['slug']} "
+            f"lists board_id {board['board_id']}"
+            + (f" and variants {', '.join(board['variants'])}" if board.get("variants") else "")
+            + " — fix the manifest or the product's env")
     if hw and hw in by_hw:
         row = by_hw[hw]
         fid, via = row["figure"], "the pins header this build compiles"
@@ -1902,6 +1893,10 @@ def figure_block(p: dict) -> dict | None:
     else:
         return None
 
+    if manifest.get("figure") != fid:
+        die(f"{p['id']}: figure '{fid}' ({via}), but devices/{manifest['slug']} says "
+            f"figure {manifest.get('figure') or 'none'} — the manifest is the join; fix "
+            f"whichever is wrong")
     if fid not in picker:
         die(f"{p['id']}: figure '{fid}' is not in figures.picker.json — "
             f"run canary-local/tools/figures/gen_figures.mjs first")
@@ -2065,30 +2060,46 @@ def main() -> None:
 
     flavors = {f["name"]: f for f in json.loads(read(REPO / "firmware/flavors.json"))}
 
+    # The device manifests: which device each flasher product installs onto,
+    # and that device's silicon. A product no manifest claims is refused —
+    # the catalog must not offer hardware the rest of the tree cannot name.
+    manifest_of = by_flasher_product(load_manifests(REPO))
+
     vision_detect = vision_detect_block()
     sense_reflexes = {f: sense_reflexes_block(f) for f in ("default", "wellbeing")}
 
     products_out = []
     chips_used = set()
     for p in PRODUCTS:
-        derived = board_for_env(p["project"], p["env"])
+        manifest = manifest_of.get(p["id"])
+        if manifest is None:
+            die(f"{p['id']}: no devices/<slug>/device.json claims this product "
+                f"(flasher.product or flasher.variants) — add it to the device it installs "
+                f"onto, or drop the row")
+        flavor = flavors.get(manifest["family"])
+        if flavor is None or not (REPO / flavor["dir"]).is_dir():
+            die(f"{p['id']}: devices/{manifest['slug']} family '{manifest['family']}' is not a "
+                f"firmware/flavors.json product with a project directory")
+        project = flavor["dir"]
+        derived = board_for_env(project, p["env"])
         if derived != p["board"]:
             die(
                 f"board drift for {p['id']}: table says '{p['board']}' but "
-                f"{p['project']} env '{p['env']}' builds for '{derived}'. "
+                f"{project} env '{p['env']}' builds for '{derived}'. "
                 f"Update PRODUCTS in gen_flash.py (and the chip guard follows)."
             )
-        chip = BOARD_CHIP.get(p["board"])
-        if not chip:
-            die(f"no chip mapping for board '{p['board']}' — extend BOARD_CHIP")
-        # Sanity: the variant's firmware dir should exist (flavors or disk).
-        fam = p["asset_stem"].split("-xiao-")[0].split("-wellbeing")[0]
-        if fam not in flavors and not (REPO / p["project"]).exists():
-            die(f"{p['id']}: neither flavors.json nor {p['project']} knows this variant")
+        # Chip + flash size: the manifest's, which the linter proves against
+        # boards.json and the env's `board =`; board_tier() re-checks the chip
+        # against the registry row below because the chip guard trusts it.
+        chip = manifest["board"]["mcu"]
+        if chip not in CHIP_INFO:
+            die(f"{p['id']}: devices/{manifest['slug']} board.mcu '{chip}' has no CHIP_INFO "
+                f"copy — extend CHIP_INFO")
         chips_used.add(chip)
-        flash_mb = BOARD_FLASH_MB.get(p["board"])
+        flash_mb = manifest["board"].get("flash_mb")
         if not flash_mb:
-            die(f"no flash-size mapping for board '{p['board']}' — extend BOARD_FLASH_MB")
+            die(f"{p['id']}: devices/{manifest['slug']} has no board.flash_mb — the flasher "
+                f"names the module from chip + flash size, so it cannot be omitted here")
         fam_ids = [f["id"] for f in FAMILIES]
         if p.get("family") not in fam_ids:
             die(f"{p['id']}: family '{p.get('family')}' is not in FAMILIES")
@@ -2106,10 +2117,10 @@ def main() -> None:
             "asset_stem": p["asset_stem"],
             "provisioning": p["provisioning"],
             "provisioning_note": PROVISIONING[p["provisioning"]],
-            "wifi_nvs": wifi_scheme(p["project"]),
-            "broker_nvs": reads_broker(p["project"]),
+            "wifi_nvs": wifi_scheme(project),
+            "broker_nvs": reads_broker(project),
             "hatch": hatch,
-            "serial_receipt": supports_serial_receipt(p["project"]),
+            "serial_receipt": supports_serial_receipt(project),
             "role": role,
             "prove": prove_block(role, p["id"]),
         }
@@ -2133,7 +2144,7 @@ def main() -> None:
         # The flasher is where a claim meets a person with a board in hand,
         # so "CI builds this; nobody has booted it" has to travel with the
         # install button or it isn't really being said.
-        tier = board_tier(p)
+        tier = board_tier(p, manifest)
         if tier:
             entry["tier"] = tier
         # The dials that genuinely apply to this product — Vision's four NVS
@@ -2144,7 +2155,7 @@ def main() -> None:
         elif role == "sense":
             entry["reflexes"] = sense_reflexes[
                 "wellbeing" if "wellbeing" in p["id"] else "default"]
-        fig = figure_block(p)
+        fig = figure_block(p, project, manifest)
         if fig:
             entry["figure"] = fig
         products_out.append(entry)
@@ -2243,7 +2254,16 @@ def main() -> None:
     validate_we2_guide()
 
     out = CANARY_LOCAL / "devices/flash.json"
-    out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    rendered = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+    if "--check" in sys.argv[1:]:
+        current = out.read_text(encoding="utf-8") if out.exists() else ""
+        if current != rendered:
+            die(f"{out.relative_to(REPO)} is stale — run python3 canary-local/tools/gen_flash.py "
+                f"and commit the result", code=1)
+        print(f"{out.relative_to(REPO)} is up to date — {len(products_out)} products, "
+              f"chips: {', '.join(sorted(chips_used))}")
+        return
+    out.write_text(rendered, encoding="utf-8")
     print(f"wrote {out.relative_to(REPO)} — {len(products_out)} products, "
           f"chips: {', '.join(sorted(chips_used))}")
 
