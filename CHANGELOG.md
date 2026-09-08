@@ -10,7 +10,8 @@
   everything (only what needs it)"**: `only: firmware` is the firmware-only
   "release if it moved" check, `force: flasher,lab` re-cuts both desktop apps
   whether or not they moved (with `publish` unchecked, the build-only smoke
-  run), and a dev-channel firmware build is `firmware-release.yml`
+  run; the rest of the plan still runs — `only:` is the narrowing knob), and
+  a dev-channel firmware build is `firmware-release.yml`
   dispatched directly with `channel: dev`, as it always was. The one thing
   only the one-click launcher did — warn that publishing an already-tagged
   app version overwrites the shipped release's assets — is now said by the
