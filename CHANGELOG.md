@@ -23,9 +23,9 @@
   canary tree's `securacv_csi.cpp` carries the BSSID half. Host-tested
   (`csi_hal_transmitter_filter_test.cpp` drives the shipped HAL through a
   stubbed ESP-IDF surface and scans ring, stats and feature vector for both
-  addresses); the device path is compile-tested at best and the bench pass in
-  `docs/IMPROVEMENT_ROADMAP.md` §5 is what shows the false-positive floor
-  moved.
+  addresses); the device path is compiled only by CI's firmware build — no
+  board has run it — and the bench pass in `docs/IMPROVEMENT_ROADMAP.md` §5
+  is what shows the false-positive floor moved.
 
 ### The device manifests drive the generators, and the release env list is derived
 
