@@ -121,9 +121,11 @@ class BrokerTransport {
         prefs.getString(NVS_KEY_FP, raw, sizeof(raw));
         raw[sizeof(raw) - 1] = '\0';
         if (fingerprint_normalize(raw, fp_, sizeof(fp_)) == 0) {
-          // Keep the malformed text out of the object but remember it was
-          // set, so decide() reports FingerprintMalformed, not Missing.
-          strncpy(fp_, raw[0] ? "?" : "", sizeof(fp_) - 1);
+          // Keep the malformed text out of the object but remember the key
+          // WAS set — including a value too long for `raw`, which
+          // getString() leaves empty — so decide() reports
+          // FingerprintMalformed, never Missing, for a pin that exists.
+          strncpy(fp_, "?", sizeof(fp_) - 1);
         }
       }
       prefs.end();

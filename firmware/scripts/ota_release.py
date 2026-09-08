@@ -40,10 +40,16 @@ floor, and only then streams bytes:
         + str(size) + "\0" + sha256hex + "\0"
     ble_signature = Ed25519.sign(msg.encode())         (64 bytes, same key)
 
-The manifest carries it as `ble_signature`; a BLE client (the companion
-PWA, or `ble-header` below) builds the 168-byte BEGIN_V2 payload from the
-manifest's product / version / size / sha256 plus that signature. Keep in
-sync with ble_ota::build_v2_message(); the cross-language fixture lives in
+The manifest carries it as `ble_signature` WHEN the header can carry the
+product and version at all — each is a 31-byte NUL-terminated slot, and
+seven of the Canary Display product ids are longer (they have no Bluetooth
+OTA path; the pull engine is their channel). ble_header_fits() is the one
+rule: a manifest whose product/version fit MUST carry the signature and
+`verify` requires it; one whose product does not fit carries none and
+`verify` asks for none. A BLE client (the companion PWA, or `ble-header`
+below) builds the 168-byte BEGIN_V2 payload from the manifest's product /
+version / size / sha256 plus that signature. Keep in sync with
+ble_ota::build_v2_message(); the cross-language fixture lives in
 test_ota_release.py and tests_host/test_ble_ota_policy.cpp.
 
 Manifest schema v1 (per-variant flat JSON, one file per product):
@@ -58,7 +64,7 @@ Manifest schema v1 (per-variant flat JSON, one file per product):
       "size": 1048576,
       "signature": "<128 hex>",
       "manifest_signature": "<128 hex>",
-      "ble_signature": "<128 hex>",
+      "ble_signature": "<128 hex>",          (only when ble_header_fits())
       "signing_key_id": "<first 16 hex of sha256(pubkey)>",
       "release_notes": "...",
       "release_url": "https://.../releases/tag/fw-v2.2.0"
@@ -166,6 +172,24 @@ def _check_ble_field(name: str, value: str) -> bytes:
     if any(c < 0x21 or c > 0x7E for c in raw):
         raise ValueError(f"{name} must be printable ASCII without spaces")
     return raw
+
+
+def ble_header_fits(product: str, version: str) -> bool:
+    """Whether the 168-byte BEGIN_V2 header can carry this product and version.
+
+    The rule that decides whether a manifest carries `ble_signature`: both
+    slots are 31 bytes of printable ASCII (no spaces) plus a NUL, mirrored
+    from ble_ota::policy_detail::field_is_clean(). A product id that does
+    not fit has no BLE OTA header, so signing one would be a claim about a
+    channel that cannot exist for it — and raising would abort the whole
+    release for a display board that has no Bluetooth.
+    """
+    try:
+        _check_ble_field("product", product)
+        _check_ble_field("version", version)
+    except ValueError:
+        return False
+    return True
 
 
 def ble_ota_signed_message(*, product: str, version: str, size: int, sha256_hex: str) -> bytes:
@@ -281,7 +305,6 @@ def build_manifest(
         release_notes=release_notes or "",
         release_url=release_url or "",
     ))
-    ble_sig = sign_ble_ota(private_key, product=product, version=version, firmware=firmware)
     manifest = {
         "manifest_version": MANIFEST_VERSION,
         "product": product,
@@ -291,9 +314,11 @@ def build_manifest(
         "size": len(firmware),
         "signature": signature.hex(),
         "manifest_signature": manifest_sig.hex(),
-        "ble_signature": ble_sig.hex(),
         "signing_key_id": signing_key_id(private_key.public_key()),
     }
+    if ble_header_fits(product, version):
+        ble_sig = sign_ble_ota(private_key, product=product, version=version, firmware=firmware)
+        manifest["ble_signature"] = ble_sig.hex()
     if min_version:
         manifest["min_version"] = min_version
     if release_notes:
@@ -365,10 +390,15 @@ def verify_manifest(manifest: dict, firmware: bytes, public_key: Ed25519PublicKe
 
     # BLE OTA v2 header signature: without it a BLE client can only send the
     # legacy v1 header, which current devices refuse unless the owner arms
-    # break-glass — so a release manifest that lacks it is a broken release.
+    # break-glass — so a release manifest that lacks it is a broken release,
+    # for every product whose id and version the header can carry. A product
+    # that does not fit (the longer display ids) has no BLE OTA channel and
+    # is not asked for one; a signature that IS present is always checked.
     bsig_hex = manifest.get("ble_signature")
+    fits = ble_header_fits(str(manifest["product"]), str(manifest["version"]))
     if not bsig_hex:
-        problems.append("missing required field: ble_signature")
+        if fits:
+            problems.append("missing required field: ble_signature")
     else:
         try:
             public_key.verify(bytes.fromhex(bsig_hex), ble_ota_signed_message(

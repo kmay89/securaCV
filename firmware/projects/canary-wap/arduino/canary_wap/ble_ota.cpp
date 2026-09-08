@@ -78,6 +78,10 @@ static void cleanup_sha() {
 
 static void abort_ota(const char* reason) {
   cleanup_sha();
+  // A refused or failed session is not a break-glass session, whatever the
+  // previous accepted BEGIN was; /api/bluetooth/ota reports the flag "for
+  // that session" (docs/firmware_ota.md).
+  g_last_break_glass = false;
   if (g_ota_handle) {
     esp_ota_abort(g_ota_handle);
     g_ota_handle = 0;
@@ -169,18 +173,14 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
     deps.nvs_floor       = nvs_floor;
 
     Verdict verdict = decide(hdr, deps);
-    if (verdict.decision == DECISION_NEEDS_BREAK_GLASS) {
-      // Only now is the owner's arming consulted — and consumed, if set.
-      // A v2 header at or above the floor never reaches this line.
-      const bool armed = (g_break_glass != nullptr) && g_break_glass();
-      verdict = apply_break_glass(verdict, armed);
-    }
     if (verdict.decision == DECISION_REFUSE) {
       abort_ota(verdict.reason);
       return;
     }
 
-    // Sanity: image must fit in the next OTA partition.
+    // Sanity BEFORE the owner's arming is spent: an image that cannot fit
+    // (or a missing OTA slot) is refused without consuming the one BOOT tap
+    // the owner gave, so a malformed rescue does not burn the 30 s window.
     g_ota_partition = esp_ota_get_next_update_partition(nullptr);
     if (!g_ota_partition) {
       abort_ota("no OTA partition available");
@@ -191,15 +191,17 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
       return;
     }
 
-    esp_err_t err = esp_ota_begin(g_ota_partition, hdr.image_size, &g_ota_handle);
-    if (err != ESP_OK) {
-      abort_ota("esp_ota_begin failed");
-      return;
+    if (verdict.decision == DECISION_NEEDS_BREAK_GLASS) {
+      // Only now is the owner's arming consulted — and consumed, if set.
+      // A v2 header at or above the floor never reaches this line.
+      const bool armed = (g_break_glass != nullptr) && g_break_glass();
+      verdict = apply_break_glass(verdict, armed);
+      if (verdict.decision == DECISION_REFUSE) {
+        abort_ota(verdict.reason);
+        return;
+      }
     }
 
-    g_image_size = hdr.image_size;
-    g_received   = 0;
-    memcpy(g_expected_sha, hdr.sha256, 32);
     // v2: the version is inside the signed canonical message, so it is
     // the release's own claim and labels the update-outcome record on the
     // next boot. v1: parse_v1 sanitized it to printable ASCII and it is
@@ -209,8 +211,10 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
 
     g_last_break_glass = (verdict.decision == DECISION_ACCEPT_BREAK_GLASS);
     if (g_last_break_glass) {
-      // The one line the audit trail needs: WHAT was bypassed, for WHICH
-      // version, against WHICH floor. No key material, no signature bytes.
+      // The one line the audit trail needs, written the moment the gate is
+      // spent — before esp_ota_begin can fail — so the health log always
+      // says WHAT was bypassed, for WHICH version, against WHICH floor.
+      // No key material, no signature bytes.
       char detail[96];
       if (verdict.need == BG_V1) {
         snprintf(detail, sizeof(detail),
@@ -223,6 +227,16 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                  "OTA break-glass: anti-rollback floor bypassed", detail);
     }
+
+    esp_err_t err = esp_ota_begin(g_ota_partition, hdr.image_size, &g_ota_handle);
+    if (err != ESP_OK) {
+      abort_ota("esp_ota_begin failed");
+      return;
+    }
+
+    g_image_size = hdr.image_size;
+    g_received   = 0;
+    memcpy(g_expected_sha, hdr.sha256, 32);
 
     cleanup_sha();
     mbedtls_sha256_init(&g_sha_ctx);

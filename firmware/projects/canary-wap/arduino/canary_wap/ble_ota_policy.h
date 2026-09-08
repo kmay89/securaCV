@@ -288,7 +288,8 @@ inline bool parse_v1(const uint8_t* buf, size_t len, ParsedHeader* out) {
   for (size_t i = 0; i < sizeof(hdr.version) && hdr.version[i] != '\0' &&
                      o < OTA_VERSION_WIDTH - 1; i++) {
     char c = hdr.version[i];
-    out->version[o++] = (c >= 0x20 && c < 0x7f) ? c : '_';
+    // Same alphabet as v2's field_is_clean(): printable ASCII, no spaces.
+    out->version[o++] = (c > 0x20 && c < 0x7f) ? c : '_';
   }
   out->version[o] = '\0';
   return true;

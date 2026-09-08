@@ -230,6 +230,34 @@ class TestBleOtaHeader:
         assert any("manifest_signature" in p for p in problems)
         assert any("ble_signature" in p for p in problems)
 
+    def test_products_the_header_cannot_carry_sign_and_verify_without_a_ble_signature(self, private_key):
+        # The longest real OTA product id (37 bytes) — seven display ids exceed
+        # the header's 31-byte slot. Before ble_header_fits() the tool raised
+        # here, which aborted the release workflow's signing step mid-loop.
+        long_product = "securacv-canary-display-nightlight-c3"
+        assert len(long_product.encode()) > ota_release.BLE_OTA_FIELD_WIDTH - 1
+        assert not ota_release.ble_header_fits(long_product, "2.4.16")
+        manifest = ota_release.build_manifest(
+            private_key=private_key,
+            firmware=FIRMWARE,
+            product=long_product,
+            version="2.4.16",
+            url="https://example.com/fw.bin",
+        )
+        assert "ble_signature" not in manifest
+        assert ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()) == []
+        # Every OTA product the firmware polls must either carry the header or
+        # be provably unable to: the rule is the same function on both sides.
+        for product in ("securacv-canary", "securacv-canary-wap", "securacv-canary-sense",
+                        "securacv-canary-vision", "securacv-canary-display-dash",
+                        "securacv-canary-display-dash-modes", "securacv-canary-display-touch169",
+                        "securacv-canary-display-nightstand-c6"):
+            m = ota_release.build_manifest(private_key=private_key, firmware=FIRMWARE,
+                                           product=product, version="2.4.16",
+                                           url="https://example.com/fw.bin")
+            assert ("ble_signature" in m) == ota_release.ble_header_fits(product, "2.4.16")
+            assert ota_release.verify_manifest(m, FIRMWARE, private_key.public_key()) == []
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Manifest build + verify

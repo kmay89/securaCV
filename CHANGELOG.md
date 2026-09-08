@@ -50,7 +50,9 @@
 
 - The 168-byte `BEGIN_V2` header carries product, version, size and digest
   under one domain-separated Ed25519 signature (`scv-ble-ota-v2`), emitted by
-  `ota_release.py` as the manifest's `ble_signature`. The Canary verifies
+  `ota_release.py` as the manifest's `ble_signature` for every product whose
+  id and version fit the header's 31-byte slots (the longer display ids have
+  no Bluetooth OTA path and carry none). The Canary verifies
   first, refuses an image for another product, and runs the version through
   the pull engine's own decision against max(running, NVS floor) — the same
   rule as network updates. Rescue downgrades and legacy v1 headers still work
@@ -86,8 +88,10 @@
   explicit lab mode that logs a warning on every connect. canary-display,
   canary-sense and canary-vision use it through a `WiFiClientSecure`
   transport header; canary-wap's esp_mqtt bridge applies the same decision
-  from a drift-gated staged copy (no fingerprint mode there — esp_mqtt has
-  no hook for it). Anything incomplete — CA mode without a CA, pin mode
+  from a drift-gated staged copy, with plain and CA-verified only: esp_mqtt
+  has no fingerprint hook, and the pinned core's esp-tls cannot skip
+  verification, so both of those modes are refused there at save time and
+  at connect with the reason. Anything incomplete — CA mode without a CA, pin mode
   without a pin, a malformed PEM or pin, an unknown mode byte — refuses to
   connect and names the reason without printing the secret.
 - **Provisioning.** NVS keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` on the
@@ -98,8 +102,7 @@
 - **Breaking, on purpose, for canary-wap units that had "Use TLS" on with
   no CA:** that setting produced an unverified `mqtts://` handshake that
   looked secured. Such units now refuse to connect until a CA is uploaded
-  on the `/mqtt` page or lab mode is chosen by name; the reason is on the
-  page and the serial log. `SECURITY_MODEL.md` no longer claims TLS on all
+  on the `/mqtt` page; the reason is on the page and the serial log. `SECURITY_MODEL.md` no longer claims TLS on all
   local traffic; the per-variant truth table is
   `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested and host-tested; no
   bench pass against a TLS broker yet.

@@ -181,7 +181,8 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
      Canary never falls back to plain or unverified on its own: an
      incomplete TLS setup refuses to connect and names the reason on its
      serial log. The unverified "lab" mode exists only as an explicit choice
-     and warns on every connect. Per-variant status:
+     on display / sense / vision and warns on every connect; the WAP offers
+     plain or CA-verified only. Per-variant status:
      [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md).
 5. Save and reboot the Canary
 

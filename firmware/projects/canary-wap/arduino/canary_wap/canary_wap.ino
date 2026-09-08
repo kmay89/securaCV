@@ -806,18 +806,29 @@ static inline bool provisioning_gate_is_open() {
   return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
 }
 
+// Consume the gate in ONE atomic step. Two consumers race for it — the
+// HTTPS receipt handler (httpd task) and the BLE OTA break-glass hook
+// (NimBLE host task) — and a load followed by a separate store would let one
+// BOOT tap be spent twice. exchange() hands the open timestamp to exactly
+// one caller; the other reads 0 and is refused.
+static inline bool provisioning_gate_take() {
+  uint32_t opened = __atomic_exchange_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_ACQ_REL);
+  if (opened == 0) return false;
+  return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
+}
+
 #if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
 // BLE OTA break-glass = the same physical-presence gate. A legacy (v1) BLE
 // OTA header, or a v2 image below the anti-rollback floor, is admitted only
 // if the owner short-tapped BOOT within the last PROVISIONING_GATE_TTL_MS —
 // the identical act that reveals the provisioning receipt. Single-use: the
-// one BEGIN it admits closes the gate. Runs on the NimBLE host task, hence
-// the same __atomic_* access as the HTTP-side receipt handler. ble_ota.cpp
+// one BEGIN it admits closes the gate, through the same atomic exchange the
+// HTTP-side receipt handler uses (provisioning_gate_take), so the two
+// consumers on their two tasks cannot both spend one tap. ble_ota.cpp
 // writes the health-log line that names what was bypassed; this only
 // records that the gate was spent on it.
 static bool ble_ota_break_glass_take() {
-  if (!provisioning_gate_is_open()) return false;
-  __atomic_store_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_RELAXED);
+  if (!provisioning_gate_take()) return false;
   log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
              "Provisioning gate spent on BLE OTA break-glass", "BOOT button");
   return true;
@@ -7378,8 +7389,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     return send_provisioning_receipt(req);
   }
 
-  // No valid token — check physical gate
-  if (!provisioning_gate_is_open()) {
+  // No valid token — consume the physical gate (one atomic step; the BLE
+  // OTA break-glass hook competes for the same tap from another task)
+  if (!provisioning_gate_take()) {
     // Derive the advertised TTL from the constant so the 403 contract
     // and the gate behavior can never drift apart.
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
@@ -7413,7 +7425,6 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     }
   }
   esp_err_t result = send_provisioning_receipt(req);
-  __atomic_store_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_RELAXED);
   Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
   log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served via HTTPS", nullptr);
   return result;

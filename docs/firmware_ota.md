@@ -128,10 +128,14 @@ at a stable URL (`releases/latest/download/manifest-<variant>.json`):
 
 `ble_signature` (added with BLE OTA protocol v2) is the same key's
 signature over the BLE header's canonical message — see [Signature
-scheme](#signature-scheme). The pull engine ignores it. Manifests from
-earlier releases lack it; a BLE client then has only the legacy v1 header,
-which a current device refuses unless break-glass is armed, and
-`ota_release.py verify` reports such a manifest as incomplete.
+scheme](#signature-scheme). The pull engine ignores it. It is present only
+for products whose id and version fit the header's 31-byte slots
+(`ota_release.ble_header_fits()`); the longer Canary Display ids have no
+Bluetooth OTA path and carry none, and `ota_release.py verify` asks them for
+none. For a product that fits, manifests from earlier releases lack it; a
+BLE client then has only the legacy v1 header, which a current device
+refuses unless break-glass is armed, and `verify` reports such a manifest as
+incomplete.
 
 `manifest-index.json` maps products to their manifest URLs for tooling and
 future variants. Devices fetch only their own flat manifest.

@@ -433,6 +433,11 @@ void ca_load() {
 }  /* namespace */
 
 const char* transport_name() {
+  /* A bridge that is switched off, or has no broker host yet, never reaches
+   * the socket decision — say so rather than reporting the default
+   * Decision's "refused" for a device nobody has configured. */
+  if (!s_active_cfg.enabled) return "disabled";
+  if (!s_active_cfg.host[0]) return "unconfigured";
   return canary::net::mqtt_tls::transport_name(s_tls_decision.transport);
 }
 
@@ -473,17 +478,22 @@ bool init(const char* device_id,
     return false;
   }
 
-  /* The socket decision is the shared header's, not this file's: plain,
-   * CA-verified, or the lab opt-in — and REFUSED (with the reason in the
-   * log and on the /mqtt page) for a TLS mode with no usable CA. esp_mqtt
-   * has no fingerprint hook, so caps.fingerprint is false and a pinned
-   * provisioning is refused with "use the CA mode". */
+  /* The socket decision is the shared header's, not this file's: plain or
+   * CA-verified — and REFUSED (with the reason in the log and on the /mqtt
+   * page) for a TLS mode with no usable CA. esp_mqtt has no fingerprint
+   * hook, so caps.fingerprint is false and a pinned provisioning is refused
+   * with "use the CA mode". caps.insecure is false too: the pinned Arduino
+   * core builds esp-tls WITHOUT CONFIG_ESP_TLS_INSECURE (sdkconfig of
+   * every chip in framework-arduinoespressif32-libs 3.3.8), so an mqtts://
+   * session with no verification option returns ESP_ERR_INVALID_STATE —
+   * the lab mode could never connect here, and the header's own
+   * InsecureUnsupported refusal says so instead of an opaque esp-tls error. */
   ca_load();
   {
     using namespace canary::net::mqtt_tls;
     Caps caps;
     caps.fingerprint = false;
-    caps.insecure = true;
+    caps.insecure = false;
     s_tls_decision = decide_u8(s_active_cfg.tls_mode, s_ca_pem, nullptr, caps);
     if (!s_tls_decision.allowed()) {
       format_failure(s_last_error, sizeof(s_last_error), Transport::Refused,
@@ -517,12 +527,9 @@ bool init(const char* device_id,
     cfg.credentials.authentication.password = s_active_cfg.pass;
   }
   /* TlsCa: esp-tls verifies the broker's chain against this PEM (NUL-
-   * terminated, so certificate_len stays 0). TlsInsecure: no verification
-   * option is set ON PURPOSE — esp-tls then skips peer verification only
-   * where the core's sdkconfig allows it (CONFIG_ESP_TLS_INSECURE +
-   * SKIP_SERVER_CERT_VERIFY, which the Arduino core ships); a core that
-   * refuses fails the connect visibly at MQTT_EVENT_ERROR rather than
-   * downgrading further. Plain sets nothing. */
+   * terminated, so certificate_len stays 0). Plain sets nothing. There is
+   * no TlsInsecure branch: decide() refuses that mode on this transport
+   * (caps.insecure above), so it never reaches the client config. */
   if (s_tls_decision.transport == canary::net::mqtt_tls::Transport::TlsCa) {
     cfg.broker.verification.certificate = s_ca_pem;
   }
@@ -1884,11 +1891,20 @@ esp_err_t handle_config_post(httpd_req_t* req) {
           "{\"ok\":false,\"reason\":\"fingerprint pinning is not available on this device - use the CA mode\"}", -1);
         return ESP_OK;
       }
+      if (mode_l == (long)canary::net::mqtt_tls::Mode::InsecureLab) {
+        /* Same reason init() would refuse it (caps.insecure = false): the
+         * core's esp-tls cannot skip verification, so saving the mode would
+         * only surface later as "won't connect". */
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req,
+          "{\"ok\":false,\"reason\":\"unverified TLS is not available on this build - use the CA mode\"}", -1);
+        return ESP_OK;
+      }
       bool known = false;
       (void)canary::net::mqtt_tls::mode_from_u8((uint8_t)(mode_l & 0xFF), &known);
       if (mode_l < 0 || mode_l > 255 || !known) {
         httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_send(req, "{\"ok\":false,\"reason\":\"tls_mode must be 0 (off), 1 (CA), or 3 (lab)\"}", -1);
+        httpd_resp_send(req, "{\"ok\":false,\"reason\":\"tls_mode must be 0 (off) or 1 (CA)\"}", -1);
         return ESP_OK;
       }
       c.tls_mode = (uint8_t)mode_l;
@@ -2049,7 +2065,6 @@ button.test{background:transparent;color:#3a311e;border:1px solid #d4c994;}
     <label>Encryption<select id="tls_mode">
       <option value="0">Off (plain, port 1883)</option>
       <option value="1">On, check the broker's certificate (port 8883)</option>
-      <option value="3">On, but do not check the broker (lab only)</option>
     </select></label>
   </div>
   <div class="row">

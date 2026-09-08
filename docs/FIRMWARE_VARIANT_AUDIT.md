@@ -39,14 +39,15 @@ apply it rather than deciding for themselves:
 Fail-closed is the rule: mode `1` with no CA, mode `2` with no pin, a
 malformed PEM, or a mode byte outside the table refuses to connect and says
 why. Nothing ever downgrades to plain or to unverified on its own; the
-unverified socket exists only as a mode chosen by name.
+unverified socket exists only as a mode chosen by name, and only on the
+transports that can honor it (display / sense / vision — not the WAP).
 
 | Variant | MQTT stack | Plain | TLS, CA-verified | TLS, SHA-256-pinned | Lab opt-in (unverified, warns every connect) | Provisioned through | Test tier |
 |---|---|---|---|---|---|---|---|
 | canary-display (every flavor) | PubSubClient over `network/mqtt_transport.h` (WiFiClientSecure) | ✅ default | ✅ `mqtt_tls=1` + `mqtt_ca` | ✅ `mqtt_tls=2` + `mqtt_fp` | ✅ `mqtt_tls=3` | NVS namespace `securacv`, seeded by the flashers' NVS builders (browser `mqttProvisioningToNvs`, desktop `build_nvs`; no form fields yet — see gaps). The on-glass onboarding provisions Wi-Fi only. | compile-tested (PlatformIO envs + the generated Arduino parity sketch); decision host-tested; the browser emulator compiles the plain path unchanged (`EMU_BUILD_FLAVOR` guard) |
 | canary-sense | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
 | canary-vision | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
-| canary-wap | esp_mqtt (ESP-IDF) applying the same decision (staged copy of the header, drift-gated by `check_mqtt_transport_sync.sh`) | ✅ default | ✅ `mqtt.tlsmode=1` + `mqtt.ca` — the device's `/mqtt` page or `POST /api/mqtt/config` | ❌ refused at save time and at connect: esp_mqtt has no fingerprint hook — use the CA mode | ✅ `mqtt.tlsmode=3` — relies on the Arduino core's esp-tls being built to allow skipped verification; a core that refuses fails the connect visibly | the device's own `/mqtt` page / API (NVS namespace `csi`) | compile-tested (Arduino CLI); decision host-tested |
+| canary-wap | esp_mqtt (ESP-IDF) applying the same decision (staged copy of the header, drift-gated by `check_mqtt_transport_sync.sh`) | ✅ default | ✅ `mqtt.tlsmode=1` + `mqtt.ca` — the device's `/mqtt` page or `POST /api/mqtt/config` | ❌ refused at save time and at connect: esp_mqtt has no fingerprint hook — use the CA mode | ❌ refused at save time and at connect: the pinned Arduino core builds esp-tls without `CONFIG_ESP_TLS_INSECURE` (every chip's sdkconfig in framework-arduinoespressif32-libs 3.3.8), so a session with no verification option fails with `ESP_ERR_INVALID_STATE` — the mode is not offered on the `/mqtt` page | the device's own `/mqtt` page / API (NVS namespace `csi`) | compile-tested (Arduino CLI); decision host-tested |
 | `firmware/canary` (PIO tree, `securacv_mqtt` lib) | PubSubClient over a plain WiFiClient | ✅ | ❌ | ❌ | — | — | **not changed in this pass — the gap remains on this variant** |
 
 Behavior worth knowing before you flip a mode on:
@@ -55,8 +56,8 @@ Behavior worth knowing before you flip a mode on:
   `mqtt.tls` bool. `true` now reads as mode `1` (CA) and is **refused until a
   CA is uploaded** — a unit that was quietly on the unverified `mqtts://`
   stops connecting after this update, with the reason on its serial log and
-  on the `/mqtt` page, until the operator uploads the broker's CA or picks
-  the lab mode by name. That is the intended behavior, not a regression to
+  on the `/mqtt` page, until the operator uploads the broker's CA (the WAP
+  has no lab mode — see its row). That is the intended behavior, not a regression to
   paper over.
 - **The port is yours.** No firmware rewrites `mqtt_port` when a TLS mode is
   set; a TLS broker normally listens on 8883. A plain listener on a

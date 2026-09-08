@@ -174,7 +174,10 @@ inline esp_err_t handle_bluetooth_ota_status(httpd_req_t* req) {
   // reading the dashboard should not have to find the health log first.
   doc["break_glass"] = ble_ota::last_break_glass();
 
-  char buffer[256];
+  // Worst case (state "receiving", two 32-bit sizes, a 63-byte last_error,
+  // break_glass) is ~195 bytes; 320 keeps real headroom now that the
+  // document has grown, and matches handle_test's buffer.
+  char buffer[320];
   serializeJson(doc, buffer);
   return send_json_response(req, buffer);
 }
