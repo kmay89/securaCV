@@ -116,6 +116,21 @@ class DecideVersioned(unittest.TestCase):
         self.assertEqual(d.decision, rp.RELEASE)
         self.assertEqual(d.inputs, {"dry_run": "false"})
 
+    def test_force_on_an_already_released_version_names_the_overwrite(self):
+        # The retired one-click launcher's preflight, carried into the plan:
+        # re-cutting a tagged app version rewrites that release's assets, and
+        # the summary row is the only place a presser will read it.
+        d = self.decide(source_version="0.2.0", changed=False, force=True)
+        self.assertEqual(d.decision, rp.RELEASE)
+        self.assertIn("OVERWRITE", d.reason)
+        self.assertIn("0.2.0", d.reason)
+
+    def test_force_on_a_newer_version_does_not_cry_wolf(self):
+        # Forcing a version that is genuinely ahead is an ordinary release.
+        d = self.decide(source_version="0.3.0", changed=False, force=True)
+        self.assertEqual(d.decision, rp.RELEASE)
+        self.assertNotIn("OVERWRITE", d.reason)
+
     def test_an_unreadable_version_is_a_note_not_a_crash(self):
         d = self.decide(source_version=None)
         self.assertEqual(d.decision, rp.NEEDS_BUMP)

@@ -121,11 +121,6 @@ source can never disagree.
     bump `FIRMWARE_VERSION` / `CANARY_FW_VERSION` in every variant** to match
     — the version-string guard greps each binary for it and fails closed
     otherwise. The one-click removes the `git tag` step, not the version bump.
-- **Actions → "Release — one click (firmware + apps + web)".** The
-  whole-pipeline launcher: set `firmware` to `dev` or `release` (with
-  `firmware_version`) and it dispatches the firmware release above alongside
-  the desktop apps and the site deploy. Leave `firmware: none` to ship only
-  the apps/web.
 - **Actions → "Update everything (only what needs it)".** The button to reach
   for when you just want the world to be current and don't want to think about
   which targets moved. It reads `.github/release-targets.yml`, compares every
@@ -149,7 +144,11 @@ source can never disagree.
   bump" and "already up to date" are answers, not failures. The decision logic
   is `.github/scripts/release_plan.py`, unit-tested in CI along with the
   catalog itself (every workflow it names must exist, every version file it
-  points at must be readable).
+  points at must be readable). `only:` narrows the run to one target and
+  `force:` (a name, comma-separated names, or `all`) re-cuts targets whether or
+  not they moved — the two knobs that replaced the retired one-click and
+  firmware-if-changed launchers (2026-09-08; the map is in
+  [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)).
 - **Actions → "Flasher Factory Images"** rebuilds *only* the browser-flasher
   factory images + `manifest-flash.json` without cutting a new version.
   `channel: release` targets an existing tag (blank = the current
