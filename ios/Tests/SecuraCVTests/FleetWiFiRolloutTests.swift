@@ -131,6 +131,31 @@ final class FleetWiFiRolloutTests: XCTestCase {
         XCTAssertTrue(plan.needsCleartextDisclosure)
     }
 
+    func testDecliningCleartextReStagesAroundAnEncryptedPilot() {
+        // One plain-http Canary the user did not approve must not hold the
+        // pinned and bonded ones: it is set aside, and the pilot is re-picked
+        // from the encrypted lanes in the same lane-then-strength order.
+        let plan = FleetWiFiRollout.plan([candidate("clear", rssi: -40),
+                                          candidate("pinned", rssi: -70, pinned: true),
+                                          candidate("dark", online: false, ble: true)])
+        XCTAssertEqual(plan.pilot?.id, "pinned")
+        let (kept, declined) = plan.excludingCleartext()
+        XCTAssertEqual(declined.map(\.id), ["clear"])
+        XCTAssertEqual(kept.pilot?.id, "pinned")
+        XCTAssertEqual(kept.followers.map(\.id), ["dark"])
+        XCTAssertFalse(kept.needsCleartextDisclosure)
+        XCTAssertFalse(plan.allPushesAreCleartext)
+    }
+
+    func testAnAllCleartextPlanHasNothingToRunUntilApproved() {
+        let plan = FleetWiFiRollout.plan([candidate("a"), candidate("b")])
+        XCTAssertTrue(plan.allPushesAreCleartext)
+        let (kept, declined) = plan.excludingCleartext()
+        XCTAssertNil(kept.pilot)
+        XCTAssertTrue(kept.followers.isEmpty)
+        XCTAssertEqual(declined.count, 2)
+    }
+
     func testOnlyCleartextWaitsOnTheAcknowledgment() {
         XCTAssertFalse(FleetWiFiRollout.mayPush(.httpCleartext, cleartextApproved: false))
         XCTAssertTrue(FleetWiFiRollout.mayPush(.httpCleartext, cleartextApproved: true))

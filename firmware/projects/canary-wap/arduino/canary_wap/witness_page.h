@@ -141,6 +141,18 @@ struct Ring {
     for (size_t i = 0; i < n; i++) out[i] = &slots[(start + i) % RING_CAP];
     return n;
   }
+
+  /* Oldest-first COPIES of the newest `n` records (n clamped to what is
+   * held) into `out`, which must have RING_CAP slots. The sketch takes this
+   * under a critical section and renders from the copies, so a push from
+   * the main loop can never tear a record the httpd task is still
+   * formatting, nor shift the ring under a chunked send that blocked. */
+  size_t snapshot(size_t n, Record* out) const {
+    if (n > count) n = count;
+    const size_t start = (next + RING_CAP - n) % RING_CAP;
+    for (size_t i = 0; i < n; i++) out[i] = slots[(start + i) % RING_CAP];
+    return n;
+  }
 };
 
 /* What the renderer needs from the device at the moment of the request. */

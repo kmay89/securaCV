@@ -407,13 +407,18 @@ actor DeviceAPI {
         let result: (Data, URLResponse)
         do {
             result = try await session.data(for: req)
-        } catch let error as URLError
-                    where pinDelegate?.sawMismatch == true
-                        && (error.code == .cancelled
-                            || error.code == .userCancelledAuthentication
-                            || error.code == .serverCertificateUntrusted) {
+        } catch let error as URLError {
             // The pin cut the handshake: name that, not a bare "canceled".
-            throw DeviceError.certificateMismatch
+            // takeMismatch() clears the flag it reads, so a mismatch on one
+            // request is reported by that request and an ordinary
+            // cancellation later on the same session is not.
+            if pinDelegate?.takeMismatch() == true
+                && (error.code == .cancelled
+                    || error.code == .userCancelledAuthentication
+                    || error.code == .serverCertificateUntrusted) {
+                throw DeviceError.certificateMismatch
+            }
+            throw error
         }
         let (data, resp) = result
         guard let http = resp as? HTTPURLResponse else { return data }
@@ -548,12 +553,17 @@ final class PinnedTrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendab
         self.pinnedFingerprint = pinnedFingerprint
     }
 
-    /// True once any connection through this delegate was cut for a
-    /// mismatched (or missing) leaf certificate.
-    var sawMismatch: Bool {
+    /// True if a connection through this delegate was cut for a mismatched
+    /// (or missing) leaf certificate since the last call — read once, by the
+    /// request that failed, and cleared, so the flag never outlives the
+    /// failure it describes (the session and its delegate are cached for the
+    /// app's lifetime).
+    func takeMismatch() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return mismatch
+        let seen = mismatch
+        mismatch = false
+        return seen
     }
 
     private func noteMismatch() {

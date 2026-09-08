@@ -173,6 +173,15 @@ static void test_ring() {
   // Exactly one: the head.
   CHECK(ring.newest(1, rows) == 1 && rows[0]->seq == 20);
 
+  // snapshot(): the same selection, copied out — what the sketch renders
+  // from, under its lock, so a concurrent push cannot tear a row.
+  Record copies[RING_CAP];
+  CHECK(ring.snapshot(5, copies) == 5);
+  for (size_t i = 0; i < 5; i++) CHECK(copies[i].seq == 16 + i);
+  CHECK(ring.snapshot(100, copies) == RING_CAP);
+  CHECK(copies[0].seq == 5 && copies[RING_CAP - 1].seq == 20);
+  CHECK(ring.snapshot(0, copies) == 0);
+
   ring.clear();
   CHECK(ring.count == 0 && ring.newest(1, rows) == 0);
 }

@@ -739,6 +739,12 @@ static WitnessRecord  g_last_record;
 // only, empty at boot — the SD log is the history; this is the page the
 // phone verifies against its pinned key.
 static witness_page::Ring g_witness_page_ring;
+/* The ring is pushed from the main loop and read by the httpd task; both go
+ * through this lock, and the handler renders from a snapshot rather than the
+ * live slots (esp_http_server serves one request at a time, so one static
+ * copy is enough). */
+static portMUX_TYPE g_witness_page_mux = portMUX_INITIALIZER_UNLOCKED;
+static witness_page::Record g_witness_page_snap[witness_page::RING_CAP];
 static SystemHealth   g_health;
 
 typedef void (*pre_reboot_fn)();
@@ -2336,7 +2342,9 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
     memcpy(pr.prev_hash,    out->prev_hash,    32);
     memcpy(pr.chain_hash,   out->chain_hash,   32);
     memcpy(pr.signature,    out->signature,    64);
+    portENTER_CRITICAL(&g_witness_page_mux);
     g_witness_page_ring.push(pr);
+    portEXIT_CRITICAL(&g_witness_page_mux);
   }
 
   // Durable tier FIRST, NVS cache second (codex P1 on #844): if the NVS
@@ -4088,10 +4096,14 @@ static esp_err_t handle_witness_v1(httpd_req_t* req) {
   if (n == 0) return http_send_error(req, 500, "page_header");
   if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
 
-  const witness_page::Record* rows[witness_page::RING_CAP];
-  const size_t count = g_witness_page_ring.newest(last, rows);
+  /* Copy under the ring's lock, render from the copy: a record sealed on the
+   * main loop mid-send can neither tear a row nor shift the ring under the
+   * chunked writer (which may block on the socket). */
+  portENTER_CRITICAL(&g_witness_page_mux);
+  const size_t count = g_witness_page_ring.snapshot(last, g_witness_page_snap);
+  portEXIT_CRITICAL(&g_witness_page_mux);
   for (size_t i = 0; i < count; i++) {
-    n = witness_page::record_build(buf, sizeof(buf), *rows[i], ctx, i == 0);
+    n = witness_page::record_build(buf, sizeof(buf), g_witness_page_snap[i], ctx, i == 0);
     if (n == 0) break;  // cannot happen at RECORD_MAX; close the page rather than hang
     if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
   }

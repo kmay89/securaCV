@@ -10,7 +10,10 @@
   everything (only what needs it)"**: `only: firmware` is the firmware-only
   "release if it moved" check, `force: flasher,lab` re-cuts both desktop apps
   whether or not they moved (with `publish` unchecked, the build-only smoke
-  run; the rest of the plan still runs — `only:` is the narrowing knob), and
+  run; the rest of the plan still runs — `only:` is the narrowing knob — and
+  the targets with no smoke mode, firmware and the site, sit a build-only run
+  out instead of falling back to a real release; a typo'd target name now
+  fails the run rather than being ignored), and
   a dev-channel firmware build is `firmware-release.yml`
   dispatched directly with `channel: dev`, as it always was. The one thing
   only the one-click launcher did — warn that publishing an already-tagged
@@ -61,11 +64,13 @@
 - **Three behaviors the canary copy had and canonical lacked moved into
   `csi_hal.cpp`** (both products get them): `stop()` drains the ring by
   advancing the consumer's own index; `get_caps()` honors
-  `CONFIG_IDF_TARGET_ESP32S3` as well as the sketch's board macro; and
-  `process()` fills `v[25]` (dropped_estimate) from the configured frame
-  rate — the canary's `/api/sensing` read it, canonical had left it 0, so
-  canary-wap's `wifi.channel_activity` module now sees a real supply-drop
-  cue too.
+  `CONFIG_IDF_TARGET_ESP32S3` / `ESP32S2` as well as the sketch's board
+  macro; and `process()` fills `v[25]` — canonical had left it 0 — with the
+  frames the rate limiter shed that window, the busy-channel meaning
+  `wifi.channel_activity` reads it in (the canary copy had filled the slot
+  with the shortfall, expected minus arrived, which points the other way;
+  one HAL means one meaning, and the canary's `/api/sensing`
+  `dropped_estimate` now carries the shed count).
 - **The canary PIO build's CSI watchdog now runs.** The old `csi_hal::` shim
   checked it only inside a `csi_hal::process()` nobody called, so the
   5 s-silence recovery `csi_modules_integration.cpp` configures had never
@@ -107,6 +112,16 @@
   addresses); the device path is compiled only by CI's firmware build — no
   board has run it — and the bench pass in `docs/IMPROVEMENT_ROADMAP.md` §5
   is what shows the false-positive floor moved.
+
+### Tooling: `regression_check.sh` judges a hit by its content, not its path
+
+- The token-isolation and private-key checks piped `grep -rn` output — which
+  starts every line with `file:line:` — through a keyword grep, so a checkout
+  whose path contained "witness" or "transmit" (a worktree named for its
+  task, a home directory) failed both checks on files nobody had touched, and
+  two reviewers in one day spent time proving the same false positive. The
+  keyword match now runs on the text after `file:line:`; the report still
+  names the file.
 
 ### One witness-page contract, a TLS pin the app actually uses, and a Wi-Fi rollout that says when the password is in the clear
 

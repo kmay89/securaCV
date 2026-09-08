@@ -53,6 +53,17 @@ final class FleetWiFiRunner: ObservableObject {
         self.cleartextApproved = cleartextApproved
         defer { running = false; finished = true }
 
+        // The plain-http lanes wait on the disclosure; the rest do not wait
+        // on them. Without approval the cleartext targets are set aside with
+        // the reason on their row and the plan is re-staged around an
+        // encrypted pilot, so one unapproved Canary never strands the fleet.
+        var plan = plan
+        if !cleartextApproved && plan.needsCleartextDisclosure {
+            let (kept, declined) = plan.excludingCleartext()
+            for c in declined { steps[c.id] = .failed(FleetWiFiRollout.cleartextDeclined) }
+            plan = kept
+        }
+
         // The lanes that never get a push start honest, not blank.
         for c in plan.handsOn { steps[c.id] = .handsOn }
         for c in plan.unreachable {

@@ -101,6 +101,28 @@ enum FleetWiFiRollout {
         /// Does running this plan need the one-time cleartext disclosure
         /// acknowledged first? True whenever any push would ride plain http.
         var needsCleartextDisclosure: Bool { !cleartextTargets.isEmpty }
+
+        /// True when EVERY push would ride plain http — the one case a run
+        /// has nothing to do until the disclosure is acknowledged. A plan
+        /// with any encrypted lane can run those lanes regardless.
+        var allPushesAreCleartext: Bool {
+            !pushTargets.isEmpty && pushTargets.allSatisfy { $0.path == .httpCleartext }
+        }
+
+        /// The plan with its plain-http lanes set aside: the declined
+        /// targets, and a plan re-staged around the healthiest device on an
+        /// encrypted lane (pinned https first, then bonded BLE), so one
+        /// plain-http Canary the user did not approve never holds the rest
+        /// of the fleet. Lane-then-strength order is preserved.
+        func excludingCleartext() -> (plan: Plan, declined: [Candidate]) {
+            let declined = cleartextTargets
+            let kept = pushTargets.filter { $0.path != .httpCleartext }
+            let pilot = kept.first { $0.path == .http } ?? kept.first { $0.path == .ble }
+            let followers = kept.filter { $0.id != pilot?.id }
+            return (Plan(pilot: pilot, followers: followers,
+                         handsOn: handsOn, unreachable: unreachable),
+                    declined)
+        }
     }
 
     /// Build the staged plan. The pilot is the healthiest Canary on the

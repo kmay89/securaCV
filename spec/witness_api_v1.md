@@ -211,3 +211,11 @@ that returns what is held. The durable history is the SD log
 (`/WITNESS/records.jsonl`), verified offline by `tools/verify_witness_log.py`.
 The old `GET /api/witness` (one record, the device's own self-check flag)
 remains for the device's dashboard and is not this contract.
+
+`payload_hash` is new on an HTTP surface (the old page sent only
+`time_bucket` and `chain_hash`). It is domain-separated but unkeyed, so a
+holder of the Bearer token can confirm a guess at a low-entropy payload — a
+short state-transition string, say — by hashing the guess. That is the same
+exposure the SD line (`ph`) and the PWK export already carry, not a new one;
+the page adds no plaintext and no key, and the token it sits behind is the
+same one that reads the SD log.

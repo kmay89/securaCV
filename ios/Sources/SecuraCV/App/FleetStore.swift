@@ -890,7 +890,9 @@ final class FleetStore: ObservableObject {
         }
 
         var events: [TimelineEvent] = []
-        if let page = try? await api.witness(last: 20) {
+        // An empty page (a ring not yet populated after boot) is no verdict:
+        // the badge is left as it was rather than read as "unsigned".
+        if let page = try? await api.witness(last: 20), !page.records.isEmpty {
             let verdict = ChainVerifier.verify(page, pinnedKey: PinnedKeyStore.key(for: ref.id))
             w.badge = verdict.badge
             // The wire's seq is u64; the model mirrors fleet_model.h's
@@ -948,7 +950,9 @@ final class FleetStore: ObservableObject {
         // against any firmware in this repository (roadmap row 6). An
         // unsigned or unknown-format page lands on the honest rung
         // (ChainVerdict.badge), never on Verified.
-        if let page = try? await api.witness(last: 20) {
+        // An empty page (a ring not yet populated after boot) is no verdict:
+        // the badge is left as it was rather than read as "unsigned".
+        if let page = try? await api.witness(last: 20), !page.records.isEmpty {
             let verdict = ChainVerifier.verify(page, pinnedKey: PinnedKeyStore.key(for: ref.id))
             w.badge = verdict.badge
             if let head = page.records.map(\.seq).max() {

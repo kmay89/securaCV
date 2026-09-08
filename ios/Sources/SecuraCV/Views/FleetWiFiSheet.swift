@@ -97,7 +97,7 @@ struct FleetWiFiSheet: View {
             .buttonStyle(.borderedProminent)
             .disabled(ssid.trimmingCharacters(in: .whitespaces).isEmpty
                       || (plan?.pushTargets.isEmpty ?? true)
-                      || ((plan?.needsCleartextDisclosure ?? false) && !cleartextApproved))
+                      || ((plan?.allPushesAreCleartext ?? false) && !cleartextApproved))
         } header: {
             Text("The new network")
         } footer: {
@@ -112,8 +112,11 @@ struct FleetWiFiSheet: View {
     }
 
     /// The cleartext disclosure: shown only when a push would ride plain
-    /// http, and the run cannot start until its switch is on. The copy says
-    /// exactly what crosses the network and the two ways to avoid it.
+    /// http. The plain-http lanes wait on its switch; the encrypted lanes run
+    /// either way (the runner re-stages around an encrypted pilot), and only
+    /// a plan whose every lane is plain http has nothing to do until the
+    /// switch is on. The copy says exactly what crosses the network and the
+    /// two ways to avoid it.
     private func cleartextSection(_ plan: FleetWiFiRollout.Plan) -> some View {
         Section {
             Toggle(isOn: $cleartextApproved) {
