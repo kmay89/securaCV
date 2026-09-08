@@ -78,6 +78,19 @@ class VersionOrdering(unittest.TestCase):
         self.assertEqual(rp.newest_published(tags, "flasher-v"), "0.2.0")
 
 
+class NameLists(unittest.TestCase):
+    # `force:` / `--only` are typed by a human into an Actions input box and
+    # arrive with the spaces humans type. A token lost to whitespace would
+    # silently force one app and not the other, with no error anywhere.
+    def test_spaces_around_commas_are_not_part_of_a_name(self):
+        self.assertEqual(rp.split_names("flasher, lab"), {"flasher", "lab"})
+        self.assertEqual(rp.split_names(" all "), {"all"})
+
+    def test_blank_means_nothing(self):
+        self.assertEqual(rp.split_names(""), set())
+        self.assertEqual(rp.split_names(" , "), set())
+
+
 class DecideVersioned(unittest.TestCase):
     def decide(self, **kwargs):
         base = dict(source_version="0.3.0", latest_version="0.2.0", changed=True)

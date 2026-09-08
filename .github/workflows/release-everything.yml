@@ -7,7 +7,7 @@
 # that is the point, and it is what stops the button burning runners.
 #
 # What "needs doing" means, per target (the logic lives in
-# `.github/scripts/release_plan.py`, which is unit-tested — 49 cases — because
+# `.github/scripts/release_plan.py`, which is unit-tested, because
 # this decision is the whole product):
 #
 #   • source version NEWER than the newest tag  → release it (this is also what
@@ -36,7 +36,9 @@
 # date) because each was one `only:` / `force:` setting of this button:
 #   • `only: firmware`            → the firmware-only "release if it moved" check
 #   • `force: flasher,lab`        → both desktop apps, whether or not they moved
-#                                   (publish unchecked = build-only smoke run)
+#                                   (publish unchecked = build-only smoke run;
+#                                   the other targets are still planned —
+#                                   `only:` is the narrowing knob)
 #   • a dev-channel firmware build → `firmware-release.yml` dispatched directly
 #                                   with `channel: dev` (never a smoke run)
 # A new thing to ship is a row in `.github/release-targets.yml`, not a new

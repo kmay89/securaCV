@@ -146,7 +146,7 @@ source can never disagree.
   catalog itself (every workflow it names must exist, every version file it
   points at must be readable). `only:` narrows the run to one target and
   `force:` (a name, comma-separated names, or `all`) re-cuts targets whether or
-  not they moved — the two knobs that replaced the retired one-click and
+  not they moved without narrowing the run — the two knobs that replaced the retired one-click and
   firmware-if-changed launchers (2026-09-08; the map is in
   [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)).
 - **Actions → "Flasher Factory Images"** rebuilds *only* the browser-flasher

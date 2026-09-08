@@ -2549,14 +2549,19 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
 - **Fix:** the three redundant launchers are deleted. `docs/RELEASE_BUTTONS.md`
   maps each retired button to the surviving inputs — `only: firmware` for the
   firmware-only check; `force: flasher,lab` with `publish` unchecked for the
-  build-only smoke run of both desktop apps (ticked, a real re-publish);
+  build-only smoke run of both desktop apps (ticked, a real re-publish —
+  and `force` names targets without narrowing the run, so "the two apps and
+  nothing else" is two presses with `only:` set);
   `firmware-release.yml` dispatched directly with `channel: dev` for a
   dev-channel build, which was never a smoke run on any button. The one
   capability no survivor had — one-click's overwrite preflight — moved into
   the plan: a forced target whose version is already tagged now says so in
   its summary row (`release_plan.py`, two new unit tests), and the `force`
   input's help text says it takes comma-separated names, which the CLI
-  always accepted. `desktop-mobile-release.yml` is a different case — the
+  always accepted — and, since review, tolerates the spaces a human types
+  (`flasher, lab`): before that, the second token arrived as `" lab"`,
+  matched nothing, and one app was forced while the other silently was not
+  (`split_names`, two unit tests). `desktop-mobile-release.yml` is a different case — the
   Lab as a Tauri iOS shell is a capability no survivor has — and is handled
   in its own entry and its own commit, so that decision can be reversed on
   its own.

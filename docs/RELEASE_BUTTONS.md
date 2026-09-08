@@ -42,8 +42,8 @@ knows the whole graph.
 **Safe by construction.** It never re-ships a different tree under a published
 version, and it doesn't go red for telling you a version needs bumping — that's
 information, not failure. Tick **`plan_only`** to see the plan and dispatch
-nothing. The decision engine is unit-tested (`.github/scripts/test_release_plan.py`,
-49 cases) because this decision *is* the product.
+nothing. The decision engine is unit-tested (`.github/scripts/test_release_plan.py`)
+because this decision *is* the product.
 
 **Narrowing it.** Two inputs replace the launchers this button retired:
 
@@ -51,11 +51,16 @@ nothing. The decision engine is unit-tested (`.github/scripts/test_release_plan.
   "release firmware if it moved" check — same rule, same watched paths.
 - **`force`** re-cuts the named targets whether or not they moved: one name,
   comma-separated names (`flasher,lab`), or `all`. With `publish` unchecked
-  that is a **build-only smoke run of exactly those apps**; with it ticked, a
-  real re-publish. Forcing a version that is **already tagged overwrites that
-  release's assets instead of cutting a new download** — the plan row says so
-  when it applies — so bump first unless a re-upload after a packaging fix is
-  the point. See *An app release that already exists* below.
+  the forced apps get a **build-only smoke run**; with it ticked, a real
+  re-publish. `force` does **not** narrow the run: every other target is still
+  planned by its own rule, and the ones with no build-only mode (firmware, the
+  site) publish for real if they are ahead. To touch two apps and nothing
+  else, press twice with `only:` set (`only: flasher` + `force: flasher`, then
+  `only: lab` + `force: lab`), or tick `plan_only` first and read the plan.
+  Forcing a version that is **already tagged overwrites that release's assets
+  instead of cutting a new download** — the plan row says so when it applies
+  — so bump first unless a re-upload after a packaging fix is the point. See
+  *An app release that already exists* below.
 
 ---
 
@@ -160,7 +165,7 @@ for one:
 |---|---|
 | **Release — one click (firmware + apps + web)** — a ticked set, unconditionally | the master button with **`force`** naming the targets (`flasher,lab`, `web`, or `all`). A dev-channel firmware build was never a smoke run: dispatch **Firmware Release** directly with `channel: dev` and the `-dev.N` version. |
 | **Firmware Release — if changed** | the master button with **`only: firmware`** — it is the same rule, generalized (`.github/scripts/release_plan.py`) |
-| **Build Mac apps (Flasher + Lab)** | the master button with **`force: flasher,lab`**; leave `publish` unchecked for the build-only smoke run, tick it to publish the Flasher and cut the Lab draft |
+| **Build Mac apps (Flasher + Lab)** | the master button with **`force: flasher,lab`**; leave `publish` unchecked for the build-only smoke run, tick it to publish the Flasher and cut the Lab draft. Unlike the old button this does not stop at the two apps — the rest of the plan runs too (firmware and the site publish for real if they are ahead). For the two apps and nothing else, press twice with `only:` set, or tick `plan_only` first |
 | **Mobile (iOS) build** — the Lab as a Tauri iOS shell | nothing: it never produced a build (one gated no-op run), and the iPhone + iPad app that ships is the native companion, through **iOS release** — the `ios` target row. The local recipe and the revive path (a target row, not a launcher) are in [`desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md). |
 
 The one thing only the one-click launcher did — warn that publishing an

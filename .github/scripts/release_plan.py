@@ -380,6 +380,17 @@ def build_plan(
 # ────────────────────────────────── CLI ────────────────────────────────────
 
 
+def split_names(raw: str) -> set[str]:
+    """`flasher,lab` → {"flasher", "lab"}.
+
+    `force:` is typed by a human into an Actions input box, so it arrives with
+    the spaces humans type (`flasher, lab`). A token lost to whitespace would
+    silently force one app and not the other, with no error anywhere — and the
+    input's own help text now tells people to type comma-separated names.
+    """
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
 def main(argv: list[str]) -> int:
     """Emit the plan as JSON.
 
@@ -415,8 +426,8 @@ def main(argv: list[str]) -> int:
         targets,
         published_tags,
         publish=args.publish,
-        force={f for f in args.force.split(",") if f},
-        only={o for o in args.only.split(",") if o} or None,
+        force=split_names(args.force),
+        only=split_names(args.only) or None,
         gates=json.loads(args.gates or "{}"),
         changed_resolver=changed_resolver,
     )

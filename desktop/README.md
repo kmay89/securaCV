@@ -94,7 +94,9 @@ The workflow downloads the espflash sidecars, builds a **universal** macOS
 both apps (and everything else). Leave **publish** unchecked for build-only
 smoke runs, tick it to publish the Flasher and cut the sibling Lab draft. It
 dispatches only what is ahead of its last tag; to build both apps regardless,
-set **force** to `flasher,lab`. Which button, when, and when not:
+set **force** to `flasher,lab` (`force` does not narrow the run — the other
+targets are still planned; tick **plan_only** first to see what a press would
+do). Which button, when, and when not:
 [`docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md).
 
 ### One-time: real self-update signing (recommended)
