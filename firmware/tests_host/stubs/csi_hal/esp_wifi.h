@@ -31,10 +31,20 @@ typedef struct {
 } wifi_csi_config_t;
 typedef void (*wifi_csi_cb_t)(void* ctx, wifi_csi_info_t* data);
 typedef enum { WIFI_SECOND_CHAN_NONE = 0 } wifi_second_chan_t;
+/* The associated-AP record the transmitter filter reads the BSSID from
+ * (csi_hal.h "TRANSMITTER FILTER"); the SSID is there so a test can prove
+ * the HAL wipes the whole record, not only the six bytes it compares. */
+typedef struct {
+  uint8_t bssid[6];
+  uint8_t ssid[33];
+  uint8_t primary;
+  int8_t  rssi;
+} wifi_ap_record_t;
 esp_err_t esp_wifi_set_csi_config(const wifi_csi_config_t* config);
 esp_err_t esp_wifi_set_csi_rx_cb(wifi_csi_cb_t cb, void* ctx);
 esp_err_t esp_wifi_set_csi(bool en);
 esp_err_t esp_wifi_set_channel(uint8_t primary, wifi_second_chan_t second);
+esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t* ap_info);
 #ifdef __cplusplus
 }
 #endif

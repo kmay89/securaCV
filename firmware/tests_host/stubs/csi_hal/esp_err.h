@@ -5,4 +5,5 @@ typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL (-1)
 #define ESP_ERR_WIFI_NOT_STARTED 0x3002
+#define ESP_ERR_WIFI_NOT_CONNECT 0x300F  /* STA not associated: the filter stays disarmed */
 #endif

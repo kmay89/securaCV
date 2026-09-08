@@ -59,6 +59,10 @@ esp_err_t esp_wifi_set_csi(bool en) {
   return ESP_OK;
 }
 esp_err_t esp_wifi_set_channel(uint8_t, wifi_second_chan_t) { return ESP_OK; }
+/* No STA association in this harness: the transmitter filter stays disarmed
+ * and every frame passes, which is what the counts below assume. The filter
+ * itself is exercised by firmware/common/csi/csi_hal_transmitter_filter_test.cpp. */
+esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t*) { return ESP_ERR_WIFI_NOT_CONNECT; }
 
 /* ── The canary health log the bridge routes into ──────────────────────── */
 static int g_health_calls = 0;
