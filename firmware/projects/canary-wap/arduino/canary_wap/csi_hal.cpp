@@ -435,8 +435,14 @@ void stop() {
 
   /* Drain ring + scrub extractor's static history — per-window state
    * (s_amp_hist, s_prev_iq, counters) AND the cross-window breathing
-   * envelope — so no CSI-derived state leaks into a subsequent run. */
-  s_head.store(s_tail.load());
+   * envelope — so no CSI-derived state leaks into a subsequent run.
+   * We are the consumer here, so we advance tail to head — never the
+   * other way round (that would be the consumer writing the producer's
+   * index, which races even with relaxed ordering). After
+   * esp_wifi_set_csi(false) the producer task can no longer enqueue, so
+   * this is well-defined. (Carried over from the canary product's former
+   * HAL copy when the two were merged — roadmap 22.) */
+  s_tail.store(s_head.load(std::memory_order_acquire), std::memory_order_release);
   secure_wipe(s_ring, sizeof(s_ring));
   csi_features::reset_history();
 }
@@ -615,6 +621,20 @@ int process() {
   csi_features_t feats = {};
   csi_features::finalize(&feats, s_window_frames, now_ms);
 
+  /* v[25] — dropped-frame estimate: the frames the configured rate promised
+   * this window minus the frames that arrived. csi_features leaves the slot
+   * to us because only the HAL knows the target rate (csi_types.h layout:
+   * [24..27] = frames / dropped / channel / bw). Read by
+   * wifi_channel_activity's "more traffic than we could sample" cue and by
+   * the canary product's sensing snapshot (/api/sensing dropped_estimate). */
+  {
+    const int32_t expected =
+        (int32_t)s_cfg.max_frame_rate_hz * (int32_t)CSI_WINDOW_MS / 1000;
+    const int32_t dropped =
+        expected > (int32_t)s_window_frames ? expected - (int32_t)s_window_frames : 0;
+    feats.v[25] = (int8_t)(dropped > 127 ? 127 : dropped);
+  }
+
   if (s_window_frames < (uint32_t)(s_cfg.max_frame_rate_hz / 2)) {
     s_windows_degraded.fetch_add(1, std::memory_order_relaxed);
   }
@@ -641,7 +661,14 @@ uint32_t get_caps() {
    * ESP32-C3 supports HT20 with amplitude only. ESP32-C6 (future) will
    * report SOUNDING_11BF when its ESP-IDF branch exposes it. */
   uint32_t caps = CSI_CAP_HT20 | CSI_CAP_PHASE;
-#if defined(HARDWARE_XIAO_ESP32S3)
+  /* HT40 is advertised only where the driver actually supports it, so
+   * downstream fusion never takes an HT40 path on a backend that silently
+   * downgraded to 20 MHz. HARDWARE_XIAO_ESP32S3 is the canary-wap sketch's
+   * board macro; the CONFIG_IDF_TARGET_* macros come from the driver's own
+   * sdkconfig, so a build that sets no board macro (the canary PIO envs)
+   * still reports the truth for its chip. */
+#if defined(HARDWARE_XIAO_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3) \
+    || defined(CONFIG_IDF_TARGET_ESP32S2)
   caps |= CSI_CAP_HT40;
 #endif
   return caps;

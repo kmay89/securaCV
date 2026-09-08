@@ -93,6 +93,13 @@ build_flags =
 
 (The SecuraCV monorepo wires this for you in `firmware/envs/platformio/canary-wap.ini`.)
 
+Inside the monorepo the canary product (`firmware/canary/platformio.ini`)
+compiles `csi_hal.cpp` + `csi_features.cpp` from this directory through its
+`build_src_filter` and adapts them to its historical `csi::` spelling in
+`firmware/canary/lib/securacv_csi/`. There is one HAL: that library carried a
+second copy until roadmap 22, and `firmware/scripts/check_csi_sync.sh` now
+fails the build if it grows a body again.
+
 ### Arduino CLI
 
 ```bash

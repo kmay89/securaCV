@@ -1654,6 +1654,54 @@
   asked for one).
 - **Date learned:** 2026-09
 
+## CSI: one HAL, not two kept equal by hand
+
+### A second copy of a driver is a place for fixes to land in only one of them — and for a shim to claim a feature it never ran
+- **What happened:** The canary product (`firmware/canary/lib/securacv_csi`)
+  and the canonical library (`firmware/common/csi`) each carried a full CSI
+  HAL + feature extractor, and the canary-wap sketch a third, staged copy.
+  `check_csi_sync.sh` guarded only the staged copy, so the first two drifted
+  silently and the September 2026 audit re-synced them by hand. Reading them
+  side by side for the merge found real divergence in both directions: the
+  canary copy had a safer `stop()` drain (consumer advances its own index),
+  reported HT40 from the driver's target macro, and filled the
+  dropped-frame slot `v[25]` that its own `/api/sensing` reads — none of
+  which canonical did — while canonical had the PSRAM-backed amplitude
+  history the canary lacked. Worse, the canary file's `csi_hal::` shim
+  advertised "full watchdog + channel-lock parity" and implemented the
+  watchdog check inside `csi_hal::process()`, but `main.cpp` pumps
+  `csi::process()`; nobody ever called the shim's, so the 5 s-silence
+  recovery the integration layer configured had never once fired on the
+  PIO build. The math bodies, at least, were identical — the hand sync had
+  gotten that part right.
+- **Root cause:** Two definitions of one thing with no gate between them.
+  The guard that existed checked bytes between the canonical file and a
+  copy that was *supposed* to be identical; nothing checked the copy that
+  was allowed to differ, so "differs" and "diverged" became the same state.
+  A shim that forwards most calls invites the assumption that it forwards
+  all of them.
+- **Fix:** `securacv_csi.cpp` is now a 76-line `csi::` adapter over
+  `csi_hal::`; `securacv_csi.h` includes `csi_types.h` (one
+  `csi_features_t`); `firmware/canary/platformio.ini` compiles the
+  canonical `csi_hal.cpp` + `csi_features.cpp`. The three canary-only
+  behaviors were ported into canonical, so both products have them.
+  `firmware/canary/include/health_log.h` answers the HAL's
+  `__has_include("health_log.h")` probe so its diagnostics reach the
+  canary health log as before.
+- **Regression check:** `firmware/scripts/check_csi_sync.sh` (CI's
+  `csi-sketch-sync` job): the adapter may define nothing the canonical
+  HAL/extractor defines unless `securacv_csi.h` declares it, may not call
+  the esp_wifi CSI driver, and may not exceed 120 lines; the header must
+  include `csi_types.h` and not restate its contract; the ini must name
+  both canonical sources. `firmware/tests_host/test_csi_hal_adapter.cpp`
+  (run by `make -C firmware/tests_host`) links the adapter against the real
+  HAL over a stubbed driver, so a body that grows back under the canonical
+  name has to link beside it, and asserts the watchdog fires on the
+  `csi::process()` path — the exact gap the shim hid. Compile-tested on the
+  PR by `firmware.yml`'s canary PlatformIO leg — the change was host-tested
+  only when it landed.
+- **Date learned:** 2026-09
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

@@ -141,7 +141,7 @@ Delivered across PRs #465–#494 (ESP32 Mesh Sensing Design plan):
 
 **CSI watchdog + WiFi recovery**:
 - ✅ 5s silence → CSI rx toggle (gentle); 3× consecutive → csi_hal::stop/start (escalation)
-- ✅ PIO csi_hal shim in securacv_csi for full watchdog + channel-lock parity
+- ✅ PIO build compiles the canonical `csi_hal.cpp` directly (roadmap 22); `lib/securacv_csi` is a thin `csi::` adapter. The watchdog now actually runs on the PIO build — the former shim only checked it inside a `csi_hal::process()` nobody called
 
 **Empty-room auto-calibration** (`meta_empty_room_baseline.{h,cpp}`):
 - ✅ 10-min baseline, quiet-hours triggered, NVS-persisted
