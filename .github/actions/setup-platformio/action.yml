@@ -1,0 +1,102 @@
+name: Set up PlatformIO (cached)
+description: >
+  One shared setup path for every PlatformIO job: the interpreter
+  (actions/setup-python lives INSIDE this action, so a caller satisfies CI.md
+  R9 by using it), the ~/.platformio cache under the caller's key, then one
+  `pip install` of PlatformIO at the caller's pin plus whatever extras the
+  job needs. Change how PlatformIO jobs are provisioned HERE, once — not in
+  four workflows (CI.md R10).
+
+# The pins stay in the CALLER. A release job passes `platformio-version:
+# "6.1.19"` and its `extras` pins in its own `with:` block, so the freeze the
+# 2026-09-04 RELEASE_LESSONS entry prescribes is still read in the workflow
+# that holds the signing key, and a bump there is still a deliberate,
+# reviewable maintainer action. This action only decides HOW the install
+# happens, never WHAT version.
+
+inputs:
+  python-version:
+    description: >
+      Interpreter passed to actions/setup-python. The PlatformIO jobs have
+      always pinned 3.11 explicitly — R9 allows a toolchain job to pin as long
+      as it says why: PlatformIO's toolchain scripts have only ever been run on
+      this interpreter here, and pyproject.toml's range (the repo's OWN
+      tooling) resolves to a newer release. Pass "" to take the interpreter
+      from pyproject.toml instead (python-version-file).
+    required: false
+    default: "3.11"
+  platformio-version:
+    description: >
+      Exact PlatformIO version, e.g. "6.1.19". Empty means
+      `pip install --upgrade platformio` — the newest release on PyPI, which
+      is what the CI build jobs have always done. Release workflows MUST pin:
+      those jobs hold the OTA signing key and a PyPI install runs package
+      code on the runner (.github/RELEASE_LESSONS.md, 2026-09-04).
+    required: false
+    default: ""
+  extras:
+    description: >
+      Extra pip requirement specs, whitespace- or newline-separated and
+      unquoted ("intelhex", or "cryptography==50.0.1 intelhex==2.3.0
+      esptool==4.12.0"). Installed in the same `pip install` as PlatformIO,
+      so one resolver sees every pin at once.
+    required: false
+    default: ""
+  cache-key:
+    description: >
+      actions/cache key for ~/.platformio. Callers compute it (they own the
+      hashFiles() over their platformio.ini set — see firmware.yml) so a move
+      into this action changes no key. Empty skips the cache step entirely
+      (a job that only runs `pio project config` downloads nothing).
+    required: false
+    default: ""
+  restore-keys:
+    description: >
+      Newline-separated restore-key prefixes for the cache step, passed
+      through verbatim. Ignored when cache-key is empty.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # Two setup-python steps rather than one with both inputs: setup-python
+    # prefers python-version when both are given and prints a warning on every
+    # run about the ignored file input.
+    - name: Set up Python ${{ inputs.python-version }}
+      if: inputs.python-version != ''
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up Python (pyproject.toml)
+      if: inputs.python-version == ''
+      uses: actions/setup-python@v7
+      with:
+        python-version-file: pyproject.toml
+
+    - name: Cache PlatformIO
+      if: inputs.cache-key != ''
+      uses: actions/cache@v6
+      with:
+        path: ~/.platformio
+        key: ${{ inputs.cache-key }}
+        restore-keys: ${{ inputs.restore-keys }}
+
+    - name: Install PlatformIO
+      shell: bash
+      env:
+        PIO_VERSION: ${{ inputs.platformio-version }}
+        EXTRAS: ${{ inputs.extras }}
+      run: |
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        # Split the extras on whitespace/newlines into one argv — no eval, no
+        # quoting rules for callers to get wrong.
+        read -r -a extra_specs <<< "${EXTRAS//$'\n'/ }"
+        if [ -n "$PIO_VERSION" ]; then
+          pip install "platformio==${PIO_VERSION}" "${extra_specs[@]}"
+        else
+          pip install --upgrade platformio "${extra_specs[@]}"
+        fi
+        pio --version

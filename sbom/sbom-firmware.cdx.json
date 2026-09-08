@@ -1,0 +1,2037 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:194631de-1491-53a3-a394-13625d55b643",
+  "version": 1,
+  "metadata": {
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "group": "securacv",
+          "name": "gen_firmware_sbom.py",
+          "version": "1.0.0",
+          "description": "scripts/gen_firmware_sbom.py — derives this document from flavors.json, the resolved PlatformIO configs, platforms.ini, the first-party library manifests and the workflows' Arduino core pins"
+        }
+      ]
+    },
+    "component": {
+      "type": "firmware",
+      "bom-ref": "securacv-firmware",
+      "group": "securacv",
+      "name": "securacv-firmware",
+      "version": "2.4.15",
+      "description": "SecuraCV Canary firmware — every PlatformIO product firmware/flavors.json builds",
+      "properties": [
+        {
+          "name": "securacv:products",
+          "value": "canary,canary-wap,canary-vision,canary-display,canary-sense"
+        },
+        {
+          "name": "securacv:version_source",
+          "value": "firmware/canary/include/canary_config.h"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "securacv:check",
+        "value": "python3 scripts/gen_firmware_sbom.py --check"
+      },
+      {
+        "name": "securacv:declared_by_hand",
+        "value": "PLATFORM_FACTS (Arduino core / ESP-IDF release per platform literal); everything else is derived"
+      },
+      {
+        "name": "securacv:generator",
+        "value": "scripts/gen_firmware_sbom.py"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_audio",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_audio/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_audio"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_audio"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_auth",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_auth/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_auth"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_auth"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_ble_scan",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_ble_scan/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_ble_scan"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_ble_scan"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_ble_status",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_ble_status/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_ble_status"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_ble_status"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_camera",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_camera/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_camera"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_camera"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_crypto",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_crypto/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_crypto"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_crypto"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_csi",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_csi/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_csi"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_csi"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_data_mgmt",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_data_mgmt/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_data_mgmt"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_data_mgmt"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_diagnostics",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_diagnostics/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_diagnostics"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_diagnostics"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_envsens",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_envsens/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_envsens"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_envsens"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_gps",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_gps/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_gps"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_gps"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_ir",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_ir/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_ir"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_ir"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_lowpower",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_lowpower/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_lowpower"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_lowpower"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_mesh",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_mesh/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_mesh"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_mesh"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_mqtt",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_mqtt/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_mqtt"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_mqtt"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_network",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_network/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_network"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_network"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_power",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_power/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_power"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_power"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_power_policy",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_power_policy/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_power_policy"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_power_policy"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_sensing",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_sensing/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_sensing"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_sensing"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_setup",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_setup/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_setup"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_setup"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_storage",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_storage/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_storage"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_storage"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_thermal",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_thermal/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_thermal"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_thermal"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_thermal_watchdog",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_thermal_watchdog/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_thermal_watchdog"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_thermal_watchdog"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_touch",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_touch/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_touch"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_touch"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_usb_onboard",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_usb_onboard/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_usb_onboard"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_usb_onboard"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_webui",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_webui/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_webui"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_webui"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_witness",
+      "version": "2.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/canary/lib/securacv_witness/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/canary/lib/securacv_witness"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "canarylib:securacv_witness"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "boot_banner",
+      "version": "1.0.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/common/boot/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/common/boot"
+        }
+      ],
+      "bom-ref": "common:boot"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv-csi",
+      "version": "0.4.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/common/csi/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/common/csi"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "bom-ref": "common:csi"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "fleet_beacon",
+      "version": "1.0.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/common/fleet_link/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/common/fleet_link"
+        }
+      ],
+      "bom-ref": "common:fleet_link"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "sentinel-fusion",
+      "version": "0.1.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/common/fusion/library.json"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/common/fusion"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "bom-ref": "common:fusion"
+    },
+    {
+      "type": "library",
+      "group": "securacv",
+      "name": "securacv_ota",
+      "version": "2.0.0",
+      "properties": [
+        {
+          "name": "securacv:first_party",
+          "value": "true"
+        },
+        {
+          "name": "securacv:manifest",
+          "value": "firmware/common/ota/library.properties"
+        },
+        {
+          "name": "securacv:path",
+          "value": "firmware/common/ota"
+        }
+      ],
+      "bom-ref": "common:ota"
+    },
+    {
+      "type": "framework",
+      "group": "espressif",
+      "name": "arduino-esp32",
+      "version": "2.0.17",
+      "description": "Arduino core for the ESP32 (framework = arduino)",
+      "purl": "pkg:github/espressif/arduino-esp32@2.0.17",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-or-later"
+          }
+        }
+      ],
+      "bom-ref": "framework:arduino-esp32@2.0.17",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images); platformio (platform_canary); platformio (platform_s3c3)"
+        },
+        {
+          "name": "securacv:declared_in",
+          "value": "scripts/gen_firmware_sbom.py PLATFORM_FACTS"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "group": "espressif",
+      "name": "arduino-esp32",
+      "description": "Arduino core for the ESP32 (esp32:esp32 Boards Manager package, Arduino-CLI build path)",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-or-later"
+          }
+        }
+      ],
+      "version": "3.3.10",
+      "purl": "pkg:github/espressif/arduino-esp32@3.3.10",
+      "bom-ref": "framework:arduino-esp32@3.3.10",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images)"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "group": "espressif",
+      "name": "arduino-esp32",
+      "version": "3.3.8",
+      "description": "Arduino core for the ESP32 (framework = arduino)",
+      "purl": "pkg:github/espressif/arduino-esp32@3.3.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-or-later"
+          }
+        }
+      ],
+      "bom-ref": "framework:arduino-esp32@3.3.8",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "platformio (platform_core3)"
+        },
+        {
+          "name": "securacv:declared_in",
+          "value": "scripts/gen_firmware_sbom.py PLATFORM_FACTS"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "group": "espressif",
+      "name": "arduino-esp32",
+      "description": "Arduino core for the ESP32 (esp32:esp32 Boards Manager package, Arduino-CLI build path)",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-or-later"
+          }
+        }
+      ],
+      "bom-ref": "framework:arduino-esp32@latest",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (csi_module_disable_matrix.yml:build-with-module-disabled); arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli); arduino-cli (flasher-release.yml:factory-images); arduino-cli (ram_audit.yml:ram-audit)"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "group": "espressif",
+      "name": "esp-idf",
+      "version": "4.4.7",
+      "description": "Espressif IoT Development Framework, bundled inside the Arduino core",
+      "purl": "pkg:github/espressif/esp-idf@v4.4.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "securacv:bundled_components",
+          "value": "not enumerated — FreeRTOS, mbedTLS, lwIP and cJSON ship inside this IDF release at versions nothing in this tree pins"
+        },
+        {
+          "name": "securacv:declared_in",
+          "value": "scripts/gen_firmware_sbom.py PLATFORM_FACTS"
+        }
+      ],
+      "bom-ref": "framework:esp-idf@4.4.7"
+    },
+    {
+      "type": "framework",
+      "group": "espressif",
+      "name": "esp-idf",
+      "version": "5.5.4",
+      "description": "Espressif IoT Development Framework, bundled inside the Arduino core",
+      "purl": "pkg:github/espressif/esp-idf@v5.5.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "securacv:bundled_components",
+          "value": "not enumerated — FreeRTOS, mbedTLS, lwIP and cJSON ship inside this IDF release at versions nothing in this tree pins"
+        },
+        {
+          "name": "securacv:declared_in",
+          "value": "scripts/gen_firmware_sbom.py PLATFORM_FACTS"
+        }
+      ],
+      "bom-ref": "framework:esp-idf@5.5.4"
+    },
+    {
+      "type": "library",
+      "name": "Seeed_Arduino_SSCMA",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "1.0.3"
+        }
+      ],
+      "group": "Seeed-Studio",
+      "version": "1.0.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/Seeed-Studio/Seeed_Arduino_SSCMA/archive/refs/tags/v1.0.3.zip"
+        }
+      ],
+      "purl": "pkg:github/Seeed-Studio/Seeed_Arduino_SSCMA@v1.0.3",
+      "bom-ref": "lib:Seeed-Studio/Seeed_Arduino_SSCMA@1.0.3"
+    },
+    {
+      "type": "library",
+      "name": "ArduinoJson",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:full,canary:release"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^7.0.0"
+        }
+      ],
+      "group": "bblanchon",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/bblanchon/ArduinoJson"
+        }
+      ],
+      "bom-ref": "lib:bblanchon/ArduinoJson@^7.0.0"
+    },
+    {
+      "type": "library",
+      "name": "NimBLE-Arduino",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^1.4.1"
+        }
+      ],
+      "group": "h2zero",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
+        }
+      ],
+      "bom-ref": "lib:h2zero/NimBLE-Arduino@^1.4.1"
+    },
+    {
+      "type": "library",
+      "name": "NimBLE-Arduino",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:full"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^2.3.8"
+        }
+      ],
+      "group": "h2zero",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
+        }
+      ],
+      "bom-ref": "lib:h2zero/NimBLE-Arduino@^2.3.8"
+    },
+    {
+      "type": "library",
+      "name": "NimBLE-Arduino",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^2.5.0"
+        }
+      ],
+      "group": "h2zero",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
+        }
+      ],
+      "bom-ref": "lib:h2zero/NimBLE-Arduino@^2.5.0"
+    },
+    {
+      "type": "library",
+      "name": "NimBLE-Arduino",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "~1.4.3"
+        }
+      ],
+      "group": "h2zero",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
+        }
+      ],
+      "bom-ref": "lib:h2zero/NimBLE-Arduino@~1.4.3"
+    },
+    {
+      "type": "library",
+      "name": "PubSubClient",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^2.8"
+        }
+      ],
+      "group": "knolleary",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/knolleary/PubSubClient"
+        }
+      ],
+      "bom-ref": "lib:knolleary/PubSubClient@^2.8"
+    },
+    {
+      "type": "library",
+      "name": "lvgl",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^8.4.0"
+        }
+      ],
+      "group": "lvgl",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/lvgl/lvgl"
+        }
+      ],
+      "bom-ref": "lib:lvgl/lvgl@^8.4.0"
+    },
+    {
+      "type": "library",
+      "name": "lvgl",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^9.5.0"
+        }
+      ],
+      "group": "lvgl",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/lvgl/lvgl"
+        }
+      ],
+      "bom-ref": "lib:lvgl/lvgl@^9.5.0"
+    },
+    {
+      "type": "library",
+      "name": "GFX Library for Arduino",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "1.4.9"
+        }
+      ],
+      "group": "moononournation",
+      "version": "1.4.9",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/moononournation/GFX%20Library%20for%20Arduino"
+        }
+      ],
+      "bom-ref": "lib:moononournation/GFX Library for Arduino@1.4.9"
+    },
+    {
+      "type": "library",
+      "name": "GFX Library for Arduino",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "1.6.6"
+        }
+      ],
+      "group": "moononournation",
+      "version": "1.6.6",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/moononournation/GFX%20Library%20for%20Arduino"
+        }
+      ],
+      "bom-ref": "lib:moononournation/GFX Library for Arduino@1.6.6"
+    },
+    {
+      "type": "library",
+      "name": "Crypto",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:full,canary:release"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^0.4.0"
+        }
+      ],
+      "group": "rweather",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/rweather/Crypto"
+        }
+      ],
+      "bom-ref": "lib:rweather/Crypto@^0.4.0"
+    },
+    {
+      "type": "platform",
+      "name": "platformio/espressif32",
+      "description": "PlatformIO platform package ([platform_canary] in firmware/envs/platformio/platforms.ini)",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/platforms/platformio/espressif32"
+        }
+      ],
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:release"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "false"
+        },
+        {
+          "name": "securacv:platform_literal",
+          "value": "espressif32 @ ^7.0.0"
+        },
+        {
+          "name": "securacv:platforms_ini_section",
+          "value": "platform_canary"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "^7.0.0"
+        }
+      ],
+      "bom-ref": "platform:platform_canary"
+    },
+    {
+      "type": "platform",
+      "name": "pioarduino/platform-espressif32",
+      "description": "PlatformIO platform package ([platform_core3] in firmware/envs/platformio/platforms.ini)",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.38-1/platform-espressif32.zip"
+        }
+      ],
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:full"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:platform_literal",
+          "value": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.38-1/platform-espressif32.zip"
+        },
+        {
+          "name": "securacv:platforms_ini_section",
+          "value": "platform_core3"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "55.03.38-1"
+        }
+      ],
+      "version": "55.03.38-1",
+      "bom-ref": "platform:platform_core3"
+    },
+    {
+      "type": "platform",
+      "name": "platformio/espressif32",
+      "description": "PlatformIO platform package ([platform_s3c3] in firmware/envs/platformio/platforms.ini)",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/platforms/platformio/espressif32"
+        }
+      ],
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:platform_literal",
+          "value": "espressif32@6.9.0"
+        },
+        {
+          "name": "securacv:platforms_ini_section",
+          "value": "platform_s3c3"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "6.9.0"
+        }
+      ],
+      "version": "6.9.0",
+      "bom-ref": "platform:platform_s3c3"
+    },
+    {
+      "type": "firmware",
+      "group": "securacv",
+      "name": "securacv-canary",
+      "version": "2.4.15",
+      "description": "PlatformIO product `canary` (firmware/canary)",
+      "properties": [
+        {
+          "name": "securacv:boards",
+          "value": "esp32-s3-devkitc-1,esp32cam,esp32dev,seeed_xiao_esp32s3"
+        },
+        {
+          "name": "securacv:build_envs",
+          "value": "dev,release,full,esp32cam,esp32-wroom,freenove-s3"
+        },
+        {
+          "name": "securacv:check_env",
+          "value": "release"
+        },
+        {
+          "name": "securacv:project_dir",
+          "value": "firmware/canary"
+        },
+        {
+          "name": "securacv:release_envs",
+          "value": ""
+        }
+      ],
+      "bom-ref": "product:canary"
+    },
+    {
+      "type": "firmware",
+      "group": "securacv",
+      "name": "securacv-canary-display",
+      "version": "2.4.15",
+      "description": "PlatformIO product `canary-display` (firmware/projects/canary-display)",
+      "properties": [
+        {
+          "name": "securacv:boards",
+          "value": "esp32-c3-devkitm-1,esp32-c6-devkitc-1,esp32-s3-devkitc-1,seeed_xiao_esp32s3"
+        },
+        {
+          "name": "securacv:build_envs",
+          "value": "canary-display-dash,canary-display-playground,canary-display-dash-b,canary-display-dash-rs485,canary-display-dash-can,canary-display-dash-vault,canary-display-dash-sd,canary-display-dash-rtc,canary-display-dash-espnow,canary-display-dash-ble5,canary-display-dash-modes,canary-display-dash-mic,canary-display-dash7,canary-display-nightstand7,canary-display-watch,canary-display-watch-modes,canary-display-nightstand-s3,canary-display-touch169,canary-display-amoled241,canary-display-nightstand-c6,canary-display-nightlight-c3"
+        },
+        {
+          "name": "securacv:check_env",
+          "value": "canary-display-watch"
+        },
+        {
+          "name": "securacv:project_dir",
+          "value": "firmware/projects/canary-display"
+        },
+        {
+          "name": "securacv:release_envs",
+          "value": "canary-display-dash7,canary-display-nightstand7,canary-display-nightstand-s3,canary-display-touch169,canary-display-amoled241,canary-display-nightstand-c6,canary-display-nightlight-c3"
+        }
+      ],
+      "bom-ref": "product:canary-display"
+    },
+    {
+      "type": "firmware",
+      "group": "securacv",
+      "name": "securacv-canary-sense",
+      "version": "2.4.15",
+      "description": "PlatformIO product `canary-sense` (firmware/projects/canary-sense)",
+      "properties": [
+        {
+          "name": "securacv:boards",
+          "value": "seeed_xiao_esp32c6"
+        },
+        {
+          "name": "securacv:build_envs",
+          "value": "canary-sense-default,canary-sense-wellbeing"
+        },
+        {
+          "name": "securacv:check_env",
+          "value": "canary-sense-default"
+        },
+        {
+          "name": "securacv:project_dir",
+          "value": "firmware/projects/canary-sense"
+        },
+        {
+          "name": "securacv:release_envs",
+          "value": ""
+        }
+      ],
+      "bom-ref": "product:canary-sense"
+    },
+    {
+      "type": "firmware",
+      "group": "securacv",
+      "name": "securacv-canary-vision",
+      "version": "2.4.15",
+      "description": "PlatformIO product `canary-vision` (firmware/projects/canary-vision)",
+      "properties": [
+        {
+          "name": "securacv:boards",
+          "value": "esp32-c3-devkitm-1,seeed_xiao_esp32c3,seeed_xiao_esp32s3"
+        },
+        {
+          "name": "securacv:build_envs",
+          "value": "canary-vision-default,canary-vision-xiao-c3,canary-vision-xiao-s3,canary-vision-c3-super-mini"
+        },
+        {
+          "name": "securacv:check_env",
+          "value": "canary-vision-default"
+        },
+        {
+          "name": "securacv:project_dir",
+          "value": "firmware/projects/canary-vision"
+        },
+        {
+          "name": "securacv:release_envs",
+          "value": ""
+        }
+      ],
+      "bom-ref": "product:canary-vision"
+    },
+    {
+      "type": "firmware",
+      "group": "securacv",
+      "name": "securacv-canary-wap",
+      "version": "2.4.15",
+      "description": "PlatformIO product `canary-wap` (firmware/projects/canary-wap)",
+      "properties": [
+        {
+          "name": "securacv:boards",
+          "value": "seeed_xiao_esp32s3"
+        },
+        {
+          "name": "securacv:build_envs",
+          "value": "canary-wap-default,canary-wap-usbdrive"
+        },
+        {
+          "name": "securacv:check_env",
+          "value": "canary-wap-default"
+        },
+        {
+          "name": "securacv:project_dir",
+          "value": "firmware/projects/canary-wap"
+        },
+        {
+          "name": "securacv:release_envs",
+          "value": ""
+        }
+      ],
+      "bom-ref": "product:canary-wap"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "canarylib:securacv_audio",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_auth",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_ble_scan",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_ble_status",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_camera",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_crypto",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_csi",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_data_mgmt",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_diagnostics",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_envsens",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_gps",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_ir",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_lowpower",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_mesh",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_mqtt",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_network",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_power",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_power_policy",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_sensing",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_setup",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_storage",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_thermal",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_thermal_watchdog",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_touch",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_usb_onboard",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_webui",
+      "dependsOn": []
+    },
+    {
+      "ref": "canarylib:securacv_witness",
+      "dependsOn": []
+    },
+    {
+      "ref": "common:boot",
+      "dependsOn": []
+    },
+    {
+      "ref": "common:csi",
+      "dependsOn": []
+    },
+    {
+      "ref": "common:fleet_link",
+      "dependsOn": []
+    },
+    {
+      "ref": "common:fusion",
+      "dependsOn": []
+    },
+    {
+      "ref": "common:ota",
+      "dependsOn": []
+    },
+    {
+      "ref": "framework:arduino-esp32@2.0.17",
+      "dependsOn": [
+        "framework:esp-idf@4.4.7"
+      ]
+    },
+    {
+      "ref": "framework:arduino-esp32@3.3.10",
+      "dependsOn": []
+    },
+    {
+      "ref": "framework:arduino-esp32@3.3.8",
+      "dependsOn": [
+        "framework:esp-idf@5.5.4"
+      ]
+    },
+    {
+      "ref": "framework:arduino-esp32@latest",
+      "dependsOn": []
+    },
+    {
+      "ref": "framework:esp-idf@4.4.7",
+      "dependsOn": []
+    },
+    {
+      "ref": "framework:esp-idf@5.5.4",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:Seeed-Studio/Seeed_Arduino_SSCMA@1.0.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:bblanchon/ArduinoJson@^7.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:h2zero/NimBLE-Arduino@^1.4.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:h2zero/NimBLE-Arduino@^2.3.8",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:h2zero/NimBLE-Arduino@^2.5.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:h2zero/NimBLE-Arduino@~1.4.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:knolleary/PubSubClient@^2.8",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:lvgl/lvgl@^8.4.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:lvgl/lvgl@^9.5.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:moononournation/GFX Library for Arduino@1.4.9",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:moononournation/GFX Library for Arduino@1.6.6",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib:rweather/Crypto@^0.4.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "platform:platform_canary",
+      "dependsOn": [
+        "framework:arduino-esp32@2.0.17"
+      ]
+    },
+    {
+      "ref": "platform:platform_core3",
+      "dependsOn": [
+        "framework:arduino-esp32@3.3.8"
+      ]
+    },
+    {
+      "ref": "platform:platform_s3c3",
+      "dependsOn": [
+        "framework:arduino-esp32@2.0.17"
+      ]
+    },
+    {
+      "ref": "product:canary",
+      "dependsOn": [
+        "canarylib:securacv_audio",
+        "canarylib:securacv_auth",
+        "canarylib:securacv_ble_scan",
+        "canarylib:securacv_ble_status",
+        "canarylib:securacv_camera",
+        "canarylib:securacv_crypto",
+        "canarylib:securacv_csi",
+        "canarylib:securacv_data_mgmt",
+        "canarylib:securacv_diagnostics",
+        "canarylib:securacv_envsens",
+        "canarylib:securacv_gps",
+        "canarylib:securacv_ir",
+        "canarylib:securacv_lowpower",
+        "canarylib:securacv_mesh",
+        "canarylib:securacv_mqtt",
+        "canarylib:securacv_network",
+        "canarylib:securacv_power",
+        "canarylib:securacv_power_policy",
+        "canarylib:securacv_sensing",
+        "canarylib:securacv_setup",
+        "canarylib:securacv_storage",
+        "canarylib:securacv_thermal",
+        "canarylib:securacv_thermal_watchdog",
+        "canarylib:securacv_touch",
+        "canarylib:securacv_usb_onboard",
+        "canarylib:securacv_webui",
+        "canarylib:securacv_witness",
+        "common:boot",
+        "common:csi",
+        "common:fleet_link",
+        "common:fusion",
+        "common:ota",
+        "lib:bblanchon/ArduinoJson@^7.0.0",
+        "lib:h2zero/NimBLE-Arduino@^2.3.8",
+        "lib:rweather/Crypto@^0.4.0",
+        "platform:platform_canary",
+        "platform:platform_core3"
+      ]
+    },
+    {
+      "ref": "product:canary-display",
+      "dependsOn": [
+        "common:boot",
+        "common:csi",
+        "common:fleet_link",
+        "common:fusion",
+        "common:ota",
+        "lib:bblanchon/ArduinoJson@^7.0.0",
+        "lib:h2zero/NimBLE-Arduino@^1.4.1",
+        "lib:h2zero/NimBLE-Arduino@^2.5.0",
+        "lib:knolleary/PubSubClient@^2.8",
+        "lib:lvgl/lvgl@^8.4.0",
+        "lib:lvgl/lvgl@^9.5.0",
+        "lib:moononournation/GFX Library for Arduino@1.4.9",
+        "lib:moononournation/GFX Library for Arduino@1.6.6",
+        "lib:rweather/Crypto@^0.4.0",
+        "platform:platform_core3",
+        "platform:platform_s3c3"
+      ]
+    },
+    {
+      "ref": "product:canary-sense",
+      "dependsOn": [
+        "common:boot",
+        "common:csi",
+        "common:fleet_link",
+        "common:fusion",
+        "common:ota",
+        "lib:bblanchon/ArduinoJson@^7.0.0",
+        "lib:h2zero/NimBLE-Arduino@^2.3.8",
+        "lib:knolleary/PubSubClient@^2.8",
+        "lib:rweather/Crypto@^0.4.0",
+        "platform:platform_core3"
+      ]
+    },
+    {
+      "ref": "product:canary-vision",
+      "dependsOn": [
+        "common:boot",
+        "common:csi",
+        "common:fleet_link",
+        "common:fusion",
+        "common:ota",
+        "lib:Seeed-Studio/Seeed_Arduino_SSCMA@1.0.3",
+        "lib:bblanchon/ArduinoJson@^7.0.0",
+        "lib:h2zero/NimBLE-Arduino@~1.4.3",
+        "lib:knolleary/PubSubClient@^2.8",
+        "lib:rweather/Crypto@^0.4.0",
+        "platform:platform_s3c3"
+      ]
+    },
+    {
+      "ref": "product:canary-wap",
+      "dependsOn": [
+        "common:boot",
+        "common:csi",
+        "common:fleet_link",
+        "common:fusion",
+        "common:ota",
+        "lib:bblanchon/ArduinoJson@^7.0.0",
+        "lib:h2zero/NimBLE-Arduino@^2.3.8",
+        "lib:rweather/Crypto@^0.4.0",
+        "platform:platform_core3"
+      ]
+    },
+    {
+      "ref": "securacv-firmware",
+      "dependsOn": [
+        "framework:arduino-esp32@2.0.17",
+        "framework:arduino-esp32@3.3.10",
+        "framework:arduino-esp32@latest",
+        "product:canary",
+        "product:canary-display",
+        "product:canary-sense",
+        "product:canary-vision",
+        "product:canary-wap"
+      ]
+    }
+  ]
+}

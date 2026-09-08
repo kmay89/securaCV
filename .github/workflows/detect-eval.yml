@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install libseccomp
-        run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+        uses: ./.github/actions/setup-libseccomp
 
       - name: Clippy (detect-eval)
         run: cargo clippy --features detect-eval --bin detect_eval --lib -- -D warnings

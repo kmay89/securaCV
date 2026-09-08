@@ -1,7 +1,12 @@
 name: SBOM Generation
 
 # The SBOMs only change when a dependency manifest does, so the triggers are
-# scoped to those files (plus manual dispatch for an on-demand snapshot). The
+# scoped to those files (plus manual dispatch for an on-demand snapshot). For
+# the firmware that manifest is the COMMITTED sbom/sbom-firmware.cdx.json:
+# lint.yml byte-gates it against every build input on every PR, so any input
+# that moves (a platform pin, a lib_deps line, a library manifest, an Arduino
+# core pin, the firmware version) reaches main only together with a
+# regenerated file, and that file is what triggers this run. The
 # `release: published` trigger is separate: it regenerates the SBOMs against the
 # tagged tree and attaches them to the release as downloadable assets, so every
 # published version ships its bill of materials instead of it living only in a
@@ -14,6 +19,8 @@ on:
       - 'Cargo.lock'
       - 'canary-vision/**/package.json'
       - 'canary-vision/package-lock.json'
+      - 'sbom/**'
+      - 'scripts/gen_firmware_sbom.py'
       - '.github/workflows/sbom.yml'
   pull_request:
     branches: [ "main" ]
@@ -22,6 +29,8 @@ on:
       - 'Cargo.lock'
       - 'canary-vision/**/package.json'
       - 'canary-vision/package-lock.json'
+      - 'sbom/**'
+      - 'scripts/gen_firmware_sbom.py'
       - '.github/workflows/sbom.yml'
   release:
     types: [ published ]
@@ -45,6 +54,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+
+    # Python + PlatformIO, right after checkout (CI.md R9): the firmware SBOM
+    # generator runs on this interpreter, and `pio project config` is the
+    # oracle its ini resolver is proven against below. No cache: nothing here
+    # compiles, so nothing is downloaded into ~/.platformio.
+    - name: Set up Python + PlatformIO (resolver oracle)
+      uses: ./.github/actions/setup-platformio
+    - name: Install the generator's YAML reader
+      # The Arduino-CLI core pins the SBOM lists live in workflow YAML.
+      run: python3 -m pip install --quiet pyyaml
 
     # ---- Rust SBOM ----
     # Compiling cargo-cyclonedx from source cost ~5-10 min of every run.
@@ -88,116 +107,26 @@ jobs:
       run: cdxgen -t node -o sbom-node.cdx.json canary-vision/
 
     # ---- Firmware (C/C++) SBOM ----
-    - name: Generate Firmware SBOM (CycloneDX)
+    # Derived, not typed. This step used to write the document from a heredoc
+    # naming Arduino-ESP32 2.0.17 / ESP-IDF 4.4.7 with a hand-picked list of
+    # IDF components — while the shipped canary-display and canary-wap images
+    # had moved to the pioarduino core 3.3.8 / ESP-IDF 5.5.4 and nothing in
+    # the template knew. scripts/gen_firmware_sbom.py now reads flavors.json,
+    # the resolved PlatformIO config of every build env, platforms.ini, the
+    # first-party library manifests and the workflows' Arduino core pins
+    # (sbom/README.md says what is derived and what is still declared).
+    #
+    # Three passes: prove the ini resolver against PlatformIO's own reading of
+    # every env; prove the committed copy matches this tree (on a release
+    # event that is the tagged tree — a stale SBOM must fail the attach, not
+    # ship); then write the artifact copy, which is the committed document
+    # plus a generation timestamp (the one non-deterministic field, and only
+    # ever in the artifact).
+    - name: Generate Firmware SBOM (CycloneDX, derived from the build inputs)
       run: |
         set -euo pipefail
-        # Derive the firmware version from source rather than hardcoding it — a
-        # stale literal (this shipped as "1.0.0") is a false compliance record on
-        # every release. FIRMWARE_VERSION is the single source of truth.
-        FW_VERSION=$(grep -oE '#define[[:space:]]+FIRMWARE_VERSION[[:space:]]+"[^"]+"' \
-          firmware/canary/include/canary_config.h | grep -oE '"[^"]+"' | tr -d '"')
-        [ -n "$FW_VERSION" ] || { echo "::error::could not read FIRMWARE_VERSION from firmware/canary/include/canary_config.h"; exit 1; }
-        echo "firmware version: $FW_VERSION"
-        # The dev/release images build framework=arduino on the OFFICIAL
-        # espressif32 platform, which packages Arduino-ESP32 core 2.0.17 /
-        # ESP-IDF 4.4.7 (firmware/canary/platformio.ini) — NOT bare esp-idf 5.1.
-        # Unquoted delimiter on purpose: $(date ...) and ${FW_VERSION} below must
-        # expand. Both values are shell-safe (a timestamp and a semver from a
-        # trusted in-repo header), so there is nothing to inject.
-        cat > sbom-firmware.cdx.json << FWEOF
-        {
-          "bomFormat": "CycloneDX",
-          "specVersion": "1.5",
-          "serialNumber": "urn:uuid:firmware-sbom",
-          "version": 1,
-          "metadata": {
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "component": {
-              "type": "firmware",
-              "name": "securacv-canary-firmware",
-              "version": "${FW_VERSION}",
-              "description": "SecuraCV Canary ESP32-S3 firmware (dev/release image: Arduino-ESP32 core on the official espressif32 platform)"
-            },
-            "tools": [
-              {
-                "name": "manual-sbom-generator",
-                "version": "1.0.0"
-              }
-            ]
-          },
-          "components": [
-            {
-              "type": "framework",
-              "name": "arduino-esp32",
-              "version": "2.0.17",
-              "description": "Arduino-ESP32 core (framework=arduino on the official espressif32 platform); bundles ESP-IDF 4.4.7",
-              "purl": "pkg:github/espressif/arduino-esp32@2.0.17",
-              "licenses": [{ "license": { "id": "LGPL-2.1-or-later" } }]
-            },
-            {
-              "type": "framework",
-              "name": "esp-idf",
-              "version": "4.4.7",
-              "description": "Espressif IoT Development Framework (bundled by the Arduino-ESP32 core)",
-              "purl": "pkg:github/espressif/esp-idf@v4.4.7",
-              "licenses": [{ "license": { "id": "Apache-2.0" } }]
-            },
-            {
-              "type": "library",
-              "name": "freertos",
-              "version": "10.4.3",
-              "description": "FreeRTOS real-time operating system kernel (bundled with ESP-IDF 4.4.7)",
-              "purl": "pkg:github/FreeRTOS/FreeRTOS-Kernel@V10.4.3",
-              "licenses": [{ "license": { "id": "MIT" } }]
-            },
-            {
-              "type": "library",
-              "name": "mbedtls",
-              "version": "2.28.3",
-              "description": "Mbed TLS cryptographic library (bundled with ESP-IDF 4.4.7, 2.28 LTS line)",
-              "purl": "pkg:github/Mbed-TLS/mbedtls@mbedtls-2.28.3",
-              "licenses": [{ "license": { "id": "Apache-2.0" } }]
-            },
-            {
-              "type": "library",
-              "name": "cJSON",
-              "version": "1.7.15",
-              "description": "Ultralightweight JSON parser (bundled with ESP-IDF 4.4.7)",
-              "purl": "pkg:github/DaveGamble/cJSON@v1.7.15",
-              "licenses": [{ "license": { "id": "MIT" } }]
-            },
-            {
-              "type": "library",
-              "name": "lwip",
-              "version": "2.1.2",
-              "description": "Lightweight TCP/IP stack (bundled with ESP-IDF 4.4.7)",
-              "purl": "pkg:github/lwip-tcpip/lwip@STABLE-2_1_2_RELEASE",
-              "licenses": [{ "license": { "id": "BSD-3-Clause" } }]
-            },
-            {
-              "type": "library",
-              "name": "esp-tls",
-              "version": "4.4.7",
-              "description": "ESP-IDF TLS abstraction layer",
-              "purl": "pkg:github/espressif/esp-idf@v4.4.7#components/esp-tls"
-            },
-            {
-              "type": "library",
-              "name": "nvs_flash",
-              "version": "4.4.7",
-              "description": "ESP-IDF Non-Volatile Storage library",
-              "purl": "pkg:github/espressif/esp-idf@v4.4.7#components/nvs_flash"
-            },
-            {
-              "type": "library",
-              "name": "esp_https_ota",
-              "version": "4.4.7",
-              "description": "ESP-IDF HTTPS OTA update component",
-              "purl": "pkg:github/espressif/esp-idf@v4.4.7#components/esp_https_ota"
-            }
-          ]
-        }
-        FWEOF
+        python3 scripts/gen_firmware_sbom.py --verify-with-pio --check
+        python3 scripts/gen_firmware_sbom.py --out sbom-firmware.cdx.json --timestamp now
 
     # Fail loudly if any SBOM is empty or malformed instead of silently
     # uploading a broken artifact.
@@ -207,6 +136,13 @@ jobs:
           jq -e '.bomFormat == "CycloneDX"' "$f" > /dev/null \
             || { echo "::error::$f is missing or not a CycloneDX document"; exit 1; }
         done
+        # The firmware document is ours end to end, so hold it to more than
+        # the format tag: the spec version the generator promises, a
+        # non-empty component list, and a closed dependency graph.
+        jq -e '.specVersion == "1.5" and (.components | length) > 0
+               and ([.dependencies[].dependsOn[]] - ([.components[]."bom-ref"] + [.metadata.component."bom-ref"]) | length) == 0' \
+          sbom-firmware.cdx.json > /dev/null \
+          || { echo "::error::sbom-firmware.cdx.json is not the document gen_firmware_sbom.py promises"; exit 1; }
 
     # ---- Upload artifacts ----
     # Always keep the 90-day CI artifact (branch/PR visibility). On a release,

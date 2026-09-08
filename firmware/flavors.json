@@ -135,6 +135,39 @@
       "canary-display-dash7": "display-pio3",
       "canary-display-dash-sd": "display-pio3",
       "canary-display-nightstand7": "display-pio3"
+    },
+    "shards": {
+      "dash": [
+        "canary-display-dash",
+        "canary-display-playground",
+        "canary-display-dash-b",
+        "canary-display-dash-rs485",
+        "canary-display-dash-can",
+        "canary-display-dash-vault"
+      ],
+      "dash-features": [
+        "canary-display-dash-sd",
+        "canary-display-dash-rtc",
+        "canary-display-dash-espnow",
+        "canary-display-dash-ble5",
+        "canary-display-dash-modes",
+        "canary-display-dash-mic"
+      ],
+      "seven-inch": [
+        "canary-display-dash7",
+        "canary-display-nightstand7"
+      ],
+      "core2-panels": [
+        "canary-display-watch",
+        "canary-display-watch-modes",
+        "canary-display-nightstand-s3",
+        "canary-display-touch169",
+        "canary-display-amoled241",
+        "canary-display-nightlight-c3"
+      ],
+      "c6": [
+        "canary-display-nightstand-c6"
+      ]
     }
   },
   {

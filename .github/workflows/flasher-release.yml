@@ -194,37 +194,32 @@ jobs:
           # symlinked file inside the action is copied as content
           # (RELEASE_LESSONS principle 1).
           mkdir -p .github/actions
-          rm -rf .github/actions/setup-arduino-esp32
+          rm -rf .github/actions/setup-arduino-esp32 .github/actions/setup-platformio
           cp -RL _tooling/.github/actions/setup-arduino-esp32 .github/actions/setup-arduino-esp32
+          # Same reason for the PlatformIO provisioning action: a tag cut
+          # before it existed has no .github/actions/setup-platformio at all,
+          # and the step below would fail outright on that channel.
+          cp -RL _tooling/.github/actions/setup-platformio .github/actions/setup-platformio
           rm -rf _tooling
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Python + build tools (PlatformIO, cached)
+        # The shared composite action (CI.md R10); the pins stay here. Exact
+        # pins, same as firmware-release.yml: this job can hold the OTA release
+        # key, and a PyPI install runs package code on the runner. Bump
+        # deliberately; Dependabot does not watch these lines.
+        #   cryptography — what build_flash_manifest.py --signing-key needs
+        #                  (via ota_release.py). Installed unconditionally:
+        #                  whether this run signs depends on a secret, and
+        #                  discovering a missing dependency after a 40-minute
+        #                  build would be the worst possible moment.
+        #   intelhex     — esptool 4.11 imports it without declaring it (same
+        #                  workaround as the release workflow)
+        #   esptool      — <5 keeps `merge_bin` stable for make_factory.py
+        uses: ./.github/actions/setup-platformio
         with:
-          python-version: "3.11"
-
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip
-          # cryptography is what build_flash_manifest.py --signing-key needs
-          # (via ota_release.py). Installed unconditionally: whether this run
-          # signs depends on a secret, and discovering a missing dependency
-          # after a 40-minute build would be the worst possible moment.
-          # Exact pins, same as firmware-release.yml: this job can hold the OTA
-          # release key, and a PyPI install runs package code on the runner.
-          # Bump deliberately; Dependabot does not watch these lines.
-          pip install "platformio==6.1.19" "cryptography==50.0.1"
-          # esptool 4.11 imports intelhex without declaring it (same workaround
-          # as the release workflow); esptool<5 keeps `merge_bin` stable for
-          # make_factory.py.
-          pip install "intelhex==2.3.0"
-          pip install "esptool==4.12.0"
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v6
-        with:
-          path: ~/.platformio
-          key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
+          platformio-version: "6.1.19"
+          extras: cryptography==50.0.1 intelhex==2.3.0 esptool==4.12.0
+          cache-key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-canary-release-
             ${{ runner.os }}-pio-canary-
