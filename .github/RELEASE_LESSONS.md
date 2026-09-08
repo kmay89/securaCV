@@ -2473,6 +2473,16 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
     read via `--flavors`), never over it. The list is today's; an env the
     tag's ini lacks fails its `pio run` and warns away, as the typed list
     used to.
+  - **a checker that parses the workflow is a consumer of the list too.**
+    `firmware/scripts/check_ota_channels.py` (Regression Guards) read the
+    signing loop's header with a regex that only matched quoted literals;
+    the first push with the `$(jq … "$DISPLAY_ENVS")` expansion in that
+    header made every display flavor read as unpublished, and the gate went
+    red on `main`'s own release list. It now reads the literals AND the
+    derived envs through `flavor_envs.py` (the workflow's own resolver), and
+    refuses to guess when the loop is not where it expects. Before you
+    change how a workflow names its products, grep the scripts that read
+    the workflow (`grep -rl firmware-release.yml scripts firmware/scripts`).
 - **Applies to:** every list a workflow types that another file already
   owns. The flasher's factory-image product list (`build_flash_manifest.py`
   reads `flash.json`) already works this way; the firmware `flavors`
