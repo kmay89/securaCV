@@ -226,6 +226,8 @@ Hash input format: `"${seq}:${prev_hash}:${timestamp}:${event_type}:${zone}:${ti
 
 Store `witness_seq` and `witness_last_hash` in NVS after each new record so the chain survives reboots. Keep the most recent 500 records in a RAM ring buffer for API queries; older records can be persisted to SPIFFS or discarded.
 
+The page shape both this reference server and the monorepo's canary-wap firmware serve — and the two chain constructions a reader must tell apart (`chain_format`: this server's string pre-image is `reference_v1`; canary-wap's domain-separated binary chain is `wap_v1`) — is pinned in [`spec/witness_api_v1.md`](../../spec/witness_api_v1.md), with one shared fixture both the firmware host test and the iPhone app's XCTest decode. canary-wap keeps a 16-record RAM ring (`witness_page.h`), not 500; the SD log is its history.
+
 ## Provisioning Flow
 
 1. Device boots for the first time with no NVS data.

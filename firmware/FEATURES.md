@@ -257,6 +257,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `POST /api/logs/*/ack` | ✅ | ❌ | ✅ | ❌ |
 | `POST /api/logs/ack-all` | ✅ | ❌ | ✅ | ❌ |
 | `GET /api/witness` | ✅ | ❌ | ❌ | ❌ |
+| `GET /api/v1/witness` (spec/witness_api_v1.md) | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/config` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/export` | ✅ PWK bundle | ❌ | ✅ | ❌ |
 | `POST /api/reboot` | ✅ | ❌ | ✅ | ❌ |

@@ -12,6 +12,29 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-08 — A new CloudKit field is a release step, not just a Swift edit
+
+- **Symptom (not yet paid for — the gate exists so it never is):** the iOS
+  app gained a field on the `PairedDevice` record (`tlsCertFP`, the pairing
+  receipt's TLS certificate fingerprint, so a second iPhone can dial and
+  check an https Canary). CloudKit auto-creates the field in DEVELOPMENT on
+  first write; PRODUCTION rejects every save that carries a field its schema
+  lacks, and `CloudSync.push` swallows the error by design — so shipping the
+  app before promoting the schema would silently stop fleet sync for every
+  user, with nothing in any log.
+- **Cause:** the schema is deployed deliberately (`ios/scripts/cloudkit_schema.sh
+  promote`), and nothing in the Swift build knows whether that happened.
+- **Fix:** the field is in the script's `requirements` table (cross-checked
+  against the Swift sources by `scripts/lint_cloudkit_container.py`), so
+  `cloudkit_schema.sh check` fails until it is promoted. **Before the next
+  iPhone/iPad release, run `ios/scripts/cloudkit_schema.sh promote`** from a
+  machine with the CloudKit CLI token; treat a red `check` as a release
+  blocker.
+- **Applies to:** every Apple target that writes a CKRecord (iPhone/iPad
+  today; the Wall if it ever does). The general rule: a new `record["…"]`
+  key is a schema migration, and the table in `cloudkit_schema.sh` is where
+  it is declared.
+
 ## 2026-09-08 — A registry probe must accept every manifest media type the builder writes
 
 - **Symptom:** `Add-on image` → *Verify publicly installable* red on every

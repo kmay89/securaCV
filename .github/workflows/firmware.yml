@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      # The shared witness-page fixture: the canary-wap host test byte-compares
+      # it and the generator's --check pins it, so an edit here must run this job.
+      - 'spec/fixtures/witness_page_v1.json'
+      - 'spec/fixtures/gen_witness_page_v1.py'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -16,6 +20,10 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      # The shared witness-page fixture: the canary-wap host test byte-compares
+      # it and the generator's --check pins it, so an edit here must run this job.
+      - 'spec/fixtures/witness_page_v1.json'
+      - 'spec/fixtures/gen_witness_page_v1.py'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -1570,6 +1578,26 @@ jobs:
               -lcrypto -o /tmp/witness_store_logic
           /tmp/witness_store_logic | tee /tmp/witness_store_logic.log
           grep -q "ALL .* PASSED" /tmp/witness_store_logic.log
+
+      - name: Build + run canary-wap witness page host test (+ fixture drift)
+        # GET /api/v1/witness (witness_page.h, spec/witness_api_v1.md): the
+        # ?last=N parser, the RAM ring, the coarse ten-minute anchoring, and a
+        # byte-exact render of the shared fixture spec/fixtures/
+        # witness_page_v1.json rebuilt from real Ed25519-signed records
+        # (OpenSSL). The same fixture is what the iPhone app's
+        # WitnessPageFixtureTests decodes, against the same public key — one
+        # fixture, both ends of the contract. The generator's --check then
+        # proves the committed fixture is what the generator writes.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_witness_page.cpp \
+              -lcrypto -o /tmp/witness_page
+          /tmp/witness_page spec/fixtures/witness_page_v1.json | tee /tmp/witness_page.log
+          grep -q "ALL .* PASSED" /tmp/witness_page.log
+          python3 -m pip install --quiet cryptography
+          python3 spec/fixtures/gen_witness_page_v1.py --check
 
       - name: Build + run canary-wap beacon audit recovery host test
         # The beacon-audit chain-head SD recovery guard

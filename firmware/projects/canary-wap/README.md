@@ -186,6 +186,7 @@ make help               # Show all targets
 | `/api/config` | GET/POST | Configuration |
 | `/api/logs` | GET | Log export |
 | `/api/witness/export` | GET | Export witness records |
+| `/api/v1/witness?last=N` | GET | Newest N signed witness records with their chain-hash pre-image — the shared page contract the phone verifies (`spec/witness_api_v1.md`) |
 | `/api/peek/start` | GET | Start camera stream |
 | `/api/peek/stop` | GET | Stop camera stream |
 | `/api/audio/status` | GET | Mic state, mute info, detection counters |

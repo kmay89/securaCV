@@ -412,6 +412,7 @@ struct DeviceDetailView: View {
         case .unsigned: return "Unsigned"
         case .brokenLink(let seq): return "Broken at #\(seq)"
         case .signatureFailed: return "FAILED"
+        case .unsupportedFormat: return "Unverified — unknown chain format"
         }
     }
 }
