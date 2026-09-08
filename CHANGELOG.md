@@ -203,6 +203,12 @@
 - **`desktop/package-lock.json` is committed** and the Flasher release
   workflow installs with `npm ci`; the audit workflow and Dependabot cover it.
   Both Tauri apps now pin the same `@tauri-apps/cli` release.
+- **No compiled test binary in the tree.** A 20 KB x86-64 executable
+  (`canary-display/tests_host/test_motion`, built by `make`) had been committed
+  since #1566 because the host-test `.gitignore` listed binaries by name and
+  the list was two entries behind. It is untracked now, and the display and
+  tincan host-test directories ignore by shape (`test_*`, sources kept by
+  extension) so a new test needs no ignore edit.
 
 ### The website's carries are generated, not hand-mirrored
 
