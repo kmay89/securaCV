@@ -287,9 +287,11 @@ one-header change instead of a per-board copy-paste.
     ghosts). Membership
     is therefore broker-writable: a flood of invented ids can crowd the Wall
     while it lasts, and the ids it leaves behind stay on the Wall as
-    `online: false` rows until a newcomer displaces them (or, if they never
-    signed anything, until they go unheard for 30 days) — what ends with the
-    flood is the lockout of real Canaries, not the ghosts' rows.
+    `online: false` rows until a newcomer displaces them (or, if they
+    acquired neither a pin nor a verified length — an invented id that
+    published a `health` with a key holds a pin and is kept — until they go
+    unheard for 30 days) — what ends with the flood is the lockout of real
+    Canaries, not the ghosts' rows.
   - The wellbeing words (`presence`, `occupants`, `breathing`) ride on a
     peer's row only while it is proven online **and** the reading is fresh
     (a live `state` publish within the same window); a retained `state` is
