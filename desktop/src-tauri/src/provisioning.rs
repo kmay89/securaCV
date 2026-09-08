@@ -571,11 +571,15 @@ mod tests {
         c.mqtt_fp = FP.into();
         let img = build_nvs(&c, 0x6000).unwrap();
         let page = &img[..4096];
+        // Keys are written without a terminator into a 0xff-filled page
+        // (header()), so match the key bytes and accept 0xff or NUL after
+        // them — the same shape the other tests in this module use.
         let has_key = |k: &str| {
-            let mut key = [0xffu8; 16];
-            key[..k.len()].copy_from_slice(k.as_bytes());
-            key[k.len()] = 0;
-            (1..126).any(|i| page[i * 32 + 8..i * 32 + 24] == key)
+            (2..128).any(|i| {
+                let o = i * 32;
+                &page[o + 8..o + 8 + k.len()] == k.as_bytes()
+                    && matches!(page[o + 8 + k.len()], 0 | 0xff)
+            })
         };
         assert!(has_key("mqtt_tls") && has_key("mqtt_ca") && has_key("mqtt_fp"));
         // The u8 payload is the mode byte.
