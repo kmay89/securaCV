@@ -1036,7 +1036,7 @@ export function buildMqtt(data, bus) {
   bus.on("mqtt", () => {
     // LWT is replaced by online on connect, then the retained snapshot lands
     const seq = [];
-    seq.push({ topic: withId(m.lwt.topic, id), payload: '{"online":true}', retain: true });
+    seq.push({ topic: withId(m.lwt.topic, id), payload: '{"online":true,"device_type":"canary-wap"}', retain: true });
     for (const t of m.topics) {
       if (!t.retained) continue;
       seq.push({ topic: withId(m.topic_pattern.replace("<suffix>", t.suffix), id), payload: t.payload, retain: true });

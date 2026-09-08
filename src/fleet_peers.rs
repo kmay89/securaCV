@@ -52,10 +52,12 @@
 //! a real Canary), and can hold a real id in the sticky `degraded` verdict by
 //! announcing a second key and signing under it. [`FLEET_PEER_MAX`] bounds the
 //! table and eviction bounds a flood's effect to its duration; the clock
-//! never expires a proven pin (only never-proven ids age out, and not across
-//! a clock jump); none of it is a liveness proof, and
-//! `tvos/discovery/DISCOVERY.md` says so in the same words. A liveness challenge would use the firmware's `whoami` canonical,
-//! which nothing here drives yet.
+//! never expires an id that holds a pin or a verified length (only ids that
+//! hold neither age out, and the pass that straddles a clock jump is
+//! skipped); none of it is a liveness proof, and
+//! `tvos/discovery/DISCOVERY.md` says so in the same words. A liveness
+//! challenge would use the firmware's `whoami` canonical, which nothing here
+//! drives yet.
 //!
 //! The pin is TOFU, not pairing: "chain: ok" means the last chain publish
 //! verified against the first key this bridge ever saw for that device id,
@@ -93,23 +95,25 @@ pub const FLEET_PEER_RECENT_SECS: u64 = 180;
 
 /// Cap on distinct device ids the table keeps. Above the display's 24-pin
 /// store with headroom for a hub. At the cap a new id displaces one — first
-/// any never-proven id unheard for [`FLEET_PEER_FORGET_SECS`], then the least
-/// recently heard id that never produced a verified signature, then the least
-/// recently heard id of all — so a broker flood can crowd the roll-call only
-/// while it lasts, never lock real Canaries out until someone deletes the
-/// file. Eviction is driven by broker activity (a new id arriving), never by
-/// the clock alone. An evicted id loses its pin and is re-pinned on its next
-/// `health`.
+/// any expirable id unheard for [`FLEET_PEER_FORGET_SECS`], then the least
+/// recently heard id that never produced a verified signature
+/// ([`PeerRecord::proven`]), then the least recently heard id of all — so a
+/// broker flood can crowd the roll-call only while it lasts, never lock real
+/// Canaries out until someone deletes the file. Eviction is driven by broker
+/// activity (a new id arriving), never by the clock alone. An evicted id
+/// loses its pin and is re-pinned on its next `health`.
 pub const FLEET_PEER_MAX: usize = 64;
 
-/// How long a NEVER-PROVEN id (no chain publish ever verified against its
-/// pin) stays in the table without being heard before it is forgotten: 30
-/// days, checked on every flush. A proven Canary's pin is never expired by
-/// the clock — it leaves only by displacement at the cap or by the operator
-/// deleting the file — and no expiry runs at all across an implausible clock
-/// jump (see [`FLEET_PEER_CLOCK_JUMP_SECS`]): a host whose clock lands 30
-/// days ahead for an hour must not come back to a fleet re-pinned by whoever
-/// published first.
+/// How long an id that holds NOTHING WORTH KEEPING — no pinned key and no
+/// verified chain length; an id heard only on `status`, `availability` or
+/// `meta` — stays in the table without being heard before it is forgotten:
+/// 30 days, checked on every flush. An id that holds a pin or a verified
+/// length is never expired by the clock: it leaves only by displacement at
+/// the cap or by the operator deleting the file, so no clock, however wrong,
+/// can hand a pinned id back to whoever publishes `health` first. The expiry
+/// pass that straddles an implausible clock jump is additionally skipped
+/// (see [`FLEET_PEER_CLOCK_JUMP_SECS`]); passes after it run against
+/// whatever clock the host then has, and can forget only unpinned ghosts.
 pub const FLEET_PEER_FORGET_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// The largest step the table's clock may take between two things it did
@@ -249,6 +253,14 @@ impl PeerRecord {
             wellbeing_epoch_s: None,
             pending_chain: None,
         }
+    }
+
+    /// Whether a chain publish has EVER verified against this id's pin,
+    /// retained or live. The one definition of "proven" the table uses — for
+    /// eviction order and for what the clock may forget — so the two paths
+    /// cannot disagree about which ids are worth keeping.
+    pub fn proven(&self) -> bool {
+        self.last_verified_length.is_some()
     }
 
     /// The contract's `online`: proven by a live signed publish inside the
@@ -582,27 +594,28 @@ impl PeerTable {
         self.evictions
     }
 
-    /// Forget every NEVER-PROVEN id not heard within
-    /// [`FLEET_PEER_FORGET_SECS`]. Returns how many were dropped. Nothing is
-    /// dropped when `now` is more than [`FLEET_PEER_CLOCK_JUMP_SECS`] past
-    /// the last moment this table knew of — a clock that jumped forward would
-    /// otherwise expire the whole roll-call in one call, the bridge would
-    /// write that loss to disk, and correcting the clock could not bring the
-    /// pins back. A proven peer (one verified signature, ever) is never
-    /// expired here: its pin is the one thing the file exists to keep, and
-    /// the cap's eviction is what bounds a table of proven ids. A stamp from
-    /// the future is a damaged record, not a recent one; it is kept and ages
-    /// out like any other once the clock passes it.
+    /// Forget every id that holds neither a pinned key nor a verified chain
+    /// length and has not been heard within [`FLEET_PEER_FORGET_SECS`].
+    /// Returns how many were dropped. An id with a pin or a verified length
+    /// is never expired here, whatever the clock says: the pin is the one
+    /// thing the file exists to keep, and the cap's eviction is what bounds
+    /// a table of such ids. The pass is skipped — and the table's clock is
+    /// NOT advanced — when `now` is more than [`FLEET_PEER_CLOCK_JUMP_SECS`]
+    /// past the last moment this table knew of, so a poll tick under a
+    /// jumped clock never teaches the table that clock by itself; only a
+    /// publish arriving under it does ([`PeerTable::observe`]), and the
+    /// passes that follow can forget only unpinned ghosts. A stamp from the
+    /// future is a damaged record, not a recent one; it is kept and ages out
+    /// like any other once the clock passes it.
     pub fn prune(&mut self, now: u64) -> usize {
-        let jumped = now > self.clock_hint.saturating_add(FLEET_PEER_CLOCK_JUMP_SECS);
-        self.clock_hint = self.clock_hint.max(now);
-        if jumped {
+        if self.clock_jumped_since(now) {
             return 0;
         }
+        self.clock_hint = self.clock_hint.max(now);
         let before = self.peers.len();
         self.peers.retain(|_, p| {
-            p.last_signed_epoch_s.is_some()
-                || p.last_verified_length.is_some()
+            p.pinned_key_hex.is_some()
+                || p.proven()
                 || now.saturating_sub(p.last_seen_epoch_s) <= FLEET_PEER_FORGET_SECS
         });
         before - self.peers.len()
@@ -616,11 +629,12 @@ impl PeerTable {
     }
 
     /// The id to displace for a newcomer at the cap: never proven before
-    /// proven, then the least recently heard.
+    /// proven ([`PeerRecord::proven`], the same word `prune` uses), then the
+    /// least recently heard.
     fn eviction_candidate(&self) -> Option<String> {
         self.peers
             .values()
-            .min_by_key(|p| (p.last_signed_epoch_s.is_some(), p.last_seen_epoch_s))
+            .min_by_key(|p| (p.proven(), p.last_seen_epoch_s))
             .map(|p| p.device_id.clone())
     }
 
@@ -1388,17 +1402,36 @@ mod tests {
             NOW + 1,
         );
         table.observe("securacv/ghost/status", b"{}", false, NOW + 1);
+        // A device whose health pinned a key but whose chain never verified:
+        // pinned, never proven. Its pin must survive any clock.
+        let fresh = SigningKey::from_bytes(&[11u8; 32]);
+        table.observe("securacv/fresh/health", &health(&fresh), false, NOW + 1);
         // The bridge restarts with the host clock 40 days ahead (a bad RTC or
-        // NTP answer) and prunes at open: nothing goes, including the ghost.
+        // NTP answer) and flushes: the pass straddling the jump is skipped,
+        // and the table's clock is not taught the jump by that pass.
         let mut reopened = PeerTable::from_summary(table.summary(NOW + 2));
         let ahead = NOW + 2 + 40 * 86_400;
         assert_eq!(reopened.prune(ahead), 0);
-        assert_eq!(reopened.len(), 2);
-        assert!(reopened
-            .summary(ahead)
+        assert_eq!(reopened.len(), 3);
+        assert_eq!(
+            reopened.prune(ahead + 30),
+            0,
+            "a second poll tick learns nothing either"
+        );
+        // A publish arrives under the jumped clock; the next pass runs against
+        // it — and can forget only the unpinned ghost. Both pins survive.
+        reopened.observe("securacv/porch/status", b"{}", false, ahead + 31);
+        assert_eq!(reopened.prune(ahead + 32), 1);
+        let after = reopened.summary(ahead + 32);
+        assert!(!after.peers.iter().any(|p| p.device_id == "ghost"));
+        assert!(after
             .peers
             .iter()
-            .any(|p| { p.device_id == "porch" && p.pinned_key_hex.is_some() }));
+            .any(|p| p.device_id == "porch" && p.pinned_key_hex.is_some()));
+        assert!(after
+            .peers
+            .iter()
+            .any(|p| p.device_id == "fresh" && p.pinned_key_hex.is_some() && !p.proven()));
         // With the clock flowing normally for 31 days of silence, the proven
         // pin is still not the clock's to expire; the ghost is.
         let mut t = NOW + 2;

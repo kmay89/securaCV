@@ -277,11 +277,14 @@ one-header change instead of a per-board copy-paste.
   - The roll-call holds at most 64 ids (`FLEET_PEER_MAX`). At the cap a
     newcomer displaces the least useful id — never-proven first, then least
     recently heard — and a displaced Canary is re-pinned on its next
-    `health`. A never-proven id unheard for 30 days is forgotten; a proven
-    Canary's pin is never expired by the clock (it leaves only by
-    displacement at the cap, or when the operator deletes the file), and no
-    expiry runs at all across an implausible clock jump, so a host whose
-    clock lands weeks ahead for an hour keeps every pin it had. Membership
+    `health`. An id that holds neither a pin nor a verified chain length
+    (heard only on `status`, `availability` or `meta`) is forgotten after 30
+    days unheard; an id with a pin is never expired by the clock — it leaves
+    only by displacement at the cap, or when the operator deletes the file —
+    so a host whose clock lands weeks ahead keeps every pin it had (the
+    expiry pass that straddles the jump is skipped as well; the passes after
+    it run on whatever clock the host then has and can forget only unpinned
+    ghosts). Membership
     is therefore broker-writable: a flood of invented ids can crowd the Wall
     while it lasts, and the ids it leaves behind stay on the Wall as
     `online: false` rows until a newcomer displaces them (or, if they never

@@ -477,14 +477,14 @@
     "lwt": {
       "topic": "securacv/<id>/status",
       "payload": "{\"online\":false}",
-      "note": "retained Last-Will; on connect the device replaces it with {\"online\":true}"
+      "note": "retained Last-Will; on connect the device replaces it with {\"online\":true,\"device_type\":\"canary-wap\"}"
     },
     "topics": [
       {
         "suffix": "status",
         "retained": true,
         "cadence": "on connect + ~30 s",
-        "payload": "{\"online\":true,\"csi_running\":true,\"wifi_connected\":true,\"rssi\":-58}"
+        "payload": "{\"online\":true,\"device_type\":\"canary-wap\",\"csi_running\":true,\"wifi_connected\":true,\"rssi\":-58}"
       },
       {
         "suffix": "events",

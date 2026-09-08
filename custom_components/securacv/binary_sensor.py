@@ -416,8 +416,9 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
 
         The verdict comes from voice.py so this entity and the spoken answer
         can never disagree about which Canaries are up. JSON first —
-        canary-wap publishes only `{"online":true}` / `{"online":false}`
-        (csi_mqtt.cpp), and reading it as a bare word rendered every live WAP
+        canary-wap publishes JSON with an `online` boolean
+        (`{"online":true,"device_type":"canary-wap",…}` / `{"online":false}`,
+        csi_mqtt.cpp), and reading it as a bare word rendered every live WAP
         permanently offline — then the bare-word dialect.
         """
         data = parse_mqtt_json(msg.payload)
