@@ -459,10 +459,36 @@ impl PeerTable {
     }
 }
 
+/// One `/api/fleet` device row: the contract's words (DISCOVERY.md) and
+/// nothing else, in the contract's order.
+///
+/// A struct rather than a `serde_json::Map` on purpose: the kernel's served
+/// bytes are pinned byte-for-byte against the shared fleet vector, and a
+/// map's key order depends on whether `serde_json/preserve_order` is compiled
+/// in — which an optional feature (`c2pa-export` pulls it in) can flip
+/// without any code here changing. Struct fields serialize in declaration
+/// order under every feature set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FleetRow {
+    pub name: String,
+    pub online: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occupants: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub breathing: Option<bool>,
+}
+
 /// Project a summary into `/api/fleet` device rows — the contract's words and
-/// nothing else. Rows are ordered by device id. Keys are copied by name, so a
-/// field added to [`PeerRecord`] stays private until it is added here too.
-pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<serde_json::Value> {
+/// nothing else. Rows are ordered by device id. Fields are copied by name, so
+/// a field added to [`PeerRecord`] stays private until it is added here too.
+pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<FleetRow> {
     let mut peers: Vec<&PeerRecord> = summary
         .peers
         .iter()
@@ -473,32 +499,29 @@ pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<serde_json::Value>
         .into_iter()
         .map(|peer| {
             let online = peer.proven_online(now);
-            let mut row = serde_json::Map::new();
             let name = peer
                 .name
                 .as_deref()
                 .filter(|n| !n.is_empty())
-                .unwrap_or(&peer.device_id);
-            row.insert("name".into(), serde_json::Value::from(name));
-            row.insert("online".into(), serde_json::Value::from(online));
-            if peer.chain == CHAIN_OK || peer.chain == CHAIN_DEGRADED {
-                row.insert("chain".into(), serde_json::Value::from(peer.chain.as_str()));
+                .unwrap_or(&peer.device_id)
+                .to_string();
+            let chain = (peer.chain == CHAIN_OK || peer.chain == CHAIN_DEGRADED)
+                .then(|| peer.chain.clone());
+            let product = peer
+                .device_type
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .map(str::to_string);
+            let wellbeing = online && peer.wellbeing_fresh(now);
+            FleetRow {
+                name,
+                online,
+                chain,
+                product,
+                presence: wellbeing.then(|| peer.presence.clone()).flatten(),
+                occupants: wellbeing.then(|| peer.occupants.clone()).flatten(),
+                breathing: wellbeing.then_some(peer.breathing).flatten(),
             }
-            if let Some(product) = peer.device_type.as_deref().filter(|p| !p.is_empty()) {
-                row.insert("product".into(), serde_json::Value::from(product));
-            }
-            if online && peer.wellbeing_fresh(now) {
-                if let Some(word) = peer.presence.as_deref() {
-                    row.insert("presence".into(), serde_json::Value::from(word));
-                }
-                if let Some(word) = peer.occupants.as_deref() {
-                    row.insert("occupants".into(), serde_json::Value::from(word));
-                }
-                if let Some(held) = peer.breathing {
-                    row.insert("breathing".into(), serde_json::Value::from(held));
-                }
-            }
-            serde_json::Value::Object(row)
         })
         .collect()
 }
@@ -507,7 +530,7 @@ pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<serde_json::Value>
 /// when there is no file, an unreadable one, or one with a foreign schema.
 /// Never an error — the open surface must keep answering with the kernel's
 /// own row whatever the bridge is doing.
-pub fn load_rows(path: &Path, now: u64) -> Vec<serde_json::Value> {
+pub fn load_rows(path: &Path, now: u64) -> Vec<FleetRow> {
     match PeerSummaryFile::read(path) {
         Ok(Some(summary)) => fleet_rows(&summary, now),
         Ok(None) => Vec::new(),
@@ -750,13 +773,10 @@ mod tests {
         ));
         let rows = fleet_rows(&table.summary(NOW + 1), NOW + 1);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["name"], "porch");
-        assert_eq!(rows[0]["online"], false);
-        assert_eq!(rows[0]["product"], "canary-wap");
-        assert!(
-            rows[0].get("chain").is_none(),
-            "no signed publish yet: {rows:?}"
-        );
+        assert_eq!(rows[0].name, "porch");
+        assert!(!rows[0].online);
+        assert_eq!(rows[0].product.as_deref(), Some("canary-wap"));
+        assert!(rows[0].chain.is_none(), "no signed publish yet: {rows:?}");
 
         // Pin, then a RETAINED chain replay: verdict yes, presence no.
         assert!(table.observe("securacv/porch/health", &health(&key), true, NOW + 2));
@@ -767,8 +787,8 @@ mod tests {
             NOW + 3
         ));
         let rows = fleet_rows(&table.summary(NOW + 3), NOW + 3);
-        assert_eq!(rows[0]["chain"], "ok");
-        assert_eq!(rows[0]["online"], false, "a retained publish is history");
+        assert_eq!(rows[0].chain.as_deref(), Some("ok"));
+        assert!(!rows[0].online, "a retained publish is history");
 
         // A LIVE signed publish inside the window: online.
         assert!(table.observe(
@@ -778,20 +798,14 @@ mod tests {
             NOW + 10
         ));
         let rows = fleet_rows(&table.summary(NOW + 10), NOW + 10);
-        assert_eq!(rows[0]["online"], true);
+        assert!(rows[0].online);
         // …until the window lapses.
         let later = NOW + 10 + FLEET_PEER_RECENT_SECS;
-        assert_eq!(fleet_rows(&table.summary(later), later)[0]["online"], true);
-        assert_eq!(
-            fleet_rows(&table.summary(later + 1), later + 1)[0]["online"],
-            false
-        );
+        assert!(fleet_rows(&table.summary(later), later)[0].online);
+        assert!(!fleet_rows(&table.summary(later + 1), later + 1)[0].online);
         // …or the broker says offline.
         assert!(table.observe("securacv/porch/availability", b"offline", false, NOW + 20));
-        assert_eq!(
-            fleet_rows(&table.summary(NOW + 21), NOW + 21)[0]["online"],
-            false
-        );
+        assert!(!fleet_rows(&table.summary(NOW + 21), NOW + 21)[0].online);
         // A newer signed publish overrides an older offline.
         assert!(table.observe(
             "securacv/porch/chain",
@@ -799,10 +813,7 @@ mod tests {
             false,
             NOW + 30
         ));
-        assert_eq!(
-            fleet_rows(&table.summary(NOW + 31), NOW + 31)[0]["online"],
-            true
-        );
+        assert!(fleet_rows(&table.summary(NOW + 31), NOW + 31)[0].online);
     }
 
     #[test]
@@ -821,8 +832,8 @@ mod tests {
             NOW + 2,
         );
         let rows = fleet_rows(&table.summary(NOW + 2), NOW + 2);
-        assert_eq!(rows[0]["chain"], "degraded");
-        assert_eq!(rows[0]["online"], false);
+        assert_eq!(rows[0].chain.as_deref(), Some("degraded"));
+        assert!(!rows[0].online);
         // The real key signing again does not clear it either.
         table.observe(
             "securacv/porch/chain",
@@ -831,8 +842,8 @@ mod tests {
             NOW + 3,
         );
         let rows = fleet_rows(&table.summary(NOW + 3), NOW + 3);
-        assert_eq!(rows[0]["chain"], "degraded");
-        assert_eq!(rows[0]["online"], false);
+        assert_eq!(rows[0].chain.as_deref(), Some("degraded"));
+        assert!(!rows[0].online);
     }
 
     #[test]
@@ -845,13 +856,11 @@ mod tests {
             false,
             NOW,
         );
-        assert!(fleet_rows(&table.summary(NOW), NOW)[0]
-            .get("chain")
-            .is_none());
+        assert!(fleet_rows(&table.summary(NOW), NOW)[0].chain.is_none());
         table.observe("securacv/porch/health", &health(&key), false, NOW + 1);
         let rows = fleet_rows(&table.summary(NOW + 1), NOW + 1);
-        assert_eq!(rows[0]["chain"], "ok");
-        assert_eq!(rows[0]["online"], true);
+        assert_eq!(rows[0].chain.as_deref(), Some("ok"));
+        assert!(rows[0].online);
     }
 
     #[test]
@@ -865,8 +874,8 @@ mod tests {
         // Live, but the row is not proven online: heard, not served.
         table.observe("securacv/bedroom/state", state, false, NOW + 2);
         let rows = fleet_rows(&table.summary(NOW + 2), NOW + 2);
-        assert_eq!(rows[0]["online"], false);
-        assert!(rows[0].get("presence").is_none(), "{rows:?}");
+        assert!(!rows[0].online);
+        assert!(rows[0].presence.is_none(), "{rows:?}");
         // Proven online: the coarse words appear — and nothing finer does.
         table.observe(
             "securacv/bedroom/chain",
@@ -875,11 +884,11 @@ mod tests {
             NOW + 3,
         );
         let rows = fleet_rows(&table.summary(NOW + 3), NOW + 3);
-        assert_eq!(rows[0]["online"], true);
-        assert_eq!(rows[0]["presence"], "present");
-        assert_eq!(rows[0]["occupants"], "1");
-        assert_eq!(rows[0]["breathing"], true);
-        let text = rows[0].to_string();
+        assert!(rows[0].online);
+        assert_eq!(rows[0].presence.as_deref(), Some("present"));
+        assert_eq!(rows[0].occupants.as_deref(), Some("1"));
+        assert_eq!(rows[0].breathing, Some(true));
+        let text = serde_json::to_string(&rows[0]).expect("a row serializes");
         for finer in ["range", "lux", "bpm", "rssi", "public_key", "pinned", "fp"] {
             assert!(!text.contains(finer), "{finer} leaked: {text}");
         }
@@ -894,11 +903,8 @@ mod tests {
         );
         let stale = NOW + 2 + FLEET_PEER_RECENT_SECS + 1;
         let rows = fleet_rows(&table.summary(stale), stale);
-        assert_eq!(rows[0]["online"], true);
-        assert!(
-            rows[0].get("presence").is_none(),
-            "a stale claim omits: {rows:?}"
-        );
+        assert!(rows[0].online);
+        assert!(rows[0].presence.is_none(), "a stale claim omits: {rows:?}");
     }
 
     #[test]
@@ -938,8 +944,8 @@ mod tests {
             NOW,
         );
         let rows = fleet_rows(&table.summary(NOW), NOW);
-        assert_eq!(rows[0]["name"], "Front Door");
-        assert_eq!(rows[0]["product"], "canary-wapscript");
+        assert_eq!(rows[0].name, "Front Door");
+        assert_eq!(rows[0].product.as_deref(), Some("canary-wapscript"));
         assert!(!table.is_empty() && table.len() == 1);
 
         // The table caps at FLEET_PEER_MAX ids.
@@ -968,8 +974,8 @@ mod tests {
 
         let rows = load_rows(&path, NOW + 2);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["online"], true);
-        assert_eq!(rows[0]["chain"], "ok");
+        assert!(rows[0].online);
+        assert_eq!(rows[0].chain.as_deref(), Some("ok"));
 
         // Rehydrating keeps the pin: the impostor is still an impostor.
         let rehydrated = PeerSummaryFile::read(&path)?.expect("file exists");

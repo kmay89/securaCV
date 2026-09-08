@@ -1,3 +1,4 @@
+use crate::fleet_peers::FleetRow;
 use crate::storage_health::SharedStorageHealth;
 use crate::verify_runner::VerifyReport;
 use crate::{ExportArtifact, ExportOptions, Kernel, KernelConfig, TimeBucket};
@@ -1314,24 +1315,37 @@ fn fleet_cors_headers(origin: Option<&str>) -> Vec<(&'static str, String)> {
 /// run — a silent key is never a claim (DISCOVERY.md). `verified_through` is
 /// "now", exactly what firmware sends: it is the device's self-report, and the
 /// Wall labels it as reported rather than as something the Wall measured.
-fn fleet_document(self_chain_ok: Option<bool>, peers: &[serde_json::Value]) -> String {
-    let mut me = serde_json::Map::new();
-    me.insert("name".into(), serde_json::Value::from("Witness kernel"));
-    me.insert("online".into(), serde_json::Value::from(true));
-    me.insert("product".into(), serde_json::Value::from("witness-kernel"));
-    if let Some(chain_valid) = self_chain_ok {
-        let chain = if chain_valid { "ok" } else { "degraded" };
-        me.insert("chain".into(), serde_json::Value::from(chain));
+fn fleet_document(self_chain_ok: Option<bool>, peers: &[FleetRow]) -> String {
+    /// The document, typed so its bytes do not depend on `serde_json`'s map
+    /// implementation: with `preserve_order` (which the `c2pa-export` feature
+    /// pulls in) a `Map` keeps insertion order, without it keys sort — and
+    /// the shared fleet vector pins these bytes exactly. Struct fields
+    /// serialize in declaration order under either.
+    #[derive(serde::Serialize)]
+    struct FleetDocument<'a> {
+        kernel: &'static str,
+        verified_through: &'static str,
+        devices: Vec<&'a FleetRow>,
     }
+    let me = FleetRow {
+        name: "Witness kernel".to_string(),
+        online: true,
+        chain: self_chain_ok.map(|ok| if ok { "ok" } else { "degraded" }.to_string()),
+        product: Some("witness-kernel".to_string()),
+        presence: None,
+        occupants: None,
+        breathing: None,
+    };
     let mut devices = Vec::with_capacity(1 + peers.len());
-    devices.push(serde_json::Value::Object(me));
-    devices.extend(peers.iter().cloned());
-    let doc = serde_json::json!({
-        "kernel": "witness-kernel",
-        "verified_through": "now",
-        "devices": devices,
-    });
-    doc.to_string()
+    devices.push(&me);
+    devices.extend(peers.iter());
+    let doc = FleetDocument {
+        kernel: "witness-kernel",
+        verified_through: "now",
+        devices,
+    };
+    // Serializing a struct of strings, bools and a Vec cannot fail.
+    serde_json::to_string(&doc).unwrap_or_else(|_| String::from("{}"))
 }
 
 fn write_response_with_headers<S: Write>(

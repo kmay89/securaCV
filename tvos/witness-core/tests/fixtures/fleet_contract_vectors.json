@@ -90,7 +90,7 @@
     {
       "name": "the kernel's aggregated document (fleet_document, verbatim): itself plus one Canary the bridge heard",
       "_note": "The repo-root kernel's own /api/fleet bytes for one planted peer (src/api tests, fleet_document_matches_the_shared_two_row_vector): its self row first, then the Canary its MQTT bridge heard — named from the retained meta topic, `online` proven by a signed chain publish 30 s before the snapshot against the key pinned for it, the room words fresh. The kernel side pins `input` byte-for-byte and this side pins `normalized`, so neither can move the two-row shape alone. Nothing the bridge keeps privately (the pinned key, the device id, timestamps) appears in `input` — the second test below asserts that.",
-      "input": "{\"devices\":[{\"chain\":\"ok\",\"name\":\"Witness kernel\",\"online\":true,\"product\":\"witness-kernel\"},{\"breathing\":true,\"chain\":\"ok\",\"name\":\"Bedroom\",\"occupants\":\"1\",\"online\":true,\"presence\":\"present\",\"product\":\"canary-sense\"}],\"kernel\":\"witness-kernel\",\"verified_through\":\"now\"}",
+      "input": "{\"kernel\":\"witness-kernel\",\"verified_through\":\"now\",\"devices\":[{\"name\":\"Witness kernel\",\"online\":true,\"chain\":\"ok\",\"product\":\"witness-kernel\"},{\"name\":\"Bedroom\",\"online\":true,\"chain\":\"ok\",\"product\":\"canary-sense\",\"presence\":\"present\",\"occupants\":\"1\",\"breathing\":true}]}",
       "normalized": {
         "kernel": "witness-kernel",
         "verified_through": "now",
