@@ -7,6 +7,12 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
+// PlatformIO's chain-mode Library Dependency Finder only follows #includes it
+// can see in PROJECT sources; network/mqtt_transport.h is reached through
+// -I .../common, so its own <WiFiClientSecure.h> is invisible to the LDF and
+// the library (WiFiClientSecure on core 2.x, NetworkClientSecure on core 3.x,
+// which ships the same header name) is never added. Name it here, first.
+#include <WiFiClientSecure.h>
 #include "network/mqtt_transport.h"  // plain / TLS-CA / pinned broker socket, decided once fleet-wide
 
 #include "canary/config.h"

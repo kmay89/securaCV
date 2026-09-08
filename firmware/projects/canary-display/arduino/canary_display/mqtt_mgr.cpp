@@ -24,6 +24,11 @@
 // WiFiClientSecure and has no broker to reach, so under EMU_BUILD_FLAVOR the
 // plain client stays exactly as it was and dist/ does not move.
 #if !defined(EMU_BUILD_FLAVOR)
+// Named here, not only inside mqtt_transport.h: PlatformIO's chain-mode LDF
+// follows #includes in project sources, not in headers reached via -I, so
+// this line is what pulls the WiFiClientSecure / NetworkClientSecure library
+// into the C6 env (the S3 envs already get it through wx_direct.cpp).
+#include <WiFiClientSecure.h>
 #include "mqtt_transport.h"
 #define CANARY_MQTT_TLS 1
 #else
