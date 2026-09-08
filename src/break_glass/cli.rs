@@ -258,7 +258,7 @@ enum Command {
         /// Device key seed (must match witnessd)
         #[arg(long, env = "DEVICE_KEY_SEED")]
         device_key_seed: String,
-        /// Setup-draft file (defaults to <db>.setup-draft.json)
+        /// Setup-draft file (defaults to `<db>.setup-draft.json`)
         #[arg(long)]
         draft: Option<String>,
     },
@@ -296,7 +296,7 @@ enum TrusteeCommand {
         /// Device key seed (must match witnessd)
         #[arg(long, env = "DEVICE_KEY_SEED")]
         device_key_seed: String,
-        /// Setup-draft file (defaults to <db>.setup-draft.json)
+        /// Setup-draft file (defaults to `<db>.setup-draft.json`)
         #[arg(long)]
         draft: Option<String>,
     },
