@@ -8,7 +8,10 @@ the two copies disagreed: the AMOLED shipped from the tag ceremony and was
 missing from every dev publish. A flavor could ship from one button and not
 the other, and no gate noticed.
 
-This script is the one place a workflow gets that list from:
+This script is the one place a workflow gets that list from — and since
+roadmap item 23 both release workflows DO: each has a "Resolve the
+canary-display release envs" step that runs `--release --json` and feeds the
+result to its build and packaging steps, so neither types an env name.
 
     python3 firmware/scripts/flavor_envs.py canary-display
         every env in the product's `build_envs`, one per line, in build order
@@ -29,13 +32,31 @@ This script is the one place a workflow gets that list from:
         the same list with the `canary-display-` prefix stripped — the short
         names the release's staging/signing loops key on
 
+    python3 firmware/scripts/flavor_envs.py canary-display --release --json
+        the same list as ONE JSON array, in the same order, one object per
+        env: {"env": "canary-display-dash7", "short": "dash7",
+        "core": "display-pio3"} — what the release workflows write to
+        $GITHUB_OUTPUT and read back with jq (the `core` word picks the
+        PLATFORMIO_CORE_DIR; the `short` name keys the staging loops)
+
+    python3 firmware/scripts/flavor_envs.py --flavors PATH ...
+        read PATH instead of firmware/flavors.json. flasher-release.yml
+        rebuilds a TAGGED tree whose flavors.json may predate `release_envs`
+        (or the tag may predate this script); it overlays today's copy of
+        both from the dispatch ref and points here, so the env list is
+        today's — an env the tag's ini lacks fails its `pio run` and warns
+        away, exactly as the typed list used to.
+
     python3 firmware/scripts/flavor_envs.py --check-workflows
         the lint: every literal `canary-display-<x>` token in any workflow
         under .github/workflows/ must name an env flavors.json declares, so a
-        typo'd or retired env can't hide in a workflow; also validates that
-        `release_envs` is a subset of `build_envs` and that every release env
-        has its flasher catalog product (canary-local/devices/flash.json).
-        Exit 1 with every problem listed. Run from lint.yml.
+        typo'd or retired env can't hide in a workflow; the two release
+        workflows must derive the list from this script (a `--release`
+        invocation present, no literal `pio run -e canary-display-<env>`);
+        also validates that `release_envs` is a subset of `build_envs` and
+        that every release env has its flasher catalog product
+        (canary-local/devices/flash.json). Exit 1 with every problem listed.
+        Run from lint.yml.
 
 stdlib only. Run from any directory (the repo root is resolved from this
 file's own location).
@@ -64,12 +85,17 @@ WORKFLOWS = REPO / ".github" / "workflows"
 # people learn to extend instead of fix.
 LINTED_PRODUCTS = ("canary-display",)
 
+# The workflows that must DERIVE the display env list from this script rather
+# than type it. Each used to carry its own copy, and the two disagreed.
+RELEASE_WORKFLOWS = ("firmware-release.yml", "flasher-release.yml")
+RELEASE_PRODUCT = "canary-display"
+
 DEFAULT_CORE = "default"
 ISOLATED_CORE = "isolated"
 
 
-def load_flavors() -> list[dict]:
-    return json.loads(FLAVORS.read_text(encoding="utf-8"))
+def load_flavors(path: Path = FLAVORS) -> list[dict]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def find_product(flavors: list[dict], name: str) -> dict:
@@ -167,6 +193,39 @@ def validate(flavors: list[dict]) -> list[str]:
     return problems
 
 
+def check_release_workflows(workflows: Path = WORKFLOWS,
+                            names=RELEASE_WORKFLOWS, product=RELEASE_PRODUCT) -> list[str]:
+    """The release workflows get the display env list from this script.
+
+    Two shape rules per workflow, both about the list being typed ONCE:
+      • it runs `flavor_envs.py … <product> … --release` (the resolve step);
+      • it has no literal `pio run -e <product>-<env>` — a build line that
+        names an env is the typed list creeping back, one env at a time.
+    """
+    problems: list[str] = []
+    derive_re = re.compile(rf"flavor_envs\.py\b.*\b{re.escape(product)}\b.*--release\b")
+    typed_re = re.compile(rf"pio\s+run\s+-e\s+[\"']?{re.escape(product)}-[a-z0-9][a-z0-9-]*")
+    for name in names:
+        path = workflows / name
+        if not path.exists():
+            problems.append(f"{name}: not found under {workflows} — the release workflows "
+                            f"named in RELEASE_WORKFLOWS must exist")
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if not any(derive_re.search(line) for line in lines):
+            problems.append(
+                f"{name}: does not derive its {product} env list from "
+                f"`flavor_envs.py {product} --release` — the list must come from "
+                f"firmware/flavors.json, not be typed into the workflow")
+        for lineno, line in enumerate(lines, 1):
+            if typed_re.search(line):
+                problems.append(
+                    f"{name}:{lineno}: builds a literal {product} env ({line.strip()[:60]}…) — "
+                    f"iterate the list `flavor_envs.py {product} --release --json` emits "
+                    f"instead of naming envs")
+    return problems
+
+
 def check_workflows(flavors: list[dict], products=LINTED_PRODUCTS) -> list[str]:
     """Every literal `<product>-<suffix>` token in a workflow names a real env."""
     problems: list[str] = []
@@ -211,25 +270,31 @@ def main(argv: list[str] | None = None) -> int:
                     help="append each env's PLATFORMIO_CORE_DIR class")
     ap.add_argument("--short", action="store_true",
                     help="strip the '<product>-' prefix from each env")
+    ap.add_argument("--json", action="store_true",
+                    help="print the list as one JSON array of {env, short, core}")
+    ap.add_argument("--flavors", type=Path, default=FLAVORS, metavar="PATH",
+                    help="read this flavors.json instead of firmware/flavors.json")
     ap.add_argument("--check-workflows", action="store_true",
                     help="lint: workflows name only envs flavors.json declares")
     args = ap.parse_args(argv)
 
-    flavors = load_flavors()
+    flavors = load_flavors(args.flavors)
 
     if args.check_workflows:
-        problems = validate(flavors) + check_workflows(flavors)
+        problems = (validate(flavors) + check_workflows(flavors)
+                    + check_release_workflows(WORKFLOWS))
         if problems:
             for p in problems:
                 print(f"::error::{p}")
             print(f"\n{len(problems)} problem(s): every display env a workflow "
-                  f"names must exist in firmware/flavors.json, and the release "
-                  f"set must be a subset of what CI builds.")
+                  f"names must exist in firmware/flavors.json, the release "
+                  f"workflows must derive the list from this script, and the "
+                  f"release set must be a subset of what CI builds.")
             return 1
         n = sum(len(e.get("release_envs") or []) for e in flavors)
         print(f"flavor_envs.py --check-workflows: OK — workflows name only "
-              f"declared envs; {n} release env(s) all in build_envs with a "
-              f"flasher product.")
+              f"declared envs and the release workflows derive the list; {n} "
+              f"release env(s) all in build_envs with a flasher product.")
         return 0
 
     if not args.product:
@@ -237,6 +302,12 @@ def main(argv: list[str] | None = None) -> int:
     entry = find_product(flavors, args.product)
     envs = ordered_release_envs(entry) if args.release else list(entry.get("build_envs") or [])
     prefix = f"{args.product}-"
+    if args.json:
+        rows = [{"env": env,
+                 "short": env[len(prefix):] if env.startswith(prefix) else env,
+                 "core": core_of(entry, env)} for env in envs]
+        print(json.dumps(rows, separators=(",", ":")))
+        return 0
     for env in envs:
         shown = env[len(prefix):] if args.short and env.startswith(prefix) else env
         print(f"{shown} {core_of(entry, env)}" if args.with_core else shown)
