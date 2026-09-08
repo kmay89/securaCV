@@ -35,13 +35,32 @@
 - **Peer aggregation, opt-in.** `event_mqtt_bridge --fleet-peers-path` (or
   `WITNESS_FLEET_PEERS_PATH`) keeps a table of the Canaries it hears on
   `securacv/<id>/{availability,status,health,chain,state,meta}`, pins each
-  device's public key on first `health` (a second key is a sticky conflict),
-  and verifies chain publishes with Ed25519; `api.fleet_peers_path` makes
-  the kernel serve those rows beside its own. `online` is proven only by a
-  live chain publish verified against the pin within 180 s; wellbeing words
-  ride only on such a row while fresh. The two-row document is a shared
-  vector with the Apple TV core, and its bytes come from typed rows so they
-  cannot move with `serde_json`'s feature set.
+  device's public key on first `health`, and verifies chain publishes with
+  Ed25519; `api.fleet_peers_path` makes the kernel serve those rows beside
+  its own. `online` is claimed only for a live chain publish that verified
+  against the pin **and advanced the chain length past the last one
+  verified**, within 180 s — stronger than a heartbeat, weaker than a
+  liveness proof, and `tvos/discovery/DISCOVERY.md` now says exactly what a
+  peer with broker publish rights can still do (replay a capture for at
+  most one window per missed advance; invent ids; hold a real id in
+  `degraded` by signing under a second key). A second key merely announced
+  on an unsigned `health` changes no verdict; one that signs is the sticky
+  conflict. Wellbeing words ride only on a proven row while fresh. The
+  two-row document is a shared vector with the Apple TV core, and its bytes
+  come from typed rows so they cannot move with `serde_json`'s feature set.
+- **The roll-call's file and table, hardened after review.** The summary
+  file is written `0600` and fsynced (it holds per-room words beside the
+  pins); the kernel refuses to read one past 256 KiB; the projection
+  re-cleans every served field and caps the rows at 64; at the cap a new id
+  displaces the least useful one (never-proven first, then least recently
+  heard) instead of locking real Canaries out until someone deletes the
+  file, and ids unheard for 30 days are forgotten; the canary-wap's LWT
+  (`{"online":false}` on `status`) now counts as offline; the bridge's
+  inbound queue is bounded and only the topics it handles are queued;
+  `http://[::1]` joins the local origins; `src/fleet_peers.rs` is
+  registered with `lint_dictionary_sync.py`, so its `securacv-canary-sig`
+  prefix and schema version are pinned to `spec/witness_dictionary.json`
+  like every other verifier's.
 - **CI: rustdoc warnings fail the Rust build** (`cargo doc --no-deps
   --document-private-items` with `RUSTDOCFLAGS=-D warnings`); the two
   failures it found are fixed.

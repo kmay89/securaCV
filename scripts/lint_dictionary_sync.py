@@ -482,19 +482,23 @@ def main() -> int:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         # Only files that *define* SIG_PREFIX (constexpr/assignment), not test refs.
-        if re.search(r'SIG_PREFIX\s*=\s*"', text):
+        if _SIG_PREFIX_DEF_RE.search(text):
             _check_sig(str(path.relative_to(ROOT)), text, sig)
     # The builders themselves live next to the headers that declare them, so
-    # scan the whole firmware tree plus the desktop verifier for canonical
-    # format strings — not just the SIG_PREFIX definers above.
+    # scan the whole firmware tree plus the desktop and kernel verifiers for
+    # canonical format strings — not just the SIG_PREFIX definers above. A
+    # verifier outside firmware/ that declares its own SIG_PREFIX / SCHEMA_V
+    # (the kernel's fleet roll-call) is pinned to the dictionary here too.
     for rel in _SIG_KIND_SOURCES:
         p = ROOT / rel
         if not p.exists():
             err(f"[drift] signature_format: {rel} is gone — canonical_kinds "
                 f"can no longer be proved against it; update _SIG_KIND_SOURCES")
             continue
-        kinds_found[rel] = _canonical_kinds(
-            p.read_text(encoding="utf-8", errors="replace"))
+        text = p.read_text(encoding="utf-8", errors="replace")
+        kinds_found[rel] = _canonical_kinds(text)
+        if not rel.startswith("firmware/") and _SIG_PREFIX_DEF_RE.search(text):
+            _check_sig(rel, text, sig)
     _check_canonical_kinds(sig, kinds_found)
 
     # --- The normative prose must name the same nine kinds as the dictionary ---
@@ -568,11 +572,22 @@ _SIG_KIND_SOURCES = (
     "firmware/projects/canary-wap/arduino/canary_wap/device_signature.cpp",
     "firmware/projects/canary-display/src/trust.cpp",
     "desktop/src-tauri/src/whoami.rs",
+    # The kernel's fleet roll-call rebuilds the `chain` canonical to verify
+    # peers' publishes against their TOFU pins (and declares SIG_PREFIX /
+    # SCHEMA_V, which _check_sig pins to the dictionary below).
+    "src/fleet_peers.rs",
 )
 
 # `SIG_PREFIX|v1|kind|`, in C (`"%s|v%d|chain|..."`), Python
-# (f"{SIG_PREFIX}|v{SCHEMA_V}|chain|...") and Rust (a literal `|v1|whoami|`).
+# (f"{SIG_PREFIX}|v{SCHEMA_V}|chain|..."), and Rust (a literal `|v1|whoami|`,
+# or a `format!("{SIG_PREFIX}|v{SCHEMA_V}|chain|…")` — the same brace form
+# as Python's f-string, which is why the constant must be spelled SCHEMA_V).
 _CANONICAL_KIND_RE = re.compile(r"\|v(?:%d|\{SCHEMA_V\}|\d+)\|([a-z][a-z0-9_]*)\|")
+
+# A file that DEFINES the prefix: C (`constexpr const char* SIG_PREFIX = "…"`),
+# Python (`SIG_PREFIX = "…"`) or Rust (`const SIG_PREFIX: &str = "…"`).
+_SIG_PREFIX_DEF_RE = re.compile(r'SIG_PREFIX(?:\s*:\s*&\s*(?:\'static\s+)?str)?\s*=\s*"([^"]+)"')
+_SCHEMA_V_DEF_RE = re.compile(r"SCHEMA_V(?:\s*:\s*u\d+)?\s*=\s*(\d+)")
 
 
 def _canonical_kinds(text: str) -> set:
@@ -609,8 +624,8 @@ def _check_canonical_kinds(sig: dict, found: dict) -> None:
 
 
 def _check_sig(rel: str, text: str, sig: dict) -> None:
-    pm = re.search(r'SIG_PREFIX\s*=\s*"([^"]+)"', text)
-    sm = re.search(r"SCHEMA_V\s*=\s*(\d+)", text)
+    pm = _SIG_PREFIX_DEF_RE.search(text)
+    sm = _SCHEMA_V_DEF_RE.search(text)
     if pm and pm.group(1) != sig["sig_prefix"]:
         err(f"[drift] {rel}: SIG_PREFIX {pm.group(1)!r} vs dictionary {sig['sig_prefix']!r}")
     if sm and int(sm.group(1)) != sig["schema_v"]:

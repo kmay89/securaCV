@@ -27,25 +27,49 @@
 //! timestamps in its last summary age out and every peer honestly reads
 //! `online: false` with no wellbeing words.
 //!
-//! **What "online" means here** is stricter than on the display's glass. A
-//! peer is claimed present only when a LIVE (not broker-retained) `chain`
-//! publish carried an Ed25519 signature that verified against the key pinned
-//! for that device — trust-on-first-use from its first `health` publish, the
-//! same pin store the display keeps in NVS — within [`FLEET_PEER_RECENT_SECS`],
-//! and no LWT `offline` has arrived since. Unsigned heartbeats (`status`, an
-//! `availability` of `online`) never prove presence: anyone on the broker can
-//! publish them. A retained publish proves only that the device once said it,
-//! so it can pin a key and set the chain verdict but never advances the
-//! signed-presence clock. A Canary that has sealed no record within the window
-//! therefore reads `online: false`, which the contract defines as "not claimed
-//! present", never as "claimed absent".
+//! **What "online" means here** is stricter than on the display's glass, and
+//! no stronger than this: a peer is claimed present only when a LIVE (not
+//! broker-retained) `chain` publish carried an Ed25519 signature that verified
+//! against the key pinned for that device — trust-on-first-use from its first
+//! `health` publish, the same pin store the display keeps in NVS — AND that
+//! publish advanced the chain length past the last one this bridge verified,
+//! within [`FLEET_PEER_RECENT_SECS`], with no LWT `offline` since. Unsigned
+//! heartbeats (`status`, an `availability` of `online`) never prove presence:
+//! anyone on the broker can publish them. A retained publish proves only that
+//! the device once said it, so it can pin a key, set the chain verdict and
+//! record its length as seen, but it never advances the signed-presence clock.
+//! A Canary that has sealed no record within the window therefore reads
+//! `online: false`, which the contract defines as "not claimed present", never
+//! as "claimed absent".
+//!
+//! **The broker is the trust boundary, and the signature does not move it.**
+//! The chain canonical binds no nonce or timestamp, so a peer with publish
+//! rights on the broker can replay a captured signed publish; the
+//! length-must-advance rule means a replay buys at most one window per chain
+//! advance this bridge did not itself see, never an indefinitely "online"
+//! powered-off Canary. The same peer can invent device ids and sign for them
+//! with its own key (the pin is TOFU, so such a row is indistinguishable from
+//! a real Canary), and can hold a real id in the sticky `degraded` verdict by
+//! announcing a second key and signing under it. [`FLEET_PEER_MAX`] bounds the
+//! table and eviction bounds a flood's effect to its duration; none of it is
+//! a liveness proof, and `tvos/discovery/DISCOVERY.md` says so in the same
+//! words. A liveness challenge would use the firmware's `whoami` canonical,
+//! which nothing here drives yet.
 //!
 //! The pin is TOFU, not pairing: "chain: ok" means the last chain publish
 //! verified against the first key this bridge ever saw for that device id,
 //! which is weaker than a key pinned at pairing and is described that way in
-//! `tvos/discovery/DISCOVERY.md`. A second, different key for a pinned id is a
-//! sticky conflict ("degraded") that only deleting the summary file clears —
-//! never a silent re-pin.
+//! `tvos/discovery/DISCOVERY.md`. A second key merely ANNOUNCED for a pinned
+//! id (an unsigned `health`, which anyone on the broker can publish) is
+//! remembered and changes no verdict; a second key that actually SIGNS the
+//! id's chain is a sticky conflict ("degraded") that only deleting the summary
+//! file clears — never a silent re-pin.
+//!
+//! The summary file holds the per-room wellbeing words beside the pins, so it
+//! is written `0600` (unix), fsynced before and after the rename, and read
+//! back only up to [`FLEET_PEERS_MAX_FILE_BYTES`]; [`fleet_rows`] re-cleans
+//! every field it serves and caps the row count, so a damaged or hand-edited
+//! file cannot widen the wire.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -67,17 +91,31 @@ pub const FLEET_PEERS_SCHEMA: &str = "securacv/fleet_peers/v1";
 pub const FLEET_PEER_RECENT_SECS: u64 = 180;
 
 /// Cap on distinct device ids the table keeps. Above the display's 24-pin
-/// store with headroom for a hub; past it, new ids are ignored (and logged
-/// once by the bridge) rather than letting a broker flood grow the file.
+/// store with headroom for a hub. At the cap a new id displaces one — first
+/// anything not heard for [`FLEET_PEER_FORGET_SECS`], then the least recently
+/// heard id that never produced a verified signature, then the least recently
+/// heard id of all — so a broker flood can crowd the roll-call only while it
+/// lasts, never lock real Canaries out until someone deletes the file. An
+/// evicted id loses its pin and is re-pinned on its next `health`.
 pub const FLEET_PEER_MAX: usize = 64;
+
+/// How long an id stays in the table without being heard at all before it is
+/// forgotten (pin included): 30 days, pruned on every flush and on rehydrate.
+pub const FLEET_PEER_FORGET_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// The most the kernel will read of a summary file. [`FLEET_PEER_MAX`] fully
+/// populated records pretty-print to a few tens of kilobytes; anything past
+/// this is a damaged or foreign file, and is ignored rather than served.
+pub const FLEET_PEERS_MAX_FILE_BYTES: u64 = 256 * 1024;
 
 /// The topic filters the bridge subscribes to when peer tracking is on. The
 /// fleet roll-call surfaces only: `events`, `sensing`, `counts` and `tamper`
 /// are deliberately absent — the bridge is the kernel's egress and must not
-/// become a consumer of witness traffic, and `chain` is the one signed
-/// publish the display verifies too, so presence is proven the same way on
-/// both. `health` carries the device's public key, which is what makes the
-/// pin possible; it is stored locally and never projected.
+/// become a consumer of witness traffic. What it does consume is the coarse
+/// roll-call: `state` for the contract's wellbeing WORDS (never the readings
+/// beside them), `health` for the device's public key (stored locally, never
+/// projected), and `chain`, the one signed publish the display verifies too,
+/// so presence is proven the same way on both.
 pub const FLEET_PEER_TOPIC_FILTERS: &[&str] = &[
     "securacv/+/availability",
     "securacv/+/status",
@@ -91,7 +129,7 @@ pub const FLEET_PEER_TOPIC_FILTERS: &[&str] = &[
 /// with `firmware/common/identity/device_signature.cpp`,
 /// `custom_components/securacv/signature.py` and the display's `trust.cpp`.
 const SIG_PREFIX: &str = "securacv-canary-sig";
-const SIG_SCHEMA_V: u32 = 1;
+const SCHEMA_V: u32 = 1;
 
 const CHAIN_OK: &str = "ok";
 const CHAIN_DEGRADED: &str = "degraded";
@@ -114,23 +152,37 @@ pub struct PeerRecord {
     pub device_type: Option<String>,
     /// Last delivery of any handled topic, retained or live. "Heard at all".
     pub last_seen_epoch_s: u64,
-    /// Last LIVE `chain` publish whose signature verified against the pin.
+    /// Last LIVE `chain` publish whose signature verified against the pin
+    /// AND advanced the chain length past `last_verified_length`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_signed_epoch_s: Option<u64>,
+    /// The highest chain `length` whose publish verified against the pin,
+    /// retained or live. A publish at or below it is a replay — of the
+    /// broker's retained head, or of a capture — and proves nothing new.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_verified_length: Option<u64>,
     /// Last time the broker or the device itself said `offline` (LWT on the
     /// availability topic, or `"status":"offline"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_epoch_s: Option<u64>,
-    /// `"ok"` (last signed chain publish verified against the pin),
-    /// `"degraded"` (a signature failed, or the id showed a second key) or
-    /// `"unknown"` (nothing signed has been checkable yet).
+    /// `"ok"` (the last signed chain publish verified against the pin),
+    /// `"degraded"` (the last one did not, or a second key has signed for
+    /// this id — see `pin_conflict`) or `"unknown"` (nothing signed has been
+    /// checkable yet).
     pub chain: String,
     /// The TOFU-pinned Ed25519 verifying key, lowercase hex. Local only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_key_hex: Option<String>,
-    /// Sticky: a different key was announced for a pinned id.
+    /// Sticky: a chain publish for this pinned id verified under a DIFFERENT
+    /// key that a `health` had announced. An announcement alone (unsigned,
+    /// anyone can publish one) never sets this.
     #[serde(default)]
     pub pin_conflict: bool,
+    /// A different key announced on `health` while a pin exists, held only
+    /// until a chain publish shows which key is really signing. Not
+    /// persisted: `health` is retained and arrives again after a restart.
+    #[serde(skip)]
+    announced_key_hex: Option<String>,
     /// Coarse room words from a LIVE `state` publish: `"clear"`/`"present"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presence: Option<String>,
@@ -168,10 +220,12 @@ impl PeerRecord {
             device_type: None,
             last_seen_epoch_s: now,
             last_signed_epoch_s: None,
+            last_verified_length: None,
             offline_epoch_s: None,
             chain: CHAIN_UNKNOWN.to_string(),
             pinned_key_hex: None,
             pin_conflict: false,
+            announced_key_hex: None,
             presence: None,
             occupants: None,
             breathing: None,
@@ -181,10 +235,15 @@ impl PeerRecord {
     }
 
     /// The contract's `online`: proven by a live signed publish inside the
-    /// window, not contradicted by a later `offline`, and never by a
-    /// timestamp from the future (the bridge and the kernel share a host
-    /// clock, so a future stamp is a damaged file, not skew).
+    /// window, not contradicted by a later `offline`, never while a second
+    /// key is signing for the id (`pin_conflict` — this bridge cannot tell
+    /// the re-keyed device from the impostor, so it claims neither), and
+    /// never by a timestamp from the future (the bridge and the kernel share
+    /// a host clock, so a future stamp is a damaged file, not skew).
     pub fn proven_online(&self, now: u64) -> bool {
+        if self.pin_conflict {
+            return false;
+        }
         match self.last_signed_epoch_s {
             Some(signed) => {
                 signed <= now
@@ -208,11 +267,13 @@ impl PeerRecord {
         match &self.pinned_key_hex {
             None => self.pinned_key_hex = Some(key),
             Some(pinned) if *pinned != key => {
-                // A different key for a pinned identity: never re-pin.
-                self.pin_conflict = true;
-                self.chain = CHAIN_DEGRADED.to_string();
+                // A different key for a pinned identity: never re-pin, and
+                // never let an UNSIGNED announcement change the verdict on
+                // its own — remember it, and let the next chain publish show
+                // which key is actually signing.
+                self.announced_key_hex = Some(key);
             }
-            Some(_) => {}
+            Some(_) => self.announced_key_hex = None,
         }
         if let Some(pending) = self.pending_chain.take() {
             self.evaluate_chain(
@@ -259,12 +320,36 @@ impl PeerRecord {
         };
         if verify_chain_signature(&self.device_id, length, latest_hash_hex, sig, &pinned) {
             self.chain = CHAIN_OK.to_string();
-            if !retained {
-                self.last_signed_epoch_s = Some(now);
+            // The pinned key is still the one signing: a second key that was
+            // only announced was noise.
+            self.announced_key_hex = None;
+            // Presence advances only with the chain. The canonical carries no
+            // nonce, so a publish at or below the last verified length is a
+            // replay — the broker's retained head delivered again, or a
+            // capture from anyone with publish rights — and a device that
+            // sealed nothing new has proven nothing new.
+            if self.last_verified_length.is_none_or(|seen| length > seen) {
+                self.last_verified_length = Some(length);
+                if !retained {
+                    self.last_signed_epoch_s = Some(now);
+                }
             }
-        } else {
-            self.chain = CHAIN_DEGRADED.to_string();
+            return;
         }
+        let signed_by_announced = self
+            .announced_key_hex
+            .as_deref()
+            .and_then(decode_key_hex)
+            .is_some_and(|other| {
+                verify_chain_signature(&self.device_id, length, latest_hash_hex, sig, &other)
+            });
+        if signed_by_announced {
+            // A second key is really signing this id's chain — a re-keyed
+            // device or an impersonation; this bridge cannot tell which, so
+            // it stops claiming either. Sticky until the file is deleted.
+            self.pin_conflict = true;
+        }
+        self.chain = CHAIN_DEGRADED.to_string();
     }
 }
 
@@ -294,34 +379,107 @@ impl PeerSummaryFile {
     }
 
     /// Read a summary from disk. A missing file is `Ok(None)` — the bridge
-    /// has not run (or peer tracking is off), which is not an error.
+    /// has not run (or peer tracking is off), which is not an error. A file
+    /// over [`FLEET_PEERS_MAX_FILE_BYTES`] is an error, never read whole: the
+    /// kernel serves this per request, so the file's size is the response's.
     pub fn read(path: &Path) -> Result<Option<Self>> {
-        match std::fs::read(path) {
-            Ok(bytes) => Self::from_json(&bytes).map(Some),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err).with_context(|| format!("reading {}", path.display())),
+        use std::io::Read;
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("opening {}", path.display())),
+        };
+        let declared = file
+            .metadata()
+            .with_context(|| format!("sizing {}", path.display()))?
+            .len();
+        if declared > FLEET_PEERS_MAX_FILE_BYTES {
+            return Err(anyhow!(
+                "fleet peers summary {} is {declared} bytes, over the \
+                 {FLEET_PEERS_MAX_FILE_BYTES}-byte bound",
+                path.display()
+            ));
         }
+        let mut bytes = Vec::with_capacity(declared as usize);
+        file.take(FLEET_PEERS_MAX_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if bytes.len() as u64 > FLEET_PEERS_MAX_FILE_BYTES {
+            return Err(anyhow!(
+                "fleet peers summary {} grew past the {FLEET_PEERS_MAX_FILE_BYTES}-byte bound",
+                path.display()
+            ));
+        }
+        Self::from_json(&bytes).map(Some)
     }
 
     /// Write via a sibling temp file and rename, so the kernel never reads a
-    /// half-written summary.
+    /// half-written summary. The temp file is created `0600` (this file
+    /// carries per-room wellbeing words and the pins, like every other state
+    /// file the kernel owns) and fsynced before the rename; the directory is
+    /// fsynced after it, so a power loss cannot leave the name pointing at an
+    /// empty file — which the bridge would recover from by re-pinning every
+    /// device, the one thing the pin store exists to avoid.
     pub fn write_atomic(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self)? + "\n";
         let mut tmp = path.as_os_str().to_owned();
         tmp.push(".tmp");
         let tmp = std::path::PathBuf::from(tmp);
-        std::fs::write(&tmp, json.as_bytes())
+        write_private_file(&tmp, json.as_bytes())
             .with_context(|| format!("writing {}", tmp.display()))?;
         std::fs::rename(&tmp, path)
             .with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))?;
+        let dir = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir,
+            _ => Path::new("."),
+        };
+        // Best effort: not every filesystem lets a directory be synced, and a
+        // summary that is merely less durable is still a correct summary.
+        if let Err(err) = std::fs::File::open(dir).and_then(|d| d.sync_all()) {
+            log::debug!(
+                "fleet peers: directory sync of {} skipped: {err}",
+                dir.display()
+            );
+        }
         Ok(())
     }
+}
+
+/// Create-or-truncate `path` with mode `0600`, refuse to follow a symlink in
+/// its place, write, and fsync. `.mode()` applies only when the file is
+/// created, so a temp file left by a crash mid-write is re-narrowed
+/// explicitly (the pattern `break_glass::cli::write_secret_file` documents).
+#[cfg(unix)]
+fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 /// The bridge's in-memory table, keyed by device id.
 #[derive(Debug, Default)]
 pub struct PeerTable {
     peers: BTreeMap<String, PeerRecord>,
+    /// Ids displaced at the cap since this table was built (the bridge logs
+    /// each increase — an eviction drops that id's pin).
+    evictions: u64,
 }
 
 impl PeerTable {
@@ -335,7 +493,10 @@ impl PeerTable {
             .filter(|p| device_id_ok(&p.device_id))
             .map(|p| (p.device_id.clone(), p))
             .collect();
-        Self { peers }
+        Self {
+            peers,
+            evictions: 0,
+        }
     }
 
     /// Number of peers tracked.
@@ -348,11 +509,37 @@ impl PeerTable {
         self.peers.is_empty()
     }
 
+    /// Ids displaced at the cap so far.
+    pub fn evictions(&self) -> u64 {
+        self.evictions
+    }
+
+    /// Forget every id not heard within [`FLEET_PEER_FORGET_SECS`], pin
+    /// included. Returns how many were dropped. A stamp from the future is a
+    /// damaged record, not a recent one, and is kept only until it ages out
+    /// like any other.
+    pub fn prune(&mut self, now: u64) -> usize {
+        let before = self.peers.len();
+        self.peers
+            .retain(|_, p| now.saturating_sub(p.last_seen_epoch_s) <= FLEET_PEER_FORGET_SECS);
+        before - self.peers.len()
+    }
+
+    /// The id to displace for a newcomer at the cap: never proven before
+    /// proven, then the least recently heard.
+    fn eviction_candidate(&self) -> Option<String> {
+        self.peers
+            .values()
+            .min_by_key(|p| (p.last_signed_epoch_s.is_some(), p.last_seen_epoch_s))
+            .map(|p| p.device_id.clone())
+    }
+
     /// Feed one received publish. `retained` is the wire flag rumqttc reports
     /// (set by the broker only for a message replayed to a new subscription).
     /// Returns `true` when the table changed and should be flushed; `false`
-    /// for topics this module does not handle, malformed ids, or a table at
-    /// its cap.
+    /// for topics this module does not handle or malformed ids. A new id at
+    /// the cap displaces one (see [`FLEET_PEER_MAX`]) rather than being
+    /// refused, so a flood cannot lock real Canaries out for good.
     pub fn observe(&mut self, topic: &str, payload: &[u8], retained: bool, now: u64) -> bool {
         let Some((device_id, suffix)) = split_topic(topic) else {
             return false;
@@ -366,8 +553,14 @@ impl PeerTable {
         ) {
             return false;
         }
-        if !self.peers.contains_key(device_id) && self.peers.len() >= FLEET_PEER_MAX {
-            return false;
+        if !self.peers.contains_key(device_id)
+            && self.peers.len() >= FLEET_PEER_MAX
+            && self.prune(now) == 0
+        {
+            if let Some(victim) = self.eviction_candidate() {
+                self.peers.remove(&victim);
+                self.evictions += 1;
+            }
         }
         let rec = self
             .peers
@@ -394,7 +587,12 @@ impl PeerTable {
                 if let Some(dt) = doc.get("device_type").and_then(|v| v.as_str()) {
                     rec.device_type = clean_product(dt);
                 }
-                if doc.get("status").and_then(|v| v.as_str()) == Some("offline") {
+                // Two LWT shapes: canary-sense/-vision publish
+                // `{"status":"offline",…}`; the canary-wap's will is
+                // `{"online":false}` on this same topic.
+                if doc.get("status").and_then(|v| v.as_str()) == Some("offline")
+                    || doc.get("online").and_then(|v| v.as_bool()) == Some(false)
+                {
                     rec.offline_epoch_s = Some(now);
                 }
             }
@@ -423,14 +621,14 @@ impl PeerTable {
                     // A replayed room claim is history, not a reading.
                     return true;
                 }
-                let presence = match doc.get("presence_state").and_then(|v| v.as_str()) {
-                    Some(w @ ("clear" | "present")) => Some(w.to_string()),
-                    _ => None,
-                };
-                let occupants = match doc.get("occupants").and_then(|v| v.as_str()) {
-                    Some(w @ ("0" | "1" | "2+")) => Some(w.to_string()),
-                    _ => None,
-                };
+                let presence = doc
+                    .get("presence_state")
+                    .and_then(|v| v.as_str())
+                    .and_then(presence_word);
+                let occupants = doc
+                    .get("occupants")
+                    .and_then(|v| v.as_str())
+                    .and_then(occupants_word);
                 let breathing = doc.get("breathing_locked").and_then(|v| v.as_bool());
                 if presence.is_some() || occupants.is_some() || breathing.is_some() {
                     rec.presence = presence;
@@ -486,8 +684,12 @@ pub struct FleetRow {
 }
 
 /// Project a summary into `/api/fleet` device rows — the contract's words and
-/// nothing else. Rows are ordered by device id. Fields are copied by name, so
-/// a field added to [`PeerRecord`] stays private until it is added here too.
+/// nothing else. Rows are ordered by device id and capped at
+/// [`FLEET_PEER_MAX`]. Fields are copied by name, so a field added to
+/// [`PeerRecord`] stays private until it is added here too — and every value
+/// is cleaned again on the way out (`clean_name`, `clean_product`, the
+/// wellbeing vocabulary), so this is a value allowlist as well as a field
+/// one: the file is the bridge's, but the wire is the kernel's.
 pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<FleetRow> {
     let mut peers: Vec<&PeerRecord> = summary
         .peers
@@ -497,29 +699,29 @@ pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<FleetRow> {
     peers.sort_by(|a, b| a.device_id.cmp(&b.device_id));
     peers
         .into_iter()
+        .take(FLEET_PEER_MAX)
         .map(|peer| {
             let online = peer.proven_online(now);
             let name = peer
                 .name
                 .as_deref()
-                .filter(|n| !n.is_empty())
-                .unwrap_or(&peer.device_id)
-                .to_string();
+                .and_then(clean_name)
+                .unwrap_or_else(|| peer.device_id.clone());
             let chain = (peer.chain == CHAIN_OK || peer.chain == CHAIN_DEGRADED)
                 .then(|| peer.chain.clone());
-            let product = peer
-                .device_type
-                .as_deref()
-                .filter(|p| !p.is_empty())
-                .map(str::to_string);
+            let product = peer.device_type.as_deref().and_then(clean_product);
             let wellbeing = online && peer.wellbeing_fresh(now);
             FleetRow {
                 name,
                 online,
                 chain,
                 product,
-                presence: wellbeing.then(|| peer.presence.clone()).flatten(),
-                occupants: wellbeing.then(|| peer.occupants.clone()).flatten(),
+                presence: wellbeing
+                    .then(|| peer.presence.as_deref().and_then(presence_word))
+                    .flatten(),
+                occupants: wellbeing
+                    .then(|| peer.occupants.as_deref().and_then(occupants_word))
+                    .flatten(),
                 breathing: wellbeing.then_some(peer.breathing).flatten(),
             }
         })
@@ -567,7 +769,7 @@ pub fn verify_chain_signature(
 }
 
 fn chain_canonical(device_id: &str, length: u64, latest_hash_hex: &str) -> String {
-    format!("{SIG_PREFIX}|v{SIG_SCHEMA_V}|chain|{device_id}|{length}|{latest_hash_hex}")
+    format!("{SIG_PREFIX}|v{SCHEMA_V}|chain|{device_id}|{length}|{latest_hash_hex}")
 }
 
 /// `securacv/<device_id>/<suffix…>` → `(device_id, suffix)`. The fleet-wide
@@ -575,32 +777,69 @@ fn chain_canonical(device_id: &str, length: u64, latest_hash_hex: &str) -> Strin
 fn split_topic(topic: &str) -> Option<(&str, &str)> {
     let rest = topic.strip_prefix("securacv/")?;
     let (device_id, suffix) = rest.split_once('/')?;
-    if device_id.is_empty() || device_id == "fleet" || suffix.is_empty() {
+    if device_id.is_empty() || device_id.eq_ignore_ascii_case("fleet") || suffix.is_empty() {
         return None;
     }
     Some((device_id, suffix))
 }
 
-/// The id alphabet a topic segment must fit before it becomes a table key.
+/// The id alphabet a topic segment must fit before it becomes a table key:
+/// at most 48 of `[A-Za-z0-9_.-]`, with at least one letter or digit, so
+/// `..`, `.` and `-` are not ids (they are never used as paths — only as
+/// map keys and the row-name fallback — but they are not names either).
 fn device_id_ok(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 48
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        && id.bytes().any(|b| b.is_ascii_alphanumeric())
 }
 
-/// An owner-typed name, kept to printable characters and 48 of them. `None`
-/// when nothing printable is left.
+/// Characters that render as nothing or re-order what follows: zero-width
+/// space through right-to-left mark, the bidi embedding/override block, the
+/// bidi isolates, the line/paragraph separators and the byte-order mark.
+/// `char::is_control` is Cc only and lets all of these through.
+fn is_invisible_or_bidi(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}'
+    )
+}
+
+/// The byte bound on a served name. The 48-character bound alone lets an
+/// all-emoji name reach 192 bytes.
+const NAME_MAX_BYTES: usize = 96;
+
+/// An owner-typed name, kept to visible characters, 48 of them and
+/// [`NAME_MAX_BYTES`]. `None` when nothing visible is left.
 fn clean_name(raw: &str) -> Option<String> {
-    let cleaned: String = raw
+    let mut cleaned = String::new();
+    for c in raw
         .chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !is_invisible_or_bidi(*c))
         .take(48)
-        .collect::<String>()
-        .trim()
-        .to_string();
+    {
+        if cleaned.len() + c.len_utf8() > NAME_MAX_BYTES {
+            break;
+        }
+        cleaned.push(c);
+    }
+    let cleaned = cleaned.trim().to_string();
     (!cleaned.is_empty()).then_some(cleaned)
+}
+
+/// The contract's presence vocabulary; anything else is not a word.
+fn presence_word(raw: &str) -> Option<String> {
+    matches!(raw, "clear" | "present").then(|| raw.to_string())
+}
+
+/// The contract's occupancy vocabulary.
+fn occupants_word(raw: &str) -> Option<String> {
+    matches!(raw, "0" | "1" | "2+").then(|| raw.to_string())
 }
 
 /// A product token: the OTA product alphabet (`canary-wap`, `canary-sense`).
@@ -922,7 +1161,10 @@ mod tests {
     fn names_products_and_ids_are_cleaned_and_bounded() {
         let mut table = PeerTable::default();
         assert!(!table.observe("securacv/fleet/escalation", b"{}", false, NOW));
-        assert!(!table.observe("securacv/../etc/status", b"{}", false, NOW));
+        assert!(!table.observe("securacv/FLEET/escalation", b"{}", false, NOW));
+        assert!(!table.observe("securacv/../status", b"{}", false, NOW));
+        assert!(!table.observe("securacv/./status", b"{}", false, NOW));
+        assert!(!table.observe("securacv/-/status", b"{}", false, NOW));
         assert!(!table.observe("securacv/has space/status", b"{}", false, NOW));
         assert!(!table.observe("witness/chain_problem", b"ON", false, NOW));
         assert!(
@@ -930,10 +1172,12 @@ mod tests {
             "events are not consumed"
         );
         assert!(!table.observe("securacv/porch/sensing", b"{}", false, NOW));
-        // A control character arrives JSON-escaped (a raw one is not JSON).
+        // A control character arrives JSON-escaped (a raw one is not JSON);
+        // a bidi override and a zero-width space are not controls, and go
+        // the same way.
         assert!(table.observe(
             "securacv/porch/meta",
-            br#"{"name":"  Front\u0007 Door ","room":"hall"}"#,
+            br#"{"name":"  Front\u0007 \u202eDoor\u200b ","room":"hall"}"#,
             true,
             NOW
         ));
@@ -947,12 +1191,287 @@ mod tests {
         assert_eq!(rows[0].name, "Front Door");
         assert_eq!(rows[0].product.as_deref(), Some("canary-wapscript"));
         assert!(!table.is_empty() && table.len() == 1);
+        // An all-emoji name is bounded by bytes as well as characters.
+        let emoji = "🦜".repeat(48);
+        table.observe(
+            "securacv/porch/meta",
+            serde_json::json!({ "name": emoji }).to_string().as_bytes(),
+            false,
+            NOW,
+        );
+        let name = &fleet_rows(&table.summary(NOW), NOW)[0].name;
+        assert!(name.len() <= NAME_MAX_BYTES, "{} bytes", name.len());
+        assert!(name.chars().count() == NAME_MAX_BYTES / 4);
+    }
 
-        // The table caps at FLEET_PEER_MAX ids.
-        for i in 0..(FLEET_PEER_MAX + 5) {
-            table.observe(&format!("securacv/flood-{i}/status"), b"{}", false, NOW);
+    #[test]
+    fn at_the_cap_a_newcomer_displaces_the_least_useful_id_never_a_real_lockout() {
+        let key = signer();
+        let mut table = PeerTable::default();
+        // One proven Canary, heard early.
+        table.observe("securacv/porch/health", &health(&key), false, NOW);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&key, "porch", 1),
+            false,
+            NOW,
+        );
+        // A flood of never-proven ids fills the rest of the table.
+        for i in 0..(FLEET_PEER_MAX - 1) {
+            table.observe(
+                &format!("securacv/ghost-{i:03}/status"),
+                b"{}",
+                false,
+                NOW + 1 + i as u64,
+            );
         }
         assert_eq!(table.len(), FLEET_PEER_MAX);
+        assert_eq!(table.evictions(), 0);
+        // Five more: each displaces the oldest UNPROVEN id; porch, older than
+        // all of them but proven, survives, and the table never grows.
+        for i in 0..5 {
+            assert!(table.observe(
+                &format!("securacv/late-{i}/status"),
+                b"{}",
+                false,
+                NOW + 500 + i
+            ));
+        }
+        assert_eq!(table.len(), FLEET_PEER_MAX);
+        assert_eq!(table.evictions(), 5);
+        let summary = table.summary(NOW + 600);
+        assert!(summary.peers.iter().any(|p| p.device_id == "porch"));
+        for i in 0..5 {
+            assert!(
+                !summary
+                    .peers
+                    .iter()
+                    .any(|p| p.device_id == format!("ghost-{i:03}")),
+                "ghost-{i:03} should have been the one displaced"
+            );
+            assert!(summary
+                .peers
+                .iter()
+                .any(|p| p.device_id == format!("late-{i}")));
+        }
+        // A file full of stale ids is pruned on rehydrate, so a lockout
+        // cannot outlive the flood by more than FLEET_PEER_FORGET_SECS.
+        let mut rehydrated = PeerTable::from_summary(summary);
+        let much_later = NOW + 600 + FLEET_PEER_FORGET_SECS + 1;
+        assert_eq!(rehydrated.prune(much_later), FLEET_PEER_MAX);
+        assert!(rehydrated.is_empty());
+    }
+
+    #[test]
+    fn a_replayed_signed_publish_proves_nothing_new() {
+        let key = signer();
+        let mut table = PeerTable::default();
+        table.observe("securacv/porch/health", &health(&key), true, NOW);
+        // The broker's retained head: verdict, and the length is now "seen".
+        let head = signed_chain(&key, "porch", 5);
+        table.observe("securacv/porch/chain", &head, true, NOW + 1);
+        assert!(!fleet_rows(&table.summary(NOW + 1), NOW + 1)[0].online);
+        // The identical bytes arriving LIVE — a capture from anyone on the
+        // broker, or the head published again — advance nothing.
+        table.observe("securacv/porch/chain", &head, false, NOW + 2);
+        assert!(!fleet_rows(&table.summary(NOW + 2), NOW + 2)[0].online);
+        // Nor does an older publish.
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&key, "porch", 4),
+            false,
+            NOW + 3,
+        );
+        assert!(!fleet_rows(&table.summary(NOW + 3), NOW + 3)[0].online);
+        // A genuine advance does.
+        let six = signed_chain(&key, "porch", 6);
+        table.observe("securacv/porch/chain", &six, false, NOW + 4);
+        assert!(fleet_rows(&table.summary(NOW + 4), NOW + 4)[0].online);
+        // Replaying THAT a week later holds nothing open.
+        let week = NOW + 7 * 24 * 3600;
+        table.observe("securacv/porch/chain", &six, false, week);
+        let rows = fleet_rows(&table.summary(week), week);
+        assert!(!rows[0].online, "a replay is not presence: {rows:?}");
+        assert_eq!(rows[0].chain.as_deref(), Some("ok"));
+        assert_eq!(table.summary(week).peers[0].last_verified_length, Some(6));
+    }
+
+    #[test]
+    fn an_unsigned_health_with_another_key_changes_no_verdict_by_itself() {
+        let key = signer();
+        let impostor = SigningKey::from_bytes(&[3u8; 32]);
+        let mut table = PeerTable::default();
+        table.observe("securacv/porch/health", &health(&key), false, NOW);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&key, "porch", 1),
+            false,
+            NOW + 1,
+        );
+        // Anyone can publish a health with a different key. Alone it is noise.
+        table.observe("securacv/porch/health", &health(&impostor), false, NOW + 2);
+        let rows = fleet_rows(&table.summary(NOW + 2), NOW + 2);
+        assert_eq!(rows[0].chain.as_deref(), Some("ok"));
+        assert!(rows[0].online);
+        assert!(!table.summary(NOW + 2).peers[0].pin_conflict);
+        // The real device keeps signing under the pin: still ok, and the
+        // announcement is forgotten.
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&key, "porch", 2),
+            false,
+            NOW + 3,
+        );
+        assert_eq!(
+            fleet_rows(&table.summary(NOW + 3), NOW + 3)[0]
+                .chain
+                .as_deref(),
+            Some("ok")
+        );
+        // A publish signed by neither key is not evidence of a second key
+        // either: the verdict says the last publish failed, nothing sticks.
+        let garbage = SigningKey::from_bytes(&[5u8; 32]);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&garbage, "porch", 3),
+            false,
+            NOW + 4,
+        );
+        assert_eq!(
+            fleet_rows(&table.summary(NOW + 4), NOW + 4)[0]
+                .chain
+                .as_deref(),
+            Some("degraded")
+        );
+        assert!(!table.summary(NOW + 4).peers[0].pin_conflict);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&key, "porch", 3),
+            false,
+            NOW + 5,
+        );
+        assert_eq!(
+            fleet_rows(&table.summary(NOW + 5), NOW + 5)[0]
+                .chain
+                .as_deref(),
+            Some("ok")
+        );
+    }
+
+    #[test]
+    fn the_wap_lwt_shape_counts_as_offline() {
+        let key = signer();
+        let mut table = PeerTable::default();
+        table.observe("securacv/porch/health", &health(&key), false, NOW);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&key, "porch", 1),
+            false,
+            NOW + 1,
+        );
+        assert!(fleet_rows(&table.summary(NOW + 1), NOW + 1)[0].online);
+        // The canary-wap's will is `{"online":false}` on the status topic.
+        table.observe(
+            "securacv/porch/status",
+            br#"{"online":false}"#,
+            false,
+            NOW + 2,
+        );
+        assert!(!fleet_rows(&table.summary(NOW + 2), NOW + 2)[0].online);
+        // …and `{"online":true}` is an unsigned heartbeat, so still not online.
+        table.observe(
+            "securacv/porch/status",
+            br#"{"online":true}"#,
+            false,
+            NOW + 3,
+        );
+        assert!(!fleet_rows(&table.summary(NOW + 3), NOW + 3)[0].online);
+    }
+
+    #[test]
+    fn the_projection_recleans_and_caps_whatever_the_file_says() {
+        let mut dirty = PeerRecord::new("z", NOW);
+        dirty.name = Some("line1\nline2\u{202e}\u{7}".to_string());
+        dirty.device_type = Some("<script>alert(1)</script>".to_string());
+        dirty.presence = Some("levitating".to_string());
+        dirty.occupants = Some("many".to_string());
+        dirty.breathing = Some(true);
+        dirty.wellbeing_epoch_s = Some(NOW);
+        dirty.last_signed_epoch_s = Some(NOW);
+        dirty.chain = CHAIN_OK.to_string();
+        let mut peers = vec![dirty];
+        for i in 0..(FLEET_PEER_MAX * 3) {
+            peers.push(PeerRecord::new(&format!("a{i:04}"), NOW));
+        }
+        let summary = PeerSummaryFile {
+            schema: FLEET_PEERS_SCHEMA.to_string(),
+            written_at_epoch_s: NOW,
+            peers,
+        };
+        let rows = fleet_rows(&summary, NOW);
+        assert_eq!(
+            rows.len(),
+            FLEET_PEER_MAX,
+            "the row count is capped on read"
+        );
+        // Sorted by id, so "z" is past the cap; project it alone to inspect.
+        let summary_z = PeerSummaryFile {
+            peers: vec![summary.peers[0].clone()],
+            ..summary
+        };
+        let row = &fleet_rows(&summary_z, NOW)[0];
+        assert_eq!(row.name, "line1line2");
+        assert_eq!(row.product.as_deref(), Some("scriptalert1script"));
+        assert!(row.online);
+        assert!(row.presence.is_none() && row.occupants.is_none());
+        assert_eq!(row.breathing, Some(true));
+    }
+
+    #[test]
+    fn an_oversize_summary_file_is_ignored_not_served() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("fleet_peers.json");
+        let mut peers = Vec::new();
+        for i in 0..20_000 {
+            peers.push(PeerRecord::new(&format!("p{i}"), NOW));
+        }
+        let big = PeerSummaryFile {
+            schema: FLEET_PEERS_SCHEMA.to_string(),
+            written_at_epoch_s: NOW,
+            peers,
+        };
+        big.write_atomic(&path)?;
+        assert!(std::fs::metadata(&path)?.len() > FLEET_PEERS_MAX_FILE_BYTES);
+        let err = PeerSummaryFile::read(&path).unwrap_err();
+        assert!(format!("{err:#}").contains("bound"), "{err:#}");
+        assert!(load_rows(&path, NOW).is_empty());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_summary_file_is_written_private() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("fleet_peers.json");
+        // A pre-existing, world-readable temp file (a crash mid-write) is
+        // re-narrowed, not inherited.
+        let tmp = dir.path().join("fleet_peers.json.tmp");
+        std::fs::write(&tmp, b"stale")?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644))?;
+        PeerTable::default().summary(NOW).write_atomic(&path)?;
+        let mode = std::fs::metadata(&path)?.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the summary holds room words and pins");
+        assert!(!tmp.exists());
+        // A symlink planted at the temp path is refused, not followed.
+        let elsewhere = dir.path().join("elsewhere");
+        std::os::unix::fs::symlink(&elsewhere, &tmp)?;
+        assert!(PeerTable::default()
+            .summary(NOW)
+            .write_atomic(&path)
+            .is_err());
+        assert!(!elsewhere.exists());
+        Ok(())
     }
 
     #[test]
@@ -982,7 +1501,14 @@ mod tests {
         let mut table = PeerTable::from_summary(rehydrated);
         let impostor = SigningKey::from_bytes(&[3u8; 32]);
         table.observe("securacv/porch/health", &health(&impostor), false, NOW + 5);
-        assert!(table.summary(NOW + 5).peers[0].pin_conflict);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&impostor, "porch", 2),
+            false,
+            NOW + 6,
+        );
+        assert!(table.summary(NOW + 6).peers[0].pin_conflict);
+        assert!(!fleet_rows(&table.summary(NOW + 6), NOW + 6)[0].online);
 
         std::fs::write(
             &path,

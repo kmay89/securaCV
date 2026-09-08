@@ -201,6 +201,18 @@ incomplete TLS setup refuses to connect rather than quietly downgrading, and
 the unverified "lab" mode exists only as a mode chosen by name that warns on
 every connect. This is compile-tested, not yet bench-tested.
 
+**One read on the hub is open on purpose: the fleet roll-call**
+(`GET /api/fleet`). It answers anyone who can reach the kernel's port with
+the coarse words the Witness Wall paints — each Canary's name, whether it is
+online, its chain verdict and product, and the presence / occupants /
+breathing words while it is proven online — never an event, a zone or a key.
+That is why the kernel listens on loopback by default and the port is yours
+to expose; the origin allow-list only stops other websites' scripts, not a
+device on your LAN. And "online" there is a verified, chain-advancing
+signature seen within three minutes — stronger than a heartbeat, but not a
+liveness proof against someone who can publish on your MQTT broker
+(`tvos/discovery/DISCOVERY.md` spells out the difference).
+
 ---
 
 ## Who Cannot Access Your Data

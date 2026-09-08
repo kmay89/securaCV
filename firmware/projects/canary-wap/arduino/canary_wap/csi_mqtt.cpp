@@ -144,7 +144,9 @@ void mqtt_event_handler(void* /*handler_args*/, esp_event_base_t /*base*/,
        * a freshly-connecting HA sees the right state immediately. */
       char topic[192];
       build_topic(topic, sizeof(topic), "status");
-      const char* online = "{\"online\":true}";
+      /* device_type names the product the same way the mDNS `dt` record
+       * and the fleet self-report do, so a hub's roll-call can carry it. */
+      const char* online = "{\"online\":true,\"device_type\":\"canary-wap\"}";
       publish_raw(topic, online, strlen(online), /*retain=*/true);
       /* HA MQTT auto-discovery: when discovery=true, publish entity +
        * trigger definitions so a freshly-subscribing HA sees the
@@ -1010,6 +1012,7 @@ void publish_status(bool csi_running, bool wifi_connected, int rssi_dbm) {
   const int n = snprintf(body, sizeof(body),
     "{"
       "\"online\":true,"
+      "\"device_type\":\"canary-wap\","
       "\"csi_running\":%s,"
       "\"wifi_connected\":%s,"
       "\"rssi\":%d"
