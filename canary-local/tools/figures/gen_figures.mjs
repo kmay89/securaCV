@@ -16,8 +16,10 @@
 //                                          for the phone's turntable viewer
 //
 // `--check` regenerates into memory and fails if anything on disk differs.
-// That is the CI gate: edit massing.mjs or re-export an STL without running
-// this, and the build stops. See docs/design/FLEET_FIGURES.md.
+// That is the CI gate: edit massing.mjs, re-export an STL or change a device
+// manifest's `figure` (devices/<slug>/device.json — the hardware→figure map
+// is read from there) without running this, and the build stops. See
+// docs/design/FLEET_FIGURES.md.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -555,59 +557,10 @@ function walkConfigs() {
  * marker. A wrong picture is worse than no picture.
  */
 
-// boards/<id>/pins  ->  the figure of the thing that board is. Envs with no
-// pins header of their own fall back to `board:<platformio id>`.
-const HARDWARE_FIGURE = {
-  'xiao-esp32s3-round': 'device.canary-display-watch',
-  'waveshare-esp32s3-lcd43': 'device.canary-display-dash',
-  'waveshare-esp32s3-lcd7': 'device.canary-display-dash7',
-  'waveshare-esp32s3-touch-lcd169': 'device.canary-display-touch169',
-  'xiao-esp32c6-mr60': 'device.canary-sense',
-  'board:seeed_xiao_esp32s3': 'device.canary-wap',
-  // The two XIAO hosts share the stacked-XIAO enclosure the Vision figure
-  // traces; the DevKitM is a wider, Grove-cabled housing with its own STLs,
-  // so it gets its own figure rather than borrowing one that fits neither.
-  'xiao-esp32c3': 'device.canary-vision',
-  'xiao-esp32s3': 'device.canary-vision',
-  'esp32-c3': 'device.canary-vision-devkit',
-  // Three boards carry the same 1.47" panel, and they are three DIFFERENT
-  // shapes — same glass, same product name in two cases, three cases on disk.
-  //   C3  the Nightlight's pocket case      (canary_c3_lcd147.scad)
-  //   S3  the Nightstand's USB-A wall stick (canary_s3_lcd147.scad)
-  //   C6  a header board with a USB-C port  (canary_c6_display.scad)
-  //
-  // The S3 was unmapped with the reason "no panel record on disk to size it
-  // from" — true when it was written, and not any more: canary_s3_lcd147.scad
-  // carries the whole record (board outline, the MEASURED 8.2 mm stack, the
-  // derived outer shell it echoes at render time), so its figure is traced
-  // rather than invented.
-  //
-  // The C6 stays unmapped, and NOT because we lack a drawing of it. Its case
-  // file opens with "⚠️ NOT the C6 case … a header board with a USB-C PORT on
-  // its short edge", where the S3's defining feature is a 12 mm USB-A male
-  // plug. Handing the C6 the stick's figure would draw a plug onto a device
-  // that has a socket — the exact wrong-picture failure the ladder exists to
-  // prevent. It needs its own registry entry and its own massing; until then
-  // the generic marker is the honest answer.
-  'waveshare-esp32c3-lcd147': 'device.canary-nightlight',
-  'waveshare-esp32s3-lcd147': 'device.canary-display-nightstand',
-  'waveshare-esp32s3-amoled241': 'device.canary-display-amoled241',
-};
-
-/* Hardware we can name but cannot yet draw. Listed so the gap is data, with
- * the reason beside it, rather than a silent nullptr:
- *   waveshare-esp32s3-lcd43b / -lcd43c   the 4.3B and 4.3C panels; the Dash
- *       figure traces the plain 4.3, and these are different housings
- *   waveshare-esp32c6-lcd147             the C6 1.47" board is not a device in
- *       registry.json, and the registry is the one id space (CATALOG §4)
- *   xiao-esp32c3-sentinel-lite / board:seeed_xiao_esp32c6   the Sentinel line
- *       (Phase 0 — firmware host-tested, hardware bench pending) has no
- *       enclosure CAD at all yet, and inventing a case shape for it is the
- *       one place a sketch would mislead
- * (The S3 1.47" USB-A stick used to sit in this list as "no panel record on
- * disk to size it from"; canary_s3_lcd147.scad now carries the whole record
- * and the map above traces it — see the 1.47" comment there.)
- */
+// boards/<id>/pins  ->  the figure of the thing that board is. NOT typed here:
+// built below (after walkEnvs) from devices/<slug>/device.json, where each
+// device names its board_id and, once drawn, its figure. Envs with no pins
+// header of their own key on `board:<platformio id>`.
 
 // firmware/configs/<family>/<flavor> -> figure. Used ONLY to work out which
 // published device types are unambiguous; never as an identity itself, since
@@ -678,10 +631,158 @@ const mappedConfigRows = configRows.filter((r) => r.fig);
 /* ── hardware: the exact lookup, from the pins each build compiles ────── */
 
 const envs = walkEnvs();
+const envByName = new Map(envs.map((e) => [e.env, e]));
+
+/* ── the device manifests: which figure draws which board ────────────────
+ * devices/<slug>/device.json is the join between this ledger and the rest
+ * of the tree (devices/README.md): each manifest names its registry board
+ * (board.board_id), the envs that target it and — once one has been drawn
+ * — its figure. That IS the hardware→figure map, so it is read from there
+ * rather than typed here a second time. The rule is narrow on purpose:
+ *
+ *   a manifest's figure draws its board_id, and ONLY its board_id.
+ *
+ * Its `variants` — SKU siblings whose pins headers some of its envs compile
+ * (the Dash's 4.3B and 4.3C) — are different housings and stay unmapped
+ * until someone traces them. A manifest without a figure maps nothing, and
+ * its board shows in hardware.unmapped with the builds it covers: the C6
+ * 1.47" board (its case file opens with "NOT the C6 case … a USB-C PORT",
+ * where the S3 stick's defining feature is a USB-A plug — lending it that
+ * figure would draw a plug onto a device with a socket), the C3 Super Mini
+ * (no enclosure at all), the Sentinel line (no CAD yet). Envs the walker
+ * never sees — the canary tree's, whose pins ride in build flags, and the
+ * Arduino profile builds — contribute no key. An env that compiles no pins
+ * header keys on `board:<platformio id>`, and the manifest's registry row
+ * must name that same PlatformIO board (the WAP is the one such device).
+ *
+ * What is NOT read from a manifest is the confidence ladder: its schema
+ * forbids a status, and the verdict above is derived from evidence on disk.
+ */
+const DEVICES = join(ROOT, 'devices');
+const manifests = readdirSync(DEVICES, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && existsSync(join(DEVICES, e.name, 'device.json')))
+  .map((e) => JSON.parse(readFileSync(join(DEVICES, e.name, 'device.json'), 'utf8')))
+  .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+const pioBoardOf = new Map(
+  JSON.parse(readFileSync(join(ROOT, 'firmware/boards/boards.json'), 'utf8'))
+    .map((b) => [b.id, b.pio_board]),
+);
+const HARDWARE_FIGURE = {};
+const hardwareDrawnBy = {};   // hardware -> manifest slug, for the messages
+for (const m of manifests) {
+  if (!m.figure) continue;
+  const bid = m.board.board_id;
+  for (const name of m.board.envs) {
+    const e = envByName.get(name);
+    if (!e) continue;
+    let key = null;
+    if (e.pins) {
+      if (e.pins === bid) key = bid;          // a variant's header: not this figure's
+    } else if (e.board) {
+      if (pioBoardOf.get(bid) !== e.board) {
+        throw new Error(`figures: devices/${m.slug} names board_id "${bid}" (PlatformIO board `
+          + `${pioBoardOf.get(bid)}), but its env ${name} compiles no pins header and builds `
+          + `for board = ${e.board}. Fix the manifest or the env.`);
+      }
+      key = e.hardware;                        // board:<platformio id>
+    }
+    if (!key) continue;
+    if (HARDWARE_FIGURE[key] && HARDWARE_FIGURE[key] !== m.figure) {
+      throw new Error(`figures: boards/${key} is drawn as "${HARDWARE_FIGURE[key]}" by `
+        + `devices/${hardwareDrawnBy[key]} and as "${m.figure}" by devices/${m.slug}. `
+        + 'One board, one shape — fix one manifest.');
+    }
+    HARDWARE_FIGURE[key] = m.figure;
+    hardwareDrawnBy[key] = m.slug;
+  }
+}
 for (const id of Object.keys(HARDWARE_FIGURE)) {
   if (!byIdBuilt.get(HARDWARE_FIGURE[id])) {
-    throw new Error(`figures: HARDWARE_FIGURE maps "${id}" to "${HARDWARE_FIGURE[id]}", `
-      + 'which is not a figure. Fix the map or add the figure.');
+    throw new Error(`figures: devices/${hardwareDrawnBy[id]} names figure "${HARDWARE_FIGURE[id]}" `
+      + `for boards/${id}, which is not a figure. Fix the manifest or add the figure.`);
+  }
+}
+
+/* The coarse map (CONFIG_FIGURE, above) is still typed here, because the
+ * manifests cannot own it: they name boards, and a config directory is not
+ * one board (canary-vision/default is compiled for four hosts; the WAP's
+ * envs compile no configs/ include at all). What the manifests CAN do is
+ * keep it honest, in both directions:
+ *
+ *   • every row must be BACKED by a device — a manifest with that figure
+ *     whose envs compile that config, or the only device of a one-manifest
+ *     family (the WAP, whose configs no env names);
+ *   • every config that publishes a DEVICE_TYPE and is compiled by a figured
+ *     device must HAVE a row — a new drawn device cannot leave its type
+ *     reading "no figure for this hardware yet";
+ *   • a figured manifest compiling a config the row maps to a DIFFERENT
+ *     figure is a DISPUTE: two boards publish that device type with two
+ *     shapes. Which picture a shared type draws (or whether it should draw
+ *     any) is a person's decision, so a dispute is recorded in
+ *     CONFIG_FIGURE_DISPUTED with the decision pending, and a new one — or a
+ *     stale entry — fails the build.
+ *
+ * Today's one dispute: canary-vision/default. The DevKit host got its own
+ * figure (device.canary-vision-devkit — the Grove-cabled housing is not the
+ * stacked-XIAO case), and it compiles the same config, and publishes the
+ * same device type `canary-vision`, as the two XIAO hosts drawn as
+ * device.canary-vision. The row keeps the XIAO figure it has always drawn;
+ * by this generator's own rule ("a type resolves only when every board
+ * publishing it agrees") the honest outcome may be to unmap the type, which
+ * moves fleet_figures.h and FleetFigures.swift and is therefore a decision,
+ * not a refactor. */
+const CONFIG_FIGURE_DISPUTED = new Set(['canary-vision/default']);
+const configsWithType = new Set(deviceTypes.map((c) => `${c.family}/${c.flavor}`));
+const manifestsOfFamily = new Map();
+for (const m of manifests) {
+  if (!manifestsOfFamily.has(m.family)) manifestsOfFamily.set(m.family, []);
+  manifestsOfFamily.get(m.family).push(m);
+}
+const configBacked = new Set();
+const configDisputed = new Map();   // config -> ['devices/<slug>: <figure>', …]
+for (const m of manifests) {
+  if (!m.figure) continue;
+  const compiled = new Set(m.board.envs.map((n) => envByName.get(n)?.config).filter(Boolean));
+  if (manifestsOfFamily.get(m.family).length === 1) {
+    for (const key of configsWithType) {
+      if (key.startsWith(`${m.family}/`)) compiled.add(key);
+    }
+  }
+  for (const key of compiled) {
+    if (!(key in CONFIG_FIGURE)) {
+      if (configsWithType.has(key)) {
+        throw new Error(`figures: devices/${m.slug} (figure ${m.figure}) compiles configs/${key}, `
+          + 'which publishes a device type but has no CONFIG_FIGURE row. Add the row.');
+      }
+      continue;
+    }
+    if (CONFIG_FIGURE[key] === m.figure) {
+      configBacked.add(key);
+    } else {
+      if (!configDisputed.has(key)) configDisputed.set(key, []);
+      configDisputed.get(key).push(`devices/${m.slug}: ${m.figure}`);
+    }
+  }
+}
+for (const key of Object.keys(CONFIG_FIGURE)) {
+  if (!configBacked.has(key)) {
+    throw new Error(`figures: CONFIG_FIGURE maps ${key} to "${CONFIG_FIGURE[key]}", but no `
+      + 'devices/<slug>/device.json with that figure compiles that config. Fix the row or the '
+      + 'manifest.');
+  }
+}
+for (const [key, who] of configDisputed) {
+  if (!CONFIG_FIGURE_DISPUTED.has(key)) {
+    throw new Error(`figures: ${key} is drawn as "${CONFIG_FIGURE[key]}" here, but `
+      + `${who.join(', ')} also compile it with a different figure. Decide which picture the `
+      + 'shared device type draws (or unmap it) and record the outcome in CONFIG_FIGURE / '
+      + 'CONFIG_FIGURE_DISPUTED.');
+  }
+}
+for (const key of CONFIG_FIGURE_DISPUTED) {
+  if (!configDisputed.has(key)) {
+    throw new Error(`figures: CONFIG_FIGURE_DISPUTED lists ${key}, but no manifest disputes it `
+      + 'any more — remove the entry.');
   }
 }
 
