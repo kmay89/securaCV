@@ -150,16 +150,18 @@ clicking Publish in the UI *does* fire the event, so that path still works.)
 
 ## Retired buttons, and what to press instead
 
-Three dispatch-only launchers were deleted on 2026-09-08 after sixty days
-unpressed — each was one input combination of the master button, kept "for
+Four dispatch-only launchers were deleted on 2026-09-08 after sixty days
+unpressed. Three were one input combination of the master button, kept "for
 when you know exactly what you want", and a second place every new target had
-to be wired. If muscle memory reaches for one:
+to be wired; the fourth had never produced a build. If muscle memory reaches
+for one:
 
 | You used to press | Press instead |
 |---|---|
 | **Release — one click (firmware + apps + web)** — a ticked set, unconditionally | the master button with **`force`** naming the targets (`flasher,lab`, `web`, or `all`). A dev-channel firmware build was never a smoke run: dispatch **Firmware Release** directly with `channel: dev` and the `-dev.N` version. |
 | **Firmware Release — if changed** | the master button with **`only: firmware`** — it is the same rule, generalized (`.github/scripts/release_plan.py`) |
 | **Build Mac apps (Flasher + Lab)** | the master button with **`force: flasher,lab`**; leave `publish` unchecked for the build-only smoke run, tick it to publish the Flasher and cut the Lab draft |
+| **Mobile (iOS) build** — the Lab as a Tauri iOS shell | nothing: it never produced a build (one gated no-op run), and the iPhone + iPad app that ships is the native companion, through **iOS release** — the `ios` target row. The local recipe and the revive path (a target row, not a launcher) are in [`desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md). |
 
 The one thing only the one-click launcher did — warn that publishing an
 already-tagged app version overwrites the shipped release — now lives in the

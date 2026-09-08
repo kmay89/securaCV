@@ -362,10 +362,10 @@ Simulator opens straight into a sample fleet, and
 `APPLE_DEVELOPMENT_TEAM=YOURTEAMID scripts/heal.sh generate` makes device
 signing survive regeneration.
 
-Signing (device / TestFlight / App Store) uses the **same** Apple secrets as the
-desktop mobile pipeline (`ENABLE_IOS_BUILD`, `APPLE_DEVELOPMENT_TEAM`,
+Signing (device / TestFlight / App Store) uses the **same** Apple secrets as
+every Apple target in the repo (`ENABLE_IOS_BUILD`, `APPLE_DEVELOPMENT_TEAM`,
 `APPLE_API_ISSUER`/`APPLE_API_KEY`/`APPLE_API_KEY_BASE64`, …). See
-`.github/workflows/ios-release.yml` and `desktop-lab/MOBILE.md`.
+`.github/workflows/ios-release.yml` and the CI section of `desktop-lab/MOBILE.md`.
 
 ## What it will never do (invariant guardrails)
 

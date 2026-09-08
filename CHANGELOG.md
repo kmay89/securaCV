@@ -21,6 +21,14 @@
   instead. The rule going forward: a new thing to ship is a row in
   `.github/release-targets.yml`, never a new launcher
   (`.github/RELEASE_LESSONS.md`, 2026-09-08).
+- **`desktop-mobile-release.yml` ("Mobile (iOS) build") is retired too, in
+  its own commit.** It wrapped the Lab's Tauri v2 iOS shell
+  (`desktop-lab/MOBILE.md`), was dispatched once (gated to a no-op) and never
+  produced a build; the iPhone / iPad app that ships is the native companion
+  in `ios/`, through `ios-release.yml` and the `ios` target row. This is a
+  distinct capability, not a duplicate — the local `npm run ios:build` recipe
+  stays, and `MOBILE.md` says how to bring a CI build back (a per-target
+  workflow plus a `release-targets.yml` row, not a launcher).
 
 ### The device manifests drive the generators, and the release env list is derived
 

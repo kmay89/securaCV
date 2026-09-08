@@ -85,8 +85,8 @@ declare it, and let the app render what the device says it has.
 3. **Prove the bundle before you publish.** Every app workflow has a
    build-only path — run it first, publish only after it's green:
    - `desktop-flasher-release.yml` → `dry_run: true` (build only)
-   - `desktop-release.yml` (Lab), `ios-release.yml`, `tvos-release.yml`,
-     `desktop-mobile-release.yml` → `publish: false` (build only)
+   - `desktop-release.yml` (Lab), `ios-release.yml`, `tvos-release.yml` →
+     `publish: false` (build only)
 4. **Verify a bundled resource exists in the copy step**, so the failure is
    a clear line in *that* step, not an opaque bundler abort 3 minutes later:
    `test -s "$res/bootfiles.bin" || { echo "::error::payload missing"; exit 1; }`
@@ -1413,8 +1413,8 @@ Two independent failures, one release day, both invisible-by-design.
   `MARKETING_VERSION` and ship the next one.
 - **Applies to:** `ios-release.yml`, `ios-selfheal.yml`,
   `tvos-release.yml`, `tvos.yml` (all fixed), `desktop-mobile-release.yml`
-  (already on `macos-latest`, which tracks new images). Watch for the same
-  aging on the next annual Xcode requirement.
+  (already on `macos-latest`, which tracks new images; retired 2026-09-08).
+  Watch for the same aging on the next annual Xcode requirement.
 
 ### 2026-07-28 (i) — Non-blocking build loops rot silently: watch/dash/dash-modes missing from every firmware release ever cut
 
@@ -1559,8 +1559,9 @@ Two independent failures, one release day, both invisible-by-design.
   stopped shipping.
 - **Cause:** `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` were read by
   **six** workflows that need **different certificates**. The Apple-native
-  pipelines (`ios-release`, `tvos-release`, `desktop-mobile-release`) sign
-  for the **App Store** and want an **Apple Distribution** identity; the
+  pipelines (`ios-release`, `tvos-release`, `desktop-mobile-release` — the
+  last since retired, 2026-09-08) sign for the **App Store** and want an
+  **Apple Distribution** identity; the
   Tauri desktop pipelines (`desktop-flasher-release`, `desktop-release`)
   produce a **notarized DMG downloaded outside the App Store**, which
   requires **Developer ID Application** — `desktop/SIGNING.md` even says in
@@ -2544,3 +2545,38 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
 - **Applies to:** every future "just a button that dispatches X and Y" idea.
   Before adding one, write down which `only:` / `force:` / `publish` setting
   it equals. If you can, it already exists.
+
+### 2026-09-08 (c) — The Lab's Tauri iOS shell had a release workflow and never a build
+
+- **Symptom:** `desktop-mobile-release.yml` ("Mobile (iOS) build") sat in the
+  Actions sidebar beside `ios-release.yml`, both gated on `ENABLE_IOS_BUILD`,
+  both signing with the same Apple secrets — and only one of them had ever
+  produced an `.ipa`. The Lab one had been dispatched once (2026-07-24, with
+  the gate off, so it printed a notice and exited green) and never again.
+- **Cause:** it was the CI half of `desktop-lab/MOBILE.md`, the plan to wrap
+  the web Lab in a Tauri v2 mobile shell for iPad. The plan was scaffolded
+  (`npm run ios:init` / `ios:build` scripts, the capability seam) and then the
+  *living-with-it* iPhone / iPad app was built native instead
+  (`docs/design/iphone_companion_app.md`, "Why native, not the scaffolded
+  Tauri-mobile shell?"), because CoreBluetooth, Secure Enclave custody and
+  background notifications are exactly what a WebView fights. Nothing marked
+  the shell's workflow as superseded: `src-tauri/gen/apple` was never
+  committed, `tauri.conf.json` has no iOS section, and the workflow was not
+  in `release-targets.yml`, so the master button never planned it and the
+  catalog tests never asked whether it worked. Unlike the three launchers in
+  (b), this is not a duplicate of the master button — it is a capability no
+  survivor has, which is why it is a separate entry and a separate commit.
+- **Fix:** retired on its own, so the decision can be reversed on its own.
+  `MOBILE.md` keeps the local recipe (which is where the shell was always
+  going to be built first — it needs an Apple account no runner has) and now
+  states the revive path: a per-target workflow running that recipe plus a
+  row in `release-targets.yml` (version from `tauri.conf.json`, its own tag
+  prefix, `gate_var: ENABLE_IOS_BUILD`), never a launcher. `ios-release.yml`,
+  `ios/README.md`, `docs/tvos/AUTOPIPELINE.md` and the Lab's `Cargo.toml`
+  comment no longer describe it as the reference Apple pipeline.
+- **Applies to:** every scaffold that grows a release workflow before it has a
+  build. A gated workflow that has only ever no-op'd verifies nothing
+  (Principle 9), and one outside `release-targets.yml` is invisible to the
+  only button that reports what it is doing. Either give the scaffold a
+  catalog row and an ungated dev build the day it lands, or don't give it a
+  workflow yet.
