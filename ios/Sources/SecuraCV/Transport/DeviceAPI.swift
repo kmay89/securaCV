@@ -7,8 +7,18 @@
 // rejected, matching the "nothing phones home" promise). Decoding is tolerant:
 // new firmware fields are ignored, missing ones default, so the app never
 // hard-fails on a version it predates.
+//
+// TLS (roadmap row 5): a WAP that serves https presents a self-signed
+// certificate the system trust store can never accept, so URLSession.shared
+// simply failed every request to one. The pairing receipt carries that
+// certificate's SHA-256 (`tls_cert_fp`); DeviceAPI keeps it and answers the
+// server-trust challenge with it (PinnedTrustDelegate, bottom of this file).
+// An https device WITHOUT a pin is refused, not trusted — a TLS device the
+// app cannot check is not "verified" in any sense this project uses.
 
+import CryptoKit
 import Foundation
+import Security
 
 struct DeviceInfo: Codable, Sendable {
     var deviceID: String
@@ -34,6 +44,11 @@ struct ProvisioningReceipt: Codable, Sendable {
     var deviceID: String
     var baseURL: URL
     var token: String
+    /// `tls_cert_fp`: the SHA-256 (64 hex) of the Canary's TLS certificate
+    /// DER, as canary_wap.ino writes it. Nil when the receipt carried none
+    /// or an empty string (an http-only device). The pin an https base URL
+    /// needs before DeviceAPI will dial it.
+    var tlsCertFingerprint: String?
 
     // Accept the documented alternate field names too.
     init(from decoder: Decoder) throws {
@@ -44,6 +59,7 @@ struct ProvisioningReceipt: Codable, Sendable {
         }
         deviceID = str(["device_id"]) ?? ""
         token = str(["token", "api_token"]) ?? ""
+        tlsCertFingerprint = TLSPin.normalize(str(["tls_cert_fp"]))
         let urlString = str(["base_url", "host"]) ?? ""
         // Tolerance has a floor: a receipt without a token would "pair" a
         // device whose every authenticated call then 401s with no explanation.
@@ -106,6 +122,12 @@ enum DeviceError: Error, LocalizedError {
     case http(Int, String)
     case badReceipt
     case notPairable
+    /// An https Canary presented a certificate whose SHA-256 is not the one
+    /// its pairing receipt named. The connection was cut before any request.
+    case certificateMismatch
+    /// An https Canary with no certificate fingerprint on record — refused,
+    /// because a TLS device the app cannot check is not a checked device.
+    case tlsPinMissing
 
     var errorDescription: String? {
         switch self {
@@ -113,6 +135,15 @@ enum DeviceError: Error, LocalizedError {
         case .http(let code, let msg): return "Device error \(code): \(msg)"
         case .badReceipt: return "That pairing receipt couldn't be read."
         case .notPairable: return "This Canary is paired through Home Assistant, not here."
+        case .certificateMismatch:
+            return "This Canary's secure certificate doesn't match the one in its pairing "
+                + "receipt, so the connection was refused. Something may be answering in its "
+                + "place — check the device itself. If you reset or replaced it, re-pair it "
+                + "to get its new receipt."
+        case .tlsPinMissing:
+            return "This Canary uses a secure (https) connection, but its pairing receipt "
+                + "carried no certificate fingerprint, so the connection can't be checked and "
+                + "was refused. Update the Canary's firmware and pair it again from its setup page."
         }
     }
 }
@@ -121,13 +152,37 @@ actor DeviceAPI {
     private let base: URL
     private let token: String
     private let session: URLSession
+    /// The trust delegate behind `session` when this device speaks TLS —
+    /// asked, after a cut connection, whether it was the pin that cut it.
+    private let pinDelegate: PinnedTrustDelegate?
 
-    init(base: URL, token: String, session: URLSession = .shared) throws {
+    /// - tlsFingerprint: the pairing receipt's `tls_cert_fp`. Required when
+    ///   `base` is https (a TLS Canary without a pin is refused with
+    ///   `.tlsPinMissing`); ignored for http.
+    /// - session: tests only — a caller-supplied session skips pinning.
+    init(base: URL, token: String, tlsFingerprint: String? = nil,
+         session: URLSession? = nil) throws {
         guard Self.isPrivate(base) else { throw DeviceError.notPrivateAddress }
         self.base = base
         self.token = token
-        self.session = session
+        if let session {
+            self.session = session
+            self.pinDelegate = nil
+        } else if Self.isTLS(base) {
+            guard let pin = TLSPin.normalize(tlsFingerprint) else {
+                throw DeviceError.tlsPinMissing
+            }
+            let pinned = PinnedSessions.shared.session(pinnedTo: pin)
+            self.session = pinned.session
+            self.pinDelegate = pinned.delegate
+        } else {
+            self.session = .shared
+            self.pinDelegate = nil
+        }
     }
+
+    /// Does this base URL speak TLS? The one place the scheme is inspected.
+    static func isTLS(_ url: URL) -> Bool { url.scheme?.lowercased() == "https" }
 
     func info() async throws -> DeviceInfo { try await get("/api/v1/info") }
 
@@ -182,6 +237,17 @@ actor DeviceAPI {
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw DeviceError.http(http.statusCode, "")
         }
+        return try FleetSelfReport.decode(data)
+    }
+
+    /// `GET /api/fleet` over THIS device's session — the pinned one when it
+    /// speaks TLS — so a paired https Canary's own self row is reachable.
+    /// The static form above stays for discovered, unpaired hosts, which
+    /// are dialed over plain http.
+    func fleetSelfReport() async throws -> FleetSelfReport {
+        var req = URLRequest(url: base.appendingPathComponent("/api/fleet"))
+        req.timeoutInterval = 4
+        let data = try await send(req)
         return try FleetSelfReport.decode(data)
     }
 
@@ -338,7 +404,18 @@ actor DeviceAPI {
     }
 
     private func send(_ req: URLRequest) async throws -> Data {
-        let (data, resp) = try await session.data(for: req)
+        let result: (Data, URLResponse)
+        do {
+            result = try await session.data(for: req)
+        } catch let error as URLError
+                    where pinDelegate?.sawMismatch == true
+                        && (error.code == .cancelled
+                            || error.code == .userCancelledAuthentication
+                            || error.code == .serverCertificateUntrusted) {
+            // The pin cut the handshake: name that, not a bare "canceled".
+            throw DeviceError.certificateMismatch
+        }
+        let (data, resp) = result
         guard let http = resp as? HTTPURLResponse else { return data }
         guard (200..<300).contains(http.statusCode) else {
             let msg = (try? Self.decoder.decode([String: String].self, from: data))?["message"] ?? ""
@@ -422,4 +499,115 @@ private struct DynamicKey: CodingKey {
     init(_ s: String) { stringValue = s }
     init?(stringValue: String) { self.stringValue = stringValue }
     init?(intValue: Int) { nil }
+}
+
+// MARK: - TLS pinning (the receipt's tls_cert_fp)
+
+/// The one fact that makes an https Canary reachable AND checkable: the
+/// SHA-256 of its self-signed certificate's DER bytes, handed over in the
+/// pairing receipt (`tls_cert_fp`, canary_wap.ino send_provisioning_receipt).
+/// Public data — the same bytes any TLS client sees — so an exact compare is
+/// the right compare; what makes it a pin is that it arrived over the
+/// physical-presence receipt, not over the network being checked.
+enum TLSPin {
+    /// Lowercase hex SHA-256 of a DER-encoded certificate — the firmware's
+    /// `sha256_raw(cert_der)` as hex.
+    static func fingerprintHex(ofDER der: Data) -> String {
+        SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A receipt value as a canonical pin: case folded, `:`/space/`-`
+    /// separators dropped; nil unless exactly 64 hex digits remain (an
+    /// http device's receipt carries the empty string).
+    static func normalize(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let cleaned = raw.lowercased().filter { !($0 == ":" || $0 == "-" || $0.isWhitespace) }
+        guard cleaned.count == 64, cleaned.allSatisfy({ $0.isHexDigit }) else { return nil }
+        return cleaned
+    }
+
+    /// Does this DER certificate hash to the pinned fingerprint?
+    static func matches(der: Data, pinned: String) -> Bool {
+        guard let pin = normalize(pinned) else { return false }
+        return fingerprintHex(ofDER: der) == pin
+    }
+}
+
+/// Answers URLSession's server-trust challenge with the receipt's pin: the
+/// leaf certificate's DER must hash to it, and nothing else is consulted —
+/// a Canary's certificate is self-signed, so the system trust store has
+/// nothing to say about it either way. On a mismatch the challenge is
+/// canceled and the mismatch remembered, so DeviceAPI can name the failure
+/// (`.certificateMismatch`) instead of surfacing a bare "canceled".
+final class PinnedTrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    let pinnedFingerprint: String
+    private let lock = NSLock()
+    private var mismatch = false
+
+    init(pinnedFingerprint: String) {
+        self.pinnedFingerprint = pinnedFingerprint
+    }
+
+    /// True once any connection through this delegate was cut for a
+    /// mismatched (or missing) leaf certificate.
+    var sawMismatch: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return mismatch
+    }
+
+    private func noteMismatch() {
+        lock.lock()
+        mismatch = true
+        lock.unlock()
+    }
+
+    func urlSession(_ session: URLSession,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let space = challenge.protectionSpace
+        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = space.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+              let leaf = chain.first else {
+            noteMismatch()
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        let der = SecCertificateCopyData(leaf) as Data
+        if TLSPin.matches(der: der, pinned: pinnedFingerprint) {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            noteMismatch()
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        }
+    }
+}
+
+/// One pinned URLSession per fingerprint, for the app's lifetime. A session
+/// retains its delegate and lives until invalidated, and DeviceAPI is built
+/// per call (DeviceStore.api(for:) on every poll), so a session per
+/// DeviceAPI would leak one every twenty seconds. Ephemeral configuration:
+/// no disk cache, no cookies — a Canary's answers are not to be cached.
+final class PinnedSessions: @unchecked Sendable {
+    static let shared = PinnedSessions()
+
+    private let lock = NSLock()
+    private var byFingerprint: [String: (session: URLSession, delegate: PinnedTrustDelegate)] = [:]
+
+    func session(pinnedTo fingerprint: String) -> (session: URLSession, delegate: PinnedTrustDelegate) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = byFingerprint[fingerprint] { return existing }
+        let delegate = PinnedTrustDelegate(pinnedFingerprint: fingerprint)
+        let config = URLSessionConfiguration.ephemeral
+        config.waitsForConnectivity = false
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        let entry = (session: session, delegate: delegate)
+        byFingerprint[fingerprint] = entry
+        return entry
+    }
 }

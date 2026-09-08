@@ -91,7 +91,7 @@ requirements() {
 WitnessWake|sev|-|createdTimestamp
 EscalationWake|sev|-|createdTimestamp
 AlertAnswered|-|createdTimestamp|-
-PairedDevice|name deviceType baseURL pairedAt|recordName|-
+PairedDevice|name deviceType baseURL pairedAt tlsCertFP|recordName|-
 EOF
 }
 
@@ -172,7 +172,7 @@ export_dev_schema() {
 #
 # The first version of this file read a fixed `grep -A20` window after the
 # header line. That silently under-reads: CloudKit's exported schema lists its
-# own system fields alongside yours, so PairedDevice's five fields plus the
+# own system fields alongside yours, so PairedDevice's six fields plus the
 # GRANT lines run well past twenty — and a check that looks in the wrong window
 # reports "field missing" for a field that is right there, or worse, misses a
 # real gap because the window ended early. Read to the closing paren instead.

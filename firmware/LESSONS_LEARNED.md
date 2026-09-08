@@ -7,6 +7,44 @@
 
 ---
 
+## One contract, or the two ends drift until neither notices
+
+### The phone verified a page no firmware served (2026-09, roadmap rows 5/6/13)
+- **What happened:** The iPhone app's headline trust feature — recompute the
+  chain, verify the head against the pinned key — fetched `/api/v1/witness`
+  in the canary-vision reference server's shape. Every firmware in this
+  repository (canary-wap) answered `/api/witness`: one record, a different
+  shape, no signature. Both ends had tests; each tested only itself. Every
+  WAP sat at "Unverified" and nothing went red.
+- **Second layer:** the receipt the WAP hands over on a BOOT-tap carried
+  `tls_cert_fp` since TLS shipped, and the app never read it — so the one
+  transport that protects the router password (`/api/wifi/connect` over
+  https) was the one the app could not open at all (`URLSession.shared`
+  never answers a self-signed server-trust challenge). Meanwhile the fleet
+  Wi-Fi rollout pushed the password over plain http and the sheet's copy
+  called it the safe path.
+- **The fix:** one contract in `spec/witness_api_v1.md` with a
+  `chain_format` field, because the two chains legitimately differ (string
+  pre-image vs domain-separated binary; signature over the hex string vs the
+  raw hash) and pretending otherwise would have meant a second signing
+  scheme. canary-wap renders it from a 16-record RAM ring
+  (`witness_page.h`, pure and host-tested); the Swift verifier learned
+  `wap_v1`. ONE fixture (`spec/fixtures/witness_page_v1.json`) is
+  byte-compared by the firmware host test and decoded by the Swift test
+  against the same public key — the contract cannot move on one side alone.
+  The app pins `tls_cert_fp` and refuses an https device without it; the
+  rollout prefers the bonded BLE lane and discloses plain http.
+- **Guidance:** a contract that exists only as "what the other side sends
+  today" is not a contract. Put the shape in `spec/`, put ONE fixture beside
+  it, and have every implementer decode the same bytes in its own test —
+  mirror-of-mirror tests (Swift asserting what Swift encodes) find nothing.
+  When two producers genuinely differ, name the difference in a field the
+  reader dispatches on; do not invent a third format to paper over it.
+  And when a receipt carries a security fact (`tls_cert_fp`), grep the
+  consumer for it before calling the feature shipped.
+
+---
+
 ## A driver library's init table is a PANEL personality, not a chip default
 
 ### The stock RM690B0 table lit the T4-S3 and darkened the Waveshare 2.41 (2026-08)

@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+### One witness-page contract, a TLS pin the app actually uses, and a Wi-Fi rollout that says when the password is in the clear
+
+- **`GET /api/v1/witness` is one contract** ([`spec/witness_api_v1.md`](spec/witness_api_v1.md)).
+  The iPhone app verified a page no firmware in this repository served: it
+  fetched `/api/v1/witness` in the canary-vision reference shape while
+  canary-wap answered only `/api/witness` (one record, another shape, no
+  signature). canary-wap now serves the page from a 16-record RAM ring
+  (`witness_page.h`, `handle_witness_v1`, Bearer-gated, chunked) as
+  `chain_format: wap_v1` — the firmware's own domain-separated chain hash
+  and its existing per-record Ed25519 signature over the raw hash, no new
+  signing scheme — with coarse ten-minute timestamps only when the device
+  has met a clock (Invariant III), and never its own self-check flag. The
+  reference server's shape is `reference_v1` (absent `chain_format`). One
+  shared fixture, `spec/fixtures/witness_page_v1.json` (generator
+  `--check`ed in CI), is byte-compared by a firmware host test that rebuilds
+  it from real Ed25519-signed records and decoded by a Swift XCTest against
+  the same public key. The app's decoder tolerates an absent or empty
+  signature (Unsigned — never Verified) and an absent timestamp (anchored
+  coarsely from `time_bucket × time_bucket_ms` and `uptime_s`); the
+  verifier recomputes `wap_v1` links and signs over the right message;
+  a WAP row's trust badge is now set by that verification. Swift
+  compile-untested here; the WAP endpoint and fixture are host-tested.
+- **The app pins the receipt's `tls_cert_fp`.** The pairing receipt always
+  carried the SHA-256 of the WAP's self-signed certificate; the app dropped
+  it and dialed with `URLSession.shared`, so a TLS-enabled WAP was
+  unreachable. `PairedDeviceRef` keeps the fingerprint (also synced as
+  `PairedDevice.tlsCertFP` — **run `ios/scripts/cloudkit_schema.sh promote`
+  before the next iOS release**, production rejects a field the schema
+  lacks); `DeviceAPI` dials https through a `PinnedTrustDelegate` that
+  hashes the leaf certificate's DER and compares exactly, cancels on
+  mismatch with a user-readable `certificateMismatch`, and refuses an https
+  device with no pin (`tlsPinMissing` — a TLS device the app cannot check is
+  not a checked device); PairView refuses such a receipt at paste time; the
+  liveness sentinel and the rollout's return-watch probe through the same
+  pin. Plain-http devices are unchanged. Compile-untested here.
+- **Fleet Wi-Fi rollout: the password's wire is named, and plain http asks
+  first.** The planner prefers the bonded BLE lane over plain http even for
+  an online Canary, uses HTTP freely only when the device is pinned https,
+  and puts every remaining plain-http push behind a one-time disclosure
+  ("sends it across your Wi-Fi unencrypted") the sheet must acknowledge; the
+  runner refuses an unapproved cleartext push with the reason on the row.
+  Planner tests extended. Compile-untested here.
+
 ### The device manifests drive the generators, and the release env list is derived
 
 - **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read

@@ -24,6 +24,7 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`invariants.md`](invariants.md) | Draft v0.1 | Foundational | 🟢 Stable — enforced in the kernel |
 | [`event_contract.md`](event_contract.md) | Draft v0.1 | Normative | 🟢 Stable — the core event vocabulary/format |
 | [`evidence_envelope.md`](evidence_envelope.md) | v1 (proposed) | Normative | 🟢 Stable — versioned, self-verifying; dual Rust↔JS verifier |
+| [`witness_api_v1.md`](witness_api_v1.md) | v1.0 | Normative | 🟡 Draft — the one `GET /api/v1/witness` page contract, two chain formats (`reference_v1`, `wap_v1`), one shared fixture (`fixtures/witness_page_v1.json`); canary-wap side host-tested, reference device-api Node-tested, the iPhone decoder compile-untested in this repo (the gated Apple CI is its compiler) |
 | [`sensor_adapter_contract_v0.md`](sensor_adapter_contract_v0.md) | Draft v0.1 | Normative | 🟢 Stable — implemented by `src/adapter/` + `adapter_host` |
 | [`break_glass.md`](break_glass.md) | — | Normative | 🟢 Stable — implemented by the `break_glass` CLI + kernel |
 | [`threat_model.md`](threat_model.md) | Draft v0.1 | Informative but binding | 🟢 Stable — the security/privacy boundary |

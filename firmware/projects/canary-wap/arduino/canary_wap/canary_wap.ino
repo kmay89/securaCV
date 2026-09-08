@@ -139,6 +139,7 @@
 #include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
+#include "witness_page.h"            // pure, host-tested GET /api/v1/witness page (spec/witness_api_v1.md)
 #include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
 #include "birth_day.h"               // pure, host-tested "when was this key born" rules
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
@@ -734,6 +735,10 @@ static FixState       g_pending_state = STATE_NO_FIX;
 static uint32_t       g_state_entered_ms = 0;
 static uint32_t       g_pending_state_ms = 0;
 static WitnessRecord  g_last_record;
+// The newest signed records, for GET /api/v1/witness (witness_page.h). RAM
+// only, empty at boot — the SD log is the history; this is the page the
+// phone verifies against its pinned key.
+static witness_page::Ring g_witness_page_ring;
 static SystemHealth   g_health;
 
 typedef void (*pre_reboot_fn)();
@@ -2317,6 +2322,22 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
   
   g_health.records_created++;
   g_health.records_verified++;
+
+  // The /api/v1/witness page ring: the same bytes the SD line carries, plus
+  // the bucket width in force, so the page can be recomputed and the
+  // bucket aged without reading the card (witness_page.h).
+  {
+    witness_page::Record pr;
+    pr.seq         = out->seq;
+    pr.time_bucket = out->time_bucket;
+    pr.bucket_ms   = g_time_bucket_ms;
+    pr.type        = (uint8_t)out->type;
+    memcpy(pr.payload_hash, out->payload_hash, 32);
+    memcpy(pr.prev_hash,    out->prev_hash,    32);
+    memcpy(pr.chain_hash,   out->chain_hash,   32);
+    memcpy(pr.signature,    out->signature,    64);
+    g_witness_page_ring.push(pr);
+  }
 
   // Durable tier FIRST, NVS cache second (codex P1 on #844): if the NVS
   // seq/head advanced before a failed or torn SD append, reboot would see
@@ -4024,6 +4045,51 @@ static esp_err_t handle_witness(httpd_req_t* req) {
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
+}
+
+// GET /api/v1/witness?last=N — the one witness-page contract
+// (spec/witness_api_v1.md), streamed from the RAM ring in witness_page.h:
+// the newest N signed records, oldest first, each with its full chain-hash
+// pre-image and its Ed25519 signature so the phone can recompute the chain
+// and verify the head against the key it pinned. Coarse time only
+// (Invariant III): a ten-minute bucket start, and only when the device has
+// met a believable clock. Chunked, one record per chunk — a 100-record page
+// would not fit a stack buffer, and the header/record/footer split is
+// exactly what the host test byte-compares.
+static esp_err_t handle_witness_v1(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char qs[64];
+  const char* query = NULL;
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) query = qs;
+  const size_t last = witness_page::parse_last(query);
+
+  witness_page::Context ctx;
+  ctx.device_id   = g_device.device_id;
+  ctx.total       = g_device.seq;
+  ctx.now_ms      = millis();
+  ctx.now_epoch_s = (uint32_t)time(nullptr);
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+  char buf[witness_page::RECORD_MAX];
+  size_t n = witness_page::header_build(buf, sizeof(buf), ctx);
+  if (n == 0) return http_send_error(req, 500, "page_header");
+  if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
+
+  const witness_page::Record* rows[witness_page::RING_CAP];
+  const size_t count = g_witness_page_ring.newest(last, rows);
+  for (size_t i = 0; i < count; i++) {
+    n = witness_page::record_build(buf, sizeof(buf), *rows[i], ctx, i == 0);
+    if (n == 0) break;  // cannot happen at RECORD_MAX; close the page rather than hang
+    if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
+  }
+
+  n = witness_page::footer_build(buf, sizeof(buf));
+  if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
+  return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t handle_config_get(httpd_req_t* req) {
@@ -7689,6 +7755,10 @@ static esp_err_t handle_witness_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_witness(req);
 }
+static esp_err_t handle_witness_v1_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_witness_v1(req);
+}
 static esp_err_t handle_config_get_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_config_get(req);
@@ -8258,6 +8328,9 @@ static void register_api_routes(httpd_handle_t server) {
 
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness_auth };
   httpd_register_uri_handler(server, &witness);
+  // The shared witness-page contract the phone verifies (spec/witness_api_v1.md).
+  httpd_uri_t witness_v1 = { .uri = "/api/v1/witness", .method = HTTP_GET, .handler = handle_witness_v1_auth };
+  httpd_register_uri_handler(server, &witness_v1);
 
   httpd_uri_t config_get = { .uri = "/api/config", .method = HTTP_GET, .handler = handle_config_get_auth };
   httpd_register_uri_handler(server, &config_get);
@@ -8358,8 +8431,8 @@ static void start_http_server() {
   //   tests_host/check_route_budget.py  (CI: firmware.yml)
   // which emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and
   // asserts >= 8 free slots. If it fails, RAISE a number here — never lower.
-  const int base_handlers = 49;       // register_api_routes core (incl. /api/config
-                                       // GET+POST) + the always-on
+  const int base_handlers = 50;       // register_api_routes core (incl. /api/config
+                                       // GET+POST, /api/v1/witness) + the always-on
                                        // register_extra_routes singles (WiFi
                                        // provisioning, OTA x4, identify,
                                        // device-name, selftest, fleet/pairing QR,
