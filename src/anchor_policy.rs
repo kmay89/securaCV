@@ -215,12 +215,23 @@ fn validate(policy: &mut AnchorPolicy, prefix: &str) -> Result<()> {
             policy.tsas.len()
         );
     }
+    // An explicit empty list would make `anchor-all` request nothing and
+    // `verify --policy` vacuously SATISFIED — the two-TSA control turned into
+    // a silent no-op by a typo. Refuse it, and refuse a repeated subject (it
+    // would double the request count for that ledger).
+    if policy.subjects.is_empty() {
+        bail!("{prefix}at least one subject is required");
+    }
+    let mut seen_subjects = std::collections::BTreeSet::new();
     for s in &policy.subjects {
         match AnchorSubject::parse(s) {
             Some(k) if k.is_head() => {}
             _ => bail!(
                 "{prefix}subject '{s}' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head)"
             ),
+        }
+        if !seen_subjects.insert(s.as_str()) {
+            bail!("{prefix}duplicate subject '{s}'");
         }
     }
     Ok(())
@@ -429,7 +440,13 @@ pub fn evaluate(
                 .max_by_key(|(_, g)| (g.newest_bucket, g.newest_id))
                 .map(|(h, g)| (*h, g))
         };
-        if let Some((hash, g)) = pick(&covered) {
+        // The ledger's CURRENT head wins whenever it is fully covered, even if
+        // an older hash carries a newer anchor row (an offline response
+        // imported late, a re-import): "current head: yes" must never be
+        // lost to the import order. Only when the head itself is not covered
+        // does the newest covered historical hash describe the state.
+        let current = groups.get(&head).filter(|g| covered(g)).map(|g| (head, g));
+        if let Some((hash, g)) = current.or_else(|| pick(&covered)) {
             let mut ids = g.ids.clone();
             ids.sort_unstable();
             out.push(Coverage {
@@ -566,6 +583,20 @@ mod tests {
     fn at_least_one_tsa() {
         let err = err_of(r#"{"format":"securacv-anchor-policy:v1","tsas":[]}"#);
         assert!(err.ends_with("at least one TSA is required"), "{err}");
+    }
+
+    #[test]
+    fn at_least_one_subject() {
+        // An explicit empty list is not "the default": it would make the
+        // policy a silent no-op (no requests, vacuously SATISFIED).
+        let err = err_of(&two_tsas(r#","subjects":[]"#));
+        assert!(err.ends_with("at least one subject is required"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_subject_is_refused() {
+        let err = err_of(&two_tsas(r#","subjects":["chain_head","chain_head"]"#));
+        assert!(err.ends_with("duplicate subject 'chain_head'"), "{err}");
     }
 
     #[test]
@@ -891,6 +922,52 @@ mod tests {
                 is_current: true,
             }
         );
+    }
+
+    #[test]
+    fn evaluate_prefers_a_covered_current_head_over_a_later_imported_older_hash() {
+        // The head was covered in bucket 600; an OLDER hash's responses were
+        // imported afterwards (bucket 1200, higher ids). Import order must
+        // not turn "current head: yes" into "NO".
+        let policy = eval_policy();
+        let old = [1u8; 32];
+        let head = [3u8; 32];
+        let a_head = record(1, "chain_head", head, 600);
+        let b_head = record(2, "chain_head", head, 600);
+        let a_old = record(3, "chain_head", old, 1200);
+        let b_old = record(4, "chain_head", old, 1200);
+        let rows = vec![
+            Attributed {
+                anchor: &a_head,
+                name: "alpha".into(),
+            },
+            Attributed {
+                anchor: &b_head,
+                name: "beta".into(),
+            },
+            Attributed {
+                anchor: &a_old,
+                name: "alpha".into(),
+            },
+            Attributed {
+                anchor: &b_old,
+                name: "beta".into(),
+            },
+        ];
+        let out = evaluate(&policy, &[(AnchorSubject::ChainHead, Some(head))], &rows);
+        match &out[0].verdict {
+            CoverageVerdict::Covered {
+                hash,
+                is_current,
+                anchor_ids,
+                ..
+            } => {
+                assert_eq!(*hash, head);
+                assert!(is_current);
+                assert_eq!(anchor_ids, &[1, 2]);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

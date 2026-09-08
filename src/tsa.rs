@@ -625,6 +625,47 @@ struct EmbeddedCert<'a> {
     serial: &'a [u8],
     issuer_raw: &'a [u8],
     subject_raw: &'a [u8],
+    /// The X.509v3 SubjectKeyIdentifier extension value, when the certificate
+    /// carries one — what a `SignerIdentifier` of the `subjectKeyIdentifier`
+    /// form names. `None` when absent or when the extensions tail does not
+    /// parse (that tail is best-effort: it never makes the certificate
+    /// unusable for issuer/serial matching).
+    ski: Option<&'a [u8]>,
+}
+
+/// X.509v3 SubjectKeyIdentifier extension OID, 2.5.29.14.
+const OID_SUBJECT_KEY_IDENTIFIER: &[u8] = &[0x55, 0x1d, 0x0e];
+
+/// Walk the rest of a `TBSCertificate` after `subject` and return the
+/// SubjectKeyIdentifier extension's `KeyIdentifier` contents, if present:
+/// `subjectPublicKeyInfo`, optional `[1]`/`[2]` unique ids, then
+/// `[3] Extensions ::= SEQUENCE OF Extension { extnID, critical?, extnValue }`
+/// whose SKI `extnValue` OCTET STRING wraps a DER OCTET STRING.
+fn subject_key_identifier<'a>(t: &mut Der<'a>) -> Result<Option<&'a [u8]>> {
+    t.expect(0x30, "subjectPublicKeyInfo")?;
+    while matches!(t.peek_tag(), Some(0x81) | Some(0x82)) {
+        t.tlv()?;
+    }
+    if t.peek_tag() != Some(0xa3) {
+        return Ok(None);
+    }
+    let (_, exts_wrapper, _) = t.tlv()?;
+    let exts = Der::new(exts_wrapper).expect(0x30, "Extensions")?;
+    let mut e = Der::new(exts);
+    while e.has_more() {
+        let ext = e.expect(0x30, "Extension")?;
+        let mut x = Der::new(ext);
+        let oid = x.expect(0x06, "extnID")?;
+        if x.peek_tag() == Some(0x01) {
+            x.tlv()?;
+        }
+        let value = x.expect(0x04, "extnValue")?;
+        if oid == OID_SUBJECT_KEY_IDENTIFIER {
+            let ki = Der::new(value).expect(0x04, "KeyIdentifier")?;
+            return Ok(Some(ki));
+        }
+    }
+    Ok(None)
 }
 
 fn parse_embedded_cert(raw: &[u8]) -> Result<EmbeddedCert<'_>> {
@@ -648,12 +689,50 @@ fn parse_embedded_cert(raw: &[u8]) -> Result<EmbeddedCert<'_>> {
     if tag != 0x30 {
         bail!("DER: expected subject Name (tag 0x30), got 0x{tag:02x}");
     }
+    let ski = subject_key_identifier(&mut t).unwrap_or(None);
     Ok(EmbeddedCert {
         raw,
         serial,
         issuer_raw,
         subject_raw,
+        ski,
     })
+}
+
+/// `SignerIdentifier ::= CHOICE { issuerAndSerialNumber, subjectKeyIdentifier [0] }`.
+enum SignerId<'a> {
+    IssuerSerial {
+        issuer_raw: &'a [u8],
+        serial: &'a [u8],
+    },
+    Ski(&'a [u8]),
+}
+
+/// The embedded certificate a `SignerIdentifier` names, if the token carries
+/// it. `issuerAndSerialNumber` matches on the raw issuer `Name` TLV and the
+/// integer-normalized serial. `subjectKeyIdentifier` matches the certificate
+/// whose SubjectKeyIdentifier extension equals the identifier — a token may
+/// embed the signing certificate and its chain, so the count of certificates
+/// decides nothing; only when the token embeds exactly one certificate and
+/// that certificate carries no SKI extension is it taken as the signer (the
+/// identifier cannot then be checked against anything, and a lone embedded
+/// certificate in a `certReq` reply is the signer by RFC 3161 §2.4.1).
+fn match_signer_cert<'c, 'a>(
+    sid: &SignerId<'_>,
+    certs: &'c [EmbeddedCert<'a>],
+) -> Option<&'c EmbeddedCert<'a>> {
+    match sid {
+        SignerId::IssuerSerial { issuer_raw, serial } => certs.iter().find(|c| {
+            c.issuer_raw == *issuer_raw && uint_normalize(c.serial) == uint_normalize(serial)
+        }),
+        SignerId::Ski(ski) => certs
+            .iter()
+            .find(|c| c.ski == Some(*ski))
+            .or_else(|| match certs {
+                [only] if only.ski.is_none() => Some(only),
+                _ => None,
+            }),
+    }
 }
 
 /// First commonName of a DER `Name`, sanitized for display.
@@ -747,13 +826,6 @@ pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
     let mut si = Der::new(info);
     si.expect(0x02, "SignerInfo.version")?;
     let (sid_tag, sid_content, _) = si.tlv()?;
-    enum Sid<'a> {
-        IssuerSerial {
-            issuer_raw: &'a [u8],
-            serial: &'a [u8],
-        },
-        Ski(&'a [u8]),
-    }
     let sid = match sid_tag {
         0x30 => {
             let mut r = Der::new(sid_content);
@@ -762,9 +834,9 @@ pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
                 bail!("DER: expected issuer Name (tag 0x30), got 0x{tag:02x}");
             }
             let serial = r.expect(0x02, "serialNumber")?;
-            Sid::IssuerSerial { issuer_raw, serial }
+            SignerId::IssuerSerial { issuer_raw, serial }
         }
-        0x80 => Sid::Ski(sid_content),
+        0x80 => SignerId::Ski(sid_content),
         _ => bail!("SignerInfo.sid is neither issuerAndSerialNumber nor subjectKeyIdentifier"),
     };
 
@@ -772,35 +844,25 @@ pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
         .iter()
         .map(|raw| parse_embedded_cert(raw))
         .collect::<Result<Vec<_>>>()?;
+    let matched = match_signer_cert(&sid, &parsed_certs);
 
-    let (sid_hex, issuer_sha256, serial_hex, matched) = match sid {
-        Sid::IssuerSerial { issuer_raw, serial } => {
+    let (sid_hex, issuer_sha256, serial_hex) = match sid {
+        SignerId::IssuerSerial { issuer_raw, serial } => {
             let mut h = Sha256::new();
             h.update(issuer_raw);
             h.update(serial);
             let sid_hex = hex::encode(h.finalize());
             let issuer_sha256: [u8; 32] = Sha256::digest(issuer_raw).into();
-            let matched = parsed_certs.iter().find(|c| {
-                c.issuer_raw == issuer_raw && uint_normalize(c.serial) == uint_normalize(serial)
-            });
             (
                 sid_hex,
                 Some(issuer_sha256),
                 Some(hex::encode(uint_normalize(serial))),
-                matched,
             )
         }
-        Sid::Ski(ski) => {
+        SignerId::Ski(ski) => {
             let sid_hex = hex::encode(Sha256::digest(ski));
-            // Documented assumption: the SKI form is matched only when the
-            // token embeds exactly one certificate.
-            let matched = if parsed_certs.len() == 1 {
-                parsed_certs.first()
-            } else {
-                None
-            };
             let serial_hex = matched.map(|c| hex::encode(uint_normalize(c.serial)));
-            (sid_hex, None, serial_hex, matched)
+            (sid_hex, None, serial_hex)
         }
     };
 
@@ -1538,6 +1600,47 @@ mod tests {
         assert_eq!(cert_der.len(), 448);
         let cert_sha: [u8; 32] = Sha256::digest(&cert_der).into();
         assert_eq!(Some(cert_sha), signer.cert_sha256);
+    }
+
+    #[test]
+    fn signer_matching_uses_the_subject_key_identifier_extension() {
+        // The fixture certificate carries an SKI extension; a token that
+        // names its signer by subjectKeyIdentifier must match on it — not on
+        // "there is exactly one certificate" — so a token that also embeds
+        // its chain still identifies the signer, and a lone certificate whose
+        // SKI disagrees with the identifier is never mistaken for it.
+        let pem = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/tsa/tsa.crt",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+        let cert_der = base64_decode(&b64);
+        let cert = parse_embedded_cert(&cert_der).unwrap();
+        let ski = cert
+            .ski
+            .expect("fixture certificate carries an SKI extension");
+        assert_eq!(
+            hex::encode(ski),
+            "fed9bb53d2a050b14064eeb457004ad3a2d96b69",
+            "openssl x509 -ext subjectKeyIdentifier"
+        );
+        let certs = vec![cert];
+        let hit = match_signer_cert(&SignerId::Ski(ski), &certs).expect("SKI matches");
+        assert_eq!(hit.raw, cert_der.as_slice());
+        assert!(
+            match_signer_cert(&SignerId::Ski(b"not-this-key"), &certs).is_none(),
+            "a certificate with a different SKI is not the signer, even when it is the only one"
+        );
+        // The issuerAndSerialNumber form still matches the same certificate.
+        let by_serial = match_signer_cert(
+            &SignerId::IssuerSerial {
+                issuer_raw: certs[0].issuer_raw,
+                serial: certs[0].serial,
+            },
+            &certs,
+        );
+        assert!(by_serial.is_some());
     }
 
     /// Minimal standard-alphabet base64 decoder for the PEM fixture (no
