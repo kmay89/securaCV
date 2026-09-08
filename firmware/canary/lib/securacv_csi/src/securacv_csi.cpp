@@ -77,5 +77,7 @@ bool conformance_check_no_mac_in_buffers()       { return csi_hal::conformance_c
  * flags a refresh; process() does the driver call on the main loop. */
 void request_bssid_refresh()                     { csi_hal::request_bssid_refresh(); }
 bool has_associated_bssid()                      { return csi_hal::has_associated_bssid(); }
+void set_filter_foreign(bool on)                 { csi_hal::set_filter_foreign(on); }
+bool get_filter_foreign()                        { return csi_hal::get_filter_foreign(); }
 
 }  /* namespace csi */

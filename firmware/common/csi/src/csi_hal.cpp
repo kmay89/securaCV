@@ -146,6 +146,10 @@ static std::atomic<uint32_t> s_windows_degraded{0};
 /* Window boundary tracking (main-loop side only). */
 static uint32_t s_window_start_ms = 0;
 static uint32_t s_window_frames = 0;
+/* Frames the rate limiter shed inside the open window — the busy-channel
+ * signal v[25] carries (see process()). Written on the Wi-Fi task, read and
+ * cleared by the consumer at window close. */
+static std::atomic<uint32_t> s_window_dropped_rate{0};
 
 /* Rate limiter state (WiFi-task side only). */
 static uint32_t s_rate_last_ms = 0;
@@ -281,6 +285,7 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
     const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
     if ((now - s_rate_last_ms) < s_rate_min_gap_ms) {
       s_frames_dropped_rate.fetch_add(1, std::memory_order_relaxed);
+      s_window_dropped_rate.fetch_add(1, std::memory_order_relaxed);
       return;
     }
     s_rate_last_ms = now;
@@ -470,6 +475,7 @@ bool start() {
   if (r == 1) {
     s_window_start_ms = millis();
     s_window_frames = 0;
+    s_window_dropped_rate.store(0, std::memory_order_relaxed);
     s_running = true;
     s_start_pending = false;
     return true;
@@ -555,8 +561,19 @@ static void watchdog_check_and_recover() {
   s_watchdog_last_recovery_ms = now;
   s_watchdog_recovery_count++;
 
-  CSI_LOG_WARNF("CSI silent for %ums; recovery attempt %u",
-                (unsigned)silent, (unsigned)s_watchdog_recovery_count);
+  /* One WARNING per silence episode — the first attempt, when `silent` has
+   * only just crossed the timeout — and INFO for the throttled attempts
+   * that follow. A product whose radio is legitimately quiet (an AP with no
+   * station, a room with no traffic) would otherwise write a WARNING into
+   * its health ring every WATCHDOG_RECOVERY_MIN_MS, evicting real entries
+   * and driving the needs-attention counter without bound. */
+  if (silent < s_watchdog_timeout_ms + WATCHDOG_RECOVERY_MIN_MS) {
+    CSI_LOG_WARNF("CSI silent for %ums; recovery attempt %u",
+                  (unsigned)silent, (unsigned)s_watchdog_recovery_count);
+  } else {
+    CSI_LOG_INFOF("CSI still silent (%ums); recovery attempt %u",
+                  (unsigned)silent, (unsigned)s_watchdog_recovery_count);
+  }
 
   if (s_watchdog_cb) s_watchdog_cb(silent, s_watchdog_recovery_count);
 
@@ -711,6 +728,7 @@ int process() {
       if (r == 1) {
         s_window_start_ms = now;
         s_window_frames = 0;
+        s_window_dropped_rate.store(0, std::memory_order_relaxed);
         s_running = true;
         s_start_pending = false;
         CSI_LOG_INFO("CSI deferred start succeeded (WiFi now up)");
@@ -769,18 +787,18 @@ int process() {
   csi_features_t feats = {};
   csi_features::finalize(&feats, s_window_frames, now_ms);
 
-  /* v[25] — dropped-frame estimate: the frames the configured rate promised
-   * this window minus the frames that arrived. csi_features leaves the slot
-   * to us because only the HAL knows the target rate (csi_types.h layout:
-   * [24..27] = frames / dropped / channel / bw). Read by
-   * wifi_channel_activity's "more traffic than we could sample" cue and by
-   * the canary product's sensing snapshot (/api/sensing dropped_estimate). */
+  /* v[25] — frames DROPPED this window: the ones the rate limiter shed
+   * because the channel offered more than max_frame_rate_hz. csi_features
+   * leaves the slot to us because only the HAL sees the limiter (csi_types.h
+   * layout: [24..27] = frames / dropped / channel / bw). It rises when the
+   * air gets busy and is zero in a quiet room — the direction
+   * wifi_channel_activity's "airwaves near me just got busy" cue and the
+   * canary product's /api/sensing dropped_estimate both read it in. (The
+   * former canary copy filled this slot with the SHORTFALL, expected minus
+   * arrived, which points the other way; one HAL means one meaning.) */
   {
-    const int32_t expected =
-        (int32_t)s_cfg.max_frame_rate_hz * (int32_t)CSI_WINDOW_MS / 1000;
-    const int32_t dropped =
-        expected > (int32_t)s_window_frames ? expected - (int32_t)s_window_frames : 0;
-    feats.v[25] = (int8_t)(dropped > 127 ? 127 : dropped);
+    const uint32_t shed = s_window_dropped_rate.exchange(0, std::memory_order_relaxed);
+    feats.v[25] = (int8_t)(shed > 127u ? 127 : shed);
   }
 
   if (s_window_frames < (uint32_t)(s_cfg.max_frame_rate_hz / 2)) {

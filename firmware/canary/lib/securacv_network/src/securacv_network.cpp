@@ -2546,6 +2546,7 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   st["frames_dropped_foreign"] = stats.frames_dropped_foreign;
   // Armed = the filter is on AND has a BSSID to compare against (a held
   // BSSID alone outlives a config with the filter off).
+  st["filter_foreign"]      = csi::get_filter_foreign();
   st["filter_armed"]        = csi::get_filter_foreign() && csi::has_associated_bssid();
   st["windows_emitted"]     = stats.windows_emitted;
   st["windows_degraded"]    = stats.windows_degraded;

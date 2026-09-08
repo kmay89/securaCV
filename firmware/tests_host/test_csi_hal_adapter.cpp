@@ -16,7 +16,8 @@
  *     canary health log (log_health) instead of only Serial;
  *   - the driver callback is registered from ONE site, once per start();
  *   - the two behaviors ported from the former canary copy hold: v[25]
- *     (dropped-frame estimate) is filled from the configured rate, and
+ *     carries the frames the rate limiter shed this window (the meaning
+ *     wifi_channel_activity reads — NOT the former copy's shortfall), and
  *     the silence watchdog fires on the csi::process() path — the former
  *     csi_hal:: shim only checked it in a process() nobody called.
  *
@@ -113,10 +114,12 @@ int main() {
   assert(csi::is_running() && csi_hal::is_running() && csi_is_running());
   puts("PASS start registers the driver callback once");
 
-  /* ten frames at the 20 Hz rate-limit spacing, then the window closes. */
+  /* ten frames at the 20 Hz rate-limit spacing — plus one crowded frame the
+   * limiter sheds — then the window closes. */
   for (int i = 0; i < 10; i++) {
     g_host_millis += 50;
     inject_frame(-50);
+    if (i == 4) inject_frame(-50);          /* same millisecond: rate-dropped */
     assert(csi::process() == 0);
   }
   g_host_millis += 600;                     /* t = 1100 ms */
@@ -125,7 +128,7 @@ int main() {
   printf("  window: frames=%d dropped=%d ch=%d bw=%d caps=0x%02x\n",
          g_last.v[24], g_last.v[25], g_last.v[26], g_last.v[27], g_last.caps_observed);
   assert(g_last.v[24] == 10);               /* frames_received */
-  assert(g_last.v[25] == 10);               /* dropped_estimate = 20 Hz x 1 s - 10 (ported) */
+  assert(g_last.v[25] == 1);                /* the one frame the limiter shed, not the shortfall */
   assert(g_last.v[26] == 6);                /* observed channel */
   assert(g_last.caps_observed & CSI_CAP_HT20);
   assert(csi_hal::get_observed_channel() == 6 && csi_hal::is_channel_in_sync());
@@ -133,7 +136,7 @@ int main() {
 
   csi_stats_t st = {};
   assert(csi::get_stats(&st));
-  assert(st.frames_received == 10 && st.windows_emitted == 1 && st.frames_dropped_rate == 0);
+  assert(st.frames_received == 10 && st.windows_emitted == 1 && st.frames_dropped_rate == 1);
   csi_stats_t st_c = {};
   assert(csi_get_stats(&st_c) && st_c.frames_received == st.frames_received);
   assert(csi::get_caps() == csi_hal::get_caps());

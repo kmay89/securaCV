@@ -67,6 +67,10 @@ namespace csi {
    * has associated, and while false every frame is accepted. */
   void request_bssid_refresh();
   bool has_associated_bssid();
+  /* Runtime mirror of csi_config_t::filter_foreign (the WAP persists it;
+   * the canary product reads it into /api/sensing). */
+  void set_filter_foreign(bool on);
+  bool get_filter_foreign();
 
 }  /* namespace csi */
 

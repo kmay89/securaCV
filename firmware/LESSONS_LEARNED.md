@@ -1738,8 +1738,10 @@
   side by side for the merge found real divergence in both directions: the
   canary copy had a safer `stop()` drain (consumer advances its own index),
   reported HT40 from the driver's target macro, and filled the
-  dropped-frame slot `v[25]` that its own `/api/sensing` reads — none of
-  which canonical did — while canonical had the PSRAM-backed amplitude
+  dropped-frame slot `v[25]` that its own `/api/sensing` reads (with the
+  shortfall — the merge keeps the slot but gives it the busy-channel meaning
+  the WAP's `wifi.channel_activity` module reads: frames the limiter shed) —
+  none of which canonical did — while canonical had the PSRAM-backed amplitude
   history the canary lacked. Worse, the canary file's `csi_hal::` shim
   advertised "full watchdog + channel-lock parity" and implemented the
   watchdog check inside `csi_hal::process()`, but `main.cpp` pumps
