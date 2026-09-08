@@ -76,7 +76,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 REPO = Path(__file__).resolve().parents[1]
 FLAVORS = REPO / "firmware" / "flavors.json"
@@ -591,7 +591,11 @@ def build_document(timestamp: str | None = None) -> dict:
             comp["version"] = lib["spec"]
         if lib["url"]:
             comp["externalReferences"] = [{"type": "distribution", "url": lib["url"]}]
-            if lib["group"] and "github.com/" in lib["url"] and lib["exact"]:
+            # Host check on the parsed URL, not a substring: a purl of type
+            # `github` is a claim about where the bytes come from, and
+            # "github.com/" can appear anywhere in a URL that points elsewhere.
+            host = urlparse(lib["url"]).hostname or ""
+            if lib["group"] and host.lower() in ("github.com", "www.github.com") and lib["exact"]:
                 comp["purl"] = f"pkg:github/{lib['group']}/{lib['name']}@v{lib['spec']}"
         elif lib["group"]:
             # quote(): a registry name may carry spaces ("GFX Library for
