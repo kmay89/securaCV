@@ -33,6 +33,19 @@ recovery for a link that has never associated, because the credentials or the
 network are simply wrong and a reboot just re-runs the same failed join on a
 timer. Boot-time join failures must therefore not reboot at all.
 
+## The second rule
+
+Every supervisor — the emulator included — must be a DIRECT consumer of the
+shared header: include it, keep a `WifiRetry`, hand a `WifiRetryPolicy` built
+from its board's `WIFI_RETRY_BASE_MS` / `WIFI_RETRY_MAX_MS` /
+`WIFI_OUTAGE_REBOOT_MS` to `wifi_next_action()`, and name those tunables
+NOWHERE else. The emulator used to be excused from the include because
+`wifi_mgr.h` pulled the header in transitively; that excuse is how its copy of
+the outage rule drifted (it booted believing the link had once been up, so a
+device started with Wi-Fi off would have rebooted after five minutes — the one
+thing the rule forbids). A local backoff table or a `base << attempts` doubling
+is the same copy in a different spelling, and is refused too.
+
 Run locally:  python3 scripts/lint_wifi_join_policy.py
 CI:           lint.yml
 """
@@ -75,6 +88,9 @@ GATE_PATTERNS = [
     # The real tree hid this because its reboot routes through the shared
     # switch, so only an adversarial probe surfaced it.
     re.compile(r"ever_online\b"),
+    # The emulator's former spelling (g_wifi_ever_up), kept so a board that
+    # adopts it is still read correctly. The emulator itself now keeps a
+    # WifiRetry and reaches its restart through the shared switch.
     re.compile(r"ever_up\b"),
     # The shared dispatcher itself: reaching a restart through
     # `switch (wifi_next_action(...))` IS the gate, since the policy only ever
@@ -85,18 +101,51 @@ GATE_PATTERNS = [
 RESTART = re.compile(r"\b(?:ESP\.restart|esp_restart)\s*\(")
 
 # Every supervisor must defer to the shared core rather than re-deriving the
-# rules. Checked as a PROPERTY (does this file speak the shared vocabulary?)
-# rather than a mechanism (does it have this exact include line?): the emulator
-# reaches the same header transitively through wifi_mgr.h, and demanding a
-# redundant include there would mean editing a file the committed wasm `dist/`
-# artifacts are built from, for no behavioral gain. If the header ever stopped
-# being reachable, that is a compile error, which needs no lint.
-POLICY_USE = re.compile(
-    r'#include\s+"(?:network/)?wifi_join_policy\.h"'
-    r'|\bwifi_next_action\b'
-    r'|\bjoin_failure_(?:label|detail|hint)\b'
-    r'|\bWifiAction::'
+# rules — and it must do so DIRECTLY. Three things are required of each file:
+#
+#   1. it includes the header itself (`network/wifi_join_policy.h`; the
+#      flattened Arduino sketch spells it `wifi_join_policy.h`);
+#   2. it keeps a `WifiRetry` and lets `wifi_next_action()` decide;
+#   3. it builds its `WifiRetryPolicy` from the board's own tunables, by name,
+#      and names those tunables nowhere else.
+#
+# The emulator used to be excused from (1) on the grounds that wifi_mgr.h
+# pulled the header in transitively and that editing emu_net.cpp moves the
+# committed wasm dist/. That excuse is exactly how its copy of the outage rule
+# drifted from the glass it previews, so it is gone: the emulator is held to
+# all three like any board.
+REQUIRED_INCLUDE = re.compile(r'#include\s+"(?:network/)?wifi_join_policy\.h"')
+CONFIG_INCLUDE = re.compile(r'#include\s+"(?:canary/)?config\.h"')
+REQUIRED_DRIVERS = {
+    "WifiRetry": re.compile(r"\bWifiRetry\b"),
+    "wifi_next_action()": re.compile(r"\bwifi_next_action\s*\("),
+}
+
+# The tunables the shared policy consumes, and the field each must feed. A
+# supervisor may name one of these ONLY on the line that hands it to the
+# policy — `p.outage_reboot_ms = WIFI_OUTAGE_REBOOT_MS;`. Anywhere else
+# (`now - lost >= WIFI_OUTAGE_REBOOT_MS`, `WIFI_RETRY_BASE_MS << attempts`)
+# is the decision being re-derived beside the header — the copy this lint
+# exists to prevent, and the exact shape the emulator's copy had.
+# WIFI_BOOT_TIMEOUT_MS is deliberately absent: the boot-time blocking bound is
+# the board's, not the policy's, and boot code legitimately compares against it.
+POLICY_FIELDS = {
+    "base_ms": "WIFI_RETRY_BASE_MS",
+    "max_ms": "WIFI_RETRY_MAX_MS",
+    "outage_reboot_ms": "WIFI_OUTAGE_REBOOT_MS",
+}
+TUNABLE = re.compile(r"\bWIFI_(?:RETRY_BASE|RETRY_MAX|OUTAGE_REBOOT)_MS\b")
+POLICY_ASSIGN = re.compile(
+    r"^\s*\w+\.(base_ms|max_ms|outage_reboot_ms)\s*=\s*([A-Za-z_]\w*|\d\w*)\s*;\s*$"
 )
+# A retry schedule kept locally, in either of the two spellings that existed
+# in this tree before the header did: a table of waits, or a doubling on the
+# attempt counter. Both are a second copy of wifi_backoff_ms().
+LOCAL_SCHEDULE = [
+    re.compile(r"\b\w*(?:backoff|retry|reconnect)\w*\s*\[[^\]]*\]\s*=\s*\{", re.I),
+    re.compile(r"<<=?\s*\(?\s*\w*(?:attempt|retr|tries|fail)", re.I),
+    re.compile(r"\b\w*(?:backoff|retry|reconnect)\w*\s*\*=\s*2\b", re.I),
+]
 
 
 def _depths(lines: list[str]) -> list[int]:
@@ -189,26 +238,90 @@ def enclosing_guard(lines: list[str], i: int) -> bool:
     return False
 
 
-def check_file(rel: str) -> list[str]:
-    path = REPO / rel
-    if not path.exists():
-        return [
-            f"{rel}: listed as a Wi-Fi supervisor but not found — if the file "
-            f"moved, update WIFI_SUPERVISORS in this script."
-        ]
+def _code_lines(text: str) -> list[str]:
+    """Source lines with comments blanked, line numbering preserved.
 
-    text = path.read_text(encoding="utf-8")
+    Block comments are replaced by the newlines they span, so a `/* ... */`
+    that mentions a tunable neither trips the check nor shifts the line the
+    message points at. Strings are left alone: nothing in the tree logs a
+    tunable's name, and a false positive there would at least be legible.
+    """
+    no_block = re.sub(
+        r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S
+    )
+    return [re.sub(r"//.*$", "", ln) for ln in no_block.splitlines()]
+
+
+def policy_assignments(text: str) -> dict[str, str]:
+    """`{field: rhs}` for every `x.<field> = <rhs>;` that feeds a WifiRetryPolicy."""
+    out: dict[str, str] = {}
+    for code in _code_lines(text):
+        m = POLICY_ASSIGN.match(code)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def check_text(rel: str, text: str) -> list[str]:
+    """Every rule, applied to `text` as though it were the file at `rel`."""
     lines = text.splitlines()
+    code = _code_lines(text)
     problems: list[str] = []
 
-    if not POLICY_USE.search(text):
+    if not REQUIRED_INCLUDE.search(text):
         problems.append(
-            f"{rel}: supervises a Wi-Fi link but shows no sign of using the "
-            f"shared policy (wifi_join_policy.h — wifi_next_action, "
-            f"join_failure_*, WifiAction). The join/retry rules are shared on "
-            f"purpose: three boards each kept their own copy and drifted apart, "
-            f"which is how a reboot loop shipped on one of them."
+            f"{rel}: supervises a Wi-Fi link but does not include "
+            f'"network/wifi_join_policy.h" itself. Reaching the header through '
+            f"wifi_mgr.h is not enough — the emulator did exactly that while "
+            f"carrying its own copy of the outage rule, and the copy drifted. The "
+            f"join/retry rules are shared on purpose: three boards each kept their "
+            f"own and drifted apart, which is how a reboot loop shipped on one of them."
         )
+    if not CONFIG_INCLUDE.search(text):
+        problems.append(
+            f"{rel}: does not include its board's canary/config.h — that is where "
+            f"WIFI_RETRY_BASE_MS / WIFI_RETRY_MAX_MS / WIFI_OUTAGE_REBOOT_MS live, "
+            f"and the policy must be built from those symbols, not from literals."
+        )
+    for name, pat in REQUIRED_DRIVERS.items():
+        if not pat.search(text):
+            problems.append(
+                f"{rel}: no {name} — the supervisor must keep a WifiRetry and let "
+                f"wifi_next_action() decide Wait / Retry / Reboot, rather than "
+                f"deciding locally."
+            )
+
+    got = policy_assignments(text)
+    if got != POLICY_FIELDS:
+        want = ", ".join(f"p.{k} = {v};" for k, v in POLICY_FIELDS.items())
+        have = ", ".join(f"p.{k} = {v};" for k, v in got.items()) or "(none)"
+        problems.append(
+            f"{rel}: WifiRetryPolicy is not built from the board's tunables by "
+            f"name.\n      expected: {want}\n      found:    {have}\n"
+            f"      Every supervisor feeds the policy its own config.h constants, so "
+            f"the emulator (which includes the display's canary/config.h) runs the "
+            f"display's schedule by construction — and the lint can hold the two in "
+            f"step only if both spell the assignment the same way."
+        )
+
+    for i, c in enumerate(code):
+        if TUNABLE.search(c) and not POLICY_ASSIGN.match(c):
+            problems.append(
+                f"{rel}:{i + 1}: names a retry tunable outside the WifiRetryPolicy "
+                f"assignment — that is the decision being re-derived beside the "
+                f"shared header.\n      {lines[i].strip()}\n"
+                f"      Hand the constant to the policy and let wifi_next_action() "
+                f"apply it."
+            )
+        if any(p.search(c) for p in LOCAL_SCHEDULE):
+            problems.append(
+                f"{rel}:{i + 1}: looks like a local backoff schedule (a table of "
+                f"waits, or a doubling on the attempt counter).\n"
+                f"      {lines[i].strip()}\n"
+                f"      wifi_backoff_ms() / wifi_backoff_with_jitter_ms() in "
+                f"wifi_join_policy.h are the only schedule; a second copy is how the "
+                f"boards drifted."
+            )
 
     for i, line in enumerate(lines):
         if line.lstrip().startswith("//") or not RESTART.search(line):
@@ -228,9 +341,22 @@ def check_file(rel: str) -> list[str]:
     return problems
 
 
+def check_file(rel: str) -> list[str]:
+    path = REPO / rel
+    if not path.exists():
+        return [
+            f"{rel}: listed as a Wi-Fi supervisor but not found — if the file "
+            f"moved, update WIFI_SUPERVISORS in this script."
+        ]
+    return check_text(rel, path.read_text(encoding="utf-8"))
+
+
 def main() -> int:
     problems: list[str] = []
-    print("Wi-Fi join policy (no reboot loops on a link that never worked):")
+    print(
+        "Wi-Fi join policy (one shared header, no local copies, no reboot loops "
+        "on a link that never worked):"
+    )
 
     for rel in WIFI_SUPERVISORS:
         found = check_file(rel)

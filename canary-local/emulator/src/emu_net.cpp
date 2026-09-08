@@ -5,14 +5,29 @@
 // same canary::net contracts, driven by page-side switches. The
 // semantics stay honest to the originals: a display that boots with no
 // reachable Wi-Fi finishes booting and the loop owns the retry (never a
-// reboot loop — common/network/wifi_join_policy.h), while a link that once
-// worked and stays down for WIFI_OUTAGE_REBOOT_MS does reboot, because
-// watching that happen (and reading the serial log while it does) is
-// exactly what canary.local is for. mqtt_mgr.cpp is NOT here: the real one compiles against the
-// PubSubClient shim in emu_mqtt.cpp.
+// reboot loop), while a link that once worked and stays down for
+// WIFI_OUTAGE_REBOOT_MS does reboot, because watching that happen (and
+// reading the serial log while it does) is exactly what canary.local is for.
+//
+// The Wi-Fi decisions are NOT re-implemented here. The shim keeps one
+// canary::net::WifiRetry and asks the same common/network/wifi_join_policy.h
+// the display's wifi_mgr.cpp asks — the identical header, reached through the
+// same -I firmware/common, with a WifiRetryPolicy built from the same
+// canary/config.h constants — so the page previews the firmware's own
+// schedule (2 s → 4 s → 8 s … with jitter) and its one hard rule: a reboot
+// only ever for a link that has been associated at least once. A fourth,
+// hand-written copy of that rule used to live in this file under a comment
+// calling it "the same as glass"; it had already drifted — it booted
+// believing the link had once been up, so a device started with Wi-Fi off
+// would have rebooted after five minutes, the one thing the rule forbids.
+// scripts/lint_wifi_join_policy.py now holds this file to the header.
+//
+// mqtt_mgr.cpp is NOT here: the real one compiles against the PubSubClient
+// shim in emu_mqtt.cpp.
 #include <Arduino.h>
 
 #include <emscripten.h>
+#include <esp_random.h>  // esp_random() for reconnect jitter (the shim's — page entropy, seedable)
 #include <string.h>
 #include <stdio.h>
 
@@ -27,18 +42,23 @@
 #include "canary/net/provision.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/glass_web.h"
+#include "network/wifi_join_policy.h"  // fleet-wide join/retry rules (common/)
 
 #include "emu_bus.h"
 
 // ── Scenario state (set from JS via emu_bindings.cpp) ───────────────────
 namespace {
 volatile int g_wifi_up = 1;
-// Has the emulated link ever been up? Gates the outage reboot, mirroring the
-// firmware's rule that a link which never associated must never be rebooted.
-// Starts at 1 because the emulator boots connected by default.
-volatile int g_wifi_ever_up = 1;
 volatile int g_rssi = -52;
 volatile int g_broker_up = 1;
+
+// The shared policy's live state. The shim owns the storage and the header
+// owns the rules — the same split wifi_mgr.cpp makes. ever_online starts
+// false exactly as on silicon: an association sets it, nothing assumes it. So
+// a visitor who flips Wi-Fi off before boot gets the firmware's answer (boot
+// completes, the loop retries forever, no reboot), not a five-minute timer.
+canary::net::WifiRetry g_retry;
+uint32_t g_jitter = 0;  // re-sampled once per attempt, as wifi_mgr.cpp does
 
 char g_tz_from_page[64] = {0};   // browser's zone, POSIX form
 bool g_tz_applied = false;
@@ -46,11 +66,22 @@ bool g_tz_applied = false;
 char g_referral_host[64] = {0};  // mDNS fleet-gossip broker referral
 uint16_t g_referral_port = 1883;
 
-uint32_t g_wifi_down_since = 0;
-
 EM_JS(void, js_net_event, (const char* kind, const char* detail), {
   if (Module.onNetEvent) Module.onNetEvent(UTF8ToString(kind), UTF8ToString(detail));
 });
+
+// The per-board tunables still win; only the RULES are shared. These are the
+// display's own numbers, read from the same canary/config.h its wifi_mgr.cpp
+// reads, so the emulator cannot quietly run a different schedule from the
+// glass it previews. The lint checks that the two assignments name the same
+// symbols.
+canary::net::WifiRetryPolicy retry_policy() {
+  canary::net::WifiRetryPolicy p;
+  p.base_ms          = WIFI_RETRY_BASE_MS;
+  p.max_ms           = WIFI_RETRY_MAX_MS;
+  p.outage_reboot_ms = WIFI_OUTAGE_REBOOT_MS;
+  return p;
+}
 }  // namespace
 
 extern "C" {
@@ -80,42 +111,80 @@ void wifi_init_or_reboot() {
   const uint32_t t0 = millis();
   while (!g_wifi_up) {
     if ((int32_t)(millis() - t0) >= (int32_t)WIFI_BOOT_TIMEOUT_MS) {
-      // Same as glass — and the glass no longer reboots here. Rebooting on a
-      // join that has never succeeded re-runs the identical join forever, so
-      // the device never finishes booting and the setup wizard that could fix
-      // the credentials never appears. Boot completes; wifi_loop owns retry.
-      // (firmware/common/network/wifi_join_policy.h)
+      // Same as glass: no reboot. Rebooting on a join that has never
+      // succeeded re-runs the identical join forever, so the device never
+      // finishes booting and the setup wizard that could fix the credentials
+      // never appears. Boot completes; wifi_loop owns retry, through the
+      // shared policy, with ever_online still false.
       log_line("WiFi",
                canary::net::join_failure_detail(canary::net::JoinFailure::Unknown));
       js_net_event("wifi-boot-timeout", "");
+      g_retry.online = false;
       return;
     }
     delay(250);
   }
   log_line("WiFi", "Connected (emulated).");
-  g_wifi_ever_up = 1;
+  g_retry.online = true;
+  g_retry.ever_online = true;
   js_net_event("wifi-up", "");
 }
 
 void wifi_loop(uint32_t now_ms) {
   if (g_wifi_up) {
-    if (g_wifi_down_since) js_net_event("wifi-up", "reconnected");
-    g_wifi_down_since = 0;
-    g_wifi_ever_up = 1;
+    if (!g_retry.online) {
+      g_retry.online = true;
+      g_retry.ever_online = true;
+      g_retry.attempts = 0;
+      log_line("WiFi", "Reconnected (emulated).");
+      js_net_event("wifi-up", "reconnected");
+    }
     return;
   }
-  if (!g_wifi_down_since) {
-    g_wifi_down_since = now_ms ? now_ms : 1;
+
+  if (g_retry.online) {
+    // Link just dropped: start the outage clock and count the immediate retry
+    // the firmware kicks off here (its begin_sta(); the page's switch is the
+    // only radio there is).
+    g_retry.online = false;
+    g_retry.lost_since_ms = now_ms;
+    g_retry.last_attempt_ms = now_ms;
+    g_retry.attempts = 1;
+    log_line("WiFi", "Link lost. Reconnecting...");
     js_net_event("wifi-down", "");
+    return;
   }
-  // Only a link that WAS up may be rebooted — the shared rule the firmware
-  // now follows. A link that never associated is a wrong configuration, not a
-  // wedged radio, and rebooting it is the same failed join on a timer.
-  if (g_wifi_ever_up &&
-      (int32_t)(now_ms - g_wifi_down_since) >= (int32_t)WIFI_OUTAGE_REBOOT_MS) {
-    log_line("WiFi", "Outage past deadline on a link that was working — rebooting.");
-    js_net_event("wifi-outage-reboot", "");
-    ESP.restart();
+
+  // One shared decision for the whole fleet — see
+  // common/network/wifi_join_policy.h and firmware/tests_host/
+  // test_wifi_join_policy.cpp. The policy only ever returns Reboot for a link
+  // that has been online, so the boot-timeout path above (ever_online false)
+  // can wait here forever and never reboot — which is the point.
+  char msg[48];
+  switch (canary::net::wifi_next_action(retry_policy(), g_retry, now_ms, g_jitter)) {
+    case canary::net::WifiAction::Reboot:
+      log_line("WiFi", "Outage persisted on a link that was working. Rebooting...");
+      js_net_event("wifi-outage-reboot", "");
+      delay(200);
+      ESP.restart();
+      break;
+
+    case canary::net::WifiAction::Retry:
+      g_retry.last_attempt_ms = now_ms;
+      g_retry.attempts++;
+      // Re-sample jitter ONCE per attempt, not once per loop iteration.
+      g_jitter = esp_random();
+      snprintf(msg, sizeof(msg), "Reconnect attempt %lu ...",
+               (unsigned long)g_retry.attempts);
+      log_line("WiFi", msg);
+      // Nothing to poke: the attempt succeeds iff the page's switch is up,
+      // which the next pass observes. The wire log still shows the cadence.
+      snprintf(msg, sizeof(msg), "attempt %lu", (unsigned long)g_retry.attempts);
+      js_net_event("wifi-retry", msg);
+      break;
+
+    case canary::net::WifiAction::Wait:
+      break;
   }
 }
 
@@ -130,7 +199,9 @@ JoinFailure wifi_last_failure() { return JoinFailure::Unknown; }
 
 // The setup fallback exists for credentials that are set but WRONG. The
 // emulator has no credentials to be wrong, and raising a SoftAP wizard in a
-// browser tab would be theater, so this is honestly false.
+// browser tab would be theater, so this is honestly false. (The shared rule
+// agrees: wifi_should_open_setup() never opens setup for JoinFailure::Unknown,
+// which is all this shim can ever report.)
 bool wifi_wants_setup() { return false; }
 
 // ── tz_auto contract ────────────────────────────────────────────────────
