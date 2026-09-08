@@ -168,6 +168,18 @@ def decide(
     if not selected:
         return make(SKIPPED, "Not selected for this run.")
 
+    if not publish and not target.get("dev_inputs"):
+        # A build-only press must never publish by accident. A target with no
+        # dev inputs has no smoke run to give, and falling back to its real
+        # inputs (which this used to do) meant "dev build" could cut a signed
+        # firmware release or deploy the site. It sits this run out instead;
+        # `force` does not override that — ticking `publish` is the override.
+        return make(
+            SKIPPED,
+            "Build-only run: this target has no dev inputs, so a smoke run "
+            "cannot exercise it. Tick publish to release it.",
+        )
+
     if target.get("gate_var") and not gate_enabled:
         # A target can explain its own gate. Without `gate_reason` the default
         # text describes the Apple case (a repo VARIABLE that must be 'true');
@@ -380,6 +392,17 @@ def build_plan(
 # ────────────────────────────────── CLI ────────────────────────────────────
 
 
+def unknown_names(names: set[str], targets: list[dict[str, Any]]) -> set[str]:
+    """The names in `names` that no catalog row carries (`all` is a word, not a row).
+
+    A typo in the `force:` / `only:` box used to be silently ignored — the run
+    went green having forced (or narrowed to) nothing. The CLI refuses instead,
+    so the mistake is the first line of the failed run, not a puzzle.
+    """
+    known = {t["name"] for t in targets} | {"all"}
+    return {n for n in names if n not in known}
+
+
 def split_names(raw: str) -> set[str]:
     """`flasher,lab` → {"flasher", "lab"}.
 
@@ -422,12 +445,24 @@ def main(argv: list[str]) -> int:
             return False  # nothing published: "changed" is not the question
         return paths_changed(f"{target['tag_prefix']}{latest_version}", watch)
 
+    force_names = split_names(args.force)
+    only_names = split_names(args.only)
+    bad = unknown_names(force_names | only_names, targets)
+    if bad:
+        known = ", ".join(sorted(t["name"] for t in targets))
+        print(
+            f"release_plan: unknown target name(s) {sorted(bad)} in force/only — "
+            f"the catalog has: {known} (or 'all' for force)",
+            file=sys.stderr,
+        )
+        return 2
+
     decisions = build_plan(
         targets,
         published_tags,
         publish=args.publish,
-        force=split_names(args.force),
-        only=split_names(args.only) or None,
+        force=force_names,
+        only=only_names or None,
         gates=json.loads(args.gates or "{}"),
         changed_resolver=changed_resolver,
     )

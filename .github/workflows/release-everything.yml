@@ -51,7 +51,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish real releases (unchecked = build-only smoke runs for the apps)"
+        description: "Publish real releases (unchecked = build-only smoke runs for the apps; firmware and the site sit it out)"
         type: boolean
         default: false
       only:
@@ -262,7 +262,7 @@ jobs:
                   ? '**Plan only** — nothing was dispatched.'
                   : publish
                     ? '**Publishing real releases** for everything that needed it.'
-                    : '**Dev build-only smoke runs** for the apps (tick *publish* for real releases).'
+                    : '**Dev build-only smoke runs** for the apps; targets with no build-only mode (firmware, the site) sit this run out (tick *publish* for real releases).'
               )
               .addBreak()
               .addRaw(`**Ref:** \`${ref}\``)

@@ -102,7 +102,7 @@ the honest guarantee is "same source, same toolchain, re-verified
 signatures". (Bit-identical artifact promotion is a possible future
 hardening; don't claim it until it's implemented.)
 
-### The same ceremony, one-click (no local `git tag`)
+### The same ceremony from the Actions tab (no local `git tag`)
 
 Everything above also runs from the **Actions tab** — same build, same
 signing, same guards, so the two paths can't drift. The button just creates
@@ -120,7 +120,7 @@ source can never disagree.
     already-published tag is refused (bump the headers first). **You still
     bump `FIRMWARE_VERSION` / `CANARY_FW_VERSION` in every variant** to match
     — the version-string guard greps each binary for it and fails closed
-    otherwise. The one-click removes the `git tag` step, not the version bump.
+    otherwise. The Actions-tab dispatch removes the `git tag` step, not the version bump.
 - **Actions → "Update everything (only what needs it)".** The button to reach
   for when you just want the world to be current and don't want to think about
   which targets moved. It reads `.github/release-targets.yml`, compares every

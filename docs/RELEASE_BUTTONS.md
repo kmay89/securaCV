@@ -53,8 +53,11 @@ because this decision *is* the product.
   comma-separated names (`flasher,lab`), or `all`. With `publish` unchecked
   the forced apps get a **build-only smoke run**; with it ticked, a real
   re-publish. `force` does **not** narrow the run: every other target is still
-  planned by its own rule, and the ones with no build-only mode (firmware, the
-  site) publish for real if they are ahead. To touch two apps and nothing
+  planned by its own rule — and the ones with no build-only mode (firmware, the
+  site) **sit a build-only run out**, so a dev press can never cut a signed
+  firmware release or deploy the site by accident; tick `publish` for those. A
+  name the catalog does not know fails the run on its first line rather than
+  being silently ignored. To touch two apps and nothing
   else, press twice with `only:` set (`only: flasher` + `force: flasher`, then
   `only: lab` + `force: lab`), or tick `plan_only` first and read the plan.
   Forcing a version that is **already tagged overwrites that release's assets

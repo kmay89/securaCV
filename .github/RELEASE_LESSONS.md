@@ -2551,7 +2551,10 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   firmware-only check; `force: flasher,lab` with `publish` unchecked for the
   build-only smoke run of both desktop apps (ticked, a real re-publish —
   and `force` names targets without narrowing the run, so "the two apps and
-  nothing else" is two presses with `only:` set);
+  nothing else" is two presses with `only:` set; a build-only run now skips
+  the targets that have no smoke mode — firmware, the site — outright, where
+  it used to fall back to their real inputs, and a typo'd target name fails
+  the run instead of being ignored);
   `firmware-release.yml` dispatched directly with `channel: dev` for a
   dev-channel build, which was never a smoke run on any button. The one
   capability no survivor had — one-click's overwrite preflight — moved into

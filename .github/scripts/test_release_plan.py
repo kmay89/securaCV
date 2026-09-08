@@ -181,12 +181,36 @@ class DecideInputs(unittest.TestCase):
         self.assertEqual(d.inputs, {"publish": "True"})
         self.assertTrue(all(isinstance(v, str) for v in d.inputs.values()))
 
-    def test_a_target_without_dev_inputs_falls_back_to_its_real_inputs(self):
+    def test_a_target_without_dev_inputs_sits_out_a_dev_run(self):
+        # The former fallback ran such a target with its REAL inputs, so a
+        # "dev build" press could cut a signed firmware release. Not anymore.
         target = dict(VERSIONED)
         target.pop("dev_inputs")
         d = rp.decide(target, source_version="0.3.0", latest_version="0.2.0",
                       changed=True, publish=False)
-        self.assertEqual(d.inputs, {"dry_run": "false"})
+        self.assertEqual(d.decision, rp.SKIPPED)
+        self.assertEqual(d.inputs, {})
+        self.assertIn("Tick publish", d.reason)
+
+    def test_force_does_not_override_the_dev_run_skip(self):
+        target = dict(VERSIONED)
+        target.pop("dev_inputs")
+        d = rp.decide(target, source_version="0.3.0", latest_version="0.2.0",
+                      changed=True, publish=False, force=True)
+        self.assertEqual(d.decision, rp.SKIPPED)
+
+    def test_a_target_without_dev_inputs_still_publishes_when_asked(self):
+        target = dict(VERSIONED)
+        target.pop("dev_inputs")
+        d = rp.decide(target, source_version="0.3.0", latest_version="0.2.0",
+                      changed=True, publish=True)
+        self.assertEqual(d.decision, rp.RELEASE)
+
+    def test_unknown_force_or_only_names_are_refused(self):
+        targets = [dict(VERSIONED, name="flasher"), dict(VERSIONED, name="lab")]
+        self.assertEqual(rp.unknown_names({"flahser"}, targets), {"flahser"})
+        self.assertEqual(rp.unknown_names({"flasher", "lab", "all"}, targets), set())
+        self.assertEqual(rp.unknown_names(set(), targets), set())
 
 
 class DecidePages(unittest.TestCase):
