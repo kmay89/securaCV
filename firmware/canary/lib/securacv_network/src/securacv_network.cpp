@@ -2544,7 +2544,9 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   // Transmitter filter: frames from a transmitter other than the associated
   // router (neighbor beacons, other stations). A count, never an address.
   st["frames_dropped_foreign"] = stats.frames_dropped_foreign;
-  st["filter_armed"]        = csi::has_associated_bssid();
+  // Armed = the filter is on AND has a BSSID to compare against (a held
+  // BSSID alone outlives a config with the filter off).
+  st["filter_armed"]        = csi::get_filter_foreign() && csi::has_associated_bssid();
   st["windows_emitted"]     = stats.windows_emitted;
   st["windows_degraded"]    = stats.windows_degraded;
   // Breathing-envelope cadence: how far the loop's real window pace was

@@ -3143,7 +3143,13 @@ bool csi_get_stats(csi_stats_t* out) {
 
 bool csi_filter_foreign() { return csi_hal::get_filter_foreign(); }
 
-bool csi_filter_armed() { return csi_hal::has_associated_bssid(); }
+bool csi_filter_armed() {
+  /* "Comparing" needs both: the setting on and a BSSID to compare against.
+   * has_associated_bssid() alone stays true after the setting is turned off
+   * (the learned BSSID is kept), which would read as armed while every frame
+   * passes. */
+  return csi_hal::get_filter_foreign() && csi_hal::has_associated_bssid();
+}
 
 void on_wifi_sta_connected() {
   /* Runs on the Arduino Wi-Fi event task: only flag it; csi_hal::process()
