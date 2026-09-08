@@ -63,7 +63,7 @@ jobs:
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     - name: Rustfmt
       run: cargo fmt --check
     - name: Clippy
@@ -94,7 +94,7 @@ jobs:
     - uses: actions/checkout@v7
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     # scripts/ci/conformance.sh existed but no workflow ran it — the one
     # end-to-end gate that generates a sealed-log fixture DB and drives the
     # shipping verifier binary over it (plus the compile-fail suite that
@@ -111,7 +111,7 @@ jobs:
     - uses: actions/checkout@v7
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     # The adapter surface is the kernel's primary untrusted-input boundary
     # (docs/strategy/12, finding A1). Every adapter feature is off by default,
     # so without this job their tests — including the security-critical
@@ -215,7 +215,7 @@ jobs:
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
-      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      uses: ./.github/actions/setup-libseccomp
     - name: Clippy (ingest-esp32)
       run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
     - name: Clippy (adapters)

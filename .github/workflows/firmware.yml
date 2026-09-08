@@ -169,24 +169,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Python + PlatformIO (cached)
+        # Interpreter, ~/.platformio cache and the pip install, in the shared
+        # composite action (CI.md R10). The cache key is computed HERE so the
+        # move changed no key: one entry per flavor, over its platformio.ini
+        # plus the shared envs/platformio/*.ini set.
+        uses: ./.github/actions/setup-platformio
         with:
-          python-version: '3.11'
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.platformio
-          key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
+          extras: ${{ matrix.flavor.pip_extras }}
+          cache-key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-${{ matrix.flavor.name }}-
-
-      - name: Install PlatformIO
-        run: |
-          python -m pip install --upgrade pip
-          pip install --upgrade platformio ${{ matrix.flavor.pip_extras }}
 
       - name: Generate CI secrets header (build-only, not from committed file)
         if: matrix.flavor.pre_step == 'secrets_header'
@@ -276,24 +269,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Python + PlatformIO (cached)
+        # Interpreter, ~/.platformio cache and the pip install, in the shared
+        # composite action (CI.md R10). The cache key is computed HERE so the
+        # move changed no key: one entry per flavor, over its platformio.ini
+        # plus the shared envs/platformio/*.ini set.
+        uses: ./.github/actions/setup-platformio
         with:
-          python-version: '3.11'
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.platformio
-          key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
+          extras: ${{ matrix.flavor.pip_extras }}
+          cache-key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-${{ matrix.flavor.name }}-
-
-      - name: Install PlatformIO
-        run: |
-          python -m pip install --upgrade pip
-          pip install --upgrade platformio ${{ matrix.flavor.pip_extras }}
 
       - name: Generate CI secrets header (build-only, not from committed file)
         if: matrix.flavor.pre_step == 'secrets_header'
