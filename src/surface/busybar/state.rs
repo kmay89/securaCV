@@ -31,7 +31,9 @@
 
 use std::collections::BTreeMap;
 
-use super::card::{front_phrase, Badge, Card, ClassOptions, Refusal};
+use super::card::{
+    front_phrase, rear_admits, Badge, Card, CardValue, ClassOptions, PrivacyClass, Refusal,
+};
 use super::device::{
     Align, Display, Element, Font, Frame, Rgba, PRIORITY_ADVISORY, PRIORITY_CALM, PRIORITY_DEGRADED,
 };
@@ -177,6 +179,24 @@ impl TransportPath {
     }
 }
 
+/// Is the broker still answering?
+///
+/// `last_message_ms` is when a message was last actually **received** — not
+/// when the fleet map was last non-empty. That distinction is the whole
+/// function: after the first publish the fleet map stays populated forever,
+/// so freshness derived from it would pin this to `true` for the life of the
+/// process and `broker_stale_ms` would never fire. The matrix would then keep
+/// breathing calm green through a dead broker, which is the stale-but-
+/// plausible state this surface exists not to show.
+pub fn broker_live(last_message_ms: Option<u64>, now_ms: u64, stale_ms: u64) -> bool {
+    match last_message_ms {
+        Some(last) => now_ms.saturating_sub(last) <= stale_ms,
+        // Nothing has ever arrived. Not knowing is not the same as being
+        // fine, so this reads as not live until something proves otherwise.
+        None => false,
+    }
+}
+
 /// Which of the surface's two upstreams are answering.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LinkState {
@@ -236,7 +256,36 @@ pub struct DeviceCards {
     pub cards: Vec<Card>,
 }
 
-/// One verified event in the scrubber's window.
+/// What a surface can honestly say about a sealed-log tail it walked itself.
+///
+/// The vocabulary is deliberately weaker than the kernel's. `chain_valid`
+/// there means an Ed25519 signature checked against a pinned key; this
+/// surface only re-walks `SHA256(prev_hash || payload)` over the served rows,
+/// which proves the tail is internally consistent and proves nothing about
+/// who wrote it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LogVerdict {
+    /// Nothing has been read yet, or the kernel is unreachable.
+    #[default]
+    Unknown,
+    /// The entry-hash walk held across every served row. Identity unchecked.
+    SelfConsistent,
+    /// The walk broke. Something is wrong with the log or with what served it.
+    Failed,
+}
+
+impl LogVerdict {
+    /// The operator-facing word for the rear display.
+    pub fn word(self) -> &'static str {
+        match self {
+            LogVerdict::Unknown => "log unread",
+            LogVerdict::SelfConsistent => "log self-consistent",
+            LogVerdict::Failed => "log WALK FAILED",
+        }
+    }
+}
+
+/// One event in the scrubber's window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimelineEntry {
     /// The event's public phrase, already classed. Built by the ingest so the
@@ -251,14 +300,14 @@ pub struct TimelineEntry {
     /// The event's attestation tier, verbatim from the export
     /// (`device` / `adapter` / `ha-bridged`).
     pub attestation: Option<String>,
-    /// The chain-level verdict for the export this event came from.
+    /// What this surface established about the tail this event came from.
     ///
-    /// Deliberately chain-level: the kernel's `ExportEvent` carries **no
-    /// per-event signature** (`src/lib.rs`), so a scrubber that printed
-    /// "verified" beside one event would be claiming a check nobody
-    /// performed. What was actually verified is the bundle, and that is what
-    /// the rear says.
-    pub bundle_badge: Badge,
+    /// Deliberately log-level: sealed rows carry no per-event signature a
+    /// reader can check in isolation, so a scrubber that printed "verified"
+    /// beside one event would be claiming a check nobody performed. What was
+    /// actually established is the entry-hash walk, and that is what the rear
+    /// says.
+    pub log_verdict: LogVerdict,
 }
 
 /// Everything the surface knows about witness state, as a read-only snapshot.
@@ -275,7 +324,15 @@ pub struct WitnessView {
     /// Recent verified events, oldest first.
     pub timeline: Vec<TimelineEntry>,
     /// Events in the timeline window, for the rear's count line.
-    pub verified_recent: u32,
+    ///
+    /// Deliberately not called "verified". The surface reads the sealed log
+    /// read-only and walks its entry-hash chain; it does not check an Ed25519
+    /// signature against a pinned key, so calling these events verified would
+    /// be exactly the overclaim AD-Core section 2.5 forbids. What the surface
+    /// actually established about them is [`Self::timeline_verdict`].
+    pub events_in_window: u32,
+    /// What this surface established about the sealed-log tail it read.
+    pub timeline_verdict: LogVerdict,
     /// A microphone or camera in this room is live, per the household's own
     /// signal. See [`PublicPhrase::OnCall`] — not a witness claim, and fed
     /// only when the operator configured a topic for it.
@@ -303,6 +360,11 @@ pub struct Timings {
     /// Broker silence after which the surface reports Unknown rather than
     /// last-known state.
     pub broker_stale_ms: u64,
+    /// A Canary unheard for this long is late — amber, and the breath stops.
+    /// AD-Core section 2.1's reference deadline is three minutes.
+    pub witness_late_secs: u64,
+    /// A Canary unheard for this long is lost. The reference is ten minutes.
+    pub witness_lost_secs: u64,
     /// Default quiet-display window for the lever.
     pub quiet_window_ms: u64,
 }
@@ -316,6 +378,8 @@ impl Default for Timings {
             pulse_steps: 4,
             watchdog_steps: 3,
             broker_stale_ms: 90_000,
+            witness_late_secs: 180,
+            witness_lost_secs: 600,
             quiet_window_ms: 30 * 60_000,
         }
     }
@@ -595,9 +659,18 @@ pub fn resolve_front(
     state: &SurfaceState,
     view: &WitnessView,
     opts: &ClassOptions,
+    timings: &Timings,
     now_ms: u64,
 ) -> Option<FrontRender> {
-    let phrases = admitted_phrases(view, opts);
+    let mut phrases = admitted_phrases(view, opts);
+    // A Canary that has gone quiet is not a card — no entity announces "I am
+    // missing" — so liveness is folded in here rather than through the
+    // classing gate. It has to reach the front: the breath means the
+    // witnesses are alive, and a fleet with a dark Canary that kept breathing
+    // green would make this surface's central claim false.
+    if let Some(w) = liveness_word(view, timings) {
+        phrases.push(PublicPhrase::Degraded(w));
+    }
 
     if let Some(w) = phrases.iter().find_map(|p| match p {
         PublicPhrase::Advisory(w) => Some(*w),
@@ -686,6 +759,36 @@ pub fn scrubbed<'a>(state: &SurfaceState, view: &'a WitnessView) -> Option<&'a T
     // The cursor counts back from the newest, and the timeline is oldest
     // first.
     view.timeline.get(len - 1 - i.min(len - 1))
+}
+
+/// The worst liveness word the fleet earns right now.
+///
+/// `online` is the peer table's verdict: a live signed chain publish verified
+/// against the pinned key, inside its freshness window, not contradicted by a
+/// later `offline`. A device that fails it is at least late; one unheard past
+/// [`Timings::witness_lost_secs`] is lost.
+///
+/// A device that has never been heard from at all (`last_seen_secs_ago` is
+/// `None`) is deliberately NOT counted: it is a config entry, not a witness
+/// that went dark, and reporting it as lost on the first boot would cry wolf
+/// before the fleet had ever spoken.
+fn liveness_word(view: &WitnessView, timings: &Timings) -> Option<DegradedWord> {
+    let mut worst: Option<DegradedWord> = None;
+    for dev in view.devices.iter().take(MAX_TRACKED_DEVICES) {
+        if dev.online {
+            continue;
+        }
+        let Some(seen) = dev.last_seen_secs_ago else {
+            continue;
+        };
+        if seen >= timings.witness_lost_secs {
+            return Some(DegradedWord::WitnessLost);
+        }
+        if seen >= timings.witness_late_secs {
+            worst = Some(DegradedWord::WitnessLate);
+        }
+    }
+    worst
 }
 
 fn worst_degraded(phrases: &[PublicPhrase]) -> Option<DegradedWord> {
@@ -785,6 +888,7 @@ pub fn sanitize_rear(raw: &str, max: usize) -> String {
 pub fn resolve_rear(
     state: &SurfaceState,
     view: &WitnessView,
+    opts: &ClassOptions,
     transport: TransportPath,
     now_ms: u64,
     now_epoch_s: u64,
@@ -812,9 +916,14 @@ pub fn resolve_rear(
                 .min_by_key(|b| badge_rank(*b))
                 .unwrap_or(Badge::Unknown);
             lines.push(format!("chain {} {}", head, badge_word(badge)));
+            // Never "verified events": this surface walked the entry-hash
+            // chain and did not check a signature against a pinned key, so
+            // the count and the verdict are reported separately and the
+            // verdict names the check that actually ran (AD-Core section 2.5).
             lines.push(format!(
-                "{} verified events in window",
-                view.verified_recent
+                "{} events in window, {}",
+                view.events_in_window,
+                view.timeline_verdict.word()
             ));
         }
     }
@@ -826,9 +935,9 @@ pub fn resolve_rear(
                 entry.bucket_size_s, entry.bucket_start_epoch_s
             ));
             lines.push(format!(
-                "attested {} / bundle {}",
+                "attested {} / {}",
                 entry.attestation.as_deref().unwrap_or("device"),
-                badge_word(entry.bundle_badge)
+                entry.log_verdict.word()
             ));
         } else {
             lines.push("timeline: live".to_string());
@@ -858,6 +967,26 @@ pub fn resolve_rear(
         ));
     }
 
+    // The wellbeing opt-in, actually applied. Every card goes through
+    // `rear_admits`, so P2 and unclassed cards are refused here exactly as
+    // they are on the front, and P1 appears only because the operator turned
+    // it on in their own config file.
+    if opts.rear_shows_wellbeing {
+        for dev in view.devices.iter().take(MAX_TRACKED_DEVICES) {
+            for card in &dev.cards {
+                if lines.len() >= MAX_REAR_LINES {
+                    break;
+                }
+                if rear_admits(card, opts).is_err() {
+                    continue;
+                }
+                if let Some(line) = wellbeing_line(card) {
+                    lines.push(line);
+                }
+            }
+        }
+    }
+
     if state.pending_count() > 0 && lines.len() < MAX_REAR_LINES {
         lines.push(format!("{} cards waiting", state.pending_count()));
     }
@@ -874,6 +1003,29 @@ pub fn resolve_rear(
         lines,
         countdown_to_epoch_s,
     }
+}
+
+/// One rear line for a wellbeing numeric, or `None` for a card that is not
+/// one. `null` renders as an em-less dash: unknown, never zero.
+fn wellbeing_line(card: &Card) -> Option<String> {
+    let (value, unit) = match &card.value {
+        CardValue::Sparkline { value, unit } => (*value, unit.as_str()),
+        CardValue::Stat { value, unit } => (*value, unit.as_str()),
+        _ => return None,
+    };
+    if card.privacy != Some(PrivacyClass::P1) {
+        return None;
+    }
+    let shown = match value {
+        Some(v) => format!("{v:.0}"),
+        None => "-".to_string(),
+    };
+    Some(format!(
+        "{} {} {}",
+        sanitize_rear(&card.title, 18),
+        shown,
+        unit
+    ))
 }
 
 fn badge_rank(b: Badge) -> u8 {
@@ -904,23 +1056,33 @@ pub fn compose(
     step: u32,
     timings: &Timings,
 ) -> Option<Frame> {
-    let front = front?;
-    let alpha = match front.motion {
-        Motion::Breathing => breath_alpha(step, timings.pulse_steps),
-        Motion::Still => 0xFF,
-    };
-    let color = front.color.with_alpha(alpha);
     let mut elements = Vec::with_capacity(2 + rear.lines.len());
 
-    let text = front.phrase.text().to_string();
-    elements.push(Element::Text {
-        id: "front",
-        text,
-        font: Font::Small,
-        color,
-        display: Display::Front,
-        align: Align::Center,
-    });
+    // A blank front does not mean a blank device. Dark and the quiet window
+    // both silence the room-facing matrix while the operator-facing rear must
+    // keep talking — Dark in particular has to keep saying that witnessing
+    // continues, which is the whole reason that line exists. So a `None`
+    // front produces a rear-only frame rather than nothing at all.
+    //
+    // Not drawing the front element is also how it goes away: the previous
+    // one ages off on its own expiry within a watchdog window, which is the
+    // same mechanism that blanks the glass when this process dies. There is
+    // no separate "erase the front" call to get wrong.
+    if let Some(front) = front {
+        let alpha = match front.motion {
+            Motion::Breathing => breath_alpha(step, timings.pulse_steps),
+            Motion::Still => 0xFF,
+        };
+        let color = front.color.with_alpha(alpha);
+        elements.push(Element::Text {
+            id: "front",
+            text: front.phrase.text().to_string(),
+            font: Font::Small,
+            color,
+            display: Display::Front,
+            align: Align::Center,
+        });
+    }
 
     for (i, line) in rear.lines.iter().enumerate().take(MAX_REAR_LINES) {
         elements.push(Element::Text {
@@ -943,10 +1105,16 @@ pub fn compose(
         });
     }
 
+    if elements.is_empty() {
+        return None;
+    }
+
     Some(Frame {
         elements,
-        led: front.led,
-        priority: front.priority,
+        led: front.and_then(|f| f.led),
+        // A rear-only frame draws at the calm priority: it is never competing
+        // for the room's attention, because it is not in the room.
+        priority: front.map_or(PRIORITY_CALM, |f| f.priority),
         timeout_ms: timings.draw_timeout_ms(),
     })
 }
@@ -1004,7 +1172,8 @@ mod tests {
             },
             devices,
             timeline: Vec::new(),
-            verified_recent: 0,
+            events_in_window: 0,
+            timeline_verdict: LogVerdict::SelfConsistent,
             on_call: false,
         }
     }
@@ -1019,12 +1188,12 @@ mod tests {
         let mut view = live_view(vec![device("porch", vec![])]);
         let opts = ClassOptions::default();
 
-        let calm = resolve_front(&state, &view, &opts, 0).expect("front");
+        let calm = resolve_front(&state, &view, &opts, &Timings::default(), 0).expect("front");
         assert_eq!(calm.phrase, PublicPhrase::Calm);
         assert_eq!(calm.motion, Motion::Breathing);
 
         view.link.broker_live = false;
-        let lost = resolve_front(&state, &view, &opts, 0).expect("front");
+        let lost = resolve_front(&state, &view, &opts, &Timings::default(), 0).expect("front");
         assert_eq!(lost.phrase, PublicPhrase::Unknown(UnknownWord::BrokerLost));
         assert_eq!(
             lost.motion,
@@ -1048,7 +1217,14 @@ mod tests {
             },
             ..live_view(vec![device("porch", vec![])])
         };
-        let r = resolve_front(&state, &view, &ClassOptions::default(), 0).expect("front");
+        let r = resolve_front(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            &Timings::default(),
+            0,
+        )
+        .expect("front");
         assert_eq!(r.phrase, PublicPhrase::Unknown(UnknownWord::KernelLost));
     }
 
@@ -1070,8 +1246,21 @@ mod tests {
 
         let state = SurfaceState::new();
         let view = live_view(vec![device("porch", vec![])]);
-        let front = resolve_front(&state, &view, &ClassOptions::default(), 0);
-        let rear = resolve_rear(&state, &view, TransportPath::Usb, 0, 1_700_000_000);
+        let front = resolve_front(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            &Timings::default(),
+            0,
+        );
+        let rear = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
         let frame = compose(front.as_ref(), &rear, 0, &timings).expect("frame");
         assert_eq!(frame.timeout_ms, timeout);
 
@@ -1119,7 +1308,7 @@ mod tests {
         // The dwell started at 0 and is 8 s, so at 9 s it is over regardless
         // of the retrigger at 5 s.
         state.tick(9_000, &timings);
-        let r = resolve_front(&state, &view, &opts, 9_000).expect("front");
+        let r = resolve_front(&state, &view, &opts, &Timings::default(), 9_000).expect("front");
         assert_eq!(r.phrase, PublicPhrase::Calm);
     }
 
@@ -1146,7 +1335,7 @@ mod tests {
         let opts = ClassOptions::default();
 
         state.note_presence("porch", Some(zone("FRONT DOOR")), 0, &timings);
-        let held = resolve_front(&state, &view, &opts, 1_000).expect("front");
+        let held = resolve_front(&state, &view, &opts, &Timings::default(), 1_000).expect("front");
         assert_eq!(
             held.phrase,
             PublicPhrase::Presence {
@@ -1156,8 +1345,14 @@ mod tests {
         assert_eq!(held.motion, Motion::Breathing, "presence is still healthy");
 
         state.tick(timings.presence_dwell_ms + 1, &timings);
-        let decayed =
-            resolve_front(&state, &view, &opts, timings.presence_dwell_ms + 1).expect("front");
+        let decayed = resolve_front(
+            &state,
+            &view,
+            &opts,
+            &Timings::default(),
+            timings.presence_dwell_ms + 1,
+        )
+        .expect("front");
         assert_eq!(decayed.phrase, PublicPhrase::Calm);
     }
 
@@ -1175,7 +1370,7 @@ mod tests {
 
         let quiet = live_view(vec![device("porch", vec![])]);
         assert!(
-            resolve_front(&state, &quiet, &opts, 1_000).is_none(),
+            resolve_front(&state, &quiet, &opts, &Timings::default(), 1_000).is_none(),
             "a presence card must be suppressed by the quiet window"
         );
 
@@ -1187,7 +1382,8 @@ mod tests {
                 CardValue::Binary(Some(true)),
             )],
         )]);
-        let r = resolve_front(&state, &advisory, &opts, 1_000).expect("advisory overrides quiet");
+        let r = resolve_front(&state, &advisory, &opts, &Timings::default(), 1_000)
+            .expect("advisory overrides quiet");
         assert_eq!(r.phrase, PublicPhrase::Advisory(AdvisoryWord::Smoke));
 
         let degraded = live_view(vec![device(
@@ -1198,7 +1394,8 @@ mod tests {
                 CardValue::Binary(Some(true)),
             )],
         )]);
-        let r = resolve_front(&state, &degraded, &opts, 1_000).expect("tamper overrides quiet");
+        let r = resolve_front(&state, &degraded, &opts, &Timings::default(), 1_000)
+            .expect("tamper overrides quiet");
         assert_eq!(r.phrase, PublicPhrase::Degraded(DegradedWord::Tamper));
     }
 
@@ -1211,9 +1408,16 @@ mod tests {
         state.set_mode(SurfaceMode::Dark);
 
         let calm = live_view(vec![device("porch", vec![])]);
-        assert!(resolve_front(&state, &calm, &opts, 0).is_none());
+        assert!(resolve_front(&state, &calm, &opts, &Timings::default(), 0).is_none());
 
-        let rear = resolve_rear(&state, &calm, TransportPath::Usb, 0, 1_700_000_000);
+        let rear = resolve_rear(
+            &state,
+            &calm,
+            &ClassOptions::default(),
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
         assert!(
             rear.lines
                 .iter()
@@ -1230,7 +1434,8 @@ mod tests {
                 CardValue::Binary(Some(true)),
             )],
         )]);
-        let r = resolve_front(&state, &advisory, &opts, 0).expect("advisory pierces Dark");
+        let r = resolve_front(&state, &advisory, &opts, &Timings::default(), 0)
+            .expect("advisory pierces Dark");
         assert_eq!(r.phrase, PublicPhrase::Advisory(AdvisoryWord::CoAlarm));
     }
 
@@ -1248,10 +1453,12 @@ mod tests {
                 CardValue::Binary(Some(true)),
             )],
         )]);
-        assert!(resolve_front(&state, &tamper, &opts, 0)
-            .expect("front")
-            .led
-            .is_none());
+        assert!(
+            resolve_front(&state, &tamper, &opts, &Timings::default(), 0)
+                .expect("front")
+                .led
+                .is_none()
+        );
 
         let smoke = live_view(vec![device(
             "porch",
@@ -1261,7 +1468,7 @@ mod tests {
                 CardValue::Binary(Some(true)),
             )],
         )]);
-        assert!(resolve_front(&state, &smoke, &opts, 0)
+        assert!(resolve_front(&state, &smoke, &opts, &Timings::default(), 0)
             .expect("front")
             .led
             .is_some());
@@ -1274,8 +1481,14 @@ mod tests {
         let opts = ClassOptions::default();
         let state = SurfaceState::new();
 
-        let well = resolve_front(&state, &live_view(vec![device("porch", vec![])]), &opts, 0)
-            .expect("front");
+        let well = resolve_front(
+            &state,
+            &live_view(vec![device("porch", vec![])]),
+            &opts,
+            &Timings::default(),
+            0,
+        )
+        .expect("front");
         assert_eq!(well.motion, Motion::Breathing);
 
         for bad in [
@@ -1296,7 +1509,7 @@ mod tests {
         ] {
             let id = bad.id.clone();
             let v = live_view(vec![device("porch", vec![bad])]);
-            let r = resolve_front(&state, &v, &opts, 0).expect("front");
+            let r = resolve_front(&state, &v, &opts, &Timings::default(), 0).expect("front");
             assert_eq!(r.motion, Motion::Still, "{id} kept breathing");
         }
     }
@@ -1326,9 +1539,23 @@ mod tests {
     fn the_rear_names_the_transport_so_the_trust_boundary_is_legible() {
         let state = SurfaceState::new();
         let view = live_view(vec![device("porch", vec![])]);
-        let rear = resolve_rear(&state, &view, TransportPath::Usb, 0, 1_700_000_000);
+        let rear = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
         assert!(rear.lines[0].contains("usb"), "{:?}", rear.lines);
-        let rear = resolve_rear(&state, &view, TransportPath::Lan, 0, 1_700_000_000);
+        let rear = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            TransportPath::Lan,
+            0,
+            1_700_000_000,
+        );
         assert!(rear.lines[0].contains("lan"), "{:?}", rear.lines);
     }
 
@@ -1356,7 +1583,14 @@ mod tests {
         dev.name = Some("porch\u{202e}\u{0007} ".repeat(20));
         let state = SurfaceState::new();
         let view = live_view(vec![dev]);
-        let rear = resolve_rear(&state, &view, TransportPath::Usb, 0, 1_700_000_000);
+        let rear = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
         assert!(rear.lines.len() <= MAX_REAR_LINES);
         for line in &rear.lines {
             assert!(
@@ -1373,7 +1607,14 @@ mod tests {
             .collect();
         let state = SurfaceState::new();
         let view = live_view(devices);
-        let rear = resolve_rear(&state, &view, TransportPath::Lan, 0, 1_700_000_000);
+        let rear = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            TransportPath::Lan,
+            0,
+            1_700_000_000,
+        );
         assert!(rear.lines.len() <= MAX_REAR_LINES);
     }
 
@@ -1389,7 +1630,7 @@ mod tests {
                 bucket_start_epoch_s: 1_700_000_000 + i * 600,
                 bucket_size_s: 600,
                 attestation: Some("adapter".to_string()),
-                bundle_badge: Badge::Signed,
+                log_verdict: LogVerdict::SelfConsistent,
             })
             .collect();
         let view = WitnessView {
@@ -1422,32 +1663,50 @@ mod tests {
         assert_eq!(state.scrub_index(), None);
     }
 
-    /// The scrubber's rear line says what was actually verified. The kernel's
-    /// per-event records carry no signature of their own, so the badge is the
-    /// bundle's and the wording must not imply otherwise.
+    /// The scrubber's rear line says which check actually ran. The surface
+    /// walks the entry-hash chain and checks no signature against a pinned
+    /// key, so the wording must not imply one.
     #[test]
-    fn the_scrubber_reports_the_bundle_verdict_not_a_per_event_one() {
+    fn the_scrubber_reports_the_check_that_actually_ran() {
         let view = WitnessView {
             timeline: vec![TimelineEntry {
                 phrase: PublicPhrase::Presence { zone: None },
                 bucket_start_epoch_s: 1_700_000_000,
                 bucket_size_s: 600,
                 attestation: Some("ha-bridged".to_string()),
-                bundle_badge: Badge::Signed,
+                log_verdict: LogVerdict::SelfConsistent,
             }],
             ..live_view(vec![device("porch", vec![])])
         };
         let mut state = SurfaceState::new();
         state.set_mode(SurfaceMode::Timeline);
         state.scrub_back(0, view.timeline.len());
-        let rear = resolve_rear(&state, &view, TransportPath::Usb, 0, 1_700_000_000);
-        let joined = rear.lines.join(" | ");
-        assert!(joined.contains("bundle signed"), "{joined}");
-        assert!(joined.contains("ha-bridged"), "{joined}");
-        assert!(
-            !joined.contains("bundle verified"),
-            "a signature nobody checked here must not read as verified: {joined}"
+        let rear = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions::default(),
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
         );
+        let joined = rear.lines.join(" | ");
+        assert!(joined.contains("log self-consistent"), "{joined}");
+        assert!(joined.contains("ha-bridged"), "{joined}");
+
+        // The per-device `chain N verified` line is honest — the peer table
+        // really did check an Ed25519 signature against a pinned key. What
+        // must never say "verified" is anything about the sealed-log tail
+        // this surface merely hash-walked.
+        for line in &rear.lines {
+            let is_timeline_line =
+                line.contains("events in window") || line.starts_with("attested");
+            if is_timeline_line {
+                assert!(
+                    !line.to_lowercase().contains("verified"),
+                    "a check nobody ran must not read as verified: {line}"
+                );
+            }
+        }
     }
 
     /// The timeline is bucketed, and the scrubber must not un-bucket it.
@@ -1459,7 +1718,7 @@ mod tests {
                 bucket_start_epoch_s: 1_700_000_000,
                 bucket_size_s: 600,
                 attestation: None,
-                bundle_badge: Badge::Signed,
+                log_verdict: LogVerdict::SelfConsistent,
             }],
             ..live_view(vec![device("porch", vec![])])
         };
@@ -1471,5 +1730,241 @@ mod tests {
             entry.bucket_size_s >= 300,
             "buckets are at least five minutes"
         );
+    }
+
+    // ---- regressions from the first review round ------------------------
+
+    /// The bug: broker freshness was stamped whenever the fleet map was
+    /// non-empty, which after the first publish is forever. `broker_live`
+    /// then pinned to true for the life of the process, `broker_stale_ms`
+    /// never fired, and the matrix kept breathing calm green through a dead
+    /// broker — the exact stale-but-plausible state this surface exists not
+    /// to show.
+    #[test]
+    fn broker_freshness_ages_out_on_silence() {
+        let stale = 90_000;
+        assert!(!broker_live(None, 0, stale), "nothing heard is not fine");
+        assert!(broker_live(Some(1_000), 1_000, stale));
+        assert!(broker_live(Some(1_000), 1_000 + stale, stale));
+        assert!(
+            !broker_live(Some(1_000), 1_001 + stale, stale),
+            "silence past the window must read as not live"
+        );
+        // A clock that went backward must not read as fresh forever.
+        assert!(broker_live(Some(10_000), 0, stale));
+    }
+
+    /// The bug: `DeviceCards::online` was set from the peer table and then
+    /// read by nobody. A Canary went dark, the rear said LATE, and the
+    /// room-facing matrix kept breathing calm green — which makes this
+    /// surface's central claim ("the breath means the witnesses are alive")
+    /// false.
+    #[test]
+    fn a_canary_going_dark_stops_the_breath() {
+        let timings = Timings::default();
+        let opts = ClassOptions::default();
+        let state = SurfaceState::new();
+
+        let mut late = device("porch", vec![]);
+        late.online = false;
+        late.last_seen_secs_ago = Some(timings.witness_late_secs + 1);
+        let r = resolve_front(&state, &live_view(vec![late]), &opts, &timings, 0).expect("front");
+        assert_eq!(r.phrase, PublicPhrase::Degraded(DegradedWord::WitnessLate));
+        assert_eq!(r.motion, Motion::Still);
+
+        let mut lost = device("gate", vec![]);
+        lost.online = false;
+        lost.last_seen_secs_ago = Some(timings.witness_lost_secs + 1);
+        let r = resolve_front(&state, &live_view(vec![lost]), &opts, &timings, 0).expect("front");
+        assert_eq!(r.phrase, PublicPhrase::Degraded(DegradedWord::WitnessLost));
+    }
+
+    /// A Canary that has never been heard from is a config entry, not a
+    /// witness that went dark. Crying wolf on first boot would teach a
+    /// household to ignore the one state that matters.
+    #[test]
+    fn a_never_heard_device_is_not_reported_lost() {
+        let timings = Timings::default();
+        let mut never = device("porch", vec![]);
+        never.online = false;
+        never.last_seen_secs_ago = None;
+        let r = resolve_front(
+            &SurfaceState::new(),
+            &live_view(vec![never]),
+            &ClassOptions::default(),
+            &timings,
+            0,
+        )
+        .expect("front");
+        assert_eq!(r.phrase, PublicPhrase::Calm);
+    }
+
+    /// The bug: `compose` returned `None` whenever the front was blank, so
+    /// Dark mode and the quiet window silenced the operator-facing rear too —
+    /// and the daemon then cleared everything. The Dark-mode line promising
+    /// that witnessing continues never actually reached the glass.
+    #[test]
+    fn a_blank_front_still_draws_the_rear() {
+        let timings = Timings::default();
+        let mut state = SurfaceState::new();
+        state.set_mode(SurfaceMode::Dark);
+        let view = live_view(vec![device("porch", vec![])]);
+        let opts = ClassOptions::default();
+
+        let front = resolve_front(&state, &view, &opts, &timings, 0);
+        assert!(front.is_none(), "Dark blanks the matrix");
+
+        let rear = resolve_rear(&state, &view, &opts, TransportPath::Usb, 0, 1_700_000_000);
+        let frame = compose(front.as_ref(), &rear, 0, &timings)
+            .expect("a blank front must still draw the rear");
+
+        let body = frame.body();
+        let elements = body["elements"].as_array().expect("elements");
+        assert!(!elements.is_empty());
+        for e in elements {
+            assert_eq!(
+                e["display"].as_str(),
+                Some("back"),
+                "nothing may be drawn on the room-facing matrix in Dark"
+            );
+        }
+        let text: String = elements
+            .iter()
+            .filter_map(|e| e["text"].as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            text.contains("witnessing continues"),
+            "Dark must reach the glass saying so: {text}"
+        );
+    }
+
+    /// With nothing at all to say, compose still yields nothing — so the
+    /// daemon clears rather than drawing an empty frame forever.
+    #[test]
+    fn nothing_to_say_draws_nothing() {
+        let timings = Timings::default();
+        let empty = RearView::default();
+        assert!(compose(None, &empty, 0, &timings).is_none());
+    }
+
+    /// The bug: `rear_shows_wellbeing` was passed only to the front resolver,
+    /// where P1 is refused unconditionally. The advertised opt-in changed
+    /// nothing on the device.
+    #[test]
+    fn the_wellbeing_opt_in_actually_reaches_the_rear() {
+        let heart = Card {
+            v: CARD_SCHEMA_V,
+            id: "heart_rate".into(),
+            title: "Heart rate".into(),
+            privacy: Some(PrivacyClass::P1),
+            severity: None,
+            absent: false,
+            value: CardValue::Sparkline {
+                value: Some(62.0),
+                unit: "bpm".into(),
+            },
+        };
+        let view = live_view(vec![device("porch", vec![heart])]);
+        let state = SurfaceState::new();
+
+        let off = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions {
+                rear_shows_wellbeing: false,
+            },
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
+        assert!(
+            !off.lines.iter().any(|l| l.contains("62")),
+            "P1 must not render unless the operator opted in: {:?}",
+            off.lines
+        );
+
+        let on = resolve_rear(
+            &state,
+            &view,
+            &ClassOptions {
+                rear_shows_wellbeing: true,
+            },
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
+        assert!(
+            on.lines.iter().any(|l| l.contains("62")),
+            "the opt-in must actually show the value: {:?}",
+            on.lines
+        );
+    }
+
+    /// The opt-in widens P1 and nothing else. P2 stays refused on the rear,
+    /// and so does an unclassed card.
+    #[test]
+    fn the_wellbeing_opt_in_does_not_widen_p2_or_unclassed() {
+        let mk = |id: &str, privacy: Option<PrivacyClass>| Card {
+            v: CARD_SCHEMA_V,
+            id: id.into(),
+            title: id.into(),
+            privacy,
+            severity: None,
+            absent: false,
+            value: CardValue::Stat {
+                value: Some(99.0),
+                unit: "x".into(),
+            },
+        };
+        let view = live_view(vec![device(
+            "porch",
+            vec![
+                mk("secret_range", Some(PrivacyClass::P2)),
+                mk("mystery", None),
+            ],
+        )]);
+        let rear = resolve_rear(
+            &SurfaceState::new(),
+            &view,
+            &ClassOptions {
+                rear_shows_wellbeing: true,
+            },
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
+        assert!(
+            !rear.lines.iter().any(|l| l.contains("99")),
+            "P2 and unclassed cards stay refused on the rear too: {:?}",
+            rear.lines
+        );
+    }
+
+    /// The rear must not call events verified when no signature was checked.
+    #[test]
+    fn the_event_count_never_claims_verification_it_did_not_do() {
+        let view = WitnessView {
+            events_in_window: 24,
+            timeline_verdict: LogVerdict::SelfConsistent,
+            ..live_view(vec![device("porch", vec![])])
+        };
+        let rear = resolve_rear(
+            &SurfaceState::new(),
+            &view,
+            &ClassOptions::default(),
+            TransportPath::Usb,
+            0,
+            1_700_000_000,
+        );
+        let line = rear
+            .lines
+            .iter()
+            .find(|l| l.contains("events in window"))
+            .expect("the count line");
+        assert!(line.contains("24"), "{line}");
+        assert!(!line.to_lowercase().contains("verified"), "{line}");
+        assert_eq!(LogVerdict::Failed.word(), "log WALK FAILED");
+        assert_eq!(LogVerdict::Unknown.word(), "log unread");
     }
 }

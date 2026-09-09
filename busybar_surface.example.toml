@@ -99,11 +99,16 @@ client_id = "securacv-busybar-surface"
 url = "http://127.0.0.1:8799"
 # The Event API capability token, as witness_api writes it.
 # token_path = "/run/witness/api_token"
-# The scrubber's window, in the form GET /export/bundle?last= accepts. The
-# surface reads a SIGNED EXPORT BUNDLE rather than the raw event list: the
-# window bounds how much can be pulled into memory, and the bundle is the
-# artifact whose signature actually means something.
-timeline_window = "24h"
+#
+# The surface reads GET /api/sealed-log, and only that. Every other route that
+# returns events — /events, /events/latest, /digest, /export/bundle — appends a
+# signed EXPORT RECEIPT to your log, because they are export routes and
+# Invariant IV says an export leaves a receipt. Correct for an export;
+# disastrous for a status display, which would forge 1,440 disclosure receipts
+# a day and bury the record of who actually looked at your evidence.
+# /api/sealed-log appends nothing. There is no window setting because that
+# route has no query parameters: it serves the checkpoint-anchored tail, and
+# the surface caps what it keeps.
 
 # ---------------------------------------------------------------------------
 # Surface behavior
@@ -145,8 +150,21 @@ pulse_steps = 4
 watchdog_steps = 3
 
 # Broker silence after which the front stops showing last-known state and
-# says NO LINK instead. Silence is not safety.
+# says NO LINK instead. Silence is not safety. Measured from the last message
+# that actually ARRIVED, not from the fleet map being non-empty.
 broker_stale_ms = 90000
+
+# The liveness ladder. A Canary unheard this long is late; unheard longer, it
+# is lost. Either stops the breath and shifts the color, because the breath
+# means the witnesses are alive and a fleet with a dark Canary that kept
+# breathing green would make that claim false. The defaults are AD-Core
+# section 2.1's reference deadlines (three minutes, ten minutes).
+#
+# A Canary that has NEVER been heard from is not counted: that is a config
+# entry, not a witness that went dark, and crying wolf on first boot teaches a
+# household to ignore the one state that matters.
+witness_late_secs = 180
+witness_lost_secs = 600
 
 # Default quiet-display window for the lever, in milliseconds (30 minutes).
 # The quiet window suppresses presence cards on the front matrix. It does NOT

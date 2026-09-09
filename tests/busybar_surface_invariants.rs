@@ -212,3 +212,61 @@ fn nothing_can_build_a_public_word_from_wire_text() {
         );
     }
 }
+
+/// The surface must never poll a route that appends an export receipt.
+///
+/// Every kernel route that returns events — `/events`, `/events/latest`,
+/// `/digest` and `/export/bundle` — runs `Kernel::export_events_for_api`,
+/// which appends a signed export receipt to the sealed log. That is correct
+/// for an export and disastrous for a status display: at one refresh a minute
+/// this surface would forge 1,440 disclosure receipts a day and bury the
+/// record of who actually looked at the evidence under acts of disclosure
+/// nobody performed.
+///
+/// `/api/sealed-log` is the read-only route. This test is the guard, because
+/// the difference is invisible at the call site — every one of those routes is
+/// a plain `GET` that returns JSON, and only reading the kernel tells you
+/// which of them writes.
+#[test]
+fn the_surface_never_polls_a_route_that_seals_a_receipt() {
+    let daemon = code_only(&read("src/bin/busybar_surface.rs"));
+    for route in ["/export/bundle", "/events/latest", "/events", "/digest"] {
+        assert!(
+            !daemon.contains(route),
+            "the surface references `{route}`, which appends an export receipt to the sealed \
+             log on every call. Use /api/sealed-log, the read-only route; see \
+             docs/design/busybar_surface.md section 7."
+        );
+    }
+    assert!(
+        daemon.contains("/api/sealed-log"),
+        "the timeline must come from the read-only sealed-log route"
+    );
+}
+
+/// The broker handoff is bounded (FR-4).
+///
+/// An unbounded channel on a Class B ingress path lets any broker client grow
+/// this process without limit by publishing faster than the redraw loop
+/// drains — and, because the drain runs to empty, starve the redraw long
+/// enough for every device-side drawing to expire.
+#[test]
+fn the_broker_handoff_queue_is_bounded() {
+    let daemon = code_only(&read("src/bin/busybar_surface.rs"));
+    assert!(
+        daemon.contains("sync_channel"),
+        "the broker handoff must use a bounded channel"
+    );
+    assert!(
+        !daemon.contains("mpsc::channel(") && !daemon.contains(" channel::<"),
+        "an unbounded channel on this ingress path is unbounded memory growth"
+    );
+    assert!(
+        daemon.contains("try_send"),
+        "the reader thread must drop rather than block when the queue is full"
+    );
+    assert!(
+        daemon.contains("MQTT_DRAIN_PER_PASS"),
+        "one redraw pass must take a bounded number of messages"
+    );
+}

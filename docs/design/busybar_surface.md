@@ -244,6 +244,7 @@ breath device-side is §9's first item.
 | Calm | *(no text)* | breathing | green | 40 |
 | Presence | the zone label, or `PRESENCE` | breathing | green | 40 |
 | Degraded | `TAMPER` / `CHAIN FAIL` / `WITNESS LOST` / `WITNESS LATE` | still | red (tamper) or amber | 70 |
+
 | Unknown | `NO LINK` | still | blue | 70 |
 | Advisory | `SMOKE` / `CO ALARM` | still | red **+ LED** | 100 |
 | On call | `ON CALL` | still | violet | 40 |
@@ -259,6 +260,22 @@ would be indefensible. Degraded overrides the quiet window and Dark too: the
 lever quiets *cards*, not the honesty about whether the witness system works.
 Unknown overrides the quiet window but not Dark, where a blank glass is
 already the honest answer.
+
+**A Canary going dark reaches the room.** Liveness is not a card — no entity
+announces "I am missing" — so it is folded into the front resolver directly
+rather than through the classing gate. A Canary past `witness_late_secs` (180 s
+by default, AD-Core §2.1's reference deadline) is `WITNESS LATE`; past
+`witness_lost_secs` (600 s) it is `WITNESS LOST`. Either stops the breath. A
+device that has never been heard from at all is deliberately not counted: that
+is a config entry, not a witness that went dark, and crying wolf on first boot
+teaches a household to ignore the one state that matters.
+
+**A blank front is not a blank device.** Dark and the quiet window silence the
+room-facing matrix while the rear keeps talking — Dark in particular has to
+keep saying that witnessing continues. So a blank front produces a rear-only
+drawing rather than nothing at all, and the previously drawn front element goes
+away by ageing off its own expiry, the same mechanism that blanks the glass
+when this process dies.
 
 **Presence debouncing.** A presence card dwells 8 s and then decays back to the
 breath. A retrigger for the same Canary inside 30 s is swallowed, and
@@ -285,6 +302,23 @@ explain itself is indistinguishable from a broken one — and because a
 household must never acquire the belief that the bar on the desk is a mute
 button.
 
+**The dial reads the log through the one read-only route.** Every kernel route
+that returns events — `/events`, `/events/latest`, `/digest`, `/export/bundle`
+— runs `export_events_for_api`, which **appends a signed export receipt**
+(Invariant IV: an export leaves a receipt tied to a specific disclosure act).
+Correct for an export; disastrous for a polling display, which at one refresh a
+minute would forge 1,440 disclosure receipts a day and bury the record of who
+actually looked at the evidence under acts nobody performed.
+`GET /api/sealed-log` appends nothing, and a source-level test keeps the
+surface on it — the difference is invisible at the call site, since all of them
+are plain `GET`s returning JSON.
+
+What the surface checks is the entry-hash walk: `SHA256(prev_hash || payload)`
+across the served tail, linking to its checkpoint anchor. That proves the rows
+are internally consistent and proves **nothing about who wrote them**, so the
+verdict is `self-consistent` and the rear says exactly that. It never says
+"verified events".
+
 **The dial is the best idea in the design.** It turns the witness log into
 something you can physically scroll through at the door: each detent steps one
 verified event, the front shows that event's public card, the rear shows what
@@ -295,12 +329,13 @@ about the record. Scrubbing is a read over a snapshot — it cannot alter,
 export, or unseal anything, and no function reachable from it could.
 
 What the rear says about a scrubbed event matters, and it is the place this
-design most easily could have overclaimed. The kernel's `ExportEvent` carries
-**no per-event signature**; verification is chain-level. So the rear names two
-things honestly: the event's own `attestation` tier (`device` / `adapter` /
-`ha-bridged`) and the **bundle's** badge. It reads `bundle signed`, never
-`bundle verified`, because this process did not itself check that signature
-against a pinned key (AD-Core §2.5). A test asserts the wording.
+design most easily could have overclaimed. Sealed rows carry no per-event
+signature a reader can check in isolation, so the rear names two things
+honestly: the event's own `attestation` tier (`device` / `adapter` /
+`ha-bridged`) and the log verdict above. A test asserts that no line about the
+timeline ever contains the word "verified" — the per-device `chain N verified`
+line may, because there the peer table really did check an Ed25519 signature
+against a pinned key.
 
 ### The physical inputs are design-only — here is exactly why
 

@@ -299,7 +299,7 @@ mod tests {
     use super::*;
     use crate::surface::busybar::card::Badge;
     use crate::surface::busybar::phrase::PublicPhrase;
-    use crate::surface::busybar::state::{DeviceCards, LinkState, TimelineEntry};
+    use crate::surface::busybar::state::{DeviceCards, LinkState, LogVerdict, TimelineEntry};
 
     fn view() -> WitnessView {
         WitnessView {
@@ -323,10 +323,11 @@ mod tests {
                     bucket_start_epoch_s: 1_700_000_000 + i * 600,
                     bucket_size_s: 600,
                     attestation: None,
-                    bundle_badge: Badge::Signed,
+                    log_verdict: LogVerdict::SelfConsistent,
                 })
                 .collect(),
-            verified_recent: 4,
+            events_in_window: 4,
+            timeline_verdict: LogVerdict::SelfConsistent,
             on_call: false,
         }
     }

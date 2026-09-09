@@ -30,7 +30,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
@@ -39,14 +39,14 @@ use rumqttc::{Event, Incoming, MqttOptions, QoS};
 use serde::Deserialize;
 
 use witness_kernel::fleet_peers::PeerTable;
-use witness_kernel::surface::busybar::card::{Badge, Card, ClassOptions};
+use witness_kernel::surface::busybar::card::{Card, ClassOptions};
 use witness_kernel::surface::busybar::controls::{apply, ControlSource, MqttControlSource};
 use witness_kernel::surface::busybar::device::{self, DrawOutcome, Frame, DRAW_PATH};
 use witness_kernel::surface::busybar::ingest;
 use witness_kernel::surface::busybar::phrase::PublicPhrase;
 use witness_kernel::surface::busybar::state::{
-    compose, resolve_front, resolve_rear, DeviceCards, SurfaceState, TimelineEntry, Timings,
-    TransportPath, WitnessView, MAX_TRACKED_DEVICES,
+    broker_live, compose, resolve_front, resolve_rear, DeviceCards, LogVerdict, SurfaceState,
+    TimelineEntry, Timings, TransportPath, WitnessView, MAX_TRACKED_DEVICES,
 };
 use witness_kernel::surface::busybar::ZoneTable;
 use witness_kernel::transport::{
@@ -156,9 +156,6 @@ struct KernelConfig {
     /// File holding the API capability token.
     #[serde(default)]
     token_path: Option<PathBuf>,
-    /// Timeline window, as the API's `last` parameter accepts it.
-    #[serde(default = "default_window")]
-    timeline_window: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -180,6 +177,10 @@ struct SurfaceSection {
     #[serde(default)]
     broker_stale_ms: Option<u64>,
     #[serde(default)]
+    witness_late_secs: Option<u64>,
+    #[serde(default)]
+    witness_lost_secs: Option<u64>,
+    #[serde(default)]
     quiet_window_ms: Option<u64>,
 }
 
@@ -189,10 +190,6 @@ fn default_broker() -> String {
 
 fn default_client_id() -> String {
     "securacv-busybar-surface".to_string()
-}
-
-fn default_window() -> String {
-    "24h".to_string()
 }
 
 /// The broker handle, with the publish half removed.
@@ -331,6 +328,8 @@ fn main() -> Result<()> {
     let defaults = Timings::default();
     let s = &cfg.surface;
     let timings = Timings {
+        witness_late_secs: s.witness_late_secs.unwrap_or(defaults.witness_late_secs),
+        witness_lost_secs: s.witness_lost_secs.unwrap_or(defaults.witness_lost_secs),
         presence_dwell_ms: s.presence_dwell_ms.unwrap_or(defaults.presence_dwell_ms),
         presence_debounce_ms: s
             .presence_debounce_ms
@@ -395,7 +394,14 @@ fn main() -> Result<()> {
     };
     tls_config.backend.validate_feature_support()?;
 
-    let (tx, rx) = channel::<(String, Vec<u8>, bool)>();
+    // Bounded (FR-4). The reader thread drops rather than blocks when this
+    // fills: every topic the surface reads is retained or repeats, so the
+    // newest state arrives again shortly and a dropped message costs a redraw
+    // of staleness, not a fact. An unbounded channel here would let any
+    // broker client grow this process without limit by publishing faster than
+    // the redraw loop drains, which on a Class B ingress path is a defect
+    // rather than a tuning question.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(String, Vec<u8>, bool)>(MQTT_QUEUE_CAP);
     let client_id = cfg.broker.client_id.clone();
     let username = cfg.broker.username.clone();
     let password = cfg.broker.password.clone();
@@ -423,6 +429,7 @@ fn main() -> Result<()> {
         let (client, mut connection) = rumqttc::ClientBuilder::new(options).capacity(64).build();
         let client = SubscribeOnly(client);
         let mut ok = true;
+        let mut dropped: u64 = 0;
         for topic in SUBSCRIBE_TOPICS {
             if let Err(e) = client.subscribe(topic, QoS::AtLeastOnce) {
                 log::warn!("{e}");
@@ -447,8 +454,19 @@ fn main() -> Result<()> {
                 match event {
                     Ok(Event::Incoming(Incoming::Publish(p))) => {
                         let topic = String::from_utf8_lossy(&p.topic).into_owned();
-                        if tx.send((topic, p.payload.to_vec(), p.retain)).is_err() {
-                            return;
+                        match tx.try_send((topic, p.payload.to_vec(), p.retain)) {
+                            Ok(()) => {}
+                            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                dropped += 1;
+                                if dropped % 100 == 1 {
+                                    log::warn!(
+                                        "broker queue full; {dropped} messages dropped so far \
+                                         (the surface renders the newest state, so this costs \
+                                         freshness, not facts)"
+                                    );
+                                }
+                            }
+                            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return,
                         }
                     }
                     Ok(_) => {}
@@ -485,7 +503,7 @@ fn main() -> Result<()> {
 
     loop {
         let t = now_ms(start);
-        drain_broker(
+        let received = drain_broker(
             &rx,
             &mut peers,
             &mut scratch,
@@ -497,7 +515,14 @@ fn main() -> Result<()> {
             &timings,
             t,
         );
-        if !scratch.is_empty() || !peers.is_empty() {
+        // Only a message that actually arrived is evidence the broker is
+        // alive. Stamping this whenever the fleet map is non-empty — which it
+        // is forever, after the first publish — would pin `broker_live` to
+        // true for the life of the process, so `broker_stale_ms` would never
+        // fire and the matrix would keep breathing calm green through a dead
+        // broker. That is precisely the stale-but-plausible state this
+        // surface exists not to show.
+        if received > 0 {
             last_broker_ms = Some(t);
         }
 
@@ -506,21 +531,22 @@ fn main() -> Result<()> {
             if t.saturating_sub(last_timeline_ms) >= timeline_refresh_ms || last_timeline_ms == 0 {
                 last_timeline_ms = t;
                 match refresh_timeline(&agent, k, kernel_token.as_deref(), &zones) {
-                    Ok(entries) => {
-                        view.verified_recent = entries.len() as u32;
+                    Ok((entries, verdict)) => {
+                        view.events_in_window = entries.len() as u32;
                         view.timeline = entries;
+                        view.timeline_verdict = verdict;
                         view.link.kernel_live = Some(true);
                     }
                     Err(e) => {
                         log::warn!("timeline refresh failed: {e}");
+                        view.timeline_verdict = LogVerdict::Unknown;
                         view.link.kernel_live = Some(false);
                     }
                 }
             }
         }
 
-        view.link.broker_live =
-            last_broker_ms.is_some_and(|last| t.saturating_sub(last) <= timings.broker_stale_ms);
+        view.link.broker_live = broker_live(last_broker_ms, t, timings.broker_stale_ms);
         view.on_call = on_call;
         view.devices = build_devices(&peers, &scratch, &zones, now_epoch_s());
 
@@ -529,8 +555,8 @@ fn main() -> Result<()> {
         }
         surface.tick(t, &timings);
 
-        let front = resolve_front(&surface, &view, &class, t);
-        let rear = resolve_rear(&surface, &view, transport, t, now_epoch_s());
+        let front = resolve_front(&surface, &view, &class, &timings, t);
+        let rear = resolve_rear(&surface, &view, &class, transport, t, now_epoch_s());
 
         match compose(front.as_ref(), &rear, step, &timings) {
             Some(frame) => match draw(&agent, &cfg.device.url, cfg.device.token.as_deref(), &frame)
@@ -566,6 +592,9 @@ fn main() -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Drain what the broker thread has queued, and report how many messages
+/// were actually taken. Bounded per pass (FR-4) so a flood cannot starve the
+/// redraw loop and let every device-side drawing expire.
 fn drain_broker(
     rx: &Receiver<(String, Vec<u8>, bool)>,
     peers: &mut PeerTable,
@@ -577,13 +606,15 @@ fn drain_broker(
     cfg: &FileConfig,
     timings: &Timings,
     t: u64,
-) {
-    loop {
+) -> usize {
+    let mut received = 0usize;
+    while received < MQTT_DRAIN_PER_PASS {
         let (topic, payload, retained) = match rx.try_recv() {
             Ok(m) => m,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => return,
+            Err(TryRecvError::Empty) => return received,
+            Err(TryRecvError::Disconnected) => return received,
         };
+        received += 1;
 
         if let Some(prefix) = cfg.broker.command_prefix.as_ref() {
             let prefix = prefix.trim_end_matches('/');
@@ -652,7 +683,15 @@ fn drain_broker(
             _ => {}
         }
     }
+    received
 }
+
+/// Most messages the broker thread may hold for the redraw loop.
+const MQTT_QUEUE_CAP: usize = 256;
+
+/// Most messages one redraw pass will take, so a flood cannot starve the
+/// draw. Anything left waits for the next pass a couple of seconds later.
+const MQTT_DRAIN_PER_PASS: usize = 512;
 
 /// Resolve a device's front label.
 ///
@@ -718,98 +757,147 @@ fn build_devices(
     out
 }
 
-/// Fetch and classify the recent verified timeline.
+/// Fetch the recent timeline, read-only.
 ///
-/// Reads a **signed export bundle** rather than the raw event list: the
-/// bundle is bounded by a time window (so this cannot pull an unbounded log
-/// into memory) and it is the artifact whose signature means something. What
-/// gets verified is the bundle, which is why `TimelineEntry::bundle_badge` is
-/// named the way it is — the kernel's per-event records carry no signature of
-/// their own, and the rear must not imply one.
+/// **`GET /api/sealed-log`, and the choice is the whole point of this
+/// function.** Every other route that returns events — `/events`,
+/// `/events/latest`, `/digest` and `/export/bundle` — runs
+/// `Kernel::export_events_for_api`, which **appends a signed export receipt
+/// to the sealed log** (`log_export_receipt`, Invariant IV: every export
+/// produces a tamper-evident receipt tied to a specific disclosure act).
+/// That is correct behavior for an export. It is disastrous for a polling
+/// status display: at one refresh a minute this surface would forge 1,440
+/// disclosure receipts a day, grow the database without bound, and fill the
+/// audit trail with acts of disclosure that nobody performed — turning the
+/// record of who looked at what into noise, which is the one thing a witness
+/// system's audit trail must not become.
+///
+/// `/api/sealed-log` is the read-only route: it serves the checkpoint-anchored
+/// tail exactly as stored, for read-only verifiers, and appends nothing. It is
+/// bounded by retention and the checkpoint anchor rather than by a time
+/// window, which is why the body read below is capped as well.
+///
+/// The rows it serves are the STORED payloads, richer than the export path's
+/// filtered ones — they still carry `correlation_token`, which an export
+/// strips. This function therefore reads exactly three fields out of each and
+/// drops the rest on the floor: the record type, the zone, and the coarse
+/// bucket. Nothing else is retained even in memory past the parse, and the
+/// only one that reaches a display is the zone, through the operator's own
+/// label table.
 fn refresh_timeline(
     agent: &ureq::Agent,
     kernel: &KernelConfig,
     token: Option<&str>,
     zones: &ZoneTable,
-) -> Result<Vec<TimelineEntry>> {
-    let url = format!(
-        "{}/export/bundle?last={}",
-        kernel.url.trim_end_matches('/'),
-        kernel.timeline_window
-    );
+) -> Result<(Vec<TimelineEntry>, LogVerdict)> {
+    let url = format!("{}/api/sealed-log", kernel.url.trim_end_matches('/'));
     let body = kernel_get(agent, &url, token)?;
-    let doc: serde_json::Value = serde_json::from_str(&body).context("export bundle JSON")?;
-    let artifact = doc
-        .get("artifact")
-        .ok_or_else(|| anyhow!("export bundle has no artifact"))?;
-    // The bundle carries a device public key and a receipt entry; verifying
-    // that pairing is the kernel verifier's job, not this surface's, so the
-    // badge stays at `Signed` — a well-formed signature this process did not
-    // itself check against a pinned key (AD-Core section 2.5, no
-    // overclaiming).
-    let bundle_badge =
-        if doc.get("receipt_entry").is_some() && doc.get("device_public_key").is_some() {
-            Badge::Signed
-        } else {
-            Badge::Unsigned
-        };
-
-    let mut out = Vec::new();
-    for batch in artifact
-        .get("batches")
+    let doc: serde_json::Value = serde_json::from_str(&body).context("sealed-log JSON")?;
+    let entries = doc
+        .get("entries")
         .and_then(|v| v.as_array())
         .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        for bucket in batch
-            .get("buckets")
-            .and_then(|v| v.as_array())
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+        .unwrap_or_default();
+
+    let verdict = walk_entry_hashes(entries, doc.get("checkpoint_head").and_then(|v| v.as_str()));
+
+    let mut out = Vec::new();
+    for entry in entries {
+        let Some(payload) = entry.get("payload").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(payload) else {
+            continue;
+        };
+        // Events only. Heartbeats, lifecycle rows and key rotations describe
+        // the witnessing system, not the scene (event contract section 12),
+        // and a scrubber over the record of what was witnessed should not
+        // step through them.
+        if record
+            .get("record_type")
+            .and_then(serde_json::Value::as_str)
+            != Some("event")
         {
-            let bucket_start = bucket
-                .get("time_bucket")
-                .and_then(|b| b.get("start_epoch_s"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let bucket_size = bucket
-                .get("time_bucket")
-                .and_then(|b| b.get("size_s"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(600);
-            for event in bucket
-                .get("events")
-                .and_then(|v| v.as_array())
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-            {
-                let zone_id = event
-                    .get("zone_id")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                out.push(TimelineEntry {
-                    // The scrubber's front phrase is a presence card in the
-                    // event's zone and nothing else: the event's own type
-                    // string never reaches the matrix, so a future event kind
-                    // cannot widen the public vocabulary by existing.
-                    phrase: PublicPhrase::Presence {
-                        zone: zones.label(zone_id).cloned(),
-                    },
-                    bucket_start_epoch_s: bucket_start,
-                    bucket_size_s: bucket_size,
-                    attestation: event
-                        .get("attestation")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                    bundle_badge,
-                });
-                if out.len() >= MAX_TIMELINE_ENTRIES {
-                    return Ok(out);
-                }
-            }
+            continue;
+        }
+        let zone_id = record
+            .get("zone_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let bucket_start = record
+            .get("time_bucket")
+            .and_then(|b| b.get("start_epoch_s"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let bucket_size = record
+            .get("time_bucket")
+            .and_then(|b| b.get("size_s"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(600);
+        out.push(TimelineEntry {
+            // The scrubber's front phrase is a presence card in the event's
+            // zone and nothing else: the event's own type string never
+            // reaches the matrix, so a future event kind cannot widen the
+            // public vocabulary by existing.
+            phrase: PublicPhrase::Presence {
+                zone: zones.label(zone_id).cloned(),
+            },
+            bucket_start_epoch_s: bucket_start,
+            bucket_size_s: bucket_size,
+            attestation: record
+                .get("attestation")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            log_verdict: verdict,
+        });
+        if out.len() >= MAX_TIMELINE_ENTRIES {
+            break;
         }
     }
-    Ok(out)
+    Ok((out, verdict))
+}
+
+/// Re-walk `SHA256(prev_hash || payload)` across the served tail.
+///
+/// This is the only check the surface performs on the log, and naming it
+/// precisely is the point: it proves the served rows are internally
+/// consistent and link to their anchor. It proves **nothing about who wrote
+/// them** — no Ed25519 signature is checked here and no key is pinned — which
+/// is why the verdict it produces is `SelfConsistent` and never anything
+/// stronger (AD-Core section 2.5).
+fn walk_entry_hashes(entries: &[serde_json::Value], checkpoint_head: Option<&str>) -> LogVerdict {
+    use sha2::{Digest, Sha256};
+
+    if entries.is_empty() {
+        return LogVerdict::Unknown;
+    }
+    let mut expected_prev = checkpoint_head.map(str::to_string);
+    for entry in entries {
+        let (Some(payload), Some(prev), Some(hash)) = (
+            entry.get("payload").and_then(serde_json::Value::as_str),
+            entry.get("prev_hash").and_then(serde_json::Value::as_str),
+            entry.get("entry_hash").and_then(serde_json::Value::as_str),
+        ) else {
+            return LogVerdict::Failed;
+        };
+        if let Some(want) = expected_prev.as_deref() {
+            if want != prev {
+                return LogVerdict::Failed;
+            }
+        }
+        let Ok(prev_bytes) = hex::decode(prev) else {
+            return LogVerdict::Failed;
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(&prev_bytes);
+        hasher.update(payload.as_bytes());
+        let got = hex::encode(hasher.finalize());
+        if !got.eq_ignore_ascii_case(hash) {
+            return LogVerdict::Failed;
+        }
+        expected_prev = Some(got);
+    }
+    LogVerdict::SelfConsistent
 }
 
 /// Most timeline entries the scrubber holds (FR-4).
