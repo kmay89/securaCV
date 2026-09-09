@@ -30,11 +30,16 @@
 //!
 //! Surfaces in this module today:
 //!
-//! - [`busybar`] — the BUSY Bar surface. A Flipper Devices BUSY Bar
+//! - `busybar` — the BUSY Bar surface. A Flipper Devices BUSY Bar
 //!   ([busy.app](https://busy.app)) driven over its local HTTP API as a
 //!   two-audience readout: the room-facing LED matrix carries public-class
 //!   card content only, the operator-facing rear display carries the detail.
 //!   Design of record: `docs/design/busybar_surface.md`.
+//!
+//!   Behind the `surface-busybar` feature, so it is a plain code span above
+//!   rather than an intra-doc link: this module documents itself in a default
+//!   build where that module does not exist, and a link would be an
+//!   unresolved-link error there rather than only on the feature lane.
 //!
 //! Not to be confused with the *shipped* SecuraCV display surfaces, which are
 //! firmware, not kernel code: Canary Display (the wall glass,
