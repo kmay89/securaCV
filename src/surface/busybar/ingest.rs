@@ -290,7 +290,10 @@ mod tests {
     #[test]
     fn a_clear_reading_is_not_the_same_as_no_reading() {
         let clear = cards_from_state(br#"{"presence_state":"clear"}"#);
-        assert_eq!(find(&clear, "presence").value, CardValue::Binary(Some(false)));
+        assert_eq!(
+            find(&clear, "presence").value,
+            CardValue::Binary(Some(false))
+        );
     }
 
     #[test]
@@ -323,7 +326,10 @@ mod tests {
     #[test]
     fn the_advisory_gates_on_the_enum_and_never_on_the_counters() {
         let now = br#"{"acoustic_event":"smoke_alarm_t3","t3_detected":5,"t4_detected":0}"#;
-        assert_eq!(acoustic_card(now).map(|c| c.id), Some("smoke_alarm_heard".into()));
+        assert_eq!(
+            acoustic_card(now).map(|c| c.id),
+            Some("smoke_alarm_heard".into())
+        );
 
         let heartbeat = br#"{"acoustic_event":"none","t3_detected":5,"t4_detected":2}"#;
         assert!(
@@ -332,7 +338,10 @@ mod tests {
         );
 
         let co = br#"{"acoustic_event":"co_alarm_t4","t4_detected":1}"#;
-        assert_eq!(acoustic_card(co).map(|c| c.id), Some("co_alarm_heard".into()));
+        assert_eq!(
+            acoustic_card(co).map(|c| c.id),
+            Some("co_alarm_heard".into())
+        );
     }
 
     /// "Verified" is earned, not assumed (AD-Core section 2.5).
@@ -391,10 +400,9 @@ mod tests {
         ours.push(chain_card(12, Badge::Verified));
 
         for (id, privacy) in &expected {
-            let card = ours
-                .iter()
-                .find(|c| &c.id == id)
-                .unwrap_or_else(|| panic!("the reference renderer builds `{id}` and this does not"));
+            let card = ours.iter().find(|c| &c.id == id).unwrap_or_else(|| {
+                panic!("the reference renderer builds `{id}` and this does not")
+            });
             let want = match privacy.as_str() {
                 "P0" => Some(PrivacyClass::P0),
                 "P1" => Some(PrivacyClass::P1),

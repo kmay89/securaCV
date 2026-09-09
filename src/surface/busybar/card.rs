@@ -225,9 +225,7 @@ fn common_refusal(card: &Card, opts: &ClassOptions) -> Option<Refusal> {
     match card.privacy {
         None => Some(Refusal::Unclassed),
         Some(PrivacyClass::P2) => Some(Refusal::NeverLeavesDevice),
-        Some(PrivacyClass::P1) if !opts.rear_shows_wellbeing => {
-            Some(Refusal::WellbeingNotOptedIn)
-        }
+        Some(PrivacyClass::P1) if !opts.rear_shows_wellbeing => Some(Refusal::WellbeingNotOptedIn),
         _ => None,
     }
 }
@@ -340,7 +338,10 @@ mod tests {
         let opts = ClassOptions {
             rear_shows_wellbeing: true,
         };
-        assert_eq!(front_phrase(&c, Some(&zone()), &opts), Err(Refusal::Unclassed));
+        assert_eq!(
+            front_phrase(&c, Some(&zone()), &opts),
+            Err(Refusal::Unclassed)
+        );
         assert_eq!(rear_admits(&c, &opts), Err(Refusal::Unclassed));
     }
 
@@ -437,7 +438,11 @@ mod tests {
     #[test]
     fn presence_is_the_one_card_that_names_a_place() {
         let opts = ClassOptions::default();
-        let c = card("presence", Some(PrivacyClass::P0), CardValue::Binary(Some(true)));
+        let c = card(
+            "presence",
+            Some(PrivacyClass::P0),
+            CardValue::Binary(Some(true)),
+        );
         assert_eq!(
             front_phrase(&c, Some(&zone()), &opts),
             Ok(PublicPhrase::Presence { zone: Some(zone()) })
@@ -479,7 +484,10 @@ mod tests {
                 crate::surface::busybar::phrase::DegradedWord::ChainFail
             ))
         );
-        assert_eq!(front_phrase(&mk(Badge::Verified), None, &opts), Ok(PublicPhrase::Calm));
+        assert_eq!(
+            front_phrase(&mk(Badge::Verified), None, &opts),
+            Ok(PublicPhrase::Calm)
+        );
         assert_eq!(
             front_phrase(&mk(Badge::Unsigned), None, &opts),
             Err(Refusal::NoPublicPhrase)
@@ -528,7 +536,11 @@ mod tests {
 
     #[test]
     fn a_card_from_a_future_schema_is_refused_rather_than_guessed_at() {
-        let mut c = card("presence", Some(PrivacyClass::P0), CardValue::Binary(Some(true)));
+        let mut c = card(
+            "presence",
+            Some(PrivacyClass::P0),
+            CardValue::Binary(Some(true)),
+        );
         c.v = CARD_SCHEMA_V + 1;
         let opts = ClassOptions::default();
         assert_eq!(rear_admits(&c, &opts), Err(Refusal::SchemaVersion));
@@ -537,12 +549,13 @@ mod tests {
 
     #[test]
     fn an_entity_compiled_out_of_the_build_draws_nothing_on_the_front() {
-        let mut c = card("presence", Some(PrivacyClass::P0), CardValue::Binary(Some(true)));
+        let mut c = card(
+            "presence",
+            Some(PrivacyClass::P0),
+            CardValue::Binary(Some(true)),
+        );
         c.absent = true;
         let opts = ClassOptions::default();
-        assert_eq!(
-            front_phrase(&c, None, &opts),
-            Err(Refusal::AbsentFromBuild)
-        );
+        assert_eq!(front_phrase(&c, None, &opts), Err(Refusal::AbsentFromBuild));
     }
 }

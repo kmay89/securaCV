@@ -346,7 +346,10 @@ mod tests {
             Err(ZoneWordError::BadChar('-'))
         ));
         assert_eq!(ZoneWord::try_new(" FRONT"), Err(ZoneWordError::BadSpacing));
-        assert_eq!(ZoneWord::try_new("FRONT  DOOR"), Err(ZoneWordError::BadSpacing));
+        assert_eq!(
+            ZoneWord::try_new("FRONT  DOOR"),
+            Err(ZoneWordError::BadSpacing)
+        );
         assert_eq!(ZoneWord::try_new(""), Err(ZoneWordError::Empty));
         assert_eq!(ZoneWord::try_new("12 34"), Err(ZoneWordError::NoLetters));
     }

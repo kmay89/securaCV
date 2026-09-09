@@ -41,14 +41,12 @@ use serde::Deserialize;
 use witness_kernel::fleet_peers::PeerTable;
 use witness_kernel::surface::busybar::card::{Badge, Card, ClassOptions};
 use witness_kernel::surface::busybar::controls::{apply, ControlSource, MqttControlSource};
-use witness_kernel::surface::busybar::device::{
-    self, DrawOutcome, Frame, DRAW_PATH,
-};
+use witness_kernel::surface::busybar::device::{self, DrawOutcome, Frame, DRAW_PATH};
 use witness_kernel::surface::busybar::ingest;
 use witness_kernel::surface::busybar::phrase::PublicPhrase;
 use witness_kernel::surface::busybar::state::{
-    compose, resolve_front, resolve_rear, DeviceCards, SurfaceState, TimelineEntry,
-    Timings, TransportPath, WitnessView, MAX_TRACKED_DEVICES,
+    compose, resolve_front, resolve_rear, DeviceCards, SurfaceState, TimelineEntry, Timings,
+    TransportPath, WitnessView, MAX_TRACKED_DEVICES,
 };
 use witness_kernel::surface::busybar::ZoneTable;
 use witness_kernel::transport::{
@@ -232,7 +230,12 @@ fn drain(response: &mut ureq::http::Response<ureq::Body>) {
 }
 
 /// One `POST /api/display/draw`.
-fn draw(agent: &ureq::Agent, base: &str, token: Option<&str>, frame: &Frame) -> Result<DrawOutcome> {
+fn draw(
+    agent: &ureq::Agent,
+    base: &str,
+    token: Option<&str>,
+    frame: &Frame,
+) -> Result<DrawOutcome> {
     let endpoint = format!("{}{}", base.trim_end_matches('/'), DRAW_PATH);
     let mut req = agent
         .post(&endpoint)
@@ -316,8 +319,8 @@ fn main() -> Result<()> {
 
     let raw = std::fs::read_to_string(&args.config)
         .with_context(|| format!("reading {}", args.config.display()))?;
-    let cfg: FileConfig = toml::from_str(&raw)
-        .with_context(|| format!("parsing {}", args.config.display()))?;
+    let cfg: FileConfig =
+        toml::from_str(&raw).with_context(|| format!("parsing {}", args.config.display()))?;
 
     // Local-first, enforced before anything opens a socket.
     device::validate_url(&cfg.device.url).map_err(|e| anyhow!(e))?;
@@ -516,8 +519,8 @@ fn main() -> Result<()> {
             }
         }
 
-        view.link.broker_live = last_broker_ms
-            .is_some_and(|last| t.saturating_sub(last) <= timings.broker_stale_ms);
+        view.link.broker_live =
+            last_broker_ms.is_some_and(|last| t.saturating_sub(last) <= timings.broker_stale_ms);
         view.on_call = on_call;
         view.devices = build_devices(&peers, &scratch, &zones, now_epoch_s());
 
@@ -530,7 +533,8 @@ fn main() -> Result<()> {
         let rear = resolve_rear(&surface, &view, transport, t, now_epoch_s());
 
         match compose(front.as_ref(), &rear, step, &timings) {
-            Some(frame) => match draw(&agent, &cfg.device.url, cfg.device.token.as_deref(), &frame) {
+            Some(frame) => match draw(&agent, &cfg.device.url, cfg.device.token.as_deref(), &frame)
+            {
                 Ok(DrawOutcome::Drawn) => {}
                 Ok(DrawOutcome::RefusedLowerPriority) => {
                     // Something with a higher priority owns the display. Our
@@ -743,12 +747,12 @@ fn refresh_timeline(
     // badge stays at `Signed` — a well-formed signature this process did not
     // itself check against a pinned key (AD-Core section 2.5, no
     // overclaiming).
-    let bundle_badge = if doc.get("receipt_entry").is_some() && doc.get("device_public_key").is_some()
-    {
-        Badge::Signed
-    } else {
-        Badge::Unsigned
-    };
+    let bundle_badge =
+        if doc.get("receipt_entry").is_some() && doc.get("device_public_key").is_some() {
+            Badge::Signed
+        } else {
+            Badge::Unsigned
+        };
 
     let mut out = Vec::new();
     for batch in artifact

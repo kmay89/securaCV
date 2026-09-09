@@ -57,8 +57,8 @@
 
 pub mod card;
 pub mod controls;
-pub mod ingest;
 pub mod device;
+pub mod ingest;
 pub mod phrase;
 pub mod state;
 
@@ -161,12 +161,18 @@ mod tests {
     #[test]
     fn the_table_accepts_a_zone_with_or_without_the_kernel_prefix() {
         let t = ZoneTable::build([("front_door", "front door")]).expect("table");
-        assert_eq!(t.label("front_door").map(ZoneWord::as_str), Some("FRONT DOOR"));
+        assert_eq!(
+            t.label("front_door").map(ZoneWord::as_str),
+            Some("FRONT DOOR")
+        );
         assert_eq!(
             t.label("zone:front_door").map(ZoneWord::as_str),
             Some("FRONT DOOR")
         );
-        assert_eq!(t.label("FRONT_DOOR").map(ZoneWord::as_str), Some("FRONT DOOR"));
+        assert_eq!(
+            t.label("FRONT_DOOR").map(ZoneWord::as_str),
+            Some("FRONT DOOR")
+        );
     }
 
     /// The safe default: a zone nobody named renders with no label. The

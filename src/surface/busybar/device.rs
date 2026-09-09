@@ -470,7 +470,10 @@ mod tests {
     #[test]
     fn one_request_addresses_both_displays() {
         let frame = Frame {
-            elements: vec![text(Display::Front, "TAMPER"), text(Display::Back, "detail")],
+            elements: vec![
+                text(Display::Front, "TAMPER"),
+                text(Display::Back, "detail"),
+            ],
             led: None,
             priority: PRIORITY_DEGRADED,
             timeout_ms: 6_000,

@@ -33,8 +33,7 @@ use std::collections::BTreeMap;
 
 use super::card::{front_phrase, Badge, Card, ClassOptions, Refusal};
 use super::device::{
-    Align, Display, Element, Font, Frame, Rgba, PRIORITY_ADVISORY, PRIORITY_CALM,
-    PRIORITY_DEGRADED,
+    Align, Display, Element, Font, Frame, Rgba, PRIORITY_ADVISORY, PRIORITY_CALM, PRIORITY_DEGRADED,
 };
 use super::phrase::{AdvisoryWord, DegradedWord, PublicPhrase, UnknownWord, ZoneWord};
 
@@ -397,7 +396,9 @@ impl SurfaceState {
 
     /// Milliseconds left in the quiet window, if one is open.
     pub fn quiet_remaining_ms(&self, now_ms: u64) -> Option<u64> {
-        self.quiet_until_ms.filter(|&u| u > now_ms).map(|u| u - now_ms)
+        self.quiet_until_ms
+            .filter(|&u| u > now_ms)
+            .map(|u| u - now_ms)
     }
 
     /// Offer a presence observation to the surface.
@@ -434,8 +435,7 @@ impl SurfaceState {
                 self.last_presence_ms.remove(&oldest);
             }
         }
-        self.last_presence_ms
-            .insert(device_id.to_string(), now_ms);
+        self.last_presence_ms.insert(device_id.to_string(), now_ms);
 
         match &self.dwelling {
             Some((_, until)) if *until > now_ms => {
@@ -812,7 +812,10 @@ pub fn resolve_rear(
                 .min_by_key(|b| badge_rank(*b))
                 .unwrap_or(Badge::Unknown);
             lines.push(format!("chain {} {}", head, badge_word(badge)));
-            lines.push(format!("{} verified events in window", view.verified_recent));
+            lines.push(format!(
+                "{} verified events in window",
+                view.verified_recent
+            ));
         }
     }
 
@@ -1022,11 +1025,12 @@ mod tests {
 
         view.link.broker_live = false;
         let lost = resolve_front(&state, &view, &opts, 0).expect("front");
+        assert_eq!(lost.phrase, PublicPhrase::Unknown(UnknownWord::BrokerLost));
         assert_eq!(
-            lost.phrase,
-            PublicPhrase::Unknown(UnknownWord::BrokerLost)
+            lost.motion,
+            Motion::Still,
+            "unknown must not keep breathing"
         );
-        assert_eq!(lost.motion, Motion::Still, "unknown must not keep breathing");
         assert_ne!(lost.color, COLOR_CALM);
         assert_ne!(lost.color, COLOR_DEGRADED, "unknown is a third state");
     }
@@ -1055,7 +1059,10 @@ mod tests {
     fn every_drawing_expires_before_the_next_redraw_is_due() {
         let timings = Timings::default();
         let timeout = timings.draw_timeout_ms();
-        assert!(timeout > timings.pulse_step_ms, "would blink on a late redraw");
+        assert!(
+            timeout > timings.pulse_step_ms,
+            "would blink on a late redraw"
+        );
         assert!(
             timeout <= super::super::device::MAX_DRAW_TIMEOUT_MS,
             "a drawing must not outlive the protocol ceiling"
@@ -1090,7 +1097,11 @@ mod tests {
                 "a retrigger inside the gap must be swallowed"
             );
         }
-        assert_eq!(state.pending_count(), 0, "swallowed triggers must not queue");
+        assert_eq!(
+            state.pending_count(),
+            0,
+            "swallowed triggers must not queue"
+        );
     }
 
     /// The swallowed trigger must not extend the dwell either — extending is
@@ -1120,7 +1131,11 @@ mod tests {
         let mut state = SurfaceState::new();
         assert!(state.note_presence("porch", Some(zone("FRONT DOOR")), 0, &timings));
         assert!(state.note_presence("gate", Some(zone("BACK GATE")), 1_000, &timings));
-        assert_eq!(state.pending_count(), 1, "the second queues behind the first");
+        assert_eq!(
+            state.pending_count(),
+            1,
+            "the second queues behind the first"
+        );
     }
 
     #[test]
@@ -1141,8 +1156,8 @@ mod tests {
         assert_eq!(held.motion, Motion::Breathing, "presence is still healthy");
 
         state.tick(timings.presence_dwell_ms + 1, &timings);
-        let decayed = resolve_front(&state, &view, &opts, timings.presence_dwell_ms + 1)
-            .expect("front");
+        let decayed =
+            resolve_front(&state, &view, &opts, timings.presence_dwell_ms + 1).expect("front");
         assert_eq!(decayed.phrase, PublicPhrase::Calm);
     }
 
@@ -1177,7 +1192,11 @@ mod tests {
 
         let degraded = live_view(vec![device(
             "porch",
-            vec![card("tamper", PrivacyClass::P0, CardValue::Binary(Some(true)))],
+            vec![card(
+                "tamper",
+                PrivacyClass::P0,
+                CardValue::Binary(Some(true)),
+            )],
         )]);
         let r = resolve_front(&state, &degraded, &opts, 1_000).expect("tamper overrides quiet");
         assert_eq!(r.phrase, PublicPhrase::Degraded(DegradedWord::Tamper));
@@ -1223,9 +1242,16 @@ mod tests {
         let state = SurfaceState::new();
         let tamper = live_view(vec![device(
             "porch",
-            vec![card("tamper", PrivacyClass::P0, CardValue::Binary(Some(true)))],
+            vec![card(
+                "tamper",
+                PrivacyClass::P0,
+                CardValue::Binary(Some(true)),
+            )],
         )]);
-        assert!(resolve_front(&state, &tamper, &opts, 0).expect("front").led.is_none());
+        assert!(resolve_front(&state, &tamper, &opts, 0)
+            .expect("front")
+            .led
+            .is_none());
 
         let smoke = live_view(vec![device(
             "porch",
@@ -1235,7 +1261,10 @@ mod tests {
                 CardValue::Binary(Some(true)),
             )],
         )]);
-        assert!(resolve_front(&state, &smoke, &opts, 0).expect("front").led.is_some());
+        assert!(resolve_front(&state, &smoke, &opts, 0)
+            .expect("front")
+            .led
+            .is_some());
     }
 
     /// Stillness is the alert. Nothing that is wrong may keep breathing, and
@@ -1438,6 +1467,9 @@ mod tests {
         state.set_mode(SurfaceMode::Timeline);
         state.scrub_back(0, view.timeline.len());
         let entry = scrubbed(&state, &view).expect("entry");
-        assert!(entry.bucket_size_s >= 300, "buckets are at least five minutes");
+        assert!(
+            entry.bucket_size_s >= 300,
+            "buckets are at least five minutes"
+        );
     }
 }

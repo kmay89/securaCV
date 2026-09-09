@@ -264,9 +264,7 @@ pub fn evaluate(topic: &str, payload: &[u8]) -> Option<Poke> {
         "sensing" => {
             let (title, kind) = match acoustic_advisory(payload)? {
                 AcousticAdvisory::Smoke => ("Smoke alarm heard", "a smoke alarm"),
-                AcousticAdvisory::CarbonMonoxide => {
-                    ("CO alarm heard", "a carbon monoxide alarm")
-                }
+                AcousticAdvisory::CarbonMonoxide => ("CO alarm heard", "a carbon monoxide alarm"),
             };
             Some(Poke {
                 class: PokeClass::Pattern,

@@ -297,9 +297,9 @@ impl ControlSource for MqttControlSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface::busybar::state::{DeviceCards, LinkState, TimelineEntry};
     use crate::surface::busybar::card::Badge;
     use crate::surface::busybar::phrase::PublicPhrase;
+    use crate::surface::busybar::state::{DeviceCards, LinkState, TimelineEntry};
 
     fn view() -> WitnessView {
         WitnessView {
@@ -402,7 +402,13 @@ mod tests {
         let v = view();
         let mut state = SurfaceState::new();
         let before = v.clone();
-        apply(&mut state, &v, Control::SetMode(SurfaceMode::Dark), &timings, 0);
+        apply(
+            &mut state,
+            &v,
+            Control::SetMode(SurfaceMode::Dark),
+            &timings,
+            0,
+        );
         assert_eq!(state.mode(), SurfaceMode::Dark);
         assert_eq!(v, before);
         assert_eq!(v.devices.len(), 1, "the fleet is still there");
