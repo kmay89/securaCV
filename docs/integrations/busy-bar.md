@@ -8,7 +8,7 @@ and an open local HTTP API. A tamper report, a heard smoke/CO alarm, a
 witness-chain failure, or a Canary going dark lights the bar on your desk:
 severity color plus a fixed alert word, nothing else.
 
-Two lanes, pick either or both:
+Three lanes, pick any:
 
 - **Lane A — Home Assistant blueprint** (config only, no SecuraCV build):
   a `rest_command` package plus the
@@ -20,6 +20,25 @@ Two lanes, pick either or both:
   bin): `--busybar-url` adds the bar as a delivery sink beside ntfy, with
   the relay's own debounce and retry. Alerts auto-expire after a bounded
   hold, because the relay is fire-and-forget by design.
+- **Lane C — the BUSY Bar *surface*** (`busybar_surface`, the
+  `surface-busybar` feature): not an alert lane at all. Instead of lighting
+  the bar when something is wrong, it makes the bar a continuous, calm
+  readout of witness state on **both** displays — the room-facing matrix
+  carries public-class card content only, the operator-facing rear carries
+  chain status, per-Canary liveness, the verified count and the transport
+  path. It breathes while the chain is intact and goes still when it is
+  not. Design, status and the bench-validation list:
+  [`docs/design/busybar_surface.md`](../design/busybar_surface.md);
+  configuration:
+  [`busybar_surface.example.toml`](../../busybar_surface.example.toml); the
+  Home Assistant controls are a drop-in package,
+  [`securacv_busybar_surface.yaml`](../../homeassistant/packages/securacv_busybar_surface.yaml).
+  **Built, not yet run against real hardware.**
+
+Lanes B and C can run together on one bar. They draw under different
+application names, so neither wipes the other's content, and the surface's
+draw priorities sit entirely below the relay's — a real alert always wins
+the glass, and the calm readout resumes when the alert's hold expires.
 
 Privacy posture (read this before deploying — it is the point of the
 product): what reaches the bar is the same coarse vocabulary every SecuraCV
@@ -122,7 +141,7 @@ then test from **Developer tools → Actions**: call
 
 ```yaml
 text: "SECURACV TEST"
-color: "#00BE50"
+color: "#00BE50FF"
 priority: 50
 timeout_ms: 10000
 ```
@@ -192,8 +211,16 @@ configurable; see §1.
 ## 6) Troubleshooting
 
 - **Nothing appears, no error**: the bar's HTTP access password is set but
-  the token is missing or wrong — the API answers 401. Set
-  `--busybar-token` (Lane B) or the `X-API-Token` header (Lane A).
+  the token is missing or wrong — the API answers **403** (Forbidden), not
+  401. Set `--busybar-token` (Lane B), the `X-API-Token` header (Lane A), or
+  `[device].token` (Lane C). Note that **USB and loopback bypass the access
+  key entirely**, so this is a Wi-Fi-only symptom: a setup that works over
+  the USB cable and fails over Wi-Fi is this, every time.
+- **Nothing appears, and the color looks fine**: check that your color has
+  **eight** hex digits, not six. The bar's API types a color as `#RRGGBBAA`
+  (`^#[a-fA-F0-9]{8}$`), and a six-digit CSS color does not match the
+  pattern. Every lane above ships the eight-digit form; a hand-written
+  `rest_command` is the place this bites.
 - **Nothing appears, connection refused/timeout**: wrong address, or the
   bar moved to a different IP on Wi-Fi. Check the bar's web UI; give it a
   DHCP reservation.

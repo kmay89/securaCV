@@ -1,0 +1,183 @@
+# BUSY Bar surface configuration — copy to busybar_surface.toml and customize.
+#
+# Run with:
+#   cargo run --bin busybar_surface --features surface-busybar -- \
+#     --config busybar_surface.toml
+#
+# Dry-run it first. `--check` resolves the whole config, prints what it
+# resolved to, and exits without opening a single socket:
+#   cargo run --bin busybar_surface --features surface-busybar -- \
+#     --config busybar_surface.toml --check
+#
+# What this is: a SecuraCV *display surface* — witness state rendered on a
+# BUSY Bar (busy.app), someone else's hardware, from your hub. It is not a
+# Canary and it does not witness anything. Design of record:
+# docs/design/busybar_surface.md.
+#
+# THE ONE THING TO KNOW BEFORE YOU DEPLOY IT: this surface has no write path.
+# It subscribes the broker and it makes GET requests to the kernel; it never
+# publishes, never appends, never exports, never unseals. Nothing anyone does
+# to the bar — button, dial, switch, lever, or a command sent over MQTT —
+# changes what your house witnesses. Dark mode blanks the glass and the
+# witnessing continues; the rear display says so in as many words.
+
+# ---------------------------------------------------------------------------
+# The bar itself
+# ---------------------------------------------------------------------------
+[device]
+# The bar's LOCAL base URL.
+#   over USB virtual Ethernet:  http://10.0.4.20   (ships at this address)
+#   over Wi-Fi:                 whatever your router gave it; the bar's own
+#                               web UI at that address shows both
+#
+# The vendor's cloud proxy (busy.app) is REFUSED here and it is not
+# configurable. A surface reaffirms its state on a cadence, so routing it
+# through a third party would hand them a continuous, timestamped record of
+# when your household's witness state changes — a finer timing oracle than
+# the event log itself is allowed to expose (Invariant III). Use the bar's
+# local address; give it a DHCP reservation so it does not move.
+url = "http://10.0.4.20"
+
+# The bar's HTTP access PIN, if you set one (its web UI, Settings -> HTTP
+# Access). Sent as the X-API-Token header. USB and loopback bypass the check
+# entirely, so this matters on Wi-Fi; without it the bar answers 403 and
+# nothing appears.
+# token = "1234"
+
+# ---------------------------------------------------------------------------
+# The broker — where witness state comes from
+# ---------------------------------------------------------------------------
+[broker]
+addr = "127.0.0.1:1883"
+# allow_remote = true            # required for a non-loopback broker
+# username = ""
+# password = ""
+# use_tls = true
+# tls_ca_path = "/etc/securacv/ca.pem"
+# tls_client_cert_path = "/etc/securacv/client.pem"
+# tls_client_key_path = "/etc/securacv/client.key"
+client_id = "securacv-busybar-surface"
+
+# Where surface commands arrive. UNSET (the default) means the surface
+# accepts no commands at all and simply renders.
+#
+# The bar's own controls are not wired yet and the design doc says exactly
+# why (docs/design/busybar_surface.md section 9): the device does expose its
+# inputs, over a protobuf WebSocket whose schema is not published and whose
+# key names have not been matched to the physical dial, switch and lever. So
+# today the controls come from Home Assistant, or anything else that can
+# publish to your broker, under this prefix:
+#
+#   <prefix>/ack     any payload            acknowledge the card on the glass
+#   <prefix>/mode    live|timeline|chain|dark|next
+#   <prefix>/scrub   a signed integer       detents; negative steps backward
+#   <prefix>/quiet   seconds, or "off"      the quiet-display window
+#
+# Anyone who can write to your broker can change what this glass SHOWS. That
+# is true and it is bounded: the only thing a command can produce is a
+# drawing. See docs/homeassistant_setup.md for the button/select helpers.
+# command_prefix = "securacv/surface/busybar/cmd"
+
+# A boolean topic carrying "is a microphone or camera in this room live?".
+# UNSET by default, and this is opt-in on purpose.
+#
+# The bar has a native on-call state, but it is driven host-side by the
+# vendor's desktop app watching your computer's microphone and camera — the
+# device's HTTP API does not expose it, so it cannot be read from here. The
+# closest achievable design is a signal you already own: publish your own
+# boolean and the front matrix shows ON CALL while it is true. It says
+# nothing about SecuraCV, whose Canaries do not stream.
+# on_call_topic = "home/office/mic_or_camera_live"
+
+# ---------------------------------------------------------------------------
+# The kernel — where the verified timeline comes from (optional)
+# ---------------------------------------------------------------------------
+# Omit this whole section for a broker-only deployment. Without it the
+# timeline scrubber has nothing to scrub, and the rear says so rather than
+# showing an empty one.
+[kernel]
+url = "http://127.0.0.1:8799"
+# The Event API capability token, as witness_api writes it.
+# token_path = "/run/witness/api_token"
+# The scrubber's window, in the form GET /export/bundle?last= accepts. The
+# surface reads a SIGNED EXPORT BUNDLE rather than the raw event list: the
+# window bounds how much can be pulled into memory, and the bundle is the
+# artifact whose signature actually means something.
+timeline_window = "24h"
+
+# ---------------------------------------------------------------------------
+# Surface behavior
+# ---------------------------------------------------------------------------
+[surface]
+# Show P1 wellbeing numerics (breath rate, heart rate) on the OPERATOR-facing
+# rear display. Default false. There is deliberately no front equivalent:
+# P1 is refused on the room-facing matrix unconditionally, and turning this
+# on cannot move it there.
+rear_shows_wellbeing = false
+
+# How long a presence card holds the matrix before decaying back to the idle
+# breath.
+presence_dwell_ms = 8000
+
+# The anti-strobe gap: the shortest interval between presence draws for ONE
+# Canary. A motion sensor that retriggers every two seconds must not turn the
+# hallway into a strobe, so a retrigger inside this window draws nothing AND
+# extends nothing — extending would let a chattering sensor hold the matrix
+# forever, which is a strobe with extra steps.
+presence_debounce_ms = 30000
+
+# The breath. One step every pulse_step_ms, pulse_steps to a full cycle, so
+# the default is an eight-second breath drawn about twice every three
+# seconds.
+#
+# This cadence is doing two jobs at once and that is the point. Motion on the
+# glass means the chain is intact and the witnesses are alive; stillness is
+# the alert. And because each redraw re-arms the device-side expiry below, a
+# bridge that dies stops breathing and then goes dark — a display that cannot
+# show a stale calm state, because staying calm takes work.
+pulse_step_ms = 2000
+pulse_steps = 4
+
+# The dead-man's switch. Every drawing this surface makes expires on the
+# device after watchdog_steps redraw intervals (default 3 x 2000 ms = 6 s).
+# Lower it and an ordinary late redraw blinks the glass; raise it and a dead
+# bridge leaves a calm green pulse up for longer than it deserves.
+watchdog_steps = 3
+
+# Broker silence after which the front stops showing last-known state and
+# says NO LINK instead. Silence is not safety.
+broker_stale_ms = 90000
+
+# Default quiet-display window for the lever, in milliseconds (30 minutes).
+# The quiet window suppresses presence cards on the front matrix. It does NOT
+# suppress a life-safety advisory, a degraded chain, a tamper report, or the
+# NO LINK state — the lever quiets cards, never the honesty about whether the
+# witness system is working.
+quiet_window_ms = 1800000
+
+# ---------------------------------------------------------------------------
+# Zone labels — the ONLY variable words the front matrix can ever show
+# ---------------------------------------------------------------------------
+# Left side: the zone_id the kernel stamps on events (the `zone:` prefix is
+# optional here). Right side: the label. Anything not listed renders with no
+# label at all — the presence state still shows, the place stays unnamed.
+#
+# Nothing on the wire can add an entry here, which is what makes the front
+# vocabulary safe: every word is one you typed, validated once at startup.
+#
+# The grammar is strict and it refuses on purpose. Letters, digits and single
+# spaces only; at most 16 characters; every word at least two letters long.
+# So "FRONT DOOR" is fine and "K. AT DOOR" is refused twice over — no
+# punctuation, and no one-letter word. The front matrix is 72 pixels wide,
+# abbreviation pressure is real, and abbreviation slides toward identity. A
+# place label is a place, never a person.
+#
+# What this does not claim: if you type a housemate's name in here, it goes on
+# the glass, and no grammar can tell a room called ROSE from a person called
+# ROSE. The guarantee is narrower and worth more — nothing the NETWORK
+# carries can put a word on the front matrix.
+[zones]
+front_door = "FRONT DOOR"
+driveway = "DRIVEWAY"
+garage = "GARAGE"
+back_gate = "BACK GATE"

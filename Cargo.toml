@@ -143,6 +143,14 @@ tsa = ["ureq"]
 # over ntfy. Zero new crates — ureq (already vetted for tsa/ingest-esp32)
 # carries rustls, so network egress stays opt-in at build time.
 alert-relay = ["ureq"]
+# The BUSY Bar display surface (docs/design/busybar_surface.md): a two-audience
+# witness readout on a Flipper Devices BUSY Bar, over its local HTTP API.
+# Depends on `alert-relay` rather than restyping its classification: the pure
+# core in src/relay/ already maps the tamper / offline / heard-alarm wire
+# vocabulary to coarse classes, and the surface reads the same mapping so the
+# two lanes on one bar cannot disagree about what a message means (FR-13).
+# `ureq` carries the HTTP client, same as the relay's sink.
+surface-busybar = ["alert-relay", "ureq"]
 # C2PA Content Credentials sidecar manifests for export bundles
 # (docs/design/c2pa_export.md). Fully offline; keys derived from the device
 # seed with domain separation; trust anchor is the device-local CA.
@@ -166,6 +174,14 @@ required-features = ["bridge-homekit-server"]
 name = "alert_relay"
 path = "src/bin/alert_relay.rs"
 required-features = ["alert-relay"]
+
+# The BUSY Bar display surface daemon. Feature-gated like every other network
+# egress lane, so a default build carries neither the HTTP client nor the
+# surface.
+[[bin]]
+name = "busybar_surface"
+path = "src/bin/busybar_surface.rs"
+required-features = ["surface-busybar"]
 
 [[bin]]
 name = "log_verify"

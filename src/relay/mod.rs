@@ -158,6 +158,39 @@ fn json_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(|v| v.as_str())
 }
 
+/// Which life-safety cadence a Canary reports having heard.
+///
+/// Its own type rather than a pair of string literals, because two lanes now
+/// read the same field: the relay turns it into a poke, and the BUSY Bar
+/// surface turns it into an advisory card
+/// (`crate::surface::busybar::ingest::acoustic_card`). One decision, one
+/// place — FR-13.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AcousticAdvisory {
+    /// NFPA 72 T3 — smoke.
+    Smoke,
+    /// UL 2034 T4 — carbon monoxide.
+    CarbonMonoxide,
+}
+
+/// Read the life-safety cadence out of a `securacv/<device>/sensing` payload.
+///
+/// Gates on `acoustic_event`, the enum field that means **now** — never on
+/// the cumulative `t3_detected` / `t4_detected` counters beside it, which
+/// stay nonzero forever once anything has ever been heard and would therefore
+/// re-fire on every 60-second heartbeat. That trap is why this is a named
+/// function instead of an inline match: the next lane to read this topic gets
+/// the rule for free.
+pub fn acoustic_advisory(payload: &[u8]) -> Option<AcousticAdvisory> {
+    let raw = std::str::from_utf8(payload).ok()?;
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    match json_field(&value, "acoustic_event") {
+        Some("smoke_alarm_t3") => Some(AcousticAdvisory::Smoke),
+        Some("co_alarm_t4") => Some(AcousticAdvisory::CarbonMonoxide),
+        _ => None,
+    }
+}
+
 /// Map one message to at most one poke. Pure; the debouncer decides delivery.
 pub fn evaluate(topic: &str, payload: &[u8]) -> Option<Poke> {
     let raw = std::str::from_utf8(payload).ok()?;
@@ -229,14 +262,11 @@ pub fn evaluate(topic: &str, payload: &[u8]) -> Option<Poke> {
             })
         }
         "sensing" => {
-            // Gate on the enum field that means "now" — NEVER the cumulative
-            // t3_detected/t4_detected counters, which stay nonzero forever
-            // and would re-poke on every 60 s heartbeat.
-            let value: serde_json::Value = serde_json::from_str(raw).ok()?;
-            let (title, kind) = match json_field(&value, "acoustic_event") {
-                Some("smoke_alarm_t3") => ("Smoke alarm heard", "a smoke alarm"),
-                Some("co_alarm_t4") => ("CO alarm heard", "a carbon monoxide alarm"),
-                _ => return None,
+            let (title, kind) = match acoustic_advisory(payload)? {
+                AcousticAdvisory::Smoke => ("Smoke alarm heard", "a smoke alarm"),
+                AcousticAdvisory::CarbonMonoxide => {
+                    ("CO alarm heard", "a carbon monoxide alarm")
+                }
             };
             Some(Poke {
                 class: PokeClass::Pattern,

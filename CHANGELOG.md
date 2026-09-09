@@ -2,6 +2,86 @@
 
 ## [Unreleased]
 
+### The BUSY Bar surface: witness state on someone else's glass, with the room and the operator reading different things
+
+- **A first-class SecuraCV *display surface*** (`busybar_surface`, the
+  `surface-busybar` feature, pure core in `src/surface/busybar/`) drives a
+  Flipper Devices BUSY Bar over its local HTTP API as a two-audience readout.
+  The design rests on one idea: **the device's two displays map onto the Canary
+  Cards privacy classing.** The room-facing 72x16 matrix renders public-class
+  content only; the operator-facing rear carries chain status, per-Canary
+  liveness with last-seen, the recent verified count, the mode and the
+  transport path. Both come from the same card set a Canary already announces
+  to Home Assistant, through one classing gate — and a unit test pins the card
+  ids and privacy classes to `canary-local/assets/canary-cards.js`, because a
+  drift in classing is a privacy bug rather than a cosmetic one. Design,
+  status and the bench-validation list: `docs/design/busybar_surface.md`.
+- **PII on the front matrix is a `can't`, not a `won't`.** The renderer takes a
+  closed `PublicPhrase` type, never a string: no `From<String>`, no `FromStr`,
+  no constructor accepting free text, and a source-level test asserts none
+  appear. The only variable word is a `ZoneWord` — a place, read from the
+  operator's own config and validated once at load — so no MQTT field, kernel
+  event or HTTP response can be interpolated onto the glass (the retained
+  `meta` name is rear-only for exactly that reason). The grammar closes the
+  abbreviation route specifically: `K. AT DOOR` is refused for its punctuation
+  and `K AT DOOR` for its initial, both at startup with a message naming the
+  zone.
+- **A dead-man's switch answers "fail visible, not silent."** Every drawing
+  carries a device-side expiry shorter than the redraw cadence, so a bridge
+  that dies, a hub that loses power or a LAN that drops takes the calm pulse
+  off the glass instead of freezing it there. No error handling inside the
+  process can give you that, because the dangerous cases are the ones where the
+  process is not running. Losing the broker or the kernel is also its own front
+  state, `NO LINK`, distinct from both healthy and degraded.
+- **Stillness is the alert; motion is reassurance.** The breath means the chain
+  is intact and the witnesses are alive; verification failure or a dropped
+  Canary stops it and shifts the color. There are no flashing alert states and
+  there will not be — an animated alarm trains a household to feel watched by
+  the object whose job is to make watching legible. The breath is also the
+  liveness proof: one redraw cadence drives the motion and arms the expiry, so
+  a dead bridge stops breathing and then goes dark, in that order.
+- **No control on the device can affect witnessing**, built three ways and
+  grepped for in CI: the effect vocabulary has two variants and both are
+  drawing; witness state reaches controls as `&`, never `&mut`; and the broker
+  handle is `SubscribeOnly` with a private inner client, while the kernel is
+  reached with `GET` only (`POST /verify` is deliberately not called — a dial
+  detent must not schedule kernel work). The named cost: you cannot acknowledge
+  the fleet from the bar, only clear the card from this glass. Dark blanks the
+  displays and the rear says out loud that witnessing continues.
+- **The rotary dial scrubs the verified timeline**, one event per detent, over
+  a signed export bundle — read-only, and it cannot un-bucket time. The rear
+  reads `bundle signed`, never `bundle verified`: the kernel's per-event
+  records carry no signature of their own, so claiming one would overclaim
+  (AD-Core section 2.5). A test pins the wording.
+- **Reuse over parallel paths (FR-13).** The surface feeds
+  `fleet_peers::PeerTable` for TOFU pinning, Ed25519 chain verification and
+  replay rejection rather than writing a second verifier; `acoustic_advisory`
+  was factored out of the alert relay so both lanes read the smoke/CO enum by
+  one rule (including the trap that the cumulative counters must never be the
+  gate); and the cloud refusal is the relay's own `validate_url`. The two lanes
+  draw under different application names with the surface's priorities entirely
+  below the relay's, so a real alert always wins the glass.
+- **Two defects found in the shipped Busy Bar lane, fixed in all three places
+  the product touches this hardware.** Colors were six hex digits and the
+  firmware types them `^#[a-fA-F0-9]{8}$` (RGBA) — on firmware that enforces
+  the pattern the draw was rejected and the bar stayed dark with no error an
+  owner could see; the relay, the blueprint and the recipe now all emit eight.
+  And the troubleshooting doc named the wrong status: an unauthenticated Wi-Fi
+  request gets 403, not 401, and USB and loopback bypass the access key
+  entirely, so it is a Wi-Fi-only symptom. A third finding is recorded and
+  deliberately not acted on: `scroll_rate` is documented in pixels per *minute*,
+  which would make the relay's shipped `20` about three and a half minutes to
+  cross the matrix. That one needs a bench, not a guess.
+- **Status honesty.** Nothing here has been run against a real BUSY Bar — the
+  protocol shapes come from the firmware's own OpenAPI specification and the
+  two official client libraries. The physical controls are **designed and not
+  implemented**, because the device pushes input over a protobuf WebSocket
+  whose `BSB_State.State` schema is not published and whose key names have not
+  been matched to the physical dial, switch and lever; guessing either would be
+  worse than waiting. The control lane that works today is MQTT, with a
+  drop-in Home Assistant package. A test fails if the docs stop saying bench
+  validation is pending.
+
 ### The device manifests drive the generators, and the release env list is derived
 
 - **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read
