@@ -26,7 +26,31 @@
     "scad": "docs/hardware/enclosure/canary_s3_touch169.scad",
     "enclosure_sets": [
       "1-69-touch-watch-display-puck"
-    ]
+    ],
+    "params": {
+      "glass_w": {
+        "brd_fn": "brd_ws169_glass_h"
+      },
+      "glass_h": {
+        "brd_fn": "brd_ws169_glass_w"
+      },
+      "glass_t": 2.6,
+      "r_glass": 7.0,
+      "aa_w": 32.634,
+      "aa_h": 27.972,
+      "pcb_w": {
+        "brd": "ws169",
+        "dim": "w"
+      },
+      "pcb_h": {
+        "brd": "ws169",
+        "dim": "l"
+      },
+      "pcb_t": {
+        "brd": "ws169",
+        "dim": "t"
+      }
+    }
   },
   "emulator": {
     "flavor": "touch169"

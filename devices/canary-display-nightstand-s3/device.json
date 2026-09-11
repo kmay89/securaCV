@@ -23,7 +23,21 @@
     "scad": "docs/hardware/enclosure/canary_s3_lcd147.scad",
     "enclosure_sets": [
       "s3-hallway-stick-case"
-    ]
+    ],
+    "params": {
+      "board_l": {
+        "brd": "ws147",
+        "dim": "l"
+      },
+      "board_w": {
+        "brd": "ws147",
+        "dim": "w"
+      },
+      "pcb_t": {
+        "brd": "ws147",
+        "dim": "t"
+      }
+    }
   },
   "emulator": {
     "flavor": "nightstand"
