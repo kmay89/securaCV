@@ -42,7 +42,8 @@ survived only if a majority could not. The counts:
 | Closed by the documentation wave (PR #1647, mirror #11, website #189) | 0 — a fresh docs audit, not this list; see §3 |
 | Landed in wave 3 (PR #1664) | 10 in full (four of them rows that were "in part") |
 | Landed in wave 4 (2026-09-08) | 7 in full (items 2, 5, 6, 13, 22, 42, 51 — 2 and 22 host-tested, 5/6/13 compile-untested here) |
-| Still open | 0 in full, 2 in part (21's Parametrize wave, 30's version spread), plus one decision surfaced in wave 4's review: whether the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, 5 s in both firmwares) should widen to the ten-minute grid Invariant III names for wall-clock time |
+| Landed in wave 5 (2026-09-11, PR pending) | row 21's Parametrize wave, in part — the device manifests own their cases' board knobs and a generator writes them into the CAD, the regeneration order is one command, the CAD ledger the website pins to carries the knobs; zero `.scad` bytes moved |
+| Still open | 0 in full, 2 in part (21's Parametrize leftovers — see §4 — and 30's version spread), plus one decision surfaced in wave 4's review: whether the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, 5 s in both firmwares) should widen to the ten-minute grid Invariant III names for wall-clock time; and two surfaced in wave 5 (§4): whether the optional render-plan package is wanted, and what to do about `canary-local/devices/registry.json`'s hand-typed `body_mm` |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -179,6 +180,80 @@ line "5-second buckets (minimum)", `test_config_logic.cpp`'s `FLOOR`) and
 changes nothing about verification, but it is a product decision about
 both firmwares' chains, not a review fix (`spec/witness_api_v1.md` §3).
 
+### Landed in wave 5
+
+A fifth pass on 2026-09-11 (monorepo PR pending) took the one row still
+open in part that needs no hardware: the device package's Parametrize wave
+(row 21, §4). One package per worktree, the merged tree reviewed
+adversarially before these docs were written to it, and — the proof the
+wave was designed around — **zero `.scad` bytes moved**: `git diff --stat`
+from the wave's base lists no `.scad`, `.stl`, catalog or builder-manifest
+file, every generator's `--check` is green on the landed tree, and a
+write-mode run of the new generator over it prints "nothing to write".
+
+- **The manifest owns the board knobs.** `devices/<slug>/device.json`
+  `cad.params` names the literal board and module knobs of its case
+  (`board_l`, `vm_w`, `stack_sock_h` — the dimensions a case is built
+  around, never its walls, never a selector), and
+  `docs/hardware/enclosure/gen_cad_params.py` **writes** them into the
+  `.scad` — the token on the knob's own line, nothing else — with `--check`
+  proving equality in `lint.yml`, in `enclosure.yml` and through
+  `scripts/lint_device_manifests.py`. Nothing reads a manifest at render
+  time: the Customizer, `render.sh`, the fit check, both catalog parsers and
+  `lint_design_lang.py` keep seeing the literal knob they always did. The
+  manifest moved to the front of the chain; it did not replace a link of it.
+- **A knob that is a board fact references the registry.** A value may be
+  `{"brd": "xiao", "dim": "w"}` (a `BRD_REGISTRY` row and column of
+  `canary_board_lib.scad`) or `{"brd_fn": "brd_xiao_w_measured"}` (one of
+  its measured facts); the generator resolves it before it writes, so a
+  registry correction reaches every owned case and `--check` reports the
+  drift as "registry says X, file says Y". Converted only where the knob's
+  help comment already cites the registry; a knob that merely equals a row
+  by coincidence stays a number. 54 knobs across 8 case files (the WAP,
+  Vision, DevKit, Sense and five display cases), 29 of them references.
+- **The regeneration order is one command.** `scripts/regen_cad.py` runs
+  the twelve generators and gates in the order each one's inputs dictate,
+  stops before the emulator dist rebuild (only Actions can build it; `--from
+  gen_flash` resumes), renders the owed previews of every part of every
+  changed case with `--previews DIR`, and `--check` names the first stale
+  step. Rehearsed end to end on a scratch branch (`canary-wap` `board_w`
+  17.5 → 17.8): one `.scad` line, 116 clean renders, the WAP envelope
+  36.6 → 36.9 mm, 46 files moved, 26 previews rendered — then reverted. The
+  landed tree is a fixed point of a full run.
+- **The CAD ledger carries what the website needs.** `gen_builder_manifest.py
+  --site` adds, per figure, the resolved `knobs` and the measured `seams_mm`,
+  and the whole board registry with its evidence rung (`board_registry`,
+  `board_facts`) to `scad/cad-dims.json` — additively (strip the four keys
+  and the website's committed bytes are reproduced), unrounded, and refused
+  while a manifest disagrees with its case. `--site <checkout> --check` is
+  the carry's first gate; a write run writes only what changed.
+- **What did not land, named** (the row and §4 carry the detail): the
+  Nightstand C6 (`board_l` / `board_w` are a `model` ternary), the 7" frame
+  (its panel record is typed in `canary_panel_lib.scad`), the Touch 1.69's
+  `aa_dx = 0.0; aa_dy = 0.0;` line, the doorbell (no manifest names its
+  case), the website's reading of the new ledger keys (the website repo's
+  change), and the optional **render-plan** package — a per-set selector
+  vocabulary in the manifests, which rewrites `render.sh`,
+  `gen_assembled_dims.py` and enclosure CI and re-homes five Lab cards
+  (`enclosures.json` attributes the display sets to the wrong device today)
+  — deliberately **not built**: it needs the maintainer's yes. Two decisions
+  taken as defaults and reversible: `envelope_mm` is not a manifest input
+  (`figure` is the join; the ledger measures envelopes off the STLs), and
+  `canary-local/devices/registry.json`'s hand-typed `body_mm` is left as it
+  is, with its disagreement recorded (the Dash: 113.7 × 73.6 × 16 there,
+  118 × 79 × 38.9 in `figures.json`, `dims_source: board-cad`).
+- **One lesson, kept** (`CLAUDE.md`, "Generated files"): the review round
+  found the generator's checker answering "the file already says it" for a
+  value it could not spell as a Customizer literal — an exponent-form
+  number, NaN, a string holding a comment opener — so a wrong manifest
+  passed `--check` and a write wrote nothing. A generator that cannot spell
+  a value must refuse by name, never pass.
+
+Two wave counters meet here and are easy to confuse: the §3 waves count
+PRs (this is the fifth); §4's "three waves" are the device package's own
+ladder — Describe 1, Consume 2, Parametrize 3 — which `devices/README.md`
+uses. Row 21 reads "waves 1–3" in the second sense.
+
 ### The documentation wave
 
 A third pass on 2026-09-04 (monorepo PR #1647, mirror PR #11, website PR
@@ -276,7 +351,7 @@ the ledger stays complete:
 
 | # | Item | Why it matters | Fix | Effort |
 |---|---|---|---|---|
-| 21 | **(landed, waves 1–2)** **The device package** — see §4. Firmware envs, emulator flavor, enclosure CAD, glTF model, fleet figures, flasher catalog and website copy are joined by hand. | Every new device is five hand-edits and three drift gates away from consistent. | Wave 1 landed: `devices/<slug>/device.json` for the 19 devices the repo builds, one JSON Schema, and `scripts/lint_device_manifests.py` (in `lint.yml`) proving every join. Wave 2 landed: the generators read the manifests. `gen_flash.py` takes each flasher product's chip, flash size, registry board and PlatformIO project from the manifest that claims it (the hand-typed `BOARD_CHIP` / `BOARD_FLASH_MB` tables and per-row declarations are gone; `flash.json` byte-identical); `gen_figures.mjs` builds the exact hardware→figure map from the manifests and validates the coarse config→device-type map against them, recording one dispute (`canary-vision/default`: DevKit vs XIAO figures under one device type) for a maintainer; `lint_build_matrix.py` applies the matrix's side of the join through the shared `scripts/_device_join.py`, so the two lints cannot disagree. Still typed by design: the confidence ladder (derived from evidence), `TWIN_ALIASES`, `build_matrix.json`'s mirrored board/mcu cells, the WAP's declared figure (until `flash.json` may move), and `CONFIG_FIGURE` pending that dispute. Wave 3 (Parametrize, §4) is open. | L |
+| 21 | **(landed, waves 1–3 — 3 in part)** **The device package** — see §4. Firmware envs, emulator flavor, enclosure CAD, glTF model, fleet figures, flasher catalog and website copy are joined by hand. | Every new device is five hand-edits and three drift gates away from consistent. | Wave 1 landed: `devices/<slug>/device.json` for the 19 devices the repo builds, one JSON Schema, and `scripts/lint_device_manifests.py` (in `lint.yml`) proving every join. Wave 2 landed: the generators read the manifests. `gen_flash.py` takes each flasher product's chip, flash size, registry board and PlatformIO project from the manifest that claims it (the hand-typed `BOARD_CHIP` / `BOARD_FLASH_MB` tables and per-row declarations are gone; `flash.json` byte-identical); `gen_figures.mjs` builds the exact hardware→figure map from the manifests and validates the coarse config→device-type map against them, recording one dispute (`canary-vision/default`: DevKit vs XIAO figures under one device type) for a maintainer; `lint_build_matrix.py` applies the matrix's side of the join through the shared `scripts/_device_join.py`, so the two lints cannot disagree. Still typed by design: the confidence ladder (derived from evidence), `TWIN_ALIASES`, `build_matrix.json`'s mirrored board/mcu cells, the WAP's declared figure (until `flash.json` may move), and `CONFIG_FIGURE` pending that dispute. Wave 3 landed in part (PR wave 5, PR pending): each manifest owns its case's literal board and module knobs (`cad.params`, as numbers or as references into `canary_board_lib.scad`'s registry) and `gen_cad_params.py` writes them into the `.scad` and `--check`s them in three gates; `scripts/regen_cad.py` is the twelve-step regeneration order as one command; `gen_builder_manifest.py --site` carries the resolved knobs, the assembled seams and the board registry into the website's `cad-dims.json`, with `--site --check`. Zero `.scad` bytes moved. Still open on the row: the Nightstand C6's `model` ternary, the 7" frame's panel record, the Touch 1.69's two-knob line, the doorbell (no manifest), the website's reading of the new ledger keys, and the optional render-plan package (per-set selectors in the manifest; rewrites enclosure CI and re-homes five Lab cards — the maintainer's call). | L |
 | 22 | **(landed)** **Two CSI HAL implementations** (`firmware/canary/lib/securacv_csi` vs `firmware/common/csi`) plus the sketch copy; the September pass synced them by hand. | Three copies of the most intricate driver in the project. | Landed. `securacv_csi.cpp` is a 76-line `csi::` adapter over `csi_hal::` (it was 1146 lines of HAL + extractor + a `csi_hal::` shim); `securacv_csi.h` includes `csi_types.h` instead of declaring a twin `csi_features_t`, so the module bridge's "two typedefs" rationale is gone; `firmware/canary/platformio.ini` now names `csi_hal.cpp` + `csi_features.cpp` in `build_src_filter`, so the image has exactly one `esp_wifi_set_csi_rx_cb` registration — the canonical one. Three things the canary copy did and canonical did not were ported into `csi_hal.cpp` rather than kept as a second body: `stop()` drains by advancing the consumer's own index, `get_caps()` reads the driver's `CONFIG_IDF_TARGET_*` macro as well as the sketch's board macro, and `process()` fills `v[25]` (dropped_estimate — the canary's `/api/sensing` reads it; canonical had left it 0, so canary-wap's `wifi_channel_activity` now sees it too). A `firmware/canary/include/health_log.h` bridge answers the HAL's `__has_include` probe so its diagnostics keep landing in the canary health log. Found on the way: the former shim's watchdog only ran inside a `csi_hal::process()` nobody called, so the PIO build never had a live CSI watchdog; it does now. `check_csi_sync.sh` gained five guards (name-based shared-definition check with its limits stated, no driver calls in the adapter, a 120-line budget, the header must consume `csi_types.h`, the ini must compile the HAL). **Host-tested only** — `firmware/tests_host/test_csi_hal_adapter.cpp` links the adapter against the real `csi_hal.cpp` + `csi_features.cpp` over a stubbed esp_wifi driver and pushes frames through the one registered callback (single registration, `v[25]`, the watchdog firing on the `csi::process()` path); the five `common/csi` host suites and the canary-wap CSI host suites pass; the canary envs get their compile test from `firmware.yml`'s PlatformIO leg on the PR. | M |
 | 23 | **(landed)** **Display env list is typed twice** (`firmware-release.yml` vs `flasher-release.yml`) with no gate against `flavors.json`; the AMOLED was missing from every dev publish. | A flavor can ship from one button and not the other. | Landed. Both release workflows derive the Canary Display env list from `firmware/flavors.json` via a "Resolve the canary-display release envs" step (`flavor_envs.py canary-display --release --json`, consumed through `fromJSON` into the build, staging and signing steps); `flavor_envs.py --check-workflows` fails a workflow that lacks the derivation or types a `pio run -e canary-display-<env>` back in; `flasher-release.yml` overlays today's script and `flavors.json` onto tagged trees. `check_ota_channels.py` reads the same derivation (it parsed only literal loop headers before and went red on the first derived list). Host-tested only — the first real release run deserves a look at that step's log. | S |
 | 24 | **(landed)** **`FEATURES.md` parity dashboard and `build_matrix.json` omit canary-display**, the most actively released product. | The parity doctrine's own dashboard does not list the flagship. | Add the display lane and let `lint_build_matrix.py` require every `flavors.json` product. | S |
@@ -351,61 +426,138 @@ an S3 with 8 MB PSRAM, an ES7210 mic and a WS2812 ring, builds from
 `canary-doorbell-s3` and is `confirmed` on the confidence ladder, is not
 written down once. It is written down seven times, in seven schemas.
 
-### Proposal
+### Proposal — as it landed
 
-A `devices/<slug>/device.json` per product, validated by one JSON Schema, with
-these sections:
+A `devices/<slug>/device.json` per product, validated by one JSON Schema
+(`devices/device.schema.json`; the how-to is `devices/README.md`). The
+original proposal here carried a `status` and an `envelope_mm`; the schema
+as it is has neither, on purpose, and the sample below is the WAP's manifest
+as it stands, not a sketch:
 
 ```jsonc
 {
-  "slug": "canary-doorbell",
-  "name": "Canary Doorbell",
-  "status": "confirmed",              // the ladder; derived evidence lives beside it
-  "board": { "mcu": "esp32s3", "psram_mb": 8, "flash_mb": 16, "envs": ["canary-doorbell-s3"] },
-  "peripherals": ["es7210", "ws2812x12", "ov2640"],
-  "envelope_mm": { "w": 92, "h": 38, "d": 24 },  // the CAD ledger number
-  "cad": { "scad": "hardware/enclosure/doorbell.scad", "params": { "wall": 2.0, "bezel_color": "graphite" } },
-  "emulator": { "flavor": "doorbell", "face": "portrait" },
-  "flasher": { "chip": "esp32s3", "offsets": "s3-16mb" },
-  "site": { "page": "canary-doorbell.html", "model": "models/canary-doorbell.glb" }
+  "slug": "canary-wap",
+  "name": "Canary WAP",
+  "family": "canary-wap",                        // the firmware/flavors.json product
+  "board": { "mcu": "ESP32-S3", "psram_mb": 8, "flash_mb": 8,
+             "board_id": "xiao-esp32s3-sense",   // the firmware/boards/<id>/ registry row
+             "envs": ["canary-wap-default", "canary-wap-usbdrive"] },
+  "peripherals": ["camera", "microphone", "sd_card", "gnss_uart", "tamper_input"],
+  "figure": "device.canary-wap",                 // the fleet figure — and, through it, the envelope
+  "cad": {
+    "scad": "docs/hardware/enclosure/canary_wap_enclosure.scad",
+    "enclosure_sets": ["wap-compact", "wap-battery", "wap-weather", "wap-clip-coupon", "thermal-outdoor-kit"],
+    "params": {
+      "board_l": { "brd": "xiao", "dim": "l" },  // a board fact: brd_l("xiao") in canary_board_lib.scad
+      "board_w": { "brd": "xiao", "dim": "w" },  // the 17.5 spec width — the clips' decision, stated
+      "board_h": 1.2,                            // a case measurement: a number
+      "board_clear": 0.6, "stack_camera": 8.0, "stack_plain": 4.5
+    }
+  },
+  "flasher": { "product": "securacv-canary-wap" }
+  // "emulator": { "flavor": "watch" }           — display devices only (the browser twin)
+  // "site":     { "model": "models/canary-vision.glb" } — declared, not verifiable from here
 }
 ```
 
-The existing generators change from *authoring* facts to *consuming* them:
+- **No `status`.** The confidence ladder is derived from evidence on disk by
+  the figures generator and rejected by the schema (decided in wave 1;
+  `scripts/lint_device_manifests.py` prints the derived verdict).
+- **No `envelope_mm`.** The outer size is reached through `figure`,
+  measured, never typed: every case derives it from board dimensions plus
+  walls, `gen_assembled_dims.py` measures the assembled union off the
+  STLs, and the ledger carries it (`figures.json`, `cad-dims.json`) — which
+  is what the website's model tests already pin to. Wave 5 took this as a
+  default; a linter-asserted mirror in the manifest is a reversible later
+  step, and nobody has asked for one.
+- **`cad.params` in two forms.** A board fact is a reference into the board
+  registry that already carries each board's evidence rung; a case
+  measurement with no registry home is a number. Never a wall or a
+  tolerance (the design-language canon stays case-owned, with `deviates:`
+  reasons), never a selector (`preset`, `host`, `part` — chosen per
+  printable set at render time).
 
-- `gen_builder_manifest.py` and `gen_stamp.py` read `envelope_mm` and
-  `cad.params`, so the SCAD is parametric from the manifest, not from
-  constants at the top of the file;
-- `gen_builder_manifest.py --site` carries `envelope_mm` into the website's
-  `cad-dims.json` as it does today, and the glTF generators keep pinning to it;
-- `gen_figures.mjs` reads `status` and `envelope_mm` instead of a second
-  `figures.json`;
-- `gen_flash.py` reads `board` and `flasher` and stops inferring chips;
-- `lint_build_matrix.py` requires every `envs` entry to exist in
-  `firmware/envs/` and every `firmware/envs/` entry to be claimed by a device;
-- the emulator `build.sh` iterates `emulator.flavor` across devices, and the
-  boot probe (item 43) follows.
+What the generators do with it — what actually landed, per wave, against
+the original list:
 
-The gates stay exactly where they are; they just get a common upstream. A new
-device becomes: write one manifest, run `./setup.sh regen`, dispatch the dist
-rebuild, run the catalogs, commit — the order `CLAUDE.md` already prescribes,
-with one file at the front instead of five.
+- `gen_flash.py` reads `board` and `flasher` and stopped inferring chips
+  (wave 2, as proposed);
+- `gen_figures.mjs` builds the hardware→figure map from the manifests
+  (wave 2) — it never reads a status or an envelope from them: the ladder
+  stays derived and the envelopes stay measured (`docs/design/FLEET_FIGURES.md`
+  §5);
+- `lint_build_matrix.py` resolves every matrix lane to one manifest through
+  the shared `scripts/_device_join.py` (wave 2, as proposed);
+- `gen_cad_params.py` **writes** `cad.params` into the case `.scad` and
+  `--check`s it (wave 3) — **not** the proposed "the SCAD is parametric from
+  the manifest": the file stays a literal Customizer knob, nothing reads a
+  manifest at render time, and every consumer of that literal-knob contract
+  (`gen_builder_manifest.py`, `gen_stamp.py`, `gen_enclosures.py`,
+  `render.sh`, the fit check, `lint_design_lang.py`) is untouched;
+- `gen_builder_manifest.py --site` carries the resolved knobs, the measured
+  seams and the board registry into the website's `cad-dims.json` beside the
+  envelopes it always carried (wave 3); the glTF generators keep pinning to
+  the measured envelope, and reading the new keys is the website repo's
+  change, still open;
+- the emulator `build.sh` still types its flavor allowlist — the manifests
+  **prove** it (every `emulator.flavor` is in the allowlist and every dist
+  flavor is claimed) rather than drive it; the boot probe loops over the
+  dist metadata (item 43, landed).
+
+The gates stay exactly where they are; they have a common upstream. A new
+device is: write one manifest, `python3 scripts/regen_cad.py --previews
+<dir>` (the manifest into the `.scad`, the STLs, the envelopes, the figures
+and their mirrors, the flashers' models, the sketch mirror — then it
+**stops**), dispatch the dist rebuild and pull it, `python3
+scripts/regen_cad.py --from gen_flash` for the catalogs, commit — the order
+`CLAUDE.md` prescribes, now runnable, with one file at the front instead of
+five.
 
 ### Migration in three waves
 
-1. **Describe** (S, **landed** — `devices/` and `scripts/lint_device_manifests.py`): write the manifests for the five shipping and confirmed
-   devices from the facts as they stand; add the schema and a lint that every
-   manifest validates and every `flavors.json` entry has one. Nothing consumes
-   them yet, so nothing can break.
-2. **Consume** (M, **landed** in wave 3): `lint_build_matrix.py`, `gen_flash.py`
-   and `gen_figures.mjs` read the manifests, with the byte gates proving no
-   generated output moved (`flash.json` and `figures.json` byte-identical);
-   the leftovers are listed on row 21.
-3. **Parametrize** (L): thread `cad.params` and `envelope_mm` into the SCAD
-   sources and the glTF generators, so a dimension change is one edit that
-   re-renders the enclosure, the AR model and the figure together. This is the
-   wave that needs the render previews AGENTS.md requires with every SCAD
-   change.
+The counter here is the device package's own (`devices/README.md` uses it);
+the PR waves in §3 are a different count.
+
+1. **Describe** (S, **landed** — the follow-up wave, PR #1635: `devices/` and
+   `scripts/lint_device_manifests.py`): write the manifests for the five
+   shipping and confirmed devices from the facts as they stand; add the
+   schema and a lint that every manifest validates and every `flavors.json`
+   entry has one. Nothing consumes them yet, so nothing can break.
+2. **Consume** (M, **landed** — PR wave 3, #1664): `lint_build_matrix.py`,
+   `gen_flash.py` and `gen_figures.mjs` read the manifests, with the byte
+   gates proving no generated output moved (`flash.json` and `figures.json`
+   byte-identical); the leftovers are listed on row 21.
+3. **Parametrize** (L, **landed in part** — PR wave 5, PR pending): the
+   manifest owns the board knobs its case is cut around, and a dimension
+   edit is one manifest line that `gen_cad_params.py` writes into the
+   `.scad`, from which the chain that already exists re-renders the
+   enclosure, re-measures the envelope, redraws the figure and re-carries
+   the ledger the AR model is pinned to — `scripts/regen_cad.py` is that
+   chain as one command. It landed with **zero `.scad` bytes moved**, so
+   no previews were owed; the rehearsal (one WAP knob, 46 files, 26
+   previews, reverted) is the proof the obligation is automated
+   (`--previews DIR`), and the first real edit is the one that pays it.
+   What is left, honestly: the **doorbell** has no manifest (its env is
+   claimed by `canary-vision`), so `canary_vision_doorbell.scad` stays
+   unowned; the **Nightstand C6**'s `board_l` / `board_w` are a `model`
+   ternary, computed, which the generator refuses until someone makes
+   them literal in a `.scad` PR with previews; the **7" frame** reads its
+   panel record from `canary_panel_lib.scad` through `panel_variant`,
+   typed there this wave; the **Touch 1.69**'s `aa_dx = 0.0; aa_dy = 0.0;`
+   line holds two knobs and stays unowned until it is split (a `.scad`
+   change, with previews); the **selectors** (`host`, `preset`, `radar`,
+   `headers`, `port`, `model`, `panel_variant`, `part`) are chosen per
+   printable set in `render.sh` — making them manifest-owned is the
+   optional **render-plan** package, which rewrites `render.sh`,
+   `gen_assembled_dims.py` and enclosure CI and re-homes five Lab cards,
+   and was not built because it needs the maintainer's yes; **walls and
+   tolerances** stay case-owned by the design-language canon; the
+   **sketch envelopes** of devices with no committed CAD stay in
+   `massing.mjs` (the Watch's figure among them — it will not follow a
+   Watch knob until it is drawn from the parts); and the **website's
+   half** — its glTF generators and copy reading `knobs`, `seams_mm`,
+   `board_registry` and `board_facts` from the carried ledger — is the
+   website repo's change.
 
 ---
 
