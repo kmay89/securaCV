@@ -96,8 +96,10 @@ states the decision, as the library's header asks each file to. The rows and
 facts no manifest references (the solar relay pod's `heltec_v3` row, the
 doorbell's unmeasured stack guess, the two brass-pillar facts the C3 and the
 C6 cite by comment) are printed by `--check` as INFO, never an error — those
-cases cite the registry by comment and own nothing yet. The library is read, never
-written: correcting a board dimension is still an edit to the registry.
+entries are cited by comment only (the solar pod and the doorbell have no
+manifest; the C6 owns nothing yet; the C3 owns its board row but not the
+pillar fact). The library is read, never written: correcting a board
+dimension is still an edit to the registry.
 
 ## Run the gate
 
