@@ -292,9 +292,14 @@ def _sha(path: Path) -> str:
 # messages
 # ---------------------------------------------------------------------------
 
-def openscad_missing_message(what: str) -> str:
+def openscad_missing_message(needing: list[str] | tuple[str, ...]) -> str:
+    """`needing`: what was refused — "step 3 (render)", "--previews" — listed
+    so the verb agrees in number (one item needs; two or more need)."""
+    items = list(needing)
+    who = items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+    verb = "needs" if len(items) == 1 else "need"
     return (
-        f"regen_cad: {what} needs OpenSCAD and `openscad` is not on PATH — refused before anything ran.\n"
+        f"regen_cad: {who} {verb} OpenSCAD and `openscad` is not on PATH — refused before anything ran.\n"
         f"  There is no Actions button that renders the STLs and pushes them back: {CAD_WORKFLOW}\n"
         f"  re-renders every part, re-measures the assembled envelopes (gen_assembled_dims.py --check)\n"
         f"  and runs the fit gate on every push touching {ENC_REL}/** — it names the drift, it does\n"
@@ -347,7 +352,7 @@ def run_check(step: Step, i: int, repo: Path, site: Path | None = None) -> tuple
         return True, ""
     if step.needs_openscad and not openscad_available():
         print(_hdr(i, step, step.check or (), "check"))
-        return False, openscad_missing_message(f"step {i} ({step.name}) --check")
+        return False, openscad_missing_message([f"step {i} ({step.name}) --check"])
     if step.check_kind == "diff":
         print(_hdr(i, step, step.check or (), "check"))
         return _check_by_diff(step, repo)
@@ -602,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.previews is not None:
             needing.append("--previews")
         if needing:
-            print(openscad_missing_message(" and ".join(needing)))
+            print(openscad_missing_message(needing))
             return 1
 
     print(f"regen_cad: {mode} — steps {todo[0][0]}..{len(STEPS)} of {len(STEPS)}"

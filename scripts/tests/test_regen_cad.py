@@ -217,6 +217,24 @@ class OpenScadIsRefusedUpFront(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(rec.argvs()[0], list(CHECKS["gen_figures"]))
 
+    def test_the_refusal_agrees_in_number(self):
+        one = rc.openscad_missing_message(["step 4 (gen_assembled_dims) --check"])
+        self.assertIn("step 4 (gen_assembled_dims) --check needs OpenSCAD", one)
+        two = rc.openscad_missing_message(["step 3 (render)", "step 4 (gen_assembled_dims)"])
+        self.assertIn("step 3 (render) and step 4 (gen_assembled_dims) need OpenSCAD", two)
+        three = rc.openscad_missing_message(["step 3 (render)", "step 4 (gen_assembled_dims)",
+                                             "--previews"])
+        self.assertIn("step 3 (render), step 4 (gen_assembled_dims) and --previews need OpenSCAD",
+                      three)
+        self.assertNotIn("needs", three)
+        with tempfile.TemporaryDirectory() as td:
+            code, out, rec = run_main(["--previews", td], which=None)
+        self.assertEqual(code, 1)
+        self.assertIn("step 3 (render), step 4 (gen_assembled_dims) and --previews need OpenSCAD", out)
+        code, out, rec = run_main(["--check", "--from", "gen_assembled_dims"], which=None)
+        self.assertEqual(code, 1)
+        self.assertIn("step 4 (gen_assembled_dims) needs OpenSCAD", out)
+
     def test_from_past_the_openscad_steps_runs_without_openscad(self):
         code, out, rec = run_main(["--from", "gen_figures"], which=None)
         self.assertEqual(code, 0)
