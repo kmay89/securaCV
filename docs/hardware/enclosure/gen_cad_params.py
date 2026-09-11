@@ -643,7 +643,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"INFO: registry entries no manifest references — rows: "
                   f"{', '.join(rows) or 'none'}; facts: {', '.join(facts) or 'none'}. Cases no "
                   f"manifest owns (the doorbell, the gang plate, the Hammond chassis, the J-box, "
-                  f"the bench fixture, the display cases) cite them by comment; not an error")
+                  f"the bench fixture, the C6 display, the 7\" frame) cite them by comment; not an "
+                  f"error")
         return 0
 
     written, errors = write()
