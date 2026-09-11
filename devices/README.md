@@ -17,9 +17,11 @@ that *this* env, *this* pins header, *this* figure, *this* flasher product and
 **id each of those files uses for one device**: no feature lists, no prose,
 and — deliberately — no status. The one thing in it that is not an id is
 `cad.params`, the board and module dimensions its case is built around, and
-it holds those as the **owner**, not a mirror: a generator writes them into
-the CAD — as numbers, or as references into the board registry that already
-carries each board's evidence. Wave 1 ("Describe") of
+it holds those as the **owner**, not a mirror: `gen_cad_params.py` writes
+them **into** the case `.scad` and its `--check` proves the file still says
+them — a board fact as a reference into the board registry that already
+carries each board's evidence, a case measurement as a number. Wave 1
+("Describe") of
 [the roadmap's §4](../docs/IMPROVEMENT_ROADMAP.md) wrote the manifests and
 the lint; wave 2 ("Consume") made the generators read
 them — see "What the manifests drive" below for exactly which facts, per
@@ -245,7 +247,11 @@ linter; making the matrix generator read them is a wave of its own).
   display cases own what is literal" above). Still open in this wave: the
   Nightstand C6 (its `board_l` / `board_w` are a `model` ternary), the 7"
   frame (its panel record is typed in `canary_panel_lib.scad`), the 1.69's
-  `aa_dx = 0.0; aa_dy = 0.0;` line (a `.scad` split, with previews), and the
+  `aa_dx = 0.0; aa_dy = 0.0;` line (a `.scad` split, with previews), the
+  selectors — chosen per printable set in `render.sh`, the fit check and
+  `gen_assembled_dims.py`; making them manifest-owned is a render-plan
+  package that rewrites those three and enclosure CI and re-homes five Lab
+  cards, deliberately not built without the maintainer's yes — and the
   website's own half of the ledger — `gen_builder_manifest.py --site` now
   carries each owned device's resolved `knobs`, its assembled `seams_mm` and
   the board registry with its evidence rung in `scad/cad-dims.json` (and
