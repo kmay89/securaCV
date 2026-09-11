@@ -102,10 +102,14 @@ struct HiveCell: View {
                 if witness.isMuted {
                     // 8pt was below the legibility floor at default type;
                     // 9pt scaling with .caption2 is the smallest honest
-                    // bell. The 96pt cell absorbs growth; the name label
-                    // truncates first.
+                    // bell. The cell is FIXED geometry (HoneycombLayout
+                    // proposes exactly 96pt), so the bell scales through
+                    // the standard sizes and parks at a cap rather than
+                    // pushing the stack past the circle at accessibility
+                    // sizes — the mute fact rides the cell's VoiceOver
+                    // label either way, never these pixels.
                     Image(systemName: "bell.slash.fill")
-                        .font(.system(size: muteBellSize))
+                        .font(.system(size: min(muteBellSize, 13)))
                         .foregroundStyle(.secondary)
                 }
             }
