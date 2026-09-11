@@ -45,8 +45,10 @@ The registry is parsed as gen_builder_manifest.parse_colorways parses
 CW_REGISTRY — a literal-shape regex with the row starts counted
 independently, so a row that drifts from the shape fails the build rather
 than shortening the registry — and the facts with the FUNC pattern
-scripts/lint_design_lang.py already uses. canary_board_lib.scad is READ
-here, never written.
+scripts/lint_design_lang.py already uses; both on the source with its `//`
+and `/* */` comments stripped first, so a row commented out or a fact
+inside a block comment is as absent here as it is to OpenSCAD.
+canary_board_lib.scad is READ here, never written.
 
 ELIGIBILITY IS THE BUILDER'S PARSER. The knobs a manifest may own are
 exactly what gen_builder_manifest.parse_scad returns — a top-level
@@ -309,32 +311,93 @@ def _show(o: Owned) -> str:
 
 
 # ---------------------------------------------------------------------------
+# comments — what OpenSCAD does not see, this file must not read
+# ---------------------------------------------------------------------------
+
+def _strip_comments(src: str) -> str:
+    """`src` with every `// …` line comment and `/* … */` block blanked to
+    spaces. Newlines are kept, so a line number counted on the result is the
+    file's; string literals are kept whole, so a `//` inside a quoted note is
+    not a comment. parse_scad's block-comment state, per character, with the
+    string state OpenSCAD's lexer has and a line-splitter cannot: a
+    BRD_REGISTRY row commented out with `//`, or a `function brd_*()` inside
+    a block comment, is exactly as absent here as it is to OpenSCAD."""
+    out: list[str] = []
+    i, n, state = 0, len(src), "code"
+    while i < n:
+        c = src[i]
+        if state == "code":
+            if c == '"':
+                state = "str"
+                out.append(c)
+            elif src.startswith("//", i):
+                state = "line"
+                out.append("  ")
+                i += 1
+            elif src.startswith("/*", i):
+                state = "block"
+                out.append("  ")
+                i += 1
+            else:
+                out.append(c)
+        elif state == "str":
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(src[i + 1])
+                i += 1
+            elif c == '"':
+                state = "code"
+        elif state == "line":
+            if c == "\n":
+                state = "code"
+                out.append(c)
+            else:
+                out.append(" ")
+        else:                                   # block
+            if src.startswith("*/", i):
+                state = "code"
+                out.append("  ")
+                i += 1
+            else:
+                out.append(c if c == "\n" else " ")
+        i += 1
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
 # the board registry
 # ---------------------------------------------------------------------------
 
 def parse_board_registry(lib: Path | None = None) -> Registry:
     """canary_board_lib.scad's BRD_REGISTRY rows and brd_*() facts, by id, with
-    the line each lives on. Raises RegistryError — naming the file — when the
-    registry is missing, a row does not parse, or an id is defined twice."""
+    the line each lives on — read as OpenSCAD reads it, comments stripped
+    first. Raises RegistryError — naming the file — when the registry is
+    missing, a row does not parse, or an id is defined twice."""
     lib = lib or REPO / BOARD_LIB_REL
     try:
         src = lib.read_text(encoding="utf-8")
     except OSError as e:
         raise RegistryError(f"{lib.name}: the board registry cannot be read ({e})") from None
-    start = src.find("BRD_REGISTRY = [")
+    # Comments first: a row commented out with `//` or a fact inside `/* */`
+    # is not a row and not a fact. Newlines survive the stripping, so every
+    # line number below is counted on the stripped text and is the file's.
+    code = _strip_comments(src)
+    start = code.find("BRD_REGISTRY = [")
     if start < 0:
         raise RegistryError(f"{lib.name}: no `BRD_REGISTRY = [` — the board registry has moved "
                             f"or been renamed; cad.params references resolve from it")
-    end = src.find("];", start)
+    end = code.find("];", start)
     if end < 0:
         raise RegistryError(f"{lib.name}: `BRD_REGISTRY = [` is never closed with `];`")
-    region = src[start:end]
+    region = code[start:end]
     matches = list(_BRD_ROW.finditer(region))
     # Every row must parse, not just some (gen_builder_manifest.parse_colorways):
     # findall() would silently drop a row that drifts from the literal shape and
     # a reference to it would then be "unknown" — or worse, a shorter registry
     # would still resolve every OTHER reference and look healthy. Row starts
-    # are counted independently of the row regex, so drift is a build failure.
+    # are counted independently of the row regex — on the same stripped text,
+    # so a commented-out row is neither a row nor a start — and drift is a
+    # build failure.
     row_starts = len(re.findall(r'\[\s*"', region))
     if not matches or len(matches) != row_starts:
         raise RegistryError(
@@ -344,7 +407,7 @@ def parse_board_registry(lib: Path | None = None) -> Registry:
             f"literal): a shorter registry would resolve cad.params references wrongly")
     rows: dict[str, Row] = {}
     for m in matches:
-        line = src.count("\n", 0, start + m.start()) + 1
+        line = code.count("\n", 0, start + m.start()) + 1
         rid = m.group(1)
         if rid in rows:
             raise RegistryError(f'{lib.name}:{line}: BRD_REGISTRY row "{rid}" is defined twice '
@@ -354,9 +417,8 @@ def parse_board_registry(lib: Path | None = None) -> Registry:
                               "t": float(m.group(4))},
                         m.group(5), re.sub(r"\s+", " ", m.group(6)).strip(), line)
     facts: dict[str, Fact] = {}
-    for lineno, raw in enumerate(src.splitlines(), start=1):
-        code = raw.split("//", 1)[0]
-        for m in _FUNC.finditer(code):
+    for lineno, line_code in enumerate(code.splitlines(), start=1):
+        for m in _FUNC.finditer(line_code):
             name = m.group("fn")
             if not _FACT_NAME.match(name):
                 continue

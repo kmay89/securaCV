@@ -326,6 +326,79 @@ class BoardRegistry(unittest.TestCase):
             self.assertIn("canary_board_lib.scad: the board registry cannot be read",
                           str(cm.exception))
 
+    def test_a_commented_out_row_is_not_a_row_and_the_count_guard_keeps_its_meaning(self):
+        # OpenSCAD sees neither a `//` row nor a `/* */` one; the row regex and
+        # the row-start count used to see both, and a reference to a dead row
+        # resolved to its stale number
+        src = LIB.read_text(encoding="utf-8")
+        heltec = ('    ["heltec_v3",  51.0,  26.0, 1.2, "spec",\n'
+                  '     "Heltec WiFi LoRa 32 V3 — the solar relay pod\'s radio board"],\n')
+        self.assertEqual(src.count(heltec), 1)
+        with tempfile.TemporaryDirectory() as td:
+            lib = Path(td) / LIB_NAME
+            # both lines of the row behind `//`
+            lib.write_text(src.replace(heltec, "".join("    // " + ln.lstrip() + "\n"
+                                                       for ln in heltec.splitlines())),
+                           encoding="utf-8")
+            reg = gcp.parse_board_registry(lib)
+            self.assertEqual(len(reg.rows), 8)
+            self.assertNotIn("heltec_v3", reg.rows)
+            with self.assertRaises(gcp.RefError) as cm:
+                gcp.resolve_ref({"brd": "heltec_v3", "dim": "l"}, reg)
+            self.assertIn('has no row "heltec_v3"', str(cm.exception))
+            self.assertEqual(reg.rows["xiao"].line, 43)                # line numbers are the file's
+            # the same row inside a block comment
+            lib.write_text(src.replace(heltec, "    /*\n" + heltec + "    */\n"), encoding="utf-8")
+            reg = gcp.parse_board_registry(lib)
+            self.assertEqual(len(reg.rows), 8)
+            self.assertNotIn("heltec_v3", reg.rows)
+            # a row-shaped `//` comment inside the region is neither a row nor a start
+            ghost = '    // ["ghost", 1.0, 2.0, 3.0, "spec", "not a row"],\n'
+            lib.write_text(src.replace(heltec, ghost + heltec), encoding="utf-8")
+            reg = gcp.parse_board_registry(lib)
+            self.assertEqual(len(reg.rows), 9)
+            self.assertNotIn("ghost", reg.rows)
+            self.assertEqual(reg.rows["heltec_v3"].line, 60)            # shifted by the one line
+            # the count guard still catches drift: 8 live rows, one of them drifted
+            lib.write_text(src.replace(heltec, "".join("    // " + ln.lstrip() + "\n"
+                                                       for ln in heltec.splitlines()))
+                           .replace('["ov5647",     24.0,  25.0, 1.0, "spec",',
+                                    '["ov5647",     24.0,  25.0, 1.0 + 0, "spec",'),
+                           encoding="utf-8")
+            with self.assertRaises(gcp.RegistryError) as cm:
+                gcp.parse_board_registry(lib)
+            self.assertIn("parsed 7 of 8 BRD_REGISTRY rows", str(cm.exception))
+            # a `BRD_REGISTRY = [` mentioned in a comment above the real one is prose
+            lib.write_text("// BRD_REGISTRY = [ … ]; is below\n" + src, encoding="utf-8")
+            reg = gcp.parse_board_registry(lib)
+            self.assertEqual((len(reg.rows), reg.rows["xiao"].line), (9, 44))
+
+    def test_a_fact_in_a_comment_is_not_a_fact(self):
+        src = LIB.read_text(encoding="utf-8")
+        live = "function brd_xiao_w_measured() = 17.8;"
+        self.assertEqual(src.count(live), 1)
+        with tempfile.TemporaryDirectory() as td:
+            lib = Path(td) / LIB_NAME
+            lib.write_text(src.replace(live, "/* function brd_xiao_w_measured_old() = 17.5; */\n"
+                                       "// function brd_ghost() = 1;\n" + live), encoding="utf-8")
+            reg = gcp.parse_board_registry(lib)
+            self.assertNotIn("brd_xiao_w_measured_old", reg.facts)
+            self.assertNotIn("brd_ghost", reg.facts)
+            self.assertEqual((reg.facts["brd_xiao_w_measured"].value,
+                              reg.facts["brd_xiao_w_measured"].line), (17.8, 86))
+            self.assertEqual(list(reg.facts)[:2], ["brd_xiao_w_measured", "brd_stack_sock_measured"])
+            # a multi-line block comment holding a fact, and a `//` inside a string
+            lib.write_text(src.replace(live, "/*\n   function brd_stale() = 1;\n*/\n" + live)
+                           .replace('"OV5647 camera carrier, Pi-cam v1.3 form"',
+                                    '"OV5647 carrier // Pi-cam v1.3 form"'), encoding="utf-8")
+            reg = gcp.parse_board_registry(lib)
+            self.assertNotIn("brd_stale", reg.facts)
+            self.assertEqual(reg.rows["ov5647"].note, "OV5647 carrier // Pi-cam v1.3 form")
+            self.assertEqual(len(reg.rows), 9)
+        # the stripper itself: newlines and strings kept, comments blanked
+        self.assertEqual(gcp._strip_comments('a = 1; // x\nb = "//"; /* c\nd */ e = 2;'),
+                         'a = 1;     \nb = "//";     \n     e = 2;')
+
     def test_each_reference_form_resolves(self):
         reg = gcp.parse_board_registry()
         cases = [({"brd": "xiao", "dim": "l"}, 21.0, 'brd_l("xiao")', ":43, spec rung"),
