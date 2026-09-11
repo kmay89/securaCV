@@ -18,7 +18,9 @@ are replaced for every test, and a recorder keeps what WOULD have run):
     Actions button that renders and pushes STLs;
   • --check runs each check form in order and names the first failure with
     the resume command; --from skips exactly the earlier steps; --site
-    reaches gen_builder_manifest.py in write mode only;
+    reaches gen_builder_manifest.py and no other step, in both modes — the
+    write form carries, the check form is `--site DIR --check`, which names
+    a stale carry and writes nothing;
   • a full run STOPS (exit 3) after regenerating the sketch mirror when the
     figure headers moved, before gen_flash.py, naming the dist button — and
     continues when they did not;
@@ -298,13 +300,35 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
             self.assertEqual((sketch / "fleet_figures.h").read_bytes(), b"uncommitted but current")
             self.assertEqual((sketch / "main.cpp").read_bytes(), b"main")
 
-    def test_site_is_ignored_under_check(self):
+    def test_site_under_check_runs_the_carry_check_and_only_there(self):
+        # gen_builder_manifest.py's `--site DIR --check` regenerates the
+        # carries in memory and names a stale one, writing nothing — so
+        # --check --site DIR gates the website checkout too, and no other
+        # step ever sees the flag
         with tempfile.TemporaryDirectory() as td:
-            code, out, rec = run_main(["--check", "--from", "gen_builder_manifest", "--site", td])
-        self.assertEqual(code, 0)
-        self.assertIn("--site is ignored under --check", out)
-        for argv in rec.argvs():
-            self.assertNotIn("--site", argv)
+            code, out, rec = run_main(["--check", "--from", "gen_flash", "--site", td])
+            argvs = rec.argvs()
+            self.assertEqual(code, 0)
+            self.assertNotIn("ignored", out)
+            self.assertEqual(argvs[1], ["python3", f"{ENC}/gen_builder_manifest.py",
+                                        "--site", td, "--check"])
+            self.assertEqual([a for a in argvs if "--site" in a], [argvs[1]])
+            self.assertIn(f"gen_builder_manifest.py --site {td} --check", out)
+            self.assertEqual(argvs[0], list(CHECKS["gen_flash"]))
+            self.assertEqual(argvs[2], list(CHECKS["gen_enclosures"]))
+        # without --site the check form is the bare one CI runs
+        code, out, rec = run_main(["--check", "--from", "gen_builder_manifest"])
+        self.assertEqual(rec.argvs()[0], list(CHECKS["gen_builder_manifest"]))
+
+    def test_a_stale_carry_is_the_first_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            rules = [(f"--site {td} --check", const(1, "2 of 16 website carries are not current"))]
+            code, out, rec = run_main(["--check", "--from", "gen_flash", "--site", td], rules)
+            self.assertEqual(code, 1)
+            self.assertIn("FIRST FAILURE at step 9 (gen_builder_manifest)", out)
+            self.assertIn("--from gen_builder_manifest", out)
+            self.assertEqual(rec.argvs()[-1], ["python3", f"{ENC}/gen_builder_manifest.py",
+                                               "--site", td, "--check"])
 
     def test_previews_do_not_combine_with_check(self):
         with tempfile.TemporaryDirectory() as td, redirect_stdout(io.StringIO()), \

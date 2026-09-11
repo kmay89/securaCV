@@ -5,7 +5,8 @@
     python3 scripts/regen_cad.py --check             # each step's CHECK form, in order; the first failure is named
     python3 scripts/regen_cad.py --from gen_flash    # resume after the emulator dist came back
     python3 scripts/regen_cad.py --previews DIR      # + PNG previews of every part of every case whose bytes moved
-    python3 scripts/regen_cad.py --site DIR          # + the website carries (gen_builder_manifest.py --site DIR)
+    python3 scripts/regen_cad.py --site DIR          # + the website carries (gen_builder_manifest.py --site DIR;
+                                                     #   under --check, --site DIR --check names a stale carry)
     python3 scripts/regen_cad.py --list              # the steps, numbered, with their check forms
 
 WHY ONE COMMAND. A dimension edit in devices/<slug>/device.json `cad.params`
@@ -57,9 +58,12 @@ four JSON outputs, as canary-local.yml diffs them) and setup.sh regen (the
 sketch mirror directory, as firmware/scripts/check_display_arduino_sync.sh
 proves it — but against the tree as it stands, not HEAD, so the check is
 meaningful right after a write run regenerated the mirror and before it is
-committed; CI's script would report that as drift). --site is ignored
-under --check (gen_builder_manifest.py --site writes the carries whether or
-not --check is given).
+committed; CI's script would report that as drift). --site DIR under
+--check runs step 9 as `gen_builder_manifest.py --site DIR --check`: every
+carry is regenerated in memory and compared with the checkout, a stale or
+missing one is named by file, and nothing is written in either tree — so a
+checkout that was not carried after the ledger moved fails here, the same
+way a stale builder_manifest.json does.
 
 --previews DIR. The rule of record (AGENTS.md "Before you commit";
 docs/hardware/enclosure/README.md "Preview renders"): every .scad change
@@ -333,8 +337,10 @@ def _hdr(i: int, step: Step, argv: tuple[str, ...], mode: str, cwd: str | None =
     return f"[{i}/{len(STEPS)}] {step.name}  {mode}: {' '.join(argv)}{where}"
 
 
-def run_check(step: Step, i: int, repo: Path) -> tuple[bool, str]:
-    """(ok, detail) for one step's check form."""
+def run_check(step: Step, i: int, repo: Path, site: Path | None = None) -> tuple[bool, str]:
+    """(ok, detail) for one step's check form. `site` reaches step 9 only, as
+    `gen_builder_manifest.py --site DIR --check` — the carries are regenerated
+    in memory and a stale one is named; nothing is written in either tree."""
     if step.check_kind == "none":
         print(_hdr(i, step, ("(no check form)",), "check"))
         print(f"      skipped — {step.note}")
@@ -345,8 +351,11 @@ def run_check(step: Step, i: int, repo: Path) -> tuple[bool, str]:
     if step.check_kind == "diff":
         print(_hdr(i, step, step.check or (), "check"))
         return _check_by_diff(step, repo)
-    print(_hdr(i, step, step.check or (), "check", step.check_cwd or step.cwd))
-    r = _run(step.check or (), cwd=repo / (step.check_cwd or step.cwd))
+    argv = tuple(step.check or ())
+    if step.name == "gen_builder_manifest" and site is not None:
+        argv = tuple(step.cmd) + ("--site", str(site), "--check")
+    print(_hdr(i, step, argv, "check", step.check_cwd or step.cwd))
+    r = _run(argv, cwd=repo / (step.check_cwd or step.cwd))
     if r.returncode != 0:
         return False, f"{step.name} --check exited {r.returncode}"
     return True, ""
@@ -570,8 +579,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="after step 1, render PNG previews of every part of every case .scad whose "
                          "bytes changed into DIR (the README recipe; needs OpenSCAD; never commit them)")
     ap.add_argument("--site", metavar="DIR", type=Path,
-                    help="also write the website carries (gen_builder_manifest.py --site DIR); "
-                         "ignored under --check")
+                    help="also carry the website checkout DIR (gen_builder_manifest.py --site DIR); "
+                         "under --check, `--site DIR --check` names a stale carry and writes nothing")
     ap.add_argument("--list", action="store_true", help="print the steps and exit")
     args = ap.parse_args(argv)
 
@@ -595,15 +604,12 @@ def main(argv: list[str] | None = None) -> int:
         if needing:
             print(openscad_missing_message(" and ".join(needing)))
             return 1
-    if args.check and args.site is not None:
-        print("regen_cad: --site is ignored under --check (gen_builder_manifest.py --site writes the "
-              "carries whether or not --check is given; run the write form to carry)")
 
     print(f"regen_cad: {mode} — steps {todo[0][0]}..{len(STEPS)} of {len(STEPS)}"
           + (f" (from {args.start})" if args.start else ""))
     for i, step in todo:
         if args.check:
-            ok, detail = run_check(step, i, repo)
+            ok, detail = run_check(step, i, repo, args.site)
             if not ok:
                 print(f"\nregen_cad: FIRST FAILURE at step {i} ({step.name}): {detail}")
                 print(f"  fix: python3 scripts/regen_cad.py --from {step.name}   "
