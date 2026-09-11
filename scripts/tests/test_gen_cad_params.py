@@ -564,8 +564,9 @@ class ManifestsCarryTheJoin(unittest.TestCase):
         self.assertIn("rows: heltec_v3; facts: brd_stack_sock_unmeasured, brd_ws147_brass_c3, "
                       "brd_ws147_brass_c6", text)
         self.assertIn("not an error", text)
-        # the display cases HAVE manifests (canary-display-*/device.json names
-        # each case) — they own no knobs yet; the INFO must not say otherwise
+        # every display case HAS a manifest (canary-display-*/device.json
+        # names each case); two of them — the Nightstand C6 and the 7" frame —
+        # own no knobs yet, and the INFO names those two, not "the display cases"
         self.assertIn("Cases whose manifests own no knobs yet (the C6 display, the 7\" frame)", text)
         self.assertIn("cases with no manifest (the doorbell", text)
         self.assertNotIn("Cases no manifest owns", text)

@@ -112,9 +112,9 @@ scripts/lint_device_manifests.py imports check(), so `python3
 scripts/lint_device_manifests.py` stays THE manifest gate; lint.yml and
 enclosure.yml also run --check directly. --check also prints, as INFO
 (never an error), the registry rows and facts no manifest references: the
-display cases have manifests that own no knobs yet, and the doorbell, the
-gang plate, the Hammond chassis, the J-box and the bench fixture have no
-manifest — all of them cite the registry by comment.
+cases whose manifests own no knobs yet (the Nightstand C6, the 7" frame)
+and the cases with no manifest (the doorbell, the gang plate, the Hammond
+chassis, the J-box, the bench fixture) cite them by comment.
 """
 
 from __future__ import annotations
