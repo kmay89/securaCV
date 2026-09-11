@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "4be23b02bf480f45421b24808bfc395d0709335fb98c09b5bc2c6897b04fb2ef",
+      "sha256": "b0d0c9706f80b548c38bc6f0f21f4659fdbb177eb55de134de63fdad7880a271",
       "groups": [
         {
           "name": "What to render",
@@ -2259,7 +2259,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "484a026e37d4cc7d8b883157ea6108b83d11d1d1750c378d71b305c7f204f638",
+      "sha256": "e683da73f00d3629b2d785af336fb9ec1cba97086fe8a6eb9821399e50a667c0",
       "groups": [
         {
           "name": "What to render",

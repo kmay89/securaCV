@@ -367,7 +367,10 @@ hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
 hw_echo("Vision doorbell", [
     hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
     hw_item(4, "M2 pan x 6 self-tap (OV5647 to the face posts)"),
-    hw_item(1, str("M2 x 10 security screw, Torx pin/tri-wing, ", screw_insert ? "machine thread" : "self-tap", " (plate foot into the body boss)")),
+    // the security boss takes screw_size's insert when screw_insert is on (its bore is ins_od),
+    // so the security screw is that size's machine thread; self-tap builds keep the M2 pilot
+    hw_item(1, str(screw_insert ? hw_size_name(screw_size) : "M2", " x 10 security screw, Torx pin/tri-wing, ",
+                   screw_insert ? "machine thread (into the boss insert)" : "self-tap", " (plate foot into the body boss)")),
     screw_insert ? hw_item(len(post_xy()) + 1, str(str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h), " — the +1 seats in the security boss")) : "",
     head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     hw_item(1, str("Ø", btn_d, " illuminated momentary button + panel nut (", btn_nut_ac, " AC)")),

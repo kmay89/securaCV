@@ -498,6 +498,13 @@ hw_echo("WAP", [
     e_camera && cam_disc_t > 0 ? hw_item(1, str("Ø", cam_disc_d, " x ", cam_disc_t, " clear disc (bond)")) : "",
     e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
     e_mount && (mount_style == "keyhole" || mount_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+    // the anti-lift knockouts exist only with keyholes + a battery bay (the floor they sit under)
+    mount_extra > 0 && kh_lock && e_battery ? hw_item(2, "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)") : "",
+    // the thermal shield rides on the corner screws: they pass the shield panel and its
+    // standoffs (sh_t + sh_gap) before the lid, so the shield render lists the long ones
+    part == "shield" ? hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head,
+                           hw_len(lid_t, head_pad + sh_t + sh_gap, hw_engage(screw_size)), hw_thread),
+                           " — REPLACES the lid screws when the shield is fitted")) : "",
 ]);
 echo(str("Canary WAP enclosure v0.8 — outer ", out_l, " x ", out_w, " x ",
          base_h + lid_t + mount_extra, " mm  (preset=", preset, ", seal=", e_seal, ", mount=", e_mount, ")"));
