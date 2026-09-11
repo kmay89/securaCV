@@ -146,6 +146,49 @@ class LintCatchesRealMistakes(unittest.TestCase):
             _, errors = ldm.lint(devices_dir=devices)
         self.assertTrue(any("'dash7'" in e and "allowlist" in e for e in errors), errors)
 
+    # cad.params — the manifest OWNS these knobs (docs/hardware/enclosure/
+    # gen_cad_params.py writes them); the lint runs the generator's check()
+    def test_cad_param_that_disagrees_with_the_case_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_w", 17.8))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "board_w" in e]
+        self.assertEqual(len(hits), 1, errors)
+        for needle in ("canary_wap_enclosure.scad:154", "17.5", "17.8", "gen_cad_params.py"):
+            self.assertIn(needle, hits[0])
+
+    def test_two_manifests_disagreeing_on_a_shared_knob_fail_naming_both(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision-devkit",
+                 lambda d: d["cad"]["params"].__setitem__("xiao_l", 22.0))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "xiao_l" in e]
+        self.assertEqual(len(hits), 1, errors)
+        for needle in ("devices/canary-vision ", "devices/canary-vision-devkit", "21.0", "22.0"):
+            self.assertIn(needle, hits[0])
+
+    def test_selector_knob_in_cad_params_is_refused(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision", lambda d: d["cad"]["params"].__setitem__("host", "xiao"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("cad.params.host" in e and "selector" in e and "render time" in e
+                            for e in errors), errors)
+
+    def test_computed_knob_in_cad_params_is_refused(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap",
+                 lambda d: d["cad"]["params"].__setitem__("board_stack_h", 8.0))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("board_stack_h" in e and "not a literal Customizer knob" in e
+                            for e in errors), errors)
+
+    def test_cad_params_value_must_be_a_literal_by_schema(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_l", [21]))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any(".cad.params.board_l" in e and "expected number/string/boolean" in e
+                            for e in errors), errors)
+
 
 class SchemaValidatorSubset(unittest.TestCase):
     def test_keywords_the_schema_uses(self):
