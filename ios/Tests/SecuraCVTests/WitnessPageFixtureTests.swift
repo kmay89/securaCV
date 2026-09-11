@@ -130,7 +130,17 @@ final class WitnessPageFixtureTests: XCTestCase {
         // genuine hash/signature pair must fall to the recompute, not pass.
         var page = try decode(try fixtureText())
         page.records[1].seq = 20
-        XCTAssertEqual(ChainVerifier.verify(page, pinnedKey: pinnedKey), .brokenLink(seq: 20))
+        // The forged record itself no longer recomputes: seq is in the
+        // wap_v1 pre-image (spec §4.2), so its stored hash is now wrong.
+        XCTAssertNotEqual(ChainVerifier.recomputedHash(of: page.records[1], format: .wapV1),
+                          page.records[1].hash)
+        // The verdict names the FIRST break in ascending seq order, and the
+        // edit reordered the walk to 1, 3, 4, 20: record 3's prev_hash is
+        // the genuine hash of the record that used to be seq 2, which no
+        // longer precedes it — so the walk stops at 3 before it ever reaches
+        // the forgery. A failed verdict is the contract; the seq is a hint to
+        // where the chain first stops making sense, not an accusation.
+        XCTAssertEqual(ChainVerifier.verify(page, pinnedKey: pinnedKey), .brokenLink(seq: 3))
     }
 
     func testEditedPayloadHashBreaksTheChain() throws {
