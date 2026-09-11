@@ -24,7 +24,11 @@ What is pinned and why:
   • every refusal fires by name — a selector, a computed / [Hidden] knob, a
     type mismatch, a two-knob line, a knob assigned twice, a non-scalar
     value, a malformed reference, two manifests disagreeing on a shared key
-    — and a refusal anywhere means nothing is written anywhere.
+    — and a refusal anywhere means nothing is written anywhere;
+  • --dry-run SLUG:KNOB=VALUE prints the unified diff a manifest edit would
+    write, through the same resolver and the same refusals, and writes
+    nothing — a number, a reference, several edits at once, no change, and
+    each refusal.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -678,6 +682,119 @@ class WriteMode(unittest.TestCase):
             after = {p.name: p.read_bytes()
                      for p in (root / "docs/hardware/enclosure").glob("*.scad")}
         self.assertEqual(after, before)
+
+
+class DryRun(unittest.TestCase):
+    """--dry-run: the diff a manifest edit would write, nothing written."""
+
+    def _run(self, *specs):
+        before = {p: p.read_bytes() for p in ENC.glob("*.scad")}
+        before.update({p: p.read_bytes() for p in DEVICES.glob("*/device.json")})
+        args = []
+        for spec in specs:
+            args += ["--dry-run", spec]
+        with redirect_stdout(io.StringIO()) as out:
+            code = gcp.main(args)
+        after = {p: p.read_bytes() for p in before}
+        self.assertEqual(after, before, "a dry run wrote something")
+        return code, out.getvalue()
+
+    def test_parse(self):
+        self.assertEqual(gcp.parse_dry_run("canary-wap:board_w=17.8"), ("canary-wap", "board_w", 17.8))
+        self.assertEqual(gcp.parse_dry_run("canary-wap:board_w=18"), ("canary-wap", "board_w", 18))
+        self.assertEqual(gcp.parse_dry_run('canary-wap:board_w={"brd_fn":"brd_xiao_w_measured"}'),
+                         ("canary-wap", "board_w", {"brd_fn": "brd_xiao_w_measured"}))
+        self.assertEqual(gcp.parse_dry_run("canary-sense:radar=fda2"), ("canary-sense", "radar", "fda2"))
+        self.assertEqual(gcp.parse_dry_run('canary-sense:radar="fda2"'), ("canary-sense", "radar", "fda2"))
+        self.assertEqual(gcp.parse_dry_run("x:b=true"), ("x", "b", True))
+        for bad in ("board_w=17.8", "canary-wap:board_w", "canary-wap:=1", "Canary:board_w=1", ""):
+            with self.assertRaises(ValueError, msg=bad):
+                gcp.parse_dry_run(bad)
+
+    def test_a_number_prints_the_one_line_diff_and_writes_nothing(self):
+        code, out = self._run("canary-wap:board_w=17.8")
+        self.assertEqual(code, 0)
+        self.assertIn("devices/canary-wap cad.params.board_w = 17.8", out)
+        self.assertIn("would write (nothing written)", out)
+        self.assertIn("--- a/docs/hardware/enclosure/canary_wap_enclosure.scad", out)
+        self.assertIn("+++ b/docs/hardware/enclosure/canary_wap_enclosure.scad", out)
+        self.assertIn("-board_w        = 17.5;  // PCB width (along Y)", out)
+        self.assertIn("+board_w        = 17.8;  // PCB width (along Y)", out)
+        self.assertEqual(out.count("\n-board_w"), 1)
+        self.assertEqual(out.count("\n+board_w"), 1)
+        self.assertIn("1 knob(s) on 1 line(s) in 1 file(s)", out)
+        self.assertIn("owes PNG previews of every part of: canary_wap_enclosure.scad", out)
+        self.assertIn("scripts/regen_cad.py --previews", out)
+
+    def test_a_reference_shows_what_it_resolves_to(self):
+        code, out = self._run('canary-wap:board_w={"brd_fn":"brd_xiao_w_measured"}')
+        self.assertEqual(code, 0)
+        self.assertIn('cad.params.board_w = {"brd_fn": "brd_xiao_w_measured"} '
+                      "(= brd_xiao_w_measured() = 17.8)", out)
+        self.assertIn("+board_w        = 17.8;", out)
+
+    def test_several_edits_diff_every_file_they_touch(self):
+        code, out = self._run("canary-wap:board_w=17.8", "canary-sense:xiao_l=21.4")
+        self.assertEqual(code, 0)
+        self.assertIn("--- a/docs/hardware/enclosure/canary_sense_enclosure.scad", out)
+        self.assertIn("--- a/docs/hardware/enclosure/canary_wap_enclosure.scad", out)
+        self.assertIn("+xiao_l   = 21.4;", out)
+        self.assertIn("2 knob(s) on 2 line(s) in 2 file(s)", out)
+        self.assertIn("canary_sense_enclosure.scad, canary_wap_enclosure.scad", out)
+
+    def test_no_change_says_so(self):
+        code, out = self._run("canary-wap:board_w=17.5", "canary-wap:board_l=21")
+        self.assertEqual(code, 0)
+        self.assertIn("no change", out)
+        self.assertIn("already equals the .scad literal(s)", out)
+        self.assertNotIn("---", out)
+
+    def test_refusals_are_the_writes_refusals(self):
+        code, out = self._run("canary-wap:preset=compact_plain")
+        self.assertEqual(code, 1)
+        self.assertIn("refused — 1 problem(s)", out)
+        self.assertIn("cad.params.preset (devices/canary-wap) is a selector", out)
+        self.assertNotIn("---", out)
+        code, out = self._run("canary-vision-devkit:xiao_l=22")
+        self.assertEqual(code, 1)
+        self.assertIn("must agree on a shared key", out)
+        code, out = self._run("canary-wap:board_w=17.8", "nope:x=1")
+        self.assertEqual(code, 1)
+        self.assertIn("devices/nope: no such manifest", out)
+        self.assertNotIn("+board_w", out)               # one refusal, no diff at all
+        code, out = self._run("canary-wap:board_stack_h=9")
+        self.assertEqual(code, 1)
+        self.assertIn("is not a literal Customizer knob", out)
+        code, out = self._run("canary-wap:board_w=x")
+        self.assertEqual(code, 1)
+        self.assertIn("is a string in the manifest but the knob is a number", out)
+
+    def test_a_manifest_without_a_case_cannot_be_dry_run(self):
+        # the Glance AMOLED has a flasher product and no cad block
+        code, out = self._run("canary-display-amoled241:x=1")
+        self.assertEqual(code, 1)
+        self.assertIn("devices/canary-display-amoled241: cad.params without a cad.scad", out)
+
+    def test_dry_run_api_returns_the_diff_the_changes_and_the_owned_map(self):
+        diff, changes, errors, owned = gcp.dry_run([("canary-wap", "board_w", 17.8)])
+        self.assertEqual(errors, [])
+        self.assertEqual([(p.name, c.line, c.old_token, c.new_token) for p, c in changes],
+                         [("canary_wap_enclosure.scad", 154, "17.5", "17.8")])
+        self.assertTrue(diff.startswith("--- a/docs/hardware/enclosure/canary_wap_enclosure.scad\n"))
+        self.assertEqual(owned[WAP_REL]["board_w"].value, 17.8)
+        self.assertIsNone(owned[WAP_REL]["board_w"].ref)
+        # and nothing else in the owned map moved
+        base, _ = gcp.load_params()
+        self.assertEqual({k: o.value for k, o in owned[SENSE_REL].items()},
+                         {k: o.value for k, o in base[SENSE_REL].items()})
+
+    def test_bad_shape_and_check_are_parser_errors(self):
+        for args in (["--dry-run", "bad"], ["--check", "--dry-run", "a:b=1"]):
+            with redirect_stdout(io.StringIO()), \
+                    __import__("unittest.mock").mock.patch.object(sys, "stderr", io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    gcp.main(args)
+            self.assertEqual(cm.exception.code, 2, args)
 
 
 if __name__ == "__main__":
