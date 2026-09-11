@@ -888,6 +888,29 @@ class NoSilentPassForAnUnspellableValue(unittest.TestCase):
                 gcp._token(value, "0.6")
         self.assertIsNone(gcp._token(0.6, "0.6"))
 
+    def test_a_string_holding_a_comment_opener_is_refused_before_it_is_written(self):
+        # it used to write fine — and then --check failed as "not a literal
+        # knob", because parse_scad splits the line at `//` or `/*` first
+        with tempfile.TemporaryDirectory() as td:
+            f = fixture(Path(td))
+            for value in ("a//b", "a/*b", "//", "/* x */", "http://x"):
+                r = gcp.render(f, {"s": value})
+                self.assertEqual(r.changes, [], value)
+                self.assertEqual(len(r.errors), 1, (value, r.errors))
+                self.assertIn(f"cad.params.s: {json.dumps(value)} cannot be spelled as a Customizer "
+                              f"literal", r.errors[0])
+                self.assertIn("comment opener", r.errors[0])
+            # `*/` alone is not an opener: it writes, and re-checks clean
+            r = gcp.render(f, {"s": "a*/b"})
+            self.assertEqual((r.errors, [(c.old_token, c.new_token) for c in r.changes]),
+                             ([], [('"abc"', '"a*/b"')]))
+            f.write_text(r.text, encoding="utf-8")
+            again = gcp.render(f, {"s": "a*/b"})
+            self.assertEqual((again.errors, again.changes), ([], []))
+        # (no released case owns a string knob today — the fixture is the only
+        # place this refusal can fire; a manifest that named one would reach
+        # render() through the same path)
+
     def test_a_non_finite_number_is_refused_at_load_naming_manifest_and_key(self):
         # Python's json reads NaN and Infinity; a manifest carrying one is
         # refused before anything is rendered, and nan == nan being False can

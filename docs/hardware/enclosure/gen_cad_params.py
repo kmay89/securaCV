@@ -67,6 +67,10 @@ WHAT IT REFUSES (exit 1, naming the manifest, the knob and why):
     `part`): those are chosen per printable SET at render time (render.sh,
     canary_case_fitcheck.scad, gen_assembled_dims.py), not by a device;
   * a value whose type disagrees with the knob's (a number for a string);
+  * a value with no Customizer-literal spelling: a number in exponent form
+    (0.00001), NaN or Infinity (refused when the manifest loads), a string
+    holding `//` or `/*` (a comment opener to the parser: it would write,
+    then fail --check as "not a literal");
   * a line that holds two statements (`aa_dx = 0.0; aa_dy = 0.0;`, `$fn =
     64; shared = 7;`, `mixed = 3; dep = mixed;`) — counted on the line's
     code, comments and strings aside — split the line first, so a rewrite
@@ -294,6 +298,12 @@ def _token(value, old: str) -> str | None:
         new = "true" if value else "false"
         return None if new == old else new
     if isinstance(value, str):
+        if "//" in value or "/*" in value:
+            # parse_scad splits the line at `//` and `/*` before it reads the
+            # literal, so a string holding either would write fine and then
+            # fail --check as "not a literal knob" — refused before the write.
+            raise Unspellable("a string holding `//` or `/*` reads as a comment opener to "
+                              "parse_scad, so --check could not find the knob it had written")
         if json.loads(old) == value:               # keep the file's own spelling
             return None
         return json.dumps(value, ensure_ascii=False)
