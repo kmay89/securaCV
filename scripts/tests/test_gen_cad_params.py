@@ -116,11 +116,24 @@ NUMBERS = {
 XIAO_ROW = '["xiao",       21.0,  17.5, 1.2, "spec",'
 
 
+def owned_scads() -> list[str]:
+    """The file name of every .scad a manifest with cad.params names — read
+    from the manifests, so a display manifest gaining params is copied into
+    the scratch tree by construction instead of breaking every _Tree test."""
+    names = set()
+    for path in DEVICES.glob("*/device.json"):
+        cad = json.loads(path.read_text(encoding="utf-8")).get("cad") or {}
+        if "params" in cad and isinstance(cad.get("scad"), str):
+            names.add(Path(cad["scad"]).name)
+    return sorted(names)
+
+
 class _Tree:
-    """A scratch repo: devices/ copied, and the .scad files the tests own
-    copied under the same relative path — the board registry among them,
-    because a cad.params reference resolves from it — so write() can be
-    exercised without touching the real sources."""
+    """A scratch repo: devices/ copied, and under the same relative path every
+    .scad a manifest owns knobs of (owned_scads()), the released set (the
+    doorbell has no manifest and must stay untouched) and the board registry
+    (a cad.params reference resolves from it) — so write() can be exercised
+    without touching the real sources."""
 
     def __enter__(self) -> Path:
         self._tmp = tempfile.TemporaryDirectory()
@@ -128,7 +141,7 @@ class _Tree:
         shutil.copytree(DEVICES, root / "devices")
         enc = root / "docs" / "hardware" / "enclosure"
         enc.mkdir(parents=True)
-        for name in RELEASED + ["canary_s3_touch169.scad", LIB_NAME]:
+        for name in sorted(set(owned_scads()) | set(RELEASED) | {LIB_NAME}):
             shutil.copyfile(ENC / name, enc / name)
         return root
 
@@ -203,6 +216,16 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
             r = gcp.render(ENC / name, {})
             self.assertEqual((r.changes, r.errors), ([], []), name)
             self.assertEqual(r.text, (ENC / name).read_bytes().decode("utf-8"), name)
+
+    def test_the_scratch_tree_copies_every_owned_case(self):
+        self.assertEqual(owned_scads(), ["canary_sense_enclosure.scad",
+                                         "canary_vision_enclosure.scad",
+                                         "canary_wap_enclosure.scad"])
+        with _Tree() as root:
+            enc = root / "docs/hardware/enclosure"
+            for name in owned_scads() + RELEASED + [LIB_NAME]:
+                self.assertEqual((enc / name).read_bytes(), (ENC / name).read_bytes(), name)
+            self.assertEqual(gcp.check(root / "devices", root), [])
 
     def test_shared_case_is_a_union_of_subsets(self):
         owned, _ = gcp.load_params()
