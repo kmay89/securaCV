@@ -157,6 +157,19 @@ def fixture(tmp: Path, text: str = FIXTURE) -> Path:
     return path
 
 
+def _linter():
+    """scripts/lint_device_manifests.py, loaded by path the way its own tests
+    load it — the gate that imports check(), so a refusal here is proven to
+    come back through it as a message."""
+    script = REPO / "scripts" / "lint_device_manifests.py"
+    if str(script.parent) not in sys.path:
+        sys.path.insert(0, str(script.parent))
+    spec = importlib.util.spec_from_file_location("lint_device_manifests", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
 def moved_lines(name: str, root: Path) -> list[int]:
     """1-based lines of the scratch copy of `name` that differ from the tree's."""
     old = (ENC / name).read_text(encoding="utf-8").splitlines(keepends=True)
@@ -662,6 +675,37 @@ class Refusals(unittest.TestCase):
             errors = gcp.check(root / "devices", root)
         self.assertTrue(any("board_l = [21] is not a number, string, boolean or registry "
                             "reference" in e for e in errors), errors)
+
+    def test_a_non_canonical_cad_scad_is_an_error_never_an_exception(self):
+        # `owned` was keyed by the manifest's literal string and check() looked
+        # it up by the normalized path: KeyError, and through the linter a
+        # traceback in place of the whole manifest gate
+        schema = json.loads((DEVICES / "device.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(gcp.SCAD_PATH_RE.pattern,
+                         schema["properties"]["cad"]["properties"]["scad"]["pattern"])
+        for spelling in ("docs/hardware/enclosure/./canary_wap_enclosure.scad",
+                         "docs/hardware/enclosure/../enclosure/canary_wap_enclosure.scad",
+                         "./docs/hardware/enclosure/canary_wap_enclosure.scad",
+                         "docs/hardware/enclosure/Canary_WAP_enclosure.scad"):
+            with _Tree() as root:
+                edit(root, "canary-wap", lambda d: d["cad"].__setitem__("scad", spelling))
+                owned, errors = gcp.load_params(root / "devices", root)
+                self.assertNotIn(WAP_REL, owned, spelling)
+                self.assertNotIn(spelling, owned)
+                self.assertEqual(len(errors), 1, (spelling, errors))
+                self.assertIn(f"devices/canary-wap: cad.scad {json.dumps(spelling)} is not a case "
+                              f"file path", errors[0])
+                self.assertIn("device.schema.json", errors[0])
+                self.assertEqual(gcp.check(root / "devices", root), errors)      # no KeyError
+                self.assertEqual(gcp.write(root / "devices", root), ([], errors))
+                if spelling.startswith("docs/hardware/enclosure/./"):
+                    # and through THE manifest gate, as its own tests drive it:
+                    # devices/ scratch, the repo defaulted — a message, not a traceback
+                    _, lint_errors = _linter().lint(devices_dir=root / "devices")
+                    self.assertTrue(any("is not a case file path" in e for e in lint_errors),
+                                    lint_errors)
+                    self.assertTrue(any(".cad.scad:" in e and "does not match" in e
+                                        for e in lint_errors), lint_errors)   # the schema's, too
 
     def test_missing_scad_is_reported(self):
         with _Tree() as root:

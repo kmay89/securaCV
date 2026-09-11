@@ -100,6 +100,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 from collections import Counter
@@ -126,6 +127,14 @@ LITERAL = r'"(?:[^"\\]|\\.)*"|true|false|-?\d+\.?\d*'
 LINE_RE = r"^(\s*)(%s)(\s*=\s*)(" + LITERAL + r")(\s*;.*)$"
 
 SCAD_TYPE = {"bool": "bool", "number": "number", "string": "string"}
+
+# What a manifest's cad.scad may be: devices/device.schema.json's pattern for
+# it, verbatim (test_gen_cad_params.py pins the two equal). The standalone
+# generator refuses what the schema would, so it never relies on the manifest
+# linter having run first — and a `./` or `..` segment can never key the owned
+# map under one spelling and be looked up under another (a KeyError that used
+# to take the whole manifest gate down with it).
+SCAD_PATH_RE = re.compile(r"^docs/hardware/enclosure/[a-z0-9_]+\.scad$")
 
 # A reference's `dim` -> (the accessor it stands for, the row column it reads).
 DIMS = {"l": ("brd_l", 1), "w": ("brd_w", 2), "t": ("brd_t", 3)}
@@ -172,6 +181,12 @@ class Rendered(NamedTuple):
     text: str
     changes: list[Change]
     errors: list[str]
+
+
+class Planned(NamedTuple):
+    scad_rel: str          # the owned-map key: cad.scad, canonical (see load_params)
+    path: Path
+    rendered: Rendered
 
 
 class Owned(NamedTuple):
@@ -437,9 +452,19 @@ def load_params(devices_dir: Path = DEVICES_DIR,
         if not isinstance(scad, str) or not scad:
             errors.append(f"devices/{slug}: cad.params without a cad.scad — nothing to own")
             continue
+        if not SCAD_PATH_RE.match(scad):
+            errors.append(f"devices/{slug}: cad.scad {json.dumps(scad)} is not a case file path — "
+                          f"devices/device.schema.json spells it docs/hardware/enclosure/<name>"
+                          f".scad (lowercase letters, digits, underscores; no `./` or `..` "
+                          f"segment), and cad.params owns nothing until it is")
+            continue
         if not isinstance(params, dict):
             errors.append(f"devices/{slug}: cad.params must be an object of knob -> literal")
             continue
+        # The key every lookup uses. A path the pattern admits is already
+        # canonical; normalizing anyway means two spellings of one file can
+        # never render independently and clobber each other on write.
+        scad = Path(os.path.normpath(scad)).as_posix()
         per = owned.setdefault(scad, {})
         for key, value in params.items():
             if isinstance(value, dict):
@@ -591,10 +616,13 @@ def render(scad_path: Path, owned: dict[str, object],
 # the gate and the writer
 # ---------------------------------------------------------------------------
 
-def _plan(devices_dir: Path, repo: Path) -> tuple[list[tuple[Path, Rendered]], list[str],
+def _plan(devices_dir: Path, repo: Path) -> tuple[list[Planned], list[str],
                                                   dict[str, dict[str, Owned]]]:
+    """Every owned case rendered in memory, every error so far, and the owned
+    map — the whole run, short of writing. A test asserts the fixed point on
+    this, never by calling write() against the live tree."""
     owned, errors = load_params(devices_dir, repo)
-    plan: list[tuple[Path, Rendered]] = []
+    plan: list[Planned] = []
     for scad_rel in sorted(owned):
         keys = owned[scad_rel]
         path = repo / scad_rel
@@ -606,7 +634,7 @@ def _plan(devices_dir: Path, repo: Path) -> tuple[list[tuple[Path, Rendered]], l
         r = render(path, {k: o.value for k, o in keys.items()},
                    {k: o.slugs for k, o in keys.items()})
         errors.extend(r.errors)
-        plan.append((path, r))
+        plan.append(Planned(scad_rel, path, r))
     return plan, errors, owned
 
 
@@ -617,8 +645,8 @@ def check(devices_dir: Path | None = None, repo: Path | None = None) -> list[str
     devices_dir = devices_dir or DEVICES_DIR
     repo = repo or REPO
     plan, errors, owned = _plan(devices_dir, repo)
-    for path, r in plan:
-        keys = owned[_rel(path, repo)]
+    for scad_rel, path, r in plan:
+        keys = owned[scad_rel]           # the key _plan iterated, not a re-derived path
         for c in r.changes:
             o = keys[c.name]
             slugs = ", ".join(f"devices/{s}" for s in o.slugs)
@@ -652,7 +680,7 @@ def write(devices_dir: Path | None = None,
     if errors:
         return [], errors
     written: list[tuple[Path, Change]] = []
-    for path, r in plan:
+    for _, path, r in plan:
         if not r.changes:
             continue
         path.write_bytes(r.text.encode("utf-8"))    # no newline translation, on any OS
