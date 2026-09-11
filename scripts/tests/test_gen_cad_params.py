@@ -257,7 +257,10 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
             self.assertEqual(r.text, (ENC / name).read_bytes().decode("utf-8"), name)
 
     def test_the_scratch_tree_copies_every_owned_case(self):
-        self.assertEqual(owned_scads(), sorted(RELEASED + DISPLAY))
+        # every released case but the doorbell (no manifest names it), plus
+        # the five display cases that joined with pure JSON
+        self.assertEqual(owned_scads(),
+                         sorted((set(RELEASED) - {"canary_vision_doorbell.scad"}) | set(DISPLAY)))
         with _Tree() as root:
             enc = root / "docs/hardware/enclosure"
             for name in sorted(set(owned_scads()) | set(RELEASED) | set(DISPLAY) | {C6, LIB_NAME}):
