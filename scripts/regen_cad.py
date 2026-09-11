@@ -75,7 +75,12 @@ the -D selector sets render.sh uses for that file (WAP presets, Vision
 host x preset, the doorbell's wedge), at ROTX 62 (top three-quarter) and
 ROTX 245 (underside), through the README's own command. A changed library
 (no `part` knob) is named, not rendered: every case that uses it owes
-previews, and that list is the requester's to judge.
+previews, and that list is the requester's to judge. With --from, step 1 is
+skipped, so the previews are rendered FIRST — before the resumed step, from
+the same git status — and the run says so; nothing after step 1 moves a
+.scad, so the set owed is the same. A change committed since the run that
+wrote it owed its previews to that run: git no longer sees it, and the
+"no case .scad changed" line means exactly that.
 
 OPENSCAD. Steps 3 and 4 and --previews are refused, before anything runs,
 when `openscad` is not on PATH. There is no Actions button that renders the
@@ -556,6 +561,19 @@ def render_previews(out_dir: Path, repo: Path) -> tuple[int, list[str]]:
     return n, failures
 
 
+def run_previews(out_dir: Path, repo: Path, i: int) -> tuple[bool, str]:
+    """The --previews hook, printed as step `i`'s companion: (ok, detail)."""
+    print(f"[{i}/{len(STEPS)}] previews  (README \"Preview renders\": every part of every "
+          f"changed case, ROTX {PREVIEW_VIEWS[0][1]} and {PREVIEW_VIEWS[1][1]})")
+    n, failures = render_previews(out_dir, repo)
+    if failures:
+        print("\n".join(failures))
+        return False, f"rendering previews ({len(failures)} of {n + len(failures)})"
+    if n:
+        print(f"      {n} PNG(s) in {out_dir} — share them with the requester; never commit them")
+    return True, ""
+
+
 # ---------------------------------------------------------------------------
 # the chain
 # ---------------------------------------------------------------------------
@@ -581,8 +599,9 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"start at STEP (one of: {', '.join(STEP_NAMES)}); "
                          f"--from {RESUME_AFTER_DIST} resumes after the emulator dist rebuild")
     ap.add_argument("--previews", metavar="DIR", type=Path,
-                    help="after step 1, render PNG previews of every part of every case .scad whose "
-                         "bytes changed into DIR (the README recipe; needs OpenSCAD; never commit them)")
+                    help="after step 1 (first, under --from), render PNG previews of every part of "
+                         "every case .scad whose bytes changed into DIR (the README recipe; needs "
+                         "OpenSCAD; never commit them)")
     ap.add_argument("--site", metavar="DIR", type=Path,
                     help="also carry the website checkout DIR (gen_builder_manifest.py --site DIR); "
                          "under --check, `--site DIR --check` names a stale carry and writes nothing")
@@ -612,6 +631,17 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"regen_cad: {mode} — steps {todo[0][0]}..{len(STEPS)} of {len(STEPS)}"
           + (f" (from {args.start})" if args.start else ""))
+    if args.previews is not None and start > 0:
+        # the hook fires after step 1, which --from skipped: render now, from the same git
+        # status (nothing after step 1 moves a .scad), rather than silently never
+        print(f"regen_cad: --previews renders after step 1 (gen_cad_params), which --from "
+              f"{args.start} skips — rendering first, before step {start + 1}, every case .scad "
+              f"git sees changed (a change committed since the run that wrote it owed its "
+              f"previews to that run)")
+        ok, detail = run_previews(args.previews, repo, start + 1)
+        if not ok:
+            print(f"\nregen_cad: FAILED {detail}")
+            return 1
     for i, step in todo:
         if args.check:
             ok, detail = run_check(step, i, repo, args.site)
@@ -636,16 +666,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  resume: python3 scripts/regen_cad.py --from {step.name}")
             return 1
         if step.name == "gen_cad_params" and args.previews is not None:
-            print(f"[{i}/{len(STEPS)}] previews  (README \"Preview renders\": every part of every "
-                  f"changed case, ROTX {PREVIEW_VIEWS[0][1]} and {PREVIEW_VIEWS[1][1]})")
-            n, failures = render_previews(args.previews, repo)
-            if failures:
-                print("\n".join(failures))
-                print(f"\nregen_cad: FAILED rendering previews ({len(failures)} of {n + len(failures)})")
+            ok, detail = run_previews(args.previews, repo, i)
+            if not ok:
+                print(f"\nregen_cad: FAILED {detail}")
                 return 1
-            if n:
-                print(f"      {n} PNG(s) in {args.previews} — share them with the requester; never "
-                      f"commit them")
     print(f"\nregen_cad: {mode} complete — {len(todo)} step(s)"
           + ("" if args.check else "; git status lists what moved (STL bytes move on every render "
                                     "— their bounding boxes are what the gates compare)"))

@@ -26,7 +26,9 @@ are replaced for every test, and a recorder keeps what WOULD have run):
     continues when they did not;
   • the render log is judged by enclosure.yml's grep, verbatim;
   • the preview plan covers every value of a case's `part` enum with the
-    selector sets render.sh uses, both views, through the README's command.
+    selector sets render.sh uses, both views, through the README's command;
+    under --from (step 1 skipped) the previews render FIRST, from the same
+    git status, and the run says so — never silently not at all.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -547,6 +549,50 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("no case .scad changed — no previews owed", out)
         self.assertFalse(any("openscad" in a[:3] for a in rec.argvs()))
+
+    def test_previews_with_from_render_first_not_silently_never(self):
+        # the hook fires after step 1, which --from skips; a resumed run must
+        # still pay the obligation, from the same git status, and say so
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td) / "previews"
+
+            def fake_openscad(argv, cwd):
+                Path(argv[argv.index("-o") + 1]).parent.mkdir(parents=True, exist_ok=True)
+                Path(argv[argv.index("-o") + 1]).write_bytes(b"PNG")
+                return 0, ""
+
+            rules = [("git status --porcelain -- docs/hardware",
+                      const(0, f" M {ENC}/canary_sense_enclosure.scad\n")),
+                     ("openscad -o", fake_openscad)]
+            code, out, rec = run_main(["--from", "gen_flash", "--previews", str(out_dir)], rules)
+            self.assertEqual(code, 0)
+            self.assertEqual(len(list(out_dir.glob("*.png"))), 12)
+            argvs = rec.argvs()
+            renders = [a for a in argvs if "openscad" in a[:3] and "-o" in a]
+            self.assertEqual(len(renders), 12)
+            self.assertEqual(argvs.index(renders[0]), 0)            # before gen_flash.py
+            self.assertEqual(argvs[12], ["python3", "canary-local/tools/gen_flash.py"])
+            self.assertIn("renders after step 1 (gen_cad_params), which --from gen_flash skips", out)
+            self.assertIn("[8/12] previews", out)
+            self.assertIn("12 PNG(s) in", out)
+            self.assertIn("run complete — 5 step(s)", out)
+        # a clean tree at the resume point says so — the previews were the
+        # earlier run's to render — instead of saying nothing
+        with tempfile.TemporaryDirectory() as td:
+            code, out, rec = run_main(["--from", "gen_flash", "--previews", td])
+        self.assertEqual(code, 0)
+        self.assertIn("which --from gen_flash skips", out)
+        self.assertIn("no case .scad changed — no previews owed", out)
+        self.assertFalse(any("openscad" in a[:3] for a in rec.argvs()))
+        # and a failed preview fails the resumed run before its first step
+        with tempfile.TemporaryDirectory() as td:
+            rules = [("git status --porcelain -- docs/hardware",
+                      const(0, f" M {ENC}/canary_sense_enclosure.scad\n")),
+                     ("openscad -o", const(1, "ERROR: no GL context"))]
+            code, out, rec = run_main(["--from", "gen_flash", "--previews", td], rules)
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED rendering previews (12 of 12)", out)
+        self.assertNotIn(["python3", "canary-local/tools/gen_flash.py"], rec.argvs())
 
     def test_a_failed_preview_fails_the_run(self):
         with tempfile.TemporaryDirectory() as td:
