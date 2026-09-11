@@ -42,7 +42,7 @@ survived only if a majority could not. The counts:
 | Closed by the documentation wave (PR #1647, mirror #11, website #189) | 0 — a fresh docs audit, not this list; see §3 |
 | Landed in wave 3 (PR #1664) | 10 in full (four of them rows that were "in part") |
 | Landed in wave 4 (2026-09-08) | 7 in full (items 2, 5, 6, 13, 22, 42, 51 — 2 and 22 host-tested, 5/6/13 compile-untested here) |
-| Still open | 0 in full, 2 in part (21's Parametrize wave, 30's version spread) |
+| Still open | 0 in full, 2 in part (21's Parametrize wave, 30's version spread), plus one decision surfaced in wave 4's review: whether the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, 5 s in both firmwares) should widen to the ten-minute grid Invariant III names for wall-clock time |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -164,6 +164,20 @@ prove here:
 What is left — 0 rows in full and 2 in part — is the device package's
 Parametrize wave (row 21) and row 30's version-spread decision, plus the
 bench confirmations in §5 that no worktree can run.
+
+One decision surfaced by the wave-4 review and deliberately not taken
+here: the witness chain binds `time_bucket = millis() / time_bucket_ms`
+with a 5 s floor (`TIME_BUCKET_MS` in canary-wap, `CONFIG_TIME_BUCKET_MS`
+and the canary product's `securacv_witness.cpp`), documented in six places
+as the privacy floor, while Invariant III names ten-minute buckets for
+wall-clock time. The bucket rides every witness surface because the hash
+binds it, so `/api/v1/witness` adds no exposure — but an authenticated
+reader can place records 5 s apart relative to boot. Widening the floor to
+600 000 ms is mechanical (the two constants, `configs/canary-wap/*/config.h`,
+`web_ui.h`'s "Minimum 5000 ms" copy, the two READMEs, `LESSONS_LEARNED`
+line "5-second buckets (minimum)", `test_config_logic.cpp`'s `FLOOR`) and
+changes nothing about verification, but it is a product decision about
+both firmwares' chains, not a review fix (`spec/witness_api_v1.md` §3).
 
 ### The documentation wave
 

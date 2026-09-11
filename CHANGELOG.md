@@ -237,7 +237,16 @@
   device with no pin (`tlsPinMissing` — a TLS device the app cannot check is
   not a checked device); PairView refuses such a receipt at paste time; the
   liveness sentinel and the rollout's return-watch probe through the same
-  pin. Plain-http devices are unchanged. Compile-untested here.
+  pin. Plain-http devices are unchanged. Compile-untested here. Review
+  round (Codex on #1675): the compact pairing QR (`GET /api/pairing-qr`)
+  now carries `tls_cert_fp` on a TLS-enabled device too — without it the
+  app's new refusal made the QR fallback unable to add any https Canary;
+  `GET /api/v1/witness` takes its ring snapshot before it writes the
+  header, so `total` can never trail a `seq` on the same page; and the
+  contract's §3 now states both time floors exactly (a ten-minute
+  wall-clock bucket, and the chain's native 5 s uptime bucket that rides
+  because the hash binds it and every existing surface already carries it)
+  instead of claiming only the first.
 - **Fleet Wi-Fi rollout: the password's wire is named, and plain http asks
   first.** The planner prefers the bonded BLE lane over plain http even for
   an online Canary, uses HTTP freely only when the device is pinned https,

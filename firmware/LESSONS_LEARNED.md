@@ -32,6 +32,19 @@
   `wap_v1`. ONE fixture (`spec/fixtures/witness_page_v1.json`) is
   byte-compared by the firmware host test and decoded by the Swift test
   against the same public key — the contract cannot move on one side alone.
+- **Review round, two lessons the contract itself taught:** (1) a streamed
+  page must *snapshot before it promises* — the handler wrote `total` from
+  the live chain head and only then copied the ring, so a record sealed in
+  between could ride the page with a `seq` above the `total` the header had
+  already sent; copy first, derive the header from the copy. (2) Write down
+  every time floor the wire actually has. The spec said "nothing finer than
+  ten minutes" while the chain hash binds a 5 s *uptime* bucket that has to
+  ride for the hash to be recomputable (and already rides the SD line,
+  `/api/export` and the MQTT chain publish). A reviewer read the sentence,
+  not the tree, and was right to. Whether the chain's floor should widen
+  to the ten-minute grid is a product decision (both firmwares, their
+  config floors, six places of operator copy), recorded as open — the
+  contract's job was to stop overclaiming, which it now does.
   The app pins `tls_cert_fp` and refuses an https device without it; the
   rollout prefers the bonded BLE lane and discloses plain http.
 - **Guidance:** a contract that exists only as "what the other side sends

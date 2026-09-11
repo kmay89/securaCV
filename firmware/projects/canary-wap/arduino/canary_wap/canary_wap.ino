@@ -4068,9 +4068,12 @@ static esp_err_t handle_witness(httpd_req_t* req) {
 // (spec/witness_api_v1.md), streamed from the RAM ring in witness_page.h:
 // the newest N signed records, oldest first, each with its full chain-hash
 // pre-image and its Ed25519 signature so the phone can recompute the chain
-// and verify the head against the key it pinned. Coarse time only
-// (Invariant III): a ten-minute bucket start, and only when the device has
-// met a believable clock. Chunked, one record per chunk — a 100-record page
+// and verify the head against the key it pinned. Wall-clock time rides only
+// as a ten-minute bucket start (`timestamp`, Invariant III), and only when
+// the device has met a believable clock; the chain's own uptime bucket
+// (`time_bucket`, TIME_BUCKET_MS floor) rides because the hash binds it —
+// the same value the SD line, /api/witness, /api/export and the MQTT chain
+// publish already carry (spec §3). Chunked, one record per chunk — a 100-record page
 // would not fit a stack buffer, and the header/record/footer split is
 // exactly what the host test byte-compares.
 static esp_err_t handle_witness_v1(httpd_req_t* req) {
@@ -4081,9 +4084,23 @@ static esp_err_t handle_witness_v1(httpd_req_t* req) {
   if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) query = qs;
   const size_t last = witness_page::parse_last(query);
 
+  /* Copy under the ring's lock FIRST, then render from the copy: a record
+   * sealed on the main loop mid-send can neither tear a row nor shift the
+   * ring under the chunked writer (which may block on the socket). The
+   * snapshot precedes the header so `total` can be derived from what the
+   * page will actually carry — read the other way round, a record sealed
+   * between the header write and the ring read would ride the page with a
+   * `seq` above the `total` the header promised (Codex on #1675). */
+  portENTER_CRITICAL(&g_witness_page_mux);
+  const size_t count = g_witness_page_ring.snapshot(last, g_witness_page_snap);
+  portEXIT_CRITICAL(&g_witness_page_mux);
+
   witness_page::Context ctx;
   ctx.device_id   = g_device.device_id;
-  ctx.total       = g_device.seq;
+  ctx.total       = g_device.seq;  // the chain head, read after the snapshot …
+  if (count > 0 && g_witness_page_snap[count - 1].seq > ctx.total) {
+    ctx.total = g_witness_page_snap[count - 1].seq;  // … so it never trails the page
+  }
   ctx.now_ms      = millis();
   ctx.now_epoch_s = (uint32_t)time(nullptr);
 
@@ -4096,12 +4113,6 @@ static esp_err_t handle_witness_v1(httpd_req_t* req) {
   if (n == 0) return http_send_error(req, 500, "page_header");
   if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
 
-  /* Copy under the ring's lock, render from the copy: a record sealed on the
-   * main loop mid-send can neither tear a row nor shift the ring under the
-   * chunked writer (which may block on the socket). */
-  portENTER_CRITICAL(&g_witness_page_mux);
-  const size_t count = g_witness_page_ring.snapshot(last, g_witness_page_snap);
-  portEXIT_CRITICAL(&g_witness_page_mux);
   for (size_t i = 0; i < count; i++) {
     n = witness_page::record_build(buf, sizeof(buf), g_witness_page_snap[i], ctx, i == 0);
     if (n == 0) break;  // cannot happen at RECORD_MAX; close the page rather than hang
@@ -6500,8 +6511,10 @@ static void url_decode_inplace(char* s) {
 // Render a text payload as an SVG QR code response. Shared by the fleet
 // WiFi-credentials QR and the pairing-receipt QR.
 static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
-  // Use version 1-10 range (enough for short payloads, small QR)
-  static constexpr int QR_MAX_VER = 10;
+  // Versions 1-12: the encoder picks the smallest that fits, so short
+  // payloads stay small; 12 (287 bytes at ECC M) is the ceiling the pairing
+  // receipt needs once it carries the TLS pin (handle_pairing_qr).
+  static constexpr int QR_MAX_VER = 12;
   uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
   uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
 
@@ -6827,9 +6840,13 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  * The payload carries the API token, so this endpoint demands the same
  * auth as the receipt's Bearer path — the QR is something an already-
  * authenticated operator deliberately shows to their own phone, never an
- * anonymous read. Only the three fields the app's scanner consumes are
- * encoded ({device_id, base_url, token}); the slim payload keeps the QR
- * at a low version so phone cameras lock on quickly.
+ * anonymous read. Only the fields the app's scanner consumes are encoded:
+ * {device_id, base_url, token}, plus tls_cert_fp on a TLS-enabled device —
+ * the certificate pin the app requires before it will speak to an https
+ * Canary at all (ios DeviceAPI.swift; PairView refuses an https receipt
+ * without one, so a QR that omitted it could never pair a secure device —
+ * Codex on #1675). The slim payload keeps the QR at a low version so phone
+ * cameras lock on quickly; the pin adds ~80 bytes only where it is needed.
  */
 static esp_err_t handle_pairing_qr(httpd_req_t* req) {
   g_health.http_requests++;
@@ -6845,13 +6862,25 @@ static esp_err_t handle_pairing_qr(httpd_req_t* req) {
              WiFi.softAPIP().toString().c_str());
   }
 
-  char payload[224];
-  int n = snprintf(payload, sizeof(payload),
-    "{\"device_id\":\"%s\",\"base_url\":\"%s://%s\",\"token\":\"%s\"}",
-    g_device.device_id,
-    g_tls_enabled ? "https" : "http",
-    base_host,
-    g_device.api_token_str);
+  // With the 64-hex pin the worst case (31-char id, 55-char host, the
+  // 35-char token) is ~250 bytes: within QR version 12 at ECC M (287),
+  // which send_qr_svg allows; the encoder still picks the smallest version
+  // that fits, so a plain-http device's QR is as small as before.
+  char payload[320];
+  int n;
+  if (g_tls_enabled && g_tls_cert_fp_hex[0] != '\0') {
+    n = snprintf(payload, sizeof(payload),
+      "{\"device_id\":\"%s\",\"base_url\":\"https://%s\",\"token\":\"%s\","
+      "\"tls_cert_fp\":\"%s\"}",
+      g_device.device_id, base_host, g_device.api_token_str, g_tls_cert_fp_hex);
+  } else {
+    n = snprintf(payload, sizeof(payload),
+      "{\"device_id\":\"%s\",\"base_url\":\"%s://%s\",\"token\":\"%s\"}",
+      g_device.device_id,
+      g_tls_enabled ? "https" : "http",
+      base_host,
+      g_device.api_token_str);
+  }
   if (n < 0 || (size_t)n >= sizeof(payload)) {
     return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
                                "Failed to build pairing payload");

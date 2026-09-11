@@ -56,7 +56,7 @@ allowlist only as a *gated* route (`tests_host/check_route_security.py`).
 | `schema` | string | no | `securacv/witness_page/v1` when present. |
 | `device_id` | string | no | The device's own id (the `wap_v1` genesis input, §4.2). |
 | `total` | integer | no | The chain length: the newest `seq` this key has issued. May exceed the newest `seq` on the page only if records were issued between the ring read and the header write; it never falls below it. |
-| `uptime_s` | integer | no | Seconds since boot at render time. The anchor for records that carry no `timestamp` (§3.2). |
+| `uptime_s` | integer | no | Seconds since boot at render time — the same value as `/api/status` `uptime_sec`. The anchor for records that carry no `timestamp` (§3.2). |
 
 Unknown top-level fields are ignored.
 
@@ -83,8 +83,28 @@ Unknown record fields are ignored (the reference server also sends
 
 ## 3. Time on this wire — Invariant III
 
-`spec/invariants.md` Invariant III: nothing a Canary publishes names a time
-finer than a ten-minute bucket.
+`spec/invariants.md` Invariant III: a Canary never publishes a precise
+timestamp. On this wire that is two floors, and a reader must know both:
+
+* **Wall-clock time is never finer than a ten-minute bucket.** `timestamp`,
+  when present, is a bucket start (§3.1), and a reader presents every record
+  as a bucket.
+* **The chain binds an *uptime* bucket at its native width.** canary-wap's
+  chain hash covers `time_bucket = millis() / time_bucket_ms` (§4.2), where
+  `time_bucket_ms` is a runtime setting clamped to the firmware's floor
+  (`TIME_BUCKET_MS`, 5 000 ms as shipped; `/api/config` reports it as
+  `time_bucket_floor_ms`). The page carries `time_bucket` and
+  `time_bucket_ms` because the hash cannot be recomputed without them. This
+  is not new exposure: the same value already rides the SD witness line,
+  `GET /api/witness`, `POST /api/export` and the MQTT `chain` publish, and
+  `uptime_s` is `/api/status`'s `uptime_sec` — every one of them behind the
+  same Bearer token. It does mean an authenticated reader can place a record
+  to the bucket's width *relative to boot*, and, with any anchor, in wall
+  time. A reader MUST still present it coarsened (§3.1, §3.2); widening the
+  chain's floor to the ten-minute grid is a firmware decision recorded as
+  open in `docs/IMPROVEMENT_ROADMAP.md` (it touches both products' witness
+  chains, their config floors and the operator copy that names 5 s), not
+  something this contract can do on its own.
 
 ### 3.1 `timestamp` is a bucket start
 
