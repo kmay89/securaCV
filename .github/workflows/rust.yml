@@ -274,6 +274,21 @@ jobs:
       run: cargo clippy --all-targets --features alert-relay -- -D warnings
     - name: Test (alert-relay)
       run: "cargo test --verbose --features alert-relay relay::"
+    - name: Clippy (surface-busybar)
+      run: cargo clippy --all-targets --features surface-busybar -- -D warnings
+    # The surface's tests ARE its privacy contract: which card class may reach
+    # the room-facing matrix, that no control can do anything but draw, that
+    # losing the broker shows unknown rather than a stale calm state, and that
+    # every drawing expires on the device. Same reasoning as the bridge job
+    # above — a clippy-only gate would compile those and never run them.
+    - name: Test (surface-busybar)
+      run: "cargo test --verbose --features surface-busybar surface::"
+    # The source-level invariants live in an integration test, so they need
+    # their own filter: they assert the code AROUND the pure core has not grown
+    # a publish path, a kernel write, or a way to build a public word from wire
+    # text.
+    - name: Test (surface-busybar source invariants)
+      run: cargo test --verbose --features surface-busybar --test busybar_surface_invariants
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)
