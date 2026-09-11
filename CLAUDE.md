@@ -46,7 +46,7 @@
     `initialism`, `aria-labelledby`. The linter's `ALLOW` list asserts it.
   - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
 
-## Generated files — there are TWENTY, not a handful
+## Generated files — there are TWENTY-NINE, not a handful
 
 Committed generators whose output CI regenerates and byte-diffs. Editing a
 source without re-running the right one leaves a gate to find it, and the
@@ -84,7 +84,7 @@ page as `wap.html` embeds it, and it reads that page from
 `gen_wap.py` **then** `gen_csp.py`; running only the first leaves
 `gen_csp.py --check` red with a message that names the second.
 
-**The recipe above does not find the twenty-first, and it can't:** the WASM
+**The recipe above does not find the thirtieth, and it can't:** the WASM
 emulator's `canary-local/emulator/dist/*.js` is generated and committed like
 the rest, but its generator is a compiler and its *inputs are firmware
 sources*. There is no `gen_*.py` or `make-*.mjs` to grep for. So an ordinary
