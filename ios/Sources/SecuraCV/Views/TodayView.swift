@@ -45,7 +45,7 @@ struct TodayView: View {
     }
 
     private var backdrop: some View {
-        LinearGradient(colors: [Theme.color(store.worstSeverity.role).opacity(0.12), .clear],
+        LinearGradient(colors: [Theme.color(store.worstSeverity.role).opacity(Theme.faint), .clear],
                        startPoint: .top, endPoint: .center)
     }
 }
@@ -59,11 +59,12 @@ struct StatusHero: View {
     var watchers: Int = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .largeTitle) private var heroSymbolSize: CGFloat = 56
 
     var body: some View {
         VStack(spacing: Theme.s) {
             Image(systemName: severity.sfSymbol)
-                .font(.system(size: 56, weight: .semibold))
+                .font(.system(size: heroSymbolSize, weight: .semibold))
                 .foregroundStyle(Theme.color(severity.role))
                 .symbolRenderingMode(.hierarchical)
                 // A quiet pulse ONLY while something needs you — the calm
@@ -105,9 +106,9 @@ struct TimelineRow: View {
                     .imageScale(.medium)
                     .frame(width: 24)
                     .accessibilityLabel(event.severity.label)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Theme.xxs) {
                     Text(event.headline).font(.body)
-                    HStack(spacing: 6) {
+                    HStack(spacing: Theme.inline) {
                         Image(systemName: event.badge.sfSymbol)
                             .imageScale(.small)
                             .foregroundStyle(event.badge.isTrusted ? Theme.color(.calm) : .secondary)
@@ -131,7 +132,7 @@ struct EmptyTimeline: View {
                 VStack(alignment: .leading, spacing: Theme.xs) {
                     Text("Nothing to report").font(.headline)
                     Text("Events show up here as your Canaries witness them — a claim of what happened, never a recording.")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
         }
@@ -142,16 +143,15 @@ struct EmptyTimeline: View {
 struct DemoDataBanner: View {
     @EnvironmentObject var store: FleetStore
     var body: some View {
-        HStack(spacing: Theme.s) {
-            Image(systemName: "sparkles.rectangle.stack")
-            Text("Demo fleet — sample data").font(.footnote.weight(.medium))
-            Spacer()
-            Button("Turn off") { store.setDemoMode(false) }
-                .font(.footnote.bold())
+        Card(variant: .chip) {
+            HStack(spacing: Theme.s) {
+                Image(systemName: "sparkles.rectangle.stack")
+                Text("Demo fleet — sample data").font(.footnote.weight(.medium))
+                Spacer()
+                Button("Turn off") { store.setDemoMode(false) }
+                    .font(.footnote.weight(.semibold))
+            }
         }
-        .padding(.horizontal, Theme.m)
-        .padding(.vertical, Theme.s)
-        .background(.ultraThinMaterial, in: Capsule())
         .accessibilityElement(children: .combine)
     }
 }

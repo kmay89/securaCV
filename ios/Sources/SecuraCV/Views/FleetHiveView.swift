@@ -23,7 +23,12 @@ struct FleetHiveView: View {
                     ForEach(witnesses) { w in
                         NavigationLink(value: w) { HiveCell(witness: w) }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("\(w.displayName), \(w.effectiveSeverity.label)")
+                            // The parent link's explicit label is what VoiceOver
+                            // speaks (it overrides the children), so mute must be
+                            // announced HERE — a label on the bell would be inert.
+                            .accessibilityLabel(w.isMuted
+                                ? "\(w.displayName), \(w.effectiveSeverity.label), muted"
+                                : "\(w.displayName), \(w.effectiveSeverity.label)")
                     }
                     Button {
                         showAdd = true
@@ -62,6 +67,7 @@ struct HiveCell: View {
 
     private var role: Theme.Role { witness.effectiveSeverity.role }
     private var isQuiet: Bool { witness.effectiveSeverity == .ok }
+    @ScaledMetric(relativeTo: .caption2) private var muteBellSize: CGFloat = 9
 
     var body: some View {
         ZStack {
@@ -70,7 +76,7 @@ struct HiveCell: View {
             // only one at full saturation. Color never carries meaning
             // alone — the glyph and label repeat it.
             Circle()
-                .strokeBorder(Theme.color(role).opacity(isQuiet ? 0.35 : 0.95),
+                .strokeBorder(Theme.color(role).opacity(isQuiet ? Theme.dim : 1),
                               lineWidth: isQuiet ? 2.5 : 3.5)
             VStack(spacing: 3) {
                 // The device itself where the pipeline can draw it honestly —
@@ -94,8 +100,12 @@ struct HiveCell: View {
                     .lineLimit(1)
                     .frame(maxWidth: 76)
                 if witness.isMuted {
+                    // 8pt was below the legibility floor at default type;
+                    // 9pt scaling with .caption2 is the smallest honest
+                    // bell. The 96pt cell absorbs growth; the name label
+                    // truncates first.
                     Image(systemName: "bell.slash.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: muteBellSize))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -109,7 +119,7 @@ struct AddHiveCell: View {
         ZStack {
             Circle()
                 .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
-                .foregroundStyle(.secondary.opacity(0.6))
+                .foregroundStyle(.secondary.opacity(Theme.soft))
             VStack(spacing: 3) {
                 Image(systemName: "plus")
                     .font(.title3)

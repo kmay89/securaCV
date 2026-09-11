@@ -224,7 +224,7 @@ struct TimelineDayShapeView: View {
                         Capsule()
                             .fill(Theme.color(.info))
                             .frame(width: gainTier > 0 ? 2 : 3)
-                            .shadow(color: Theme.color(.info).opacity(0.45), radius: 3)
+                            .shadow(color: Theme.color(.info).opacity(Theme.dim), radius: 3)
                             .offset(x: x - (gainTier > 0 ? 1 : 1.5) + edgeOvershoot(width: width))
                             .animation(reduceMotion ? nil : .interactiveSpring(), value: bucket)
                             // Springs the overshoot home when the drag ends.
@@ -240,7 +240,7 @@ struct TimelineDayShapeView: View {
                         // detent haptic, and a real touch dismisses it. The
                         // ghost matches the idle pen's width, visibly lighter.
                         Capsule()
-                            .fill(Theme.color(.info).opacity(0.30))
+                            .fill(Theme.color(.info).opacity(Theme.dim))
                             .frame(width: 3)
                             .offset(x: hx)
                             .animation(.easeInOut(duration: 0.13), value: hx)

@@ -64,7 +64,7 @@ struct FindCanaryView: View {
             // (its real figure), a ring that tightens band by band.
             ZStack {
                 Circle()
-                    .stroke(Theme.color(.info).opacity(0.15), lineWidth: 10)
+                    .stroke(Theme.color(.info).opacity(Theme.faint), lineWidth: 10)
                 Circle()
                     .trim(from: 0, to: reading.band.ringFraction)
                     .stroke(ringColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
@@ -82,10 +82,14 @@ struct FindCanaryView: View {
                     .font(.title.bold())
                     .contentTransition(.opacity)
                 if let trend = reading.trend.label {
+                    // Colder is guidance, not a warning — the words "Warmer"
+                    // and "Colder" carry the meaning (C5); orange stays a
+                    // reserved severity word. And no glyph: this screen's
+                    // doctrine is that there is honestly no arrow.
                     Text(trend)
                         .font(.headline)
                         .foregroundStyle(reading.trend == .warmer
-                                         ? Theme.color(.calm) : Theme.color(.warn))
+                                         ? Theme.color(.calm) : Theme.color(.neutral))
                 }
                 if suffixIsAmbiguous {
                     // No signal is honest here — walking the user toward a
@@ -243,7 +247,7 @@ struct FindCanaryView: View {
         switch reading.band {
         case .here: return Theme.color(.calm)
         case .veryClose, .near: return Theme.color(.info)
-        default: return Theme.color(.info).opacity(0.6)
+        default: return Theme.color(.info).opacity(Theme.soft)
         }
     }
 }
