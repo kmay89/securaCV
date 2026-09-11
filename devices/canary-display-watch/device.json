@@ -26,7 +26,16 @@
     "scad": "docs/hardware/enclosure/canary_watch_station.scad",
     "enclosure_sets": [
       "watch-station"
-    ]
+    ],
+    "params": {
+      "disc_d": {
+        "brd": "round_disp",
+        "dim": "l"
+      },
+      "disc_t": 5.0,
+      "disp_back": 5.0,
+      "xiao_t": 4.4
+    }
   },
   "emulator": {
     "flavor": "watch"

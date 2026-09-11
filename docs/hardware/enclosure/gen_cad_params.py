@@ -815,9 +815,9 @@ def main(argv: list[str] | None = None) -> int:
         if rows or facts:
             print(f"INFO: registry entries no manifest references — rows: "
                   f"{', '.join(rows) or 'none'}; facts: {', '.join(facts) or 'none'}. Cases whose "
-                  f"manifests own no knobs yet (the display cases) and cases with no manifest "
-                  f"(the doorbell, the gang plate, the Hammond chassis, the J-box, the bench "
-                  f"fixture) cite them by comment; not an error")
+                  f"manifests own no knobs yet (the C6 display, the 7\" frame) and cases with no "
+                  f"manifest (the doorbell, the gang plate, the Hammond chassis, the J-box, the "
+                  f"bench fixture) cite them by comment; not an error")
         return 0
 
     written, errors = write()
