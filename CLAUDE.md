@@ -68,7 +68,14 @@ The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
 `gen_hub_provision_bundle.py` (anything it embeds and pins by hash),
 `gen_apple_home_docs.py` (any `homekit_projection` change in the dictionary —
 the Apple Home quickstart's signal table is a privacy promise, so a stale one
-is a false statement rather than merely old).
+is a false statement rather than merely old), and `gen_cad_params.py` (any
+`cad.params` edit in `devices/<slug>/device.json`, or a `.scad` edit that
+bypasses the manifest: it **writes** the manifest-owned board knobs into the
+case file — the literal token on the knob's own line — and `--check` proves
+the file still says them, in `lint.yml`, in `enclosure.yml` and through
+`scripts/lint_device_manifests.py`; a board fact is a reference into
+`canary_board_lib.scad`'s registry, so correcting a board dimension is an
+edit to the registry, never to the literal by hand).
 
 Two of them are chained, and the order matters: `gen_csp.py` (every Lab page's
 Content-Security-Policy, from one policy table) hashes the firmware's captive
@@ -124,6 +131,53 @@ bump/edit → ./setup.sh regen → dispatch the dist rebuild → pull it
           → run the gen_*.py catalogs → commit
 ```
 
+**A CAD or `cad.params` edit is the same order with more links in front of
+it, and one command runs them:** `python3 scripts/regen_cad.py --previews
+<dir>` (`--check` runs every step's check form and names the first stale
+one; `--from <step>` resumes; `--list` prints the steps). The order is derived
+from what each generator *reads*, and it is this — stated here once, so the
+prose and the script cannot disagree:
+
+```
+devices/<slug>/device.json cad.params
+  → gen_cad_params.py            (the knob into the .scad — a one-line diff; --dry-run shows it first)
+  → lint_design_lang.py          (the literal-knob canon still holds)
+  → render.sh --no-png           (the STLs; OpenSCAD 2021.01)
+  → gen_assembled_dims.py        (assembled envelopes, measured off the fit-checked unions)
+  → gen_figures.mjs              (figures.json, the SVGs, fleet_figures.h / _art.h, FleetFigures.swift)
+  → gen_device_glbs.mjs          (the two flashers' models)
+  → firmware/projects/canary-display/setup.sh regen   (only when fleet_figures*.h moved) — then STOP
+  → dispatch the dist rebuild → pull it
+  → gen_flash.py → gen_builder_manifest.py [--site <website-checkout>] → gen_enclosures.py
+  → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
+  → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
+```
+
+Two things about that list that the old prose had wrong. `./setup.sh regen`
+is `firmware/projects/canary-display/setup.sh` (`regen)` at :363-368), the
+display project's Arduino sketch mirror — it *copies* `gen_figures.mjs`'s
+outputs (`fleet_figures.h` and `fleet_figures_art.h`, setup.sh:128-129) into
+the sketch, so it runs **after** the figures generator, never before it. And
+the STL link has no `--check` form: OpenSCAD's STL bytes are not
+deterministic, so nothing byte-gates them — the two steps after it gate the
+bounding boxes and seams, and `enclosure.yml` re-renders and greps the log.
+There is no Actions button that renders STLs and pushes them back; the
+"Enclosure CAD" workflow names the drift, it does not fix it.
+
+**A generator that cannot spell a value must refuse, not pass.** The review
+of `gen_cad_params.py` found its own checker answering "the file already
+says it" for a value it had no Customizer-literal spelling for — a number
+whose `repr` is exponent form (`0.00005` against a file literal `0.6`), NaN,
+infinity, a string holding `//` or `/*` (a comment opener to the parser) —
+so a wrong manifest passed `--check` and a write wrote nothing, green all
+the way. A `--check` is the writer's own reader; when the writer cannot
+spell a value, the reader is the last thing that should say "equal". Every
+such value is now refused by manifest, knob and reason before anything
+renders (and a two-statement line is refused whatever the statements — the
+first version counted only the knobs the parser accepted from it). When you
+write a generator with a check form, enumerate what the write path cannot
+express and make the check fail on it, not fall through.
+
 **Two different gates catch a stale dist, and only one of them is the drift
 check.** `canary-local.yml`'s "Dist drift check" compares the BUNDLE bytes and
 deliberately ignores `meta.json` (it carries the git stamp — the merge-base
@@ -170,6 +224,23 @@ pushes the bytes back. Two things to know before you rely on it:
 
 ## Enclosure CAD
 
+- **Changed a board knob? Change the manifest, not the file.** The board
+  and module dimensions a released or display case is cut around
+  (`board_l`, `vm_w`, `stack_sock_h`) are owned by
+  `devices/<slug>/device.json` `cad.params`, and
+  `docs/hardware/enclosure/gen_cad_params.py` writes them into the `.scad`
+  (`--dry-run <slug>:<knob>=<value>` prints the one-line diff first; the
+  literal in the file is what every consumer keeps reading). A board fact
+  is a reference into `canary_board_lib.scad`'s registry — correct the
+  registry row and every owned case follows; a case measurement is a
+  number. Walls, tolerances and the selectors stay in the file: the
+  design-language canon is case-owned (`lint_design_lang.py`) and
+  `preset` / `host` / `part` are chosen per printable set at render time.
+  What each manifest owns and what it cannot yet (the C6's `model` ternary,
+  the 7" frame's panel record, the 1.69's two-knob line, the doorbell) is
+  in `devices/README.md`. Then `python3 scripts/regen_cad.py --previews
+  <dir>` — the order in "Generated files" above, as one command.
+
 - **Always send rendering previews.** Any change to an enclosure `.scad`
   ships with PNG previews of every affected part, shared with the requester
   in the conversation. This is a repo-wide rule — it lives in the AGENTS.md
@@ -185,7 +256,9 @@ pushes the bytes back. Two things to know before you rely on it:
   FIRST (it re-measures the assembled envelopes the ledger publishes; the
   enclosure CI `--check`s it), then
   `node canary-local/tools/figures/gen_figures.mjs` and commit both outputs in
-  the same change; `--check` is the CI gate and will name every stale file.
+  the same change; `--check` is the CI gate and will name every stale file
+  (`scripts/regen_cad.py` runs both, in that order, with everything downstream
+  of them).
   The generator refuses to emit a figure that has drifted from its part, or
   one that puts two materials on the same plane — both are real defects, not
   style notes.
