@@ -83,14 +83,18 @@ manifest-owned case — `--check` reports it as "registry says X, file says Y"
 and a write carries it into the file. A reference is declared only where the
 knob's help comment already cites the registry; a knob that merely equals a
 row by coincidence (the WAP's `board_h` 1.2, the Sense's uncommented `pcb_t`)
-stays a number. **A design decision is which registry entry the manifest
+stays a number. One reference leans on less than the others: the Vision's
+`vm_w` comment never spells `brd_w("grove_v2")` — it cites the `[Boards]`
+group header (which points at the registry) and `board_selfcheck()`, and the
+test accepts that as the citation. **A design decision is which registry entry the manifest
 names:** the WAP and Sense clips name `brd_w("xiao")` (the 17.5 spec width —
 the clips absorb the measured board) and the Vision pins name
 `brd_xiao_w_measured()` (17.8); the registry states the truth, the manifest
 states the decision, as the library's header asks each file to. The rows and
 facts no manifest references (the doorbell's, the gang plate's, the display
 cases') are printed by `--check` as INFO, never an error — those cases cite
-the registry by comment and have no manifest yet. The library is read, never
+the registry by comment: the display cases' manifests own no knobs yet, and
+the doorbell and the gang plate have no manifest. The library is read, never
 written: correcting a board dimension is still an edit to the registry.
 
 ## Run the gate
@@ -192,8 +196,9 @@ linter; making the matrix generator read them is a wave of its own).
   that is a board fact is a reference into the board registry
   (`canary_board_lib.scad`), so a registry correction flows to every owned
   case through the same generator. Still open in this wave: the display
-  cases, whose `model` ternary and two-knob lines the generator refuses
-  today; and the ledger keys the website derives its copy from. A real
+  cases, whose `model` selector, `model`-derived `board_l` / `board_w` and
+  two-knob lines the generator refuses today; and the ledger keys the
+  website derives its copy from. A real
   dimension edit still owes the render previews `AGENTS.md` requires with
   every `.scad` change — the generator lists the changed lines so that
   obligation is a list, not a memory.
