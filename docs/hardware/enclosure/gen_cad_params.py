@@ -67,8 +67,10 @@ WHAT IT REFUSES (exit 1, naming the manifest, the knob and why):
     `part`): those are chosen per printable SET at render time (render.sh,
     canary_case_fitcheck.scad, gen_assembled_dims.py), not by a device;
   * a value whose type disagrees with the knob's (a number for a string);
-  * a line that assigns two knobs (`aa_dx = 0.0; aa_dy = 0.0;`) — split the
-    line first, so a rewrite can never touch its neighbor;
+  * a line that holds two statements (`aa_dx = 0.0; aa_dy = 0.0;`, `$fn =
+    64; shared = 7;`, `mixed = 3; dep = mixed;`) — counted on the line's
+    code, comments and strings aside — split the line first, so a rewrite
+    can never touch its neighbor;
   * a knob assigned twice at top level (OpenSCAD warns and takes the last);
   * two manifests naming one .scad that disagree on a shared key. Several
     manifests may name one case (the three Vision hosts); each asserts any
@@ -105,7 +107,6 @@ import math
 import os
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
 
@@ -364,6 +365,28 @@ def _strip_comments(src: str) -> str:
     return "".join(out)
 
 
+def _statements(body: str) -> int:
+    """How many `;`-terminated statements the CODE of one line carries —
+    comments stripped, strings skipped — so a `;` in the help text or inside
+    a quoted value is not a statement, and `$fn = 64; shared = 7;` is two
+    whatever parse_scad makes of `$fn`."""
+    code = _strip_comments(body)
+    count, in_str, i = 0, False, 0
+    while i < len(code):
+        c = code[i]
+        if in_str:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == ";":
+            count += 1
+        i += 1
+    return count
+
+
 # ---------------------------------------------------------------------------
 # the board registry
 # ---------------------------------------------------------------------------
@@ -603,8 +626,6 @@ def render(scad_path: Path, owned: dict[str, object],
     # joining reproduces the bytes, whatever each line ends with.
     text = scad_path.read_bytes().decode("utf-8")
     lines = text.splitlines(keepends=True)
-    flat = _params(scad_path)
-    per_line = Counter(p["line"] for p in flat)
     params = eligible(scad_path)
     changes: list[Change] = []
     errors: list[str] = []
@@ -642,14 +663,20 @@ def render(scad_path: Path, owned: dict[str, object],
             errors.append(f"{tag(name)} is a {got} in the manifest but the knob is a {want} "
                           f"(line {p['line']}: {json.dumps(p['default'])})")
             continue
-        if per_line[p["line"]] > 1:
-            errors.append(f"{tag(name)}: line {p['line']} assigns more than one knob — split the "
-                          f"line first, so a rewrite can never touch its neighbor")
-            continue
         idx = p["line"] - 1
         raw = lines[idx]
         body = raw.rstrip("\r\n")
         ending = raw[len(body):]
+        # Counted on the line's code, not on the knobs parse_scad accepted from
+        # it: `shared2 = 8; $fn = 32;` has one parsed knob and two statements,
+        # and `mixed = 3; dep = mixed;` likewise — a rewrite may touch neither
+        # neighbor, so any second statement refuses the line.
+        k = _statements(body)
+        if k > 1:
+            errors.append(f"{tag(name)}: line {p['line']} holds {k} statements "
+                          f"({body.strip()!r}) — split the line first, so a rewrite can never "
+                          f"touch its neighbor")
+            continue
         m = re.match(LINE_RE % re.escape(name), body)
         if not m:
             errors.append(f"{tag(name)}: could not locate the literal on line {p['line']} "

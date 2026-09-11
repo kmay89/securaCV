@@ -24,7 +24,7 @@ What is pinned and why:
     with what each cites, the knobs that merely equal a row stay numbers, and
     a mutated registry value moves exactly the lines that reference it;
   • every refusal fires by name — a selector, a computed / [Hidden] knob, a
-    type mismatch, a two-knob line, a knob assigned twice, a non-scalar
+    type mismatch, a two-statement line, a knob assigned twice, a non-scalar
     value, a malformed reference, two manifests disagreeing on a shared key
     — and a refusal anywhere means nothing is written anywhere.
 
@@ -748,8 +748,40 @@ class Refusals(unittest.TestCase):
         self.assertEqual(r.changes, [])
         self.assertEqual(len(r.errors), 2, r.errors)
         for e in r.errors:
-            self.assertIn("line 69 assigns more than one knob", e)
+            self.assertIn("line 69 holds 2 statements", e)
             self.assertIn("split the line first", e)
+
+    def test_a_line_with_two_statements_is_refused_whatever_they_are(self):
+        # counted on the code of the line, not on the knobs the parser took
+        # from it: `$fn` is skipped by parse_scad and `dep = mixed` is not a
+        # literal, so one parsed knob used to mean "one knob line" — and
+        # `$fn = 64; shared = 7;` was refused for the wrong reason (could not
+        # locate) while `shared2 = 8; $fn = 32;` was rewritten
+        src = """\
+/* [Boards] */
+$fn = 64; shared = 7;   // $fn first
+shared2 = 8; $fn = 32;  // $fn after
+mixed = 3; dep = mixed; // a literal and a computed value
+semi = 5;     // comment with ; semicolons; and x = 9; are not code
+sq = "a;b";   // a ; inside a string is not a statement
+open = 4;     /* a block comment that opens here; and
+               closes on the next line */
+module m() {}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            f = fixture(Path(td), src)
+            r = gcp.render(f, {"shared": 70, "shared2": 80, "mixed": 30, "semi": 55,
+                               "sq": "c;d", "open": 40})
+        refused = {e.split("cad.params.", 1)[1].split(":", 1)[0]: e for e in r.errors}
+        self.assertEqual(sorted(refused), ["mixed", "shared", "shared2"], r.errors)
+        for name, line in (("shared", 2), ("shared2", 3), ("mixed", 4)):
+            self.assertIn(f"line {line} holds 2 statements", refused[name])
+            self.assertIn("split the line first", refused[name])
+        self.assertEqual([(c.line, c.name, c.old_token, c.new_token) for c in r.changes],
+                         [(5, "semi", "5", "55"), (6, "sq", '"a;b"', '"c;d"'), (7, "open", "4", "40")])
+        self.assertEqual(gcp._statements('a = 1; b = "x;y"; // c; d;'), 2)
+        self.assertEqual(gcp._statements('a = 1;   // ; ; ;'), 1)
+        self.assertEqual(gcp._statements('a = "\\";"; /* ; */'), 1)
 
     def test_knob_assigned_twice_is_refused(self):
         with tempfile.TemporaryDirectory() as td:
