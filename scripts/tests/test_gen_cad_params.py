@@ -635,6 +635,60 @@ class Refusals(unittest.TestCase):
         self.assertTrue(any(WAP_REL in e and "does not exist" in e for e in errors), errors)
 
 
+class NoSilentPassForAnUnspellableValue(unittest.TestCase):
+    """_token used to return None — "the file already says it" — for a value
+    whose repr is exponent form, NaN or inf, so 0.00005 passed a --check
+    against 0.6 and write() wrote nothing. Now it raises, and render() reports."""
+
+    def test_an_exponent_form_number_is_an_error_not_unchanged(self):
+        with _Tree() as root:
+            edit(root, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_clear", 1e-5))
+            errors = gcp.check(root / "devices", root)
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("canary_wap_enclosure.scad: cad.params.board_clear (devices/canary-wap): "
+                          "1e-05 cannot be spelled as a Customizer literal", errors[0])
+            self.assertIn("no exponent form", errors[0])
+            written, werr = gcp.write(root / "devices", root)
+            self.assertEqual((written, werr), ([], errors))
+        with tempfile.TemporaryDirectory() as td:
+            f = fixture(Path(td))
+            for owned in ({"f": 1e-5}, {"n": 0.00005}, {"f": 1e16}, {"f": float("nan")},
+                          {"n": float("inf")}, {"n": -float("inf")}):
+                r = gcp.render(f, owned)
+                self.assertEqual(r.changes, [], owned)
+                self.assertEqual(len(r.errors), 1, (owned, r.errors))
+                self.assertIn("cannot be spelled as a Customizer literal", r.errors[0])
+            # an integer-valued 1e16 against an integer-spelled token has a spelling
+            r = gcp.render(f, {"n": 1e16})
+            self.assertEqual((r.errors, [(c.old_token, c.new_token) for c in r.changes]),
+                             ([], [("5", "10000000000000000")]))
+        # the helper raises — it never answers None for these
+        for value in (1e-5, 1e16, float("nan"), float("inf"), 10 ** 400):
+            with self.assertRaises(gcp.Unspellable, msg=value):
+                gcp._token(value, "0.6")
+        self.assertIsNone(gcp._token(0.6, "0.6"))
+
+    def test_a_non_finite_number_is_refused_at_load_naming_manifest_and_key(self):
+        # Python's json reads NaN and Infinity; a manifest carrying one is
+        # refused before anything is rendered, and nan == nan being False can
+        # never turn into an equality check that does not settle
+        for literal in ("NaN", "Infinity", "-Infinity"):
+            with _Tree() as root:
+                path = root / "devices" / "canary-wap" / "device.json"
+                text = path.read_text(encoding="utf-8")
+                self.assertEqual(text.count('"board_clear": 0.6'), 1)
+                path.write_text(text.replace('"board_clear": 0.6', f'"board_clear": {literal}'),
+                                encoding="utf-8")
+                owned, errors = gcp.load_params(root / "devices", root)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(f"devices/canary-wap: cad.params.board_clear = {literal} is not a "
+                              f"finite number", errors[0])
+                self.assertNotIn("board_clear", owned[WAP_REL])
+                self.assertIn("board_l", owned[WAP_REL])       # the rest still loads
+                self.assertEqual(gcp.check(root / "devices", root), errors)
+                self.assertEqual(gcp.write(root / "devices", root), ([], errors))
+
+
 class WriteMode(unittest.TestCase):
     def test_write_changes_the_file_and_check_is_then_clean(self):
         with _Tree() as root:

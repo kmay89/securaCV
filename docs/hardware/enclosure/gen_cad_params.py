@@ -98,6 +98,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from collections import Counter
@@ -210,6 +211,14 @@ class RefError(ValueError):
     clause after `cad.params.<knob> = <ref>`."""
 
 
+class Unspellable(ValueError):
+    """A manifest value with no Customizer-literal spelling: a number whose
+    shortest repr is exponent form (1e-05; 1e+16 against a decimal token),
+    a non-finite one, a string holding a comment opener. Raised, never
+    returned, so it can never be mistaken for _token's None — "the file
+    already says it" — which is what let 0.00005 pass a --check against 0.6."""
+
+
 # ---------------------------------------------------------------------------
 # values
 # ---------------------------------------------------------------------------
@@ -234,19 +243,34 @@ def _same(a, b) -> bool:
     return a == b
 
 
-def _fmt_number(value, old: str) -> str | None:
-    """`value` spelled the way `old` was: integer stays integer when it can."""
+def _finite(value) -> bool:
+    """True for a number a literal can carry: finite, and small enough for a
+    float (Python's json reads NaN, Infinity and a 400-digit integer; OpenSCAD
+    has no spelling for any of them)."""
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
+
+
+def _fmt_number(value, old: str) -> str:
+    """`value` spelled the way `old` was: integer stays integer when it can.
+    Raises Unspellable when the shortest spelling is not a Customizer literal."""
+    if not _finite(value):
+        raise Unspellable(f"{json.dumps(value)} is not a finite number")
     f = float(value)
     if "." not in old and f.is_integer():
         return str(int(f))
     s = repr(f)
-    if not re.fullmatch(r"-?\d+\.?\d*", s):      # 1e-05, inf, nan — not a knob
-        return None
+    if not re.fullmatch(r"-?\d+\.?\d*", s):      # 1e-05, 1e+16 — exponent form
+        raise Unspellable(f"Python spells it {s} and a Customizer literal is a plain decimal "
+                          f"(digits, one optional point) — no exponent form")
     return s
 
 
 def _token(value, old: str) -> str | None:
-    """The new literal for `value`, or None when `old` already says it."""
+    """The new literal for `value`, or None when `old` already says it. A value
+    with no literal spelling raises Unspellable — it is never None."""
     if isinstance(value, bool):
         new = "true" if value else "false"
         return None if new == old else new
@@ -254,6 +278,8 @@ def _token(value, old: str) -> str | None:
         if json.loads(old) == value:               # keep the file's own spelling
             return None
         return json.dumps(value, ensure_ascii=False)
+    if not _finite(value):
+        raise Unspellable(f"{json.dumps(value)} is not a finite number")
     if float(old) == float(value):
         return None
     return _fmt_number(value, old)
@@ -430,6 +456,14 @@ def load_params(devices_dir: Path = DEVICES_DIR,
                               f"number, string, boolean or registry reference — a knob is a "
                               f"literal, or exactly {REF_SHAPE} that the registry resolves to one")
                 continue
+            elif _kind(value) == "number" and not _finite(value):
+                # Python's json reads NaN and Infinity; OpenSCAD cannot spell
+                # them, and nan == nan is False, so an equality check would
+                # never settle. Refused here, by manifest and key.
+                errors.append(f"devices/{slug}: cad.params.{key} = {json.dumps(value)} is not a "
+                              f"finite number — NaN and Infinity have no Customizer-literal "
+                              f"spelling; write the dimension as a plain decimal")
+                continue
             else:
                 entry = Owned(value, [slug])
             if key in per:
@@ -531,12 +565,17 @@ def render(scad_path: Path, owned: dict[str, object],
                           f"({body.strip()!r}) — the line is not `{name} = <literal>; …`")
             continue
         old = m.group(4)
-        new = _token(value, old)
-        if new is None:
-            continue
-        if not re.fullmatch(LITERAL, new):
+        try:
+            new = _token(value, old)
+        except Unspellable as e:
             errors.append(f"{tag(name)}: {json.dumps(value)} cannot be spelled as a Customizer "
-                          f"literal")
+                          f"literal — {e}")
+            continue
+        if new is None:                    # the file already says it
+            continue
+        if not re.fullmatch(LITERAL, new):     # belt and braces: never a silent skip
+            errors.append(f"{tag(name)}: {json.dumps(value)} cannot be spelled as a Customizer "
+                          f"literal (would write {new!r})")
             continue
         new_body = m.group(1) + m.group(2) + m.group(3) + new + m.group(5)
         lines[idx] = new_body + ending
