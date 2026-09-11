@@ -223,8 +223,10 @@
   signature (Unsigned — never Verified) and an absent timestamp (anchored
   coarsely from `time_bucket × time_bucket_ms` and `uptime_s`); the
   verifier recomputes `wap_v1` links and signs over the right message;
-  a WAP row's trust badge is now set by that verification. Swift
-  compile-untested here; the WAP endpoint and fixture are host-tested.
+  a WAP row's trust badge is now set by that verification. Written
+  without a Swift toolchain; the PR's iOS self-heal run compiled the app
+  and ran its 618 tests (one expectation corrected). The WAP endpoint and
+  fixture are host-tested.
 - **The app pins the receipt's `tls_cert_fp`.** The pairing receipt always
   carried the SHA-256 of the WAP's self-signed certificate; the app dropped
   it and dialed with `URLSession.shared`, so a TLS-enabled WAP was
@@ -237,8 +239,8 @@
   device with no pin (`tlsPinMissing` — a TLS device the app cannot check is
   not a checked device); PairView refuses such a receipt at paste time; the
   liveness sentinel and the rollout's return-watch probe through the same
-  pin. Plain-http devices are unchanged. Compile-untested here. Review
-  round (Codex on #1675): the compact pairing QR (`GET /api/pairing-qr`)
+  pin. Plain-http devices are unchanged. Compiled and tested by the PR's
+  iOS self-heal run. Review round (Codex on #1675): the compact pairing QR (`GET /api/pairing-qr`)
   now carries `tls_cert_fp` on a TLS-enabled device too — without it the
   app's new refusal made the QR fallback unable to add any https Canary;
   `GET /api/v1/witness` takes its ring snapshot before it writes the
@@ -253,7 +255,7 @@
   and puts every remaining plain-http push behind a one-time disclosure
   ("sends it across your Wi-Fi unencrypted") the sheet must acknowledge; the
   runner refuses an unapproved cleartext push with the reason on the row.
-  Planner tests extended. Compile-untested here.
+  Planner tests extended; compiled and run by the PR's iOS self-heal.
 
 ### The device manifests drive the generators, and the release env list is derived
 
