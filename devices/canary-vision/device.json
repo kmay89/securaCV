@@ -25,16 +25,38 @@
       "vision-doorbell"
     ],
     "params": {
-      "vm_l": 40.0,
-      "vm_w": 20.0,
-      "xiao_l": 21.0,
-      "xiao_w": 17.8,
-      "stack_sock_h": 6.5,
+      "vm_l": {
+        "brd": "grove_v2",
+        "dim": "l"
+      },
+      "vm_w": {
+        "brd": "grove_v2",
+        "dim": "w"
+      },
+      "xiao_l": {
+        "brd": "xiao",
+        "dim": "l"
+      },
+      "xiao_w": {
+        "brd_fn": "brd_xiao_w_measured"
+      },
+      "stack_sock_h": {
+        "brd_fn": "brd_stack_sock_measured"
+      },
       "xiao_below": 5.5,
       "vm_front_h": 5.0,
-      "cam_w": 25.0,
-      "cam_h": 24.0,
-      "pcb_t": 1.0,
+      "cam_w": {
+        "brd": "ov5647",
+        "dim": "w"
+      },
+      "cam_h": {
+        "brd": "ov5647",
+        "dim": "l"
+      },
+      "pcb_t": {
+        "brd": "grove_v2",
+        "dim": "t"
+      },
       "board_clear": 0.6
     }
   },

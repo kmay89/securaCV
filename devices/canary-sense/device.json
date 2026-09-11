@@ -28,11 +28,25 @@
       "sense-in-wall-plate"
     ],
     "params": {
-      "vm_l": 44.0,
-      "vm_w": 36.0,
-      "xiao_l": 21.0,
-      "xiao_w": 17.5,
-      "stack_sock_h": 6.5,
+      "vm_l": {
+        "brd": "mr60",
+        "dim": "l"
+      },
+      "vm_w": {
+        "brd": "mr60",
+        "dim": "w"
+      },
+      "xiao_l": {
+        "brd": "xiao",
+        "dim": "l"
+      },
+      "xiao_w": {
+        "brd": "xiao",
+        "dim": "w"
+      },
+      "stack_sock_h": {
+        "brd_fn": "brd_stack_sock_measured"
+      },
       "xiao_below": 5.5,
       "vm_front_h": 3.5,
       "ant_h": 1.2,

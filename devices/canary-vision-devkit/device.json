@@ -23,8 +23,14 @@
       "vision-mount-kit"
     ],
     "params": {
-      "dk_l": 39.0,
-      "dk_w": 25.4,
+      "dk_l": {
+        "brd": "dk_c3",
+        "dim": "l"
+      },
+      "dk_w": {
+        "brd": "dk_c3",
+        "dim": "w"
+      },
       "stack_h": 9.0
     }
   },

@@ -5,17 +5,26 @@ device manifest OWN the board knobs of its case.
 What is pinned and why:
   • the committed tree is a fixed point: check() is empty, write() writes
     nothing, and every owned case renders to its own bytes — the mechanism
-    landed with zero .scad bytes moved, and this keeps it provable;
+    landed with zero .scad bytes moved, the reference conversion moved zero
+    more, and this keeps both provable;
   • a changed value moves exactly one line and only its literal token: the
     help comment, the indent and every other line are byte-identical, and
     writing twice is the same as writing once (idempotence);
   • the eligibility set IS gen_builder_manifest.parse_scad's: with_lines=True
     points at the assignment it accepted and changes nothing else about its
     output, so a same-named local inside a module can never be hit;
+  • the board registry (canary_board_lib.scad) parses completely — nine rows,
+    seven facts — and a row that drifts from the literal shape is a failure,
+    never a shorter registry; each reference form resolves; an unknown row,
+    dim or fact fails naming the manifest and the library;
+  • a reference is declared only where the knob's help comment already cites
+    the registry (decision 4): the seventeen references are enumerated here
+    with what each cites, the knobs that merely equal a row stay numbers, and
+    a mutated registry value moves exactly the lines that reference it;
   • every refusal fires by name — a selector, a computed / [Hidden] knob, a
     type mismatch, a two-knob line, a knob assigned twice, a non-scalar
-    value, two manifests disagreeing on a shared key — and a refusal anywhere
-    means nothing is written anywhere.
+    value, a malformed reference, two manifests disagreeing on a shared key
+    — and a refusal anywhere means nothing is written anywhere.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -49,9 +58,13 @@ from gen_builder_manifest import parse_scad  # noqa: E402
 
 RELEASED = ["canary_wap_enclosure.scad", "canary_vision_enclosure.scad",
             "canary_vision_doorbell.scad", "canary_sense_enclosure.scad"]
+LIB_NAME = "canary_board_lib.scad"
+LIB = ENC / LIB_NAME
+LIB_REL = "docs/hardware/enclosure/" + LIB_NAME
 WAP = ENC / "canary_wap_enclosure.scad"
 WAP_REL = "docs/hardware/enclosure/canary_wap_enclosure.scad"
 VISION_REL = "docs/hardware/enclosure/canary_vision_enclosure.scad"
+SENSE_REL = "docs/hardware/enclosure/canary_sense_enclosure.scad"
 FIXTURE = """\
 /* [Boards] */
 n = 5;   // an integer-spelled knob
@@ -68,11 +81,44 @@ secret = 1;
 module m() { n = 3; }
 """
 
+# Decision 4, enumerated: every cad.params reference in the tree, and what it
+# stands for. A knob is a reference ONLY where its help comment already cites
+# the registry; the WAP's board_h (1.2 == brd_t("xiao") by coincidence, its
+# comment says "PCB thickness") and the Sense's pcb_t (no comment at all) stay
+# numbers even though the spec's first draft listed them.
+REFS = {
+    ("canary_wap_enclosure.scad", "board_l"): 'brd_l("xiao")',
+    ("canary_wap_enclosure.scad", "board_w"): 'brd_w("xiao")',
+    ("canary_vision_enclosure.scad", "dk_l"): 'brd_l("dk_c3")',
+    ("canary_vision_enclosure.scad", "dk_w"): 'brd_w("dk_c3")',
+    ("canary_vision_enclosure.scad", "vm_l"): 'brd_l("grove_v2")',
+    ("canary_vision_enclosure.scad", "vm_w"): 'brd_w("grove_v2")',
+    ("canary_vision_enclosure.scad", "xiao_l"): 'brd_l("xiao")',
+    ("canary_vision_enclosure.scad", "xiao_w"): "brd_xiao_w_measured()",
+    ("canary_vision_enclosure.scad", "stack_sock_h"): "brd_stack_sock_measured()",
+    ("canary_vision_enclosure.scad", "cam_w"): 'brd_w("ov5647")',
+    ("canary_vision_enclosure.scad", "cam_h"): 'brd_l("ov5647")',
+    ("canary_vision_enclosure.scad", "pcb_t"): 'brd_t("grove_v2")',
+    ("canary_sense_enclosure.scad", "vm_l"): 'brd_l("mr60")',
+    ("canary_sense_enclosure.scad", "vm_w"): 'brd_w("mr60")',
+    ("canary_sense_enclosure.scad", "xiao_l"): 'brd_l("xiao")',
+    ("canary_sense_enclosure.scad", "xiao_w"): 'brd_w("xiao")',
+    ("canary_sense_enclosure.scad", "stack_sock_h"): "brd_stack_sock_measured()",
+}
+NUMBERS = {
+    "canary_wap_enclosure.scad": ["board_h", "board_clear", "stack_camera", "stack_plain"],
+    "canary_vision_enclosure.scad": ["xiao_below", "vm_front_h", "board_clear", "stack_h"],
+    "canary_sense_enclosure.scad": ["xiao_below", "vm_front_h", "ant_h", "pcb_t", "board_clear",
+                                    "xiao_usb_z"],
+}
+XIAO_ROW = '["xiao",       21.0,  17.5, 1.2, "spec",'
+
 
 class _Tree:
     """A scratch repo: devices/ copied, and the .scad files the tests own
-    copied under the same relative path — so write() can be exercised
-    without touching the real sources."""
+    copied under the same relative path — the board registry among them,
+    because a cad.params reference resolves from it — so write() can be
+    exercised without touching the real sources."""
 
     def __enter__(self) -> Path:
         self._tmp = tempfile.TemporaryDirectory()
@@ -80,7 +126,7 @@ class _Tree:
         shutil.copytree(DEVICES, root / "devices")
         enc = root / "docs" / "hardware" / "enclosure"
         enc.mkdir(parents=True)
-        for name in RELEASED + ["canary_s3_touch169.scad"]:
+        for name in RELEASED + ["canary_s3_touch169.scad", LIB_NAME]:
             shutil.copyfile(ENC / name, enc / name)
         return root
 
@@ -95,10 +141,29 @@ def edit(root: Path, slug: str, fn) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def edit_lib(root: Path, old: str, new: str) -> str:
+    """Replace one literal in the scratch registry; returns the new source."""
+    lib = root / LIB_REL
+    src = lib.read_text(encoding="utf-8")
+    assert src.count(old) == 1, old
+    out = src.replace(old, new)
+    lib.write_text(out, encoding="utf-8")
+    return out
+
+
 def fixture(tmp: Path, text: str = FIXTURE) -> Path:
     path = tmp / "fixture.scad"
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def moved_lines(name: str, root: Path) -> list[int]:
+    """1-based lines of the scratch copy of `name` that differ from the tree's."""
+    old = (ENC / name).read_text(encoding="utf-8").splitlines(keepends=True)
+    new = (root / "docs/hardware/enclosure" / name).read_text(encoding="utf-8") \
+        .splitlines(keepends=True)
+    assert len(old) == len(new), name
+    return [i + 1 for i, (a, b) in enumerate(zip(old, new)) if a != b]
 
 
 class CommittedTreeIsAFixedPoint(unittest.TestCase):
@@ -148,6 +213,259 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
         self.assertIn("31 manifest-owned knobs across 3 case file(s)", out.getvalue())
+        self.assertIn("(17 of them resolved from canary_board_lib.scad)", out.getvalue())
+
+
+class BoardRegistry(unittest.TestCase):
+    def test_committed_lib_parses_nine_rows_and_seven_facts(self):
+        reg = gcp.parse_board_registry()
+        self.assertEqual(reg.path, LIB)
+        self.assertEqual(list(reg.rows), ["xiao", "grove_v2", "ov5647", "mr60", "dk_c3",
+                                          "ws147", "ws169", "round_disp", "heltec_v3"])
+        xiao = reg.rows["xiao"]
+        self.assertEqual((xiao.dims, xiao.status, xiao.line),
+                         ({"l": 21.0, "w": 17.5, "t": 1.2}, "spec", 43))
+        self.assertIn("brd_xiao_w_measured()", xiao.note)
+        self.assertEqual(reg.rows["grove_v2"].dims, {"l": 40.0, "w": 20.0, "t": 1.0})
+        self.assertEqual(reg.rows["grove_v2"].status, "measured")
+        self.assertEqual(reg.rows["dk_c3"].dims, {"l": 39.0, "w": 25.4, "t": 1.0})
+        self.assertEqual(reg.rows["ws147"].dims, {"l": 36.37, "w": 20.32, "t": 1.6})
+        self.assertEqual(reg.rows["heltec_v3"].line, 59)
+        for row in reg.rows.values():
+            self.assertIn(row.status, {"measured", "drawing", "spec", "unmeasured"}, row.id)
+        self.assertEqual(list(reg.facts), ["brd_xiao_w_measured", "brd_stack_sock_measured",
+                                           "brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
+                                           "brd_ws147_brass_c6", "brd_ws169_glass_w",
+                                           "brd_ws169_glass_h"])
+        self.assertEqual((reg.facts["brd_xiao_w_measured"].value,
+                          reg.facts["brd_xiao_w_measured"].line), (17.8, 84))
+        self.assertEqual(reg.facts["brd_stack_sock_measured"].value, 6.5)
+        self.assertEqual(reg.facts["brd_stack_sock_unmeasured"].value, 11.5)
+        self.assertEqual(reg.facts["brd_ws169_glass_h"].value, 41.13)
+        # the accessors take an argument and are not facts; nor is _brd_find
+        for name in ("brd_l", "brd_w", "brd_t", "brd_status", "brd_note", "_brd_find"):
+            self.assertNotIn(name, reg.facts)
+
+    def test_malformed_row_fails_naming_the_file(self):
+        src = LIB.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as td:
+            lib = Path(td) / LIB_NAME
+            # a row wrapped differently: its thickness becomes an expression
+            bad = src.replace('["ov5647",     24.0,  25.0, 1.0, "spec",',
+                              '["ov5647",     24.0,  25.0, 1.0 + 0, "spec",')
+            self.assertNotEqual(bad, src)
+            lib.write_text(bad, encoding="utf-8")
+            with self.assertRaises(gcp.RegistryError) as cm:
+                gcp.parse_board_registry(lib)
+            self.assertIn("canary_board_lib.scad: parsed 8 of 9 BRD_REGISTRY rows",
+                          str(cm.exception))
+            self.assertIn("shorter registry", str(cm.exception))
+            # a duplicate id
+            lib.write_text(src.replace('["heltec_v3",', '["xiao",'), encoding="utf-8")
+            with self.assertRaises(gcp.RegistryError) as cm:
+                gcp.parse_board_registry(lib)
+            self.assertIn('canary_board_lib.scad:59: BRD_REGISTRY row "xiao" is defined twice '
+                          '(also line 43)', str(cm.exception))
+            # no registry at all, and no file at all
+            lib.write_text("function brd_x() = 1;\n", encoding="utf-8")
+            with self.assertRaises(gcp.RegistryError) as cm:
+                gcp.parse_board_registry(lib)
+            self.assertIn("no `BRD_REGISTRY = [`", str(cm.exception))
+            lib.unlink()
+            with self.assertRaises(gcp.RegistryError) as cm:
+                gcp.parse_board_registry(lib)
+            self.assertIn("canary_board_lib.scad: the board registry cannot be read",
+                          str(cm.exception))
+
+    def test_each_reference_form_resolves(self):
+        reg = gcp.parse_board_registry()
+        cases = [({"brd": "xiao", "dim": "l"}, 21.0, 'brd_l("xiao")', ":43, spec rung"),
+                 ({"brd": "xiao", "dim": "w"}, 17.5, 'brd_w("xiao")', ":43, spec rung"),
+                 ({"brd": "xiao", "dim": "t"}, 1.2, 'brd_t("xiao")', ":43, spec rung"),
+                 ({"brd": "grove_v2", "dim": "w"}, 20.0, 'brd_w("grove_v2")',
+                  ":45, measured rung"),
+                 ({"brd": "mr60", "dim": "l"}, 44.0, 'brd_l("mr60")', ":49, spec rung"),
+                 ({"brd_fn": "brd_xiao_w_measured"}, 17.8, "brd_xiao_w_measured()", ":84"),
+                 ({"brd_fn": "brd_stack_sock_measured"}, 6.5, "brd_stack_sock_measured()",
+                  ":90")]
+        for ref, want, cite, where in cases:
+            value, got_cite, got_where = gcp.resolve_ref(ref, reg)
+            self.assertEqual((value, got_cite), (want, cite), ref)
+            self.assertEqual(got_where, "canary_board_lib.scad" + where, ref)
+
+    def test_unknown_row_dim_or_fact_and_a_bad_shape_fail_naming_the_registry_file(self):
+        with _Tree() as root:
+            edit(root, "canary-wap", lambda d: d["cad"]["params"].update({
+                "board_l": {"brd": "nope", "dim": "l"},
+                "board_w": {"brd": "xiao", "dim": "h"},
+                "board_h": {"brd_fn": "brd_nope"},
+                "board_clear": {"brd": "xiao"},
+                "stack_camera": {"brd": "xiao", "dim": "l", "extra": 1},
+                "stack_plain": {"brd_fn": "core_wall"},
+            }))
+            owned, errors = gcp.load_params(root / "devices", root)
+        self.assertEqual(len(errors), 6, errors)
+        by = {}
+        for e in errors:
+            self.assertTrue(e.startswith("devices/canary-wap: cad.params."), e)
+            self.assertIn("canary_board_lib.scad", e)
+            by[e.split("cad.params.", 1)[1].split(" ", 1)[0]] = e
+        self.assertIn('references brd_l("nope") but canary_board_lib.scad BRD_REGISTRY has no '
+                      'row "nope" (rows: xiao, grove_v2, ov5647', by["board_l"])
+        self.assertIn('names dim "h" — a dim is "l"', by["board_w"])
+        self.assertIn("references brd_nope() but canary_board_lib.scad defines no numeric "
+                      "`function brd_nope() = <number>;` (facts: brd_xiao_w_measured",
+                      by["board_h"])
+        self.assertIn("is not a registry reference", by["board_clear"])
+        self.assertIn("is not a registry reference", by["stack_camera"])
+        self.assertIn('names "core_wall" — a fact is a brd_<name>', by["stack_plain"])
+        self.assertEqual(owned[WAP_REL], {})          # six refusals, nothing owned
+        # a registry that does not parse is ONE error, and the numbers still load
+        with _Tree() as root:
+            (root / LIB_REL).write_text("// nothing here\n", encoding="utf-8")
+            owned, errors = gcp.load_params(root / "devices", root)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("no `BRD_REGISTRY = [`", errors[0])
+        self.assertIn("no cad.params reference resolves until it parses", errors[0])
+        self.assertIn("board_clear", owned[WAP_REL])
+        self.assertNotIn("board_l", owned[WAP_REL])
+
+
+class ManifestsCarryTheJoin(unittest.TestCase):
+    def test_the_seventeen_references_each_cite_what_the_knobs_comment_already_says(self):
+        owned, errors = gcp.load_params()
+        self.assertEqual(errors, [])
+        refs = {(Path(s).name, k): o for s, keys in owned.items() for k, o in keys.items()
+                if o.ref is not None}
+        self.assertEqual({k: o.cite for k, o in refs.items()}, REFS)
+        for (scad, knob), o in refs.items():
+            # the knob's own line plus its comment-only continuation lines
+            lines = (ENC / scad).read_text(encoding="utf-8").splitlines()
+            start = gcp.eligible(ENC / scad)[knob]["line"]
+            block = [lines[start - 1]]
+            for ln in lines[start:]:
+                if not ln.strip().startswith("//"):
+                    break
+                block.append(ln)
+            text = "\n".join(block)
+            # the accessor or the fact by name — or board_selfcheck(), the
+            # registry's own self-check, which is how the Vision module's vm_w
+            # comment cites the row that pins it
+            fn = o.cite.split("(")[0]
+            self.assertTrue(fn in text or "board_selfcheck()" in text,
+                            f"{scad}: {knob} references {o.cite} but its comment does not "
+                            f"cite the registry:\n{text}")
+            self.assertRegex(o.where, r"^canary_board_lib\.scad:\d+")
+            # and the resolved number is the file's literal (the fixed point above)
+            self.assertEqual(float(o.value), float(gcp.eligible(ENC / scad)[knob]["default"]))
+
+    def test_a_knob_whose_comment_does_not_cite_the_registry_stays_a_number(self):
+        owned, _ = gcp.load_params()
+        by_name = {Path(s).name: keys for s, keys in owned.items()}
+        for scad, knobs in NUMBERS.items():
+            for knob in knobs:
+                o = by_name[scad][knob]
+                self.assertIsNone(o.ref, (scad, knob))
+                self.assertEqual((o.cite, o.where), ("", ""), (scad, knob))
+        # in particular the two coincidental equalities the first draft listed
+        self.assertEqual(by_name["canary_wap_enclosure.scad"]["board_h"].value, 1.2)
+        self.assertEqual(by_name["canary_sense_enclosure.scad"]["pcb_t"].value, 1.0)
+        self.assertEqual(len(REFS) + sum(len(v) for v in NUMBERS.values()),
+                         sum(len(k) for k in owned.values()))
+
+    def test_the_xiao_width_decision_is_which_registry_entry_the_manifest_names(self):
+        owned, _ = gcp.load_params()
+        sense, vision, wap = owned[SENSE_REL], owned[VISION_REL], owned[WAP_REL]
+        self.assertEqual((sense["xiao_w"].cite, sense["xiao_w"].value), ('brd_w("xiao")', 17.5))
+        self.assertEqual((wap["board_w"].cite, wap["board_w"].value), ('brd_w("xiao")', 17.5))
+        self.assertEqual((vision["xiao_w"].cite, vision["xiao_w"].value),
+                         ("brd_xiao_w_measured()", 17.8))
+        self.assertIn("spec rung", sense["xiao_w"].where)
+
+    def test_unreferenced_registry_entries_are_info_not_errors(self):
+        owned, _ = gcp.load_params()
+        rows, facts = gcp.unreferenced(owned, gcp.parse_board_registry())
+        self.assertEqual(rows, ["ws147", "ws169", "round_disp", "heltec_v3"])
+        self.assertEqual(facts, ["brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
+                                 "brd_ws147_brass_c6", "brd_ws169_glass_w", "brd_ws169_glass_h"])
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(gcp.main(["--check"]), 0)
+        text = out.getvalue()
+        self.assertIn("INFO: registry entries no manifest references", text)
+        self.assertIn("rows: ws147, ws169, round_disp, heltec_v3", text)
+        self.assertIn("not an error", text)
+
+
+class ARegistryCorrectionReachesTheCases(unittest.TestCase):
+    def test_a_mutated_row_moves_exactly_the_referencing_lines(self):
+        with _Tree() as root:
+            lib_after = edit_lib(root, XIAO_ROW, XIAO_ROW.replace("21.0", "21.4"))
+            errors = gcp.check(root / "devices", root)
+            self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
+                             ["canary_sense_enclosure.scad:92:", "canary_vision_enclosure.scad:120:",
+                              "canary_wap_enclosure.scad:153:"], errors)
+            for e in errors:
+                self.assertIn('references brd_l("xiao") (canary_board_lib.scad:43, spec rung): '
+                              "registry says 21.4, file says 21.0", e)
+                self.assertIn("gen_cad_params.py", e)
+            written, werr = gcp.write(root / "devices", root)
+            self.assertEqual(werr, [])
+            self.assertEqual(sorted((p.name, c.line, c.name, c.old_token, c.new_token)
+                                    for p, c in written),
+                             [("canary_sense_enclosure.scad", 92, "xiao_l", "21.0", "21.4"),
+                              ("canary_vision_enclosure.scad", 120, "xiao_l", "21.0", "21.4"),
+                              ("canary_wap_enclosure.scad", 153, "board_l", "21.0", "21.4")])
+            self.assertEqual(gcp.check(root / "devices", root), [])
+            self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [153])
+            self.assertEqual(moved_lines("canary_vision_enclosure.scad", root), [120])
+            self.assertEqual(moved_lines("canary_sense_enclosure.scad", root), [92])
+            # the doorbell cites the same row by comment and has no manifest
+            self.assertEqual(moved_lines("canary_vision_doorbell.scad", root), [])
+            # the registry was read, never written
+            self.assertEqual((root / LIB_REL).read_text(encoding="utf-8"), lib_after)
+
+    def test_a_mutated_fact_moves_only_the_lines_that_name_it(self):
+        with _Tree() as root:
+            # the seated-stack fact: named by the Vision and the Sense, not the WAP
+            edit_lib(root, "function brd_stack_sock_measured()   = 6.5;",
+                     "function brd_stack_sock_measured()   = 6.2;")
+            errors = gcp.check(root / "devices", root)
+            self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
+                             ["canary_sense_enclosure.scad:94:", "canary_vision_enclosure.scad:122:"],
+                             errors)
+            for e in errors:
+                self.assertIn("references brd_stack_sock_measured() (canary_board_lib.scad:90): "
+                              "registry says 6.2, file says 6.5", e)
+            written, werr = gcp.write(root / "devices", root)
+            self.assertEqual(werr, [])
+            self.assertEqual(sorted((p.name, c.line) for p, c in written),
+                             [("canary_sense_enclosure.scad", 94),
+                              ("canary_vision_enclosure.scad", 122)])
+            self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [])
+        with _Tree() as root:
+            # the measured XIAO width: the Vision pins name it; the WAP and
+            # Sense clips name the spec row, so their 17.5 stays put
+            edit_lib(root, "function brd_xiao_w_measured() = 17.8;",
+                     "function brd_xiao_w_measured() = 17.9;")
+            errors = gcp.check(root / "devices", root)
+            self.assertEqual([e.split(" ", 1)[0] for e in errors],
+                             ["canary_vision_enclosure.scad:121:"], errors)
+            self.assertIn("registry says 17.9, file says 17.8", errors[0])
+            written, _ = gcp.write(root / "devices", root)
+            self.assertEqual([(p.name, c.line, c.new_token) for p, c in written],
+                             [("canary_vision_enclosure.scad", 121, "17.9")])
+            self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [])
+            self.assertEqual(moved_lines("canary_sense_enclosure.scad", root), [])
+
+    def test_write_after_a_registry_change_is_idempotent(self):
+        with _Tree() as root:
+            edit_lib(root, XIAO_ROW, XIAO_ROW.replace("17.5", "17.6"))
+            first, _ = gcp.write(root / "devices", root)
+            self.assertEqual(sorted((p.name, c.line) for p, c in first),
+                             [("canary_sense_enclosure.scad", 93),
+                              ("canary_wap_enclosure.scad", 154)])
+            self.assertEqual(gcp.write(root / "devices", root), ([], []))
+            self.assertEqual(gcp.check(root / "devices", root), [])
 
 
 class EligibilityIsTheBuildersParser(unittest.TestCase):
@@ -257,6 +575,17 @@ class Refusals(unittest.TestCase):
             r = gcp.render(fixture(Path(td)), {"s": 3, "b": 1})
         self.assertEqual(len(r.errors), 2, r.errors)
 
+    def test_reference_on_a_string_knob_is_a_type_mismatch(self):
+        # a reference always resolves to a number; a string knob cannot take one
+        with _Tree() as root:
+            edit(root, "canary-sense", lambda d: d["cad"]["params"].__setitem__(
+                "radar", {"brd": "mr60", "dim": "l"}))
+            errors = gcp.check(root / "devices", root)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("cad.params.radar", errors[0])
+        # the selector refusal comes first — it is the more useful message
+        self.assertIn("is a selector", errors[0])
+
     def test_two_assignment_line_is_refused(self):
         r = gcp.render(ENC / "canary_s3_touch169.scad", {"aa_dx": 0.0, "aa_dy": 0.0})
         self.assertEqual(r.changes, [])
@@ -277,8 +606,10 @@ class Refusals(unittest.TestCase):
                  lambda d: d["cad"]["params"].__setitem__("xiao_l", 22.0))
             errors = gcp.check(root / "devices", root)
         self.assertEqual(len(errors), 1, errors)
+        # the Vision's side is a reference: shown as written, with what it resolved to
         for needle in ("cad.params.xiao_l", "devices/canary-vision ", "devices/canary-vision-devkit",
-                       "21.0", "22.0", "must agree"):
+                       '{"brd": "xiao", "dim": "l"} (= brd_l("xiao") = 21.0)', "22.0",
+                       "must agree"):
             self.assertIn(needle, errors[0])
 
     def test_check_names_knob_manifest_value_and_scad_value(self):
@@ -294,8 +625,8 @@ class Refusals(unittest.TestCase):
         with _Tree() as root:
             edit(root, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_l", [21]))
             errors = gcp.check(root / "devices", root)
-        self.assertTrue(any("board_l = [21] is not a number, string or boolean" in e
-                            for e in errors), errors)
+        self.assertTrue(any("board_l = [21] is not a number, string, boolean or registry "
+                            "reference" in e for e in errors), errors)
 
     def test_missing_scad_is_reported(self):
         with _Tree() as root:
@@ -315,9 +646,7 @@ class WriteMode(unittest.TestCase):
                              [("canary_wap_enclosure.scad", 154, "17.5", "17.8")])
             self.assertEqual(gcp.check(root / "devices", root), [])
             # only the one token moved
-            old = WAP.read_text(encoding="utf-8").splitlines(keepends=True)
-            new = (root / WAP_REL).read_text(encoding="utf-8").splitlines(keepends=True)
-            self.assertEqual([i for i, (a, b) in enumerate(zip(old, new)) if a != b], [153])
+            self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [154])
             # and writing again is a no-op
             self.assertEqual(gcp.write(root / "devices", root), ([], []))
 
@@ -330,6 +659,21 @@ class WriteMode(unittest.TestCase):
             written, errors = gcp.write(root / "devices", root)
             self.assertEqual(written, [])
             self.assertTrue(any("cad.params.radar" in e and "is a selector" in e
+                                for e in errors), errors)
+            after = {p.name: p.read_bytes()
+                     for p in (root / "docs/hardware/enclosure").glob("*.scad")}
+        self.assertEqual(after, before)
+
+    def test_an_unresolvable_reference_anywhere_writes_nothing_anywhere(self):
+        with _Tree() as root:
+            edit_lib(root, XIAO_ROW, XIAO_ROW.replace("21.0", "21.4"))      # a real change
+            edit(root, "canary-sense", lambda d: d["cad"]["params"].__setitem__(
+                "pcb_t", {"brd": "mr60", "dim": "h"}))                     # and a bad ref
+            before = {p.name: p.read_bytes()
+                      for p in (root / "docs/hardware/enclosure").glob("*.scad")}
+            written, errors = gcp.write(root / "devices", root)
+            self.assertEqual(written, [])
+            self.assertTrue(any('cad.params.pcb_t' in e and 'names dim "h"' in e
                                 for e in errors), errors)
             after = {p.name: p.read_bytes()
                      for p in (root / "docs/hardware/enclosure").glob("*.scad")}

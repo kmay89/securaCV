@@ -7,9 +7,10 @@
 WHAT IT OWNS. devices/<slug>/device.json `cad.params` names the literal
 Customizer knobs of that device's `cad.scad` that describe the BOARD or
 MODULE the case is built around — `board_l`, `vm_w`, `stack_sock_h` — as
-plain JSON numbers, strings or booleans. This generator WRITES those values
-into the .scad's top-of-file literals (the line the knob already lives on,
-the token only) and `--check` proves the file still says what the manifest
+plain JSON numbers, strings or booleans, or as REFERENCES into the board
+registry (next section). This generator WRITES those values into the
+.scad's top-of-file literals (the line the knob already lives on, the
+token only) and `--check` proves the file still says what the manifest
 says. Nothing reads the manifest at render time: OpenSCAD, the Customizer,
 render.sh, canary_case_fitcheck.scad, gen_builder_manifest.py,
 gen_enclosures.py and scripts/lint_design_lang.py all keep seeing the same
@@ -18,6 +19,34 @@ states — "a case file's Customizer knob stays a LITERAL on purpose; a
 computed value would vanish from the Customizer and from the website
 builder's manifest" — is untouched; the manifest moved to the FRONT of the
 chain, it did not replace a link of it.
+
+A KNOB THAT IS A BOARD FACT REFERENCES THE REGISTRY. canary_board_lib.scad
+already holds every board the catalog mounts, once, with its evidence rung:
+BRD_REGISTRY rows of [id, along-USB length, width, PCB thickness, status,
+note], plus the measured facts that refine a row (`function
+brd_xiao_w_measured() = 17.8;`). So a cad.params value may be
+
+    {"brd": "xiao", "dim": "l"}          ->  brd_l("xiao")      dim: l | w | t
+    {"brd_fn": "brd_xiao_w_measured"}     ->  brd_xiao_w_measured()
+
+and the generator resolves it to the registry's number BEFORE eligibility
+and rewrite — the .scad still receives a literal, exactly as for a typed
+number. The manifest carries the JOIN, the registry carries the number:
+which row, which rung, and which decision (the Sense clips name
+brd_w("xiao") = 17.5 spec; the Vision pins name brd_xiao_w_measured() =
+17.8 — the registry states the truth, the manifest states the decision,
+as the library's header asks the file to). A registry correction now
+reaches every manifest-owned case through --check as "registry says X,
+file says Y", and through a write. A reference is declared only where the
+knob's help comment already cites the registry; a knob that merely equals
+a row by coincidence (the WAP's board_h 1.2) stays a number, and so does a
+case measurement with no registry home (board_clear, xiao_below, ant_h).
+The registry is parsed as gen_builder_manifest.parse_colorways parses
+CW_REGISTRY — a literal-shape regex with the row starts counted
+independently, so a row that drifts from the shape fails the build rather
+than shortening the registry — and the facts with the FUNC pattern
+scripts/lint_design_lang.py already uses. canary_board_lib.scad is READ
+here, never written.
 
 ELIGIBILITY IS THE BUILDER'S PARSER. The knobs a manifest may own are
 exactly what gen_builder_manifest.parse_scad returns — a top-level
@@ -41,20 +70,28 @@ WHAT IT REFUSES (exit 1, naming the manifest, the knob and why):
   * a knob assigned twice at top level (OpenSCAD warns and takes the last);
   * two manifests naming one .scad that disagree on a shared key. Several
     manifests may name one case (the three Vision hosts); each asserts any
-    SUBSET of its literal knobs, the union is written, shared keys must agree.
+    SUBSET of its literal knobs, the union is written, shared keys must agree;
+  * a reference that is not exactly {"brd", "dim"} or exactly {"brd_fn"},
+    that names a row, a dim or a fact the registry does not define, or a
+    registry whose rows do not all parse — the message names the manifest
+    and the library.
 
 HOW IT WRITES. The literal token only, on the recorded line, keeping the
 old token's integer-vs-decimal spelling (`5` stays `5`, `21.0` stays a
 decimal); the trailing comment and every other byte are left alone. A
 token already equal to its manifest (numerically, for numbers) leaves its
 line byte-identical, so a run over a tree whose manifests match its cases
-changes nothing — which is what the first run proved. When a value did
-change, the geometry moved, and the rest of the chain follows in the order
-REGEN_ORDER prints (previews first: a .scad change must be seeable).
+changes nothing — which is what the first run proved, and what the
+reference conversion proved again. When a value did change, the geometry
+moved, and the rest of the chain follows in the order REGEN_ORDER prints
+(previews first: a .scad change must be seeable).
 
 scripts/lint_device_manifests.py imports check(), so `python3
 scripts/lint_device_manifests.py` stays THE manifest gate; lint.yml and
-enclosure.yml also run --check directly.
+enclosure.yml also run --check directly. --check also prints, as INFO
+(never an error), the registry rows and facts no manifest references:
+the doorbell, the gang plate, the Hammond chassis, the J-box and the bench
+fixture cite the registry by comment and have no manifest.
 """
 
 from __future__ import annotations
@@ -70,6 +107,8 @@ from typing import NamedTuple
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent.parent          # as FIGURES_JSON does in gen_builder_manifest.py
 DEVICES_DIR = REPO / "devices"
+# The board registry a cad.params reference resolves from — read, never written.
+BOARD_LIB_REL = "docs/hardware/enclosure/canary_board_lib.scad"
 
 # The parser is shared, not copied: the same directory, on sys.path whether
 # this file runs as a script (sys.path[0] is HERE), is imported by the
@@ -85,6 +124,23 @@ LITERAL = r'"(?:[^"\\]|\\.)*"|true|false|-?\d+\.?\d*'
 LINE_RE = r"^(\s*)(%s)(\s*=\s*)(" + LITERAL + r")(\s*;.*)$"
 
 SCAD_TYPE = {"bool": "bool", "number": "number", "string": "string"}
+
+# A reference's `dim` -> (the accessor it stands for, the row column it reads).
+DIMS = {"l": ("brd_l", 1), "w": ("brd_w", 2), "t": ("brd_t", 3)}
+# One BRD_REGISTRY row in its literal shape — ["id", l, w, t, "status", "note"] —
+# as gen_builder_manifest._CW_ROW reads a CW_REGISTRY row: lowercase id and
+# status, plain numbers, one quoted note. A row typed any other way does not
+# match, and parse_board_registry() then fails on the row count.
+_BRD_ROW = re.compile(
+    r'\[\s*"([a-z][a-z0-9_]*)"\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,'
+    r'\s*(-?\d+(?:\.\d+)?)\s*,\s*"([a-z]+)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\]',
+    re.S)
+# `function <name>() = <number>;` — scripts/lint_design_lang.py's FUNC pattern,
+# verbatim; only the brd_* matches are facts a manifest may name.
+_FUNC = re.compile(r"function\s+(?P<fn>[a-z_][a-z0-9_]*)\(\)\s*=\s*(?P<val>-?\d+(?:\.\d+)?)\s*;")
+_FACT_NAME = re.compile(r"^brd_[a-z0-9_]+$")
+REF_SHAPE = ('{"brd": "<id>", "dim": "l"|"w"|"t"} (a BRD_REGISTRY row: along-USB length, '
+             'width, PCB thickness) or exactly {"brd_fn": "brd_<name>"} (a numeric brd_*() fact)')
 
 REGEN_ORDER = """\
 After an INTENDED change the geometry moved. Regenerate in this order:
@@ -117,8 +173,41 @@ class Rendered(NamedTuple):
 
 
 class Owned(NamedTuple):
-    value: object
+    value: object              # the literal to write — a reference's is already resolved
     slugs: list[str]
+    ref: dict | None = None    # the manifest's reference object, when there was one
+    cite: str = ""             # what it stands for: brd_l("xiao") / brd_xiao_w_measured()
+    where: str = ""            # where the number lives: canary_board_lib.scad:43, spec rung
+
+
+class Row(NamedTuple):
+    id: str
+    dims: dict          # {"l": float, "w": float, "t": float}
+    status: str         # a rung of the ladder: measured / drawing / spec / unmeasured
+    note: str
+    line: int           # 1-based, in the library
+
+
+class Fact(NamedTuple):
+    name: str
+    value: float
+    line: int
+
+
+class Registry(NamedTuple):
+    path: Path
+    rows: dict[str, Row]        # in file order
+    facts: dict[str, Fact]      # in file order
+
+
+class RegistryError(ValueError):
+    """The board library cannot be read as a registry. A build failure, never
+    a shorter registry — the colorways precedent."""
+
+
+class RefError(ValueError):
+    """A cad.params reference the registry cannot resolve; the message is the
+    clause after `cad.params.<knob> = <ref>`."""
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +259,114 @@ def _token(value, old: str) -> str | None:
     return _fmt_number(value, old)
 
 
+def _show(o: Owned) -> str:
+    """A value as the manifest wrote it, with what it resolved to."""
+    if o.ref is None:
+        return json.dumps(o.value)
+    return f"{json.dumps(o.ref)} (= {o.cite} = {json.dumps(o.value)})"
+
+
+# ---------------------------------------------------------------------------
+# the board registry
+# ---------------------------------------------------------------------------
+
+def parse_board_registry(lib: Path | None = None) -> Registry:
+    """canary_board_lib.scad's BRD_REGISTRY rows and brd_*() facts, by id, with
+    the line each lives on. Raises RegistryError — naming the file — when the
+    registry is missing, a row does not parse, or an id is defined twice."""
+    lib = lib or REPO / BOARD_LIB_REL
+    try:
+        src = lib.read_text(encoding="utf-8")
+    except OSError as e:
+        raise RegistryError(f"{lib.name}: the board registry cannot be read ({e})") from None
+    start = src.find("BRD_REGISTRY = [")
+    if start < 0:
+        raise RegistryError(f"{lib.name}: no `BRD_REGISTRY = [` — the board registry has moved "
+                            f"or been renamed; cad.params references resolve from it")
+    end = src.find("];", start)
+    if end < 0:
+        raise RegistryError(f"{lib.name}: `BRD_REGISTRY = [` is never closed with `];`")
+    region = src[start:end]
+    matches = list(_BRD_ROW.finditer(region))
+    # Every row must parse, not just some (gen_builder_manifest.parse_colorways):
+    # findall() would silently drop a row that drifts from the literal shape and
+    # a reference to it would then be "unknown" — or worse, a shorter registry
+    # would still resolve every OTHER reference and look healthy. Row starts
+    # are counted independently of the row regex, so drift is a build failure.
+    row_starts = len(re.findall(r'\[\s*"', region))
+    if not matches or len(matches) != row_starts:
+        raise RegistryError(
+            f"{lib.name}: parsed {len(matches)} of {row_starts} BRD_REGISTRY rows — a row has "
+            f"drifted from the literal [id, length, width, thickness, status, note] shape "
+            f"(lowercase id and status, plain numbers, one quoted note; keep each row a plain "
+            f"literal): a shorter registry would resolve cad.params references wrongly")
+    rows: dict[str, Row] = {}
+    for m in matches:
+        line = src.count("\n", 0, start + m.start()) + 1
+        rid = m.group(1)
+        if rid in rows:
+            raise RegistryError(f'{lib.name}:{line}: BRD_REGISTRY row "{rid}" is defined twice '
+                                f"(also line {rows[rid].line}) — board_selfcheck() refuses that "
+                                f"at render time; a lookup here would pick one silently")
+        rows[rid] = Row(rid, {"l": float(m.group(2)), "w": float(m.group(3)),
+                              "t": float(m.group(4))},
+                        m.group(5), re.sub(r"\s+", " ", m.group(6)).strip(), line)
+    facts: dict[str, Fact] = {}
+    for lineno, raw in enumerate(src.splitlines(), start=1):
+        code = raw.split("//", 1)[0]
+        for m in _FUNC.finditer(code):
+            name = m.group("fn")
+            if not _FACT_NAME.match(name):
+                continue
+            if name in facts:
+                raise RegistryError(f"{lib.name}:{lineno}: `function {name}()` is defined twice "
+                                    f"(also line {facts[name].line})")
+            facts[name] = Fact(name, float(m.group("val")), lineno)
+    return Registry(lib, rows, facts)
+
+
+def resolve_ref(ref: dict, registry: Registry) -> tuple[float, str, str]:
+    """(number, citation, provenance) for a reference: 21.0, `brd_l("xiao")`,
+    `canary_board_lib.scad:43, spec rung`. Raises RefError saying what is
+    wrong — the shape, the row, the dim or the fact."""
+    lib = registry.path.name
+    keys = set(ref)
+    if keys == {"brd", "dim"}:
+        rid, dim = ref["brd"], ref["dim"]
+        if not isinstance(dim, str) or dim not in DIMS:
+            raise RefError(f'names dim {json.dumps(dim)} — a dim is "l" (along-USB length, '
+                           f'brd_l), "w" (width, brd_w) or "t" (PCB thickness, brd_t)')
+        fn = DIMS[dim][0]
+        row = registry.rows.get(rid) if isinstance(rid, str) else None
+        if row is None:
+            raise RefError(f'references {fn}({json.dumps(rid)}) but {lib} BRD_REGISTRY has no '
+                           f'row {json.dumps(rid)} (rows: {", ".join(registry.rows)})')
+        return row.dims[dim], f'{fn}("{rid}")', f"{lib}:{row.line}, {row.status} rung"
+    if keys == {"brd_fn"}:
+        name = ref["brd_fn"]
+        if not isinstance(name, str) or not _FACT_NAME.match(name):
+            raise RefError(f"names {json.dumps(name)} — a fact is a brd_<name> zero-argument "
+                           f"numeric function of {lib} (facts: {', '.join(registry.facts)})")
+        fact = registry.facts.get(name)
+        if fact is None:
+            raise RefError(f"references {name}() but {lib} defines no numeric `function {name}() "
+                           f"= <number>;` (facts: {', '.join(registry.facts)})")
+        return fact.value, f"{name}()", f"{lib}:{fact.line}"
+    raise RefError(f"is not a registry reference — a reference is exactly {REF_SHAPE}")
+
+
+def unreferenced(owned: dict[str, dict[str, Owned]],
+                 registry: Registry) -> tuple[list[str], list[str]]:
+    """(rows, facts) of the registry no manifest references, in file order.
+    INFO, never an error: cases with no manifest cite them by comment."""
+    rows = {o.ref["brd"] for k in owned.values() for o in k.values()
+            if o.ref is not None and "brd" in o.ref}
+    fns = {o.ref["brd_fn"] for k in owned.values() for o in k.values()
+           if o.ref is not None and "brd_fn" in o.ref}
+    return ([r for r in registry.rows if r not in rows],
+            [f for f in registry.facts if f not in fns])
+
+
 # ---------------------------------------------------------------------------
 # the manifests' side
 # ---------------------------------------------------------------------------
@@ -183,15 +380,21 @@ def _rel(path: Path, repo: Path) -> str:
 
 def load_params(devices_dir: Path = DEVICES_DIR,
                 repo: Path = REPO) -> tuple[dict[str, dict[str, Owned]], list[str]]:
-    """{cad.scad (repo-relative): {knob: Owned(value, [slugs])}}, errors.
+    """{cad.scad (repo-relative): {knob: Owned(value, [slugs], …)}}, errors.
 
     Every devices/*/device.json with a `cad.params` contributes to its
-    `cad.scad`; a knob two manifests assert with different values is an
-    error naming both. The first assertion's value stays in the map so the
-    caller can still report the rest of the file.
+    `cad.scad`; a reference is resolved from the board registry here, so
+    everything downstream sees a literal. A knob two manifests assert with
+    different values is an error naming both. The first assertion's value
+    stays in the map so the caller can still report the rest of the file.
     """
     owned: dict[str, dict[str, Owned]] = {}
     errors: list[str] = []
+    registry: Registry | None = None
+    try:
+        registry = parse_board_registry(repo / BOARD_LIB_REL)
+    except RegistryError as e:
+        errors.append(f"{e} — no cad.params reference resolves until it parses")
     for path in sorted(devices_dir.glob("*/device.json")):
         try:
             m = json.loads(path.read_text(encoding="utf-8"))
@@ -212,22 +415,35 @@ def load_params(devices_dir: Path = DEVICES_DIR,
             continue
         per = owned.setdefault(scad, {})
         for key, value in params.items():
-            if _kind(value) is None:
+            if isinstance(value, dict):
+                if registry is None:            # reported once, above
+                    continue
+                try:
+                    number, cite, where = resolve_ref(value, registry)
+                except RefError as e:
+                    errors.append(f"devices/{slug}: cad.params.{key} = {json.dumps(value)} {e} "
+                                  f"— references are resolved from {BOARD_LIB_REL}")
+                    continue
+                entry = Owned(number, [slug], value, cite, where)
+            elif _kind(value) is None:
                 errors.append(f"devices/{slug}: cad.params.{key} = {json.dumps(value)} is not a "
-                              f"number, string or boolean — a knob is a literal")
+                              f"number, string, boolean or registry reference — a knob is a "
+                              f"literal, or exactly {REF_SHAPE} that the registry resolves to one")
                 continue
+            else:
+                entry = Owned(value, [slug])
             if key in per:
                 prev = per[key]
-                if not _same(prev.value, value):
+                if not _same(prev.value, entry.value):
                     others = ", ".join(f"devices/{s}" for s in prev.slugs)
                     errors.append(
                         f"{Path(scad).name}: cad.params.{key} is asserted by {others} as "
-                        f"{json.dumps(prev.value)} and by devices/{slug} as {json.dumps(value)} — "
-                        f"manifests sharing one case must agree on a shared key")
+                        f"{_show(prev)} and by devices/{slug} as {_show(entry)} — manifests "
+                        f"sharing one case must agree on a shared key")
                     continue
                 prev.slugs.append(slug)
             else:
-                per[key] = Owned(value, [slug])
+                per[key] = entry
     return owned, errors
 
 
@@ -332,7 +548,8 @@ def render(scad_path: Path, owned: dict[str, object],
 # the gate and the writer
 # ---------------------------------------------------------------------------
 
-def _plan(devices_dir: Path, repo: Path) -> tuple[list[tuple[Path, Rendered]], list[str]]:
+def _plan(devices_dir: Path, repo: Path) -> tuple[list[tuple[Path, Rendered]], list[str],
+                                                  dict[str, dict[str, Owned]]]:
     owned, errors = load_params(devices_dir, repo)
     plan: list[tuple[Path, Rendered]] = []
     for scad_rel in sorted(owned):
@@ -347,7 +564,7 @@ def _plan(devices_dir: Path, repo: Path) -> tuple[list[tuple[Path, Rendered]], l
                    {k: o.slugs for k, o in keys.items()})
         errors.extend(r.errors)
         plan.append((path, r))
-    return plan, errors
+    return plan, errors, owned
 
 
 def check(devices_dir: Path | None = None, repo: Path | None = None) -> list[str]:
@@ -356,17 +573,28 @@ def check(devices_dir: Path | None = None, repo: Path | None = None) -> list[str
     appends to its own errors."""
     devices_dir = devices_dir or DEVICES_DIR
     repo = repo or REPO
-    plan, errors = _plan(devices_dir, repo)
-    owned, _ = load_params(devices_dir, repo)
+    plan, errors, owned = _plan(devices_dir, repo)
     for path, r in plan:
         keys = owned[_rel(path, repo)]
         for c in r.changes:
-            slugs = ", ".join(f"devices/{s}" for s in keys[c.name].slugs)
-            errors.append(
-                f"{path.name}:{c.line}: {c.name} = {c.old_token} in the .scad, but {slugs} "
-                f"cad.params says {c.new_token} — the manifest owns this knob: run "
-                f"python3 docs/hardware/enclosure/gen_cad_params.py (then the regen order it "
-                f"prints), or change the manifest back")
+            o = keys[c.name]
+            slugs = ", ".join(f"devices/{s}" for s in o.slugs)
+            if o.ref is not None:
+                # The whole point of a reference: a registry correction reaches
+                # the case through this message, then through a write.
+                errors.append(
+                    f"{path.name}:{c.line}: {c.name} = {c.old_token} in the .scad, but {slugs} "
+                    f"cad.params references {o.cite} ({o.where}): registry says {c.new_token}, "
+                    f"file says {c.old_token} — the manifest carries the join and the registry "
+                    f"the number: run python3 docs/hardware/enclosure/gen_cad_params.py (then "
+                    f"the regen order it prints), or name a different registry entry in the "
+                    f"manifest")
+            else:
+                errors.append(
+                    f"{path.name}:{c.line}: {c.name} = {c.old_token} in the .scad, but {slugs} "
+                    f"cad.params says {c.new_token} — the manifest owns this knob: run "
+                    f"python3 docs/hardware/enclosure/gen_cad_params.py (then the regen order it "
+                    f"prints), or change the manifest back")
     return errors
 
 
@@ -377,7 +605,7 @@ def write(devices_dir: Path | None = None,
     written — the list of parts that now need previews — and the errors."""
     devices_dir = devices_dir or DEVICES_DIR
     repo = repo or REPO
-    plan, errors = _plan(devices_dir, repo)
+    plan, errors, _ = _plan(devices_dir, repo)
     if errors:
         return [], errors
     written: list[tuple[Path, Change]] = []
@@ -406,8 +634,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         owned, _ = load_params()
         n = sum(len(k) for k in owned.values())
+        refs = sum(1 for k in owned.values() for o in k.values() if o.ref is not None)
         print(f"gen_cad_params.py: OK — {n} manifest-owned knobs across {len(owned)} case "
-              f"file(s) equal their .scad literals")
+              f"file(s) equal their .scad literals ({refs} of them resolved from "
+              f"{Path(BOARD_LIB_REL).name})")
+        rows, facts = unreferenced(owned, parse_board_registry())   # parsed: check() was clean
+        if rows or facts:
+            print(f"INFO: registry entries no manifest references — rows: "
+                  f"{', '.join(rows) or 'none'}; facts: {', '.join(facts) or 'none'}. Cases no "
+                  f"manifest owns (the doorbell, the gang plate, the Hammond chassis, the J-box, "
+                  f"the bench fixture, the display cases) cite them by comment; not an error")
         return 0
 
     written, errors = write()
@@ -420,9 +656,12 @@ def main(argv: list[str] | None = None) -> int:
         print("gen_cad_params.py: nothing to write — every manifest-owned literal already equals "
               "its .scad")
         return 0
+    owned, _ = load_params()
     files = sorted({p for p, _ in written})
     for path, c in written:
-        print(f"wrote {_rel(path, REPO)}:{c.line}  {c.name}: {c.old_token} -> {c.new_token}")
+        o = owned.get(_rel(path, REPO), {}).get(c.name)
+        via = f"  (registry: {o.cite}, {o.where})" if o is not None and o.ref is not None else ""
+        print(f"wrote {_rel(path, REPO)}:{c.line}  {c.name}: {c.old_token} -> {c.new_token}{via}")
     print(f"\n{len(written)} knob(s) in {len(files)} file(s) changed — render PNG previews of "
           f"every affected part of: {', '.join(p.name for p in files)}")
     print()
