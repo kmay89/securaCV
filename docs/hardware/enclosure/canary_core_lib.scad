@@ -456,6 +456,46 @@ module lip_ring(l, w, r, lip_h, lip_t, cham = core_lip_cham()) {
 }
 
 // ---------------------------------------------------------------------------
+//  Hardware — the count that cannot drift.
+//
+//  No file in the catalog counted its screws, and the one BOM quantity that
+//  lived in a header had already drifted (the doorbell's security-boss insert
+//  was the fifth of "four"). A count typed in a comment is a count the next
+//  option breaks. These helpers let a case DERIVE its hardware from the same
+//  variables that draw the holes and echo it on every render, so the number
+//  the builder reads is the number the geometry needs today.
+//
+//    hw_len(plate, pad, engage) — the shortest standard screw that passes a
+//      plate (+ any head pad) and still engages `engage` mm of post; 3 x the
+//      nominal is the self-tap rule, 6 mm for M2.
+//    hw_screw(size, head, len, thread) — "M2 pan x 8 self-tap"
+//    hw_item(qty, what) — "4x M2 pan x 8 self-tap"
+//    hw_echo(name, items) — one HARDWARE line per render; drops empty items,
+//      so an option that is off simply contributes "".
+// ---------------------------------------------------------------------------
+function hw_std_lens() = [4, 5, 6, 8, 10, 12, 16, 20, 25, 30];
+function hw_len(plate, pad = 0, engage = 6) =
+    let (need = plate + pad + engage,
+         ok = [for (l = hw_std_lens()) if (l >= need - 1e-9) l])
+    len(ok) > 0 ? ok[0] : ceil(need);
+function hw_engage(size) = 3 * scr_nominal(size);
+function hw_size_name(size) = str("M", scr_nominal(size));
+function hw_screw(size, head, len, thread = "self-tap") =
+    str(hw_size_name(size), " ", head, " x ", len, " ", thread);
+function hw_item(qty, what) = (qty > 0 && what != "") ? str(qty, "x ", what) : "";
+function hw_insert(size) =
+    str(hw_size_name(size), " heat-set insert ", scr_insert_d(size), " OD x ", scr_insert_h(size));
+function hw_oring(size) =
+    str("O-ring ", scr_oring_id(size), " ID x ", scr_oring_cs(size), " CS (under the head)");
+function _hw_join(items, i = 0, acc = "") =
+    i >= len(items) ? acc
+    : _hw_join(items, i + 1,
+               items[i] == "" ? acc : (acc == "" ? items[i] : str(acc, " · ", items[i])));
+module hw_echo(name, items) {
+    echo(str("HARDWARE — ", name, ": ", _hw_join(items)));
+}
+
+// ---------------------------------------------------------------------------
 //  Seam reveal — a shadow line under a parting line.
 //
 //  Five of the eight released variants have their lid and base at EXACTLY the
@@ -669,6 +709,9 @@ module core_selfcheck() {
            "core: the lid key rib must fit the lip annulus and print as at least two lines");
     assert(core_lip_cham() < core_min_wall() / 2, "core: the lip lead-in must leave most of the lip's tip");
     assert(core_floor_cove() >= 2*core_extrusion() - 1e-9, "core: the floor cove is at least two extrusions");
+    assert(hw_len(2.0, 0, 6) == 8 && hw_len(2.0, 1.0, 6) == 10 && hw_len(2.2, 0, 6) == 10,
+           "core: hw_len rounds a 2 mm lid + 6 mm engagement to the WAP's validated M2 x 8, and a padded seat to 10");
+    assert(hw_item(0, "x") == "" && _hw_join(["a", "", "b"]) == "a · b", "core: hardware list drops what is off");
     // the house look: the second stage is what makes the edge read as a
     // roundover rather than a bevel, and it spent its life defaulted off
     assert(core_face_edge() > 0 && core_face_edge2() > 0,

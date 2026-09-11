@@ -57,6 +57,7 @@ use <canary_snap_lib.scad>    // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>    // bridge-safe USB opening (the WAP's print-validated profile)
 use <canary_board_lib.scad>   // board registry — the MR60 carrier numbers the knobs cite
 use <canary_mark_lib.scad>    // the house wordmark (opt_mark)
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
@@ -372,6 +373,21 @@ assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", label_size),
            " mm at label_size ", label_size, " on a ", plate_x,
            " mm face (2 mm margin per side) — shrink label_size"));
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
+hw_echo("Sense", [
+    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
+    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    opt_vent     ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
+    opt_led      ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    opt_lux && lux_disc_d > 0 ? hw_item(1, str("Ø", lux_disc_d, " x 1 clear disc (lux aperture; bond)")) : "",
+    opt_tamper   ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(1, str("M", hinge_bolt_d, " x 25 bolt + nut (hinge; Vision knob/bracket parts)")) : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#6 pan wall screw (bracket)") : "",
+    e_mount && (m_style == "keyhole" || m_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+]);
 echo(str("Canary Sense RADOME enclosure v0.2 — MR60", radar == "fda2" ? "FDA2" : "BHA2",
          ", outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r, " mm prongs)  (radome ",
@@ -453,6 +469,7 @@ module foot_chamfer_cut() {
 module back() {
     posts = post_xy();
     gusset_h = max(2, cav_d - lip_h - 1.0);
+    gusset_w = min(2.0, rib_t_max(wall_eff));
     union() {
         difference() {
             union() {
@@ -513,16 +530,11 @@ module back() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
-                for (p = posts) {
+                // constant-width webs (canary_rib_lib corner_gusset) — no hull flare
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    if (sx != 0) hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
-                    if (sy != 0) hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
+                    if (sx != 0) corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
+                    if (sy != 0) corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2.0])

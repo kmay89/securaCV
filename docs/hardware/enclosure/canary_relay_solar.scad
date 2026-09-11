@@ -192,6 +192,18 @@ assert(!opt_mark || mark_word_ink_w("securaCV", mark_size) <= plate_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", mark_size),
            " mm at mark_size ", mark_size, " on a ", plate_x,
            " mm lid (2 mm margin per side) — shrink mark_size"));
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib);
+// the two TOP lid screws are the roof's, swapped for M2 x 12 through its feet
+hw_echo("Solar relay pod", [
+    hw_item(len(post_xy()) - 2, hw_screw("m2", "pan", hw_len(lid_t, head_pad, 6), "self-tap")),
+    hw_item(2, "M2 pan x 12 self-tap (through the roof feet into the top posts)"),
+    e_seal ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    hw_item(1, str("SMA bulkhead jack, Ø", sma_d, " D-flat, + EPDM sealing washer under the nut")),
+    hw_item(1, "M8 cable gland (panel lead, lid)"),
+    hw_item(1, "Ø10 adhesive ePTFE vent patch (inner face of the lid)"),
+    hw_item(1, str("18650 holder with leads (", bh_l, " x ", bh_w, ")")),
+    hw_item(2, str("hose clamp or heavy zip tie, ", strap_w, " mm wide (pole straps)")),
+]);
 echo(str("Canary solar relay pod v0.2-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t,
          " mm, panel ", pan_w, "x", pan_l, " @ ", roof_ang, " deg  (IN DEVELOPMENT)"));
 
@@ -287,12 +299,12 @@ module body_solid() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
-                for (p = posts) {
+                // constant-width webs (canary_rib_lib corner_gusset) — no hull flare
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
-                             translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
-                    if (sy != 0) hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
-                             translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
+                    gw = min(2.0, rib_t_max(wall_eff));
+                    corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], cav_d - lip_h - 1, wall_eff, pd, gw);
+                    if (sy != 0) corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), cav_d - lip_h - 1, wall_eff, pd, gw);
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2]) cylinder(d = screw_d, h = cav_d);

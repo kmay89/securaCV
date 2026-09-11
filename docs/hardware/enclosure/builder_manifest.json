@@ -137,7 +137,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "498fccb4fd3f24cc47a25a31380eb70baa0e8109e242016b3aadac816f14c8d5",
+      "sha256": "4be23b02bf480f45421b24808bfc395d0709335fb98c09b5bc2c6897b04fb2ef",
       "groups": [
         {
           "name": "What to render",
@@ -1099,7 +1099,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
+          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1120,6 +1120,10 @@
         {
           "file": "canary_mark_lib.scad",
           "sha256": "ed31240c982b12abaf29c482f5e359f19e304e4e8f22d387c38be5dab429c6bc"
+        },
+        {
+          "file": "canary_rib_lib.scad",
+          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
         },
         {
           "file": "canary_color_lib.scad",
@@ -1205,7 +1209,7 @@
         }
       },
       "units": {},
-      "sha256": "d4421a83bd253c18b50733140b1b30446bf3266bebb3281d7c68677415d3c244",
+      "sha256": "10e697e8a9c4cf98b757f0fb7d9c46d95bcc812870740a6218b952c2a0b98e9a",
       "groups": [
         {
           "name": "What to render",
@@ -2173,7 +2177,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
+          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2194,6 +2198,10 @@
         {
           "file": "canary_mark_lib.scad",
           "sha256": "ed31240c982b12abaf29c482f5e359f19e304e4e8f22d387c38be5dab429c6bc"
+        },
+        {
+          "file": "canary_rib_lib.scad",
+          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
         },
         {
           "file": "canary_color_lib.scad",
@@ -2251,7 +2259,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "9652987439c2f592be36a60d3ab4a6b81a528381323337c905e9f2d96b2fa69e",
+      "sha256": "484a026e37d4cc7d8b883157ea6108b83d11d1d1750c378d71b305c7f204f638",
       "groups": [
         {
           "name": "What to render",
@@ -3019,7 +3027,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
+          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3040,6 +3048,10 @@
         {
           "file": "canary_mark_lib.scad",
           "sha256": "ed31240c982b12abaf29c482f5e359f19e304e4e8f22d387c38be5dab429c6bc"
+        },
+        {
+          "file": "canary_rib_lib.scad",
+          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
         },
         {
           "file": "canary_color_lib.scad",
@@ -3111,7 +3123,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "6d22d6d41134e6ece4e06cf65541fd2b87ce6bd0610faf41d359a427dc97739d",
+      "sha256": "3e7aa2c185b59bd4d60c0e821407c4ad7a9fc9f592ed24870a8d655ca35e7d34",
       "groups": [
         {
           "name": "What to render",
@@ -3911,7 +3923,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
+          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3932,6 +3944,10 @@
         {
           "file": "canary_mark_lib.scad",
           "sha256": "ed31240c982b12abaf29c482f5e359f19e304e4e8f22d387c38be5dab429c6bc"
+        },
+        {
+          "file": "canary_rib_lib.scad",
+          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
         },
         {
           "file": "canary_color_lib.scad",
@@ -4329,7 +4345,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "f5834622de3df73b24bb5b6b1fec6d066ca8321640fe175d257fe5e3dfdb019a"
+          "sha256": "26b8d2d35a528d40ed621f1682ef670ece1aceb1d14ceef4a492e96c410248bd"
         },
         {
           "file": "canary_mount_lib.scad",

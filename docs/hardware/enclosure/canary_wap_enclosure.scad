@@ -57,6 +57,7 @@ use <canary_snap_lib.scad>    // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>    // bridge-safe USB opening (this file's polygon, promoted)
 use <canary_board_lib.scad>   // board registry — the XIAO numbers the knobs cite
 use <canary_mark_lib.scad>    // the house wordmark (opt_mark)
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>   // the colorway registry — assembled-preview spools
 
 /* [What to render] */
@@ -485,6 +486,19 @@ assert(!e_battery || cav_h >= batt_h + 1.0, "battery bay taller than the cavity"
 assert(!e_gps || cav_h >= gps_h + 1.0, "GPS bay taller than the cavity");
 assert(base_h - (e_seal ? gasket_groove : 0) - (pcb_z + board_h + usb_h + usb_z) >= usb_web - 1e-6,
        "less than usb_web of wall above the USB opening");
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
+hw_echo("WAP", [
+    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
+    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    e_buzzer && e_seal ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
+    e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    e_camera && cam_disc_t > 0 ? hw_item(1, str("Ø", cam_disc_d, " x ", cam_disc_t, " clear disc (bond)")) : "",
+    e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
+    e_mount && (mount_style == "keyhole" || mount_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+]);
 echo(str("Canary WAP enclosure v0.8 — outer ", out_l, " x ", out_w, " x ",
          base_h + lid_t + mount_extra, " mm  (preset=", preset, ", seal=", e_seal, ", mount=", e_mount, ")"));
 echo(str("lid screws: ", screw_size, " ", screw_head, " head, max length ",
@@ -612,6 +626,7 @@ module base() {
                 [board_cx-bx, board_cy-by], [board_cx-bx, board_cy+by] ];   // standoff/board-rest corners
     posts    = post_xy();
     gusset_h = max(2, cav_h - lip_h - 1.0);   // keep wall gussets below where the lid lip nests
+    gusset_w = min(2.0, rib_t_max(wall_eff));   // the landing width, capped at the old 2.0 target
 
     union() {
         // hollow shell with the USB-C wall opening (+ optional mounting/seal features)
@@ -697,16 +712,13 @@ module base() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_h - head_pad);
-                for (p = posts) {
+                // constant-width webs to both walls (canary_rib_lib corner_gusset):
+                // a hull between a Ø5 post and a Ø2 target flares and lands wider
+                // than drawn; this lands at gusset_w, 0.5 into the wall, sloped
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    hull() {  // web to the X wall
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([sx*(inner_l/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
-                    hull() {  // web to the Y wall
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([p[0], sy*(inner_w/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
+                    corner_gusset(p[0], p[1], sx*(inner_l/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
+                    corner_gusset(p[0], p[1], p[0], sy*(inner_w/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
             // self-tap pilot — or, with inserts, a clearance bore the whole way (a machine
