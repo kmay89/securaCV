@@ -50,11 +50,16 @@ with the resume command. `render` has no check form — OpenSCAD's STL bytes
 are not deterministic, so nothing byte-gates them; the two steps after it
 gate their bounding boxes and seams (gen_assembled_dims.py --check at
 0.01 mm, gen_figures.mjs --check) and enclosure.yml re-renders and greps
-the log in CI. gen_enclosures.py has no --check flag: its check form is the
-one canary-local.yml uses — regenerate, compare the four JSON outputs —
-except that the committed bytes are put back afterwards, so --check writes
-nothing anywhere. --site is ignored under --check (gen_builder_manifest.py
---site writes the carries whether or not --check is given).
+the log in CI. Two steps have no --check flag and get the form CI uses —
+regenerate and compare — except that the tree's bytes are put back
+afterwards, so --check writes nothing anywhere: gen_enclosures.py (the
+four JSON outputs, as canary-local.yml diffs them) and setup.sh regen (the
+sketch mirror directory, as firmware/scripts/check_display_arduino_sync.sh
+proves it — but against the tree as it stands, not HEAD, so the check is
+meaningful right after a write run regenerated the mirror and before it is
+committed; CI's script would report that as drift). --site is ignored
+under --check (gen_builder_manifest.py --site writes the carries whether or
+not --check is given).
 
 --previews DIR. The rule of record (AGENTS.md "Before you commit";
 docs/hardware/enclosure/README.md "Preview renders"): every .scad change
@@ -165,9 +170,10 @@ STEPS: tuple[Step, ...] = (
          "figures.json verdicts + massing -> canary-local/models/*.glb and desktop/src/models/*.glb"),
     Step("setup_regen",
          ("./setup.sh", "regen"), "firmware/projects/canary-display",
-         ("firmware/scripts/check_display_arduino_sync.sh",), "argv", False,
+         ("./setup.sh", "regen"), "diff", False,
          "fleet_figures.h / fleet_figures_art.h -> the Arduino sketch mirror; then STOP for the dist",
-         conditional=True, check_cwd="."),
+         outputs=("firmware/projects/canary-display/arduino/canary_display",),
+         conditional=True),
     Step("gen_flash",
          ("python3", "canary-local/tools/gen_flash.py"), ".",
          ("python3", "canary-local/tools/gen_flash.py", "--check"), "argv", False,
@@ -346,29 +352,47 @@ def run_check(step: Step, i: int, repo: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def _snapshot(paths: list[Path]) -> dict[Path, bytes]:
+    """{file: bytes} for every output — a directory means every file under it."""
+    out: dict[Path, bytes] = {}
+    for p in paths:
+        if p.is_dir():
+            for f in sorted(p.rglob("*")):
+                if f.is_file():
+                    out[f] = f.read_bytes()
+        elif p.is_file():
+            out[p] = p.read_bytes()
+    return out
+
+
 def _check_by_diff(step: Step, repo: Path) -> tuple[bool, str]:
-    """Regenerate, compare the outputs, and put the committed bytes back —
-    canary-local.yml's gate for gen_enclosures.py, minus the dirty tree."""
+    """Regenerate, compare the outputs, and put the tree's bytes back — the
+    CI gate for a generator without a --check flag (canary-local.yml's four
+    JSON diffs; check_display_arduino_sync.sh's sketch regen), minus the
+    dirty tree, and against the tree as it stands rather than HEAD."""
     paths = [repo / o for o in step.outputs]
-    before = {p: (p.read_bytes() if p.exists() else None) for p in paths}
-    r = _run(step.cmd, cwd=repo / step.cwd, capture=True)
+    before = _snapshot(paths)
+    r = _run(step.check or step.cmd, cwd=repo / (step.check_cwd or step.cwd), capture=True)
     if r.stdout:
         print(r.stdout.rstrip())
+    after = _snapshot(paths)
     stale = []
-    for p, old in before.items():
-        new = p.read_bytes() if p.exists() else None
+    for f in sorted(set(before) | set(after)):
+        old, new = before.get(f), after.get(f)
         if new != old:
-            stale.append(str(p.relative_to(repo)))
+            stale.append(str(f.relative_to(repo)))
             if old is None:
-                p.unlink()
+                f.unlink()
             else:
-                p.write_bytes(old)
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_bytes(old)
     if r.returncode != 0:
         return False, f"{step.name} exited {r.returncode}"
     if stale:
-        return False, (f"{step.name}: generated catalog stale — {', '.join(stale)} would change "
-                       f"(the committed bytes were put back)")
-    print(f"      {len(paths)} generated file(s) reproduce byte-for-byte")
+        shown = ", ".join(stale[:8]) + (f" (+{len(stale) - 8} more)" if len(stale) > 8 else "")
+        return False, (f"{step.name}: generated output stale — {shown} would change "
+                       f"(the tree's bytes were put back)")
+    print(f"      {len(before)} generated file(s) reproduce byte-for-byte")
     return True, ""
 
 
@@ -526,7 +550,7 @@ def list_steps() -> str:
     rows = []
     for i, s in enumerate(STEPS, 1):
         chk = {"argv": " ".join(s.check or ()), "diff": " ".join(s.check or ()) + "  + byte-compare "
-               + ", ".join(Path(o).name for o in s.outputs) + " (committed bytes restored)",
+               + ", ".join(Path(o).name for o in s.outputs) + " (the tree's bytes restored)",
                "none": "(none — " + s.note.split(";")[0] + ")"}[s.check_kind]
         flags = " ".join(f for f, on in (("[openscad]", s.needs_openscad), ("[report-only]", s.report_only),
                                           ("[conditional: stops]", s.conditional)) if on)

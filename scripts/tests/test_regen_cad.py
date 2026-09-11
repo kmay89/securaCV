@@ -58,7 +58,7 @@ CHECKS = {
     "gen_assembled_dims": ("python3", f"{ENC}/gen_assembled_dims.py", "--check"),
     "gen_figures": ("node", "canary-local/tools/figures/gen_figures.mjs", "--check"),
     "gen_device_glbs": ("node", "canary-local/tools/figures/gen_device_glbs.mjs", "--check"),
-    "setup_regen": ("firmware/scripts/check_display_arduino_sync.sh",),
+    "setup_regen": ("./setup.sh", "regen"),
     "gen_flash": ("python3", "canary-local/tools/gen_flash.py", "--check"),
     "gen_builder_manifest": ("python3", f"{ENC}/gen_builder_manifest.py", "--check"),
     "gen_enclosures": ("python3", "canary-local/tools/gen_enclosures.py"),
@@ -128,7 +128,9 @@ class TheOrderIsTheDerivedOrder(unittest.TestCase):
         self.assertEqual({s.name: s.check for s in rc.STEPS}, CHECKS)
         kinds = {s.name: s.check_kind for s in rc.STEPS}
         self.assertEqual([n for n, k in kinds.items() if k == "none"], ["render"])
-        self.assertEqual([n for n, k in kinds.items() if k == "diff"], ["gen_enclosures"])
+        self.assertEqual([n for n, k in kinds.items() if k == "diff"], ["setup_regen", "gen_enclosures"])
+        self.assertEqual(rc.STEP_BY_NAME["setup_regen"].outputs,
+                         ("firmware/projects/canary-display/arduino/canary_display",))
         render = rc.STEP_BY_NAME["render"]
         self.assertIn("gen_assembled_dims --check", render.note)
         self.assertIn("gen_figures --check", render.note)
@@ -156,10 +158,16 @@ class TheOrderIsTheDerivedOrder(unittest.TestCase):
                 self.assertTrue(path.is_file(), f"{s.name}: {path} is not a file")
                 if argv[0] not in ("python3", "node"):
                     self.assertTrue(os.access(path, os.X_OK), f"{s.name}: {path} not executable")
+            for o in s.outputs:
+                self.assertTrue((REPO / o).exists(), f"{s.name}: output {o} is not in the tree")
         for h in rc.FIGURE_HEADERS:
             self.assertTrue((REPO / h).is_file(), h)
         for o in rc.ENCLOSURE_OUTPUTS:
             self.assertTrue((REPO / o).is_file(), o)
+        # the sketch-mirror check is what CI's guard does, against the tree instead of HEAD
+        guard = (REPO / "firmware/scripts/check_display_arduino_sync.sh").read_text(encoding="utf-8")
+        self.assertIn("./setup.sh regen", guard)
+        self.assertIn('git diff --quiet -- "$SKETCH"', guard)
 
     def test_render_grep_is_enclosure_ymls(self):
         yml = (REPO / ".github/workflows/enclosure.yml").read_text(encoding="utf-8")
@@ -221,9 +229,9 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
         self.assertIn("[3/12] render  check: (no check form)", out)
         self.assertIn("4 generated file(s) reproduce byte-for-byte", out)
         self.assertIn("check complete — 12 step(s)", out)
-        # the check forms run where CI runs them: step 7's from the repo root
+        # the check forms run where CI runs them
         cwds = {a[0] if a[0] != "python3" and a[0] != "node" else a[1]: c for a, c in rec.calls}
-        self.assertEqual(cwds["firmware/scripts/check_display_arduino_sync.sh"], str(rc.REPO))
+        self.assertEqual(cwds["./setup.sh"], str(rc.REPO / "firmware/projects/canary-display"))
         self.assertEqual(cwds[f"{ENC}/gen_cad_params.py"], str(rc.REPO))
 
     def test_first_failure_is_named_with_the_resume_command(self):
@@ -252,9 +260,43 @@ class CheckRunsEveryCheckFormInOrder(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("FIRST FAILURE at step 10 (gen_enclosures)", out)
             self.assertIn("catalog.json would change", out)
-            self.assertIn("committed bytes were put back", out)
+            self.assertIn("tree's bytes were put back", out)
             for o in rc.ENCLOSURE_OUTPUTS:
                 self.assertEqual((root / o).read_bytes(), b"committed " + o.encode(), o)
+
+    def test_sketch_mirror_check_regenerates_against_the_tree_and_restores_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            sketch = root / "firmware/projects/canary-display/arduino/canary_display"
+            sketch.mkdir(parents=True)
+            (sketch / "fleet_figures.h").write_bytes(b"uncommitted but current")
+            (sketch / "main.cpp").write_bytes(b"main")
+
+            def in_sync(argv, cwd):
+                return 0, "Flattened"                     # regen reproduces the tree exactly
+
+            code, out, rec = run_main(["--check", "--from", "setup_regen"],
+                                      [("setup.sh regen", in_sync)], repo=root)
+            self.assertEqual(code, 0)
+            self.assertIn("2 generated file(s) reproduce byte-for-byte", out)
+            self.assertEqual(rec.calls[0], (["./setup.sh", "regen"],
+                                            str(root / "firmware/projects/canary-display")))
+
+            def drifted(argv, cwd):
+                (sketch / "fleet_figures.h").write_bytes(b"regenerated differently")
+                (sketch / "main.cpp").unlink()
+                (sketch / "new.cpp").write_bytes(b"added")
+                return 0, "Flattened"
+
+            code, out, rec = run_main(["--check", "--from", "setup_regen"],
+                                      [("setup.sh regen", drifted)], repo=root)
+            self.assertEqual(code, 1)
+            self.assertIn("FIRST FAILURE at step 7 (setup_regen)", out)
+            for name in ("fleet_figures.h", "main.cpp", "new.cpp"):
+                self.assertIn(name, out)
+            self.assertEqual(sorted(f.name for f in sketch.iterdir()), ["fleet_figures.h", "main.cpp"])
+            self.assertEqual((sketch / "fleet_figures.h").read_bytes(), b"uncommitted but current")
+            self.assertEqual((sketch / "main.cpp").read_bytes(), b"main")
 
     def test_site_is_ignored_under_check(self):
         with tempfile.TemporaryDirectory() as td:
