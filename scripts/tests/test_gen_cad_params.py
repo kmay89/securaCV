@@ -538,6 +538,41 @@ class RenderMovesOnlyTheToken(unittest.TestCase):
                 self.assertEqual([(c.line, c.old_token, c.new_token) for c in r.changes],
                                  want, owned)
 
+    def test_crlf_survives_a_real_edit_and_only_the_token_moves(self):
+        # read_text()'s universal newlines turned every CRLF into LF, so one
+        # changed token rewrote a CRLF file LF on every line; bytes in, bytes out
+        crlf = FIXTURE.replace("\n", "\r\n").encode("utf-8")
+        self.assertEqual(crlf.count(b"\r\n"), FIXTURE.count("\n"))
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "crlf.scad"
+            f.write_bytes(crlf)
+            r = gcp.render(f, {"n": 6})
+            self.assertEqual((r.errors, [(c.line, c.old_token, c.new_token) for c in r.changes]),
+                             ([], [(2, "5", "6")]))
+            out = r.text.encode("utf-8")
+            self.assertEqual(out.count(b"\r\n"), crlf.count(b"\r\n"))
+            self.assertEqual(out.count(b"\n"), out.count(b"\r\n"))        # no bare LF crept in
+            self.assertEqual(out, crlf.replace(b"n = 5;", b"n = 6;", 1))
+            # an unchanged value reproduces the bytes exactly
+            self.assertEqual(gcp.render(f, {"n": 5}).text.encode("utf-8"), crlf)
+        # and through write(): a CRLF copy of a released case keeps every CRLF
+        with _Tree() as root:
+            wap = root / WAP_REL
+            before = wap.read_bytes().replace(b"\n", b"\r\n")
+            wap.write_bytes(before)
+            edit(root, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_w", 17.8))
+            written, errors = gcp.write(root / "devices", root)
+            self.assertEqual(errors, [])
+            self.assertEqual([(c.line, c.old_token, c.new_token) for _, c in written],
+                             [(154, "17.5", "17.8")])
+            after = wap.read_bytes()
+            self.assertEqual(after.count(b"\r\n"), before.count(b"\r\n"))
+            self.assertEqual(after.count(b"\n"), after.count(b"\r\n"))
+            old, new = before.split(b"\r\n"), after.split(b"\r\n")
+            self.assertEqual(len(old), len(new))
+            self.assertEqual([i + 1 for i, (a, b) in enumerate(zip(old, new)) if a != b], [154])
+            self.assertEqual(gcp.check(root / "devices", root), [])
+
     def test_module_local_of_the_same_name_is_never_touched(self):
         with tempfile.TemporaryDirectory() as td:
             r = gcp.render(fixture(Path(td)), {"n": 9})

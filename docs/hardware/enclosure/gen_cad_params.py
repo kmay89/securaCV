@@ -78,7 +78,8 @@ WHAT IT REFUSES (exit 1, naming the manifest, the knob and why):
 
 HOW IT WRITES. The literal token only, on the recorded line, keeping the
 old token's integer-vs-decimal spelling (`5` stays `5`, `21.0` stays a
-decimal); the trailing comment and every other byte are left alone. A
+decimal); the trailing comment, the line ending (CRLF stays CRLF) and
+every other byte are left alone. A
 token already equal to its manifest (numerically, for numbers) leaves its
 line byte-identical, so a run over a tree whose manifests match its cases
 changes nothing — which is what the first run proved, and what the
@@ -508,9 +509,12 @@ def render(scad_path: Path, owned: dict[str, object],
     """The file's text with every owned knob's literal set to its manifest
     value, the list of lines that changed, and every refusal. Nothing is
     written. `who` (knob -> slugs) only decorates the messages."""
-    text = scad_path.read_text(encoding="utf-8")
-    # splitlines(keepends=True) splits exactly where parse_scad's splitlines()
-    # does, so its line numbers index this list; joining reproduces the bytes.
+    # Bytes in, bytes out: read_text() would translate every CRLF to LF
+    # (universal newlines), and a real edit would then rewrite a CRLF file
+    # LF on every line. splitlines(keepends=True) splits exactly where
+    # parse_scad's splitlines() does, so its line numbers index this list;
+    # joining reproduces the bytes, whatever each line ends with.
+    text = scad_path.read_bytes().decode("utf-8")
     lines = text.splitlines(keepends=True)
     flat = _params(scad_path)
     per_line = Counter(p["line"] for p in flat)
@@ -651,7 +655,7 @@ def write(devices_dir: Path | None = None,
     for path, r in plan:
         if not r.changes:
             continue
-        path.write_text(r.text, encoding="utf-8")
+        path.write_bytes(r.text.encode("utf-8"))    # no newline translation, on any OS
         written.extend((path, c) for c in r.changes)
     return written, errors
 
