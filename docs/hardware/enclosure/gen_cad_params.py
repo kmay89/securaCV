@@ -98,9 +98,10 @@ moved, and the rest of the chain follows in the order REGEN_ORDER prints
 scripts/lint_device_manifests.py imports check(), so `python3
 scripts/lint_device_manifests.py` stays THE manifest gate; lint.yml and
 enclosure.yml also run --check directly. --check also prints, as INFO
-(never an error), the registry rows and facts no manifest references:
-the doorbell, the gang plate, the Hammond chassis, the J-box and the bench
-fixture cite the registry by comment and have no manifest.
+(never an error), the registry rows and facts no manifest references: the
+display cases have manifests that own no knobs yet, and the doorbell, the
+gang plate, the Hammond chassis, the J-box and the bench fixture have no
+manifest — all of them cite the registry by comment.
 """
 
 from __future__ import annotations
@@ -811,9 +812,10 @@ def main(argv: list[str] | None = None) -> int:
         rows, facts = unreferenced(owned, parse_board_registry())   # parsed: check() was clean
         if rows or facts:
             print(f"INFO: registry entries no manifest references — rows: "
-                  f"{', '.join(rows) or 'none'}; facts: {', '.join(facts) or 'none'}. Cases no "
-                  f"manifest owns (the doorbell, the gang plate, the Hammond chassis, the J-box, "
-                  f"the bench fixture, the display cases) cite them by comment; not an error")
+                  f"{', '.join(rows) or 'none'}; facts: {', '.join(facts) or 'none'}. Cases whose "
+                  f"manifests own no knobs yet (the display cases) and cases with no manifest "
+                  f"(the doorbell, the gang plate, the Hammond chassis, the J-box, the bench "
+                  f"fixture) cite them by comment; not an error")
         return 0
 
     written, errors = write()

@@ -516,6 +516,14 @@ class ManifestsCarryTheJoin(unittest.TestCase):
         self.assertIn("INFO: registry entries no manifest references", text)
         self.assertIn("rows: ws147, ws169, round_disp, heltec_v3", text)
         self.assertIn("not an error", text)
+        # the display cases HAVE manifests (canary-display-*/device.json names
+        # each case) — they own no knobs yet; the INFO must not say otherwise
+        self.assertIn("Cases whose manifests own no knobs yet (the display cases)", text)
+        self.assertIn("cases with no manifest (the doorbell", text)
+        self.assertNotIn("Cases no manifest owns", text)
+        display = [p for p in DEVICES.glob("canary-display-*/device.json")
+                   if (json.loads(p.read_text(encoding="utf-8")).get("cad") or {}).get("scad")]
+        self.assertGreater(len(display), 0)
 
 
 class ARegistryCorrectionReachesTheCases(unittest.TestCase):
