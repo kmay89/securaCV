@@ -94,7 +94,12 @@ class _Tree:
         shutil.copytree(DEVICES, root / "devices")
         enc = root / "docs" / "hardware" / "enclosure"
         enc.mkdir(parents=True)
-        for name in RELEASED + [LIB_NAME]:
+        # every case a manifest owns knobs of (the released cases and, since
+        # the display cases joined, theirs), derived from the manifests so a
+        # manifest gaining cad.params never breaks this tree
+        owned = {Path((m.get("cad") or {}).get("scad", "")).name
+                 for m in manifests().values() if (m.get("cad") or {}).get("params")}
+        for name in sorted(owned | set(RELEASED) | {LIB_NAME}):
             shutil.copyfile(ENC / name, enc / name)
         return root
 
@@ -175,7 +180,11 @@ class LedgerShape(unittest.TestCase):
         drawn = {m["figure"] for m in manifests().values()
                  if m.get("figure") and (m.get("cad") or {}).get("params")}
         self.assertEqual(drawn, {"device.canary-wap", "device.canary-sense",
-                                 "device.canary-vision", "device.canary-vision-devkit"})
+                                 "device.canary-vision", "device.canary-vision-devkit",
+                                 # the display cases joined with pure JSON
+                                 "device.canary-display-dash", "device.canary-display-nightstand",
+                                 "device.canary-display-touch169", "device.canary-display-watch",
+                                 "device.canary-nightlight"})
         with_knobs = {fid for fid, e in self.dims["figures"].items() if "knobs" in e}
         self.assertEqual(with_knobs, drawn)
         # the doorbell has no manifest; every part figure has none either
@@ -204,15 +213,18 @@ class LedgerShape(unittest.TestCase):
         self.assertEqual(set(vision), {"vm_l", "vm_w", "xiao_l", "xiao_w", "stack_sock_h",
                                        "xiao_below", "vm_front_h", "cam_w", "cam_h", "pcb_t",
                                        "board_clear"})
+        # every owned knob reaches exactly the figure its manifest draws (a
+        # shared case file reaches two figures by slug: the devkit's knobs are
+        # the devkit figure's, the XIAO manifests' the Vision figure's)
+        figure_of = {slug: m["figure"] for slug, m in manifests().items() if m.get("figure")}
+        seen = 0
         for scad_rel, keys in owned.items():
             for name, o in keys.items():
-                fig = {"canary_wap_enclosure.scad": "device.canary-wap",
-                       "canary_sense_enclosure.scad": "device.canary-sense"}.get(
-                           Path(scad_rel).name)
-                if fig is None:      # the shared Vision case: by slug
-                    fig = ("device.canary-vision-devkit" if o.slugs == ["canary-vision-devkit"]
-                           else "device.canary-vision")
-                self.assertEqual(figs[fig]["knobs"][name], o.value, f"{fig}.{name}")
+                for slug in o.slugs:
+                    fig = figure_of[slug]
+                    self.assertEqual(figs[fig]["knobs"][name], o.value, f"{fig}.{name}")
+                    seen += 1
+        self.assertGreaterEqual(seen, 54)
 
     def test_board_registry_rides_along_with_its_evidence(self):
         reg = self.dims["board_registry"]
