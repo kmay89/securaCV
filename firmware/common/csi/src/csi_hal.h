@@ -5,14 +5,31 @@
  * Implements the CSI interface defined in csi_types.h, backed by
  * Espressif's esp_wifi_set_csi_rx_cb() on ESP32-S3 / ESP32-C3.
  *
- * PRIVACY BARRIER (enforced in this file, tested in conformance checks):
+ * PRIVACY BARRIER (enforced in this file, tested in
+ * csi_hal_transmitter_filter_test.cpp):
  *   The ESP-IDF CSI callback delivers a wifi_csi_info_t that contains the
- *   source MAC, BSSID, and assorted frame metadata. This module copies out
- *   ONLY the subcarrier samples and aggregate RSSI/timing, then immediately
- *   zeroes the fields of the info struct that can identify a device.
+ *   transmitter MAC, the destination MAC, and assorted frame metadata. This
+ *   module copies out ONLY the subcarrier samples and aggregate RSSI/timing.
  *
  *   No MAC, no BSSID, no FCS, no sequence number, no frame-control bits
- *   enter the ring buffer that feeds the feature extractor.
+ *   enter the ring buffer that feeds the feature extractor, a stat, a log
+ *   line or any wire format.
+ *
+ *   The transmitter filter (below) READS info->mac — six bytes, in place —
+ *   to compare it against the BSSID of the AP this station is associated
+ *   with, and hands the same pointer to the optional peer hook. It is a
+ *   memcmp, not a copy: the bytes never leave the driver's struct.
+ *
+ *   The ONE identifier this HAL keeps is that associated BSSID, in a single
+ *   file-static (s_assoc_bssid), read back from esp_wifi_sta_get_ap_info().
+ *   It is never exported, never logged (the log line says "learned", not
+ *   what), and wiped on deinit(). It is the address of the household's own
+ *   router — the link the sensor listens on, not a device it observes.
+ *
+ *   Invariant F (spec/canary_free_signals_v0.md, Symmetry) is untouched:
+ *   the filter selects the sensing LINK, it does not classify devices or
+ *   people, and nothing about it reaches an event. frames_dropped_foreign
+ *   is a driver counter beside frames_dropped_rssi, not an event field.
  *
  * See also: spec/canary_free_signals_v0.md (Invariant F).
  */
@@ -44,13 +61,18 @@ struct Config {
   uint8_t  bandwidth_mhz;    /* 20 or 40 */
   uint16_t max_frame_rate_hz;
   int8_t   rssi_floor_dbm;
+  /* Transmitter filter: accept frames only from the associated AP's BSSID
+   * (and registered peers, see set_peer_filter). Off = the pre-filter
+   * behavior, every decoded frame on the channel lands in the window. */
+  bool     filter_foreign;
 
   static Config defaults() {
     return Config{
       /* channel */           0,
       /* bandwidth_mhz */      20,
       /* max_frame_rate_hz */  20,
-      /* rssi_floor_dbm */     CSI_RSSI_NOISE_FLOOR_DBM
+      /* rssi_floor_dbm */     CSI_RSSI_NOISE_FLOOR_DBM,
+      /* filter_foreign */     true
     };
   }
 };
@@ -79,6 +101,71 @@ bool     get_stats(csi_stats_t* out);
  * Used by the rf_presence conformance suite to prove no identifiers leaked
  * into the CSI data path. */
 bool conformance_check_no_mac_in_buffers();
+
+/* ────────────────────────────────────────────────────────────────────────
+ * TRANSMITTER FILTER
+ *
+ * Every transmitter the radio can decode lands in the CSI callback:
+ * neighbor APs' beacons, other households' stations, peer Canaries'
+ * ESP-NOW probes, and the frames from the router this station is
+ * associated with. Each link has its own channel response, so a 64-frame
+ * window that alternates between links measures the DIFFERENCE between
+ * links, and per-subcarrier variance reads as motion. The filter keeps
+ * one link: frames whose transmitter address is the associated AP's BSSID
+ * (beacons, echo replies to csi_traffic's pings, data to us) and, when a
+ * peer hook is installed, registered peer Canaries. Everything else is
+ * counted under csi_stats_t::frames_dropped_foreign and never buffered.
+ *
+ * Privacy: see the barrier note at the top of this file. The comparison
+ * is a 6-byte memcmp against info->mac in place; the associated BSSID is
+ * the single identifier the HAL holds, and it is never exported.
+ *
+ * Arming: the filter engages once a BSSID is known. Until the STA has
+ * associated (AP-only install, captive-portal phase) there is nothing to
+ * compare against and every frame is accepted — the pre-filter behavior,
+ * reported by has_associated_bssid() == false. A held BSSID survives a
+ * disconnect until a reassociation replaces it (roaming to another AP of
+ * the same network is picked up by the poll below) or deinit() wipes it.
+ *
+ * Learning the BSSID: process() polls esp_wifi_sta_get_ap_info() from the
+ * main loop — every second while none is held, every
+ * TRANSMITTER_BSSID_POLL_MS once one is — so a consumer that never calls
+ * anything below still converges within a second of association. The
+ * integration layer's STA got-IP handler should call
+ * request_bssid_refresh() to make that immediate.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+constexpr uint32_t TRANSMITTER_BSSID_POLL_MS         = 10000;  /* once known */
+constexpr uint32_t TRANSMITTER_BSSID_POLL_UNKNOWN_MS = 1000;   /* until known */
+
+/* Re-read the associated AP's BSSID from the driver now. MAIN-LOOP (or
+ * init-time) context only: it is the single writer of the held BSSID and
+ * calls into the Wi-Fi driver, so never call it from a Wi-Fi event
+ * handler or the CSI callback — use request_bssid_refresh() there.
+ * Returns true when a BSSID is held afterwards (kept from before if the
+ * STA is currently not associated). */
+bool refresh_associated_bssid();
+
+/* Ask process() to refresh on its next tick. Safe from any task (the
+ * Arduino Wi-Fi event task included) — it only sets a flag. */
+void request_bssid_refresh();
+
+/* True when the filter has a BSSID to compare against (see "Arming"). */
+bool has_associated_bssid();
+
+/* Runtime mirror of Config::filter_foreign for a settings surface. Takes
+ * effect on the next frame. */
+void set_filter_foreign(bool on);
+bool get_filter_foreign();
+
+/* Optional second allow-list: registered peer Canaries. The hook runs in
+ * the Wi-Fi task for every frame the BSSID compare rejected, receiving a
+ * pointer INTO the driver's info->mac for the duration of the callback.
+ * It must compare and return — never copy or log. The intended target is
+ * csi_probe::has_peer, which already holds those addresses in its RAM
+ * table; the HAL does not keep a second copy. nullptr clears the hook. */
+using PeerFilter = bool (*)(const uint8_t* mac);
+void set_peer_filter(PeerFilter fn);
 
 /* ────────────────────────────────────────────────────────────────────────
  * CHANNEL LOCK

@@ -252,6 +252,9 @@ genuinely sophisticated, privacy-first, single-antenna CSI stack, well above typ
 CSI code. It enables CSI via the standard `esp_wifi_set_csi_config/_rx_cb/_set` path (with deferred
 retry until WiFi is up), and the driver callback **structurally scrubs identifiers at the ISR
 boundary** — it copies only RSSI/channel/bandwidth + the raw I/Q, never `info->mac`/`hdr`/`payload`.
+*(2026-09 note: the transmitter filter now reads `info->mac` in place to compare it against the
+associated AP's BSSID — still never copied; the BSSID is the one identifier the HAL holds. See
+`csi_hal.h` and `docs/IMPROVEMENT_ROADMAP.md` row 2.)*
 Frames land in a 16-slot lock-free SPSC ring drained by the loop into a 32-dim `int8` feature vector
 per 1 s window.
 

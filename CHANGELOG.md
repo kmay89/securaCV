@@ -82,6 +82,170 @@
   drop-in Home Assistant package. A test fails if the docs stop saying bench
   validation is pending.
 
+### Release buttons: three redundant launchers retired, one rule for adding the next
+
+- **`release-one-click.yml`, `firmware-release-if-changed.yml` and
+  `mac-apps-release.yml` are gone, and nothing they could do is lost.** None
+  had run since July, and each was one input combination of **"Update
+  everything (only what needs it)"**: `only: firmware` is the firmware-only
+  "release if it moved" check, `force: flasher,lab` re-cuts both desktop apps
+  whether or not they moved (with `publish` unchecked, the build-only smoke
+  run; the rest of the plan still runs — `only:` is the narrowing knob — and
+  the targets with no smoke mode, firmware and the site, sit a build-only run
+  out instead of falling back to a real release; a typo'd target name now
+  fails the run rather than being ignored), and
+  a dev-channel firmware build is `firmware-release.yml`
+  dispatched directly with `channel: dev`, as it always was. The one thing
+  only the one-click launcher did — warn that publishing an already-tagged
+  app version overwrites the shipped release's assets — is now said by the
+  plan itself, in the forced target's summary row (`release_plan.py`, two
+  new unit tests); the `force` input's help text says it takes
+  comma-separated names, which the CLI always accepted.
+  `docs/RELEASE_BUTTONS.md` maps each retired button to what to press
+  instead. The rule going forward: a new thing to ship is a row in
+  `.github/release-targets.yml`, never a new launcher
+  (`.github/RELEASE_LESSONS.md`, 2026-09-08).
+- **`desktop-mobile-release.yml` ("Mobile (iOS) build") is retired too, in
+  its own commit.** It wrapped the Lab's Tauri v2 iOS shell
+  (`desktop-lab/MOBILE.md`), was dispatched once (gated to a no-op) and never
+  produced a build; the iPhone / iPad app that ships is the native companion
+  in `ios/`, through `ios-release.yml` and the `ios` target row. This is a
+  distinct capability, not a duplicate — the local `npm run ios:build` recipe
+  stays, and `MOBILE.md` says how to bring a CI build back (a per-target
+  workflow plus a `release-targets.yml` row, not a launcher).
+
+### The Home Assistant integration carries its own icon, and the HACS mirror carries it too
+
+- **`custom_components/securacv/brand/` is part of the integration.** The
+  icon (256 and 512 px) and logo moved byte-for-byte from `brands/submission/`
+  into the integration directory. Home Assistant 2026.3 and newer serves them
+  at `/api/brands/integration/securacv/…` (a local file takes priority over
+  the brands CDN; no manifest key needed), and HACS's `brands` validation
+  accepts the same folder — so `homeassistant-mirror.yml` no longer excludes
+  it, the mirror's `check_mirror_sync.py` no longer special-cases it, the
+  whole directory is one byte-exact copy, and the monorepo's `validate.yml`
+  runs the brands check instead of ignoring it. The unused root
+  `custom_components/securacv/icon.png` / `icon@2x.png` (read by nothing) are
+  gone. Older Home Assistant shows the generic placeholder; nothing has been
+  submitted to home-assistant/brands — `brands/home-assistant/README.md`
+  records the sizes and the optional recipe. Closes roadmap row 51 with its
+  premise corrected: the mirror README's "HACS does not read `brand/`" was
+  the false claim, not the folder.
+
+### Firmware: one CSI HAL — the canary library is an adapter over `common/csi`
+
+- **`firmware/canary/lib/securacv_csi` no longer carries its own copy of the
+  CSI HAL and feature extractor** (roadmap 22). `securacv_csi.cpp` went from
+  1146 lines to a 76-line `csi::` adapter that delegates to `csi_hal::`, and
+  `securacv_csi.h` includes the canonical `csi_types.h` instead of declaring a
+  twin `csi_features_t`. `firmware/canary/platformio.ini` compiles
+  `common/csi/src/csi_hal.cpp` + `csi_features.cpp` directly, so the image has
+  exactly one `esp_wifi_set_csi_rx_cb` registration.
+- **Three behaviors the canary copy had and canonical lacked moved into
+  `csi_hal.cpp`** (both products get them): `stop()` drains the ring by
+  advancing the consumer's own index; `get_caps()` honors
+  `CONFIG_IDF_TARGET_ESP32S3` / `ESP32S2` as well as the sketch's board
+  macro; and `process()` fills `v[25]` — canonical had left it 0 — with the
+  frames the rate limiter shed that window, the busy-channel meaning
+  `wifi.channel_activity` reads it in (the canary copy had filled the slot
+  with the shortfall, expected minus arrived, which points the other way;
+  one HAL means one meaning, and the canary's `/api/sensing`
+  `dropped_estimate` now carries the shed count).
+- **The canary PIO build's CSI watchdog now runs.** The old `csi_hal::` shim
+  checked it only inside a `csi_hal::process()` nobody called, so the
+  5 s-silence recovery `csi_modules_integration.cpp` configures had never
+  fired there. `firmware/canary/include/health_log.h` answers the HAL's
+  `__has_include` probe so its diagnostics keep landing in the canary health
+  log rather than only on the serial console.
+- **`firmware/scripts/check_csi_sync.sh` guards the shape:** a name-based
+  check that the adapter defines nothing the canonical HAL or extractor
+  defines (limits stated in the script), no direct driver calls, a 120-line
+  budget, the header must consume `csi_types.h`, and the ini must compile the
+  HAL. `firmware/tests_host/test_csi_hal_adapter.cpp` (run by `make -C
+  firmware/tests_host`) links the adapter against the real `csi_hal.cpp` +
+  `csi_features.cpp` over a stubbed esp_wifi driver and pushes frames through
+  the one registered callback — single registration, `v[25]`, and the
+  watchdog firing on `csi::process()`. Host-tested only; the canary envs are
+  compile-tested by `firmware.yml`'s PlatformIO leg.
+
+### CSI: one transmitter per window
+
+- **The CSI HAL filters on the transmitter address.** Every decoded frame on
+  the channel used to land in the same 1 s window — neighbor APs' beacons,
+  other households' stations, peer probes, router echoes — and the variance
+  between links' channel responses read as motion. `csi_hal.cpp` now compares
+  each frame's transmitter address, in place, against the BSSID of the AP the
+  station is associated with (and, on the WAP, against the probe layer's peer
+  table) and drops the rest before anything is buffered, counting them under
+  `frames_dropped_foreign`. Until the STA associates there is nothing to
+  compare against and every frame passes, so an AP-only install senses as
+  before. The BSSID is the one identifier the HAL holds: one static, read
+  back from `esp_wifi_sta_get_ap_info()` on the main loop, never exported or
+  logged, wiped on `deinit()`; the transmitter address itself is never copied
+  into a slot, a stat, a log line or a wire format. Surfaces: `/api/status`
+  gains `frames_dropped_foreign`, `filter_foreign` and `filter_armed`;
+  `/api/settings` gains `filter_foreign` (bool, default on, persisted); the
+  canary webui's driver-health tile gains "Drop: other transmitters". The
+  canary tree's `securacv_csi.cpp` carries the BSSID half. Host-tested
+  (`csi_hal_transmitter_filter_test.cpp` drives the shipped HAL through a
+  stubbed ESP-IDF surface and scans ring, stats and feature vector for both
+  addresses); the device path is compiled only by CI's firmware build — no
+  board has run it — and the bench pass in `docs/IMPROVEMENT_ROADMAP.md` §5
+  is what shows the false-positive floor moved.
+
+### Tooling: `regression_check.sh` judges a hit by its content, not its path
+
+- The token-isolation and private-key checks piped `grep -rn` output — which
+  starts every line with `file:line:` — through a keyword grep, so a checkout
+  whose path contained "witness" or "transmit" (a worktree named for its
+  task, a home directory) failed both checks on files nobody had touched, and
+  two reviewers in one day spent time proving the same false positive. The
+  keyword match now runs on the text after `file:line:`; the report still
+  names the file.
+
+### One witness-page contract, a TLS pin the app actually uses, and a Wi-Fi rollout that says when the password is in the clear
+
+- **`GET /api/v1/witness` is one contract** ([`spec/witness_api_v1.md`](spec/witness_api_v1.md)).
+  The iPhone app verified a page no firmware in this repository served: it
+  fetched `/api/v1/witness` in the canary-vision reference shape while
+  canary-wap answered only `/api/witness` (one record, another shape, no
+  signature). canary-wap now serves the page from a 16-record RAM ring
+  (`witness_page.h`, `handle_witness_v1`, Bearer-gated, chunked) as
+  `chain_format: wap_v1` — the firmware's own domain-separated chain hash
+  and its existing per-record Ed25519 signature over the raw hash, no new
+  signing scheme — with coarse ten-minute timestamps only when the device
+  has met a clock (Invariant III), and never its own self-check flag. The
+  reference server's shape is `reference_v1` (absent `chain_format`). One
+  shared fixture, `spec/fixtures/witness_page_v1.json` (generator
+  `--check`ed in CI), is byte-compared by a firmware host test that rebuilds
+  it from real Ed25519-signed records and decoded by a Swift XCTest against
+  the same public key. The app's decoder tolerates an absent or empty
+  signature (Unsigned — never Verified) and an absent timestamp (anchored
+  coarsely from `time_bucket × time_bucket_ms` and `uptime_s`); the
+  verifier recomputes `wap_v1` links and signs over the right message;
+  a WAP row's trust badge is now set by that verification. Swift
+  compile-untested here; the WAP endpoint and fixture are host-tested.
+- **The app pins the receipt's `tls_cert_fp`.** The pairing receipt always
+  carried the SHA-256 of the WAP's self-signed certificate; the app dropped
+  it and dialed with `URLSession.shared`, so a TLS-enabled WAP was
+  unreachable. `PairedDeviceRef` keeps the fingerprint (also synced as
+  `PairedDevice.tlsCertFP` — **run `ios/scripts/cloudkit_schema.sh promote`
+  before the next iOS release**, production rejects a field the schema
+  lacks); `DeviceAPI` dials https through a `PinnedTrustDelegate` that
+  hashes the leaf certificate's DER and compares exactly, cancels on
+  mismatch with a user-readable `certificateMismatch`, and refuses an https
+  device with no pin (`tlsPinMissing` — a TLS device the app cannot check is
+  not a checked device); PairView refuses such a receipt at paste time; the
+  liveness sentinel and the rollout's return-watch probe through the same
+  pin. Plain-http devices are unchanged. Compile-untested here.
+- **Fleet Wi-Fi rollout: the password's wire is named, and plain http asks
+  first.** The planner prefers the bonded BLE lane over plain http even for
+  an online Canary, uses HTTP freely only when the device is pinned https,
+  and puts every remaining plain-http push behind a one-time disclosure
+  ("sends it across your Wi-Fi unencrypted") the sheet must acknowledge; the
+  runner refuses an unapproved cleartext push with the reason on the row.
+  Planner tests extended. Compile-untested here.
+
 ### The device manifests drive the generators, and the release env list is derived
 
 - **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read

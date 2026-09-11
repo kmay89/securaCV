@@ -7,7 +7,7 @@
 # that is the point, and it is what stops the button burning runners.
 #
 # What "needs doing" means, per target (the logic lives in
-# `.github/scripts/release_plan.py`, which is unit-tested — 43 cases — because
+# `.github/scripts/release_plan.py`, which is unit-tested, because
 # this decision is the whole product):
 #
 #   • source version NEWER than the newest tag  → release it (this is also what
@@ -29,9 +29,20 @@
 # fails only if something that was supposed to happen didn't (a dispatch call
 # erroring), which is the honest definition of a red run.
 #
-# Related, and narrower: `release-one-click.yml` runs a chosen set
-# unconditionally; `firmware-release-if-changed.yml` does this for firmware
-# alone. This is both of those generalized to every target.
+# This is the only launcher. The narrower ones it grew out of —
+# `firmware-release-if-changed.yml` (firmware alone), `mac-apps-release.yml`
+# (both desktop apps) and `release-one-click.yml` (a ticked set, run
+# unconditionally) — were retired on 2026-09-08 (RELEASE_LESSONS.md, that
+# date) because each was one `only:` / `force:` setting of this button:
+#   • `only: firmware`            → the firmware-only "release if it moved" check
+#   • `force: flasher,lab`        → both desktop apps, whether or not they moved
+#                                   (publish unchecked = build-only smoke run;
+#                                   the other targets are still planned —
+#                                   `only:` is the narrowing knob)
+#   • a dev-channel firmware build → `firmware-release.yml` dispatched directly
+#                                   with `channel: dev` (never a smoke run)
+# A new thing to ship is a row in `.github/release-targets.yml`, not a new
+# launcher.
 name: Update everything (only what needs it)
 run-name: >-
   Update everything — ${{ inputs.plan_only && 'PLAN ONLY' || (inputs.publish && 'PUBLISH' || 'dev build') }}${{ inputs.only != 'all' && format(' [{0}]', inputs.only) || '' }} — @${{ github.actor }}
@@ -40,7 +51,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish real releases (unchecked = build-only smoke runs for the apps)"
+        description: "Publish real releases (unchecked = build-only smoke runs for the apps; firmware and the site sit it out)"
         type: boolean
         default: false
       only:
@@ -53,7 +64,7 @@ on:
         type: boolean
         default: false
       force:
-        description: "Re-release even if it looks up to date: a target name, or 'all' (leave blank normally)"
+        description: "Re-release even if it looks up to date: a target name, comma-separated names (flasher,lab), or 'all'. Leave blank normally — re-cutting a version that is already tagged OVERWRITES that release's assets (the plan row says so)"
         type: string
         default: ""
 
@@ -251,7 +262,7 @@ jobs:
                   ? '**Plan only** — nothing was dispatched.'
                   : publish
                     ? '**Publishing real releases** for everything that needed it.'
-                    : '**Dev build-only smoke runs** for the apps (tick *publish* for real releases).'
+                    : '**Dev build-only smoke runs** for the apps; targets with no build-only mode (firmware, the site) sit this run out (tick *publish* for real releases).'
               )
               .addBreak()
               .addRaw(`**Ref:** \`${ref}\``)

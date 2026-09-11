@@ -56,8 +56,9 @@
  * magnitude is order-invariant and its rotation path only uses the sign for
  * slow-drift direction, so nothing downstream re-learns a convention.
  *
- * Header-only, <stdint.h>/<string.h> only: compiled into both HALs
- * (firmware/common/csi and firmware/canary/lib/securacv_csi) and the host
+ * Header-only, <stdint.h>/<string.h> only: compiled into the one CSI HAL
+ * (firmware/common/csi/src/csi_hal.cpp — built by the canary PIO envs and,
+ * as a byte-identical staged copy, by the canary-wap sketch) and the host
  * tests (tests_host/test_csi_subcarriers.cpp).
  *
  * License: MIT (matches the library).

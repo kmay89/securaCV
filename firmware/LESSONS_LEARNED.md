@@ -7,6 +7,44 @@
 
 ---
 
+## One contract, or the two ends drift until neither notices
+
+### The phone verified a page no firmware served (2026-09, roadmap rows 5/6/13)
+- **What happened:** The iPhone app's headline trust feature — recompute the
+  chain, verify the head against the pinned key — fetched `/api/v1/witness`
+  in the canary-vision reference server's shape. Every firmware in this
+  repository (canary-wap) answered `/api/witness`: one record, a different
+  shape, no signature. Both ends had tests; each tested only itself. Every
+  WAP sat at "Unverified" and nothing went red.
+- **Second layer:** the receipt the WAP hands over on a BOOT-tap carried
+  `tls_cert_fp` since TLS shipped, and the app never read it — so the one
+  transport that protects the router password (`/api/wifi/connect` over
+  https) was the one the app could not open at all (`URLSession.shared`
+  never answers a self-signed server-trust challenge). Meanwhile the fleet
+  Wi-Fi rollout pushed the password over plain http and the sheet's copy
+  called it the safe path.
+- **The fix:** one contract in `spec/witness_api_v1.md` with a
+  `chain_format` field, because the two chains legitimately differ (string
+  pre-image vs domain-separated binary; signature over the hex string vs the
+  raw hash) and pretending otherwise would have meant a second signing
+  scheme. canary-wap renders it from a 16-record RAM ring
+  (`witness_page.h`, pure and host-tested); the Swift verifier learned
+  `wap_v1`. ONE fixture (`spec/fixtures/witness_page_v1.json`) is
+  byte-compared by the firmware host test and decoded by the Swift test
+  against the same public key — the contract cannot move on one side alone.
+  The app pins `tls_cert_fp` and refuses an https device without it; the
+  rollout prefers the bonded BLE lane and discloses plain http.
+- **Guidance:** a contract that exists only as "what the other side sends
+  today" is not a contract. Put the shape in `spec/`, put ONE fixture beside
+  it, and have every implementer decode the same bytes in its own test —
+  mirror-of-mirror tests (Swift asserting what Swift encodes) find nothing.
+  When two producers genuinely differ, name the difference in a field the
+  reader dispatches on; do not invent a third format to paper over it.
+  And when a receipt carries a security fact (`tls_cert_fp`), grep the
+  consumer for it before calling the feature shipped.
+
+---
+
 ## A driver library's init table is a PANEL personality, not a chip default
 
 ### The stock RM690B0 table lit the T4-S3 and darkened the Waveshare 2.41 (2026-08)
@@ -1145,6 +1183,41 @@
   code, without ever being started.
 - **Date learned:** 2026-07
 
+### A sensor that sums frames from every transmitter measures the neighborhood, not the room
+- **What happened:** The September 2026 audit (docs/IMPROVEMENT_ROADMAP.md
+  row 2) found the presence detector's false-positive floor was set by the
+  neighborhood's Wi-Fi: neighbor APs' beacons, other households' stations,
+  peer Canaries' ESP-NOW probes and the router's echo replies all landed in
+  the same 1 s window.
+- **Root cause:** `csi_rx_cb` accepted every frame the PHY decoded. Each
+  link has its own channel response, so a window that alternates between
+  links measures the *difference between links*, and per-subcarrier
+  variance across that difference is indistinguishable from motion. The
+  DSP was right; its input was several rooms' worth of radio.
+- **Fix:** a transmitter filter at the top of the callback, before the RSSI
+  floor and the rate limiter (so a foreign burst cannot spend our link's
+  rate budget): a 6-byte compare of `info->mac`, in place, against the
+  BSSID of the AP the station is associated with (read back from
+  `esp_wifi_sta_get_ap_info()` on the main loop, polled and refreshed from
+  the STA got-IP handler), plus a hook into `csi_probe::has_peer()` for
+  registered peers. Everything else is counted under
+  `frames_dropped_foreign` and never buffered. Until a BSSID is known every
+  frame passes, so an AP-only install is unchanged. The BSSID is the one
+  identifier the HAL holds — one static, never exported or logged, wiped on
+  `deinit()`; the transmitter address is never copied anywhere.
+- **The lesson:** a HAL that has to know its own link needs exactly one
+  identifier. Hold it in one named place, compare in place, say so where
+  the "we never read this" claim used to be (that claim was now half
+  false), and let a test scan everything else for the bytes.
+- **Regression check:** `firmware/common/csi/csi_hal_transmitter_filter_test.cpp`
+  (the `CSI Privacy Invariants` job in firmware.yml) compiles the shipped
+  `csi_hal.cpp` against `host_stubs/`, feeds two transmitters, asserts the
+  associated one is processed and the other dropped and counted, and byte-
+  scans the ring, the stats and the emitted feature vector for either
+  address. Two planted leaks (a copy into a slot's trailing bytes, a copy
+  into the feature vector) each fail exactly one scan.
+- **Date learned:** 2026-09
+
 ### A feature that only exists in dev builds fails silently in the field
 - **What happened:** A user pressed their smoke alarm's TEST button next to
   a production Canary; nothing happened — no event, no log, no error. The
@@ -1656,6 +1729,56 @@
   `ble_signature` for any product whose id fits the header's 31-byte slot
   (`ble_header_fits()`; the seven longer display ids carry none and are not
   asked for one).
+- **Date learned:** 2026-09
+
+## CSI: one HAL, not two kept equal by hand
+
+### A second copy of a driver is a place for fixes to land in only one of them — and for a shim to claim a feature it never ran
+- **What happened:** The canary product (`firmware/canary/lib/securacv_csi`)
+  and the canonical library (`firmware/common/csi`) each carried a full CSI
+  HAL + feature extractor, and the canary-wap sketch a third, staged copy.
+  `check_csi_sync.sh` guarded only the staged copy, so the first two drifted
+  silently and the September 2026 audit re-synced them by hand. Reading them
+  side by side for the merge found real divergence in both directions: the
+  canary copy had a safer `stop()` drain (consumer advances its own index),
+  reported HT40 from the driver's target macro, and filled the
+  dropped-frame slot `v[25]` that its own `/api/sensing` reads (with the
+  shortfall — the merge keeps the slot but gives it the busy-channel meaning
+  the WAP's `wifi.channel_activity` module reads: frames the limiter shed) —
+  none of which canonical did — while canonical had the PSRAM-backed amplitude
+  history the canary lacked. Worse, the canary file's `csi_hal::` shim
+  advertised "full watchdog + channel-lock parity" and implemented the
+  watchdog check inside `csi_hal::process()`, but `main.cpp` pumps
+  `csi::process()`; nobody ever called the shim's, so the 5 s-silence
+  recovery the integration layer configured had never once fired on the
+  PIO build. The math bodies, at least, were identical — the hand sync had
+  gotten that part right.
+- **Root cause:** Two definitions of one thing with no gate between them.
+  The guard that existed checked bytes between the canonical file and a
+  copy that was *supposed* to be identical; nothing checked the copy that
+  was allowed to differ, so "differs" and "diverged" became the same state.
+  A shim that forwards most calls invites the assumption that it forwards
+  all of them.
+- **Fix:** `securacv_csi.cpp` is now a 76-line `csi::` adapter over
+  `csi_hal::`; `securacv_csi.h` includes `csi_types.h` (one
+  `csi_features_t`); `firmware/canary/platformio.ini` compiles the
+  canonical `csi_hal.cpp` + `csi_features.cpp`. The three canary-only
+  behaviors were ported into canonical, so both products have them.
+  `firmware/canary/include/health_log.h` answers the HAL's
+  `__has_include("health_log.h")` probe so its diagnostics reach the
+  canary health log as before.
+- **Regression check:** `firmware/scripts/check_csi_sync.sh` (CI's
+  `csi-sketch-sync` job): the adapter may define nothing the canonical
+  HAL/extractor defines unless `securacv_csi.h` declares it, may not call
+  the esp_wifi CSI driver, and may not exceed 120 lines; the header must
+  include `csi_types.h` and not restate its contract; the ini must name
+  both canonical sources. `firmware/tests_host/test_csi_hal_adapter.cpp`
+  (run by `make -C firmware/tests_host`) links the adapter against the real
+  HAL over a stubbed driver, so a body that grows back under the canonical
+  name has to link beside it, and asserts the watchdog fires on the
+  `csi::process()` path — the exact gap the shim hid. Compile-tested on the
+  PR by `firmware.yml`'s canary PlatformIO leg — the change was host-tested
+  only when it landed.
 - **Date learned:** 2026-09
 
 ## How to Add an Entry

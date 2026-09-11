@@ -14,12 +14,25 @@
 // network. A wrong password strands one device (which the BLE provisioning
 // service and the BOOT-button portal can still rescue), never the fleet.
 //
-// Three transports, matched to what each device can actually do right now:
-//   * HTTP — a WAP-class Canary that is answering on the LAN. The normal
-//     path when you're migrating ahead of a router change.
-//   * BLE — a WAP-class Canary that has gone dark on Wi-Fi (the password
-//     already changed under it) but is in Bluetooth range: the firmware's
-//     bonded provisioning service exists for exactly this rescue.
+// The second rule is about what the password crosses on its way (roadmap
+// row 13): the Bluetooth lane is bonded — encrypted end to end — and an
+// https Canary pinned to its receipt's certificate is too, but a plain-http
+// push puts the router password on the LAN in the clear. So a device that
+// can be reached over the bonded lane takes it even when it is answering
+// over plain http, plain http is offered only when nothing better exists,
+// and then only behind a disclosure the user has to acknowledge. The sheet
+// used to send it in the clear and call the app the safe path.
+//
+// Four transports, matched to what each device can actually do right now:
+//   * HTTP (pinned TLS) — a WAP-class Canary answering over https whose
+//     certificate fingerprint came with its pairing receipt. Encrypted and
+//     checked (DeviceAPI pins it); the normal fast path.
+//   * BLE — a WAP-class Canary heard over its bonded provisioning service:
+//     the rescue for one that has gone dark on Wi-Fi, and the preferred lane
+//     for one that is online but not pinned.
+//   * HTTP (cleartext) — a WAP-class Canary answering over plain http with
+//     no bonded lane in range. Works, but the password crosses the LAN
+//     unencrypted; the plan says so and asks first.
 //   * Hands-on — the display family stores credentials only through its
 //     first-boot portal; the plan says so up front instead of pretending.
 
@@ -28,10 +41,14 @@ import Foundation
 enum FleetWiFiRollout {
     /// How the new credentials can reach one device right now.
     enum Path: Hashable, Sendable {
-        case http        // answering on the LAN — push over /api/wifi/connect
-        case ble         // dark on Wi-Fi, heard over BLE — bonded provisioning write
-        case handsOn     // no runtime credential path (the display family)
-        case unreachable // updatable in principle; no path to it right now
+        case http          // answering over pinned https — push over /api/wifi/connect, encrypted
+        case httpCleartext // answering over plain http only — same push, password in the clear; needs the disclosure
+        case ble           // heard over the bonded provisioning service — encrypted write
+        case handsOn       // no runtime credential path (the display family)
+        case unreachable   // updatable in principle; no path to it right now
+
+        /// The two HTTP lanes share the transport; only the wire differs.
+        var isHTTP: Bool { self == .http || self == .httpCleartext }
     }
 
     struct Candidate: Identifiable, Hashable, Sendable {
@@ -41,14 +58,23 @@ enum FleetWiFiRollout {
         var updatable: Bool
         /// Answering over HTTP on the LAN right now.
         var online: Bool
-        /// Heard over BLE right now (console connected) — the rescue path.
+        /// Heard over BLE right now (console connected) — the bonded lane.
         var bleReachable: Bool
         var rssiDBM: Int?
+        /// Its base URL is https AND its pairing receipt carried the
+        /// certificate fingerprint DeviceAPI pins — the HTTP lane is
+        /// encrypted and checked. Defaults false: a plain-http device is the
+        /// common case and must never be mistaken for a pinned one.
+        var tlsPinned: Bool = false
 
         var path: Path {
             guard updatable else { return .handsOn }
-            if online { return .http }
+            if online && tlsPinned { return .http }
+            // Bonded beats cleartext even when the device is answering on
+            // the LAN: an online-but-unpinned Canary in Bluetooth range takes
+            // the encrypted lane, not the one that leaks the password.
             if bleReachable { return .ble }
+            if online { return .httpCleartext }
             return .unreachable
         }
     }
@@ -66,13 +92,47 @@ enum FleetWiFiRollout {
         var pushTargets: [Candidate] {
             (pilot.map { [$0] } ?? []) + followers
         }
+
+        /// The push targets whose password would cross the LAN unencrypted.
+        var cleartextTargets: [Candidate] {
+            pushTargets.filter { $0.path == .httpCleartext }
+        }
+
+        /// Does running this plan need the one-time cleartext disclosure
+        /// acknowledged first? True whenever any push would ride plain http.
+        var needsCleartextDisclosure: Bool { !cleartextTargets.isEmpty }
+
+        /// True when EVERY push would ride plain http — the one case a run
+        /// has nothing to do until the disclosure is acknowledged. A plan
+        /// with any encrypted lane can run those lanes regardless.
+        var allPushesAreCleartext: Bool {
+            !pushTargets.isEmpty && pushTargets.allSatisfy { $0.path == .httpCleartext }
+        }
+
+        /// The plan with its plain-http lanes set aside: the declined
+        /// targets, and a plan re-staged around the healthiest device on an
+        /// encrypted lane (pinned https first, then bonded BLE), so one
+        /// plain-http Canary the user did not approve never holds the rest
+        /// of the fleet. Lane-then-strength order is preserved.
+        func excludingCleartext() -> (plan: Plan, declined: [Candidate]) {
+            let declined = cleartextTargets
+            let kept = pushTargets.filter { $0.path != .httpCleartext }
+            let pilot = kept.first { $0.path == .http } ?? kept.first { $0.path == .ble }
+            let followers = kept.filter { $0.id != pilot?.id }
+            return (Plan(pilot: pilot, followers: followers,
+                         handsOn: handsOn, unreachable: unreachable),
+                    declined)
+        }
     }
 
-    /// Build the staged plan. The pilot is the healthiest HTTP-reachable
-    /// Canary (strongest signal first — the device MOST likely to rejoin
-    /// fast, so the proof arrives fast); if nothing answers over HTTP the
-    /// pilot comes from the BLE lane. Followers keep the same
-    /// strongest-first order so the fleet moves sturdiest-to-shakiest.
+    /// Build the staged plan. The pilot is the healthiest Canary on the
+    /// fastest ENCRYPTED lane: pinned https first (proof in seconds, nothing
+    /// in the clear), then plain http (still seconds, but the password is
+    /// exposed — so only when no pinned device can prove it), then the
+    /// bonded BLE lane (a bond ceremony can take a minute). Strongest signal
+    /// first within a lane — the device MOST likely to rejoin fast, so the
+    /// proof arrives fast. Followers keep the same lane-then-strength order
+    /// so the fleet moves sturdiest-to-shakiest.
     static func plan(_ candidates: [Candidate]) -> Plan {
         let byStrength: (Candidate, Candidate) -> Bool = { a, b in
             switch (a.rssiDBM, b.rssiDBM) {
@@ -82,14 +142,23 @@ enum FleetWiFiRollout {
             case (nil, nil): return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
             }
         }
-        let http = candidates.filter { $0.path == .http }.sorted(by: byStrength)
+        let pinned = candidates.filter { $0.path == .http }.sorted(by: byStrength)
+        let cleartext = candidates.filter { $0.path == .httpCleartext }.sorted(by: byStrength)
         let ble = candidates.filter { $0.path == .ble }.sorted(by: byStrength)
-        let pilot = http.first ?? ble.first
-        let followers = (http + ble).filter { $0.id != pilot?.id }
+        let pilot = pinned.first ?? cleartext.first ?? ble.first
+        let followers = (pinned + cleartext + ble).filter { $0.id != pilot?.id }
         return Plan(pilot: pilot,
                     followers: followers,
                     handsOn: candidates.filter { $0.path == .handsOn },
                     unreachable: candidates.filter { $0.path == .unreachable })
+    }
+
+    /// Is this device's HTTP lane encrypted AND checked? Only an https base
+    /// whose receipt fingerprint parses as a pin counts — the same rule
+    /// DeviceAPI applies before it will dial an https Canary at all.
+    static func isPinnedTLS(url: URL?, fingerprint: String?) -> Bool {
+        guard let url, DeviceAPI.isTLS(url) else { return false }
+        return TLSPin.normalize(fingerprint) != nil
     }
 
     // MARK: - credentials
@@ -104,6 +173,30 @@ enum FleetWiFiRollout {
         if password.utf8.count > 64 { return "A Wi-Fi password is at most 64 characters." }
         return nil
     }
+
+    // MARK: - the cleartext disclosure
+
+    /// Shown once, above the plan, whenever a push would ride plain http.
+    /// It names the exposure plainly and the two ways out of it.
+    static let cleartextDisclosure =
+        "Some of these Canaries can only take the new password over plain "
+        + "HTTP right now, which sends it across your Wi-Fi unencrypted — "
+        + "anyone already on this network could read it while it's in "
+        + "flight. Their encrypted lanes aren't available: Bluetooth needs "
+        + "you within a room or two, and a secure (https) connection needs "
+        + "a pairing receipt that carried the Canary's certificate."
+
+    /// The acknowledgment the user has to switch on before such a push runs.
+    static let cleartextAcknowledgment = "Send it over plain HTTP anyway"
+
+    /// The verdict for a cleartext target the user did not approve.
+    static let cleartextDeclined =
+        "Not sent — sending the password over unencrypted Wi-Fi wasn't "
+        + "approved. Move within Bluetooth range for its encrypted lane, or "
+        + "re-pair it with a secure (https) receipt, then try again."
+
+    /// The per-row note for a cleartext lane, before and during the run.
+    static let cleartextNote = "Plain HTTP — the password crosses your Wi-Fi unencrypted"
 
     // MARK: - the per-device story
 
@@ -140,5 +233,12 @@ enum FleetWiFiRollout {
     /// there is nobody to fan out to, so the answer is moot but safe.
     static func mayFanOut(pilotState: StepState?) -> Bool {
         pilotState == .moved
+    }
+
+    /// May THIS push go out? Every lane but cleartext always may; cleartext
+    /// only once the disclosure was acknowledged. The runner asks before
+    /// every push, so a plan built before the toggle cannot slip one past.
+    static func mayPush(_ path: Path, cleartextApproved: Bool) -> Bool {
+        path != .httpCleartext || cleartextApproved
     }
 }

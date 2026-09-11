@@ -123,9 +123,20 @@ struct PairView: View {
             error = "That receipt couldn't be read, or points off your local network."
             return
         }
+        // A secure (https) Canary is reachable only through the certificate
+        // fingerprint its receipt carries; pairing one without it would add
+        // a device every call then refuses (DeviceError.tlsPinMissing). Say
+        // so now, at the one moment the user can still get a better receipt.
+        if DeviceAPI.isTLS(receipt.baseURL) && receipt.tlsCertFingerprint == nil {
+            error = "This receipt points at a secure (https) Canary but carries no certificate "
+                + "fingerprint, so the connection couldn't be checked. Update the Canary's "
+                + "firmware and take a fresh receipt from its setup page."
+            return
+        }
         let ref = PairedDeviceRef(id: receipt.deviceID.isEmpty ? canary.deviceID : receipt.deviceID,
                                   name: canary.name, deviceType: canary.deviceType,
-                                  baseURL: receipt.baseURL, pairedAt: Date())
+                                  baseURL: receipt.baseURL, pairedAt: Date(),
+                                  tlsCertFingerprint: receipt.tlsCertFingerprint)
         store.devices.add(ref, token: receipt.token)
         Task { await store.refreshOnce() }
         dismiss()

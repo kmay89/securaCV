@@ -88,20 +88,16 @@ The workflow downloads the espflash sidecars, builds a **universal** macOS
 `latest.json` self-update manifest. You can also run it from the Actions tab
 (**Run workflow**) for a smoke build.
 
-### One-button Mac app build/release
+### Both desktop apps at once
 
-To build both native Mac apps at once:
-
-1. Open [**Actions → Build Mac apps (Flasher + Lab)**](https://github.com/kmay89/securaCV/actions/workflows/mac-apps-release.yml).
-2. Click **Run workflow**, choose the **main** branch, and leave **publish**
-   unchecked for a build-only smoke run.
-3. Check **publish** only when you want to publish the Flasher release and
-   create the sibling SecuraCV Lab draft release.
-
-GitHub only shows a newly added workflow in the Actions sidebar after its file
-exists on the repository's default branch. The launcher is now on **main**. If
-the entry is still missing, refresh the Actions page; as a fallback, run
-**Desktop Flasher — build & release** and **Desktop app release** separately.
+**Actions → "Update everything (only what needs it)"** is the launcher for
+both apps (and everything else). Leave **publish** unchecked for build-only
+smoke runs, tick it to publish the Flasher and cut the sibling Lab draft. It
+dispatches only what is ahead of its last tag; to build both apps regardless,
+set **force** to `flasher,lab` (`force` does not narrow the run — the other
+targets are still planned; tick **plan_only** first to see what a press would
+do). Which button, when, and when not:
+[`docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md).
 
 ### One-time: real self-update signing (recommended)
 

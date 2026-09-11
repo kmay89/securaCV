@@ -124,7 +124,7 @@ has 4 gaps, Gold is where the UX wins live. Every finding below was verified in 
 | test-before-configure | ✅/⚠️ | kernel mode validates by real call; MQTT mode accepts prefix without broker check |
 | test-before-setup | ✅ | `async_config_entry_first_refresh()` (`__init__.py:355`) |
 | dependency-transparency | ⚠️ | `requirements: []` but imports `cryptography` relying on HA's bundled copy — works, but the dependency is invisible and unpinned |
-| brands | ⚠️ | assets staged in `brands/submission/`, never submitted. Since HA 2026.3 an in-repo `custom_components/securacv/brand/` folder also works (icons served via `/api/brands/...` proxy) — we can self-serve this today |
+| brands | ✅ | `custom_components/securacv/brand/` ships in the integration (2026-09-08); HA 2026.3+ serves it via `/api/brands/integration/securacv/…` and HACS's brands check accepts it. Not submitted to home-assistant/brands — `brands/home-assistant/README.md` |
 | common-modules | ⚠️ | coordinators live in `__init__.py` (679 lines), no `coordinator.py` / `entity.py` split |
 | appropriate-polling | ⚠️ | 30 s HTTP poll of a loopback API whose data changes on 10-minute buckets; and a push path (MQTT) exists for the same data (§4.3) |
 | docs-* (5 rules) | ⚠️ | `docs/homeassistant_setup.md` is strong but not structured per-rule (install/removal/actions) |
@@ -539,7 +539,7 @@ flows · services (`verify`, `export_evidence`, `pin_device`) registered in
 `async_setup` · entity translations + icons.json (kill the dead strings) ·
 `via_device` tree (§6.2) · add-on store presentation (DOCS.md, icon, CHANGELOG,
 option translations, `homeassistant:` min) · s6 service supervision + `apparmor.txt` ·
-in-repo `brand/` folder (and still submit to home-assistant/brands) ·
+in-repo `brand/` folder (done 2026-09-08; a home-assistant/brands PR stays optional, for pre-2026.3 installs) ·
 `pytest-homeassistant-custom-component` for flow/lifecycle tests.
 
 **Phase 2 — Gold + native UX:**

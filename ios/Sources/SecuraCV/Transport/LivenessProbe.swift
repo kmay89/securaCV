@@ -28,9 +28,24 @@ enum LivenessProbe {
     }()
 
     /// True when the device answered with ANY HTTP status.
-    static func isAnswering(_ base: URL) async -> Bool {
+    ///
+    /// `tlsFingerprint` is the pairing receipt's certificate pin: an https
+    /// Canary is dialed through its pinned session (the same one DeviceAPI
+    /// uses), because its self-signed certificate fails the plain session's
+    /// handshake before any status arrives. An https address with NO pin is
+    /// honestly unreachable — DeviceAPI refuses it too — rather than "alive
+    /// because something completed a handshake".
+    static func isAnswering(_ base: URL, tlsFingerprint: String? = nil) async -> Bool {
+        let session: URLSession
+        if DeviceAPI.isTLS(base) {
+            guard let pin = TLSPin.normalize(tlsFingerprint) else { return false }
+            session = PinnedSessions.shared.session(pinnedTo: pin).session
+        } else {
+            session = Self.session
+        }
         var request = URLRequest(url: base.appendingPathComponent("api/v1/info"))
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.timeoutInterval = 2.5     // the pinned session has no tight default
         do {
             _ = try await session.data(for: request)
             return true

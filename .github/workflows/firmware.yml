@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      # The shared witness-page fixture: the canary-wap host test byte-compares
+      # it and the generator's --check pins it, so an edit here must run this job.
+      - 'spec/fixtures/witness_page_v1.json'
+      - 'spec/fixtures/gen_witness_page_v1.py'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -16,6 +20,10 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      # The shared witness-page fixture: the canary-wap host test byte-compares
+      # it and the generator's --check pins it, so an edit here must run this job.
+      - 'spec/fixtures/witness_page_v1.json'
+      - 'spec/fixtures/gen_witness_page_v1.py'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -871,6 +879,11 @@ jobs:
         #  11. Anomaly events bypass the Quiet Hours gate
         #  12. core.multilink_fusion strips unauthorized fields (PR 3 + PR 6)
         #  13. ble.scout strips unauthorized fields (PR 5 + PR 6)
+        #  14. (separate step below) the CSI HAL's transmitter filter drops
+        #      and counts frames from any transmitter but the associated
+        #      BSSID / registered peers, and no slot, stat or feature vector
+        #      ever carries a MAC byte — the HAL compiled as shipped, driven
+        #      through a stubbed ESP-IDF surface
         #
         # If a future PR (or LLM coder) breaks any of these, this job
         # fails before the firmware build even starts.
@@ -961,6 +974,21 @@ jobs:
               firmware/common/csi/src/csi_bundler.cpp \
               -I firmware/common/csi/src -o /tmp/csi_empty_room_test
           /tmp/csi_empty_room_test
+      - name: Build + run host transmitter-filter test (csi_hal)
+        # The real ESP-IDF backend (csi_hal.cpp, unity-included by the test)
+        # against firmware/common/csi/host_stubs/ standing in for Arduino.h
+        # and esp_wifi.h. Frames from two transmitter addresses: the
+        # associated BSSID is processed, the other is dropped and counted
+        # under frames_dropped_foreign, and a byte scan of the ring, the
+        # stats and the emitted feature vector finds neither address.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter \
+              firmware/common/csi/csi_hal_transmitter_filter_test.cpp \
+              firmware/common/csi/src/csi_features.cpp \
+              -I firmware/common/csi/host_stubs \
+              -I firmware/common/csi/src -o /tmp/csi_hal_filter_test
+          /tmp/csi_hal_filter_test
 
   # ──────────────────────────────────────────────────────────────────
   # Mesh + Scout host test suites
@@ -1550,6 +1578,26 @@ jobs:
               -lcrypto -o /tmp/witness_store_logic
           /tmp/witness_store_logic | tee /tmp/witness_store_logic.log
           grep -q "ALL .* PASSED" /tmp/witness_store_logic.log
+
+      - name: Build + run canary-wap witness page host test (+ fixture drift)
+        # GET /api/v1/witness (witness_page.h, spec/witness_api_v1.md): the
+        # ?last=N parser, the RAM ring, the coarse ten-minute anchoring, and a
+        # byte-exact render of the shared fixture spec/fixtures/
+        # witness_page_v1.json rebuilt from real Ed25519-signed records
+        # (OpenSSL). The same fixture is what the iPhone app's
+        # WitnessPageFixtureTests decodes, against the same public key — one
+        # fixture, both ends of the contract. The generator's --check then
+        # proves the committed fixture is what the generator writes.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_witness_page.cpp \
+              -lcrypto -o /tmp/witness_page
+          /tmp/witness_page spec/fixtures/witness_page_v1.json | tee /tmp/witness_page.log
+          grep -q "ALL .* PASSED" /tmp/witness_page.log
+          python3 -m pip install --quiet cryptography
+          python3 spec/fixtures/gen_witness_page_v1.py --check
 
       - name: Build + run canary-wap beacon audit recovery host test
         # The beacon-audit chain-head SD recovery guard
