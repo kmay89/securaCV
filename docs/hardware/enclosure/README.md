@@ -575,6 +575,29 @@ accent color when only the company line is accent, and standing the inlays
 proud does not fix it. It is useful for silhouette and for the bezel band,
 and misleading for anything else. The caveat is written at the module too.
 
+### Where the board numbers come from
+
+The board and module knobs at the top of a released or display case —
+`board_l`, `vm_w`, `stack_sock_h`, the dimensions the case is cut around,
+not its walls — are owned by that device's manifest,
+`devices/<slug>/device.json` `cad.params`. [`gen_cad_params.py`](./gen_cad_params.py)
+writes them into the `.scad` as the literal you see (the token on the
+knob's own line, nothing else), and `--check` proves the file still says
+them: in `lint.yml`, in this directory's workflow, and through
+`scripts/lint_device_manifests.py`. A knob that is a board fact is a
+reference into [`canary_board_lib.scad`](./canary_board_lib.scad)'s
+registry (`{"brd": "xiao", "dim": "w"}` is `brd_w("xiao")`), so a registry
+correction reaches every owned case through the generator; a case
+measurement with no registry home is a number. So: correct a board
+dimension in the registry, a case decision in the manifest, and never the
+literal by hand — `--check` names it. Walls, tolerances and every feature
+knob stay in the file (the design-language canon, `lint_design_lang.py`);
+the selectors (`preset`, `host`, `part`, …) are chosen per printable set in
+`render.sh`; the outer envelope is never an input — `gen_assembled_dims.py`
+measures it off the STLs. `devices/README.md` lists what each manifest owns
+and what it cannot yet (the C6's `model` ternary, the 7" frame's panel
+record in `canary_panel_lib.scad`).
+
 ### Ring gauge — check the whole outline for five grams
 
 ```bash
