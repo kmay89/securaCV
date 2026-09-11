@@ -88,9 +88,10 @@ names:** the WAP and Sense clips name `brd_w("xiao")` (the 17.5 spec width —
 the clips absorb the measured board) and the Vision pins name
 `brd_xiao_w_measured()` (17.8); the registry states the truth, the manifest
 states the decision, as the library's header asks each file to. The rows and
-facts no manifest references (the doorbell's, the gang plate's, the display
-cases') are printed by `--check` as INFO, never an error — those cases cite
-the registry by comment and have no manifest yet. The library is read, never
+facts no manifest references (the solar relay pod's `heltec_v3` row, the
+doorbell's unmeasured stack guess, the two brass-pillar facts the C3 and the
+C6 cite by comment) are printed by `--check` as INFO, never an error — those
+cases cite the registry by comment and own nothing yet. The library is read, never
 written: correcting a board dimension is still an edit to the registry.
 
 ## Run the gate
@@ -155,6 +156,38 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   as which registry entry is named: `xiao_w` is `brd_w("xiao")` (the 17.5
   spec width) in the WAP and Sense clips and `brd_xiao_w_measured()` (17.8)
   in the Vision pins, and each manifest says exactly what its case does.
+- **The display cases own what is literal, and name what they cannot.** Five
+  display manifests carry `cad.params`, with zero `.scad` bytes moved. The
+  Nightlight C3 and the Nightstand S3 name the `ws147` family row for
+  `board_l` / `board_w` / `pcb_t` (their comments already cite
+  `brd_l("ws147")` and kin, MEASURE caveat and all — the row's `drawing` rung
+  says the same). The Watch Station names `brd_l("round_disp")` for `disc_d`
+  and copies its three measured stack numbers (`disc_t`, `disp_back`,
+  `xiao_t`). The Touch 1.69 names the `ws169` row for `pcb_w` / `pcb_h` /
+  `pcb_t` and the `brd_ws169_glass_*()` facts for `glass_w` / `glass_h` —
+  **crosswise**: the registry's axes follow the board's along-USB length,
+  which is that case's Y, so the case's X-width is the registry's glass
+  *height*, exactly as the file's own comment explains; `glass_t`, `r_glass`,
+  `aa_w` and `aa_h` are numbers. The Dash copies `panel_l` / `panel_w` /
+  `glass_t` / `stack_t` as numbers: there is no registry row for the 4.3
+  panel and all four are `MEASURE` placeholders — owning them documents the
+  value the case is cut to today, it does not bless it. Not owned, by
+  construction rather than by omission: the selectors (`headers`, `port`,
+  `model`, `panel_variant`); the 1.69's `aa_dx = 0.0; aa_dy = 0.0;` line (two
+  knobs on one line — splitting it is a `.scad` change that owes previews);
+  the **Nightstand C6**, whose `board_l` / `board_w` are a `model` ternary
+  the generator refuses (it cites `brd_t("ws147")` by comment only, so a
+  registry correction does not reach it — the test suite pins that a moved
+  `ws147` row moves both 1.47 sticks and not the C6); and the **7" Dash /
+  Nightstand**, whose every panel number is read from `canary_panel_lib.scad`
+  through `panel_variant` and is `STAMP`-hashed by `gen_stamp.py` (the 7"
+  record stays typed there this wave). One caution beside the Watch's knobs:
+  `canary_watch_station.scad` is a `REFERENCE_SCADS` carry
+  (`gen_builder_manifest.py --site` copies it to the website, sha256-pinned)
+  and its fleet figure is a hand-authored `sketch` in
+  `canary-local/tools/figures/massing.mjs`, not an STL measurement — so the
+  first real edit to a Watch knob moves the website's carried copy, and the
+  figure will **not** follow the CAD until someone draws it from the parts.
 
 ## What the manifests drive
 
@@ -168,7 +201,7 @@ per generator — what is read from here, and what is still typed elsewhere:
 | `canary-local/tools/figures/gen_figures.mjs` (→ `figures.json`, `fleet_figures.h`, `FleetFigures.swift`, …) | the **hardware→figure map** (`hardware.mapped`, `figure_for_hardware()`): a manifest's `figure` draws its `board.board_id` — and only that; `variants` stay unmapped as different housings; two manifests drawing one board differently fail the build. | the coarse config→device-type map (`CONFIG_FIGURE`, feeding `device_types` / `configs_audit`), because a config directory is not one board and the WAP's envs compile no `configs/` include. The manifests **validate** it in both directions (every row backed by a device with that figure; every typed config a drawn device compiles has a row) and record its one **dispute**: `canary-vision/default` is compiled by the DevKit (own figure since its housing was traced) and the two XIAO hosts (the stacked-XIAO figure), all publishing device type `canary-vision`; the row keeps the XIAO figure pending a decision (unmapping the type moves the firmware and Swift tables). |
 | `scripts/lint_build_matrix.py` | every `build_matrix.json` lane resolves to one manifest (by id, else flavor + env — the same function this linter uses); every manifest's `board.envs` is an `[env:NAME]` of its family's project | the feature-flag cells, which are `platformio.ini` / `canary_config.h` facts, not device facts |
 | `.github/workflows/firmware-release.yml`, `flasher-release.yml` | (not the manifests — `firmware/flavors.json` `release_envs`, via `flavor_envs.py --release --json`; roadmap item 23, landed in the same wave: neither workflow types a display env any more) | — |
-| [`docs/hardware/enclosure/gen_cad_params.py`](../docs/hardware/enclosure/gen_cad_params.py) (→ the case `.scad` literals) | `cad.params`: the board/module knobs of `cad.scad` — a number, or a reference the generator resolves from the board registry (`canary_board_lib.scad`, read and never written). The generator **writes** them into the file — the literal token on the knob's own line, nothing else — so the Customizer, `render.sh`, the fit check, the web builder's manifest and `lint_design_lang.py` all keep reading the same literal knob they always did; `--check` proves equality, and the first run over the committed tree changed zero bytes. A knob the builder's parser does not accept (computed, module-local, `[Hidden]`), a selector, a type mismatch, a two-knob line or a reference the registry does not define is refused by name. | walls, tolerances and every feature knob (the design-language canon — case-owned, explained with `deviates:`); the enum selectors (`host`, `radar`, `preset`, `part` — per printable set, in `render.sh` and the fit check); the doorbell (`canary_vision_doorbell.scad`: no manifest names it); computed knobs (`board_stack_h`) and knobs read from a registry (`canary_s3_lcd7.scad`'s panel record); and `envelope_mm`, which is never an input — every case derives its outer size from board dims + walls, the ledger measures it off the STL (`gen_assembled_dims.py`), and the manifest reaches it through `figure` |
+| [`docs/hardware/enclosure/gen_cad_params.py`](../docs/hardware/enclosure/gen_cad_params.py) (→ the case `.scad` literals) | `cad.params`: the board/module knobs of `cad.scad` — a number, or a reference the generator resolves from the board registry (`canary_board_lib.scad`, read and never written). The generator **writes** them into the file — the literal token on the knob's own line, nothing else — so the Customizer, `render.sh`, the fit check, the web builder's manifest and `lint_design_lang.py` all keep reading the same literal knob they always did; `--check` proves equality, and the first run over the committed tree changed zero bytes. A knob the builder's parser does not accept (computed, module-local, `[Hidden]`), a selector, a type mismatch, a two-knob line or a reference the registry does not define is refused by name. | walls, tolerances and every feature knob (the design-language canon — case-owned, explained with `deviates:`); the enum selectors (`host`, `radar`, `preset`, `part` — per printable set, in `render.sh` and the fit check); the doorbell (`canary_vision_doorbell.scad`: no manifest names it); computed knobs (`board_stack_h`; `canary_c6_display.scad`'s `model` ternary for `board_l` / `board_w`), knobs read from a registry (`canary_s3_lcd7.scad`'s panel record), the two-knob line `aa_dx = 0.0; aa_dy = 0.0;` of `canary_s3_touch169.scad`; and `envelope_mm`, which is never an input — every case derives its outer size from board dims + walls, the ledger measures it off the STL (`gen_assembled_dims.py`), and the manifest reaches it through `figure` |
 
 **Still typed, deliberately:** the confidence ladder (derived from evidence
 by the figures generator, never here), the emulator twin aliases in
@@ -191,9 +224,13 @@ linter; making the matrix generator read them is a wave of its own).
   ledger measures it — so `figure` stays the join to the AR model. A knob
   that is a board fact is a reference into the board registry
   (`canary_board_lib.scad`), so a registry correction flows to every owned
-  case through the same generator. Still open in this wave: the display
-  cases, whose `model` ternary and two-knob lines the generator refuses
-  today; and the ledger keys the website derives its copy from. A real
+  case through the same generator. The display cases joined with pure
+  JSON (five manifests, twelve more references, zero `.scad` bytes — "The
+  display cases own what is literal" above). Still open in this wave: the
+  Nightstand C6 (its `board_l` / `board_w` are a `model` ternary), the 7"
+  frame (its panel record is typed in `canary_panel_lib.scad`), the 1.69's
+  `aa_dx = 0.0; aa_dy = 0.0;` line (a `.scad` split, with previews), and the
+  ledger keys the website derives its copy from. A real
   dimension edit still owes the render previews `AGENTS.md` requires with
   every `.scad` change — the generator lists the changed lines so that
   obligation is a list, not a memory.
