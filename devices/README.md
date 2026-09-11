@@ -86,10 +86,10 @@ row by coincidence (the WAP's `board_h` 1.2, the Sense's uncommented `pcb_t`)
 stays a number. One reference leans on less than the others: the Vision's
 `vm_w` comment never spells `brd_w("grove_v2")` — it cites the `[Boards]`
 group header (which points at the registry) and `board_selfcheck()`, and the
-test accepts that as the citation. **A design decision is which registry entry the manifest
-names:** the WAP and Sense clips name `brd_w("xiao")` (the 17.5 spec width —
-the clips absorb the measured board) and the Vision pins name
-`brd_xiao_w_measured()` (17.8); the registry states the truth, the manifest
+test accepts that as the citation. **A design decision is which registry
+entry the manifest names:** the WAP and Sense clips name `brd_w("xiao")` (the
+17.5 spec width — the clips absorb the measured board) and the Vision pins
+name `brd_xiao_w_measured()` (17.8); the registry states the truth, the manifest
 states the decision, as the library's header asks each file to. The rows and
 facts no manifest references (the doorbell's, the gang plate's, the display
 cases') are printed by `--check` as INFO, never an error — those cases cite
