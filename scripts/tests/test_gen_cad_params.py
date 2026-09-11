@@ -6,7 +6,8 @@ What is pinned and why:
   • the committed tree is a fixed point: check() is empty, write() writes
     nothing, and every owned case renders to its own bytes — the mechanism
     landed with zero .scad bytes moved, the reference conversion moved zero
-    more, and this keeps both provable;
+    more, widening to the five display cases moved zero more, and this keeps
+    all three provable;
   • a changed value moves exactly one line and only its literal token: the
     help comment, the indent and every other line are byte-identical, and
     writing twice is the same as writing once (idempotence);
@@ -18,9 +19,15 @@ What is pinned and why:
     never a shorter registry; each reference form resolves; an unknown row,
     dim or fact fails naming the manifest and the library;
   • a reference is declared only where the knob's help comment already cites
-    the registry (decision 4): the seventeen references are enumerated here
-    with what each cites, the knobs that merely equal a row stay numbers, and
-    a mutated registry value moves exactly the lines that reference it;
+    the registry (decision 4): the twenty-nine references are enumerated here
+    with what each cites (the released cases' seventeen, the display cases'
+    twelve — the Touch 1.69's glass pair crosswise, as its comment says), the
+    knobs that merely equal a row stay numbers, and a mutated registry value
+    moves exactly the lines that reference it — a case that cites the same
+    row by comment but owns nothing (the C6 display) does not move;
+  • the display cases no manifest can own yet are refused by construction,
+    not by omission: the C6's `model` ternary, the 1.69's two-knob line, the
+    7" frame's panel-library reads;
   • every refusal fires by name — a selector, a computed / [Hidden] knob, a
     type mismatch, a two-knob line, a knob assigned twice, a non-scalar
     value, a malformed reference, two manifests disagreeing on a shared key
@@ -58,6 +65,14 @@ from gen_builder_manifest import parse_scad  # noqa: E402
 
 RELEASED = ["canary_wap_enclosure.scad", "canary_vision_enclosure.scad",
             "canary_vision_doorbell.scad", "canary_sense_enclosure.scad"]
+# The display cases a manifest owns knobs of (wave 3 widened to them with zero
+# .scad bytes moved), and the one that cites the registry by comment only —
+# its board_l / board_w are a `model` ternary the generator refuses.
+DISPLAY = ["canary_c3_lcd147.scad", "canary_s3_lcd147.scad", "canary_watch_station.scad",
+           "canary_dash_display.scad", "canary_s3_touch169.scad"]
+C6 = "canary_c6_display.scad"
+OWNED = sorted(["canary_sense_enclosure.scad", "canary_vision_enclosure.scad",
+                "canary_wap_enclosure.scad", *DISPLAY])
 LIB_NAME = "canary_board_lib.scad"
 LIB = ENC / LIB_NAME
 LIB_REL = "docs/hardware/enclosure/" + LIB_NAME
@@ -65,6 +80,7 @@ WAP = ENC / "canary_wap_enclosure.scad"
 WAP_REL = "docs/hardware/enclosure/canary_wap_enclosure.scad"
 VISION_REL = "docs/hardware/enclosure/canary_vision_enclosure.scad"
 SENSE_REL = "docs/hardware/enclosure/canary_sense_enclosure.scad"
+TOUCH169_REL = "docs/hardware/enclosure/canary_s3_touch169.scad"
 FIXTURE = """\
 /* [Boards] */
 n = 5;   // an integer-spelled knob
@@ -104,14 +120,38 @@ REFS = {
     ("canary_sense_enclosure.scad", "xiao_l"): 'brd_l("xiao")',
     ("canary_sense_enclosure.scad", "xiao_w"): 'brd_w("xiao")',
     ("canary_sense_enclosure.scad", "stack_sock_h"): "brd_stack_sock_measured()",
+    # the display cases: the two 1.47 sticks share the ws147 family row; the
+    # watch's disc names the measured round_disp row; the 1.69's PCB names
+    # the ws169 row and its glass slab the brd_ws169_glass_*() facts —
+    # CROSSWISE, because the registry's axes follow the board's along-USB
+    # length, which is that case's Y (the file's group comment says so)
+    ("canary_c3_lcd147.scad", "board_l"): 'brd_l("ws147")',
+    ("canary_c3_lcd147.scad", "board_w"): 'brd_w("ws147")',
+    ("canary_c3_lcd147.scad", "pcb_t"): 'brd_t("ws147")',
+    ("canary_s3_lcd147.scad", "board_l"): 'brd_l("ws147")',
+    ("canary_s3_lcd147.scad", "board_w"): 'brd_w("ws147")',
+    ("canary_s3_lcd147.scad", "pcb_t"): 'brd_t("ws147")',
+    ("canary_watch_station.scad", "disc_d"): 'brd_l("round_disp")',
+    ("canary_s3_touch169.scad", "glass_w"): "brd_ws169_glass_h()",
+    ("canary_s3_touch169.scad", "glass_h"): "brd_ws169_glass_w()",
+    ("canary_s3_touch169.scad", "pcb_w"): 'brd_w("ws169")',
+    ("canary_s3_touch169.scad", "pcb_h"): 'brd_l("ws169")',
+    ("canary_s3_touch169.scad", "pcb_t"): 'brd_t("ws169")',
 }
 NUMBERS = {
     "canary_wap_enclosure.scad": ["board_h", "board_clear", "stack_camera", "stack_plain"],
     "canary_vision_enclosure.scad": ["xiao_below", "vm_front_h", "board_clear", "stack_h"],
     "canary_sense_enclosure.scad": ["xiao_below", "vm_front_h", "ant_h", "pcb_t", "board_clear",
                                     "xiao_usb_z"],
+    # measured stack numbers with no registry home
+    "canary_watch_station.scad": ["disc_t", "disp_back", "xiao_t"],
+    # the 4.3 panel has no registry row: MEASURE placeholders, owned as the
+    # numbers they are today — documented, not blessed
+    "canary_dash_display.scad": ["panel_l", "panel_w", "glass_t", "stack_t"],
+    "canary_s3_touch169.scad": ["glass_t", "r_glass", "aa_w", "aa_h"],
 }
 XIAO_ROW = '["xiao",       21.0,  17.5, 1.2, "spec",'
+WS147_ROW = '["ws147",      36.37, 20.32, 1.6, "drawing",'
 
 
 class _Tree:
@@ -126,7 +166,7 @@ class _Tree:
         shutil.copytree(DEVICES, root / "devices")
         enc = root / "docs" / "hardware" / "enclosure"
         enc.mkdir(parents=True)
-        for name in RELEASED + ["canary_s3_touch169.scad", LIB_NAME]:
+        for name in RELEASED + DISPLAY + [C6, LIB_NAME]:
             shutil.copyfile(ENC / name, enc / name)
         return root
 
@@ -173,9 +213,7 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
     def test_every_owned_case_renders_to_its_own_bytes(self):
         owned, errors = gcp.load_params()
         self.assertEqual(errors, [])
-        self.assertEqual(sorted(Path(s).name for s in owned),
-                         ["canary_sense_enclosure.scad", "canary_vision_enclosure.scad",
-                          "canary_wap_enclosure.scad"])
+        self.assertEqual(sorted(Path(s).name for s in owned), OWNED)
         for scad_rel, keys in owned.items():
             path = REPO / scad_rel
             r = gcp.render(path, {k: o.value for k, o in keys.items()})
@@ -212,8 +250,8 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
     def test_cli_check_exit_code(self):
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
-        self.assertIn("31 manifest-owned knobs across 3 case file(s)", out.getvalue())
-        self.assertIn("(17 of them resolved from canary_board_lib.scad)", out.getvalue())
+        self.assertIn("54 manifest-owned knobs across 8 case file(s)", out.getvalue())
+        self.assertIn("(29 of them resolved from canary_board_lib.scad)", out.getvalue())
 
 
 class BoardRegistry(unittest.TestCase):
@@ -332,7 +370,7 @@ class BoardRegistry(unittest.TestCase):
 
 
 class ManifestsCarryTheJoin(unittest.TestCase):
-    def test_the_seventeen_references_each_cite_what_the_knobs_comment_already_says(self):
+    def test_every_reference_cites_what_the_knobs_comment_already_says(self):
         owned, errors = gcp.load_params()
         self.assertEqual(errors, [])
         refs = {(Path(s).name, k): o for s, keys in owned.items() for k, o in keys.items()
@@ -385,15 +423,123 @@ class ManifestsCarryTheJoin(unittest.TestCase):
     def test_unreferenced_registry_entries_are_info_not_errors(self):
         owned, _ = gcp.load_params()
         rows, facts = gcp.unreferenced(owned, gcp.parse_board_registry())
-        self.assertEqual(rows, ["ws147", "ws169", "round_disp", "heltec_v3"])
+        # the solar relay pod's radio board has no case file; the seated-stack
+        # guess is the doorbell's; the brass pillar facts are cited by comment
+        # in the C3 (its own MEASURED 3.0) and the C6 (which owns nothing yet)
+        self.assertEqual(rows, ["heltec_v3"])
         self.assertEqual(facts, ["brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
-                                 "brd_ws147_brass_c6", "brd_ws169_glass_w", "brd_ws169_glass_h"])
+                                 "brd_ws147_brass_c6"])
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
         text = out.getvalue()
         self.assertIn("INFO: registry entries no manifest references", text)
-        self.assertIn("rows: ws147, ws169, round_disp, heltec_v3", text)
+        self.assertIn("rows: heltec_v3; facts: brd_stack_sock_unmeasured, brd_ws147_brass_c3, "
+                      "brd_ws147_brass_c6", text)
         self.assertIn("not an error", text)
+
+
+class DisplayCasesJoinTheSameChain(unittest.TestCase):
+    """Wave 3 widened cad.params to the display cases with pure JSON — the
+    same generator, the same registry, zero .scad bytes — and left the ones
+    it cannot own refused, not forgotten."""
+
+    def test_the_touch169_glass_pair_is_crosswise_on_purpose(self):
+        owned, _ = gcp.load_params()
+        t = owned[TOUCH169_REL]
+        # the registry's w/h follow the board's along-USB length (this case's
+        # Y), so the case's X-width is the registry's glass HEIGHT and vice
+        # versa — the manifest states the join exactly as the file's comment does
+        self.assertEqual((t["glass_w"].cite, t["glass_w"].value), ("brd_ws169_glass_h()", 41.13))
+        self.assertEqual((t["glass_h"].cite, t["glass_h"].value), ("brd_ws169_glass_w()", 33.13))
+        self.assertEqual((t["pcb_w"].cite, t["pcb_w"].value), ('brd_w("ws169")', 37.12))
+        self.assertEqual((t["pcb_h"].cite, t["pcb_h"].value), ('brd_l("ws169")', 29.83))
+        self.assertEqual((t["pcb_t"].cite, t["pcb_t"].value), ('brd_t("ws169")', 1.6))
+        self.assertIn("crosswise", (ENC / "canary_s3_touch169.scad").read_text(encoding="utf-8"))
+        for knob in ("glass_w", "glass_h", "pcb_w", "pcb_h", "pcb_t"):
+            self.assertEqual(t[knob].slugs, ["canary-display-touch169"])
+
+    def test_the_two_147_sticks_share_the_ws147_row(self):
+        owned, _ = gcp.load_params()
+        for name, slug in [("canary_c3_lcd147.scad", "canary-display-nightlight-c3"),
+                           ("canary_s3_lcd147.scad", "canary-display-nightstand-s3")]:
+            keys = owned["docs/hardware/enclosure/" + name]
+            self.assertEqual(sorted(keys), ["board_l", "board_w", "pcb_t"])
+            self.assertEqual({k: (o.cite, o.value, o.slugs) for k, o in keys.items()},
+                             {"board_l": ('brd_l("ws147")', 36.37, [slug]),
+                              "board_w": ('brd_w("ws147")', 20.32, [slug]),
+                              "pcb_t": ('brd_t("ws147")', 1.6, [slug])})
+            for o in keys.values():
+                self.assertIn("drawing rung", o.where)
+
+    def test_a_mutated_ws147_row_moves_both_sticks_and_not_the_c6(self):
+        with _Tree() as root:
+            lib_after = edit_lib(root, WS147_ROW, WS147_ROW.replace("36.37", "36.4"))
+            errors = gcp.check(root / "devices", root)
+            self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
+                             ["canary_c3_lcd147.scad:249:", "canary_s3_lcd147.scad:106:"], errors)
+            for e in errors:
+                self.assertIn('references brd_l("ws147") (canary_board_lib.scad:53, drawing rung): '
+                              "registry says 36.4, file says 36.37", e)
+            written, werr = gcp.write(root / "devices", root)
+            self.assertEqual(werr, [])
+            self.assertEqual(sorted((p.name, c.line, c.name, c.old_token, c.new_token)
+                                    for p, c in written),
+                             [("canary_c3_lcd147.scad", 249, "board_l", "36.37", "36.4"),
+                              ("canary_s3_lcd147.scad", 106, "board_l", "36.37", "36.4")])
+            self.assertEqual(gcp.check(root / "devices", root), [])
+            self.assertEqual(moved_lines("canary_c3_lcd147.scad", root), [249])
+            self.assertEqual(moved_lines("canary_s3_lcd147.scad", root), [106])
+            # the C6 cites the same row by comment; its board_l is a `model`
+            # ternary no manifest owns, so a registry correction does NOT reach
+            # it — that is the honest leftover, visible as a line that stays put
+            self.assertEqual(moved_lines(C6, root), [])
+            for name in ("canary_s3_touch169.scad", "canary_watch_station.scad",
+                         "canary_dash_display.scad", *RELEASED):
+                self.assertEqual(moved_lines(name, root), [], name)
+            self.assertEqual((root / LIB_REL).read_text(encoding="utf-8"), lib_after)
+
+    def test_a_mutated_glass_fact_moves_only_the_crosswise_knob_that_names_it(self):
+        with _Tree() as root:
+            edit_lib(root, "function brd_ws169_glass_h() = 41.13;",
+                     "function brd_ws169_glass_h() = 41.2;")
+            errors = gcp.check(root / "devices", root)
+            self.assertEqual([e.split(" ", 1)[0] for e in errors],
+                             ["canary_s3_touch169.scad:63:"], errors)
+            self.assertIn("glass_w = 41.13 in the .scad", errors[0])
+            self.assertIn("references brd_ws169_glass_h() (canary_board_lib.scad:101): "
+                          "registry says 41.2, file says 41.13", errors[0])
+            written, _ = gcp.write(root / "devices", root)
+            self.assertEqual([(p.name, c.line, c.name, c.new_token) for p, c in written],
+                             [("canary_s3_touch169.scad", 63, "glass_w", "41.2")])
+            self.assertEqual(moved_lines("canary_s3_touch169.scad", root), [63])
+
+    def test_the_display_cases_no_manifest_owns_are_refused_by_construction(self):
+        # the C6: board_l / board_w are a `model` ternary, `model` a selector
+        r = gcp.render(ENC / C6, {"board_l": 36.37, "board_w": 20.32, "model": "1.47"})
+        self.assertEqual(r.changes, [])
+        self.assertEqual(len(r.errors), 3, r.errors)
+        self.assertIn("board_l is not a literal Customizer knob", r.errors[0])
+        self.assertIn("board_w is not a literal Customizer knob", r.errors[1])
+        self.assertIn("model is a selector", r.errors[2])
+        # the 7" frame reads its panel record from canary_panel_lib.scad
+        r = gcp.render(ENC / "canary_s3_lcd7.scad", {"panel_variant": "lcd7", "PANEL": 1})
+        self.assertEqual(r.changes, [])
+        self.assertIn("panel_variant is a selector", r.errors[0])
+        self.assertIn("PANEL is not a literal Customizer knob", r.errors[1])
+        # and their manifests own nothing — the leftovers are listed in
+        # devices/README.md, not papered over with a partial
+        for slug in ("canary-display-nightstand-c6", "canary-display-dash7",
+                     "canary-display-nightstand7"):
+            m = json.loads((DEVICES / slug / "device.json").read_text(encoding="utf-8"))
+            self.assertNotIn("params", m["cad"], slug)
+        # the selectors of the owned display cases are not owned either
+        for name, selectors in [("canary_c3_lcd147.scad", ("headers", "port")),
+                                ("canary_s3_lcd147.scad", ("headers",))]:
+            owned, _ = gcp.load_params()
+            keys = owned["docs/hardware/enclosure/" + name]
+            for sel in selectors:
+                self.assertNotIn(sel, keys)
+                self.assertIn("options", gcp.eligible(ENC / name)[sel])
 
 
 class ARegistryCorrectionReachesTheCases(unittest.TestCase):
