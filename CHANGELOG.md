@@ -2,6 +2,93 @@
 
 ## [Unreleased]
 
+### The device manifest owns its case's board knobs, and the regeneration order is one command
+
+- **`devices/<slug>/device.json` `cad.params` owns the board and module
+  knobs of the released and display cases** — the dimensions a case is cut
+  around (`board_l`, `vm_w`, `stack_sock_h`), never its walls, never a
+  selector. `docs/hardware/enclosure/gen_cad_params.py` **writes** them into
+  the `.scad` as the literal Customizer knob the file always had (the token
+  on the knob's own line, nothing else; CRLF stays CRLF) and `--check`
+  proves the file still says them — in `lint.yml`, in `enclosure.yml`, and
+  through `scripts/lint_device_manifests.py`, which stays the one manifest
+  gate. Nothing reads a manifest at render time: the Customizer, `render.sh`,
+  the fit check, both catalog parsers and `lint_design_lang.py` keep seeing
+  the literal they saw before, so the manifest moved to the front of the
+  chain rather than replacing a link of it. What a maintainer can now do:
+  change a board dimension in the manifest, see the one-line `.scad` diff
+  with `--dry-run <slug>:<knob>=<value>` before anything moves, and let the
+  generator write it.
+- **A knob that is a board fact references the registry; a case measurement
+  is a number.** A value may be `{"brd": "xiao", "dim": "w"}` (a
+  `BRD_REGISTRY` row and column of `canary_board_lib.scad`) or `{"brd_fn":
+  "brd_xiao_w_measured"}` (one of its measured facts), resolved before the
+  write — so correcting a board dimension is an edit to the registry and
+  every owned case follows, with `--check` reporting drift as "registry says
+  X, file says Y". Converted only where the knob's help comment already
+  cites the registry; a knob that merely equals a row by coincidence stays a
+  number. 54 knobs across 8 case files (the WAP, Vision, DevKit, Sense, the
+  two 1.47 sticks, the Watch, the Touch 1.69 and the Dash), 29 of them
+  references; several manifests may name one case, each asserting a subset,
+  and a shared key must agree or the gate names both.
+- **The byte-identity proof.** Every value is the file's literal as it
+  stood, so the wave landed with **zero `.scad` bytes moved**: a write-mode
+  run prints "nothing to write", `git diff --stat` from the wave's base lists
+  no `.scad`, `.stl`, catalog or builder-manifest file, and every generator's
+  `--check` is green. No previews were owed, and none are claimed.
+- **`scripts/regen_cad.py` runs the enclosure regeneration chain as one
+  command**, in the order each generator's inputs dictate: the manifest into
+  the `.scad`, the design-language lint, `render.sh`, the assembled
+  envelopes, the figures and their firmware and Swift mirrors, the flashers'
+  models, the display sketch mirror — then it **stops**, because the
+  emulator dist is upstream of the catalogs and only Actions can build it —
+  and `--from gen_flash` finishes `flash.json`, the builder manifest and the
+  enclosure catalog. `--check` runs every step's check form and names the
+  first stale one; `--previews DIR` renders every part of every changed case
+  at both angles through the README's own recipe, so the preview obligation
+  is a directory, not a memory. It refuses the OpenSCAD steps up front when
+  the binary is missing and says honestly that no button renders STLs for
+  you.
+- **The rehearsal.** The chain was run end to end on a scratch branch with
+  one real edit (`canary-wap` `board_w` 17.5 → 17.8): one `.scad` line, 116
+  clean renders, the WAP's assembled height 36.6 → 36.9 mm, four figure
+  revisions, a moved builder pin, 46 files in all, 26 previews — then
+  reverted. A full run on the landed tree is a fixed point (only OpenSCAD's
+  nondeterministic STL bytes churn; every bounding-box gate stays green).
+- **The CAD ledger the website pins to carries the knobs, the seams and the
+  board registry.** `gen_builder_manifest.py --site` adds, per figure, the
+  resolved `knobs` and the measured `seams_mm`, and `board_registry` /
+  `board_facts` with their evidence rung, to `scad/cad-dims.json` —
+  additively (strip the four keys and the website's committed bytes are
+  reproduced) and unrounded, refused while a manifest disagrees with its
+  case. `--site <checkout> --check` is the carry's first gate; a write run
+  writes only what changed, and `builder_manifest.json` is no longer
+  rewritten when it is already current.
+- **What stays typed, on purpose, and what is open.** `envelope_mm` is not
+  a manifest input — every case derives its outer size from board dims plus
+  walls and the ledger measures it off the STLs, so `figure` stays the join
+  to the AR model. Walls and tolerances are case-owned (the design-language
+  canon); the selectors are chosen per printable set in `render.sh` — a
+  render-plan package that would make them manifest-owned rewrites enclosure
+  CI and re-homes five Lab cards and was not built without the maintainer's
+  yes. Still unowned by construction: the Nightstand C6 (`board_l` /
+  `board_w` are a `model` ternary), the 7" frame (its panel record is typed
+  in `canary_panel_lib.scad`), the Touch 1.69's `aa_dx = 0.0; aa_dy = 0.0;`
+  line, and the doorbell (no manifest names its case). The website's
+  reading of the new ledger keys is the website repo's change. One
+  disagreement recorded, not fixed: `canary-local/devices/registry.json`'s
+  hand-typed Dash `body_mm` (113.7 × 73.6 × 16) against the ledger's
+  measured 118 × 79 × 38.9.
+- **One lesson kept (`CLAUDE.md`, "Generated files").** The review round
+  found the generator's checker answering "the file already says it" for a
+  value it could not spell as a Customizer literal — an exponent-form
+  number, NaN, a string holding a comment opener — so a wrong manifest
+  passed `--check` and a write wrote nothing. Every such value is refused by
+  manifest, knob and reason now, a two-statement line is refused whatever
+  the statements, and the registry is read with its comments stripped, as
+  OpenSCAD reads it. A generator that cannot spell a value must refuse, not
+  pass.
+
 ### The BUSY Bar surface: witness state on someone else's glass, with the room and the operator reading different things
 
 - **A first-class SecuraCV *display surface*** (`busybar_surface`, the
