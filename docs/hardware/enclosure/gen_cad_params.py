@@ -3,6 +3,8 @@
 
     python3 gen_cad_params.py            # write the manifest-owned literals into the .scad files
     python3 gen_cad_params.py --check    # CI gate: every owned literal equals its manifest
+    python3 gen_cad_params.py --dry-run canary-wap:board_w=17.8     # the unified diff a manifest
+                                         # edit WOULD write; nothing is written (repeatable)
 
 WHAT IT OWNS. devices/<slug>/device.json `cad.params` names the literal
 Customizer knobs of that device's `cad.scad` that describe the BOARD or
@@ -97,6 +99,15 @@ reference conversion proved again. When a value did change, the geometry
 moved, and the rest of the chain follows in the order REGEN_ORDER prints
 (previews first: a .scad change must be seeable).
 
+--dry-run SLUG:KNOB=VALUE prints the unified diff the .scad would receive
+if devices/SLUG/device.json said cad.params.KNOB = VALUE — on top of every
+manifest as it stands, through the same resolver and the same refusals, so
+a selector, a type mismatch or two manifests disagreeing is reported
+exactly as a write would report it. VALUE is JSON (17.8, true, "str",
+{"brd":"xiao","dim":"w"}) or a bare string. Nothing is written: the diff
+is what a PR body quotes and what a maintainer reads before deciding
+whether an edit is safe, and the line count is the preview obligation.
+
 scripts/lint_device_manifests.py imports check(), so `python3
 scripts/lint_device_manifests.py` stays THE manifest gate; lint.yml and
 enclosure.yml also run --check directly. --check also prints, as INFO
@@ -109,6 +120,7 @@ manifest — all of them cite the registry by comment.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import math
 import os
@@ -164,7 +176,10 @@ REF_SHAPE = ('{"brd": "<id>", "dim": "l"|"w"|"t"} (a BRD_REGISTRY row: along-USB
              'width, PCB thickness) or exactly {"brd_fn": "brd_<name>"} (a numeric brd_*() fact)')
 
 REGEN_ORDER = """\
-After an INTENDED change the geometry moved. Regenerate in this order:
+After an INTENDED change the geometry moved. One command runs the whole order
+(and stops before the emulator dist rebuild, telling you how to resume):
+  python3 scripts/regen_cad.py --previews <dir> [--site <website checkout>]
+Step by step, the same order:
   1. PNG previews of every affected part, shared with the requester, never
      committed (docs/hardware/enclosure/README.md, "Preview renders")
   2. (cd docs/hardware/enclosure && ./render.sh)                    # the STLs
@@ -518,8 +533,9 @@ def _rel(path: Path, repo: Path) -> str:
         return str(path)
 
 
-def load_params(devices_dir: Path = DEVICES_DIR,
-                repo: Path = REPO) -> tuple[dict[str, dict[str, Owned]], list[str]]:
+def load_params(devices_dir: Path = DEVICES_DIR, repo: Path = REPO,
+                overrides: dict[str, dict[str, object]] | None = None,
+                ) -> tuple[dict[str, dict[str, Owned]], list[str]]:
     """{cad.scad (repo-relative): {knob: Owned(value, [slugs], …)}}, errors.
 
     Every devices/*/device.json with a `cad.params` contributes to its
@@ -527,10 +543,15 @@ def load_params(devices_dir: Path = DEVICES_DIR,
     everything downstream sees a literal. A knob two manifests assert with
     different values is an error naming both. The first assertion's value
     stays in the map so the caller can still report the rest of the file.
+
+    `overrides` ({slug: {knob: value}}, the --dry-run edits) are laid over
+    the manifests' cad.params as if the files said so — a slug no manifest
+    has, or one whose manifest names no cad.scad, is an error.
     """
     owned: dict[str, dict[str, Owned]] = {}
     errors: list[str] = []
     registry: Registry | None = None
+    overrides = dict(overrides or {})
     try:
         registry = parse_board_registry(repo / BOARD_LIB_REL)
     except RegistryError as e:
@@ -544,6 +565,9 @@ def load_params(devices_dir: Path = DEVICES_DIR,
         slug = m.get("slug") or path.parent.name
         cad = m.get("cad") or {}
         params = cad.get("params")
+        extra = overrides.pop(slug, None)
+        if extra is not None:
+            params = {**(params if isinstance(params, dict) else {}), **extra}
         if params is None:
             continue
         scad = cad.get("scad")
@@ -602,6 +626,9 @@ def load_params(devices_dir: Path = DEVICES_DIR,
                 prev.slugs.append(slug)
             else:
                 per[key] = entry
+    for slug in overrides:
+        errors.append(f"devices/{slug}: no such manifest (devices/{slug}/device.json) — a dry run "
+                      f"edits a manifest that exists")
     return owned, errors
 
 
@@ -718,12 +745,14 @@ def render(scad_path: Path, owned: dict[str, object],
 # the gate and the writer
 # ---------------------------------------------------------------------------
 
-def _plan(devices_dir: Path, repo: Path) -> tuple[list[Planned], list[str],
-                                                  dict[str, dict[str, Owned]]]:
+def _plan(devices_dir: Path, repo: Path,
+          overrides: dict[str, dict[str, object]] | None = None,
+          ) -> tuple[list[Planned], list[str], dict[str, dict[str, Owned]]]:
     """Every owned case rendered in memory, every error so far, and the owned
     map — the whole run, short of writing. A test asserts the fixed point on
-    this, never by calling write() against the live tree."""
-    owned, errors = load_params(devices_dir, repo)
+    this, never by calling write() against the live tree. `overrides` is
+    --dry-run's edit (see load_params)."""
+    owned, errors = load_params(devices_dir, repo, overrides)
     plan: list[Planned] = []
     for scad_rel in sorted(owned):
         keys = owned[scad_rel]
@@ -790,11 +819,86 @@ def write(devices_dir: Path | None = None,
     return written, errors
 
 
+_DRY_RUN_RE = re.compile(r"^([a-z0-9][a-z0-9-]*):([A-Za-z_][A-Za-z0-9_]*)=(.+)$", re.S)
+
+
+def parse_dry_run(spec: str) -> tuple[str, str, object]:
+    """'canary-wap:board_w=17.8' -> ('canary-wap', 'board_w', 17.8). The value
+    is JSON when it parses (a number, true/false, a quoted string, a
+    reference object), else the bare string. Raises ValueError on shape."""
+    m = _DRY_RUN_RE.match(spec)
+    if not m:
+        raise ValueError(f"{spec!r} is not SLUG:KNOB=VALUE (e.g. canary-wap:board_w=17.8, "
+                         f'canary-wap:board_w={{"brd_fn":"brd_xiao_w_measured"}})')
+    slug, knob, raw = m.groups()
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        value = raw
+    return slug, knob, value
+
+
+def dry_run(specs: list[tuple[str, str, object]], devices_dir: Path | None = None,
+            repo: Path | None = None,
+            ) -> tuple[str, list[tuple[Path, Change]], list[str], dict[str, dict[str, Owned]]]:
+    """(unified diff, the (file, change) pairs, errors, what is owned with
+    the edits laid over) for the edits in `specs`. Renders in memory only."""
+    devices_dir = devices_dir or DEVICES_DIR
+    repo = repo or REPO
+    overrides: dict[str, dict[str, object]] = {}
+    for slug, knob, value in specs:
+        overrides.setdefault(slug, {})[knob] = value
+    plan, errors, owned = _plan(devices_dir, repo, overrides)
+    if errors:
+        return "", [], errors, owned
+    diff: list[str] = []
+    changes: list[tuple[Path, Change]] = []
+    for _, path, r in plan:
+        if not r.changes:
+            continue
+        rel = _rel(path, repo)
+        old = path.read_bytes().decode("utf-8").splitlines(keepends=True)  # bytes, as render reads
+        diff.extend(difflib.unified_diff(old, r.text.splitlines(keepends=True),
+                                         fromfile=f"a/{rel}", tofile=f"b/{rel}", n=1))
+        changes.extend((path, c) for c in r.changes)
+    return "".join(diff), changes, errors, owned
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--check", action="store_true",
-                    help="verify every manifest-owned literal equals its .scad (CI); write nothing")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true",
+                      help="verify every manifest-owned literal equals its .scad (CI); write nothing")
+    mode.add_argument("--dry-run", metavar="SLUG:KNOB=VALUE", action="append",
+                      help="print the unified diff the .scad would receive if devices/SLUG said "
+                           "cad.params.KNOB = VALUE (JSON, or a bare string); repeatable; writes nothing")
     args = ap.parse_args(argv)
+
+    if args.dry_run:
+        try:
+            specs = [parse_dry_run(s) for s in args.dry_run]
+        except ValueError as e:
+            ap.error(str(e))
+        diff, changes, errors, owned = dry_run(specs)
+        if errors:
+            print(f"gen_cad_params.py --dry-run: refused — {len(errors)} problem(s):\n")
+            for e in errors:
+                print(f"  ✗ {e}")
+            return 1
+        by_knob = {(s, k): o for keys in owned.values() for k, o in keys.items() for s in o.slugs}
+        asked = ", ".join(f"devices/{s} cad.params.{k} = {_show(by_knob[(s, k)])}"
+                          for s, k, _ in specs)
+        if not changes:
+            print(f"gen_cad_params.py --dry-run: no change — {asked} already equals the .scad "
+                  f"literal(s); a write would leave every byte where it is")
+            return 0
+        print(f"gen_cad_params.py --dry-run: {asked}\nwould write (nothing written):\n")
+        print(diff, end="")
+        files = sorted({p for p, _ in changes})
+        print(f"\n{len(changes)} knob(s) on {len(changes)} line(s) in {len(files)} file(s); a write "
+              f"owes PNG previews of every part of: {', '.join(p.name for p in files)}, then the "
+              f"regen order (python3 scripts/regen_cad.py --previews <dir>)")
+        return 0
 
     if args.check:
         errors = check()

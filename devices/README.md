@@ -103,7 +103,11 @@ written: correcting a board dimension is still an edit to the registry.
 python3 scripts/lint_device_manifests.py          # table, then errors; exit 1 on any
 python3 docs/hardware/enclosure/gen_cad_params.py --check   # the cad.params half alone; a
                                                   # failure prints the regen order to follow
-python3 -m unittest scripts/tests/test_device_manifests.py scripts/tests/test_gen_cad_params.py -v
+python3 docs/hardware/enclosure/gen_cad_params.py --dry-run canary-wap:board_w=17.8
+                                                  # the diff a manifest edit WOULD write; nothing written
+python3 scripts/regen_cad.py --check              # every generator downstream of a knob, in order
+python3 -m unittest scripts/tests/test_device_manifests.py scripts/tests/test_gen_cad_params.py \
+    scripts/tests/test_regen_cad.py -v
 ```
 
 CI runs the first in `.github/workflows/lint.yml` (Repo Lints) beside
@@ -222,8 +226,16 @@ linter; making the matrix generator read them is a wave of its own).
   there the chain that already exists re-renders the enclosure
   (`render.sh`), re-measures the envelope (`gen_assembled_dims.py`), redraws
   the figure (`gen_figures.mjs`) and re-carries the CAD ledger the website's
-  AR models are pinned to (`gen_builder_manifest.py --site`); the generator
-  prints that order after a write. `envelope_mm` is deliberately **not** an
+  AR models are pinned to (`gen_builder_manifest.py --site`). That order is
+  one command — [`scripts/regen_cad.py`](../scripts/regen_cad.py) runs the
+  twelve generators and gates in the order each one's inputs dictate, stops
+  before the emulator dist rebuild when the figure headers moved (the
+  rebuild is upstream of the catalogs; `--from gen_flash` resumes), renders
+  the owed PNG previews of every part of every changed case with
+  `--previews DIR`, and `--check` runs every step's check form and names the
+  first stale one — and `gen_cad_params.py --dry-run SLUG:KNOB=VALUE` shows
+  the one-line diff an edit would write before anything moves.
+  `envelope_mm` is deliberately **not** an
   input — every case derives its outer size from board dims + walls and the
   ledger measures it — so `figure` stays the join to the AR model. A knob
   that is a board fact is a reference into the board registry
@@ -241,8 +253,9 @@ linter; making the matrix generator read them is a wave of its own).
   site's AR generators and copy still hand-type those numbers until they
   read the new keys. A real
   dimension edit still owes the render previews `AGENTS.md` requires with
-  every `.scad` change — the generator lists the changed lines so that
-  obligation is a list, not a memory.
+  every `.scad` change — the generator lists the changed lines, and
+  `regen_cad.py --previews` renders them, so that obligation is a list and
+  a directory, not a memory.
 
 ## Adding a device
 
@@ -260,8 +273,17 @@ linter; making the matrix generator read them is a wave of its own).
    measurement is copied as the number.
 2. `python3 scripts/lint_device_manifests.py` until it is green. Each error
    names the file that owns the fact it disagrees with.
-3. Then the regeneration order [`CLAUDE.md`](../CLAUDE.md) already
-   prescribes for the rest of the tree — `./setup.sh regen` → dispatch the
-   emulator dist rebuild → pull it → run the `gen_*.py` catalogs → commit —
-   because a new board usually moves `flash.json`, `figures.json` and the
-   `dist/`, and the rebuild is upstream of the catalogs.
+3. Then `python3 scripts/regen_cad.py --previews <dir>` — the regeneration
+   order [`CLAUDE.md`](../CLAUDE.md) prescribes for the rest of the tree,
+   as one command: the manifest-owned knobs into the `.scad`, the STLs, the
+   assembled envelopes, the figures and their firmware / Swift mirrors, the
+   two flashers' models, then — because a new board usually moves
+   `flash.json`, `figures.json` and the `dist/`, and the rebuild is upstream
+   of the catalogs — it regenerates the display sketch mirror
+   (`firmware/projects/canary-display/setup.sh regen`) and **stops**: push
+   the branch, dispatch Actions → "Rebuild emulator dist (pinned emsdk)" on
+   it, pull, and `python3 scripts/regen_cad.py --from gen_flash` finishes
+   the catalogs. Commit what moved; the PNGs in `<dir>` go to the requester,
+   never into the tree. Before any of that, `gen_cad_params.py --dry-run
+   <slug>:<knob>=<value>` shows the exact line a `cad.params` edit would
+   move.
