@@ -3,10 +3,12 @@
 device manifest OWN the board knobs of its case.
 
 What is pinned and why:
-  • the committed tree is a fixed point: check() is empty, write() writes
-    nothing, and every owned case renders to its own bytes — the mechanism
+  • the committed tree is a fixed point: check() is empty, the plan holds no
+    change, and every owned case renders to its own bytes — the mechanism
     landed with zero .scad bytes moved, the reference conversion moved zero
-    more, and this keeps both provable;
+    more, and this keeps both provable. write() is only ever called inside a
+    scratch copy of the tree (_Tree): with default arguments it would rewrite
+    the real released cases the moment a manifest disagreed with one;
   • a changed value moves exactly one line and only its literal token: the
     help comment, the indent and every other line are byte-identical, and
     writing twice is the same as writing once (idempotence);
@@ -194,13 +196,13 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
             r = gcp.render(path, {k: o.value for k, o in keys.items()})
             self.assertEqual(r.errors, [], scad_rel)
             self.assertEqual(r.changes, [], scad_rel)
-            self.assertEqual(r.text, path.read_text(encoding="utf-8"), scad_rel)
+            self.assertEqual(r.text, path.read_bytes().decode("utf-8"), scad_rel)
         # the four released cases: the doorbell has no manifest, so nothing is
         # owned there and a render with nothing owned is the file itself
         for name in RELEASED:
             r = gcp.render(ENC / name, {})
             self.assertEqual((r.changes, r.errors), ([], []), name)
-            self.assertEqual(r.text, (ENC / name).read_text(encoding="utf-8"), name)
+            self.assertEqual(r.text, (ENC / name).read_bytes().decode("utf-8"), name)
 
     def test_shared_case_is_a_union_of_subsets(self):
         owned, _ = gcp.load_params()
@@ -216,11 +218,22 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
         self.assertEqual(s3["cad"]["scad"], VISION_REL)
         self.assertNotIn("params", s3["cad"])
 
-    def test_write_mode_writes_nothing_on_the_committed_tree(self):
-        before = {p: p.read_bytes() for p in ENC.glob("*.scad")}
-        written, errors = gcp.write()
-        self.assertEqual((written, errors), ([], []))
-        self.assertEqual({p: p.read_bytes() for p in ENC.glob("*.scad")}, before)
+    def test_write_mode_would_write_nothing_on_the_committed_tree(self):
+        # NEVER gcp.write() with default arguments from a test: the moment a
+        # manifest disagrees with its .scad, that rewrites the real released
+        # cases. The fixed point is asserted on the plan — the whole run short
+        # of writing — and then write() runs inside a scratch copy of the tree.
+        plan, errors, owned = gcp._plan(DEVICES, REPO)
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(p.scad_rel for p in plan), sorted(owned))
+        for scad_rel, path, r in plan:
+            self.assertEqual(r.changes, [], scad_rel)
+            self.assertEqual(r.text, path.read_bytes().decode("utf-8"), scad_rel)
+        with _Tree() as root:
+            enc = root / "docs/hardware/enclosure"
+            before = {p.name: p.read_bytes() for p in enc.glob("*.scad")}
+            self.assertEqual(gcp.write(root / "devices", root), ([], []))
+            self.assertEqual({p.name: p.read_bytes() for p in enc.glob("*.scad")}, before)
 
     def test_cli_check_exit_code(self):
         with redirect_stdout(io.StringIO()) as out:
