@@ -20,6 +20,12 @@ gate. This lint still fails FIRST, and names the file that owns the fact.
 The ini resolver and the build-matrix join it uses are shared with
 scripts/lint_build_matrix.py through scripts/_device_join.py.
 
+Since wave 3 ("Parametrize") a manifest also OWNS the board/module knobs of
+its case (`cad.params`): docs/hardware/enclosure/gen_cad_params.py writes
+them into the .scad as the literals the Customizer, the web builder and
+lint_design_lang.py already read, and this lint runs its check() — so a
+manifest edit and a .scad edit meet at the same gate.
+
 What is PROVED (each a hard error, exit 1):
   schema       every manifest validates against devices/device.schema.json —
                a stdlib validator (type, required, enum, pattern, minLength,
@@ -54,6 +60,12 @@ What is PROVED (each a hard error, exit 1):
                its board, mcu and env(s) agree with that manifest.
   cad          scad exists; enclosure sets exist in enclosures.json; scad is
                the source of at least one listed set.
+  cad.params   every owned knob is a literal Customizer knob of that scad
+               (never a selector, a computed value or a two-knob line),
+               manifests sharing one case agree on every shared key, and the
+               .scad's literal equals the manifest — gen_cad_params.check(),
+               the same code its own --check runs. The generator WRITES the
+               literal, so a mismatch means "run it", not "retype it".
   site         shape only — those paths live in the website repository.
 
 Output: one table row per device (slug · mcu · envs · emulator · confidence ·
@@ -82,6 +94,16 @@ from _device_join import (
 
 REPO = Path(__file__).resolve().parents[1]
 DEVICES_DIR = REPO / "devices"
+
+# The cad.params check lives beside the enclosure generators because it
+# shares gen_builder_manifest.parse_scad (the knobs a manifest may own are
+# the knobs the builder shows — one parser). That directory goes on sys.path
+# explicitly: CI runs this file from the repo root and the unittest harness
+# loads it by path, so neither can rely on the cwd.
+ENCLOSURE_DIR = REPO / "docs" / "hardware" / "enclosure"
+if str(ENCLOSURE_DIR) not in sys.path:
+    sys.path.insert(0, str(ENCLOSURE_DIR))
+import gen_cad_params  # noqa: E402
 
 # ── a small JSON Schema (2020-12) validator ─────────────────────────────────
 # Only the keywords devices/device.schema.json uses. Unknown keywords are
@@ -449,6 +471,12 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
         rows.append({"slug": slug, "mcu": board["mcu"], "envs": len(board["envs"]),
                      "emulator": emu_col, "confidence": confidence, "flasher": flasher_col})
 
+    # ── 2b. cad.params: the manifests OWN these knobs; the .scad must agree ─
+    # (gen_cad_params.py writes the literal; its check() renders in memory
+    # and names knob, manifest value and .scad value — the same code its own
+    # --check runs in lint.yml and in enclosure.yml's render job)
+    errors.extend(gen_cad_params.check(devices_dir, repo))
+
     # ── 3. completeness: every fact on the other side is claimed ────────────
     unclaimed_envs: dict[str, dict] = {}
     for entry in unclaimed.get("envs", []):
@@ -529,7 +557,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ✗ {e}")
         return 1
     print(f"\nlint_device_manifests.py: OK — {len(rows)} device manifests; every env, board, "
-          f"figure, flasher, emulator and CAD join holds.")
+          f"figure, flasher, emulator and CAD join holds, and every manifest-owned CAD knob "
+          f"equals its case.")
     return 0
 
 
