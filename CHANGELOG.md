@@ -27,10 +27,10 @@
   every owned case follows, with `--check` reporting drift as "registry says
   X, file says Y". Converted only where the knob's help comment already
   cites the registry; a knob that merely equals a row by coincidence stays a
-  number. 54 knobs across 8 case files (the WAP, Vision, DevKit, Sense, the
-  two 1.47 sticks, the Watch, the Touch 1.69 and the Dash), 29 of them
-  references; several manifests may name one case, each asserting a subset,
-  and a shared key must agree or the gate names both.
+  number. 54 knobs across 8 case files (the WAP, the Vision — shared by the
+  DevKit — the Sense, the two 1.47 sticks, the Watch, the Touch 1.69 and the
+  Dash), 29 of them references; several manifests may name one case, each
+  asserting a subset, and a shared key must agree or the gate names both.
 - **The byte-identity proof.** Every value is the file's literal as it
   stood, so the wave landed with **zero `.scad` bytes moved**: a write-mode
   run prints "nothing to write", `git diff --stat` from the wave's base lists

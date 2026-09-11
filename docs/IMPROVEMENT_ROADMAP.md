@@ -209,8 +209,9 @@ write-mode run of the new generator over it prints "nothing to write".
   registry correction reaches every owned case and `--check` reports the
   drift as "registry says X, file says Y". Converted only where the knob's
   help comment already cites the registry; a knob that merely equals a row
-  by coincidence stays a number. 54 knobs across 8 case files (the WAP,
-  Vision, DevKit, Sense and five display cases), 29 of them references.
+  by coincidence stays a number. 54 knobs across 8 case files (the WAP, the
+  Vision — shared by the DevKit — the Sense and five display cases), 29 of
+  them references.
 - **The regeneration order is one command.** `scripts/regen_cad.py` runs
   the twelve generators and gates in the order each one's inputs dictate,
   stops before the emulator dist rebuild (only Actions can build it; `--from
