@@ -169,6 +169,7 @@ per generator — what is read from here, and what is still typed elsewhere:
 | `scripts/lint_build_matrix.py` | every `build_matrix.json` lane resolves to one manifest (by id, else flavor + env — the same function this linter uses); every manifest's `board.envs` is an `[env:NAME]` of its family's project | the feature-flag cells, which are `platformio.ini` / `canary_config.h` facts, not device facts |
 | `.github/workflows/firmware-release.yml`, `flasher-release.yml` | (not the manifests — `firmware/flavors.json` `release_envs`, via `flavor_envs.py --release --json`; roadmap item 23, landed in the same wave: neither workflow types a display env any more) | — |
 | [`docs/hardware/enclosure/gen_cad_params.py`](../docs/hardware/enclosure/gen_cad_params.py) (→ the case `.scad` literals) | `cad.params`: the board/module knobs of `cad.scad` — a number, or a reference the generator resolves from the board registry (`canary_board_lib.scad`, read and never written). The generator **writes** them into the file — the literal token on the knob's own line, nothing else — so the Customizer, `render.sh`, the fit check, the web builder's manifest and `lint_design_lang.py` all keep reading the same literal knob they always did; `--check` proves equality, and the first run over the committed tree changed zero bytes. A knob the builder's parser does not accept (computed, module-local, `[Hidden]`), a selector, a type mismatch, a two-knob line or a reference the registry does not define is refused by name. | walls, tolerances and every feature knob (the design-language canon — case-owned, explained with `deviates:`); the enum selectors (`host`, `radar`, `preset`, `part` — per printable set, in `render.sh` and the fit check); the doorbell (`canary_vision_doorbell.scad`: no manifest names it); computed knobs (`board_stack_h`) and knobs read from a registry (`canary_s3_lcd7.scad`'s panel record); and `envelope_mm`, which is never an input — every case derives its outer size from board dims + walls, the ledger measures it off the STL (`gen_assembled_dims.py`), and the manifest reaches it through `figure` |
+| [`docs/hardware/enclosure/gen_builder_manifest.py --site`](../docs/hardware/enclosure/gen_builder_manifest.py) (→ the website's `scad/cad-dims.json`) | `cad.params`, resolved and merged by `gen_cad_params.py` and joined through `figure` to the fleet figure it draws, carried as that figure's `knobs` (the DevKit's three land on its own figure, not the stacked-XIAO's, though both name one case); the carry refuses to run while a manifest disagrees with its case, so the site never reads a knob the released STLs were not rendered from | the envelopes and assembled seams (`seams_mm`, measured — `figures.json`, `gen_assembled_dims.py`); the board registry, carried whole with its evidence rung as `board_registry` / `board_facts` (`canary_board_lib.scad`); and reading those keys on the website side, which is the website repository's change |
 
 **Still typed, deliberately:** the confidence ladder (derived from evidence
 by the figures generator, never here), the emulator twin aliases in
@@ -193,7 +194,12 @@ linter; making the matrix generator read them is a wave of its own).
   (`canary_board_lib.scad`), so a registry correction flows to every owned
   case through the same generator. Still open in this wave: the display
   cases, whose `model` ternary and two-knob lines the generator refuses
-  today; and the ledger keys the website derives its copy from. A real
+  today; and the website's own half of the ledger — `gen_builder_manifest.py
+  --site` now carries each owned device's resolved `knobs`, its assembled
+  `seams_mm` and the board registry with its evidence rung in
+  `scad/cad-dims.json` (and `--site <checkout> --check` says whether the
+  carry is current), but the site's AR generators and copy still hand-type
+  those numbers until they read the new keys. A real
   dimension edit still owes the render previews `AGENTS.md` requires with
   every `.scad` change — the generator lists the changed lines so that
   obligation is a list, not a memory.
