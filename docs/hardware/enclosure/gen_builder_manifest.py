@@ -471,12 +471,20 @@ def _num(s: str):
     return int(f) if f.is_integer() and "." not in s else f
 
 
-def parse_scad(path: Path) -> list[dict]:
-    """Return the file's Customizer groups with their literal parameters."""
+def parse_scad(path: Path, with_lines: bool = False) -> list[dict]:
+    """Return the file's Customizer groups with their literal parameters.
+
+    with_lines=True additionally records each parameter's 1-based source
+    line as `"line"`. gen_cad_params.py asks for it so the knobs a device
+    manifest may own and the knobs this parser accepts are one set by
+    construction — the rewrite lands on the very line the parser took the
+    literal from, and nothing else scans the file. The default output
+    (and so builder_manifest.json) is unchanged.
+    """
     groups: list[dict] = []
     group = {"name": "Parameters", "params": []}
     in_block_comment = False
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if re.match(r"^module\s", raw):
             break
         line = raw
@@ -511,6 +519,8 @@ def parse_scad(path: Path) -> list[dict]:
             if name.startswith("$"):
                 continue
             param: dict = {"name": name}
+            if with_lines:
+                param["line"] = lineno
             if value in ("true", "false"):
                 param["type"] = "bool"
                 param["default"] = value == "true"
