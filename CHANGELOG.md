@@ -75,8 +75,8 @@
   `board_w` are a `model` ternary), the 7" frame (its panel record is typed
   in `canary_panel_lib.scad`), the Touch 1.69's `aa_dx = 0.0; aa_dy = 0.0;`
   line, and the doorbell (no manifest names its case). The website's
-  reading of the new ledger keys is the website repo's change. One
-  disagreement recorded, not fixed: `canary-local/devices/registry.json`'s
+  reading of the new ledger keys is the website repo's change, landed on
+  the website branch (PR pending). One disagreement recorded, not fixed: `canary-local/devices/registry.json`'s
   hand-typed Dash `body_mm` (113.7 × 73.6 × 16) against the ledger's
   measured 118 × 79 × 38.9.
 - **One lesson kept (`CLAUDE.md`, "Generated files").** The review round
