@@ -94,6 +94,11 @@
           "minItems": 1,
           "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
           "description": "canary-local/devices/enclosures.json `sets[].id` entries printable for this hardware; `scad` must be the source of at least one of them."
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": { "type": ["number", "string", "boolean"] },
+          "description": "Literal Customizer knobs of `cad.scad` this device asserts (board/module dimensions). docs/hardware/enclosure/gen_cad_params.py WRITES them into the .scad and its --check proves equality; manifests sharing one .scad may each assert a subset and must agree on shared keys; enum/selector knobs (host, preset, radar, headers, port, model, panel_variant, part) are refused — they are chosen per set at render time."
         }
       }
     },

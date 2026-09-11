@@ -23,7 +23,20 @@
       "vision-xiao-weather",
       "vision-mount-kit",
       "vision-doorbell"
-    ]
+    ],
+    "params": {
+      "vm_l": 40.0,
+      "vm_w": 20.0,
+      "xiao_l": 21.0,
+      "xiao_w": 17.8,
+      "stack_sock_h": 6.5,
+      "xiao_below": 5.5,
+      "vm_front_h": 5.0,
+      "cam_w": 25.0,
+      "cam_h": 24.0,
+      "pcb_t": 1.0,
+      "board_clear": 0.6
+    }
   },
   "flasher": {
     "product": "securacv-canary-vision-xiao-c3"

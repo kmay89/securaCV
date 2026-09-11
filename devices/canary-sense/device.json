@@ -26,7 +26,20 @@
       "sense-radome",
       "sense-bedside-stand",
       "sense-in-wall-plate"
-    ]
+    ],
+    "params": {
+      "vm_l": 44.0,
+      "vm_w": 36.0,
+      "xiao_l": 21.0,
+      "xiao_w": 17.5,
+      "stack_sock_h": 6.5,
+      "xiao_below": 5.5,
+      "vm_front_h": 3.5,
+      "ant_h": 1.2,
+      "pcb_t": 1.0,
+      "board_clear": 0.6,
+      "xiao_usb_z": 0.0
+    }
   },
   "flasher": {
     "product": "securacv-canary-sense",
