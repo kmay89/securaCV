@@ -189,6 +189,37 @@ class LintCatchesRealMistakes(unittest.TestCase):
         self.assertTrue(any(".cad.params.board_l" in e and "expected number/string/boolean" in e
                             for e in errors), errors)
 
+    # a value may also be a reference into the board registry
+    # (canary_board_lib.scad); the schema admits the object and its keys, the
+    # generator resolves it and checks the brd+dim / brd_fn shape
+    def test_cad_params_reference_shape_is_checked_by_schema_and_generator(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap", lambda d: d["cad"]["params"].update({
+                "board_l": {"brd": "xiao"},                          # half a reference
+                "board_w": {"brd": "xiao", "dim": "h"},              # not a column
+                "board_h": {"brd": "xiao", "dim": "t", "note": 1}}))  # a stray key
+            _, errors = ldm.lint(devices_dir=devices)
+        # the schema: the enum and the closed key set
+        self.assertTrue(any(".cad.params.board_w.dim" in e and "'h' is not one of" in e
+                            for e in errors), errors)
+        self.assertTrue(any(".cad.params.board_h" in e and "'note'" in e
+                            and "additionalProperties" in e for e in errors), errors)
+        self.assertFalse(any(".cad.params.board_l" in e and "expected" in e for e in errors),
+                         errors)
+        # the generator: the shape the schema cannot state, naming the library
+        self.assertTrue(any("cad.params.board_l" in e and "is not a registry reference" in e
+                            and "canary_board_lib.scad" in e for e in errors), errors)
+
+    def test_cad_params_reference_to_an_unknown_row_is_refused(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-sense", lambda d: d["cad"]["params"].__setitem__(
+                "vm_l", {"brd": "mr60x", "dim": "l"}))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "cad.params.vm_l" in e]
+        self.assertEqual(len(hits), 1, errors)
+        self.assertIn('BRD_REGISTRY has no row "mr60x"', hits[0])
+        self.assertIn("devices/canary-sense", hits[0])
+
 
 class SchemaValidatorSubset(unittest.TestCase):
     def test_keywords_the_schema_uses(self):
