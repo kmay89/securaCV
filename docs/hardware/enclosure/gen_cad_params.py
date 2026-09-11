@@ -55,7 +55,9 @@ exactly what gen_builder_manifest.parse_scad returns — a top-level
 `name = <literal>;` before the first `module`, outside a [Hidden] group —
 asked with `with_lines=True`, so the rewrite lands on the line that parser
 accepted the literal from. There is no second scanner to disagree with it,
-and a same-named local inside a module can never be hit.
+and a same-named local of a column-0 module can never be hit (parse_scad
+stops at the first `^module`; that is the boundary it draws, and this file
+draws no other).
 
 WHAT IT REFUSES (exit 1, naming the manifest, the knob and why):
   * a key that is not a literal knob of the file: a computed value

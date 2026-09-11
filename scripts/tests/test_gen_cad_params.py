@@ -14,7 +14,8 @@ What is pinned and why:
     writing twice is the same as writing once (idempotence);
   • the eligibility set IS gen_builder_manifest.parse_scad's: with_lines=True
     points at the assignment it accepted and changes nothing else about its
-    output, so a same-named local inside a module can never be hit;
+    output, so a same-named local of a column-0 module can never be hit
+    (parse_scad stops at the first `^module`);
   • the board registry (canary_board_lib.scad) parses completely — nine rows,
     seven facts — and a row that drifts from the literal shape is a failure,
     never a shorter registry; each reference form resolves; an unknown row,
@@ -704,6 +705,8 @@ class RenderMovesOnlyTheToken(unittest.TestCase):
             self.assertEqual(gcp.check(root / "devices", root), [])
 
     def test_module_local_of_the_same_name_is_never_touched(self):
+        # a local of a COLUMN-0 module: parse_scad stops at the first `^module`,
+        # which is the only module boundary it (and so this generator) knows
         with tempfile.TemporaryDirectory() as td:
             r = gcp.render(fixture(Path(td)), {"n": 9})
             self.assertEqual([(c.line, c.new_token) for c in r.changes], [(2, "9")])
