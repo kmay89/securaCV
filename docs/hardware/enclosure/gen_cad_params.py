@@ -190,6 +190,7 @@ Step by step, the same order:
   7. Actions -> "Rebuild emulator dist (pinned emsdk)" on the branch, then pull it
   8. python3 canary-local/tools/gen_flash.py
   9. python3 docs/hardware/enclosure/gen_builder_manifest.py [--site <website checkout>]
+     # --site <website checkout> --check names a stale carry, writing nothing
  10. python3 canary-local/tools/gen_enclosures.py"""
 
 

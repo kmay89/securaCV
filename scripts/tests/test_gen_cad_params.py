@@ -308,6 +308,21 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
         self.assertIn("54 manifest-owned knobs across 8 case file(s)", out.getvalue())
         self.assertIn("(29 of them resolved from canary_board_lib.scad)", out.getvalue())
 
+    def test_the_printed_order_names_the_carry_and_its_check(self):
+        # REGEN_ORDER is what a write and a failed --check print. Step 9 must
+        # say the carry has a check form (`--site <checkout> --check` names a
+        # stale carry, writing nothing), or the operator carries to find out.
+        order = gcp.REGEN_ORDER
+        self.assertIn("python3 scripts/regen_cad.py --previews <dir> [--site <website checkout>]",
+                      order)
+        self.assertIn("9. python3 docs/hardware/enclosure/gen_builder_manifest.py "
+                      "[--site <website checkout>]", order)
+        self.assertIn("--site <website checkout> --check names a stale carry", order)
+        lines = order.splitlines()
+        nine = next(i for i, ln in enumerate(lines) if ln.lstrip().startswith("9. "))
+        self.assertIn("--check names a stale carry", lines[nine + 1])
+        self.assertTrue(lines[nine + 2].lstrip().startswith("10. "))
+
 
 class BoardRegistry(unittest.TestCase):
     def test_committed_lib_parses_nine_rows_and_seven_facts(self):
