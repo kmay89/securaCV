@@ -57,6 +57,7 @@ use <canary_port_lib.scad>   // connector standards — the shell numbers the
 use <canary_board_lib.scad>  // board registry — this file is the measured
                              // source for the seated-stack height
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
@@ -361,6 +362,25 @@ assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", label_size),
            " mm at label_size ", label_size, " on a ", plate_x,
            " mm face (2 mm margin per side) — shrink label_size"));
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
+hw_echo("Vision doorbell", [
+    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    hw_item(4, "M2 pan x 6 self-tap (OV5647 to the face posts)"),
+    // the security boss takes screw_size's insert when screw_insert is on (its bore is ins_od),
+    // so the security screw is that size's machine thread; self-tap builds keep the M2 pilot
+    hw_item(1, str(screw_insert ? hw_size_name(screw_size) : "M2", " x 10 security screw, Torx pin/tri-wing, ",
+                   screw_insert ? "machine thread (into the boss insert)" : "self-tap", " (plate foot into the body boss)")),
+    screw_insert ? hw_item(len(post_xy()) + 1, str(str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h), " — the +1 seats in the security boss")) : "",
+    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    hw_item(1, str("Ø", btn_d, " illuminated momentary button + panel nut (", btn_nut_ac, " AC)")),
+    e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    opt_vent     ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
+    opt_led      ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    cam_disc_t > 0 && cam_disc_d > 0 ? hw_item(1, str("Ø", cam_disc_d, " x ", cam_disc_t, " clear disc (neutral-cure silicone)")) : "",
+    opt_tamper   ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
+    hw_item(2, "#6 pan wall screw (plate)"),
+]);
 echo(str("Canary Vision DOORBELL v0.4 — body ", out_x, " x ", out_y, " x ", base_d + lid_t + kh_extra,
          " mm + plate ", plate_t, " mm (wedge ", plate_wedge, " deg, seal=", e_seal, ")"));
 
@@ -394,6 +414,7 @@ module edgeclip(px, py, ang, soff) {
 module body() {
     posts = post_xy();
     gusset_h = max(2, cav_d - lip_h - 1.0);
+    gusset_w = min(2.0, rib_t_max(wall_eff));
     difference() {
     union() {
         difference() {
@@ -441,21 +462,14 @@ module body() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
-                for (p = posts) {
+                // constant-width webs (canary_rib_lib corner_gusset) — no hull flare.
+                // The ±Y web ties a corner post into its end wall (it used to aim
+                // inside the post and drew nothing); a mid-span post has only its X wall
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = abs(p[1]) > 1 ? sign(p[1]) : 0;
-                    hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
-                    // ±Y gusset ties the post into its end wall, same 0.3
-                    // wall-overlap convention as the ±X one above. It used to
-                    // aim at inner_y/2 - 2.3, which left the d=2 target circle
-                    // entirely INSIDE the d=5 post — the hull added nothing
-                    // and this case had no end-wall gussets at all.
-                    if (sy != 0 && abs(p[1]) > inner_y/2 - 10) hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
+                    corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
+                    if (sy != 0 && abs(p[1]) > inner_y/2 - 10)
+                        corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2.0])

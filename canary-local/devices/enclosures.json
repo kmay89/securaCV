@@ -1671,6 +1671,10 @@
       {
        "name": "cam_need",
        "default": "2*cam_throw*tan(cam_fov/2) + 2.0"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }
@@ -2675,6 +2679,10 @@
       {
        "name": "cam_need",
        "default": "2*max(0, cam_throw)*tan(cam_fov/2) + 4.0"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }
@@ -3418,6 +3426,10 @@
       {
        "name": "lid_headroom",
        "default": "cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra))"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }
@@ -4262,6 +4274,10 @@
        "name": "key_x",
        "default": "inner_x/2 - post_corner - 2.5",
        "comment": "lid key: on the +Y wall, inboard of the +X corner post"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }

@@ -26,6 +26,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the blind 
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>   // bridge-safe USB openings (the WAP's print-validated profile)
 use <canary_board_lib.scad>  // board registry — the Grove/MR60 numbers the knobs cite
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 
 /* [What to render] */
@@ -171,6 +172,14 @@ assert(!opt_mark || mark_word_ink_w("securaCV", mark_size) <= plate_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", mark_size),
            " mm at mark_size ", mark_size, " on a ", plate_x,
            " mm face (2 mm margin per side) — shrink mark_size"));
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_echo("Combo witness", [
+    hw_item(len(post_xy()), hw_screw("m2", "pan", hw_len(lid_t, head_pad, 6), "self-tap")),
+    hw_item(4, "M2 pan x 6 self-tap (OV5647 to the front posts)"),
+    e_seal ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    opt_led ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    opt_mount ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+]);
 echo(str("Canary COMBO witness v0.1-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t + mount_extra,
          " mm, radar gap ", rad_gap, " mm  (IN DEVELOPMENT)"));
 
@@ -246,12 +255,12 @@ module back() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
-                for (p = posts) {
+                // constant-width webs (canary_rib_lib corner_gusset) — no hull flare
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
-                             translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
-                    hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
-                             translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
+                    gw = min(2.0, rib_t_max(wall_eff));
+                    corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], cav_d - lip_h - 1, wall_eff, pd, gw);
+                    corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), cav_d - lip_h - 1, wall_eff, pd, gw);
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2]) cylinder(d = screw_d, h = cav_d);

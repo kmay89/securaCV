@@ -72,6 +72,7 @@ use <canary_snap_lib.scad>   // snap-fit doctrine — snap_strain() gates edgecl
 use <canary_port_lib.scad>   // connector openings — the bridge-safe USB profile
 use <canary_board_lib.scad>  // board registry — the knob defaults below cite it
 use <canary_mark_lib.scad>   // THE BIRD — opt_mark's front deboss
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
@@ -463,6 +464,23 @@ assert(!(opt_mark && label_text != ""),
        "opt_mark and label_text are exclusive — the front carries the mark or a label, not both");
 assert((label_text == "" && !opt_mark) || (label_depth > 0 && label_depth < lid_t),
        "label_depth must be between 0 and lid_t");
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
+hw_echo(str("Vision ", host), [
+    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    hw_item(4, "M2 pan x 6 self-tap (OV5647 to the front posts)"),
+    screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
+    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
+    e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    cam_disc_t > 0 && cam_disc_d > 0 ? hw_item(1, str("Ø", cam_disc_d, " x ", cam_disc_t, " clear disc (neutral-cure silicone)")) : "",
+    e_hood       ? hw_item(1, "hood (print part=\"hood\"; bond into the front's groove)") : "",
+    e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(1, str("M", hinge_bolt_d, " x 25 bolt + nut (hinge; knob part=\"knob\")")) : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#6 pan wall screw (bracket)") : "",
+    e_mount && (m_style == "keyhole" || m_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+]);
 echo(str("Canary Vision enclosure v0.4 — outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r,
          " mm prongs)  (host=", host, ", preset=", preset, ", seal=", e_seal, ", mount=", m_style, ")"));
@@ -591,6 +609,7 @@ module case_hinge() {
 module back() {
     posts = post_xy();
     gusset_h = max(2, cav_d - lip_h - 1.0);
+    gusset_w = min(2.0, rib_t_max(wall_eff));   // the landing width, capped at the old 2.0 target
 
     union() {
         difference() {
@@ -684,16 +703,13 @@ module back() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
-                for (p = posts) {
+                // constant-width webs (canary_rib_lib corner_gusset): a hull between a
+                // Ø5 post and a Ø2 target FLARES, landing wider than it was drawn;
+                // this lands at gusset_w, 0.5 into the wall, sloped so no shelf
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    if (sx != 0) hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
-                    if (sy != 0) hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
+                    if (sx != 0) corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
+                    if (sy != 0) corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
             // self-tap pilot — or, with inserts, a clearance bore below the brass

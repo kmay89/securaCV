@@ -80,6 +80,11 @@ out_l = inner_l + 2*wall_t;
 out_w = inner_w + 2*wall_t;
 base_h = floor_t + cav_h;
 pd = post_d;
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_echo("Covert j-box", [
+    hw_item(len(post_xy()), hw_screw("m2", "flat", hw_len(lid_t, 0, 6), "self-tap")),   // the lid seat is a cone: flat head
+    hw_item(2, "#8 pan wall screw (box mount)"),
+]);
 echo(str("Canary covert j-box v0.1-dev — ", out_l, " x ", out_w, " x ", base_h + lid_t,
          " mm  (IN DEVELOPMENT)"));
 // the mark library's measured type metrics gate the interior wordmark the same

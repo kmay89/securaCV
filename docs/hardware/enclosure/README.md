@@ -198,6 +198,12 @@ protocols that earn each level — see
   elephant-foot, and the floor-to-wall junction *inside* the cavity is a 45°
   **`floor_cove`** (0.8 mm) rather than the square notch a corner drop
   hinges the floor about.
+- **The render tells you what to buy.** Every shell echoes a `HARDWARE —`
+  line derived from the same knobs that draw its holes: post count, screw
+  size and head, a standard length that passes the lid and engages three
+  diameters of post, inserts, O-rings, gasket, vent patch, light pipe,
+  clear disc, magnet, hinge bolt and wall screws. It cannot drift from the
+  geometry, because it is the geometry.
 - **It only goes together one way.** Four corner posts fit a lid two ways
   and every lid feature lines up one way, so each shell carries a
   **`lid_key`**: a rib on the +Y cavity wall inside the lip zone and a slot

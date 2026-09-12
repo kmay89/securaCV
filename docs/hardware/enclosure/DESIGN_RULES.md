@@ -35,7 +35,7 @@ top face the lid seats on.
 | Outside bottom edges get a chamfer (elephant-foot and the delamination site in compression) | 45° × 0.5 | `foot_chamfer_ring()`; `check_foot_relief.py` gates the C3/C6 bezels |
 | Show-face edges are the house two-stage soft edge | 0.8 + 0.8 | `soft_edge_plate()`; `lint_design_lang.py` |
 | Rib and rail roots are coved where a square root would read through the face or start a crack | 1.2 mm leg | `rib_root_fillet()`, `rib_root_fillet_rect()`, `board_rail(fil=)` |
-| Corner screw posts are webbed into both walls with a constant-width gusset, not a flaring hull | landing width ≤ wall | `corner_gusset()`; adopters still on hand hulls are listed in the audit (AES rows) |
+| Corner screw posts are webbed into both walls with a constant-width gusset, not a flaring hull | landing width `min(2.0, rib_t_max(wall))`, 0.5 into the wall, 45° sloped top | `corner_gusset()` — adopted by the WAP, Vision, Sense, doorbell, relay and combo shells (PLS-5) |
 
 ## 3. Ribs and bosses
 
@@ -53,6 +53,7 @@ top face the lid seats on.
 | Rule | Number | Enforced by |
 |---|---|---|
 | One screw registry: pilot, nominal, clearance, both heads, insert, O-ring per size | M2 / M2.5 / M3 | `SCR_REGISTRY`, `core_selfcheck()` pins the print-validated M2 row |
+| Every shell counts its own hardware, derived from the knobs that draw the holes, and echoes it on every render — a count typed in a comment is a count the next option breaks | `HARDWARE — <case>: 4x M2 flat x 8 self-tap · …` | `hw_echo()`, `hw_len()`, `hw_screw()`, `hw_insert()`, `hw_oring()` in `canary_core_lib`; `core_selfcheck()` pins `hw_len` to the validated M2 x 8 |
 | A head seat never goes as deep as the plate it is in; a pan head gets a floor, a flat head gets a 90° cone | ≥ 1.0 mm floor | `cb_head_pad()` + `cb_flat_cut()` / `cs_cone90_cut()`; the assembled fit check found the pad that overhung |
 | Every screwed case offers a heat-set insert path, including the one screw undone at every service | `screw_insert` | WAP, Vision, doorbell (corner posts and the security boss), Sense |
 | Snap-closed cases have a pry point | 0.6 in, 0.8 down | `pry_notch` on the watch drum, C6 and 1.69, positions derived and asserted off ports and corner radii |
@@ -118,10 +119,5 @@ top face the lid seats on.
 - **Lid rib proportions.** Every lid's rib ring is pinned by a 1.0 mm
   headroom, now asserted; making the ribs taller means growing `cav_extra`
   on each case, which moves the released envelopes. A per-case decision.
-- **Gusset adoption.** The released cases still draw their post gussets as
-  hulls; `corner_gusset()` is the constant-width form. Mesh-moving on
-  every released STL, so it waits for a release that re-cuts them anyway.
-- **Hardware counts.** No file counts its screws and inserts; the one BOM
-  quantity in a header has already drifted.
 - **Customizer help text and naming collisions** — the audit's parametric
   UX section.
