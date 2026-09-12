@@ -260,7 +260,7 @@ linter; making the matrix generator read them is a wave of its own).
   `--site <checkout> --check` says whether the carry is current), and the
   site's reading of the new keys — its `make-*-glb.mjs` and `cad-dims.mjs`
   take `seamsMeters`, `knobMeters` and `boardMm` from the carry, models
-  byte-identical — is landed on the website branch, PR pending. A real
+  byte-identical — is website PR #197. A real
   dimension edit still owes the render previews `AGENTS.md` requires with
   every `.scad` change — the generator lists the changed lines, and
   `regen_cad.py --previews` renders them, so that obligation is a list and
