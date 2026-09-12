@@ -67,7 +67,19 @@ SEAMS = {
     "device.canary-vision-doorbell": [4, 28],
     "device.canary-wap": [13.05],
 }
-DIMS_BASE = 16   # 13 .scad carries + colorways.json + cad-dims.json + builder-data.js
+
+
+def carry_count(manifest: dict) -> int:
+    """How many files a --site run carries: every distinct .scad the curated
+    models and their deps name, the reference sources and their use<> deps,
+    plus colorways.json, cad-dims.json and builder-data.js. Counted from the
+    manifest, not typed, so a library an upstream pass adds to a case (the rib
+    library, #1673) moves the expectation with the tree."""
+    scads = {f for m in manifest["models"]
+             for f in [m["file"], *(d["file"] for d in m.get("deps", []))]}
+    for name in gbm.REFERENCE_SCADS:
+        scads.update([name, *gbm.scad_deps(ENC / name)])
+    return len(scads) + 3
 
 
 def ledger_figures() -> dict[str, dict]:
@@ -328,6 +340,7 @@ class SiteCarry(unittest.TestCase):
         self.site = Path(self._tmp.name) / "site"
         (self.site / "js").mkdir(parents=True)
         self.manifest = gbm.build_manifest()
+        self.n = carry_count(self.manifest)   # 17 on the tree this was written against
         self.fresh = json.dumps(self.manifest, indent=2, ensure_ascii=False) + "\n"
         self._real_manifest = gbm.MANIFEST
         gbm.MANIFEST = Path(self._tmp.name) / "builder_manifest.json"
@@ -351,7 +364,7 @@ class SiteCarry(unittest.TestCase):
 
     def test_carried_set(self):
         carries = gbm.site_carries(self.manifest)
-        self.assertEqual(len(carries), DIMS_BASE)
+        self.assertEqual(len(carries), self.n)
         names = list(carries)
         for model in gbm.CURATED:
             self.assertIn(f"scad/{model['file']}", names)
@@ -376,12 +389,12 @@ class SiteCarry(unittest.TestCase):
     def test_write_then_check_is_green_and_a_second_write_is_a_fixed_point(self):
         rc, out, _ = self.run_main("--site", str(self.site))
         self.assertEqual(rc, 0)
-        self.assertIn(f"{DIMS_BASE} of {DIMS_BASE} website carries written", out)
+        self.assertIn(f"{self.n} of {self.n} website carries written", out)
         first = self.snapshot()
-        self.assertEqual(len(first), DIMS_BASE)
+        self.assertEqual(len(first), self.n)
         rc, out, _ = self.run_main("--site", str(self.site), "--check")
         self.assertEqual(rc, 0)
-        self.assertIn(f"are up to date ({DIMS_BASE} files)", out)
+        self.assertIn(f"are up to date ({self.n} files)", out)
         rc, out, _ = self.run_main("--site", str(self.site))
         self.assertEqual(rc, 0)
         self.assertIn("nothing written", out)
@@ -399,7 +412,7 @@ class SiteCarry(unittest.TestCase):
         self.assertIn("rerun gen_builder_manifest.py --site", str(exc.code))
         stale = [ln.strip()[2:] for ln in out.splitlines() if ln.strip().startswith("✗")]
         self.assertEqual(stale, ["scad/canary_core_lib.scad (stale)"])
-        self.assertIn(f"1 of {DIMS_BASE} website carries are not current", out)
+        self.assertIn(f"1 of {self.n} website carries are not current", out)
         self.assertEqual(self.snapshot(), before)          # --check wrote nothing
         # a missing carry is named as missing, in write order after the stale one
         (self.site / "js" / "builder-data.js").unlink()
@@ -411,7 +424,7 @@ class SiteCarry(unittest.TestCase):
         # and a write repairs exactly those two
         rc, out, _ = self.run_main("--site", str(self.site))
         self.assertEqual(rc, 0)
-        self.assertIn(f"2 of {DIMS_BASE} website carries written", out)
+        self.assertIn(f"2 of {self.n} website carries written", out)
         self.assertEqual(victim.read_bytes(), (ENC / "canary_core_lib.scad").read_bytes())
 
     def test_a_site_run_leaves_a_current_manifest_untouched(self):

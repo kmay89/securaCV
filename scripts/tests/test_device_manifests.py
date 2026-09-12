@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -29,6 +30,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "lint_device_manifests.py"
 DEVICES = REPO / "devices"
+WAP_SCAD = REPO / "docs" / "hardware" / "enclosure" / "canary_wap_enclosure.scad"
+# the knob's line, read live: an upstream edit above it moves the expectation with the file
+WAP_BOARD_W_LINE = next(i for i, ln in enumerate(WAP_SCAD.read_text(encoding="utf-8").splitlines(), 1)
+                        if re.match(r"^\s*board_w\s*=", ln))
 
 # The lint imports its ini resolver from scripts/_device_join.py the way it
 # runs in CI (`python3 scripts/lint_device_manifests.py` puts scripts/ at
@@ -154,7 +159,7 @@ class LintCatchesRealMistakes(unittest.TestCase):
             _, errors = ldm.lint(devices_dir=devices)
         hits = [e for e in errors if "board_w" in e]
         self.assertEqual(len(hits), 1, errors)
-        for needle in ("canary_wap_enclosure.scad:154", "17.5", "17.8", "gen_cad_params.py"):
+        for needle in (f"canary_wap_enclosure.scad:{WAP_BOARD_W_LINE}", "17.5", "17.8", "gen_cad_params.py"):
             self.assertIn(needle, hits[0])
 
     def test_two_manifests_disagreeing_on_a_shared_knob_fail_naming_both(self):

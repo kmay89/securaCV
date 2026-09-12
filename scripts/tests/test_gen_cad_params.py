@@ -239,6 +239,23 @@ def moved_lines(name: str, root: Path) -> list[int]:
     return [i + 1 for i, (a, b) in enumerate(zip(old, new)) if a != b]
 
 
+def knob_line(name: str, knob: str) -> int:
+    """1-based line of `knob`'s assignment in the tree's copy of `name`, read
+    live — an upstream edit that inserts lines above a knob (the gusset pass,
+    #1673, added a `use <>` and a hardware echo to every box shell) moves the
+    expectation with the file instead of breaking it."""
+    for i, ln in enumerate((ENC / name).read_text(encoding="utf-8").splitlines(), 1):
+        if re.match(rf"^\s*{re.escape(knob)}\s*=", ln):
+            return i
+    raise AssertionError(f"{name}: no knob {knob!r}")
+
+
+SENSE, VISION = "canary_sense_enclosure.scad", "canary_vision_enclosure.scad"
+WAP_L, WAP_W = knob_line(WAP.name, "board_l"), knob_line(WAP.name, "board_w")
+SENSE_XL, SENSE_XW, SENSE_SOCK = (knob_line(SENSE, k) for k in ("xiao_l", "xiao_w", "stack_sock_h"))
+VIS_XL, VIS_XW, VIS_SOCK = (knob_line(VISION, k) for k in ("xiao_l", "xiao_w", "stack_sock_h"))
+
+
 class CommittedTreeIsAFixedPoint(unittest.TestCase):
     def test_check_is_clean(self):
         self.assertEqual(gcp.check(), [])
@@ -700,8 +717,8 @@ class ARegistryCorrectionReachesTheCases(unittest.TestCase):
             lib_after = edit_lib(root, XIAO_ROW, XIAO_ROW.replace("21.0", "21.4"))
             errors = gcp.check(root / "devices", root)
             self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
-                             ["canary_sense_enclosure.scad:92:", "canary_vision_enclosure.scad:120:",
-                              "canary_wap_enclosure.scad:153:"], errors)
+                             [f"{SENSE}:{SENSE_XL}:", f"{VISION}:{VIS_XL}:",
+                              f"{WAP.name}:{WAP_L}:"], errors)
             for e in errors:
                 self.assertIn('references brd_l("xiao") (canary_board_lib.scad:43, spec rung): '
                               "registry says 21.4, file says 21.0", e)
@@ -710,13 +727,13 @@ class ARegistryCorrectionReachesTheCases(unittest.TestCase):
             self.assertEqual(werr, [])
             self.assertEqual(sorted((p.name, c.line, c.name, c.old_token, c.new_token)
                                     for p, c in written),
-                             [("canary_sense_enclosure.scad", 92, "xiao_l", "21.0", "21.4"),
-                              ("canary_vision_enclosure.scad", 120, "xiao_l", "21.0", "21.4"),
-                              ("canary_wap_enclosure.scad", 153, "board_l", "21.0", "21.4")])
+                             [(SENSE, SENSE_XL, "xiao_l", "21.0", "21.4"),
+                              (VISION, VIS_XL, "xiao_l", "21.0", "21.4"),
+                              (WAP.name, WAP_L, "board_l", "21.0", "21.4")])
             self.assertEqual(gcp.check(root / "devices", root), [])
-            self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [153])
-            self.assertEqual(moved_lines("canary_vision_enclosure.scad", root), [120])
-            self.assertEqual(moved_lines("canary_sense_enclosure.scad", root), [92])
+            self.assertEqual(moved_lines(WAP.name, root), [WAP_L])
+            self.assertEqual(moved_lines(VISION, root), [VIS_XL])
+            self.assertEqual(moved_lines(SENSE, root), [SENSE_XL])
             # the doorbell cites the same row by comment and has no manifest
             self.assertEqual(moved_lines("canary_vision_doorbell.scad", root), [])
             # the registry was read, never written
@@ -729,7 +746,7 @@ class ARegistryCorrectionReachesTheCases(unittest.TestCase):
                      "function brd_stack_sock_measured()   = 6.2;")
             errors = gcp.check(root / "devices", root)
             self.assertEqual(sorted(e.split(" ", 1)[0] for e in errors),
-                             ["canary_sense_enclosure.scad:94:", "canary_vision_enclosure.scad:122:"],
+                             [f"{SENSE}:{SENSE_SOCK}:", f"{VISION}:{VIS_SOCK}:"],
                              errors)
             for e in errors:
                 self.assertIn("references brd_stack_sock_measured() (canary_board_lib.scad:90): "
@@ -737,8 +754,8 @@ class ARegistryCorrectionReachesTheCases(unittest.TestCase):
             written, werr = gcp.write(root / "devices", root)
             self.assertEqual(werr, [])
             self.assertEqual(sorted((p.name, c.line) for p, c in written),
-                             [("canary_sense_enclosure.scad", 94),
-                              ("canary_vision_enclosure.scad", 122)])
+                             [(SENSE, SENSE_SOCK),
+                              (VISION, VIS_SOCK)])
             self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [])
         with _Tree() as root:
             # the measured XIAO width: the Vision pins name it; the WAP and
@@ -747,11 +764,11 @@ class ARegistryCorrectionReachesTheCases(unittest.TestCase):
                      "function brd_xiao_w_measured() = 17.9;")
             errors = gcp.check(root / "devices", root)
             self.assertEqual([e.split(" ", 1)[0] for e in errors],
-                             ["canary_vision_enclosure.scad:121:"], errors)
+                             [f"{VISION}:{VIS_XW}:"], errors)
             self.assertIn("registry says 17.9, file says 17.8", errors[0])
             written, _ = gcp.write(root / "devices", root)
             self.assertEqual([(p.name, c.line, c.new_token) for p, c in written],
-                             [("canary_vision_enclosure.scad", 121, "17.9")])
+                             [(VISION, VIS_XW, "17.9")])
             self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [])
             self.assertEqual(moved_lines("canary_sense_enclosure.scad", root), [])
 
@@ -760,8 +777,8 @@ class ARegistryCorrectionReachesTheCases(unittest.TestCase):
             edit_lib(root, XIAO_ROW, XIAO_ROW.replace("17.5", "17.6"))
             first, _ = gcp.write(root / "devices", root)
             self.assertEqual(sorted((p.name, c.line) for p, c in first),
-                             [("canary_sense_enclosure.scad", 93),
-                              ("canary_wap_enclosure.scad", 154)])
+                             [(SENSE, SENSE_XW),
+                              (WAP.name, WAP_W)])
             self.assertEqual(gcp.write(root / "devices", root), ([], []))
             self.assertEqual(gcp.check(root / "devices", root), [])
 
@@ -780,8 +797,8 @@ class EligibilityIsTheBuildersParser(unittest.TestCase):
         self.assertEqual(stripped, plain)
         self.assertFalse(any("line" in p for g in plain for p in g["params"]))
         by = {p["name"]: p["line"] for g in with_lines for p in g["params"]}
-        self.assertEqual(by["board_l"], 153)
-        self.assertEqual(by["board_w"], 154)
+        self.assertEqual(by["board_l"], WAP_L)
+        self.assertEqual(by["board_w"], WAP_W)
         self.assertNotIn("board_stack_h", by)          # computed: not a knob
 
     def test_eligible_is_the_parsers_set(self):
@@ -800,11 +817,11 @@ class RenderMovesOnlyTheToken(unittest.TestCase):
         new = r.text.splitlines(keepends=True)
         self.assertEqual(len(old), len(new))
         moved = [i for i, (a, b) in enumerate(zip(old, new)) if a != b]
-        self.assertEqual(moved, [153])                              # 0-based: line 154
+        self.assertEqual(moved, [WAP_W - 1])                        # 0-based
         self.assertEqual([(c.line, c.name, c.old_token, c.new_token) for c in r.changes],
-                         [(154, "board_w", "17.5", "17.8")])
-        self.assertEqual(new[153], old[153].replace("= 17.5;", "= 17.8;", 1))
-        self.assertIn("// PCB width (along Y)", new[153])       # the help text survived
+                         [(WAP_W, "board_w", "17.5", "17.8")])
+        self.assertEqual(new[WAP_W - 1], old[WAP_W - 1].replace("= 17.5;", "= 17.8;", 1))
+        self.assertIn("// PCB width (along Y)", new[WAP_W - 1])       # the help text survived
 
     def test_write_is_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
@@ -862,13 +879,13 @@ class RenderMovesOnlyTheToken(unittest.TestCase):
             written, errors = gcp.write(root / "devices", root)
             self.assertEqual(errors, [])
             self.assertEqual([(c.line, c.old_token, c.new_token) for _, c in written],
-                             [(154, "17.5", "17.8")])
+                             [(WAP_W, "17.5", "17.8")])
             after = wap.read_bytes()
             self.assertEqual(after.count(b"\r\n"), before.count(b"\r\n"))
             self.assertEqual(after.count(b"\n"), after.count(b"\r\n"))
             old, new = before.split(b"\r\n"), after.split(b"\r\n")
             self.assertEqual(len(old), len(new))
-            self.assertEqual([i + 1 for i, (a, b) in enumerate(zip(old, new)) if a != b], [154])
+            self.assertEqual([i + 1 for i, (a, b) in enumerate(zip(old, new)) if a != b], [WAP_W])
             self.assertEqual(gcp.check(root / "devices", root), [])
 
     def test_module_local_of_the_same_name_is_never_touched(self):
@@ -984,7 +1001,7 @@ module m() {}
             edit(root, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_w", 17.8))
             errors = gcp.check(root / "devices", root)
         self.assertEqual(len(errors), 1, errors)
-        for needle in ("canary_wap_enclosure.scad:154", "board_w = 17.5 in the .scad",
+        for needle in (f"{WAP.name}:{WAP_W}", "board_w = 17.5 in the .scad",
                        "devices/canary-wap cad.params says 17.8", "gen_cad_params.py"):
             self.assertIn(needle, errors[0])
 
@@ -1118,10 +1135,10 @@ class WriteMode(unittest.TestCase):
             written, errors = gcp.write(root / "devices", root)
             self.assertEqual(errors, [])
             self.assertEqual([(p.name, c.line, c.old_token, c.new_token) for p, c in written],
-                             [("canary_wap_enclosure.scad", 154, "17.5", "17.8")])
+                             [(WAP.name, WAP_W, "17.5", "17.8")])
             self.assertEqual(gcp.check(root / "devices", root), [])
             # only the one token moved
-            self.assertEqual(moved_lines("canary_wap_enclosure.scad", root), [154])
+            self.assertEqual(moved_lines(WAP.name, root), [WAP_W])
             # and writing again is a no-op
             self.assertEqual(gcp.write(root / "devices", root), ([], []))
 
@@ -1250,7 +1267,7 @@ class DryRun(unittest.TestCase):
         diff, changes, errors, owned = gcp.dry_run([("canary-wap", "board_w", 17.8)])
         self.assertEqual(errors, [])
         self.assertEqual([(p.name, c.line, c.old_token, c.new_token) for p, c in changes],
-                         [("canary_wap_enclosure.scad", 154, "17.5", "17.8")])
+                         [(WAP.name, WAP_W, "17.5", "17.8")])
         self.assertTrue(diff.startswith("--- a/docs/hardware/enclosure/canary_wap_enclosure.scad\n"))
         self.assertEqual(owned[WAP_REL]["board_w"].value, 17.8)
         self.assertIsNone(owned[WAP_REL]["board_w"].ref)
