@@ -226,6 +226,17 @@ jobs:
         # the manifests yet (roadmap §4 wave 1), so this is the only gate that
         # can catch a stale join.
         run: python3 scripts/lint_device_manifests.py
+      - name: Manifest-owned CAD knobs equal the case literals
+        # Since roadmap §4 wave 3 (Parametrize) a manifest's `cad.params` OWNS
+        # the board/module knobs of its case: gen_cad_params.py writes them
+        # into the .scad as the same literals the Customizer, the web builder
+        # and lint_design_lang.py already read, and this proves the file still
+        # says what the manifest says. The manifests step above already runs
+        # this check; the generator's own --check runs here too because its
+        # failure prints the regen order to follow after an intended edit,
+        # and because this workflow is unfiltered — a manifest-only edit is
+        # gated here even though enclosure.yml never sees it.
+        run: python3 docs/hardware/enclosure/gen_cad_params.py --check
       - name: One home for the espressif32 / pioarduino platform pin
         # The same pioarduino release URL was typed in six .ini files and the
         # official espressif32 pin in three more, each trusting a "bump in

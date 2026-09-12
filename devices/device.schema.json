@@ -94,6 +94,20 @@
           "minItems": 1,
           "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
           "description": "canary-local/devices/enclosures.json `sets[].id` entries printable for this hardware; `scad` must be the source of at least one of them."
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["number", "string", "boolean", "object"],
+            "additionalProperties": false,
+            "properties": {
+              "brd": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "A BRD_REGISTRY row id in docs/hardware/enclosure/canary_board_lib.scad (xiao, grove_v2, ov5647, mr60, dk_c3, …); always paired with `dim`." },
+              "dim": { "type": "string", "enum": ["l", "w", "t"], "description": "Which column of that row: l = along-USB length (brd_l), w = width (brd_w), t = PCB thickness (brd_t)." },
+              "brd_fn": { "type": "string", "pattern": "^brd_[a-z0-9_]+$", "description": "A zero-argument numeric fact of the same library (`function brd_xiao_w_measured() = 17.8;`); alone in the object." }
+            },
+            "description": "A literal (number, string, boolean), or a reference into the board registry — exactly {\"brd\", \"dim\"} or exactly {\"brd_fn\"}. The generator resolves a reference to the registry's number before writing, and checks the shape (the schema cannot say brd+dim XOR brd_fn)."
+          },
+          "description": "Literal Customizer knobs of `cad.scad` this device asserts (board/module dimensions). A knob that IS a board fact references the registry (canary_board_lib.scad) rather than retyping its number — the manifest carries the join, the registry the number, and which entry is named is the design decision (brd_w(\"xiao\") spec in clips, brd_xiao_w_measured() in pins); a case measurement with no registry home stays a number. docs/hardware/enclosure/gen_cad_params.py WRITES the values into the .scad and its --check proves equality; manifests sharing one .scad may each assert a subset and must agree on shared keys; enum/selector knobs (host, preset, radar, headers, port, model, panel_variant, part) are refused — they are chosen per set at render time."
         }
       }
     },

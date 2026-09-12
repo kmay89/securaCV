@@ -29,7 +29,21 @@
       "wap-weather",
       "wap-clip-coupon",
       "thermal-outdoor-kit"
-    ]
+    ],
+    "params": {
+      "board_l": {
+        "brd": "xiao",
+        "dim": "l"
+      },
+      "board_w": {
+        "brd": "xiao",
+        "dim": "w"
+      },
+      "board_h": 1.2,
+      "board_clear": 0.6,
+      "stack_camera": 8.0,
+      "stack_plain": 4.5
+    }
   },
   "flasher": {
     "product": "securacv-canary-wap"

@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -29,6 +30,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "lint_device_manifests.py"
 DEVICES = REPO / "devices"
+WAP_SCAD = REPO / "docs" / "hardware" / "enclosure" / "canary_wap_enclosure.scad"
+# the knob's line, read live: an upstream edit above it moves the expectation with the file
+WAP_BOARD_W_LINE = next(i for i, ln in enumerate(WAP_SCAD.read_text(encoding="utf-8").splitlines(), 1)
+                        if re.match(r"^\s*board_w\s*=", ln))
 
 # The lint imports its ini resolver from scripts/_device_join.py the way it
 # runs in CI (`python3 scripts/lint_device_manifests.py` puts scripts/ at
@@ -145,6 +150,80 @@ class LintCatchesRealMistakes(unittest.TestCase):
                  lambda d: d.__setitem__("emulator", {"flavor": "dash7"}))
             _, errors = ldm.lint(devices_dir=devices)
         self.assertTrue(any("'dash7'" in e and "allowlist" in e for e in errors), errors)
+
+    # cad.params — the manifest OWNS these knobs (docs/hardware/enclosure/
+    # gen_cad_params.py writes them); the lint runs the generator's check()
+    def test_cad_param_that_disagrees_with_the_case_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_w", 17.8))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "board_w" in e]
+        self.assertEqual(len(hits), 1, errors)
+        for needle in (f"canary_wap_enclosure.scad:{WAP_BOARD_W_LINE}", "17.5", "17.8", "gen_cad_params.py"):
+            self.assertIn(needle, hits[0])
+
+    def test_two_manifests_disagreeing_on_a_shared_knob_fail_naming_both(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision-devkit",
+                 lambda d: d["cad"]["params"].__setitem__("xiao_l", 22.0))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "xiao_l" in e]
+        self.assertEqual(len(hits), 1, errors)
+        for needle in ("devices/canary-vision ", "devices/canary-vision-devkit", "21.0", "22.0"):
+            self.assertIn(needle, hits[0])
+
+    def test_selector_knob_in_cad_params_is_refused(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision", lambda d: d["cad"]["params"].__setitem__("host", "xiao"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("cad.params.host" in e and "selector" in e and "render time" in e
+                            for e in errors), errors)
+
+    def test_computed_knob_in_cad_params_is_refused(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap",
+                 lambda d: d["cad"]["params"].__setitem__("board_stack_h", 8.0))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("board_stack_h" in e and "not a literal Customizer knob" in e
+                            for e in errors), errors)
+
+    def test_cad_params_value_must_be_a_literal_by_schema(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap", lambda d: d["cad"]["params"].__setitem__("board_l", [21]))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any(".cad.params.board_l" in e and "expected number/string/boolean" in e
+                            for e in errors), errors)
+
+    # a value may also be a reference into the board registry
+    # (canary_board_lib.scad); the schema admits the object and its keys, the
+    # generator resolves it and checks the brd+dim / brd_fn shape
+    def test_cad_params_reference_shape_is_checked_by_schema_and_generator(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap", lambda d: d["cad"]["params"].update({
+                "board_l": {"brd": "xiao"},                          # half a reference
+                "board_w": {"brd": "xiao", "dim": "h"},              # not a column
+                "board_h": {"brd": "xiao", "dim": "t", "note": 1}}))  # a stray key
+            _, errors = ldm.lint(devices_dir=devices)
+        # the schema: the enum and the closed key set
+        self.assertTrue(any(".cad.params.board_w.dim" in e and "'h' is not one of" in e
+                            for e in errors), errors)
+        self.assertTrue(any(".cad.params.board_h" in e and "'note'" in e
+                            and "additionalProperties" in e for e in errors), errors)
+        self.assertFalse(any(".cad.params.board_l" in e and "expected" in e for e in errors),
+                         errors)
+        # the generator: the shape the schema cannot state, naming the library
+        self.assertTrue(any("cad.params.board_l" in e and "is not a registry reference" in e
+                            and "canary_board_lib.scad" in e for e in errors), errors)
+
+    def test_cad_params_reference_to_an_unknown_row_is_refused(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-sense", lambda d: d["cad"]["params"].__setitem__(
+                "vm_l", {"brd": "mr60x", "dim": "l"}))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "cad.params.vm_l" in e]
+        self.assertEqual(len(hits), 1, errors)
+        self.assertIn('BRD_REGISTRY has no row "mr60x"', hits[0])
+        self.assertIn("devices/canary-sense", hits[0])
 
 
 class SchemaValidatorSubset(unittest.TestCase):

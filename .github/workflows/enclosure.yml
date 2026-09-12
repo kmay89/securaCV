@@ -49,6 +49,17 @@ jobs:
         with:
           python-version-file: pyproject.toml
 
+      # The device manifests own the released cases' board/module literals
+      # (devices/<slug>/device.json `cad.params`, roadmap §4 wave 3);
+      # gen_cad_params.py writes them, and this proves a .scad edit did not
+      # bypass the manifest. It reads the same parser as the builder check
+      # below (parse_scad), so the knobs a manifest may own and the knobs the
+      # builder shows are one set. devices/** is deliberately NOT in this
+      # workflow's paths — lint.yml gates a manifest-only edit — so the fit
+      # matrix does not run for every manifest change.
+      - name: Manifest-owned knobs equal the case literals
+        run: python3 gen_cad_params.py --check
+
       - name: Web-builder manifest is in sync with the sources
         run: python3 gen_builder_manifest.py --check
 
