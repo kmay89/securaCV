@@ -97,12 +97,14 @@ struct AlertsView: View {
                         .listRowBackground(Color.clear)
                 }
 
-                // The heartbeat proves *a* path works. This answers the
-                // bigger question standing right behind it — how many paths
-                // there are, and which ones are down — because the person
-                // who thinks to ask it is standing on this screen.
+                // The heartbeat proves *a* path works. These answer the two
+                // questions standing right behind it — how many paths there
+                // are, and who is told if you don't answer — in ladder
+                // order, because the person who thinks to ask them is
+                // standing on this screen.
                 Section {
                     CoverageRow()
+                    HouseholdRow()
                 }
 
                 if store.alertLog.isQuiet {
@@ -223,9 +225,11 @@ struct AlertRecordRow: View {
                 Text(record.name).font(.body.weight(.medium))
                 if record.isUnseen {
                     // "You haven't looked at this yet" — the same count the
-                    // app badge carries. Cleared by visiting, not by acking:
+                    // app badge carries. Info blue, deliberately: "new" is
+                    // information, not a severity, and orange is a reserved
+                    // word here (B2). Cleared by visiting, not by acking:
                     // seen and handled are different questions.
-                    Circle().fill(Theme.color(.warn)).frame(width: 7, height: 7)
+                    Circle().fill(Theme.color(.info)).frame(width: 7, height: 7)
                         .accessibilityLabel("New")
                 }
                 Spacer(minLength: Theme.s)
@@ -278,7 +282,7 @@ struct AlertRecordRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, Theme.xxs)
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             if record.needsYou {
                 Button {
@@ -344,18 +348,78 @@ struct AwaySummaryRow: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: Theme.s) {
-            Image(systemName: "clock.arrow.circlepath")
-                .foregroundStyle(Theme.color(.info))
-                .accessibilityHidden(true)
-            Text(text).font(.subheadline)
-            Spacer(minLength: 0)
+        Card(variant: .chip) {
+            HStack(spacing: Theme.s) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(Theme.color(.info))
+                    .accessibilityHidden(true)
+                Text(text).font(.footnote)
+                Spacer(minLength: 0)
+            }
         }
-        .padding(.horizontal, Theme.m)
-        .padding(.vertical, Theme.s)
-        .background(.ultraThinMaterial,
-                    in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The escalation ladder's front door: who is told when an alarm goes
+/// unanswered. Promoted to the tab root because it is the product's answer
+/// to the question every alarm raises — behind "Tell me when…" it was the
+/// deepest point in the app. The rules sheet keeps its row as a cross-link;
+/// this collapses the three-sheet stack to two.
+///
+/// No `.task` refresh here, deliberately: FleetStore refreshes the roster at
+/// launch and HouseholdSheet refreshes when opened; this row observes the
+/// same shared object, so it updates the moment either learns better. A
+/// stale read errs toward understatement — this app's preferred failure —
+/// and the Alerts tab must not cost a CloudKit round-trip per visit.
+struct HouseholdRow: View {
+    @ObservedObject private var household = HouseholdShare.shared
+    @State private var showingHousehold = false
+
+    var body: some View {
+        Button { showingHousehold = true } label: {
+            HStack(spacing: Theme.s) {
+                // Calm green only once somebody has actually joined — the
+                // same verdict color the roster itself gives a joined member
+                // (HouseholdMemberRow). The subtitle states it in words, so
+                // color never carries the meaning alone (C5).
+                Image(systemName: "person.2")
+                    .foregroundStyle(HouseholdRelay.joinedCount(household.members) > 0
+                                     ? Theme.color(.calm) : Theme.color(.neutral))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Theme.xxs) {
+                    Text("If nobody answers").font(.body)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: Theme.s)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Shows who can be told if an alarm goes unanswered.")
+        .sheet(isPresented: $showingHousehold) { HouseholdSheet() }
+    }
+
+    /// One honest line, from the same members array HouseholdRelay reads.
+    /// "Can be told" is the roster's own hedged verb
+    /// (HouseholdMemberRow.statusLabel) — joining is observable from here;
+    /// being reached is not, so "will" is never claimed. An invitation is
+    /// never counted as a person (HouseholdRelay's rule).
+    private var subtitle: String {
+        let joined = HouseholdRelay.joinedCount(household.members)
+        let pending = HouseholdRelay.pendingCount(household.members)
+        switch (joined, pending) {
+        case (0, 0): return "Only your own devices would know."
+        case (0, _): return "Invited, but nobody has joined yet."
+        case (1, _): return "1 person can be told."
+        default:     return "\(joined) people can be told."
+        }
     }
 }
 
@@ -429,7 +493,7 @@ struct AlertRulesSheet: View {
                                     .buttonStyle(.bordered)
                             }
                         }
-                        .padding(.vertical, 2)
+                        .padding(.vertical, Theme.xxs)
                     } header: {
                         Text("Noticed")
                     } footer: {
@@ -562,7 +626,7 @@ struct AlertRuleRow: View {
                     .foregroundStyle(Theme.color(.warn))
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, Theme.xxs)
     }
 }
 

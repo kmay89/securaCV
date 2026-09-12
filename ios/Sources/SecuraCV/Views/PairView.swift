@@ -95,7 +95,8 @@ struct PairView: View {
                     // has no way to ask for one over the LAN.
                     Section("Add this Canary") {
                         Text("\(canary.name) hands over its key from its own setup page, which you reach by joining its Wi-Fi while it's in setup mode. That page gives you a receipt — paste it below.")
-                            .font(.subheadline)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                     Section("Paste the receipt") {
                         TextField("{ \"device_id\": …, \"token\": … }", text: $receiptText, axis: .vertical)

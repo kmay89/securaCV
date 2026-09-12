@@ -50,7 +50,7 @@ struct CoverageRow: View {
                     .foregroundStyle(coverage.workingCount == 0
                                      ? Theme.color(.warn) : Theme.color(.calm))
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Theme.xxs) {
                     Text("Would I be told?").font(.body)
                     Text(coverage.headline)
                         .font(.caption)
@@ -95,7 +95,19 @@ struct CoverageView: View {
 
                 Section {
                     ForEach(coverage.lanes) { lane in
-                        laneRow(lane)
+                        // The Apple Home lane is the one lane with a room
+                        // behind it in this app, so it is also the door: the
+                        // row states the house's standing, and standing on
+                        // the verdict is where "go fix it" occurs to someone.
+                        // Keys keeps its entry — this is a second door, not a
+                        // move, and the model's copy (which still says
+                        // "Keys → Apple Home") stays true and untouched.
+                        if lane.id == "applehome" {
+                            NavigationLink { AppleHomeView() } label: { laneRow(lane) }
+                                .accessibilityHint("Opens Apple Home — what the house may know.")
+                        } else {
+                            laneRow(lane)
+                        }
                     }
                 } header: {
                     Text("The paths")
@@ -133,7 +145,7 @@ struct CoverageView: View {
                     .foregroundStyle(tint(for: lane.standing))
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, Theme.xxs)
         .accessibilityElement(children: .combine)
     }
 
@@ -150,7 +162,7 @@ struct CoverageView: View {
         switch standing {
         case .covered: return Theme.color(.calm)
         case .broken: return Theme.color(.warn)
-        case .off, .unobservable: return .secondary
+        case .off, .unobservable: return Theme.color(.neutral)
         }
     }
 

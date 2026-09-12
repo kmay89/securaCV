@@ -73,10 +73,13 @@ struct DeviceDetailView: View {
             // Who it is, directly under what it looks like — the two halves
             // of one answer, and neither was typed by a human: the figure is
             // resolved from what the device published, the name is derived
-            // from its key.
+            // from its key. One shared ground: the object and its
+            // certificate float as a single provenance block, a document
+            // under an object rather than a settings cell.
             Section {
                 BirthCertificateCard(witness: liveWitness, pairedAt: pairedAt)
             }
+            .listRowBackground(Color.clear)
 
             Section("Trust") {
                 LabeledContent("Signature") {
@@ -188,7 +191,7 @@ struct DeviceDetailView: View {
                 } header: {
                     Text("Wellbeing")
                 } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: Theme.xs) {
                         Text("As the radar last reported it — coarse by design: presence, a count that tops out at 2+, a breathing rhythm yes/no. No camera, no identity, and vitals never enter the sealed log.")
                         // Provenance: these words arrive relayed (a display
                         // repeating the sense device's retained broker claim,
