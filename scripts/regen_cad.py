@@ -536,6 +536,11 @@ def changed_cases(repo: Path) -> tuple[list[str], list[str]]:
 
 def render_previews(out_dir: Path, repo: Path) -> tuple[int, list[str]]:
     """Render every owed preview into out_dir; (count rendered, failures)."""
+    # OpenSCAD runs in docs/hardware/enclosure (its includes resolve there), so a
+    # relative DIR handed straight through would land beside the .scad files, or
+    # fail because that second directory does not exist, while the existence
+    # check below looked in the caller's directory. Resolve it here, once.
+    out_dir = Path(out_dir).resolve()
     cases, libs = changed_cases(repo)
     if libs:
         print(f"      changed .scad without a `part` selector: {', '.join(libs)} — every case that "
@@ -565,6 +570,7 @@ def run_previews(out_dir: Path, repo: Path, i: int) -> tuple[bool, str]:
     """The --previews hook, printed as step `i`'s companion: (ok, detail)."""
     print(f"[{i}/{len(STEPS)}] previews  (README \"Preview renders\": every part of every "
           f"changed case, ROTX {PREVIEW_VIEWS[0][1]} and {PREVIEW_VIEWS[1][1]})")
+    out_dir = Path(out_dir).resolve()          # the summary names where the files really are
     n, failures = render_previews(out_dir, repo)
     if failures:
         print("\n".join(failures))

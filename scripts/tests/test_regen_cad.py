@@ -542,6 +542,40 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
             self.assertIn("26 PNG(s) in", out)
             self.assertIn("never commit them", out)
 
+    def test_relative_preview_dir_is_resolved_against_the_callers_cwd(self):
+        # OpenSCAD runs in docs/hardware/enclosure (its includes resolve there), so a
+        # relative DIR handed straight through lands beside the .scad files — or fails
+        # because that second directory does not exist — while the existence check
+        # looked in the caller's directory (review round on #1682: every preview
+        # "failed"). The directory is resolved once, before any argv is built.
+        with tempfile.TemporaryDirectory() as td:
+            def fake_openscad(argv, cwd):
+                # like OpenSCAD: -o opens relative to the process cwd, and a missing
+                # directory is an export error, never a mkdir
+                target = Path(cwd) / argv[argv.index("-o") + 1]
+                if not target.parent.is_dir():
+                    return 1, f"Can't open file \"{target}\" for export"
+                target.write_bytes(b"PNG")
+                return 0, ""
+
+            rules = [("git status --porcelain -- docs/hardware", const(0, f" M {ENC}/canary_wap_enclosure.scad\n")),
+                     ("render.sh", const(0, "Rendering a.stl ...\n")),
+                     ("openscad -o", fake_openscad)]
+            here = os.getcwd()
+            os.chdir(td)
+            try:
+                code, out, rec = run_main(["--previews", "previews"], rules)
+            finally:
+                os.chdir(here)
+            self.assertEqual(code, 0, out)
+            want = Path(td).resolve() / "previews"
+            self.assertEqual(len(list(want.glob("*.png"))), 26)
+            self.assertFalse((rc.REPO / ENC / "previews").exists())
+            outs = [a[a.index("-o") + 1] for a in rec.argvs() if "openscad" in a[:3] and "-o" in a]
+            self.assertEqual(len(outs), 26)
+            self.assertTrue(all(Path(o).is_absolute() and Path(o).parent == want for o in outs), outs[:2])
+            self.assertIn(f"26 PNG(s) in {want}", out)
+
     def test_no_changed_case_owes_no_previews(self):
         with tempfile.TemporaryDirectory() as td:
             rules = [("render.sh", const(0, "Rendering a.stl ...\n"))]
