@@ -21,7 +21,18 @@
     "enclosure_sets": [
       "vision-devkit-indoor",
       "vision-mount-kit"
-    ]
+    ],
+    "params": {
+      "dk_l": {
+        "brd": "dk_c3",
+        "dim": "l"
+      },
+      "dk_w": {
+        "brd": "dk_c3",
+        "dim": "w"
+      },
+      "stack_h": 9.0
+    }
   },
   "flasher": {
     "product": "securacv-canary-vision"

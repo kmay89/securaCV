@@ -104,14 +104,22 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 - `python3 scripts/lint_docs_index.py` if you touched anything under `docs/`
 - `python3 scripts/lint_dictionary_sync.py` if you touched a vocabulary
 - `python3 scripts/gen_agent_entrypoints.py` if you edited this brief
+- Changed a board knob? Change it in `devices/<slug>/device.json`
+  `cad.params` (or the board-registry row it references) and run
+  `python3 docs/hardware/enclosure/gen_cad_params.py`; the `.scad` follows,
+  and `python3 scripts/regen_cad.py --previews <dir>` runs everything
+  downstream of it in order (walls, tolerances and selectors stay in the
+  file; how-to: `devices/README.md`)
 - Changed an enclosure `.scad`? Attach PNG previews of every affected part
   for the requester — the change must be seeable, not just readable
   (recipe: `docs/hardware/enclosure/README.md`, "Preview renders")
 - Changed a builder-curated `.scad`, one of its `use<>` libraries, or the
   fleet figures? Refresh the website's carried copies too:
   `docs/hardware/enclosure/gen_builder_manifest.py --site <website-checkout>`
-  (the site pins them by sha256; its weekly "Update everything" carry job
-  catches a forgotten refresh, but a week is a long time to serve stale CAD)
+  (`--site <website-checkout> --check` says whether the carry is current
+  without writing; the site pins them by sha256; its weekly "Update
+  everything" carry job catches a forgotten refresh, but a week is a long
+  time to serve stale CAD)
 - Changed `firmware/build_matrix.json`, a kernel-status tile in
   `tools/gen_kernel_status.py`, `viewer/verify_core.js` or an envelope
   fixture? Same idea, other tool:
