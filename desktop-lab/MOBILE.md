@@ -6,10 +6,15 @@ reuse the exact same frontend as the web Lab and the desktop app** — the
 (which becomes a **bottom tab bar on iPhone** and a **sidebar on iPad**). We
 just wrap it in a Tauri v2 mobile shell. One frontend, four platforms.
 
-> **Status: scaffolded, not yet built.** Everything below is wired, but the
-> first real build needs **your Apple Developer account** (signing +
-> provisioning) — that can't be done from CI or this repo alone. This doc is
-> the exact checklist.
+> **Status: scaffolded, never built.** The local recipe below is wired, but no
+> build of this shell has ever been produced — and the *living-with-it* iPhone
+> / iPad app went native instead (`ios/`, shipped by `ios-release.yml`; the
+> reasoning is in `docs/design/iphone_companion_app.md`). The dispatch-only CI
+> workflow that once wrapped this recipe was retired on 2026-09-08 without a
+> single build to its name; see "CI" below for what remains and how to revive
+> it. The first real build still needs **your Apple Developer account**
+> (signing + provisioning) — that can't come from CI or this repo alone. This
+> doc is the exact checklist.
 
 > 📖 **Two rendered companions** (open in a browser):
 > - [`ipad-setup.html`](ipad-setup.html) — a **foolproof, copy-paste runbook**:
@@ -99,11 +104,22 @@ hides/redirects the pieces iOS won't allow.
 
 ## CI
 
-[`.github/workflows/desktop-mobile-release.yml`](../.github/workflows/desktop-mobile-release.yml)
-runs an iOS build on a macOS runner **on manual dispatch only** (so it never
-blocks other CI). It's gated behind the `ENABLE_IOS_BUILD` repository variable
-and the Apple signing secrets — until those are set, the job no-ops with a clear
-message rather than failing. Set them once your provisioning is in place:
+There is no CI workflow for this shell any more. `desktop-mobile-release.yml`
+("Mobile (iOS) build") ran `npm run ios:init && npm run ios:build` on a macOS
+runner behind the `ENABLE_IOS_BUILD` gate; it was dispatched once (2026-07-24,
+gated to a no-op) and never built anything, so it was retired on 2026-09-08
+(`.github/RELEASE_LESSONS.md`, that date). The native companion in `ios/` is
+what ships to iPhone and iPad, through `ios-release.yml` and the `ios` row of
+`.github/release-targets.yml`.
+
+**To revive a CI build of this shell,** do not add a launcher: add a per-target
+workflow that runs the recipe above, then a row for it in
+`.github/release-targets.yml` (version from `desktop-lab/src-tauri/tauri.conf.json`,
+its own tag prefix, `gate_var: ENABLE_IOS_BUILD`) so "Update everything" plans
+it like every other target. The signing story is unchanged and shared with
+`ios-release.yml` and `tvos-release.yml` — the repository variable and secrets
+below are the ones every Apple target reads. Set them once your provisioning
+is in place:
 
 - Variable: `ENABLE_IOS_BUILD = true`
 - Secrets:
@@ -112,9 +128,9 @@ message rather than failing. Set them once your provisioning is in place:
     - `APPLE_API_ISSUER` — the issuer UUID.
     - `APPLE_API_KEY` — the key **ID** (the 10-char string, e.g. `ABC123DEF4`).
     - `APPLE_API_KEY_BASE64` — the `.p8` file's **contents**, base64-encoded
-      (`base64 -i AuthKey_ABC123DEF4.p8 | pbcopy`). The workflow decodes this to
-      `AuthKey_<id>.p8` on the runner and points `APPLE_API_KEY_PATH` at it — a
-      secret is a string, so the key must be materialized as a file first.
+      (`base64 -i AuthKey_ABC123DEF4.p8 | pbcopy`). The Apple workflows decode
+      this to `AuthKey_<id>.p8` on the runner and point `APPLE_API_KEY_PATH` at
+      it — a secret is a string, so the key must be materialized as a file first.
   - `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` — the distribution
     certificate (same as the desktop pipeline).
 

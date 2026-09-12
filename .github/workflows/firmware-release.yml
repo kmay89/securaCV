@@ -32,7 +32,8 @@ on:
   push:
     tags:
       - 'fw-v*'
-  # Path B — one-click from the Actions tab (or the whole-pipeline launcher).
+  # Path B — dispatched from the Actions tab, by hand or by the "Update
+  # everything (only what needs it)" button.
   # Same build, same signing, same guards; it just creates the tag for you
   # from the version you pick, so the tag and the commit can never disagree.
   # The channel is a safety cross-check against the version's grammar
@@ -86,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # One-click path: derive VERSION + TAG from the inputs. The source
+            # Dispatch path (Actions tab): derive VERSION + TAG from the inputs. The source
             # triple (canary's FIRMWARE_VERSION) is the fallback for a release.
             SRC_TRIPLE="$(grep -E '#define[[:space:]]+FIRMWARE_VERSION' firmware/canary/include/canary_config.h | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
             VERSION="${IN_VERSION#fw-v}"     # tolerate a pasted fw-v* tag
@@ -114,7 +115,7 @@ jobs:
               echo "::error::tag ${TAG} already exists. Bump FIRMWARE_VERSION / CANARY_FW_VERSION in every variant (and the CHANGELOG) to the next version first."
               exit 1
             fi
-            echo "Firmware ${IN_CHANNEL}-channel release ${VERSION} (one-click) → will create tag ${TAG} at ${GITHUB_SHA}"
+            echo "Firmware ${IN_CHANNEL}-channel release ${VERSION} (dispatched) → will create tag ${TAG} at ${GITHUB_SHA}"
           else
             # Tag-push path (unchanged): the tag is the control surface.
             TAG="${GITHUB_REF_NAME}"
@@ -950,7 +951,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
-          # On a tag push this is the pushed tag; on the one-click path it
+          # On a tag push this is the pushed tag; on the dispatch path it
           # creates this tag. target_commitish pins the created tag to the
           # exact commit we checked out and BUILT (github.sha) — without it the
           # create-release API defaults the new tag to the repo's default

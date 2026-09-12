@@ -13,6 +13,12 @@ struct PairedDeviceRef: Identifiable, Codable, Hashable, Sendable {
     var deviceType: DeviceType
     var baseURL: URL?
     var pairedAt: Date
+    /// The pairing receipt's `tls_cert_fp`: SHA-256 of the Canary's TLS
+    /// certificate, kept so an https Canary can be dialed AND checked
+    /// (DeviceAPI pins it on every connection). Nil for http devices and
+    /// for receipts that carried none. Public data — the same bytes any TLS
+    /// client sees — so it rides beside the URL, not in the Keychain.
+    var tlsCertFingerprint: String? = nil
 }
 
 @MainActor
@@ -74,7 +80,9 @@ final class DeviceStore: ObservableObject {
     func api(for ref: PairedDeviceRef) throws -> DeviceAPI {
         guard let url = ref.baseURL else { throw DeviceError.notPairable }
         guard let token = token(for: ref.id) else { throw DeviceError.notPairable }
-        return try DeviceAPI(base: url, token: token)
+        // An https ref with no fingerprint throws .tlsPinMissing here — the
+        // refusal is DeviceAPI's, surfaced wherever this call's error is shown.
+        return try DeviceAPI(base: url, token: token, tlsFingerprint: ref.tlsCertFingerprint)
     }
 
     // MARK: - persistence (local mirror; CloudKit is the cross-device source)

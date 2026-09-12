@@ -168,8 +168,12 @@ sample data is labeled, a quiet hour can never silence tamper) — see
 Pairing a device is a **guided, physical-presence flow**, reusing the existing
 Trust-on-Pair gate: the app finds the Canary over mDNS/BLE, tells you to
 **short-tap the BOOT button**, and receives the one-shot `{device_id, base_url,
-token}` receipt. No account, no scan of a cloud registry — the device hands you
-its own key because you touched it.
+token, tls_cert_fp}` receipt. No account, no scan of a cloud registry — the
+device hands you its own key because you touched it. `tls_cert_fp` is the
+SHA-256 of the Canary's self-signed TLS certificate; when `base_url` is https
+the app keeps it with the pairing and pins every connection to it
+(`DeviceAPI` / `PinnedTrustDelegate`), and refuses an https receipt that
+carries none — a TLS Canary the app cannot check is not a checked Canary.
 
 ---
 
@@ -428,7 +432,9 @@ never have to trust us not to do.
    browse for `_securacv._tcp`, render the fleet list from TXT records.
    Reference: `canary-vision/docs/discovery.md`.
 2. **Pairing + local read.** Trust-on-Pair BOOT-button receipt → Keychain token;
-   `GET /info`, `/config`, `/witness`; render Today + Fleet. Mirror the existing
+   `GET /info`, `/config`, `/witness` (the one page contract,
+   `spec/witness_api_v1.md`, which canary-wap and the reference device-api
+   both serve); render Today + Fleet. Mirror the existing
    SPA (`canary-vision/spa/app.js`) for behavior, not for code.
 3. **Live + verify.** SSE witness stream; Ed25519 chain verify on-device with
    CryptoKit (mirror `lib/witness-chain.js`); local notifications on Wi-Fi.

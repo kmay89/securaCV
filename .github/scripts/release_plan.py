@@ -7,7 +7,8 @@ shipping — every app and every firmware — and, just as importantly, does
 so it lives here as a pure function over explicit inputs instead of inside YAML
 where it can't be tested.
 
-The rule, per target, generalized from `firmware-release-if-changed.yml`:
+The rule, per target (it began life as the firmware-only button
+`firmware-release-if-changed.yml`, retired 2026-09-08 once this covered it):
 
   * nothing published yet            → RELEASE (cut the first one)
   * source version NEWER than latest → RELEASE
@@ -167,6 +168,18 @@ def decide(
     if not selected:
         return make(SKIPPED, "Not selected for this run.")
 
+    if not publish and not target.get("dev_inputs"):
+        # A build-only press must never publish by accident. A target with no
+        # dev inputs has no smoke run to give, and falling back to its real
+        # inputs (which this used to do) meant "dev build" could cut a signed
+        # firmware release or deploy the site. It sits this run out instead;
+        # `force` does not override that — ticking `publish` is the override.
+        return make(
+            SKIPPED,
+            "Build-only run: this target has no dev inputs, so a smoke run "
+            "cannot exercise it. Tick publish to release it.",
+        )
+
     if target.get("gate_var") and not gate_enabled:
         # A target can explain its own gate. Without `gate_reason` the default
         # text describes the Apple case (a repo VARIABLE that must be 'true');
@@ -201,7 +214,21 @@ def decide(
         )
 
     if force:
-        return make(RELEASE, f"Force requested — re-cutting {source_version}.", source_version)
+        reason = f"Force requested — re-cutting {source_version}."
+        if latest_version is not None and compare(source_version, latest_version) == 0:
+            # The trap the retired one-click launcher used to preflight: an app
+            # workflow publishing a version that is already tagged rewrites that
+            # release's assets instead of cutting a new download, so no installed
+            # updater ever sees it. Firmware refuses an existing tag outright.
+            # Say so in the summary row rather than leaving it to memory.
+            reason += (
+                f" {source_version} is already released: an app workflow will"
+                " OVERWRITE that release's assets rather than cut a new download"
+                " (no installed updater sees it), and firmware-release.yml refuses"
+                " an existing tag. Bump the version first unless a re-upload after"
+                " a packaging fix is exactly what you want."
+            )
+        return make(RELEASE, reason, source_version)
 
     if latest_version is None:
         return make(
@@ -365,6 +392,28 @@ def build_plan(
 # ────────────────────────────────── CLI ────────────────────────────────────
 
 
+def unknown_names(names: set[str], targets: list[dict[str, Any]]) -> set[str]:
+    """The names in `names` that no catalog row carries (`all` is a word, not a row).
+
+    A typo in the `force:` / `only:` box used to be silently ignored — the run
+    went green having forced (or narrowed to) nothing. The CLI refuses instead,
+    so the mistake is the first line of the failed run, not a puzzle.
+    """
+    known = {t["name"] for t in targets} | {"all"}
+    return {n for n in names if n not in known}
+
+
+def split_names(raw: str) -> set[str]:
+    """`flasher,lab` → {"flasher", "lab"}.
+
+    `force:` is typed by a human into an Actions input box, so it arrives with
+    the spaces humans type (`flasher, lab`). A token lost to whitespace would
+    silently force one app and not the other, with no error anywhere — and the
+    input's own help text now tells people to type comma-separated names.
+    """
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
 def main(argv: list[str]) -> int:
     """Emit the plan as JSON.
 
@@ -396,12 +445,24 @@ def main(argv: list[str]) -> int:
             return False  # nothing published: "changed" is not the question
         return paths_changed(f"{target['tag_prefix']}{latest_version}", watch)
 
+    force_names = split_names(args.force)
+    only_names = split_names(args.only)
+    bad = unknown_names(force_names | only_names, targets)
+    if bad:
+        known = ", ".join(sorted(t["name"] for t in targets))
+        print(
+            f"release_plan: unknown target name(s) {sorted(bad)} in force/only — "
+            f"the catalog has: {known} (or 'all' for force)",
+            file=sys.stderr,
+        )
+        return 2
+
     decisions = build_plan(
         targets,
         published_tags,
         publish=args.publish,
-        force={f for f in args.force.split(",") if f},
-        only={o for o in args.only.split(",") if o} or None,
+        force=force_names,
+        only=only_names or None,
         gates=json.loads(args.gates or "{}"),
         changed_resolver=changed_resolver,
     )

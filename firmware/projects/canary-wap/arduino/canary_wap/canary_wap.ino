@@ -139,6 +139,7 @@
 #include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
+#include "witness_page.h"            // pure, host-tested GET /api/v1/witness page (spec/witness_api_v1.md)
 #include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
 #include "birth_day.h"               // pure, host-tested "when was this key born" rules
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
@@ -734,6 +735,16 @@ static FixState       g_pending_state = STATE_NO_FIX;
 static uint32_t       g_state_entered_ms = 0;
 static uint32_t       g_pending_state_ms = 0;
 static WitnessRecord  g_last_record;
+// The newest signed records, for GET /api/v1/witness (witness_page.h). RAM
+// only, empty at boot — the SD log is the history; this is the page the
+// phone verifies against its pinned key.
+static witness_page::Ring g_witness_page_ring;
+/* The ring is pushed from the main loop and read by the httpd task; both go
+ * through this lock, and the handler renders from a snapshot rather than the
+ * live slots (esp_http_server serves one request at a time, so one static
+ * copy is enough). */
+static portMUX_TYPE g_witness_page_mux = portMUX_INITIALIZER_UNLOCKED;
+static witness_page::Record g_witness_page_snap[witness_page::RING_CAP];
 static SystemHealth   g_health;
 
 typedef void (*pre_reboot_fn)();
@@ -2318,6 +2329,24 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
   g_health.records_created++;
   g_health.records_verified++;
 
+  // The /api/v1/witness page ring: the same bytes the SD line carries, plus
+  // the bucket width in force, so the page can be recomputed and the
+  // bucket aged without reading the card (witness_page.h).
+  {
+    witness_page::Record pr;
+    pr.seq         = out->seq;
+    pr.time_bucket = out->time_bucket;
+    pr.bucket_ms   = g_time_bucket_ms;
+    pr.type        = (uint8_t)out->type;
+    memcpy(pr.payload_hash, out->payload_hash, 32);
+    memcpy(pr.prev_hash,    out->prev_hash,    32);
+    memcpy(pr.chain_hash,   out->chain_hash,   32);
+    memcpy(pr.signature,    out->signature,    64);
+    portENTER_CRITICAL(&g_witness_page_mux);
+    g_witness_page_ring.push(pr);
+    portEXIT_CRITICAL(&g_witness_page_mux);
+  }
+
   // Durable tier FIRST, NVS cache second (codex P1 on #844): if the NVS
   // seq/head advanced before a failed or torn SD append, reboot would see
   // NVS ahead of the card, sd_wins() would keep the NVS head, and the next
@@ -3406,8 +3435,14 @@ static esp_err_t handle_status(httpd_req_t* req) {
   // ESP-IDF callback; `frames_received` rising = radio is producing data;
   // `windows_emitted` rising = main-loop pump is draining and finalizing
   // 1 Hz windows; `frames_dropped_full` = pump is being starved (should be
-  // 0 in normal operation); `snapshot_valid` = a v1 module has committed
-  // at least one event since boot.
+  // 0 in normal operation); `frames_dropped_foreign` = frames from
+  // transmitters other than the associated router / registered peers
+  // (neighbor beacons — expected to climb; a count, never an address);
+  // `filter_foreign` = the setting, `filter_armed` = the setting is on and
+  // the HAL holds the associated BSSID, so the filter is comparing (false
+  // with the setting off or on an AP-only install — every frame passes);
+  // `snapshot_valid` = a v1 module
+  // has committed at least one event since boot.
   JsonObject csi = doc["csi"].to<JsonObject>();
   csi["running"] = csi_integration::csi_running();
   csi["snapshot_valid"] = csi_integration::snapshot_valid();
@@ -3418,6 +3453,9 @@ static esp_err_t handle_status(httpd_req_t* req) {
     csi["frames_dropped_full"] = (uint32_t)cs.frames_dropped_full;
     csi["frames_dropped_rate"] = (uint32_t)cs.frames_dropped_rate;
     csi["frames_dropped_rssi"] = (uint32_t)cs.frames_dropped_rssi;
+    csi["frames_dropped_foreign"] = (uint32_t)cs.frames_dropped_foreign;
+    csi["filter_foreign"] = csi_integration::csi_filter_foreign();
+    csi["filter_armed"] = csi_integration::csi_filter_armed();
     csi["windows_degraded"] = (uint32_t)cs.windows_degraded;
     // Breathing-envelope cadence: how far the loop's real window pace was
     // from the 1 Hz grid the feature layer resamples onto.
@@ -4024,6 +4062,66 @@ static esp_err_t handle_witness(httpd_req_t* req) {
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
+}
+
+// GET /api/v1/witness?last=N — the one witness-page contract
+// (spec/witness_api_v1.md), streamed from the RAM ring in witness_page.h:
+// the newest N signed records, oldest first, each with its full chain-hash
+// pre-image and its Ed25519 signature so the phone can recompute the chain
+// and verify the head against the key it pinned. Wall-clock time rides only
+// as a ten-minute bucket start (`timestamp`, Invariant III), and only when
+// the device has met a believable clock; the chain's own uptime bucket
+// (`time_bucket`, TIME_BUCKET_MS floor) rides because the hash binds it —
+// the same value the SD line, /api/witness, /api/export and the MQTT chain
+// publish already carry (spec §3). Chunked, one record per chunk — a 100-record page
+// would not fit a stack buffer, and the header/record/footer split is
+// exactly what the host test byte-compares.
+static esp_err_t handle_witness_v1(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char qs[64];
+  const char* query = NULL;
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) query = qs;
+  const size_t last = witness_page::parse_last(query);
+
+  /* Copy under the ring's lock FIRST, then render from the copy: a record
+   * sealed on the main loop mid-send can neither tear a row nor shift the
+   * ring under the chunked writer (which may block on the socket). The
+   * snapshot precedes the header so `total` can be derived from what the
+   * page will actually carry — read the other way round, a record sealed
+   * between the header write and the ring read would ride the page with a
+   * `seq` above the `total` the header promised (Codex on #1675). */
+  portENTER_CRITICAL(&g_witness_page_mux);
+  const size_t count = g_witness_page_ring.snapshot(last, g_witness_page_snap);
+  portEXIT_CRITICAL(&g_witness_page_mux);
+
+  witness_page::Context ctx;
+  ctx.device_id   = g_device.device_id;
+  ctx.total       = g_device.seq;  // the chain head, read after the snapshot …
+  if (count > 0 && g_witness_page_snap[count - 1].seq > ctx.total) {
+    ctx.total = g_witness_page_snap[count - 1].seq;  // … so it never trails the page
+  }
+  ctx.now_ms      = millis();
+  ctx.now_epoch_s = (uint32_t)time(nullptr);
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+  char buf[witness_page::RECORD_MAX];
+  size_t n = witness_page::header_build(buf, sizeof(buf), ctx);
+  if (n == 0) return http_send_error(req, 500, "page_header");
+  if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
+
+  for (size_t i = 0; i < count; i++) {
+    n = witness_page::record_build(buf, sizeof(buf), g_witness_page_snap[i], ctx, i == 0);
+    if (n == 0) break;  // cannot happen at RECORD_MAX; close the page rather than hang
+    if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
+  }
+
+  n = witness_page::footer_build(buf, sizeof(buf));
+  if (httpd_resp_send_chunk(req, buf, (ssize_t)n) != ESP_OK) return ESP_FAIL;
+  return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t handle_config_get(httpd_req_t* req) {
@@ -6413,8 +6511,10 @@ static void url_decode_inplace(char* s) {
 // Render a text payload as an SVG QR code response. Shared by the fleet
 // WiFi-credentials QR and the pairing-receipt QR.
 static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
-  // Use version 1-10 range (enough for short payloads, small QR)
-  static constexpr int QR_MAX_VER = 10;
+  // Versions 1-12: the encoder picks the smallest that fits, so short
+  // payloads stay small; 12 (287 bytes at ECC M) is the ceiling the pairing
+  // receipt needs once it carries the TLS pin (handle_pairing_qr).
+  static constexpr int QR_MAX_VER = 12;
   uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
   uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VER)];
 
@@ -6740,9 +6840,13 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  * The payload carries the API token, so this endpoint demands the same
  * auth as the receipt's Bearer path — the QR is something an already-
  * authenticated operator deliberately shows to their own phone, never an
- * anonymous read. Only the three fields the app's scanner consumes are
- * encoded ({device_id, base_url, token}); the slim payload keeps the QR
- * at a low version so phone cameras lock on quickly.
+ * anonymous read. Only the fields the app's scanner consumes are encoded:
+ * {device_id, base_url, token}, plus tls_cert_fp on a TLS-enabled device —
+ * the certificate pin the app requires before it will speak to an https
+ * Canary at all (ios DeviceAPI.swift; PairView refuses an https receipt
+ * without one, so a QR that omitted it could never pair a secure device —
+ * Codex on #1675). The slim payload keeps the QR at a low version so phone
+ * cameras lock on quickly; the pin adds ~80 bytes only where it is needed.
  */
 static esp_err_t handle_pairing_qr(httpd_req_t* req) {
   g_health.http_requests++;
@@ -6758,13 +6862,25 @@ static esp_err_t handle_pairing_qr(httpd_req_t* req) {
              WiFi.softAPIP().toString().c_str());
   }
 
-  char payload[224];
-  int n = snprintf(payload, sizeof(payload),
-    "{\"device_id\":\"%s\",\"base_url\":\"%s://%s\",\"token\":\"%s\"}",
-    g_device.device_id,
-    g_tls_enabled ? "https" : "http",
-    base_host,
-    g_device.api_token_str);
+  // With the 64-hex pin the worst case (31-char id, 55-char host, the
+  // 35-char token) is ~250 bytes: within QR version 12 at ECC M (287),
+  // which send_qr_svg allows; the encoder still picks the smallest version
+  // that fits, so a plain-http device's QR is as small as before.
+  char payload[320];
+  int n;
+  if (g_tls_enabled && g_tls_cert_fp_hex[0] != '\0') {
+    n = snprintf(payload, sizeof(payload),
+      "{\"device_id\":\"%s\",\"base_url\":\"https://%s\",\"token\":\"%s\","
+      "\"tls_cert_fp\":\"%s\"}",
+      g_device.device_id, base_host, g_device.api_token_str, g_tls_cert_fp_hex);
+  } else {
+    n = snprintf(payload, sizeof(payload),
+      "{\"device_id\":\"%s\",\"base_url\":\"%s://%s\",\"token\":\"%s\"}",
+      g_device.device_id,
+      g_tls_enabled ? "https" : "http",
+      base_host,
+      g_device.api_token_str);
+  }
   if (n < 0 || (size_t)n >= sizeof(payload)) {
     return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
                                "Failed to build pairing payload");
@@ -7689,6 +7805,10 @@ static esp_err_t handle_witness_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_witness(req);
 }
+static esp_err_t handle_witness_v1_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_witness_v1(req);
+}
 static esp_err_t handle_config_get_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_config_get(req);
@@ -8258,6 +8378,9 @@ static void register_api_routes(httpd_handle_t server) {
 
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness_auth };
   httpd_register_uri_handler(server, &witness);
+  // The shared witness-page contract the phone verifies (spec/witness_api_v1.md).
+  httpd_uri_t witness_v1 = { .uri = "/api/v1/witness", .method = HTTP_GET, .handler = handle_witness_v1_auth };
+  httpd_register_uri_handler(server, &witness_v1);
 
   httpd_uri_t config_get = { .uri = "/api/config", .method = HTTP_GET, .handler = handle_config_get_auth };
   httpd_register_uri_handler(server, &config_get);
@@ -8358,8 +8481,8 @@ static void start_http_server() {
   //   tests_host/check_route_budget.py  (CI: firmware.yml)
   // which emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and
   // asserts >= 8 free slots. If it fails, RAISE a number here — never lower.
-  const int base_handlers = 49;       // register_api_routes core (incl. /api/config
-                                       // GET+POST) + the always-on
+  const int base_handlers = 50;       // register_api_routes core (incl. /api/config
+                                       // GET+POST, /api/v1/witness) + the always-on
                                        // register_extra_routes singles (WiFi
                                        // provisioning, OTA x4, identify,
                                        // device-name, selftest, fleet/pairing QR,
@@ -9328,6 +9451,10 @@ static void wifi_init_provisioning() {
   if (!s_wifi_event_registered) {
     WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t /*info*/) {
       if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        // CSI transmitter filter: follow the (re)association now rather
+        // than at the HAL's next poll. Flag only — the driver read happens
+        // on the main loop.
+        csi_integration::on_wifi_sta_connected();
         MDNS.end();
         if (MDNS.begin(g_device.mdns_hostname)) {
           MDNS.addService("http", "tcp", 80);

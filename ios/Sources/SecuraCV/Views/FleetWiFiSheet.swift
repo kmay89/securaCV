@@ -21,6 +21,9 @@ struct FleetWiFiSheet: View {
     @State private var password = ""
     @State private var showPassword = false
     @State private var problem: String?
+    /// The one-time cleartext disclosure (FleetWiFiRollout), acknowledged
+    /// for THIS run only — it is never remembered across sheets.
+    @State private var cleartextApproved = false
 
     init(store: FleetStore) {
         _runner = StateObject(wrappedValue: FleetWiFiRunner(devices: store.devices,
@@ -93,15 +96,39 @@ struct FleetWiFiSheet: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(ssid.trimmingCharacters(in: .whitespaces).isEmpty
-                      || (plan?.pushTargets.isEmpty ?? true))
+                      || (plan?.pushTargets.isEmpty ?? true)
+                      || ((plan?.allPushesAreCleartext ?? false) && !cleartextApproved))
         } header: {
             Text("The new network")
         } footer: {
             Text("One Canary goes first and has to actually come back on the "
                + "new network before the rest are touched — a mistyped "
                + "password can never strand the whole fleet. The password "
-               + "goes only to your Canaries, over your own network or "
-               + "Bluetooth; it is not stored on this iPhone.")
+               + "goes only to your Canaries — over bonded Bluetooth, over a "
+               + "secure connection when the Canary has a certificate, or "
+               + "over plain Wi-Fi only after you say so below; it is not "
+               + "stored on this iPhone.")
+        }
+    }
+
+    /// The cleartext disclosure: shown only when a push would ride plain
+    /// http. The plain-http lanes wait on its switch; the encrypted lanes run
+    /// either way (the runner re-stages around an encrypted pilot), and only
+    /// a plan whose every lane is plain http has nothing to do until the
+    /// switch is on. The copy says exactly what crosses the network and the
+    /// two ways to avoid it.
+    private func cleartextSection(_ plan: FleetWiFiRollout.Plan) -> some View {
+        Section {
+            Toggle(isOn: $cleartextApproved) {
+                Label(FleetWiFiRollout.cleartextAcknowledgment, systemImage: "lock.open")
+            }
+            ForEach(plan.cleartextTargets) { c in
+                candidateRow(c, note: FleetWiFiRollout.cleartextNote)
+            }
+        } header: {
+            Text("Unencrypted")
+        } footer: {
+            Text(FleetWiFiRollout.cleartextDisclosure)
         }
     }
 
@@ -114,8 +141,10 @@ struct FleetWiFiSheet: View {
         }
         problem = nil
         let pass = password
+        let approved = cleartextApproved
         Task {
-            await runner.run(plan: plan, ssid: trimmed, password: pass)
+            await runner.run(plan: plan, ssid: trimmed, password: pass,
+                             cleartextApproved: approved)
             // The rollout may have moved devices across networks — let the
             // fleet fold catch up right away rather than at the next cycle.
             await store.refreshOnce()
@@ -124,20 +153,35 @@ struct FleetWiFiSheet: View {
 
     // MARK: - the plan, before it runs
 
+    /// The per-row note for a lane, so the plan says which wire each
+    /// password ride takes before anything is sent.
+    private func laneNote(_ c: FleetWiFiRollout.Candidate) -> String? {
+        switch c.path {
+        case .ble: return "Bluetooth — bonded, encrypted"
+        case .http: return "Secure connection — pinned to its certificate"
+        case .httpCleartext: return FleetWiFiRollout.cleartextNote
+        case .handsOn, .unreachable: return nil
+        }
+    }
+
     @ViewBuilder
     private func planSections(_ plan: FleetWiFiRollout.Plan) -> some View {
+        if plan.needsCleartextDisclosure {
+            cleartextSection(plan)
+        }
         if let pilot = plan.pilot {
             Section {
-                candidateRow(pilot, note: "Goes first — proves the password")
+                candidateRow(pilot, note: "Goes first — proves the password"
+                             + (laneNote(pilot).map { " · " + $0 } ?? ""))
                 ForEach(plan.followers) { c in
-                    candidateRow(c, note: c.path == .ble ? "Bluetooth rescue" : nil)
+                    candidateRow(c, note: laneNote(c))
                 }
             } header: {
                 Text("Gets the update")
             } footer: {
                 if plan.followers.contains(where: { $0.path == .ble }) {
-                    Text("A Canary that already lost Wi-Fi takes the new "
-                       + "password over Bluetooth — stand within a room or two of it.")
+                    Text("A Canary on the Bluetooth lane takes the new password "
+                       + "over its bonded link — stand within a room or two of it.")
                 }
             }
         } else if !plan.handsOn.isEmpty || !plan.unreachable.isEmpty {
@@ -170,9 +214,18 @@ struct FleetWiFiSheet: View {
         }
     }
 
+    private func laneSymbol(_ c: FleetWiFiRollout.Candidate) -> String {
+        switch c.path {
+        case .ble: return "dot.radiowaves.up.forward"
+        case .http: return "lock.wifi"
+        case .httpCleartext: return "lock.open"
+        case .handsOn, .unreachable: return "wifi"
+        }
+    }
+
     private func candidateRow(_ c: FleetWiFiRollout.Candidate, note: String?) -> some View {
         HStack(spacing: Theme.m) {
-            Image(systemName: c.path == .ble ? "dot.radiowaves.up.forward" : "wifi")
+            Image(systemName: laneSymbol(c))
                 .foregroundStyle(.secondary)
                 .imageScale(.small)
             VStack(alignment: .leading, spacing: 2) {

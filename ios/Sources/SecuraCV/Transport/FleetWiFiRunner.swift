@@ -1,16 +1,18 @@
 // FleetWiFiRunner.swift
 //
 // Carries out a FleetWiFiRollout plan. The POLICY (pilot-first, who gets
-// which transport, what the verdicts mean) lives in FleetWiFiRollout and is
-// host-tested; this class is the pair of hands: it posts the HTTP writes,
-// asks BLEConsole for the Bluetooth rescue, watches for each device to
-// answer on the network again, and publishes per-device progress the sheet
-// renders live.
+// which transport, what the verdicts mean, when plain http may be used)
+// lives in FleetWiFiRollout and is host-tested; this class is the pair of
+// hands: it posts the HTTP writes, asks BLEConsole for the Bluetooth
+// rescue, watches for each device to answer on the network again, and
+// publishes per-device progress the sheet renders live.
 //
-// The one rule it enforces at runtime is the plan's one safety rule: the
-// followers are not touched until the pilot has PROVEN the credentials by
-// answering on the network again. A wrong password costs one Canary a
-// rescue, never the fleet.
+// Two rules it enforces at runtime, both the plan's: the followers are not
+// touched until the pilot has PROVEN the credentials by answering on the
+// network again (a wrong password costs one Canary a rescue, never the
+// fleet), and a cleartext push goes out only if the user acknowledged the
+// disclosure — otherwise that device gets an honest "not sent", whatever
+// the plan said.
 
 import Foundation
 
@@ -22,6 +24,9 @@ final class FleetWiFiRunner: ObservableObject {
 
     private let devices: DeviceStore
     private let ble: BLEConsole
+    /// Whether the user switched on the cleartext acknowledgment for THIS
+    /// run. Read before every push (FleetWiFiRollout.mayPush).
+    private var cleartextApproved = false
 
     init(devices: DeviceStore, ble: BLEConsole) {
         self.devices = devices
@@ -38,12 +43,26 @@ final class FleetWiFiRunner: ObservableObject {
     }
 
     /// Run the whole staged plan. Returns when every push target has a
-    /// final verdict.
-    func run(plan: FleetWiFiRollout.Plan, ssid: String, password: String) async {
+    /// final verdict. `cleartextApproved` is the disclosure toggle: false
+    /// leaves every plain-http target untouched with the reason on its row.
+    func run(plan: FleetWiFiRollout.Plan, ssid: String, password: String,
+             cleartextApproved: Bool = false) async {
         guard !running else { return }
         running = true
         finished = false
+        self.cleartextApproved = cleartextApproved
         defer { running = false; finished = true }
+
+        // The plain-http lanes wait on the disclosure; the rest do not wait
+        // on them. Without approval the cleartext targets are set aside with
+        // the reason on their row and the plan is re-staged around an
+        // encrypted pilot, so one unapproved Canary never strands the fleet.
+        var plan = plan
+        if !cleartextApproved && plan.needsCleartextDisclosure {
+            let (kept, declined) = plan.excludingCleartext()
+            for c in declined { steps[c.id] = .failed(FleetWiFiRollout.cleartextDeclined) }
+            plan = kept
+        }
 
         // The lanes that never get a push start honest, not blank.
         for c in plan.handsOn { steps[c.id] = .handsOn }
@@ -70,7 +89,7 @@ final class FleetWiFiRunner: ObservableObject {
         // be refused, not interleaved), so a parallel fan-out would rescue
         // one Canary and falsely fail the rest. The queue runs alongside
         // the HTTP work, so the slow lane never holds the fast one.
-        let httpFollowers = plan.followers.filter { $0.path == .http }
+        let httpFollowers = plan.followers.filter { $0.path.isHTTP }
         let bleFollowers = plan.followers.filter { $0.path == .ble }
         await withTaskGroup(of: Void.self) { group in
             for c in httpFollowers {
@@ -86,9 +105,15 @@ final class FleetWiFiRunner: ObservableObject {
 
     /// Push to one device over its planned path and wait for the verdict.
     private func push(to candidate: FleetWiFiRollout.Candidate, ssid: String, password: String) async {
+        // The disclosure gate, checked at the moment of the push: a
+        // cleartext target the user did not approve is not sent, and says so.
+        guard FleetWiFiRollout.mayPush(candidate.path, cleartextApproved: cleartextApproved) else {
+            steps[candidate.id] = .failed(FleetWiFiRollout.cleartextDeclined)
+            return
+        }
         steps[candidate.id] = .sending
         switch candidate.path {
-        case .http:
+        case .http, .httpCleartext:
             guard let ref = devices.devices.first(where: { $0.id == candidate.id }),
                   let url = ref.baseURL,
                   let api = try? devices.api(for: ref) else {
@@ -102,9 +127,11 @@ final class FleetWiFiRunner: ObservableObject {
                 return
             }
             // Accepted — the device is now leaving this network. Proof is
-            // it answering again, nothing softer.
+            // it answering again, nothing softer. An https Canary answers
+            // through its pinned session, so the probe carries the pin.
             steps[candidate.id] = .confirming
-            steps[candidate.id] = await Self.watchForReturn(url: url)
+            steps[candidate.id] = await Self.watchForReturn(url: url,
+                                                            tlsFingerprint: ref.tlsCertFingerprint)
 
         case .ble:
             let outcome = await ble.writeWiFiCredentials(deviceID: candidate.id,
@@ -129,11 +156,14 @@ final class FleetWiFiRunner: ObservableObject {
 
     /// Probe the device's address until it answers or the return window
     /// closes. Static + nonisolated-friendly: it holds no state, just time.
-    static func watchForReturn(url: URL, window: TimeInterval = FleetWiFiRollout.returnWindow)
+    /// `tlsFingerprint` is the receipt pin an https Canary must be probed
+    /// through (LivenessProbe refuses an unpinned https address).
+    static func watchForReturn(url: URL, tlsFingerprint: String? = nil,
+                               window: TimeInterval = FleetWiFiRollout.returnWindow)
         async -> FleetWiFiRollout.StepState {
         let deadline = Date().addingTimeInterval(window)
         while Date() < deadline {
-            if await LivenessProbe.isAnswering(url) { return .moved }
+            if await LivenessProbe.isAnswering(url, tlsFingerprint: tlsFingerprint) { return .moved }
             try? await Task.sleep(for: .seconds(5))
         }
         return .failed(FleetWiFiRollout.didNotReturn)

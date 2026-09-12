@@ -74,9 +74,21 @@ esp-csi's own examples.
 
 - **Raw-sample export** (every capture tool). Privacy invariant 3: no
   subcarrier sample ever leaves the device. The Lab gets synthetic vectors.
-- **MAC filtering** (`esp-radar`'s `filter_mac`). Invariant F (symmetry) and
-  the scrub barrier forbid the HAL from knowing which station a frame came
-  from; the router-ping supply gives us a deterministic source without it.
+- **MAC filtering as `esp-radar` does it** (`filter_mac` / `filter_dmac`: an
+  operator-supplied list of stations to watch, with per-packet detail logged).
+  We took only the narrow form, in September 2026: `csi_hal` compares each
+  frame's transmitter address, in place, against the BSSID of the router this
+  station is associated with (and, when the probe layer registers peer
+  Canaries, against that table) and drops the rest — one link per window,
+  because a window that alternates between links measures the *difference*
+  between links and reads it as motion. The associated BSSID is the one
+  identifier the HAL holds (a single static, never exported or logged, wiped
+  on `deinit()`); nothing about which station sent a frame reaches a slot, a
+  stat or an event, and Invariant F (symmetry) is untouched — the filter
+  selects the sensing link, it does not classify devices or people. What we
+  still did not take: a user-facing list of addresses to watch, or any
+  per-station output. The router-ping supply remains the deterministic
+  source; the filter is what keeps the neighborhood out of its window.
 - **HE-LTF acquisition on the C6.** Wi-Fi 6 long training fields carry ~242
   tones at 20 MHz, but the count differs per PPDU type (SU / MU / DCM /
   beamformed), which is the mixed-count problem of §2.2 all over again. It

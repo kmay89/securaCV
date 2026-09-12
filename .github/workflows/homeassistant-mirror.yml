@@ -2,23 +2,23 @@
 #
 # The Home Assistant integration reaches HACS users from a separate repository
 # (securacv-homeassistant) as a byte-for-byte copy of custom_components/securacv/
-# here, plus a brand/ folder only HACS wants. That repository's
-# mirror-freshness.yml only DETECTS drift (weekly, and on its own PRs) and
-# raises an issue; nothing pushed, so a fix merged here reached HACS users a
-# week and a human later. This workflow is the push: on every main commit that
-# touches the carried set it copies the set into a checkout of the mirror,
-# PROVES the copy exact with the mirror's own check_mirror_sync.py, and opens
-# (or refreshes) ONE pull request there on branch bot/mirror-sync. The
+# here, brand/ included (Home Assistant 2026.3+ serves the integration's icon
+# from that folder, so it is part of the integration, not a mirror extra). That
+# repository's mirror-freshness.yml only DETECTS drift (weekly, and on its own
+# PRs) and raises an issue; nothing pushed, so a fix merged here reached HACS
+# users a week and a human later. This workflow is the push: on every main
+# commit that touches the carried set it copies the set into a checkout of the
+# mirror, PROVES the copy exact with the mirror's own check_mirror_sync.py, and
+# opens (or refreshes) ONE pull request there on branch bot/mirror-sync. The
 # mirror's tests.yml, hassfest and mirror-freshness gates run on that PR before
 # it can merge; nothing lands on the mirror's main from here directly.
 #
 # The carried set — keep it in step with the mirror's check_mirror_sync.py,
 # which is what proves the copy exact:
-#   custom_components/securacv/**   minus brand/ (mirror-only) and caches
+#   custom_components/securacv/**   the whole directory, brand/ included, minus caches
 #   conftest.py                      the root Home Assistant stubs the tests import
 # Mirror-owned, never written from here: README.md, AGENTS.md, CLAUDE.md,
-# LICENSE, hacs.json, .gitignore, .github/**,
-# custom_components/securacv/brand/, and
+# LICENSE, hacs.json, .gitignore, .github/**, and
 # requirements_test.txt — Dependabot bumps that file in BOTH repos and the
 # mirror's pins lead, so copying ours would downgrade them.
 #
@@ -112,11 +112,12 @@ jobs:
       - name: Copy the carried set into the mirror
         if: steps.gate.outputs.configured == 'true'
         run: |
-          # rsync --delete keeps the mirror's tree an exact image of ours, and
-          # an --exclude protects the receiving side too: brand/ (mirror-only)
-          # is neither copied nor deleted.
+          # rsync --delete keeps the mirror's tree an exact image of ours; only
+          # caches are excluded. brand/ travels with the integration — Home
+          # Assistant 2026.3+ serves the icon from it, so it is carried, not
+          # mirror-owned (the mirror's check_mirror_sync.py agrees).
           rsync -a --delete \
-            --exclude='/brand/' --exclude='__pycache__/' --exclude='.pytest_cache/' \
+            --exclude='__pycache__/' --exclude='.pytest_cache/' \
             custom_components/securacv/ _mirror/custom_components/securacv/
           cp conftest.py _mirror/conftest.py
 
@@ -154,7 +155,7 @@ jobs:
           gh pr create --repo "$MIRROR_REPO" --head "$MIRROR_BRANCH" --base main \
             --title "Sync the integration from kmay89/securaCV@${SHORT_SHA}" \
             --body "$(printf '%s\n' \
-              "Automated mirror of \`custom_components/securacv/\` (+ \`conftest.py\`) from ${SOURCE_URL}, copied byte-for-byte and proven exact with \`check_mirror_sync.py\` before the commit was made. \`brand/\` and \`requirements_test.txt\` are mirror-owned and untouched." \
+              "Automated mirror of \`custom_components/securacv/\` (+ \`conftest.py\`) from ${SOURCE_URL}, copied byte-for-byte and proven exact with \`check_mirror_sync.py\` before the commit was made. \`requirements_test.txt\` is mirror-owned and untouched." \
               "" \
               "Opened by the monorepo's \`homeassistant-mirror.yml\`; further monorepo commits force-push this branch until it merges.")" \
           || {

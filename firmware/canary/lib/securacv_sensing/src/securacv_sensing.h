@@ -54,7 +54,7 @@ typedef struct {
   int8_t   rssi_dbm;           /* window mean RSSI */
   int8_t   rssi_std;           /* stddev across the window */
   uint16_t frames_in_window;   /* last finalized window's frame count */
-  uint16_t dropped_estimate;   /* per-window expected − actual */
+  uint16_t dropped_estimate;   /* per-window frames the rate limiter shed (v[25]) */
   uint8_t  channel;
   uint8_t  bandwidth_code;     /* 0 = HT20, 1 = HT40 */
   uint8_t  time_bucket;        /* 10-min daily bucket (0..143) */

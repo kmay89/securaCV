@@ -139,12 +139,17 @@ static std::atomic<uint32_t> s_frames_dropped_rssi{0};
 static std::atomic<uint32_t> s_frames_dropped_rate{0};
 static std::atomic<uint32_t> s_frames_dropped_full{0};
 static std::atomic<uint32_t> s_frames_dropped_short{0};  /* no L-LTF section */
+/* s_frames_dropped_foreign lives with the transmitter-filter state below. */
 static std::atomic<uint32_t> s_windows_emitted{0};
 static std::atomic<uint32_t> s_windows_degraded{0};
 
 /* Window boundary tracking (main-loop side only). */
 static uint32_t s_window_start_ms = 0;
 static uint32_t s_window_frames = 0;
+/* Frames the rate limiter shed inside the open window — the busy-channel
+ * signal v[25] carries (see process()). Written on the Wi-Fi task, read and
+ * cleared by the consumer at window close. */
+static std::atomic<uint32_t> s_window_dropped_rate{0};
 
 /* Rate limiter state (WiFi-task side only). */
 static uint32_t s_rate_last_ms = 0;
@@ -167,6 +172,29 @@ static WatchdogCallback s_watchdog_cb = nullptr;
 static uint32_t s_watchdog_last_recovery_ms = 0;
 static uint32_t s_watchdog_recovery_count = 0;
 
+/* Transmitter-filter state.
+ *
+ * s_assoc_bssid is THE ONE identifier this HAL holds: the BSSID of the AP
+ * the station is associated with, copied from esp_wifi_sta_get_ap_info()
+ * by refresh_associated_bssid() (main loop, single writer) and read by
+ * csi_rx_cb (Wi-Fi task) through s_bssid_known — acquire/release on the
+ * flag brackets the six-byte write, and the flag is dropped for the
+ * duration of a rewrite so a reader that checks it mid-rewrite accepts
+ * the frame instead of comparing. A reader already past the check can
+ * still race the memcpy; the whole exposure is one misjudged frame per
+ * reassociation (ours dropped or a foreign one passed), and the bytes it
+ * compared against are published nowhere. It is never copied
+ * anywhere else, never formatted into a log line, never serialized, and
+ * secure_wipe()d in deinit(). The s_peer_filter hook points at a table the
+ * probe layer owns; the HAL keeps no copy of peer addresses. */
+static uint8_t                 s_assoc_bssid[6] = {0, 0, 0, 0, 0, 0};
+static std::atomic<bool>       s_bssid_known{false};
+static std::atomic<bool>       s_bssid_refresh_requested{false};
+static std::atomic<bool>       s_filter_foreign{true};
+static PeerFilter              s_peer_filter = nullptr;
+static uint32_t                s_bssid_poll_last_ms = 0;
+static std::atomic<uint32_t>   s_frames_dropped_foreign{0};
+
 /* ──────────────────────────────────────────────────────────────────────────
  * PRIVACY BARRIER: scrub identifying fields from the ESP-IDF info struct.
  *
@@ -185,8 +213,15 @@ static uint32_t s_watchdog_recovery_count = 0;
  *     int8_t   noise_floor;
  *   }
  *
- * We never dereference hdr/payload (which contain the raw MAC/BSSID).
- * We copy rssi, channel, noise_floor, and the subcarrier buffer only.
+ * We never dereference hdr/payload (which contain the raw MAC header).
+ * We copy rssi, channel, bandwidth, and the subcarrier buffer only.
+ *
+ * We READ info->mac, in place, for exactly one purpose: the transmitter
+ * filter in csi_rx_cb compares its six bytes against the associated BSSID
+ * (memcmp) and, failing that, hands the pointer to the peer hook. Nothing
+ * copies those bytes into a slot, a stat, a log line or a wire format —
+ * csi_hal_transmitter_filter_test.cpp scans the ring, the stats and the
+ * emitted feature vector for them. dmac is never read at all.
  * ────────────────────────────────────────────────────────────────────────── */
 
 static inline void extract_scrubbed_metadata(const wifi_csi_info_t* info,
@@ -200,7 +235,28 @@ static inline void extract_scrubbed_metadata(const wifi_csi_info_t* info,
   /* ESP-IDF exposes two bandwidth enums; normalize to our 0/1 code. */
   slot->bandwidth_code = (info->rx_ctrl.cwb == 1) ? 1 : 0;  /* 0=HT20, 1=HT40 */
 
-  /* explicitly do NOT touch info->mac, info->dmac, info->hdr, info->payload */
+  /* explicitly do NOT touch info->mac, info->dmac, info->hdr, info->payload
+   * here — the only read of info->mac is the compare in csi_rx_cb. */
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRANSMITTER FILTER  (Wi-Fi task context — called from csi_rx_cb)
+ *
+ * True when this frame may enter the window. Compare-only: the six bytes
+ * at info->mac are read in place and never copied. Ordering matters —
+ * this runs BEFORE the RSSI floor and the rate limiter, so a burst of
+ * foreign frames cannot spend the rate budget our own link needs, and
+ * the counters keep their meaning (foreign = "not our link, whatever its
+ * strength"). When the filter is off, or no BSSID is held yet (see the
+ * header's "Arming"), every frame passes — the pre-filter behavior.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static inline bool transmitter_accepted(const wifi_csi_info_t* info) {
+  if (!s_filter_foreign.load(std::memory_order_relaxed)) return true;
+  if (!s_bssid_known.load(std::memory_order_acquire)) return true;
+  if (memcmp(info->mac, s_assoc_bssid, sizeof(s_assoc_bssid)) == 0) return true;
+  const PeerFilter peer = s_peer_filter;
+  return peer != nullptr && peer(info->mac);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -209,6 +265,12 @@ static inline void extract_scrubbed_metadata(const wifi_csi_info_t* info,
 
 static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
   if (info == nullptr || info->buf == nullptr || info->len == 0) {
+    return;
+  }
+
+  /* Transmitter filter first — see transmitter_accepted(). */
+  if (!transmitter_accepted(info)) {
+    s_frames_dropped_foreign.fetch_add(1, std::memory_order_relaxed);
     return;
   }
 
@@ -223,6 +285,7 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
     const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
     if ((now - s_rate_last_ms) < s_rate_min_gap_ms) {
       s_frames_dropped_rate.fetch_add(1, std::memory_order_relaxed);
+      s_window_dropped_rate.fetch_add(1, std::memory_order_relaxed);
       return;
     }
     s_rate_last_ms = now;
@@ -278,7 +341,9 @@ static void csi_rx_cb(void* /*ctx*/, wifi_csi_info_t* info) {
 
   /* Note: info->mac / info->dmac / info->hdr / info->payload are owned by
    * ESP-IDF and are *not* zeroed here (that could crash the WiFi driver
-   * which re-uses the buffer). The guarantee is that we do not *copy* them. */
+   * which re-uses the buffer). The guarantee is that we do not *copy* them:
+   * mac was compared in place by transmitter_accepted(); dmac, hdr and
+   * payload are never read. */
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -307,6 +372,16 @@ bool init(const Config& cfg) {
   s_watchdog_last_recovery_ms = 0;
   s_watchdog_recovery_count = 0;
 
+  /* Transmitter filter: start with no BSSID held; process() learns it
+   * (or the integration layer's got-IP handler requests it). The peer
+   * hook is left as set — like the watchdog callback, callers may wire
+   * it before init(). */
+  s_filter_foreign.store(cfg.filter_foreign, std::memory_order_relaxed);
+  s_bssid_known.store(false, std::memory_order_release);
+  secure_wipe(s_assoc_bssid, sizeof(s_assoc_bssid));
+  s_bssid_refresh_requested.store(false, std::memory_order_relaxed);
+  s_bssid_poll_last_ms = 0;
+
   /* Defer the ESP-IDF registration until start(): WiFi must be initialized
    * and in a mode that receives frames. If the user calls init() before
    * hal_wifi_init(), we still succeed — we'll register on start(). */
@@ -321,6 +396,10 @@ void deinit() {
   stop();
   secure_wipe(s_ring, sizeof(s_ring));
   s_cb = nullptr;
+  /* The one identifier the HAL held goes with it. */
+  s_bssid_known.store(false, std::memory_order_release);
+  secure_wipe(s_assoc_bssid, sizeof(s_assoc_bssid));
+  s_peer_filter = nullptr;
   s_initialized = false;
 }
 
@@ -396,6 +475,7 @@ bool start() {
   if (r == 1) {
     s_window_start_ms = millis();
     s_window_frames = 0;
+    s_window_dropped_rate.store(0, std::memory_order_relaxed);
     s_running = true;
     s_start_pending = false;
     return true;
@@ -435,8 +515,14 @@ void stop() {
 
   /* Drain ring + scrub extractor's static history — per-window state
    * (s_amp_hist, s_prev_iq, counters) AND the cross-window breathing
-   * envelope — so no CSI-derived state leaks into a subsequent run. */
-  s_head.store(s_tail.load());
+   * envelope — so no CSI-derived state leaks into a subsequent run.
+   * We are the consumer here, so we advance tail to head — never the
+   * other way round (that would be the consumer writing the producer's
+   * index, which races even with relaxed ordering). After
+   * esp_wifi_set_csi(false) the producer task can no longer enqueue, so
+   * this is well-defined. (Carried over from the canary product's former
+   * HAL copy when the two were merged — roadmap 22.) */
+  s_tail.store(s_head.load(std::memory_order_acquire), std::memory_order_release);
   secure_wipe(s_ring, sizeof(s_ring));
   csi_features::reset_history();
 }
@@ -475,8 +561,19 @@ static void watchdog_check_and_recover() {
   s_watchdog_last_recovery_ms = now;
   s_watchdog_recovery_count++;
 
-  CSI_LOG_WARNF("CSI silent for %ums; recovery attempt %u",
-                (unsigned)silent, (unsigned)s_watchdog_recovery_count);
+  /* One WARNING per silence episode — the first attempt, when `silent` has
+   * only just crossed the timeout — and INFO for the throttled attempts
+   * that follow. A product whose radio is legitimately quiet (an AP with no
+   * station, a room with no traffic) would otherwise write a WARNING into
+   * its health ring every WATCHDOG_RECOVERY_MIN_MS, evicting real entries
+   * and driving the needs-attention counter without bound. */
+  if (silent < s_watchdog_timeout_ms + WATCHDOG_RECOVERY_MIN_MS) {
+    CSI_LOG_WARNF("CSI silent for %ums; recovery attempt %u",
+                  (unsigned)silent, (unsigned)s_watchdog_recovery_count);
+  } else {
+    CSI_LOG_INFOF("CSI still silent (%ums); recovery attempt %u",
+                  (unsigned)silent, (unsigned)s_watchdog_recovery_count);
+  }
 
   if (s_watchdog_cb) s_watchdog_cb(silent, s_watchdog_recovery_count);
 
@@ -548,6 +645,76 @@ uint32_t get_ms_since_last_frame() {
 
 uint32_t get_watchdog_recovery_count() { return s_watchdog_recovery_count; }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRANSMITTER FILTER PUBLIC API  (main-loop context)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool refresh_associated_bssid() {
+  s_bssid_refresh_requested.store(false, std::memory_order_relaxed);
+#if SECURACV_HAVE_CSI_API
+  /* wifi_ap_record_t also carries the SSID, RSSI and the AP's capability
+   * bits. Only the six BSSID bytes are kept, and the whole record is wiped
+   * before this function returns — whether or not the call succeeded. */
+  wifi_ap_record_t rec;
+  memset(&rec, 0, sizeof(rec));
+  const esp_err_t err = esp_wifi_sta_get_ap_info(&rec);
+  if (err == ESP_OK) {
+    const bool known = s_bssid_known.load(std::memory_order_acquire);
+    if (!known || memcmp(rec.bssid, s_assoc_bssid, sizeof(s_assoc_bssid)) != 0) {
+      /* Drop the flag around the rewrite so a Wi-Fi-task reader that checks
+       * it now accepts the frame instead of comparing against a half-written
+       * value. Not a lock: see the state block above for the one-frame race
+       * that remains. */
+      s_bssid_known.store(false, std::memory_order_release);
+      memcpy(s_assoc_bssid, rec.bssid, sizeof(s_assoc_bssid));
+      s_bssid_known.store(true, std::memory_order_release);
+      /* Deliberately no bytes in this line. */
+      CSI_LOG_INFO(known ? "CSI transmitter filter: associated BSSID changed"
+                         : "CSI transmitter filter: associated BSSID learned");
+    }
+  }
+  /* ESP_ERR_WIFI_NOT_CONNECT (and every other failure): keep what we had.
+   * A disconnect does not un-learn the router; reassociation replaces it. */
+  secure_wipe(&rec, sizeof(rec));
+#endif
+  return s_bssid_known.load(std::memory_order_relaxed);
+}
+
+void request_bssid_refresh() {
+  s_bssid_refresh_requested.store(true, std::memory_order_relaxed);
+}
+
+bool has_associated_bssid() {
+  return s_bssid_known.load(std::memory_order_relaxed);
+}
+
+void set_filter_foreign(bool on) {
+  s_filter_foreign.store(on, std::memory_order_relaxed);
+}
+
+bool get_filter_foreign() {
+  return s_filter_foreign.load(std::memory_order_relaxed);
+}
+
+void set_peer_filter(PeerFilter fn) { s_peer_filter = fn; }
+
+/* Runs from process(): the requested refresh, else the periodic poll. */
+static void transmitter_filter_poll(uint32_t now_ms) {
+  if (!s_filter_foreign.load(std::memory_order_relaxed)) return;
+  if (s_bssid_refresh_requested.load(std::memory_order_relaxed)) {
+    s_bssid_poll_last_ms = now_ms;
+    refresh_associated_bssid();
+    return;
+  }
+  const uint32_t period = s_bssid_known.load(std::memory_order_relaxed)
+                        ? TRANSMITTER_BSSID_POLL_MS
+                        : TRANSMITTER_BSSID_POLL_UNKNOWN_MS;
+  if ((now_ms - s_bssid_poll_last_ms) >= period) {
+    s_bssid_poll_last_ms = now_ms;
+    refresh_associated_bssid();
+  }
+}
+
 int process() {
   /* Deferred-start retry. If start() was called while WiFi wasn't ready,
    * we retry once per second here until the three esp_wifi_set_csi_* calls
@@ -561,6 +728,7 @@ int process() {
       if (r == 1) {
         s_window_start_ms = now;
         s_window_frames = 0;
+        s_window_dropped_rate.store(0, std::memory_order_relaxed);
         s_running = true;
         s_start_pending = false;
         CSI_LOG_INFO("CSI deferred start succeeded (WiFi now up)");
@@ -572,6 +740,10 @@ int process() {
   }
 
   if (!s_running) return 0;
+
+  /* Transmitter filter: learn (or re-learn) the associated BSSID. Runs on
+   * the main loop, which is the only writer of the held value. */
+  transmitter_filter_poll(millis());
 
   /* Watchdog check before draining: if we've been silent past the
    * threshold, attempt a gentle recovery so the rest of the loop has
@@ -615,6 +787,20 @@ int process() {
   csi_features_t feats = {};
   csi_features::finalize(&feats, s_window_frames, now_ms);
 
+  /* v[25] — frames DROPPED this window: the ones the rate limiter shed
+   * because the channel offered more than max_frame_rate_hz. csi_features
+   * leaves the slot to us because only the HAL sees the limiter (csi_types.h
+   * layout: [24..27] = frames / dropped / channel / bw). It rises when the
+   * air gets busy and is zero in a quiet room — the direction
+   * wifi_channel_activity's "airwaves near me just got busy" cue and the
+   * canary product's /api/sensing dropped_estimate both read it in. (The
+   * former canary copy filled this slot with the SHORTFALL, expected minus
+   * arrived, which points the other way; one HAL means one meaning.) */
+  {
+    const uint32_t shed = s_window_dropped_rate.exchange(0, std::memory_order_relaxed);
+    feats.v[25] = (int8_t)(shed > 127u ? 127 : shed);
+  }
+
   if (s_window_frames < (uint32_t)(s_cfg.max_frame_rate_hz / 2)) {
     s_windows_degraded.fetch_add(1, std::memory_order_relaxed);
   }
@@ -641,7 +827,14 @@ uint32_t get_caps() {
    * ESP32-C3 supports HT20 with amplitude only. ESP32-C6 (future) will
    * report SOUNDING_11BF when its ESP-IDF branch exposes it. */
   uint32_t caps = CSI_CAP_HT20 | CSI_CAP_PHASE;
-#if defined(HARDWARE_XIAO_ESP32S3)
+  /* HT40 is advertised only where the driver actually supports it, so
+   * downstream fusion never takes an HT40 path on a backend that silently
+   * downgraded to 20 MHz. HARDWARE_XIAO_ESP32S3 is the canary-wap sketch's
+   * board macro; the CONFIG_IDF_TARGET_* macros come from the driver's own
+   * sdkconfig, so a build that sets no board macro (the canary PIO envs)
+   * still reports the truth for its chip. */
+#if defined(HARDWARE_XIAO_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3) \
+    || defined(CONFIG_IDF_TARGET_ESP32S2)
   caps |= CSI_CAP_HT40;
 #endif
   return caps;
@@ -661,6 +854,8 @@ bool get_stats(csi_stats_t* out) {
   out->windows_held     = csi_features::held_windows();
   out->windows_merged   = csi_features::merged_windows();
   out->window_period_ms = csi_features::window_period_ms();
+  out->frames_dropped_foreign =
+      s_frames_dropped_foreign.load(std::memory_order_relaxed);
   return true;
 }
 
@@ -733,6 +928,7 @@ bool csi_init(const csi_config_t* config) {
     cfg.bandwidth_mhz = config->bandwidth_mhz;
     cfg.max_frame_rate_hz = config->max_frame_rate_hz;
     if (config->rssi_floor_dbm != 0) cfg.rssi_floor_dbm = config->rssi_floor_dbm;
+    cfg.filter_foreign = config->filter_foreign;
   }
   return csi_hal::init(cfg);
 }

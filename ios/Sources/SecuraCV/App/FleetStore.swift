@@ -679,15 +679,16 @@ final class FleetStore: ObservableObject {
     }
 
     private func probeOnce() async {
-        let targets = devices.devices.compactMap { ref -> (String, URL)? in
+        let targets = devices.devices.compactMap { ref -> (String, URL, String?)? in
             guard ref.deviceType.isHTTPPairable, let url = ref.baseURL else { return nil }
-            return (ref.id, url)
+            return (ref.id, url, ref.tlsCertFingerprint)
         }
         guard !targets.isEmpty else { return }
 
         let answers = await withTaskGroup(of: (String, Bool).self) { group -> [String: Bool] in
-            for (id, url) in targets {
-                group.addTask { (id, await LivenessProbe.isAnswering(url)) }
+            for (id, url, pin) in targets {
+                // An https Canary answers only through its receipt's pin.
+                group.addTask { (id, await LivenessProbe.isAnswering(url, tlsFingerprint: pin)) }
             }
             var out: [String: Bool] = [:]
             for await (id, alive) in group { out[id] = alive }
@@ -883,14 +884,15 @@ final class FleetStore: ObservableObject {
         // Same attributed self-row fold as the WAP path — and this v1 path
         // is the one a camera-line device would answer on, so it is where
         // an attributed seeing claim would actually first appear.
-        if let base = ref.baseURL,
-           let report = try? await DeviceAPI.fleetSelfReport(at: base),
+        if let report = try? await api.fleetSelfReport(),
            let selfRow = report.devices.first {
             FleetMerge.fold(selfRow, into: &w, attributed: true)
         }
 
         var events: [TimelineEvent] = []
-        if let page = try? await api.witness(last: 20) {
+        // An empty page (a ring not yet populated after boot) is no verdict:
+        // the badge is left as it was rather than read as "unsigned".
+        if let page = try? await api.witness(last: 20), !page.records.isEmpty {
             let verdict = ChainVerifier.verify(page, pinnedKey: PinnedKeyStore.key(for: ref.id))
             w.badge = verdict.badge
             // The wire's seq is u64; the model mirrors fleet_model.h's
@@ -940,6 +942,24 @@ final class FleetStore: ObservableObject {
         w.baseURL = ref.baseURL
         w.chainLength = UInt32(clamping: status.chainSeq ?? 0)
 
+        // The chain page this repo's firmware now serves (GET /api/v1/witness,
+        // spec/witness_api_v1.md, chain_format wap_v1): recompute every link,
+        // verify the head against the pinned key, and let THAT — nothing on
+        // /api/status — set the badge. Before this the WAP path never fetched
+        // a signed record, so the headline trust feature could not run
+        // against any firmware in this repository (roadmap row 6). An
+        // unsigned or unknown-format page lands on the honest rung
+        // (ChainVerdict.badge), never on Verified.
+        // An empty page (a ring not yet populated after boot) is no verdict:
+        // the badge is left as it was rather than read as "unsigned".
+        if let page = try? await api.witness(last: 20), !page.records.isEmpty {
+            let verdict = ChainVerifier.verify(page, pinnedKey: PinnedKeyStore.key(for: ref.id))
+            w.badge = verdict.badge
+            if let head = page.records.map(\.seq).max() {
+                w.chainLength = max(w.chainLength, UInt32(clamping: head))
+            }
+        }
+
         // The device's own /api/fleet self-report, folded ATTRIBUTED: this
         // poll is the device's own address, so its self row may carry the
         // claims the name-matched path must refuse — the seeing class above
@@ -947,8 +967,7 @@ final class FleetStore: ObservableObject {
         // standing, board id and birth day, which /api/status never carried;
         // the day a camera-line firmware serves the endpoint, the class
         // signals light up here with no further app change.
-        if let base = ref.baseURL,
-           let report = try? await DeviceAPI.fleetSelfReport(at: base),
+        if let report = try? await api.fleetSelfReport(),
            let selfRow = report.devices.first {
             FleetMerge.fold(selfRow, into: &w, attributed: true)
         }
@@ -1632,7 +1651,11 @@ final class FleetStore: ObservableObject {
                 updatable: ref.baseURL != nil && devices.token(for: ref.id) != nil,
                 online: w?.link == .online,
                 bleReachable: bleIDs.contains(ref.id),
-                rssiDBM: w?.rssiDBM))
+                rssiDBM: w?.rssiDBM,
+                // Only a pinned https lane is an encrypted HTTP lane; plain
+                // http rides behind the cleartext disclosure (row 13).
+                tlsPinned: FleetWiFiRollout.isPinnedTLS(url: ref.baseURL,
+                                                        fingerprint: ref.tlsCertFingerprint)))
             seen.insert(ref.id)
         }
         for w in witnesses where !seen.contains(w.id) {
