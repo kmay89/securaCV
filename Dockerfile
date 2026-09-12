@@ -2,7 +2,7 @@
 # debian:bookworm-slim runtime stage. The locked gstreamer/glib crates
 # declare rust-version 1.92, so keep this at or above that (pinned in
 # lockstep with docker/sidecar/Dockerfile).
-FROM rust:1.98-slim-bookworm@sha256:1469a27c125cb5a3aebfa4f4e4665d935b02fb72cc093b2c974b3d740e43f157 AS build
+FROM rust:1.98-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS build
 
 # libssl-dev: the bundled SQLCipher (rusqlite bundled-sqlcipher) compiles
 # against OpenSSL headers and links libcrypto dynamically.
