@@ -48,7 +48,10 @@
   at both angles through the README's own recipe, so the preview obligation
   is a directory, not a memory. It refuses the OpenSCAD steps up front when
   the binary is missing and says honestly that no button renders STLs for
-  you.
+  you. Review round (Codex on #1682): a relative `--previews DIR` was handed
+  to OpenSCAD as typed while it ran in the enclosure directory, so every
+  preview reported failed; the directory is resolved once, before any argv
+  is built, with a test that failed 26 of 26 before the fix.
 - **The rehearsal.** The chain was run end to end on a scratch branch with
   one real edit (`canary-wap` `board_w` 17.5 → 17.8): one `.scad` line, 116
   clean renders, the WAP's assembled height 36.6 → 36.9 mm, four figure
