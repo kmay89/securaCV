@@ -154,7 +154,7 @@ class BuildMatrixShards(unittest.TestCase):
                     "small": ["canary-display-a2"]},
             size_guards=[guard("canary-display-a2"), guard("canary-display-a1"),
                          # a guard for an env CI never builds (release-time
-                         # only, like canary's release_ha) lands in no leg
+                         # only) lands in no leg
                          guard("canary-display-zz")],
         )
         legs = fe.build_legs(entry)
@@ -237,6 +237,22 @@ class CurrentTreeIsGreen(unittest.TestCase):
     def test_cli_check_mode_exit_code(self):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(fe.main(["--check-workflows"]), 0)
+
+    def test_every_guarded_image_is_built_by_pr_ci(self):
+        # firmware.yml runs a size_guards entry right after `pio run -e` of
+        # the env that produces its bin, so a guard on an env outside
+        # build_envs measures nothing until a release is cut — the slot
+        # overrun surfaces on the tag, not on the PR that caused it. canary's
+        # release_ha (the published OTA image) sat that way until it joined
+        # build_envs; this pins that every guarded env is PR-built.
+        for entry in fe.load_flavors():
+            built = set(entry.get("build_envs") or [])
+            for g in entry.get("size_guards") or []:
+                env = fe.guard_env(g)
+                self.assertIn(env, built,
+                              f"{entry['name']}: size guard for {g['bin']} names an "
+                              f"env PR CI does not build — it would fire only at "
+                              f"release time")
 
 
 class LintCatchesRealMistakes(unittest.TestCase):
