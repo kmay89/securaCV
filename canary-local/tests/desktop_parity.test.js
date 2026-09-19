@@ -1547,6 +1547,17 @@ test("broker TLS: both flashers offer the mode, the CA and the fingerprint, and 
   assert.strictEqual(htmlPat[1], pat[1], "the two flashers accept different fingerprint spellings");
   assert.match(appJs, /new RegExp\(`\^\(\?:\$\{\$\("mqtt-fp"\)\.pattern\}\)\$`\)/,
     "desktop fingerprintNormalize must read the input's own pattern (one source per side)");
+  // The placeholders too — the most likely paste is openssl's whole output
+  // line, which neither pattern takes, so both say which part to paste.
+  const fpPh = /const MQTT_FP_PLACEHOLDER =\s*"([^"]+)"/.exec(flashJs);
+  const htmlFpPh = /<input id="mqtt-fp"[^>]*\splaceholder="([^"]+)"/.exec(html);
+  assert.ok(fpPh && htmlFpPh, "a fingerprint placeholder moved");
+  assert.strictEqual(htmlFpPh[1], fpPh[1], "the two flashers give different fingerprint hints");
+  assert.match(fpPh[1], /Fingerprint=/, "the hint must name the part of openssl's line to paste (after Fingerprint=)");
+  const caPh = /const MQTT_CA_PLACEHOLDER =\s*"([^"]+)"/.exec(flashJs);
+  const htmlCaPh = /<textarea id="mqtt-ca"[^>]*\splaceholder="([^"]+)"/.exec(html);
+  assert.ok(caPh && htmlCaPh, "a CA placeholder moved");
+  assert.strictEqual(htmlCaPh[1], caPh[1], "the two flashers give different CA hints");
   const re = new RegExp(`^${pat[1]}$`);
   const hex = "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9";
   const pairs = hex.match(/../g);
