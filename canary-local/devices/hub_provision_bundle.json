@@ -41,7 +41,7 @@
       "source": "canary-local/tools/hub_host_provision.sh",
       "bundle_path": "host_provision.sh",
       "card_path": "CONFIG/securacv/host_provision.sh",
-      "sha256": "d529b5b6bbd58a10e65c5fa823b22b3fc274dd6483ff5a98733ea5c100567b7a"
+      "sha256": "0bb4d4061fe1f1901918a4054eb890c82eb7d5363c40a2a73632b98a72e0e2d0"
     },
     {
       "role": "runner",

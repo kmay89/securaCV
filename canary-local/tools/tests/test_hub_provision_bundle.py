@@ -207,3 +207,92 @@ class ManifestOutputPath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FAKE_DOCKER = """#!/bin/sh
+# Stands in for the HAOS host's docker: answers the runner's three inspects
+# and, for `run`, prints the argument list one per line instead of running.
+case "$1" in
+  inspect)
+    case "$*" in
+      *Config.Env*)   echo "SUPERVISOR_TOKEN=fake-token" ;;
+      *Config.Image*) echo "ghcr.io/home-assistant/fake-homeassistant:0" ;;
+      *IPAddress*)    echo "172.30.32.2" ;;
+      *) exit 0 ;;
+    esac ;;
+  run) shift; printf '%s\\n' "$@" ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+class HostRunnerSslMount(unittest.TestCase):
+    """The host runner mounts the hub's ssl tree read-only ONLY when the
+    broker_tls feature is asked for and the tree exists — never an
+    unconditional -v, which would make docker create an empty root-owned
+    directory on the host. Driven through the real script with a fake docker
+    on PATH, so the branch logic is exercised, not grepped."""
+
+    def run_runner(self, args: list[str], ssl_dir: str | None) -> subprocess.CompletedProcess:
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            b = tmp / "securacv-bundle"
+            gb.build_bundle(gb.build_manifest(), b)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            (bindir / "docker").write_text(FAKE_DOCKER)
+            (bindir / "docker").chmod(0o755)
+            env = {"PATH": f"{bindir}:{os.environ['PATH']}"}
+            if ssl_dir is not None:
+                env["SECURACV_HOST_SSL_DIR"] = ssl_dir
+            return subprocess.run(
+                ["sh", str(b / "host_provision.sh"), *args],
+                capture_output=True, text=True, env=env,
+            )
+
+    @staticmethod
+    def mount_of(stdout: str) -> str | None:
+        argv = stdout.splitlines()
+        for i, a in enumerate(argv):
+            if a.endswith(":/ssl:ro") and i and argv[i - 1] == "-v":
+                return a
+        return None
+
+    def test_asked_for_and_present_mounts_read_only_before_the_image(self):
+        with tempfile.TemporaryDirectory() as ssl:
+            r = self.run_runner(["--with", "broker_tls", "--dry-run"], ssl)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self.mount_of(r.stdout), f"{ssl}:/ssl:ro")
+            argv = r.stdout.splitlines()
+            self.assertLess(argv.index(f"{ssl}:/ssl:ro"), argv.index("--entrypoint"))
+            # Args still pass through, after the executor's own plan flags.
+            self.assertEqual(argv[-3:], ["--with", "broker_tls", "--dry-run"])
+            # The --with=value spelling argparse accepts is honored too.
+            r2 = self.run_runner(["--with=broker_tls"], ssl)
+            self.assertEqual(self.mount_of(r2.stdout), f"{ssl}:/ssl:ro")
+
+    def test_not_asked_for_means_no_mount_even_when_present(self):
+        with tempfile.TemporaryDirectory() as ssl:
+            r = self.run_runner(["--with", "pihole", "--dry-run"], ssl)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIsNone(self.mount_of(r.stdout))
+            self.assertNotIn("/ssl", r.stdout)
+
+    def test_asked_for_but_absent_skips_the_mount_and_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = str(Path(tmp) / "no-such-ssl")
+            r = self.run_runner(["--with", "broker_tls", "--dry-run"], missing)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIsNone(self.mount_of(r.stdout))
+            self.assertIn(missing, r.stderr)
+            self.assertIn("broker_tls", r.stderr)
+
+    def test_the_default_host_path_is_beside_addon_configs(self):
+        # The path is inferred from the Supervisor's data layout (the same
+        # tree addon_configs is mounted from), not yet proven on a hub — so
+        # it is one string, overridable, next to the mount it was inferred from.
+        hr = (gb.REPO / "canary-local/tools/hub_host_provision.sh").read_text()
+        self.assertIn("/mnt/data/supervisor/addon_configs:/addon_configs", hr)
+        self.assertIn('${SECURACV_HOST_SSL_DIR:-/mnt/data/supervisor/ssl}', hr)
+        self.assertNotIn("-v /mnt/data/supervisor/ssl", hr, "the ssl mount must be conditional")
