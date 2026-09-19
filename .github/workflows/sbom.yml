@@ -61,9 +61,15 @@ jobs:
     # compiles, so nothing is downloaded into ~/.platformio.
     - name: Set up Python + PlatformIO (resolver oracle)
       uses: ./.github/actions/setup-platformio
-    - name: Install the generator's YAML reader
-      # The Arduino-CLI core pins the SBOM lists live in workflow YAML.
-      run: python3 -m pip install --quiet pyyaml
+    - name: Install the generator's YAML reader and schema validator
+      # The Arduino-CLI core pins the SBOM lists live in workflow YAML and in
+      # the sketch.yaml profiles. cyclonedx-python-lib is the strict
+      # CycloneDX 1.5 validator the validate step below runs on the artifact
+      # — the same exact pin lint.yml runs on the committed copy. The
+      # json-validation extra is what brings the format checkers (an IRI
+      # with a space passes without it), and a bump is a reviewed change to
+      # what "valid" means, so it never floats.
+      run: python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0'
 
     # ---- Rust SBOM ----
     # Compiling cargo-cyclonedx from source cost ~5-10 min of every run.
@@ -132,13 +138,21 @@ jobs:
     # uploading a broken artifact.
     - name: Validate SBOMs are well-formed CycloneDX
       run: |
+        set -euo pipefail
         for f in sbom-rust.cdx.json sbom-node.cdx.json sbom-firmware.cdx.json; do
           jq -e '.bomFormat == "CycloneDX"' "$f" > /dev/null \
             || { echo "::error::$f is missing or not a CycloneDX document"; exit 1; }
         done
         # The firmware document is ours end to end, so hold it to more than
-        # the format tag: the spec version the generator promises, a
-        # non-empty component list, and a closed dependency graph.
+        # the format tag. First the CycloneDX 1.5 JSON schema in strict mode,
+        # on THIS file — the timestamped bytes that upload, not a re-render —
+        # through the validator lint.yml runs on the committed copy. The Rust
+        # and Node documents are not held to it: cargo-cyclonedx and cdxgen
+        # choose their own specVersion.
+        python3 scripts/gen_firmware_sbom.py --validate sbom-firmware.cdx.json
+        # Then what a schema cannot say: the spec version the generator
+        # promises, a non-empty component list, and a closed dependency graph
+        # (a dependsOn naming a bom-ref that is not there is schema-valid).
         jq -e '.specVersion == "1.5" and (.components | length) > 0
                and ([.dependencies[].dependsOn[]] - ([.components[]."bom-ref"] + [.metadata.component."bom-ref"]) | length) == 0' \
           sbom-firmware.cdx.json > /dev/null \

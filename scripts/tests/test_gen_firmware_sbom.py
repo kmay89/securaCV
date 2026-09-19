@@ -13,7 +13,19 @@ What is pinned and why:
   • the audit claim that started this: the display and WAP products depend
     on the pioarduino core-3 line (Arduino 3.3.8 / ESP-IDF 5.5.4), which the
     hand-typed template never said;
-  • --check goes red on a byte of drift.
+  • --check goes red on a byte of drift;
+  • --validate: the committed document and the timestamped artifact variant
+    are strict CycloneDX 1.5 (cyclonedx-python-lib's JsonStrictValidator),
+    and an unknown key, a URL with a space and a bad component type are
+    refused — the validator is imported unconditionally, because lint.yml's
+    tests step installs it and a skipTest on ImportError would read as
+    covered while catching nothing;
+  • the two Arduino axes: sketch.yaml profiles are read from YAML (the
+    files' comments quote core numbers too), workflow rows carry their
+    matrix-resolved library pins and the sketch they compile, the agreement
+    check is green on the tree and red on a workflow pin no profile carries,
+    a sketch pin neither axis knows, a library off its core line — and a
+    finding fails generation.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -29,6 +41,7 @@ import textwrap
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "gen_firmware_sbom.py"
@@ -214,6 +227,179 @@ class CheckMode(unittest.TestCase):
             with redirect_stdout(out):
                 self.assertEqual(gs.main(["--check", "--out", str(copy)]), 1)
             self.assertIn("is stale", out.getvalue())
+
+
+def _doc() -> dict:
+    return json.loads(gs.OUT.read_text(encoding="utf-8"))
+
+
+class SchemaValidation(unittest.TestCase):
+    """--validate: cyclonedx-python-lib's JsonStrictValidator against the
+    CycloneDX 1.5 schema it bundles. Imported unconditionally — see the
+    module docstring."""
+
+    def test_the_committed_document_and_the_artifact_variant_are_strict_1_5(self):
+        self.assertIsNone(gs.validate_document(gs.OUT.read_text(encoding="utf-8")))
+        self.assertIsNone(gs.validate_document(
+            gs.render(gs.build_document("2026-09-08T00:00:00Z"))))
+
+    def test_an_unknown_key_is_refused(self):
+        doc = _doc()
+        doc["securacv"] = "not a CycloneDX field"
+        problem = gs.validate_document(json.dumps(doc))
+        self.assertIsNotNone(problem)
+        self.assertIn("securacv", problem)
+        self.assertTrue(problem.startswith("$:"), problem)   # located at the root
+
+    def test_a_url_with_a_space_is_refused(self):
+        # The README's original catch: an externalReferences url must be an
+        # IRI, and the format checker that says so comes with the
+        # json-validation extra — a bare jsonschema would pass this.
+        doc = _doc()
+        doc["components"][0]["externalReferences"] = [{"type": "website", "url": "https://x/a b"}]
+        problem = gs.validate_document(json.dumps(doc))
+        self.assertIsNotNone(problem)
+        self.assertIn("a b", problem)
+        self.assertIn("externalReferences", problem)
+
+    def test_validate_flag_is_green_on_the_tree_and_red_on_a_doctored_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "bad.cdx.json"
+            doc = _doc()
+            doc["components"][0]["type"] = "widget"
+            bad.write_text(json.dumps(doc), encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(gs.main(["--validate", str(bad)]), 1)
+            self.assertIn("::error::", out.getvalue())
+            self.assertIn("widget", out.getvalue())
+            good = Path(tmp) / "sbom.cdx.json"
+            good.write_text(gs.OUT.read_text(encoding="utf-8"), encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(gs.main(["--check", "--validate", "--out", str(good)]), 0)
+            self.assertIn("--validate: OK", out.getvalue())
+            self.assertIn("--check: OK", out.getvalue())
+            # bare --validate is read-only: no write happens, even to --out
+            good.unlink()
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(gs.main(["--validate", "--out", str(good)]), 0)
+            self.assertFalse(good.exists())
+
+
+def _product_cores(doc: dict) -> dict[str, set[str]]:
+    """product → Arduino cores of its PlatformIO platforms, read off the
+    committed graph (product → platform → framework:arduino-esp32@X)."""
+    deps = {d["ref"]: d["dependsOn"] for d in doc["dependencies"]}
+    cores: dict[str, set[str]] = {}
+    for ref, targets in deps.items():
+        if not ref.startswith("product:"):
+            continue
+        for plat in (t for t in targets if t.startswith("platform:")):
+            for core in deps[plat]:
+                cores.setdefault(ref[len("product:"):], set()).add(core.rsplit("@", 1)[1])
+    return cores
+
+
+class ArduinoCorePins(unittest.TestCase):
+    """The two Arduino axes and the agreement asserted between them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = gs.arduino_core_pins()
+        cls.sketch = gs.sketch_core_pins(gs.load_json(gs.FLAVORS))
+        cls.cores = _product_cores(_doc())
+
+    def test_sketch_profiles_are_read_from_yaml_not_grepped(self):
+        by = {(p["sketch"], p["profile"]): p for p in self.sketch}
+        self.assertEqual(by[("canary_display", "watch-core3")]["version"], "3.3.10")
+        self.assertEqual(by[("canary_display", "watch")]["libraries"]["GFX Library for Arduino"],
+                         "1.4.9")
+        self.assertEqual(by[("canary_wap", "xiao_sense")]["product"], "canary-wap")
+        self.assertIsNone(by[("canary_wap", "xiao_sense")]["libraries"]["NimBLE-Arduino"])
+        # the display file's comments name 2.0.17 too; only two profiles pin it
+        self.assertEqual(sum(p["version"] == "2.0.17" for p in self.sketch
+                             if p["sketch"] == "canary_display"), 2)
+
+    def test_workflow_rows_carry_their_library_pins_and_the_sketch_they_compile(self):
+        rows = {(w["where"], w["version"]): w for w in self.workflow}
+        display = rows[("firmware.yml:build-arduino-cli-display", "3.3.10")]
+        self.assertEqual(display["libraries"]["lvgl"], "9.5.0")    # ${{ matrix.core.lvgl }}
+        self.assertEqual(display["products"], ["canary-display"])
+        wap = rows[("firmware.yml:build-arduino-cli", None)]
+        self.assertEqual(wap["products"], ["canary-wap"])
+        self.assertIsNone(wap["libraries"]["NimBLE-Arduino"])
+        # one release job installs the WAP's latest core and both display cores
+        release = [w for w in self.workflow if w["where"] == "firmware-release.yml:build-sign-release"]
+        self.assertEqual(sorted((w["version"] or "latest", tuple(w["products"])) for w in release),
+                         [("2.0.17", ("canary-display",)), ("3.3.10", ("canary-display",)),
+                          ("latest", ("canary-wap",))])
+
+    def test_the_agreement_holds_on_the_tree(self):
+        self.assertEqual(gs.check_core_pin_agreement(self.workflow, self.sketch, self.cores), [])
+
+    def test_a_workflow_pin_no_profile_carries_is_a_finding(self):
+        rows = self.workflow + [{"version": "3.3.11", "where": "x.yml:job",
+                                 "libraries": {}, "products": ["canary-wap"]}]
+        findings = gs.check_core_pin_agreement(rows, self.sketch, self.cores)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("x.yml:job pins esp32:esp32 3.3.11", findings[0])
+
+    def test_a_sketch_pin_neither_axis_knows_is_a_finding(self):
+        doctored = [dict(p, version="3.3.9") if p["profile"] == "xiao_sense" else p
+                    for p in self.sketch]
+        findings = gs.check_core_pin_agreement(self.workflow, doctored, self.cores)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("xiao_sense", findings[0])
+        self.assertIn("3.3.9", findings[0])
+
+    def test_the_wap_sketch_may_track_the_platformio_core_while_its_rows_float(self):
+        # 3.3.8 is no workflow pin (every WAP row builds on the action's
+        # latest); it is platform_core3's core. Without that allowance the
+        # check would be red on day one — the recorded residual, not a drift.
+        self.assertNotIn("3.3.8", {w["version"] for w in self.workflow})
+        self.assertIn("3.3.8", self.cores["canary-wap"])
+        findings = gs.check_core_pin_agreement(self.workflow, self.sketch,
+                                               {k: set() for k in self.cores})
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("xiao_sense", findings[0])
+
+    def test_a_library_off_its_core_line_is_a_finding(self):
+        # lvgl 8.4 on a core-3 profile: one finding per workflow row on 3.3.10
+        # that builds the display (firmware, firmware-release, flasher-release)
+        doctored = [dict(p, libraries=dict(p["libraries"], lvgl="8.4.0"))
+                    if p["profile"] == "dash-core3" else p for p in self.sketch]
+        findings = gs.check_core_pin_agreement(self.workflow, doctored, self.cores)
+        self.assertEqual(len(findings), 3, findings)
+        self.assertTrue(all("dash-core3" in f and "lvgl 8.4.0" in f and "lvgl@9.5.0" in f
+                            for f in findings), findings)
+        # and a pin the sketch dropped is "unpinned", not silently equal
+        doctored = [dict(p, libraries={k: v for k, v in p["libraries"].items()
+                                       if k != "NimBLE-Arduino"})
+                    if p["profile"] == "watch" else p for p in self.sketch]
+        findings = gs.check_core_pin_agreement(self.workflow, doctored, self.cores)
+        self.assertEqual(len(findings), 3, findings)
+        self.assertIn("NimBLE-Arduino unpinned", findings[0])
+
+    def test_a_disagreement_fails_generation(self):
+        doctored = [dict(p, version="3.3.9") if p["profile"] == "xiao_sense" else p
+                    for p in self.sketch]
+        with mock.patch.object(gs, "sketch_core_pins", return_value=doctored):
+            with self.assertRaises(SystemExit) as cm:
+                gs.build_document()
+        self.assertIn("disagree", str(cm.exception))
+        self.assertIn("xiao_sense", str(cm.exception))
+
+    def test_sketch_profiles_are_build_paths_of_their_core(self):
+        paths = {c["bom-ref"]: next(p["value"] for p in c["properties"]
+                                    if p["name"] == "securacv:build_paths")
+                 for c in _doc()["components"]
+                 if c["bom-ref"].startswith("framework:arduino-esp32@")}
+        self.assertIn("sketch.yaml (canary_wap/xiao_sense)", paths["framework:arduino-esp32@3.3.8"])
+        self.assertIn("sketch.yaml (canary_display/watch-core3)",
+                      paths["framework:arduino-esp32@3.3.10"])
+        self.assertIn("sketch.yaml (canary_display/watch)", paths["framework:arduino-esp32@2.0.17"])
+        self.assertNotIn("sketch.yaml", paths["framework:arduino-esp32@latest"])
 
 
 if __name__ == "__main__":
