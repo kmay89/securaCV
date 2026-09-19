@@ -872,8 +872,9 @@ still needs from you, and why:
 
 - **Keep MQTT publishing enabled** (`mqtt_publish.enabled: true` above, the
   default). The publisher is the process that listens for Canaries; with it
-  off, the roll-call lists the kernel alone, and the app log says so at
-  startup.
+  off, the roll-call lists the kernel alone — the kernel is not pointed at
+  the file, so rows a past bridge pinned are kept for their keys, not served
+  — and the app log says so at startup.
 - **Open the port and type the address once.** The app advertises no
   `_securacv._tcp` Bonjour service, and its 8799 host port ships disabled
   (see [Event API exposure](../privacy_witness_kernel/README.md#event-api-exposure)),

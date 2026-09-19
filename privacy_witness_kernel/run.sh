@@ -103,6 +103,15 @@ if [ -z "$MQTT_PUBLISH_ENABLED" ] || [ "$MQTT_PUBLISH_ENABLED" = "null" ]; then
     fi
 fi
 
+# The kernel is pointed at the roll-call file only while a bridge keeps it.
+# With publishing off, both api blocks omit fleet_peers_path, so GET
+# /api/fleet lists this kernel alone; rows a past bridge pinned are neither
+# served nor deleted (their first-sight keys wait for publishing to return).
+FLEET_PEERS_API=""
+if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
+    FLEET_PEERS_API=", \"fleet_peers_path\": \"$FLEET_PEERS_FILE\""
+fi
+
 # ============================================================================
 # Supervisor MQTT service discovery (requires `services: mqtt:want` in
 # config.yaml). Explicit option values always win; discovery fills the gaps
@@ -142,7 +151,7 @@ bashio::log.info "Time bucket: $TIME_BUCKET_MIN minutes"
 if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
     bashio::log.info "Fleet peers: $FLEET_PEERS_FILE (the MQTT publisher writes it; GET /api/fleet lists the Canaries it hears)"
 else
-    bashio::log.info "Fleet peers: MQTT publishing is disabled, so no bridge listens for Canaries; GET /api/fleet lists this kernel only."
+    bashio::log.info "Fleet peers: MQTT publishing is disabled, so no bridge listens for Canaries; GET /api/fleet lists this kernel only (a roll-call file from an earlier run is kept for its pins, not served)."
 fi
 
 # ============================================================================
@@ -213,8 +222,7 @@ write_frigate_api_config() {
   "ruleset_id": "ruleset:frigate_v1",
   "api": {
     "addr": "$API_BIND_ADDR",
-    "token_path": "$TOKEN_FILE",
-    "fleet_peers_path": "$FLEET_PEERS_FILE"
+    "token_path": "$TOKEN_FILE"$FLEET_PEERS_API
   },
   "retention": {
     "seconds": $RETENTION_SECS
@@ -551,8 +559,7 @@ else
   "ruleset_id": "ruleset:homeassistant_v1",
   "api": {
     "addr": "$API_BIND_ADDR",
-    "token_path": "$TOKEN_FILE",
-    "fleet_peers_path": "$FLEET_PEERS_FILE"
+    "token_path": "$TOKEN_FILE"$FLEET_PEERS_API
   },
   "rtsp": {
     "url": "$CAMERA_URL",

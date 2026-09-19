@@ -128,11 +128,17 @@ fi
 assert_eq "/config" "$(dirname "${ADDON_PEERS:-/missing/x}")" \
     "run.sh: the peers file lives in /config (exists at boot, rw-mapped, in HA backups)"
 
-# The needles: two kernel config blocks, one bridge argv element, one variable.
-assert_eq 2 "$(count_needle "$RUN_SH" '"fleet_peers_path"')" \
-    "run.sh: both kernel config blocks carry api.fleet_peers_path"
-assert_eq 2 "$(count_needle "$RUN_SH" '"fleet_peers_path": "$FLEET_PEERS_FILE"')" \
-    "run.sh: both blocks read the path from FLEET_PEERS_FILE"
+# The needles: one api fragment behind the publisher switch, carried by both
+# kernel config blocks; one bridge argv element; one variable. The fragment is
+# empty when publishing is off, so the kernel is never pointed at a file no
+# bridge keeps (review round on #1686: it would have served rows a past
+# bridge pinned, while the log said the roll-call lists the kernel alone).
+assert_eq 1 "$(count_needle "$RUN_SH" 'FLEET_PEERS_API=", \"fleet_peers_path\": \"$FLEET_PEERS_FILE\""')" \
+    "run.sh: the api fragment names fleet_peers_path from FLEET_PEERS_FILE, once, behind the publisher switch"
+assert_eq 2 "$(count_needle "$RUN_SH" '"token_path": "$TOKEN_FILE"$FLEET_PEERS_API')" \
+    "run.sh: both kernel config blocks carry the fragment"
+assert_eq 0 "$(count_needle "$RUN_SH" '"fleet_peers_path"')" \
+    "run.sh: no block names fleet_peers_path outside the fragment (which spells it escaped)"
 assert_eq 1 "$(count_needle "$RUN_SH" '--fleet-peers-path')" \
     "run.sh: the bridge argv names the flag exactly once (MQTT_CMD_ARRAY serves both modes)"
 assert_eq 1 "$(count_needle "$RUN_SH" '--fleet-peers-path "$FLEET_PEERS_FILE"')" \
@@ -145,11 +151,34 @@ for v in ADDON_DB ADDON_TOKEN ADDON_ADDR; do
     [ -n "${!v}" ] || fail "run.sh: could not read the fixed value behind $v"
 done
 
+# The fragment as run.sh builds it with publishing on, and as it is with it off.
+ADDON_API_ON=", \"fleet_peers_path\": \"$ADDON_PEERS\""
+
+# assert_off_block JSON LABEL TOPKEYS... — a block rendered with the fragment
+# empty is still valid, still made of accepted keys, and names no peers file.
+assert_off_block() {
+    local json="$1" label="$2"
+    shift 2
+    if jq -e . "$json" > /dev/null 2>&1; then
+        ok "$label (publishing off): renders as JSON"
+        assert_keys_accepted "$json" '.' "$label (publishing off)" "$@"
+        assert_keys_accepted "$json" '.api' "$label (publishing off, ApiConfigFile)" "${API_KEYS[@]}"
+        assert_eq "false" "$(jq -r '.api | has("fleet_peers_path")' "$json")" \
+            "$label (publishing off): the kernel is not pointed at a peers file"
+    else
+        fail "$label (publishing off): rendered text is not JSON: $(cat "$json")"
+    fi
+}
+
 # ---- block 1: frigate mode → witness_api ----------------------------------
 if heredoc_body "$RUN_SH" 1 > "$TMP/addon_frigate.body"; then
+    render "$TMP/addon_frigate.body" "$TMP/addon_frigate_off.json" \
+        DB_PATH="$ADDON_DB" API_BIND_ADDR="$ADDON_ADDR" TOKEN_FILE="$ADDON_TOKEN" \
+        FLEET_PEERS_API= RETENTION_SECS=604800
+    assert_off_block "$TMP/addon_frigate_off.json" "run.sh frigate block" "${WITNESS_API_TOP_KEYS[@]}"
     render "$TMP/addon_frigate.body" "$TMP/addon_frigate.json" \
         DB_PATH="$ADDON_DB" API_BIND_ADDR="$ADDON_ADDR" TOKEN_FILE="$ADDON_TOKEN" \
-        FLEET_PEERS_FILE="$ADDON_PEERS" RETENTION_SECS=604800
+        FLEET_PEERS_API="$ADDON_API_ON" RETENTION_SECS=604800
     if jq -e . "$TMP/addon_frigate.json" > /dev/null 2>&1; then
         ok "run.sh frigate block: renders as JSON"
         assert_keys_accepted "$TMP/addon_frigate.json" '.' \
@@ -173,9 +202,15 @@ fi
 
 # ---- block 2: standalone mode → witnessd ---------------------------------
 if heredoc_body "$RUN_SH" 2 > "$TMP/addon_standalone.body"; then
+    render "$TMP/addon_standalone.body" "$TMP/addon_standalone_off.json" \
+        DB_PATH="$ADDON_DB" API_BIND_ADDR="$ADDON_ADDR" TOKEN_FILE="$ADDON_TOKEN" \
+        FLEET_PEERS_API= RETENTION_SECS=604800 \
+        CAMERA_URL="rtsp://user:secret@cam.local:554/stream" CAMERA_FPS=10 \
+        CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_ZONE="zone:front_boundary"
+    assert_off_block "$TMP/addon_standalone_off.json" "run.sh standalone block" "${WITNESSD_TOP_KEYS[@]}"
     render "$TMP/addon_standalone.body" "$TMP/addon_standalone.json" \
         DB_PATH="$ADDON_DB" API_BIND_ADDR="$ADDON_ADDR" TOKEN_FILE="$ADDON_TOKEN" \
-        FLEET_PEERS_FILE="$ADDON_PEERS" RETENTION_SECS=604800 \
+        FLEET_PEERS_API="$ADDON_API_ON" RETENTION_SECS=604800 \
         CAMERA_URL="rtsp://user:secret@cam.local:554/stream" CAMERA_FPS=10 \
         CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_ZONE="zone:front_boundary"
     if jq -e . "$TMP/addon_standalone.json" > /dev/null 2>&1; then
@@ -217,15 +252,23 @@ fi
 # token — no second volume, and the directory exists before the first write.
 assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" 'FLEET_PEERS_FILE="$DATA_DIR/fleet_peers.json"')" \
     "entrypoint.sh: FLEET_PEERS_FILE lives in the shared \$DATA_DIR"
-assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" '"fleet_peers_path": "$FLEET_PEERS_FILE"')" \
-    "entrypoint.sh: the kernel config block carries api.fleet_peers_path from FLEET_PEERS_FILE"
+assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" 'fleet_peers_api=", \"fleet_peers_path\": \"$FLEET_PEERS_FILE\""')" \
+    "entrypoint.sh: the api fragment names fleet_peers_path from FLEET_PEERS_FILE, once, behind the publish switch"
+assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" '"token_path": "$TOKEN_FILE"$fleet_peers_api')" \
+    "entrypoint.sh: the kernel config block carries the fragment"
+assert_eq 0 "$(count_needle "$ENTRYPOINT_SH" '"fleet_peers_path"')" \
+    "entrypoint.sh: nothing names fleet_peers_path outside the fragment (which spells it escaped)"
 assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" '--fleet-peers-path "$FLEET_PEERS_FILE"')" \
     "entrypoint.sh: pub_args names the flag once, from the same variable"
 
 if heredoc_body "$ENTRYPOINT_SH" 1 > "$TMP/sidecar.body"; then
+    render "$TMP/sidecar.body" "$TMP/sidecar_off.json" \
+        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token \
+        fleet_peers_api= retention_secs=604800
+    assert_off_block "$TMP/sidecar_off.json" "entrypoint.sh block" "${WITNESS_API_TOP_KEYS[@]}"
     render "$TMP/sidecar.body" "$TMP/sidecar.json" \
         DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token \
-        FLEET_PEERS_FILE=/data/fleet_peers.json retention_secs=604800
+        fleet_peers_api=", \"fleet_peers_path\": \"/data/fleet_peers.json\"" retention_secs=604800
     if jq -e . "$TMP/sidecar.json" > /dev/null 2>&1; then
         ok "entrypoint.sh block: renders as JSON"
         assert_keys_accepted "$TMP/sidecar.json" '.' \

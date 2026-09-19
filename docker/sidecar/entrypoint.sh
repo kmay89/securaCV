@@ -305,6 +305,13 @@ run() {
     local prefix="${FRIGATE_TOPIC_PREFIX:-frigate}"
     local topic="${FRIGATE_MQTT_TOPIC:-${prefix}/events}"
     local publish="${SECURACV_PUBLISH:-true}"
+    # The api block names the roll-call file only while the bridge keeps it
+    # (as the add-on's run.sh does): with publishing off, GET /api/fleet lists
+    # this kernel alone and an older file is kept for its pins, not served.
+    local fleet_peers_api=""
+    if [ "$publish" = "true" ]; then
+        fleet_peers_api=", \"fleet_peers_path\": \"$FLEET_PEERS_FILE\""
+    fi
 
     log "broker=$addr topic=$topic retention=${retention_days}d bucket=${bucket_min}m publish=$publish"
 
@@ -329,8 +336,7 @@ run() {
   "ruleset_id": "ruleset:frigate_v1",
   "api": {
     "addr": "127.0.0.1:8799",
-    "token_path": "$TOKEN_FILE",
-    "fleet_peers_path": "$FLEET_PEERS_FILE"
+    "token_path": "$TOKEN_FILE"$fleet_peers_api
   },
   "retention": {
     "seconds": $retention_secs
@@ -412,7 +418,7 @@ EOF
         log "event_mqtt_bridge started (PID ${pids[-1]})"
         log "fleet roll-call: $FLEET_PEERS_FILE (GET /api/fleet on the loopback API lists the Canaries the bridge hears)"
     else
-        log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish); no bridge listens for Canaries, so GET /api/fleet lists this kernel only"
+        log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish); no bridge listens for Canaries, so GET /api/fleet lists this kernel only (an earlier roll-call file is kept for its pins, not served)"
     fi
 
     # Propagate the first child exit so the container restarts on failure.

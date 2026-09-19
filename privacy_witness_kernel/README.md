@@ -78,7 +78,8 @@ wires that itself — `run.sh` points both the kernel and `event_mqtt_bridge`
 at `/config/fleet_peers.json` — so there is no option to set. Three honest
 limits. Peers appear only while `mqtt_publish.enabled` is on (the default):
 with it off no bridge listens for Canaries, the roll-call lists the kernel
-alone, and the add-on log says so at startup. The add-on advertises no
+alone (the kernel is not pointed at the file, so rows a past bridge pinned
+are kept for their keys, not served), and the add-on log says so at startup. The add-on advertises no
 `_securacv._tcp` Bonjour service and, as above, ships the 8799 host port
 disabled, so the Wall cannot find it on its own: enable the port in the
 add-on's Network settings and type `http://<your-home-assistant-host>:8799`
