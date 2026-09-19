@@ -66,11 +66,13 @@ be kept in lockstep. The generator now asserts it, and a disagreement fails
 generation — so `lint.yml`'s `--check` goes red on the PR that introduces
 it — naming the row, the profile and the remedy:
 
-1. every exact core-version a workflow row pins is pinned by some sketch
-   profile;
-2. every core a sketch profile pins is a workflow pin, **or** the Arduino core
-   inside that product's PlatformIO platform (`PLATFORM_FACTS`) — a sketch may
-   track either build path;
+1. every exact core-version a workflow row pins is pinned by a sketch
+   profile of a product that row builds;
+2. every core a sketch profile pins is a pin of a workflow row that builds
+   that product, **or** the Arduino core inside that product's PlatformIO
+   platform (`PLATFORM_FACTS`) — a sketch may track either build path (both
+   rules are scoped per product: one product's profile never answers for
+   another's row);
 3. every library a workflow row pins on its core line (GFX, lvgl and NimBLE
    split their majors along the core boundary) is pinned to the same version
    by every profile, of a product that row builds, on that core. Which product

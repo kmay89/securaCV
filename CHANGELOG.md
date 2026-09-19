@@ -18,7 +18,10 @@
   `http://<host>:8799` typed into the Wall once; the MQTT publisher enabled)
   and that the summary file — pinned public keys, coarse wellbeing words,
   `0600` — enters HA backups by design. No new option; existing add-ons pick
-  it up at the next product release.
+  it up at the next product release. Review round (Codex on #1686): the api
+  blocks name the file only while a bridge keeps it, so turning the
+  publisher off stops serving the rows a past bridge pinned — the file is
+  kept for its keys, not deleted — and the render test covers both states.
 - **Both flashers (browser Lab and desktop Flasher) now carry the broker TLS
   controls** — mode select, CA certificate, SHA-256 fingerprint — writing the
   `mqtt_tls` / `mqtt_ca` / `mqtt_fp` keys the firmware has read since wave 3;
@@ -39,7 +42,10 @@
   workflows' core-version rows; the validator pin is one string across the
   workflows, README and generator, held by a test. The WAP's Arduino-CLI rows
   floating on "latest" above its 3.3.8 sketch pin is recorded as a release
-  decision, not fixed here.
+  decision, not fixed here. Review round (Codex on #1686): the agreement is
+  scoped per product — a row's pin is answered only by the profiles of the
+  product it builds, and a profile's pin only by that product's rows or its
+  own PlatformIO core.
 
 ### The device manifest owns its case's board knobs, and the regeneration order is one command
 
