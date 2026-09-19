@@ -80,9 +80,13 @@ sbom/sbom-firmware.cdx.json (lint.yml runs it on every PR).
 
 `--validate` holds the rendered document to the CycloneDX 1.5 JSON schema in
 strict mode (cyclonedx-python-lib's JsonStrictValidator, schema bundled, no
-network) — read-only, like `--check`, and run before it compares — or, given
-a FILE, holds that file's bytes to it (sbom.yml's timestamped artifact). The
-schema does not check graph closure; the unit tests and sbom.yml's jq step do.
+network) — read-only, like `--check`, and run before it compares; a `--out`
+or `--timestamp` beside it without `--check` is refused, not dropped — or,
+given a FILE, holds that file's bytes to it (sbom.yml's timestamped
+artifact). The file's `specVersion` must be 1.5 as well: the schema types it
+as a free string, so a document claiming 1.6 would otherwise pass as "a
+strict 1.5 document". The schema does not check graph closure; the unit
+tests and sbom.yml's jq step do.
 
 Usage:
     python3 scripts/gen_firmware_sbom.py              # rewrite the committed file
@@ -541,9 +545,10 @@ def sketch_core_pins(flavors: list[dict]) -> list[dict]:
     from YAML and never grepped — the files' comments quote core numbers
     too. `libraries` is {name: version|None} from `Name (1.2.3)` / `Name`.
     The product is the flavors.json entry whose dir holds the sketch. A
-    profile this reader cannot spell (no product, not exactly one platform,
-    a platform not written that way) is refused, not skipped: a --check
-    that read past it would be green on a pin it never saw.
+    file or profile this reader cannot spell (no product, no profiles, not
+    exactly one platform, a platform not written that way) is refused, not
+    skipped: a --check that read past it would be green on a pin it never
+    saw.
     """
     yaml = _yaml()
     by_dir = {REPO / p["dir"]: p["name"] for p in flavors}
@@ -555,7 +560,14 @@ def sketch_core_pins(flavors: list[dict]) -> list[dict]:
             raise SystemExit(f"gen_firmware_sbom.py: {rel} is under no product's dir in "
                              f"firmware/flavors.json")
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        for profile, body in (doc.get("profiles") or {}).items():
+        profiles = doc.get("profiles") or {}
+        if not profiles:
+            raise SystemExit(f"gen_firmware_sbom.py: {rel} declares no profiles — every "
+                             f"sketch.yaml under a product dir pins its core in a profile, "
+                             f"and a profile-less file would shrink the axis the workflow "
+                             f"pins are checked against to nothing; add the profile, or "
+                             f"extend sketch_core_pins() if such a file is now legal")
+        for profile, body in profiles.items():
             body = body or {}
             where = f"{rel} ({profile})"
             platforms = [p or {} for p in body.get("platforms") or []]
@@ -979,7 +991,21 @@ def validate_document(text: str) -> str | None:
     on. The `json-validation` extra is what brings the iri-reference
     checker; without it a URL with a space passes, so the import is guarded
     with the exact pip spec, the way the PyYAML guard names its remedy.
+
+    Two things the schema run cannot say come first: that `text` is JSON at
+    all (the validator would raise a traceback, not report), and that the
+    document claims SPEC_VERSION — the 1.5 schema types `specVersion` as a
+    free string with an example, no enum, so a file declaring 1.6 satisfies
+    it, and the OK line names 1.5.
     """
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return f"$: not JSON — {exc.msg} at line {exc.lineno} column {exc.colno}"
+    if isinstance(doc, dict) and doc.get("specVersion") != SPEC_VERSION:
+        return (f"$.specVersion: expected {SPEC_VERSION!r}, got {doc.get('specVersion')!r} "
+                f"(the schema types it as a free string; the generator promises "
+                f"{SPEC_VERSION})")
     remedy = (f"gen_firmware_sbom.py: cyclonedx-python-lib with its json-validation extra "
               f"is needed for --validate (pip install '{VALIDATOR_PIP}')")
     try:
@@ -1028,16 +1054,32 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"hold the document to the CycloneDX {SPEC_VERSION} JSON schema, "
                          f"strictly (cyclonedx-python-lib's JsonStrictValidator): the "
                          f"rendered document (read-only, like --check, and before it "
-                         f"compares); or, with FILE, that file's bytes (sbom.yml's "
-                         f"timestamped artifact). Needs: pip install '{VALIDATOR_PIP}'")
+                         f"compares; --out/--timestamp beside it need --check); or, with "
+                         f"FILE, that file's bytes (sbom.yml's timestamped artifact), whose "
+                         f"specVersion must be {SPEC_VERSION}. "
+                         f"Needs: pip install '{VALIDATOR_PIP}'")
     args = ap.parse_args(argv)
+    custom_out = args.out.resolve() != OUT.resolve()
 
     if args.validate:   # a FILE: validate those bytes and nothing else
-        if args.check or args.verify_with_pio or args.timestamp:
-            ap.error("--validate FILE validates that file only; combine bare --validate "
-                     "with --check or a write")
+        if args.check or args.verify_with_pio or args.timestamp or custom_out:
+            ap.error("--validate FILE validates that file only and takes no --check, "
+                     "--verify-with-pio, --timestamp or --out; bare --validate holds the "
+                     "rendered document, alone or with --check")
         target = Path(args.validate)
-        return _report_validation(str(target), target.read_text(encoding="utf-8"))
+        try:
+            text = target.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"::error::{target}: cannot read it — {exc.strerror or exc}")
+            return 1
+        return _report_validation(str(target), text)
+
+    if args.validate is not None and not args.check and (args.timestamp or custom_out):
+        # Read-only means read-only: a write flag beside bare --validate
+        # used to be dropped for a green exit and no file.
+        ap.error("bare --validate is read-only (the rendered document, like --check) and "
+                 "writes nothing, so --out/--timestamp need --check beside it; to validate "
+                 "an artifact, write it first and run --validate FILE on the file")
 
     if args.verify_with_pio:
         problems = verify_with_pio()
@@ -1048,7 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
         print("gen_firmware_sbom.py --verify-with-pio: OK — the resolver agrees with "
               "PlatformIO on platform / framework / board / lib_deps / lib_extra_dirs "
               "for every build env.")
-        if not args.check:
+        if not args.check and args.validate is None:
             return 0
 
     stamp = args.timestamp
@@ -1076,7 +1118,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(line)
             print(f"::error::{args.out.relative_to(REPO) if args.out.is_relative_to(REPO) else args.out} "
                   f"is stale — a build input moved (a platform pin, a lib_deps line, a "
-                  f"library manifest, an Arduino core pin, the firmware version). "
+                  f"library manifest, an Arduino core pin in a workflow or a sketch.yaml "
+                  f"profile, the firmware version). "
                   f"Regenerate: python3 scripts/gen_firmware_sbom.py")
             return 1
         doc = json.loads(text)

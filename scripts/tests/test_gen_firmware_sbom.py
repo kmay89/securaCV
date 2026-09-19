@@ -19,13 +19,18 @@ What is pinned and why:
     and an unknown key, a URL with a space and a bad component type are
     refused — the validator is imported unconditionally, because lint.yml's
     tests step installs it and a skipTest on ImportError would read as
-    covered while catching nothing;
+    covered while catching nothing; a file claiming another specVersion is
+    refused (the schema types it as a free string); a missing or non-JSON
+    FILE is one error line; bare --validate refuses a write flag beside it;
+  • the validator's pip pin is one string across lint.yml, sbom.yml, the
+    README and the generator;
   • the two Arduino axes: sketch.yaml profiles are read from YAML (the
     files' comments quote core numbers too), workflow rows carry their
     matrix-resolved library pins and the sketch they compile, the agreement
     check is green on the tree and red on a workflow pin no profile carries,
-    a sketch pin neither axis knows, a library off its core line — and a
-    finding fails generation.
+    a sketch pin neither axis knows, a library off its core line (and the
+    PlatformIO-core allowance is per product) — a finding fails generation;
+    a sketch.yaml with no profiles is refused.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -39,7 +44,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -233,6 +238,17 @@ def _doc() -> dict:
     return json.loads(gs.OUT.read_text(encoding="utf-8"))
 
 
+def _usage_error(argv: list[str]) -> int | None:
+    """gs.main(argv)'s SystemExit code when argparse refuses the flags (2),
+    else None — stdout and stderr swallowed."""
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        try:
+            gs.main(argv)
+        except SystemExit as exc:
+            return exc.code
+    return None
+
+
 class SchemaValidation(unittest.TestCase):
     """--validate: cyclonedx-python-lib's JsonStrictValidator against the
     CycloneDX 1.5 schema it bundles. Imported unconditionally — see the
@@ -280,11 +296,90 @@ class SchemaValidation(unittest.TestCase):
                 self.assertEqual(gs.main(["--check", "--validate", "--out", str(good)]), 0)
             self.assertIn("--validate: OK", out.getvalue())
             self.assertIn("--check: OK", out.getvalue())
-            # bare --validate is read-only: no write happens, even to --out
+            # bare --validate is read-only, and says so: a write flag beside
+            # it (no --check) is refused up front, never dropped for a green
+            # exit and no file. The FILE form ignores --out, so it refuses
+            # that too.
             good.unlink()
-            with redirect_stdout(io.StringIO()):
-                self.assertEqual(gs.main(["--validate", "--out", str(good)]), 0)
+            for argv in (["--validate", "--out", str(good)],
+                         ["--validate", "--timestamp", "now"],
+                         ["--validate", "--out", str(good), "--timestamp", "now"],
+                         ["--validate", str(bad), "--out", str(good)]):
+                self.assertEqual(_usage_error(argv), 2, argv)
             self.assertFalse(good.exists())
+
+    def test_a_document_claiming_another_spec_version_is_refused(self):
+        # The bundled schema types specVersion as a free string (examples,
+        # no enum), so the schema alone cannot say which spec a file claims;
+        # the OK line names 1.5, so the generator asserts it before the run.
+        doc = _doc()
+        doc["specVersion"] = "1.6"
+        problem = gs.validate_document(json.dumps(doc))
+        self.assertIsNotNone(problem)
+        self.assertTrue(problem.startswith("$.specVersion:"), problem)
+        self.assertIn("1.6", problem)
+        self.assertIn(gs.SPEC_VERSION, problem)
+        with tempfile.TemporaryDirectory() as tmp:
+            claims16 = Path(tmp) / "claims16.cdx.json"
+            claims16.write_text(json.dumps(doc), encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(gs.main(["--validate", str(claims16)]), 1)
+            self.assertIn("::error::", out.getvalue())
+            self.assertIn("$.specVersion", out.getvalue())
+
+    def test_a_missing_or_non_json_file_is_one_error_line_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "nope.cdx.json"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(gs.main(["--validate", str(missing)]), 1)
+            self.assertIn("::error::", out.getvalue())
+            self.assertIn(str(missing), out.getvalue())
+            prose = Path(tmp) / "prose.cdx.json"
+            prose.write_text("not json", encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(gs.main(["--validate", str(prose)]), 1)
+            self.assertIn("::error::", out.getvalue())
+            self.assertIn("not JSON", out.getvalue())
+            self.assertIsNotNone(gs.validate_document("not json"))
+
+
+_PIN_RE = re.compile(r"cyclonedx-python-lib\[[^\]]*\]==[0-9A-Za-z.]+")
+
+
+class ValidatorPin(unittest.TestCase):
+    """One pin, five places: the generator's VALIDATOR_PIP is the string
+    every workflow pip line, and the README, spell — a one-file bump would
+    otherwise falsify the ImportError remedy and the lint.yml comment
+    silently (the shape lint_fw_version_sync.sh exists to prevent)."""
+
+    def test_every_workflow_pip_line_and_the_readme_carry_the_generator_pin(self):
+        yaml = gs._yaml()
+        quoted = f"'{gs.VALIDATOR_PIP}'"
+        pip_lines: dict[str, list[str]] = {}
+        for path in sorted(gs.WORKFLOWS.glob("*.yml")):
+            wf = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            for job in (wf.get("jobs") or {}).values():
+                for step in (job or {}).get("steps") or []:
+                    for line in str((step or {}).get("run") or "").splitlines():
+                        if "pip install" in line and "cyclonedx-python-lib" in line:
+                            pip_lines.setdefault(path.name, []).append(line.strip())
+        # the two gates install it — and nowhere else does
+        self.assertEqual(sorted(pip_lines), ["lint.yml", "sbom.yml"], pip_lines)
+        self.assertEqual(len(pip_lines["lint.yml"]), 2, pip_lines)   # tests step, byte gate
+        self.assertEqual(len(pip_lines["sbom.yml"]), 1, pip_lines)
+        for name, lines in pip_lines.items():
+            for line in lines:
+                self.assertIn(quoted, line, f"{name}: {line}")
+        # and no text anywhere — a comment, the README, the source — quotes
+        # a different pin of it
+        readme = REPO / "sbom" / "README.md"
+        self.assertIn(quoted, readme.read_text(encoding="utf-8"))
+        for path in [*sorted(gs.WORKFLOWS.glob("*.yml")), readme, SCRIPT]:
+            for found in _PIN_RE.findall(path.read_text(encoding="utf-8")):
+                self.assertEqual(found, gs.VALIDATOR_PIP, path.name)
 
 
 def _product_cores(doc: dict) -> dict[str, set[str]]:
@@ -363,6 +458,15 @@ class ArduinoCorePins(unittest.TestCase):
                                                {k: set() for k in self.cores})
         self.assertEqual(len(findings), 1, findings)
         self.assertIn("xiao_sense", findings[0])
+        # and the allowance is per product: the display's platform carrying
+        # 3.3.8 does not excuse the WAP's sketch (today both carry it, so a
+        # union of the map would pass unnoticed without this)
+        findings = gs.check_core_pin_agreement(
+            self.workflow, self.sketch, {"canary-wap": set(), "canary-display": {"3.3.8"}})
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("xiao_sense", findings[0])
+        self.assertEqual(gs.check_core_pin_agreement(
+            self.workflow, self.sketch, {"canary-wap": {"3.3.8"}, "canary-display": set()}), [])
 
     def test_a_library_off_its_core_line_is_a_finding(self):
         # lvgl 8.4 on a core-3 profile: one finding per workflow row on 3.3.10
@@ -389,6 +493,37 @@ class ArduinoCorePins(unittest.TestCase):
                 gs.build_document()
         self.assertIn("disagree", str(cm.exception))
         self.assertIn("xiao_sense", str(cm.exception))
+
+    def test_a_sketch_yaml_with_no_profiles_is_refused(self):
+        # A profile-less file would shrink the axis rule (a) is checked
+        # against to nothing, silently; the reader refuses every other shape
+        # it cannot spell, and this one too.
+        flavors = [{"name": "x", "dir": "firmware/projects/x"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sketch = "firmware/projects/x/arduino/x/sketch.yaml"
+            with mock.patch.object(gs, "REPO", root), \
+                    mock.patch.object(gs, "PROJECTS", root / "firmware" / "projects"):
+                for body in ("name: x\n", "name: x\nprofiles: {}\n", "name: x\nprofiles:\n"):
+                    _write(root, sketch, body)
+                    with self.assertRaises(SystemExit) as cm:
+                        gs.sketch_core_pins(flavors)
+                    self.assertIn("no profiles", str(cm.exception))
+                    self.assertIn(sketch, str(cm.exception))
+                _write(root, sketch, """
+                    profiles:
+                      a:
+                        fqbn: esp32:esp32:esp32s3
+                        platforms:
+                          - platform: esp32:esp32 (3.3.10)
+                        libraries:
+                          - lvgl (9.5.0)
+                          - ArduinoJson
+                """)
+                pins = gs.sketch_core_pins(flavors)
+        self.assertEqual([(p["product"], p["profile"], p["version"], p["libraries"])
+                          for p in pins],
+                         [("x", "a", "3.3.10", {"lvgl": "9.5.0", "ArduinoJson": None})])
 
     def test_sketch_profiles_are_build_paths_of_their_core(self):
         paths = {c["bom-ref"]: next(p["value"] for p in c["properties"]
