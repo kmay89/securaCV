@@ -5,7 +5,11 @@
 # privacy-preserving witness log:
 #   witness_api        — event API + capability token (loopback :8799)
 #   frigate_bridge     — Frigate MQTT events → sealed log
-#   event_mqtt_bridge  — sealed log → HA MQTT Discovery sensors (optional)
+#   event_mqtt_bridge  — sealed log → HA MQTT Discovery sensors (optional);
+#                        also keeps the fleet roll-call (/data/fleet_peers.json,
+#                        the Canaries it hears on the broker) that witness_api's
+#                        GET /api/fleet serves. No witnessd runs here — Frigate
+#                        owns the cameras — and the API stays on loopback.
 #
 # Environment contract (only FRIGATE_MQTT_HOST is required):
 #   FRIGATE_MQTT_HOST       broker hostname Frigate publishes to   (required*)
@@ -43,6 +47,15 @@ DB_PATH="$DATA_DIR/witness.db"
 KEY_FILE="$DATA_DIR/device_key"
 TOKEN_FILE="$DATA_DIR/api_token"
 CONFIG_FILE="$DATA_DIR/witness_config.json"
+# The fleet roll-call summary event_mqtt_bridge writes and witness_api's
+# GET /api/fleet reads. All three daemons share this one container's /data,
+# so it sits beside the database and the token: the directory exists before
+# the bridge's first atomic write (which never creates a parent), and the
+# volume users already back up carries the public key pinned on first sight
+# for every Canary the bridge has heard. Written 0600: it also holds
+# per-room wellbeing words. The config block and pub_args below read this
+# one variable, so the kernel and the bridge can never name two files.
+FLEET_PEERS_FILE="$DATA_DIR/fleet_peers.json"
 
 # Logs go to stderr: several helpers are called inside $(...) command
 # substitutions, where anything on stdout would pollute the captured value.
@@ -316,7 +329,8 @@ run() {
   "ruleset_id": "ruleset:frigate_v1",
   "api": {
     "addr": "127.0.0.1:8799",
-    "token_path": "$TOKEN_FILE"
+    "token_path": "$TOKEN_FILE",
+    "fleet_peers_path": "$FLEET_PEERS_FILE"
   },
   "retention": {
     "seconds": $retention_secs
@@ -383,6 +397,7 @@ EOF
             --daemon
             --mqtt-broker-addr "$addr"
             --api-token-path "$TOKEN_FILE"
+            --fleet-peers-path "$FLEET_PEERS_FILE"
             --ha-discovery-prefix "${HA_DISCOVERY_PREFIX:-homeassistant}"
             --mqtt-topic-prefix "${MQTT_TOPIC_PREFIX:-witness}"
             --ha-device-id "$ha_device_id"
@@ -395,8 +410,9 @@ EOF
         event_mqtt_bridge "${pub_args[@]}" &
         pids+=($!)
         log "event_mqtt_bridge started (PID ${pids[-1]})"
+        log "fleet roll-call: $FLEET_PEERS_FILE (GET /api/fleet on the loopback API lists the Canaries the bridge hears)"
     else
-        log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish)"
+        log "HA Discovery publishing disabled (SECURACV_PUBLISH=$publish); no bridge listens for Canaries, so GET /api/fleet lists this kernel only"
     fi
 
     # Propagate the first child exit so the container restarts on failure.
