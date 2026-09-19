@@ -593,10 +593,12 @@ def check_core_pin_agreement(workflow_pins: list[dict], sketch_pins: list[dict],
                              product_cores: dict[str, set[str]]) -> list[str]:
     """The agreement between the two Arduino axes, as findings (empty: holds).
 
-    (a) every exact core a workflow row pins is pinned by some sketch profile;
-    (b) every core a sketch profile pins is a workflow pin, or an Arduino core
-        inside that product's PlatformIO platform(s) — `product_cores`, from
-        PLATFORM_FACTS — so a sketch may track either build path;
+    (a) every exact core a workflow row pins is pinned by a sketch profile of
+        a product that row builds;
+    (b) every core a sketch profile pins is a pin of a workflow row that builds
+        that product, or an Arduino core inside that product's PlatformIO
+        platform(s) — `product_cores`, from PLATFORM_FACTS — so a sketch may
+        track either build path;
     (c) every library a workflow row pins on its core line is pinned to the
         same version by every profile, of a product that row builds, on that
         core (firmware.yml's "keep the two in lockstep", made structural).
@@ -604,21 +606,30 @@ def check_core_pin_agreement(workflow_pins: list[dict], sketch_pins: list[dict],
     to agree with, and a sketch may pin libraries its row leaves floating.
     """
     findings: list[str] = []
-    sketch_versions = {sp["version"] for sp in sketch_pins}
-    workflow_versions = {wp["version"] for wp in workflow_pins if wp["version"]}
+    # Both directions are scoped to the product a row builds: a WAP row's pin
+    # is answered only by a WAP profile, and a WAP profile only by a WAP row
+    # (or the WAP's own PlatformIO core). A repository-wide set let one
+    # product's profile answer for another's row — the review round on #1686
+    # showed a WAP row moved to 3.3.10 staying green on the display's 3.3.10
+    # profile — which is exactly the drift this gate exists to catch.
     for wp in workflow_pins:
-        if wp["version"] and wp["version"] not in sketch_versions:
-            findings.append(f"{wp['where']} pins esp32:esp32 {wp['version']}, which no "
-                            f"sketch.yaml profile pins (the profiles pin: "
-                            f"{', '.join(sorted(sketch_versions)) or 'nothing'})")
+        if not wp["version"]:
+            continue
+        of = {sp["version"] for sp in sketch_pins if sp["product"] in wp["products"]}
+        if wp["version"] not in of:
+            findings.append(f"{wp['where']} pins esp32:esp32 {wp['version']} for "
+                            f"{', '.join(wp['products'])}, which no sketch.yaml profile of "
+                            f"that product pins (its profiles pin: "
+                            f"{', '.join(sorted(of)) or 'nothing'})")
     for sp in sketch_pins:
+        rows = {wp["version"] for wp in workflow_pins
+                if wp["version"] and sp["product"] in wp["products"]}
         cores = product_cores.get(sp["product"], set())
-        if sp["version"] not in workflow_versions | cores:
+        if sp["version"] not in rows | cores:
             findings.append(f"{sp['where']} pins esp32:esp32 {sp['version']}, which is neither "
-                            f"a workflow core-version pin "
-                            f"({', '.join(sorted(workflow_versions)) or 'none'}) nor the "
-                            f"Arduino core of {sp['product']}'s PlatformIO platform "
-                            f"({', '.join(sorted(cores)) or 'none'})")
+                            f"a core-version pin of a workflow row that builds {sp['product']} "
+                            f"({', '.join(sorted(rows)) or 'none'}) nor the Arduino core of "
+                            f"its PlatformIO platform ({', '.join(sorted(cores)) or 'none'})")
     for wp in workflow_pins:
         if not wp["version"]:
             continue

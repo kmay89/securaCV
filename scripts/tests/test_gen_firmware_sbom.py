@@ -468,6 +468,30 @@ class ArduinoCorePins(unittest.TestCase):
         self.assertEqual(gs.check_core_pin_agreement(
             self.workflow, self.sketch, {"canary-wap": {"3.3.8"}, "canary-display": set()}), [])
 
+    def test_a_row_pin_is_answered_only_by_the_profiles_of_the_product_it_builds(self):
+        # review round on #1686: a WAP row moved to 3.3.10 must not stay green
+        # on the display's 3.3.10 profile
+        rows = self.workflow + [{"version": "3.3.10", "where": "x.yml:wap",
+                                 "libraries": {}, "products": ["canary-wap"]}]
+        findings = gs.check_core_pin_agreement(rows, self.sketch, self.cores)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("x.yml:wap pins esp32:esp32 3.3.10 for canary-wap", findings[0])
+        self.assertIn("its profiles pin: 3.3.8", findings[0])
+        # the same pin on a row that builds the display is answered by its profiles
+        rows = self.workflow + [{"version": "3.3.10", "where": "x.yml:display",
+                                 "libraries": {}, "products": ["canary-display"]}]
+        self.assertEqual(gs.check_core_pin_agreement(rows, self.sketch, self.cores), [])
+
+    def test_a_profile_pin_is_answered_only_by_rows_that_build_its_product(self):
+        # a WAP profile on 2.0.17 — a display row's pin, never a WAP row's, and
+        # not the WAP's PlatformIO core — is a finding, not a coincidence
+        doctored = [dict(p, version="2.0.17") if p["profile"] == "xiao_sense" else p
+                    for p in self.sketch]
+        findings = gs.check_core_pin_agreement(self.workflow, doctored, self.cores)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("xiao_sense", findings[0])
+        self.assertIn("builds canary-wap (none)", findings[0])
+
     def test_a_library_off_its_core_line_is_a_finding(self):
         # lvgl 8.4 on a core-3 profile: one finding per workflow row on 3.3.10
         # that builds the display (firmware, firmware-release, flasher-release)
