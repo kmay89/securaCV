@@ -176,8 +176,10 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
      works) or, on canary-display / -sense / -vision, a **SHA-256
      fingerprint pin** of the broker certificate. On canary-wap this is the
      `/mqtt` page's "Encryption" setting; on the other three it is the NVS
-     keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` next to `mqtt_host` (the
-     flashers' NVS builders write them; form fields are still to come). A
+     keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` next to `mqtt_host`, set from
+     the *Broker encryption* select in either flasher's broker block (the
+     CA box or the fingerprint field appears for the mode that uses it; the
+     plain-only nightstand-c6 is offered Plain only, with the reason). A
      Canary never falls back to plain or unverified on its own: an
      incomplete TLS setup refuses to connect and names the reason on its
      serial log. The unverified "lab" mode exists only as an explicit choice

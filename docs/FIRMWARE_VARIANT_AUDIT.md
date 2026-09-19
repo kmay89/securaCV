@@ -44,8 +44,8 @@ transports that can honor it (display / sense / vision — not the WAP).
 
 | Variant | MQTT stack | Plain | TLS, CA-verified | TLS, SHA-256-pinned | Lab opt-in (unverified, warns every connect) | Provisioned through | Test tier |
 |---|---|---|---|---|---|---|---|
-| canary-display (every flavor except nightstand-c6) | PubSubClient over `network/mqtt_transport.h` (WiFiClientSecure) | ✅ default | ✅ `mqtt_tls=1` + `mqtt_ca` | ✅ `mqtt_tls=2` + `mqtt_fp` | ✅ `mqtt_tls=3` | NVS namespace `securacv`, seeded by the flashers' NVS builders (browser `mqttProvisioningToNvs`, desktop `build_nvs`; no form fields yet — see gaps). The on-glass onboarding provisions Wi-Fi only. | compile-tested (PlatformIO envs + the generated Arduino parity sketch); decision host-tested; the browser emulator compiles the plain path unchanged (`EMU_BUILD_FLAVOR` guard) |
-| canary-display nightstand-c6 | plain `WiFiClient` — built with `CANARY_MQTT_PLAIN_ONLY` (`canary-display.ini`): the TLS transport put the image 1,568 bytes over its 0x1F0000 OTA slot | ✅ default | ❌ refused: a non-zero `mqtt_tls` in NVS is answered with a refusal and the reason on the log, never a plaintext socket | ❌ same | ❌ same | same NVS row | compile-tested; returns with the next size cut or a grown slot |
+| canary-display (every flavor except nightstand-c6) | PubSubClient over `network/mqtt_transport.h` (WiFiClientSecure) | ✅ default | ✅ `mqtt_tls=1` + `mqtt_ca` | ✅ `mqtt_tls=2` + `mqtt_fp` | ✅ `mqtt_tls=3` | NVS namespace `securacv`, seeded by both flashers' broker block — the *Broker encryption* select with the CA box or fingerprint field (browser `renderWifiFields` → `mqttProvisioningToNvs`, desktop `readProvisioning` → `build_nvs`; the catalog's `broker_tls` gates the modes and `canary-local/tests/desktop_parity.test.js` pins the two forms equal). The on-glass onboarding provisions Wi-Fi only. | compile-tested (PlatformIO envs + the generated Arduino parity sketch); decision host-tested; the browser emulator compiles the plain path unchanged (`EMU_BUILD_FLAVOR` guard) |
+| canary-display nightstand-c6 | plain `WiFiClient` — built with `CANARY_MQTT_PLAIN_ONLY` (`canary-display.ini`): the TLS transport put the image 1,568 bytes over its 0x1F0000 OTA slot | ✅ default | ❌ refused: a non-zero `mqtt_tls` in NVS is answered with a refusal and the reason on the log, never a plaintext socket | ❌ same | ❌ same | same NVS row — both flashers disable the TLS modes for it (catalog `broker_tls=false`, derived by `gen_flash.py` from the env's `-DCANARY_MQTT_PLAIN_ONLY`) and quote this refusal under the select, so neither seeds a mode the board will not connect with | compile-tested; returns with the next size cut or a grown slot |
 | canary-sense | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
 | canary-vision | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
 | canary-wap | esp_mqtt (ESP-IDF) applying the same decision (staged copy of the header, drift-gated by `check_mqtt_transport_sync.sh`) | ✅ default | ✅ `mqtt.tlsmode=1` + `mqtt.ca` — the device's `/mqtt` page or `POST /api/mqtt/config` | ❌ refused at save time and at connect: esp_mqtt has no fingerprint hook — use the CA mode | ❌ refused at save time and at connect: the pinned Arduino core builds esp-tls without `CONFIG_ESP_TLS_INSECURE` (every chip's sdkconfig in framework-arduinoespressif32-libs 3.3.8), so a session with no verification option fails with `ESP_ERR_INVALID_STATE` — the mode is not offered on the `/mqtt` page | the device's own `/mqtt` page / API (NVS namespace `csi`) | compile-tested (Arduino CLI); decision host-tested |
@@ -63,6 +63,21 @@ Behavior worth knowing before you flip a mode on:
 - **The port is yours.** No firmware rewrites `mqtt_port` when a TLS mode is
   set; a TLS broker normally listens on 8883. A plain listener on a
   TLS-configured port fails as *"the broker did not speak TLS on this port"*.
+- **Both flashers' forms carry the three keys** (the browser flasher's
+  broker block and the desktop Flasher's provisioning form share no code;
+  `canary-local/tests/desktop_parity.test.js` pins them equal): a *Broker
+  encryption* select — plain / CA-verified / SHA-256 fingerprint pin / lab,
+  the last labeled encrypted-but-NOT-verified and never preselected — with a
+  CA box shown for the CA mode and a fingerprint field shown for the pin
+  mode; only the field the chosen mode uses is written. A TLS mode with the
+  port still at 1883 gets an 8883 *suggestion* with a button, never a
+  rewrite. Fingerprints are taken in every spelling the firmware accepts
+  (any run of `:` or spaces between pairs, either case) and folded to 64 hex
+  before the builders' narrower check. The catalog's `broker_tls`
+  (`gen_flash.py`, from the env's `-DCANARY_MQTT_PLAIN_ONLY`) disables the
+  TLS modes for the nightstand-c6 with the firmware's own reason. Host-tested
+  (source-read parity plus the builder tests); the forms have not been
+  exercised against a TLS broker on hardware.
 - **Display broker gossip / referrals** rebind host and port only; the
   provisioned TLS mode persists. A gossiped plain `1883` endpoint on a
   TLS-mode display fails closed with that same message rather than
@@ -80,10 +95,6 @@ Behavior worth knowing before you flip a mode on:
 
 Gaps still open after this pass:
 
-- Neither flasher **form** exposes the three fields yet (the pure NVS
-  builders on both sides accept them and the browser/native parity gate holds
-  the key-set together; the UI is the remaining half — rule 7, both
-  frontends at once).
 - The shared setup portal and the display's on-glass onboarding carry no
   MQTT fields at all (pre-existing).
 - `firmware/canary`'s `securacv_mqtt` library is still plain-only.

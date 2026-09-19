@@ -12,8 +12,12 @@ and `desktop/src-tauri/src/provisioning.rs`.
 
 The Canary form and the hub form share one memory:
 
-- **Non-secrets** (device name, Wi-Fi name, broker host/port/user, hub board
-  choice) persist live in the app's local prefs, as they already did.
+- **Non-secrets** (device name, Wi-Fi name, broker host/port/user, the
+  broker encryption mode with its CA certificate or SHA-256 fingerprint — a
+  public certificate and its hash — and the hub board choice) persist live
+  in the app's local prefs, as they already did. The one value not carried
+  forward is the lab (unverified) TLS mode: a per-flash choice, never
+  preselected.
 - **Secrets** now persist too, with consent: the "Remember" checkbox under
   each form routes the Wi-Fi password (keyed by SSID, so two homes don't
   overwrite each other), the broker password (keyed by host + user), and the
