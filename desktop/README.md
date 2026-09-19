@@ -49,7 +49,13 @@ NVS provisioning, the serial monitor/receipt parser, and the WE2 engine are
 split into `release.rs`, `provisioning.rs`, `serial_monitor.rs`, and `we2.rs`.
 
 For `usb-secrets` images, Wi-Fi and MQTT values are patched into the ESP32 NVS
-partition only after the untouched release image verifies. Passwords are not
+partition only after the untouched release image verifies. The broker block
+also carries the TLS mode with its CA certificate or SHA-256 fingerprint
+(`mqtt_tls` / `mqtt_ca` / `mqtt_fp` — the same keys the browser flasher
+seeds; `canary-local/tests/desktop_parity.test.js` pins the two forms equal,
+and the catalog's `broker_tls` withholds the TLS modes from a build that
+refuses them). The CA and the fingerprint are public values and persist with
+the host in local prefs, never in the OS secret store. Passwords are not
 logged or serialized, and the UI clears them after a successful write. The
 patched image is handed to `espflash` through an atomically-created, randomly
 named private temporary file (mode 0600 on Unix) that is removed on every
