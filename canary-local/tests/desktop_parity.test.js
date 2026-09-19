@@ -1471,6 +1471,188 @@ test("displays can be given a broker — the case that was impossible", () => {
   }
 });
 
+test("broker TLS: both flashers offer the mode, the CA and the fingerprint, and read them the same way", async () => {
+  // Wave 3 landed the three NVS keys in both builders (the key-set test above
+  // already compares them) but no form on either side — so a frontend could
+  // lose, or never gain, the controls while that test stayed green. This is
+  // the auto-update pattern: capability parity, pinned to the firmware's own
+  // table, on BOTH frontends at once (AGENTS.md rule 7).
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const logicH = read(join(ROOT, "firmware/common/network/mqtt_transport_logic.h"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // The mode table is the firmware's ("do not renumber"); both frontends
+  // offer exactly it, in the same words, with plain selected on both.
+  const fwModes = [...logicH.matchAll(/^\s*(?:Plain|Ca|Fingerprint|InsecureLab)\s*=\s*(\d)/gm)]
+    .map((m) => Number(m[1]));
+  assert.deepStrictEqual(fwModes, [0, 1, 2, 3], "mqtt_transport_logic.h Mode table moved");
+  assert.deepStrictEqual(core.MQTT_TLS_MODES, { plain: 0, ca: 1, fingerprint: 2, insecure: 3 });
+  const optBlock = /const MQTT_TLS_OPTIONS = \[([\s\S]*?)\];/.exec(flashJs);
+  assert.ok(optBlock, "flash.js lost MQTT_TLS_OPTIONS (the browser's mode select)");
+  const browserOpts = [...optBlock[1].matchAll(/\[(\d), "([^"]+)"\]/g)].map((m) => [Number(m[1]), m[2]]);
+  const selBlock = /<select id="mqtt-tls"[^>]*>([\s\S]*?)<\/select>/.exec(html);
+  assert.ok(selBlock, "index.html lost select#mqtt-tls (the desktop's mode select)");
+  const desktopOpts = [...selBlock[1].matchAll(/<option value="(\d)"(?: selected)?>([^<]+)<\/option>/g)]
+    .map((m) => [Number(m[1]), m[2]]);
+  assert.deepStrictEqual(browserOpts.map((o) => o[0]), fwModes, "browser offers a mode set that is not the firmware's");
+  assert.deepStrictEqual(desktopOpts, browserOpts, "TLS mode options differ between the two flashers");
+  // The lab option says what it is, and neither frontend preselects it —
+  // not by default, and (desktop) not by a remembered profile either.
+  const lab = browserOpts.find((o) => o[0] === 3)[1];
+  assert.match(lab, /NOT verified/, "the lab option must say the broker is not verified");
+  assert.match(lab, /warns on every connect/, "the lab option must say the firmware warns on every connect");
+  assert.match(flashJs, /tlsSel\.value = String\(core\.MQTT_TLS_MODES\.plain\)/, "browser select must default to plain");
+  assert.match(selBlock[1], /<option value="0" selected>/, "desktop select must default to plain");
+  assert.ok(!/<option value="[1-3]" selected/.test(selBlock[1]), "desktop preselects a TLS mode");
+  assert.match(appJs, /if \(\$\("mqtt-tls"\)\.value === String\(MQTT_TLS\.insecure\)\) \$\("mqtt-tls"\)\.value = String\(MQTT_TLS\.plain\)/,
+    "desktop restoreProv must not carry the lab mode forward from the profile");
+
+  // The fingerprint spelling: ONE pattern string per frontend, pinned equal,
+  // and it is the firmware's set (fingerprint_normalize: any run of ':' or
+  // ' ' between pairs, none inside a pair, either case) — wider than the
+  // shared builder's own check, which is why both fold to 64 hex first.
+  const pat = /const MQTT_FP_PATTERN = "([^"]+)"/.exec(flashJs);
+  assert.ok(pat, "flash.js lost MQTT_FP_PATTERN");
+  const htmlPat = /<input id="mqtt-fp"[^>]*\spattern="([^"]+)"/.exec(html);
+  assert.ok(htmlPat, "index.html #mqtt-fp lost its pattern");
+  assert.strictEqual(htmlPat[1], pat[1], "the two flashers accept different fingerprint spellings");
+  assert.match(appJs, /new RegExp\(`\^\(\?:\$\{\$\("mqtt-fp"\)\.pattern\}\)\$`\)/,
+    "desktop fingerprintNormalize must read the input's own pattern (one source per side)");
+  const re = new RegExp(`^${pat[1]}$`);
+  const hex = "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9";
+  const pairs = hex.match(/../g);
+  const accepted = [hex, hex.toUpperCase(), pairs.join(":"), pairs.join(" "), pairs.join("  "),
+    pairs.join(": "), ":" + pairs.join("::") + " ", pairs.join(":").toUpperCase()];
+  const rejected = [hex.slice(0, 62), hex + "aa", pairs.join("-"), hex.slice(0, 63) + "g",
+    "0a1:b" + pairs.slice(2).join(":"), pairs.slice(0, 31).join(":"), ""];
+  for (const s of accepted) assert.ok(re.test(s), `pattern must accept ${JSON.stringify(s)} (the firmware does)`);
+  for (const s of rejected) assert.ok(!re.test(s), `pattern must reject ${JSON.stringify(s)} (the firmware does)`);
+  // provisioning.rs still skips both separators anywhere (the same set)...
+  assert.match(provRs, /b\[i\] == b':' \|\| b\[i\] == b' '/, "provisioning.rs fingerprint_shape_ok no longer skips ':' and ' '");
+  // ...and the folded 64-hex form is what the shared browser builder seeds.
+  for (const s of accepted) {
+    const folded = s.replace(/[: ]/g, "");
+    const out = core.mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 8883, mqttTls: 2, mqttFp: folded });
+    assert.strictEqual(out.strings.mqtt_fp, folded);
+  }
+  assert.match(flashJs, /mqttFp: mode === core\.MQTT_TLS_MODES\.fingerprint \? mqttFingerprintNormalize\(fp\.value\) : ""/,
+    "browser values() must fold the fingerprint and send it for the pin mode only");
+  assert.match(appJs, /mqttFp: tlsMode === MQTT_TLS\.fingerprint \? fingerprintNormalize\(\$\("mqtt-fp"\)\.value\) : ""/,
+    "desktop readProvisioning must fold the fingerprint and send it for the pin mode only");
+
+  // The CA: the builders' 3070-byte cap on both forms (+ "\n" = the
+  // firmware's 3071), shown for the CA mode only, sent for the CA mode only.
+  assert.match(flashJs, /const MQTT_CA_MAX = 3070/);
+  assert.match(html, /<textarea id="mqtt-ca"[^>]*\smaxlength="3070"/);
+  assert.match(provRs, /byte_len\(ca\) > 3070/);
+  assert.match(flashJs, /ca\.classList\.toggle\("flash-hidden", mode !== core\.MQTT_TLS_MODES\.ca\)/);
+  assert.match(appJs, /\$\("mqtt-ca-row"\)\.classList\.toggle\("hidden", !\(broker && mode === MQTT_TLS\.ca\)\)/);
+  assert.match(flashJs, /mqttTls: mode,/);
+  assert.match(flashJs, /mqttCa: mode === core\.MQTT_TLS_MODES\.ca \? ca\.value : ""/);
+  assert.match(appJs, /mqttTls: tlsMode,/);
+  assert.match(appJs, /mqttCa: tlsMode === MQTT_TLS\.ca \? \$\("mqtt-ca"\)\.value\.trim\(\) : ""/);
+
+  // The port: SUGGESTED, never rewritten. Both name the firmware's own
+  // failure text and offer a button; the only assignment of 8883 to the
+  // port on either side is inside a click handler.
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop index.html", html]]) {
+    assert.ok(src.includes("the broker did not speak TLS on this port"), `${label} lost the 8883 suggestion`);
+    assert.ok(src.includes("Use 8883"), `${label}: the port suggestion must be a button, not a rewrite`);
+  }
+  const browserSets = flashJs.split("\n").filter((l) => l.includes('port.value = "8883"'));
+  const desktopSets = appJs.split("\n").filter((l) => l.includes('$("mqtt-port").value = "8883"'));
+  assert.strictEqual(browserSets.length, 1); assert.match(browserSets[0], /addEventListener\("click"/);
+  assert.strictEqual(desktopSets.length, 1); assert.match(desktopSets[0], /addEventListener\("click"/);
+
+  // Desktop persistence: mode, CA and pin are non-secrets and live in the
+  // prefs profile with the host — never in the OS secret store.
+  const pf = /const PROV_FIELDS = \[([^\]]+)\]/.exec(appJs);
+  assert.ok(pf, "desktop PROV_FIELDS moved");
+  for (const id of ["mqtt-tls", "mqtt-ca", "mqtt-fp"]) {
+    assert.ok(pf[1].includes(`"${id}"`), `desktop PROV_FIELDS must remember ${id} (a non-secret, per the fleet book)`);
+  }
+  assert.ok(!/secretStore\.(?:set|get)\([^)]*(?:mqtt-ca|mqtt-fp|mqttCa|mqttFp)/.test(appJs),
+    "the broker CA / pin must never take the OS-secret-store route");
+  // Native never logs the config: Provisioning has no Debug derive to print.
+  assert.ok(!/derive\([^)]*Debug[^)]*\)\]\s*\n\s*#\[serde\(rename_all = "camelCase"\)\]\s*\npub struct Provisioning/.test(provRs),
+    "provisioning.rs Provisioning must stay un-Debug so a CA can never be formatted into a log");
+});
+
+test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and both flashers gate on it", () => {
+  // The nightstand-c6 is built with -DCANARY_MQTT_PLAIN_ONLY and its
+  // mqtt_mgr.cpp REFUSES a provisioned TLS mode at boot (never a plain
+  // socket in its place). gen_flash.py derives broker_tls from the env's
+  // build flags; this re-derives it from the ini text so a hand-edited
+  // catalog, a flavor that gains or loses the flag, or a frontend that stops
+  // gating on it all fail here by name.
+  const ini = read(join(ROOT, "firmware/envs/platformio/canary-display.ini"));
+  const plainOnlyEnvs = new Set();
+  let cur = null;
+  for (const line of ini.split("\n")) {
+    const sec = /^\[(.+)\]/.exec(line);
+    if (sec) { cur = sec[1]; continue; }
+    if (/^\s*[;#]/.test(line)) continue;
+    if (cur && cur.startsWith("env:") &&
+        /(?:^|\s)-DCANARY_MQTT_PLAIN_ONLY(?:=(?!0(?:\s|$))\S+)?(?=\s|$)/.test(line)) {
+      plainOnlyEnvs.add(cur.slice("env:".length));
+    }
+  }
+  assert.ok(plainOnlyEnvs.has("canary-display-nightstand-c6"),
+    "the nightstand-c6 env no longer sets -DCANARY_MQTT_PLAIN_ONLY — regenerate flash.json and " +
+    "update docs/FIRMWARE_VARIANT_AUDIT.md's row with it");
+  const mgr = read(join(ROOT, "firmware/projects/canary-display/src/net/mqtt_mgr.cpp"));
+  assert.match(mgr, /Refusing to connect: NVS mqtt_tls=%u asks for TLS, but this flavor is/,
+    "canary-display mqtt_mgr.cpp no longer refuses a TLS mode on a plain-only build");
+  assert.match(mgr, /built plain-only \(OTA slot budget, CANARY_MQTT_PLAIN_ONLY\)/,
+    "the firmware's own reason text moved — both flashers quote it");
+
+  for (const p of catalog.products) {
+    assert.strictEqual(typeof p.broker_tls, "boolean",
+      `${p.id}: catalog has no broker_tls — regenerate with canary-local/tools/gen_flash.py`);
+    if (p.broker_nvs !== true) {
+      assert.strictEqual(p.broker_tls, false, `${p.id}: no broker in NVS, so no TLS mode to honor`);
+      continue;
+    }
+    // Display envs are named by their asset stem; the only plain-only env
+    // today is one of them. A flavor that gains the flag under another
+    // naming shows up as a loud mismatch here, which is the point.
+    const expect = !plainOnlyEnvs.has(p.asset_stem);
+    assert.strictEqual(p.broker_tls, expect,
+      `${p.id}: catalog says broker_tls=${p.broker_tls} but its env ${expect ? "does not set" : "sets"} ` +
+      `-DCANARY_MQTT_PLAIN_ONLY. Regenerate with gen_flash.py — never hand-edit devices/flash.json.`);
+  }
+  const c6 = catalog.products.find((p) => p.id === "securacv-canary-display-nightstand-c6");
+  assert.ok(c6 && c6.broker_nvs === true && c6.broker_tls === false,
+    "the nightstand-c6 reads a broker but honors no TLS mode — the case the flag exists for");
+
+  // Both frontends gate the TLS modes on it, and both say why with the
+  // firmware's own reason (never a hand-kept product-id list).
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  assert.match(flashJs, /const tlsOk = product\.broker_tls === true/, "browser must gate the TLS modes on broker_tls");
+  assert.match(flashJs, /if \(v !== core\.MQTT_TLS_MODES\.plain && !tlsOk\) o\.disabled = true/,
+    "browser must disable the TLS options where the build refuses them");
+  assert.match(flashJs, /const mode = tlsOk \? Number\(tlsSel\.value\) \|\| 0 : core\.MQTT_TLS_MODES\.plain/,
+    "browser values() must report plain where the build refuses TLS");
+  assert.match(appJs, /const tlsOk = broker && product\.broker_tls === true/, "desktop must gate the TLS modes on broker_tls");
+  assert.match(appJs, /o\.disabled = !tlsOk/, "desktop must disable the TLS options where the build refuses them");
+  assert.match(appJs, /const tlsMode = broker && product\.broker_tls === true/,
+    "desktop readProvisioning must report plain where the build refuses TLS");
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop app.js", appJs]]) {
+    assert.ok(src.includes("built plain-only") && src.includes("CANARY_MQTT_PLAIN_ONLY"),
+      `${label} must give the firmware's own reason for the disabled TLS modes`);
+    // The id may be NAMED in a comment explaining the flag, never used in
+    // code: every line that says it must be a comment line.
+    for (const line of src.split("\n").filter((l) => l.includes("nightstand-c6"))) {
+      assert.match(line, /^\s*\/\//,
+        `${label}: gate on the catalog flag, never a hand-kept product id (${line.trim()})`);
+    }
+  }
+});
+
 test("neither flasher gates the broker fields on the provisioning mode", () => {
   // The exact regression: `prov === "usb-secrets"` deciding whether a broker
   // can be entered. Capability and provisioning are different questions.
