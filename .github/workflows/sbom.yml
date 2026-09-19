@@ -5,8 +5,9 @@ name: SBOM Generation
 # the firmware that manifest is the COMMITTED sbom/sbom-firmware.cdx.json:
 # lint.yml byte-gates it against every build input on every PR, so any input
 # that moves (a platform pin, a lib_deps line, a library manifest, an Arduino
-# core pin, the firmware version) reaches main only together with a
-# regenerated file, and that file is what triggers this run. The
+# core pin in a workflow or a sketch.yaml profile, the firmware version)
+# reaches main only together with a regenerated file, and that file is what
+# triggers this run. The
 # `release: published` trigger is separate: it regenerates the SBOMs against the
 # tagged tree and attaches them to the release as downloadable assets, so every
 # published version ships its bill of materials instead of it living only in a
@@ -119,8 +120,10 @@ jobs:
     # had moved to the pioarduino core 3.3.8 / ESP-IDF 5.5.4 and nothing in
     # the template knew. scripts/gen_firmware_sbom.py now reads flavors.json,
     # the resolved PlatformIO config of every build env, platforms.ini, the
-    # first-party library manifests and the workflows' Arduino core pins
-    # (sbom/README.md says what is derived and what is still declared).
+    # first-party library manifests, the workflows' Arduino core pins and
+    # the sketch.yaml profiles — and refuses a tree where those two Arduino
+    # axes disagree (sbom/README.md says what is derived and what is still
+    # declared).
     #
     # Three passes: prove the ini resolver against PlatformIO's own reading of
     # every env; prove the committed copy matches this tree (on a release
@@ -146,13 +149,16 @@ jobs:
         # The firmware document is ours end to end, so hold it to more than
         # the format tag. First the CycloneDX 1.5 JSON schema in strict mode,
         # on THIS file — the timestamped bytes that upload, not a re-render —
-        # through the validator lint.yml runs on the committed copy. The Rust
-        # and Node documents are not held to it: cargo-cyclonedx and cdxgen
-        # choose their own specVersion.
+        # through the validator lint.yml runs on the committed copy; the
+        # generator asserts the file's specVersion itself, because the 1.5
+        # schema types that field as a free string. The Rust and Node
+        # documents are not held to it: cargo-cyclonedx and cdxgen choose
+        # their own specVersion.
         python3 scripts/gen_firmware_sbom.py --validate sbom-firmware.cdx.json
-        # Then what a schema cannot say: the spec version the generator
-        # promises, a non-empty component list, and a closed dependency graph
-        # (a dependsOn naming a bom-ref that is not there is schema-valid).
+        # Then what a schema cannot say: a non-empty component list and a
+        # closed dependency graph (a dependsOn naming a bom-ref that is not
+        # there is schema-valid) — with the spec version restated in jq, a
+        # second reading a reader without the Python validator can repeat.
         jq -e '.specVersion == "1.5" and (.components | length) > 0
                and ([.dependencies[].dependsOn[]] - ([.components[]."bom-ref"] + [.metadata.component."bom-ref"]) | length) == 0' \
           sbom-firmware.cdx.json > /dev/null \

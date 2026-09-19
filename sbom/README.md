@@ -136,8 +136,12 @@ Run the first after changing a platform pin, a `lib_deps` line, a library
 manifest, an Arduino core pin in a workflow, a `sketch.yaml` profile, or the
 firmware version, and commit the result in the same change. `--validate`
 needs `pip install 'cyclonedx-python-lib[json-validation]==11.12.0'` (the
-generator names that spec when the import fails); it is read-only, like
-`--check`. Tests: `scripts/tests/test_gen_firmware_sbom.py`.
+generator names that spec when the import fails, and the unit tests hold
+every workflow's pip line and this page to that one string); it is read-only,
+like `--check`, and says so: a `--out` or `--timestamp` beside it without
+`--check` is refused up front rather than dropped for a green exit and no
+file — to validate an artifact, write it, then run `--validate FILE` on it.
+Tests: `scripts/tests/test_gen_firmware_sbom.py`.
 
 ## Retrieving the SBOMs
 
@@ -168,7 +172,11 @@ format checking on) as a CI gate, twice: `lint.yml` runs
 copy on every PR, and `sbom.yml` runs `--validate sbom-firmware.cdx.json` on
 the timestamped artifact — the exact bytes it uploads and attaches to a
 release — before its `jq` step checks what a schema cannot (a non-empty
-component list, a closed dependency graph). That strict check is how a
+component list, a closed dependency graph). The `specVersion` is asserted
+by the generator, not the schema: the 1.5 schema types that field as a free
+string, so a file declaring 1.6 would otherwise pass as "a strict 1.5
+document"; `--validate FILE` refuses it, and reports a missing or non-JSON
+file as one error line. That strict check is how a
 registry URL with spaces in it was caught before the first commit, by hand;
 the `json-validation` extra is what brings the IRI format checker, which is
 why the pin is exact and the extra is not optional. The schema ships inside
