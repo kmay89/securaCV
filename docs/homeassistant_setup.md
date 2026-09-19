@@ -872,13 +872,21 @@ still needs from you, and why:
   default). The publisher is the process that listens for Canaries; with it
   off, the roll-call lists the kernel alone, and the app log says so at
   startup.
-- **Open the port and type the host once.** The app advertises no
+- **Open the port and type the address once.** The app advertises no
   `_securacv._tcp` Bonjour service, and its 8799 host port ships disabled
   (see [Event API exposure](../privacy_witness_kernel/README.md#event-api-exposure)),
   so the Wall cannot discover it. Enable the port under **Settings → Apps →
   Privacy Witness Kernel → Configuration** (Network section), then enter
-  your Home Assistant host in the Wall; a typed hub is remembered and never
-  aged out.
+  `http://<your-home-assistant-host>:8799` in the Wall — with the port,
+  because the Wall adds only `http://` to a bare host and would otherwise
+  poll port 80; a typed hub is remembered and never aged out. Know what the
+  open port means: `/api/fleet` is the one endpoint that answers without
+  the capability token, so once the host port is enabled anything on your
+  LAN can read the roll-call — name, online, chain verdict, product, and
+  the per-room presence/occupants/breathing words while a peer is proven
+  online (the posture [`docs/security/THREAT_MODEL.md`](security/THREAT_MODEL.md)
+  states for the one open read on the hub). Every other endpoint still
+  requires the token.
 - **The summary file is in your backups, on purpose.** `/config` is part of
   every Home Assistant backup, and `/config/fleet_peers.json` holds the
   public key pinned on first sight for each Canary plus the per-room

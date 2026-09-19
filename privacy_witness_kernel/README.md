@@ -66,10 +66,10 @@ how the SecuraCV integration connects. The **host port mapping ships
 disabled**, so nothing on your LAN can reach the API unless you enable the
 port in the add-on's Network settings. Every data endpoint requires the
 rotating capability token from `/config/api_token` regardless of where the
-request comes from; only `/health` answers without it. After startup the
-add-on announces the API to the Supervisor (discovery), so the SecuraCV
-integration appears under **Settings → Devices & Services** without typing
-a URL.
+request comes from; only `/health` and the fleet roll-call `GET /api/fleet`
+answer without it. After startup the add-on announces the API to the
+Supervisor (discovery), so the SecuraCV integration appears under
+**Settings → Devices & Services** without typing a URL.
 
 **Witness Wall (Apple TV).** The same API answers `GET /api/fleet`, the
 roll-call the tvOS Witness Wall reads: the kernel's own row first, then
@@ -81,8 +81,16 @@ with it off no bridge listens for Canaries, the roll-call lists the kernel
 alone, and the add-on log says so at startup. The add-on advertises no
 `_securacv._tcp` Bonjour service and, as above, ships the 8799 host port
 disabled, so the Wall cannot find it on its own: enable the port in the
-add-on's Network settings and type the Home Assistant host into the Wall
-once (a typed hub is remembered). And the summary file sits under `/config`,
+add-on's Network settings and type `http://<your-home-assistant-host>:8799`
+into the Wall once — with the port, because the Wall adds only `http://` to
+a bare host and would otherwise poll port 80 (a typed hub is remembered).
+Enabling that port also opens the roll-call to anything on your LAN:
+`/api/fleet` is the one endpoint that answers without the token, and it
+serves name, online, chain verdict, product, and the per-room
+presence/occupants/breathing words while a peer is proven online — the
+posture [`docs/security/THREAT_MODEL.md`](../docs/security/THREAT_MODEL.md)
+states for the one open read on the hub; every other endpoint still wants
+the token. And the summary file sits under `/config`,
 so it is part of every HA backup — on purpose, because it holds the public
 key pinned on first sight for each Canary (a restore keeps that trust
 instead of re-pinning) and the per-room wellbeing words the Wall shows; it
