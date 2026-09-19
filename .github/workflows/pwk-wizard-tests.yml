@@ -3,10 +3,10 @@ name: PWK Wizard Tests
 # Scoped to the Privacy Witness Kernel add-on only. Runs the pairing-
 # wizard proxy unit tests (PR-8), shellcheck over the entry scripts, the
 # run_lib unit tests and the kernel-config render check (which also covers
-# the Docker sidecar's copy of the same heredoc). The custom_components/securacv tests are
-# run separately by python.yml (ruff + mypy + pytest). Triggers only on
-# changes under privacy_witness_kernel/** so it stays off the firmware
-# build path.
+# the Docker sidecar's copy of the same heredoc). The
+# custom_components/securacv tests are run separately by python.yml
+# (ruff + mypy + pytest). Triggers only on changes under
+# privacy_witness_kernel/** so it stays off the firmware build path.
 
 on:
   push:
