@@ -720,6 +720,26 @@ def compiles_broker_tls_transport(project: str) -> bool:
                           project_source_text(project), re.M))
 
 
+def macro_test_form(project: str, macro: str) -> str | None:
+    """How the firmware's own preprocessor tests `macro`: "defined" when
+    every test asks whether it is defined (#ifdef / #ifndef / defined(MACRO)),
+    "value" when any test reads its value (#if MACRO — where `=0` means the
+    opposite of `=1`), None when no source line tests it at all (a flag no
+    line reads changes nothing about the build)."""
+    name = re.escape(macro)
+    tests = [
+        line for line in project_source_text(project).splitlines()
+        if re.match(r"\s*#\s*(?:if|elif|ifdef|ifndef)\b", line) and re.search(rf"{name}(?![A-Za-z0-9_])", line)
+    ]
+    if not tests:
+        return None
+    for line in tests:
+        rest = re.sub(rf"defined\s*\(?\s*{name}(?![A-Za-z0-9_])\s*\)?|#\s*ifn?def\s+{name}(?![A-Za-z0-9_])", " ", line)
+        if re.search(rf"{name}(?![A-Za-z0-9_])", rest):
+            return "value"
+    return "defined"
+
+
 def honors_broker_tls(project: str, env: str) -> bool:
     """Whether a provisioned `mqtt_tls` mode is HONORED by this build — the
     catalog's `broker_tls`, which both flashers gate their TLS controls on.
@@ -733,10 +753,26 @@ def honors_broker_tls(project: str, env: str) -> bool:
     so the flag is derived from the env's own build flags rather than kept
     by hand: a flavor that gains or loses the flag moves the catalog on the
     next generator run, and the drift gate names it.
+
+    env_defines answers DEFINED-ness (the firmware asks `#if defined(...)`,
+    so `=0` is plain-only too) and refuses a spelling it cannot parse. Were
+    the firmware ever to test the macro's VALUE instead, that answer would
+    be the wrong question, so this refuses then as well rather than guess.
     """
     if not reads_broker(project) or not compiles_broker_tls_transport(project):
         return False
-    return not env_defines(project, env, "CANARY_MQTT_PLAIN_ONLY")
+    if not env_defines(project, env, "CANARY_MQTT_PLAIN_ONLY"):
+        return True
+    form = macro_test_form(project, "CANARY_MQTT_PLAIN_ONLY")
+    if form == "value":
+        raise SystemExit(
+            f"gen_flash.py: {project} tests CANARY_MQTT_PLAIN_ONLY by VALUE (#if MACRO) but env {env} "
+            f"defines it and this derivation only answers whether it is defined — teach env_defines the "
+            f"value semantics (and the mirror in tests/desktop_parity.test.js) before deriving broker_tls.")
+    # "defined": the source builds the transport out — a TLS mode is refused
+    # at boot. None: the env sets a flag no source line reads, so the
+    # transport is still compiled and honored.
+    return form is None
 
 # Post-flash "hatching" copy. This lives in the generated catalog instead of
 # desktop/web UI branches so every flasher surface can share the same first-use
@@ -2039,19 +2075,87 @@ def pio_build_flags(sections: dict[str, str], name: str, seen: set[str] | None =
     return "\n".join(parts)
 
 
+def pio_items(body: str) -> list[tuple[str, str]]:
+    """Every `key = value` of a section body — the value with its indented
+    continuation lines joined, comment lines dropped — i.e. the section's
+    whole non-comment text, keyed. A reader that must refuse what it does
+    not parse walks THIS, not only the one key it evaluates. A non-indented
+    line that is not a `key =` line is kept under an empty key."""
+    items: list[list[str]] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith((";", "#")):
+            continue
+        m = re.match(r"^([A-Za-z0-9_.:-]+)\s*=\s*(.*)$", line) if line[0] not in " \t" else None
+        if m:
+            items.append([m.group(1), m.group(2).strip()])
+        elif items and line[0] in " \t":
+            items[-1][1] = (items[-1][1] + "\n" + stripped).strip()
+        else:
+            items.append(["", stripped])
+    return [(k, v) for k, v in items]
+
+
+def pio_section_chain(sections: dict[str, str], name: str) -> set[str]:
+    """Every section `name` resolves through: itself, what it `extends`
+    (recursively) and every `${other.key}` it interpolates — the input set
+    of any answer about `name`. Cycle-safe; a name no ini defines stays in
+    the set with an empty body."""
+    chain: set[str] = set()
+    todo = [name]
+    while todo:
+        cur = todo.pop()
+        if cur in chain:
+            continue
+        chain.add(cur)
+        body = sections.get(cur, "")
+        todo.extend(s for s in re.split(r"[,\s]+", pio_value(body, "extends") or "") if s)
+        todo.extend(re.findall(r"\$\{([A-Za-z0-9_.:-]+)\.[A-Za-z0-9_]+\}", body))
+    return chain
+
+
 def env_defines(project: str, env: str, macro: str) -> bool:
-    """Whether a build env's resolved build_flags define `macro` (a bare
-    -DMACRO or -DMACRO=<non-zero>). Arduino profile / FQBN envs carry no
-    build_flags of their own (their sketch.yaml sets none), so they define
-    nothing here."""
+    """Whether a build env DEFINES `macro`: one bare, unquoted `-DMACRO` or
+    `-DMACRO=<digits>` token in its resolved build_flags. The answer is
+    defined-ness — the question `#if defined(MACRO)` asks — so `=0` defines
+    it like `=1` does. Arduino profile / FQBN envs carry no build_flags of
+    their own (their sketch.yaml sets none), so they define nothing here.
+
+    REFUSES instead of answering when the macro is named, in any non-comment
+    line of any section this env resolves through (or of the base [env],
+    which PlatformIO applies to every env), in a spelling or under a key
+    this reader does not evaluate: quoted (`'-DMACRO=1'`, as the same env
+    already spells its string defines), split (`-D MACRO`), a non-numeric
+    value, `build_unflags`, `build_src_flags`, a bare line. A strict match
+    that silently misses one of those is a plain-only build the catalog
+    calls TLS-capable with every gate green — the exact board the flag
+    exists for — and a generator that cannot spell a value must refuse, not
+    pass (CLAUDE.md).
+    """
     if env.startswith(("profile:", "arduino:")):
         return False
     sections = pio_sections(project)
-    flags = pio_build_flags(sections, f"env:{env}")
-    if not flags:
-        flags = pio_build_flags(sections, "env")  # base [env] (canary pattern)
-    m = re.search(rf"(?:^|\s)-D{re.escape(macro)}(?:=(\S+))?(?=\s|$)", flags)
-    return bool(m) and (m.group(1) or "1") != "0"
+    own = f"env:{env}"
+    name = re.escape(macro)
+    strict = re.compile(rf"(?:^|\s)-D{name}(?:=\d+)?(?=\s|$)")
+    # Any token that ENDS in the macro name: `-DMACRO`, `'-DMACRO=1'`,
+    # `-D MACRO`, a bare mention (no leading \b — the D of -D sits flush
+    # against the name, so a word boundary there would miss every spelling
+    # this exists to catch, the accepted one included). MACRO_GUARD is not it.
+    named = re.compile(rf"{name}(?![A-Za-z0-9_])")
+    for sec in sorted(pio_section_chain(sections, own) | pio_section_chain(sections, "env")):
+        for key, value in pio_items(sections.get(sec, "")):
+            if not named.search(value):
+                continue
+            leftover = strict.sub(" ", value) if key == "build_flags" else value
+            if named.search(leftover):
+                raise SystemExit(
+                    f"gen_flash.py: [{sec}] {key or '(bare line)'} names {macro} in a spelling or under a key "
+                    f"this derivation does not parse, so {project} env {env}'s broker_tls cannot be derived. "
+                    f"Accepted: one unquoted -D{macro} or -D{macro}=<digits> token in build_flags. Refused "
+                    f"rather than guessed: the miss would be a plain-only build the catalog calls TLS-capable.")
+    flags = pio_build_flags(sections, own) or pio_build_flags(sections, "env")  # base [env]: the canary pattern
+    return bool(strict.search(flags))
 
 
 def board_for_env(project: str, env: str) -> str:

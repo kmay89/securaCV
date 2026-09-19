@@ -16,7 +16,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync } = require("node:fs");
+const { readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -1614,15 +1614,38 @@ test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and
   // build flags; this re-derives it from the ini text so a hand-edited
   // catalog, a flavor that gains or loses the flag, or a frontend that stops
   // gating on it all fail here by name.
-  const ini = read(join(ROOT, "firmware/envs/platformio/canary-display.ini"));
+  // Every env ini, line by line and keyed (asset_stem === env name for every
+  // product today): the flag counts only as one bare, unquoted
+  // -DCANARY_MQTT_PLAIN_ONLY or -D…=<digits> token in an env's OWN
+  // build_flags — the firmware asks `#if defined(...)`, so =0 is plain-only
+  // too. Named anywhere else — quoted as the same env spells its string
+  // defines, split after -D, in build_unflags / build_src_flags, in a base
+  // section this scan does not follow through `extends` — it FAILS here by
+  // file:line rather than silently counting as "not set": gen_flash.py
+  // env_defines refuses the same spellings, and a re-derivation with a blind
+  // spot the generator lacks would pass a plain-only build off as TLS-capable.
+  const INI_DIR = join(ROOT, "firmware/envs/platformio");
+  const strict = /(?:^|\s)-DCANARY_MQTT_PLAIN_ONLY(?:=\d+)?(?=\s|$)/;
+  const strictAll = new RegExp(strict.source, "g");
   const plainOnlyEnvs = new Set();
-  let cur = null;
-  for (const line of ini.split("\n")) {
-    const sec = /^\[(.+)\]/.exec(line);
-    if (sec) { cur = sec[1]; continue; }
-    if (/^\s*[;#]/.test(line)) continue;
-    if (cur && cur.startsWith("env:") &&
-        /(?:^|\s)-DCANARY_MQTT_PLAIN_ONLY(?:=(?!0(?:\s|$))\S+)?(?=\s|$)/.test(line)) {
+  for (const file of readdirSync(INI_DIR).filter((f) => f.endsWith(".ini")).sort()) {
+    let cur = null, key = null;
+    for (const [i, line] of read(join(INI_DIR, file)).split("\n").entries()) {
+      const sec = /^\[(.+)\]/.exec(line);
+      if (sec) { cur = sec[1]; key = null; continue; }
+      if (!line.trim() || /^\s*[;#]/.test(line)) continue;
+      const kv = /^([A-Za-z0-9_.:-]+)\s*=/.exec(line);
+      if (kv) key = kv[1];
+      // Named = any token ending in the macro name (no leading \b: the D of
+      // -D sits flush against it, so a boundary there would miss -DCANARY_…
+      // itself, quoted or not); CANARY_MQTT_PLAIN_ONLY_GUARD is not it.
+      const named = /CANARY_MQTT_PLAIN_ONLY(?![A-Za-z0-9_])/;
+      if (!named.test(line)) continue;
+      assert.ok(cur && cur.startsWith("env:") && key === "build_flags" &&
+        strict.test(line) && !named.test(line.replace(strictAll, " ")),
+        `${file}:${i + 1} [${cur}] ${key}: CANARY_MQTT_PLAIN_ONLY is named in a place or spelling this ` +
+        "re-derivation does not parse (one bare -DCANARY_MQTT_PLAIN_ONLY[=<digits>] token in an env's own " +
+        "build_flags). Spell it that way, or teach this scan AND gen_flash.py env_defines the new form together.");
       plainOnlyEnvs.add(cur.slice("env:".length));
     }
   }
@@ -1630,6 +1653,11 @@ test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and
     "the nightstand-c6 env no longer sets -DCANARY_MQTT_PLAIN_ONLY — regenerate flash.json and " +
     "update docs/FIRMWARE_VARIANT_AUDIT.md's row with it");
   const mgr = read(join(ROOT, "firmware/projects/canary-display/src/net/mqtt_mgr.cpp"));
+  // The =<digits> reading above rests on the firmware asking defined-ness.
+  assert.match(mgr, /#if defined\(CANARY_MQTT_PLAIN_ONLY\)/,
+    "mqtt_mgr.cpp no longer asks `defined(CANARY_MQTT_PLAIN_ONLY)`: the =<digits> reading here and in gen_flash.py env_defines answers defined-ness");
+  assert.ok(!/#\s*(?:el)?if\s+!?\s*CANARY_MQTT_PLAIN_ONLY\b/.test(mgr),
+    "mqtt_mgr.cpp tests CANARY_MQTT_PLAIN_ONLY by value — =0 would then mean the opposite of what this scan and env_defines answer");
   assert.match(mgr, /Refusing to connect: NVS mqtt_tls=%u asks for TLS, but this flavor is/,
     "canary-display mqtt_mgr.cpp no longer refuses a TLS mode on a plain-only build");
   assert.match(mgr, /built plain-only \(OTA slot budget, CANARY_MQTT_PLAIN_ONLY\)/,
@@ -1642,9 +1670,9 @@ test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and
       assert.strictEqual(p.broker_tls, false, `${p.id}: no broker in NVS, so no TLS mode to honor`);
       continue;
     }
-    // Display envs are named by their asset stem; the only plain-only env
-    // today is one of them. A flavor that gains the flag under another
-    // naming shows up as a loud mismatch here, which is the point.
+    // Envs are named by their asset stem (every product today); a flavor
+    // that gains the flag under another naming shows up as a loud mismatch
+    // here, which is the point.
     const expect = !plainOnlyEnvs.has(p.asset_stem);
     assert.strictEqual(p.broker_tls, expect,
       `${p.id}: catalog says broker_tls=${p.broker_tls} but its env ${expect ? "does not set" : "sets"} ` +
