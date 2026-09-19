@@ -53,8 +53,8 @@
 //      way and the keyhole can hang the case port-up or port-down. Keep any
 //      new lid feature symmetric under (x,y)→(−x,−y), or flipping breaks.
 //
-//  Model presets are parametric — `model = "1.47"` is dimensioned from the
-//  Waveshare mechanical drawing; the 1.69 preset lands when its drawing does.
+//  The board record is the 1.47's, from the Waveshare mechanical drawing: the
+//  board trio is manifest-owned (ws147); the 1.69 board has its own case file.
 //
 //  Orientation: +Y = up (portrait), USB-C exits the BOTTOM (−Y) short wall,
 //  +Z = toward the glass. All parts print flat, no supports.
@@ -86,8 +86,8 @@ headers = "none";   // ["none","male"]
 /* [Board] — ESP32-C6-LCD-1.47. From the Waveshare drawing (mm); the 1.47
    outline is the ws147 family record in canary_board_lib. */
 // long axis (portrait height, Y), short axis (X), PCB thickness
-board_l = (model == "1.69") ? 36.0  : 36.37;   // 1.69 = MEASURE (placeholder)
-board_w = (model == "1.69") ? 25.0  : 20.32;
+board_l = 36.37;     // brd_l("ws147") — the drawing's long axis (portrait height, Y)
+board_w = 20.32;     // brd_w("ws147") — the drawing's short axis (X)
 pcb_t   = 1.6;       // brd_t("ws147") — the drawing-backed family thickness;
                      // the drawing does not call it out, so MEASURE stays
 lcd_rise   = 3.65;   // LCD glass front above the PCB front face — the drawing's
@@ -113,10 +113,10 @@ brass_h = 3.0;       // factory corner pillar height above the PCB back (0 =
                      // pillar tops (the C3's print-2 floating board) — MEASURE
 
 /* [Screen] — active area = the window; the LCD module border sits under the lip */
-aa_l  = (model == "1.69") ? 27.972 : 32.35;    // active-area long (Y) — 1.69 = MEASURE
-aa_w  = (model == "1.69") ? 27.972 : 17.39;    // active-area short (X)
-lcm_l = (model == "1.69") ? 32.0   : 36.28;    // LCD module outline long
-lcm_w = (model == "1.69") ? 28.0   : 19.39;    // LCD module outline short
+aa_l  = 32.35;    // active-area long (Y) — the 1.47 drawing
+aa_w  = 17.39;    // active-area short (X)
+lcm_l = 36.28;    // LCD module outline long
+lcm_w = 19.39;    // LCD module outline short
 
 /* [Glass protection] — the panel's front face IS glass, and glass fails from
    stress at its edges. The bezel face touches the panel only on a LAND over
