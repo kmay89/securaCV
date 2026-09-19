@@ -38,7 +38,12 @@ OpenSCAD compiled to WebAssembly locally (nothing is uploaded). The page's
 manifest is generated from these files by
 [`gen_builder_manifest.py`](./gen_builder_manifest.py); CI fails if it
 drifts, and `./gen_builder_manifest.py --site <website-checkout>` refreshes
-the website's carried copies after a CAD change.
+the website's carried copies after a CAD change (`--site <website-checkout>
+--check` says whether they are current without writing anything). The carry
+includes `scad/cad-dims.json`, the CAD ledger the site's AR models and copy
+are pinned to: each figure's envelope and assembled seams from the fleet
+figures, each manifest-owned device's `cad.params` knobs resolved to numbers,
+and the board registry (`canary_board_lib.scad`) with its evidence rung.
 
 ## Table of contents
 
@@ -495,9 +500,35 @@ These dimensions were reconciled against **Seeed's official spec** and a
 
 ## Render / regenerate the STLs
 
-Requires OpenSCAD (CLI). The helper renders all three example presets, the
-gasket, the coupon and the preview PNGs (`--no-png` to skip the images;
-`OPENSCAD=/path/to/openscad` to point at a non-PATH binary):
+**Changed a knob? Run the whole chain, not one link of it.** An STL is the
+first of ten committed, byte-gated files a dimension moves — the assembled
+envelopes (`gen_assembled_dims.py`), the fleet figures and their firmware and
+Swift mirrors (`gen_figures.mjs`), the flashers' models (`gen_device_glbs.mjs`),
+the display sketch mirror, `flash.json`, the web builder's manifest and the
+enclosure catalog — in a fixed order, with the emulator dist rebuild in the
+middle of it. [`scripts/regen_cad.py`](../../../scripts/regen_cad.py) is that
+order as one command, from the repo root:
+
+```bash
+python3 scripts/regen_cad.py --previews /tmp/previews   # everything, in order; PNG previews of
+                                                        # every part of every changed case into the dir
+python3 scripts/regen_cad.py --check                    # every step's check form; the first stale one named
+python3 scripts/regen_cad.py --from gen_flash           # resume after the emulator dist came back
+python3 scripts/regen_cad.py --list                     # the twelve steps and their check forms
+```
+
+It stops on purpose after regenerating the sketch mirror when
+`fleet_figures.h` moved — the emulator dist is upstream of the catalogs and
+only Actions → "Rebuild emulator dist (pinned emsdk)" can build it — and
+refuses the OpenSCAD steps up front when `openscad` is not installed (2021.01,
+the version CI uses). For a `cad.params` edit in a device manifest,
+`gen_cad_params.py --dry-run <slug>:<knob>=<value>` prints the one-line `.scad`
+diff first, without writing it.
+
+`render.sh` alone is the STL link of that chain. Requires OpenSCAD (CLI). The
+helper renders all three example presets, the gasket, the coupon and the
+preview PNGs (`--no-png` to skip the images; `OPENSCAD=/path/to/openscad` to
+point at a non-PATH binary):
 
 ```bash
 ./render.sh
@@ -529,6 +560,13 @@ xvfb-run -a openscad -o preview.png --imgsize 1400,1000 --autocenter --viewall \
 # ROTX ≈ 62 → top three-quarter view; ROTX ≈ 245 → underside
 ```
 
+`python3 scripts/regen_cad.py --previews DIR` runs exactly that command for
+every value of the changed case's `part` enum, with the `-D` selector sets
+`render.sh` uses for the file (the WAP's three presets, the Vision's host ×
+preset, the doorbell's wedge), at both angles — so the obligation is a
+directory of PNGs to attach, not a list to remember. Share them; never commit
+them.
+
 For the 7" frame's multi-filament build, render each filament part on its own —
 `part="fil_body"`, `"fil_accent"`, and `"fil_ink"` if you have put a group back
 on it. Those are the reliable views: each contains exactly the graphics assigned
@@ -542,6 +580,29 @@ recesses they were cut from — it has rendered every back-plate group in the
 accent color when only the company line is accent, and standing the inlays
 proud does not fix it. It is useful for silhouette and for the bezel band,
 and misleading for anything else. The caveat is written at the module too.
+
+### Where the board numbers come from
+
+The board and module knobs at the top of a released or display case —
+`board_l`, `vm_w`, `stack_sock_h`, the dimensions the case is cut around,
+not its walls — are owned by that device's manifest,
+`devices/<slug>/device.json` `cad.params`. [`gen_cad_params.py`](./gen_cad_params.py)
+writes them into the `.scad` as the literal you see (the token on the
+knob's own line, nothing else), and `--check` proves the file still says
+them: in `lint.yml`, in this directory's workflow, and through
+`scripts/lint_device_manifests.py`. A knob that is a board fact is a
+reference into [`canary_board_lib.scad`](./canary_board_lib.scad)'s
+registry (`{"brd": "xiao", "dim": "w"}` is `brd_w("xiao")`), so a registry
+correction reaches every owned case through the generator; a case
+measurement with no registry home is a number. So: correct a board
+dimension in the registry, a case decision in the manifest, and never the
+literal by hand — `--check` names it. Walls, tolerances and every feature
+knob stay in the file (the design-language canon, `lint_design_lang.py`);
+the selectors (`preset`, `host`, `part`, …) are chosen per printable set in
+`render.sh`; the outer envelope is never an input — `gen_assembled_dims.py`
+measures it off the STLs. `devices/README.md` lists what each manifest owns
+and what it cannot yet (the C6's `model` ternary, the 7" frame's panel
+record in `canary_panel_lib.scad`).
 
 ### Ring gauge — check the whole outline for five grams
 

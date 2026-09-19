@@ -147,6 +147,12 @@ Almost nothing in `massing.mjs` is a typed dimension. A part declares the
 build time and hands it to the figure as its envelope. The figure is a
 *function of* the CAD, not a copy of it: re-export the STL and the figure
 follows.
+That stays true now that the device manifests own the board knobs a case
+is cut around (`devices/<slug>/device.json` `cad.params`, written into the
+`.scad` by `docs/hardware/enclosure/gen_cad_params.py`): a figure never
+reads a manifest number — the manifest moves the CAD, the CAD moves the
+STL, and the STL and the assembled envelopes below are what the figure
+measures. Unchanged doctrine, stated beside the new upstream.
 
 On top of that, the **drift guard**: a single-part figure must fill the same
 box as its part, or the picture and the print have parted company. The check

@@ -37,7 +37,13 @@
     "scad": "docs/hardware/enclosure/canary_dash_display.scad",
     "enclosure_sets": [
       "dashboard-display-case"
-    ]
+    ],
+    "params": {
+      "panel_l": 106.3,
+      "panel_w": 66.2,
+      "glass_t": 3.2,
+      "stack_t": 8.0
+    }
   },
   "emulator": {
     "flavor": "dash"
