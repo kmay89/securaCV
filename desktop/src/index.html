@@ -283,7 +283,7 @@
                 </select></label>
                 <p class="muted broker-only span-2" id="mqtt-tls-note"></p>
                 <label class="span-2 hidden" id="mqtt-ca-row">Broker CA certificate (PEM)<textarea id="mqtt-ca" rows="5" maxlength="3070" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- (PEM: the CA that signed the broker's certificate)"></textarea></label>
-                <label class="hidden" id="mqtt-fp-row">Broker certificate SHA-256 fingerprint<input id="mqtt-fp" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="AA:BB:CC:… 64 hex — openssl x509 -in broker.crt -noout -fingerprint -sha256" pattern="[: ]*(?:[0-9a-fA-F]{2}[: ]*){32}" title="SHA-256 fingerprint: 64 hex digits, ':' or spaces between pairs optional"></label>
+                <label class="hidden" id="mqtt-fp-row">Broker certificate SHA-256 fingerprint<input id="mqtt-fp" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="AA:BB:CC:… (paste just the 64 hex after “Fingerprint=” from: openssl x509 -in broker.crt -noout -fingerprint -sha256)" pattern="[: ]*(?:[0-9a-fA-F]{2}[: ]*){32}" title="SHA-256 fingerprint: 64 hex digits, ':' or spaces between pairs optional"></label>
                 <!-- A TLS mode with the port still at the plain default earns a
                      SUGGESTION of 8883 — a button, never a rewrite: the port is
                      the owner's, and "the broker did not speak TLS on this

@@ -3675,7 +3675,7 @@ const MQTT_CA_MAX = 3070; // + the builder's trailing "\n" = the firmware's 3071
 const MQTT_CA_PLACEHOLDER =
   "-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- (PEM: the CA that signed the broker's certificate)";
 const MQTT_FP_PLACEHOLDER =
-  "AA:BB:CC:… 64 hex — openssl x509 -in broker.crt -noout -fingerprint -sha256";
+  "AA:BB:CC:… (paste just the 64 hex after “Fingerprint=” from: openssl x509 -in broker.crt -noout -fingerprint -sha256)";
 const MQTT_TLS_NOTE =
   "A TLS mode encrypts the broker link so the username and password above never " +
   "cross your LAN in the clear; TLS brokers usually listen on 8883. The board never " +
