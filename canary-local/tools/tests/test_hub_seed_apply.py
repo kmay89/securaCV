@@ -119,6 +119,7 @@ class OptionalFeatures(unittest.TestCase):
         ids = {s.id for s in steps}
         self.assertNotIn("install-pihole", ids)
         self.assertNotIn("install-display", ids)
+        self.assertNotIn("broker-tls", ids)
         # And no feature-tagged repository leaks into the core register step:
         # an un-enabled feature must leave ZERO footprint on the hub.
         reg = next(s for s in steps if s.id == "add-repositories")
@@ -175,21 +176,22 @@ class OptionalFeatures(unittest.TestCase):
         self.assertNotIn("password", json.dumps(step.get("options", {})).lower())
         self.assertNotIn("options", step, "no options are set — none are safe to guess")
 
-    def test_both_features_together_compose(self):
+    def test_all_features_together_compose(self):
         steps = hsa.plan_actions(
-            REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole", "display"})
+            REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole", "display", "broker_tls"})
         )
         ids = [s.id for s in steps]
         self.assertIn("install-pihole", ids)
         self.assertIn("install-display", ids)
+        self.assertIn("broker-tls", ids)
 
     def test_core_plan_is_identical_with_and_without_features(self):
         base = [s.id for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)]
-        feature_steps = {"install-pihole", "install-display"}
+        feature_steps = {"install-pihole", "install-display", "broker-tls"}
         extra = [
             s.id
             for s in hsa.plan_actions(
-                REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole", "display"})
+                REAL_PLAN, hsa.FRESH_HUB, frozenset({"pihole", "display", "broker_tls"})
             )
             if s.id not in feature_steps
         ]
@@ -803,3 +805,286 @@ class MqttLogin(unittest.TestCase):
         line = hsa.describe(action, "http://supervisor")
         self.assertIn("generated", line)
         self.assertNotIn("password=", line)
+
+
+BROKER_TLS_FILES = ["/ssl/fullchain.pem", "/ssl/privkey.pem"]
+
+
+class BrokerTls(unittest.TestCase):
+    """Opt-in `broker_tls`: the broker's TLS listener, from files the operator
+    placed. The plan mints no certificate and chooses no trust anchor — it
+    requires the two files, pins the add-on's certfile/keyfile and restarts
+    it. Because those option values are the Mosquitto add-on's OWN defaults,
+    an unmodified hub answers set_options with "already set": the restart is
+    the work (the add-on tests /ssl for the files when it starts).
+    """
+
+    def step(self, observed=None):
+        steps = hsa.plan_actions(
+            REAL_PLAN, observed or hsa.FRESH_HUB, frozenset({"broker_tls"})
+        )
+        return next(s for s in steps if s.id == "broker-tls")
+
+    def test_absent_unless_asked_for(self):
+        ids = {s.id for s in hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)}
+        self.assertNotIn("broker-tls", ids)
+
+    def test_requires_the_files_sets_options_and_restarts(self):
+        step = self.step()
+        self.assertEqual(
+            [a.kind for a in step.actions], ["require_files", "set_options", "restart_addon"]
+        )
+        req, opts, restart = step.actions
+        self.assertEqual(req.paths, BROKER_TLS_FILES)
+        self.assertFalse(req.already)
+        self.assertTrue(req.note, "the refusal must say what supplies the files")
+        self.assertEqual(opts.slug, MOSQUITTO_SUP)
+        self.assertEqual(opts.options, {"certfile": "fullchain.pem", "keyfile": "privkey.pem"})
+        self.assertEqual(restart.slug, MOSQUITTO_SUP)
+        self.assertFalse(restart.already)
+
+    def test_it_never_reinstalls_or_restarts_twice(self):
+        # install-broker owns the install. The snapshot a fresh run plans from
+        # is taken BEFORE that step lands, so an install action here would
+        # POST a second install onto the add-on and fail the run at its end.
+        kinds = [a.kind for a in self.step().actions]
+        self.assertNotIn("install_addon", kinds)
+        self.assertNotIn("start_addon", kinds)
+        self.assertEqual(kinds.count("restart_addon"), 1)
+
+    def test_narration_names_the_port_the_folder_and_what_it_does_not_do(self):
+        step = self.step()
+        text = step.what + step.why + step.for_what
+        self.assertIn("8883", text)
+        self.assertIn("/ssl", text)
+        # The plain listener stays for the hub's own internal traffic.
+        self.assertIn("1883", step.why)
+        # Honest scope, in the plan itself: nothing is minted, nothing verified.
+        self.assertIn("mints no", text)
+        self.assertIn("cannot", text)
+        self.assertTrue(step.user_must_finish)
+        self.assertIn("8883", step.user_must_finish)
+        self.assertIn("Log", step.user_must_finish)
+
+    def test_the_plan_carries_no_certificate_or_key(self):
+        step = next(s for s in REAL_PLAN["steps"] if s["id"] == "broker-tls")
+        blob = json.dumps(step)
+        self.assertNotIn("BEGIN CERTIFICATE", blob)
+        self.assertNotIn("PRIVATE KEY", blob)
+        # The options name FILES the add-on reads from /ssl, never contents,
+        # and exactly the two the add-on documents — require_certificate and
+        # cafile are left as the operator finds them.
+        self.assertEqual(set(step["options"]), {"certfile", "keyfile"})
+        self.assertEqual(
+            [f"/ssl/{v}" for v in step["options"].values()], step["requires_files"]
+        )
+        self.assertTrue(step["restart"])
+        self.assertIs(step["install"], False)
+
+    def test_it_runs_last_so_a_missing_certificate_never_stops_the_core_plan(self):
+        ids = [
+            s.id
+            for s in hsa.plan_actions(
+                REAL_PLAN, hsa.FRESH_HUB, frozenset({"broker_tls", "pihole", "display"})
+            )
+        ]
+        self.assertEqual(ids[-1], "broker-tls")
+        self.assertLess(ids.index("install-securacv"), ids.index("broker-tls"))
+
+    def test_present_files_satisfy_the_requirement(self):
+        obs = dict(hsa.FRESH_HUB, existing_files=set(BROKER_TLS_FILES))
+        req = next(a for a in self.step(obs).actions if a.kind == "require_files")
+        self.assertTrue(req.already)
+        self.assertTrue(req.reason)
+
+    def test_one_missing_file_is_not_satisfied(self):
+        obs = dict(hsa.FRESH_HUB, existing_files={BROKER_TLS_FILES[0]})
+        req = next(a for a in self.step(obs).actions if a.kind == "require_files")
+        self.assertFalse(req.already)
+
+    def test_restart_is_never_already_satisfied(self):
+        # On an unmodified hub the options are already the add-on's defaults
+        # and the files may already be there — and the listener is STILL
+        # closed until the add-on restarts. Every run that asks for the
+        # feature restarts the broker once; that is also how a renewed
+        # certificate gets picked up.
+        obs = dict(
+            hsa.FRESH_HUB,
+            existing_files=set(BROKER_TLS_FILES),
+            addon_options={
+                MOSQUITTO_SUP: {"certfile": "fullchain.pem", "keyfile": "privkey.pem"}
+            },
+        )
+        by_kind = {a.kind: a for a in self.step(obs).actions}
+        self.assertTrue(by_kind["require_files"].already)
+        self.assertTrue(by_kind["set_options"].already)
+        self.assertFalse(by_kind["restart_addon"].already)
+
+    def test_describe_names_the_paths_and_the_restart_endpoint(self):
+        step = self.step()
+        req_line = hsa.describe(step.actions[0], "http://supervisor")
+        for p in BROKER_TLS_FILES:
+            self.assertIn(p, req_line)
+        self.assertIn("exist", req_line)
+        restart_line = hsa.describe(step.actions[2], "http://supervisor")
+        self.assertIn(f"POST http://supervisor/addons/{MOSQUITTO_SUP}/restart", restart_line)
+
+    def test_dry_run_mentions_it_is_available(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = hsa.main(["--dry-run"])
+        self.assertEqual(rc, 0)
+        self.assertIn("--with broker_tls", buf.getvalue())
+        self.assertNotIn("/ssl/", buf.getvalue())
+
+    def test_dry_run_with_broker_tls_narrates_it(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = hsa.main(["--dry-run", "--with", "broker_tls"])
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        for needle in BROKER_TLS_FILES + [
+            "8883",
+            f"POST http://supervisor/addons/{MOSQUITTO_SUP}/restart",
+        ]:
+            self.assertIn(needle, out)
+
+
+class RequireFiles(unittest.TestCase):
+    """The generic `require_files` action: a read-only existence check under
+    --files-root (`/` on the hub, a temp tree here). Three outcomes, each
+    distinguishable: present (no-op), absent (refuse, naming the path and what
+    supplies it), and folder-not-visible (refuse with a DIFFERENT message, so
+    a missing mount is never reported as a missing certificate)."""
+
+    NOTE = "your broker certificate and key, placed in Home Assistant's ssl folder"
+
+    def seed(self):
+        return {
+            "optional_features": {"broker_tls": {"enable": "--with broker_tls"}},
+            "steps": [
+                {
+                    "id": "broker-tls", "title": "tls", "why": "w", "for_what": "f",
+                    "feature": "broker_tls",
+                    "addon": "core_mosquitto", "supervisor_slug": MOSQUITTO_SUP, "install": False,
+                    "requires_files": list(BROKER_TLS_FILES), "requires_files_note": self.NOTE,
+                    "options": {"certfile": "fullchain.pem", "keyfile": "privkey.pem"},
+                    "restart": True,
+                }
+            ],
+        }
+
+    def plan(self, observed=None):
+        return hsa.plan_actions(self.seed(), observed or hsa.FRESH_HUB, frozenset({"broker_tls"}))
+
+    @staticmethod
+    def place(root: Path, *names: str) -> None:
+        (root / "ssl").mkdir(exist_ok=True)
+        for n in names:
+            (root / "ssl" / n).write_text("not a real pem\n")
+
+    def test_present_files_then_options_then_exactly_one_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.place(root, "fullchain.pem", "privkey.pem")
+            client = FakeClient(current_options={MOSQUITTO_SUP: {"logins": [{"username": "canary"}]}})
+            hsa.execute(self.plan(), client, hsa.REPO, files_root=root)
+        kinds = [c[0] for c in client.calls]
+        self.assertEqual(kinds, ["set_options", "restart_addon"])
+        # Merged over the live options: the login list survives, the two
+        # file names land, nothing else is touched.
+        self.assertEqual(
+            client.calls[0][2],
+            {"logins": [{"username": "canary"}], "certfile": "fullchain.pem", "keyfile": "privkey.pem"},
+        )
+        self.assertEqual(client.calls[1], ("restart_addon", MOSQUITTO_SUP))
+
+    def test_a_missing_file_fails_closed_naming_it_before_anything_is_written(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.place(root, "fullchain.pem")  # key absent
+            client = FakeClient()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as cm:
+                    hsa.execute(self.plan(), client, hsa.REPO, files_root=root)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("/ssl/privkey.pem", err.getvalue())
+        self.assertNotIn("/ssl/fullchain.pem", err.getvalue(), "only the missing file is named")
+        self.assertIn(self.NOTE, err.getvalue())
+        self.assertEqual(client.calls, [], "no option write and no restart on a refusal")
+
+    def test_a_folder_this_run_cannot_see_is_not_reported_as_a_missing_certificate(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)  # no ssl/ at all: the mount is missing, not the file
+            client = FakeClient()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit):
+                    hsa.execute(self.plan(), client, hsa.REPO, files_root=root)
+        text = err.getvalue()
+        self.assertIn("cannot see /ssl", text)
+        self.assertIn("host_provision.sh", text)
+        self.assertNotIn(self.NOTE, text, "a missing mount must not read as a missing file")
+        self.assertEqual(client.calls, [])
+
+    def test_observe_marks_present_files_so_the_check_shows_as_a_skip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.place(root, "fullchain.pem", "privkey.pem")
+            observed = hsa.observe(FakeClient(), self.seed(), files_root=root)
+            for p in BROKER_TLS_FILES:
+                self.assertIn(p, observed["existing_files"])
+            req = next(a for a in self.plan(observed)[0].actions if a.kind == "require_files")
+            self.assertTrue(req.already)
+        with tempfile.TemporaryDirectory() as tmp:
+            observed = hsa.observe(FakeClient(), self.seed(), files_root=Path(tmp))
+            self.assertFalse(set(BROKER_TLS_FILES) & observed["existing_files"])
+
+    def test_the_default_root_is_the_hub_filesystem(self):
+        self.assertEqual(hsa.DEFAULT_FILES_ROOT, Path("/"))
+        self.assertEqual(hsa.under_root(Path("/"), "/ssl/privkey.pem"), Path("/ssl/privkey.pem"))
+        self.assertEqual(hsa.under_root(Path("/tmp/x"), "/ssl/privkey.pem"), Path("/tmp/x/ssl/privkey.pem"))
+
+    def test_files_root_flag_reaches_a_real_run(self):
+        # End to end through main(): --files-root is what the tests and a
+        # differently-mounted runner would use; with the files placed the run
+        # completes and restarts the broker, without them it refuses (rc 1).
+        import contextlib
+        import io
+        made: list = []
+
+        def fake_client(base_url, token):
+            c = FakeClient()
+            made.append(c)
+            return c
+
+        real = hsa.SupervisorClient
+        hsa.SupervisorClient = fake_client  # type: ignore[assignment]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                plan = root / "plan.json"
+                plan.write_text(json.dumps(self.seed()))
+                args = ["--plan", str(plan), "--token", "t", "--files-root", str(root),
+                        "--with", "broker_tls"]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as cm:
+                        hsa.main(args)
+                self.assertEqual(cm.exception.code, 1)
+                self.assertEqual(made[-1].calls, [])
+                self.place(root, "fullchain.pem", "privkey.pem")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = hsa.main(args)
+                self.assertEqual(rc, 0)
+                self.assertIn(("restart_addon", MOSQUITTO_SUP), made[-1].calls)
+        finally:
+            hsa.SupervisorClient = real
