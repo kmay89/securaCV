@@ -43,7 +43,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 3 (PR #1664) | 10 in full (four of them rows that were "in part") |
 | Landed in wave 4 (2026-09-08) | 7 in full (items 2, 5, 6, 13, 22, 42, 51 — 2 and 22 host-tested, 5/6/13 written without a Swift toolchain and then compiled and tested by the PR's iOS CI) |
 | Landed in wave 5 (2026-09-11, PR #1682, website #197) | row 21's Parametrize wave, in part — the device manifests own their cases' board knobs and a generator writes them into the CAD, the regeneration order is one command, the CAD ledger the website pins to carries the knobs; zero `.scad` bytes moved |
-| Landed in wave 6 (2026-09-19, PR pending) | the open clauses of three landed rows — 1 (the add-on and sidecar wire the fleet roll-call file), 12's flasher half (the broker TLS controls in both flashers) and 35 (the SBOM schema gate and the sketch-pin assertion); the wave's other packages follow in the same PR |
+| Landed in wave 6 (2026-09-19, PR #1686) | the open clauses of three landed rows — 1 (the add-on and sidecar wire the fleet roll-call file), 12's flasher half (the broker TLS controls in both flashers) and 35 (the SBOM schema gate and the sketch-pin assertion); the wave's other packages follow in the same PR |
 | Still open | 0 in full, 2 in part (21's Parametrize leftovers — see §4 — and 30's version spread), plus one decision surfaced in wave 4's review: whether the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, 5 s in both firmwares) should widen to the ten-minute grid Invariant III names for wall-clock time; and two surfaced in wave 5 (§4): whether the optional render-plan package is wanted, and what to do about `canary-local/devices/registry.json`'s hand-typed `body_mm` |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -260,7 +260,7 @@ uses. Row 21 reads "waves 1–3" in the second sense.
 
 ### Landed in wave 6
 
-A sixth pass on 2026-09-19 (monorepo PR pending) took the open clauses the
+A sixth pass on 2026-09-19 (monorepo PR #1686) took the open clauses the
 landed rows still carried and that need no hardware and no maintainer
 decision, one package per worktree, each built, reviewed adversarially and
 fixed before it was merged here. Three so far:
