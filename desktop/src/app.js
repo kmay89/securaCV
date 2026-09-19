@@ -135,6 +135,11 @@ function savePrefs() {
 // plain, 1 CA, 2 fingerprint, 3 lab — "do not renumber"); the <select> in
 // index.html carries them as its option values.
 const MQTT_TLS = Object.freeze({ plain: 0, ca: 1, fingerprint: 2, insecure: 3 });
+// The owner's broker TLS mode while a plain-only product is on screen and the
+// select shows Plain in its place (tlsRowsRefresh parks it, persistProv skips
+// the stand-in, the next product gets it back); null whenever the select
+// shows the owner's own choice.
+let tlsParked = null;
 // The broker TLS mode, CA and pin are NON-secrets (a public certificate and
 // its hash — docs/flasher_profiles_fleet_book.md), so they live in the same
 // local prefs as the host and never take the OS-secret-store route.
@@ -142,7 +147,12 @@ const PROV_FIELDS = ["device-id", "wifi-ssid", "mqtt-host", "mqtt-port", "mqtt-u
   "mqtt-tls", "mqtt-ca", "mqtt-fp"];
 function persistProv() {
   prefs.prov = prefs.prov || {};
-  PROV_FIELDS.forEach((id) => { prefs.prov[id] = $(id).value; });
+  PROV_FIELDS.forEach((id) => {
+    // A parked TLS mode (a plain-only product on screen, the select showing
+    // Plain in its place) is not the owner's choice: the profile keeps theirs.
+    if (id === "mqtt-tls" && tlsParked !== null) return;
+    prefs.prov[id] = $(id).value;
+  });
   prefs.hubSsid = $("hub-ssid").value;
   savePrefs();
 }
@@ -3473,7 +3483,21 @@ function tlsRowsRefresh(product = state.product) {
   sel.querySelectorAll("option").forEach((o) => {
     if (Number(o.value) !== MQTT_TLS.plain) o.disabled = !tlsOk;
   });
-  if (!tlsOk) sel.value = String(MQTT_TLS.plain);
+  // The select is the owner's remembered mode (PROV_FIELDS). A plain-only
+  // product SHOWS Plain — the form must not name a mode the board would
+  // refuse — without overwriting that memory: the owner's mode is parked
+  // while such a product is chosen, comes back with the next product, and
+  // persistProv leaves the parked stand-in out of the profile. A product
+  // with no broker block at all leaves the select alone (its rows are
+  // hidden anyway); an unconditional reset here used to clobber the profile
+  // on the next persistProv, for every Canary and WAP chosen after a display.
+  if (broker && !tlsOk) {
+    if (tlsParked === null) tlsParked = sel.value;
+    sel.value = String(MQTT_TLS.plain);
+  } else if (tlsParked !== null) {
+    sel.value = tlsParked;
+    tlsParked = null;
+  }
   const mode = Number(sel.value) || MQTT_TLS.plain;
   $("mqtt-tls-note").textContent = tlsOk ? MQTT_TLS_NOTE : MQTT_TLS_PLAIN_ONLY_NOTE;
   $("mqtt-ca-row").classList.toggle("hidden", !(broker && mode === MQTT_TLS.ca));

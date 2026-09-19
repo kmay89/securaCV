@@ -1509,6 +1509,32 @@ test("broker TLS: both flashers offer the mode, the CA and the fingerprint, and 
   assert.ok(!/<option value="[1-3]" selected/.test(selBlock[1]), "desktop preselects a TLS mode");
   assert.match(appJs, /if \(\$\("mqtt-tls"\)\.value === String\(MQTT_TLS\.insecure\)\) \$\("mqtt-tls"\)\.value = String\(MQTT_TLS\.plain\)/,
     "desktop restoreProv must not carry the lab mode forward from the profile");
+  // The desktop select is the owner's REMEMBERED mode. tlsRowsRefresh never
+  // resets it for a product with no broker block (review of the first
+  // version: it did, and the next persistProv wrote plain over the profile
+  // for every Canary or WAP chosen after a display), and for a plain-only
+  // product it PARKS the mode behind the Plain it shows — the profile keeps
+  // the owner's, persistProv skips the stand-in, the next product gets it
+  // back. Held by the shape of the one place that writes the select.
+  const rows = /function tlsRowsRefresh\(product = state\.product\) \{([\s\S]*?)\n\}/.exec(appJs);
+  assert.ok(rows, "desktop tlsRowsRefresh moved");
+  assert.deepStrictEqual(
+    rows[1].split("\n").filter((l) => /\bsel\.value = /.test(l)).map((l) => l.trim()),
+    ["sel.value = String(MQTT_TLS.plain);", "sel.value = tlsParked;"],
+    "tlsRowsRefresh may write the select only to park (plain-only product) or to unpark");
+  assert.match(rows[1],
+    /if \(broker && !tlsOk\) \{\s*if \(tlsParked === null\) tlsParked = sel\.value;\s*sel\.value = String\(MQTT_TLS\.plain\);\s*\} else if \(tlsParked !== null\) \{\s*sel\.value = tlsParked;\s*tlsParked = null;\s*\}/,
+    "the Plain shown for a plain-only product must park the owner's mode, never replace it; no broker block → hands off");
+  assert.match(appJs, /function persistProv\(\) \{[\s\S]*?if \(id === "mqtt-tls" && tlsParked !== null\) return;[\s\S]*?\n\}/,
+    "persistProv must not write a parked (stand-in) TLS mode over the owner's profile");
+  // The CA and the pin are `required` exactly while shown (an empty one is
+  // caught by the form's own prompt before the native builder refuses the
+  // incomplete pair), and the rows are refreshed for every product chosen.
+  assert.match(rows[1], /\$\("mqtt-ca"\)\.required = broker && mode === MQTT_TLS\.ca;/, "desktop CA must be required exactly while shown");
+  assert.match(rows[1], /\$\("mqtt-fp"\)\.required = broker && mode === MQTT_TLS\.fingerprint;/, "desktop pin must be required exactly while shown");
+  const chosen = /function onProductChosen\(p, ver\) \{([\s\S]*?)\n\}/.exec(appJs);
+  assert.ok(chosen, "desktop onProductChosen moved");
+  assert.match(chosen[1], /^\s*tlsRowsRefresh\(p\);/m, "onProductChosen must refresh the TLS rows for the product just chosen");
 
   // The fingerprint spelling: ONE pattern string per frontend, pinned equal,
   // and it is the firmware's set (fingerprint_normalize: any run of ':' or
