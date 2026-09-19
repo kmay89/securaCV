@@ -131,7 +131,15 @@ function savePrefs() {
   }
 }
 
-const PROV_FIELDS = ["device-id", "wifi-ssid", "mqtt-host", "mqtt-port", "mqtt-user"];
+// Broker TLS mode values — the firmware's (mqtt_transport_logic.h Mode: 0
+// plain, 1 CA, 2 fingerprint, 3 lab — "do not renumber"); the <select> in
+// index.html carries them as its option values.
+const MQTT_TLS = Object.freeze({ plain: 0, ca: 1, fingerprint: 2, insecure: 3 });
+// The broker TLS mode, CA and pin are NON-secrets (a public certificate and
+// its hash — docs/flasher_profiles_fleet_book.md), so they live in the same
+// local prefs as the host and never take the OS-secret-store route.
+const PROV_FIELDS = ["device-id", "wifi-ssid", "mqtt-host", "mqtt-port", "mqtt-user",
+  "mqtt-tls", "mqtt-ca", "mqtt-fp"];
 function persistProv() {
   prefs.prov = prefs.prov || {};
   PROV_FIELDS.forEach((id) => { prefs.prov[id] = $(id).value; });
@@ -140,6 +148,9 @@ function persistProv() {
 }
 function restoreProv() {
   if (prefs.prov) PROV_FIELDS.forEach((id) => { if (prefs.prov[id]) $(id).value = prefs.prov[id]; });
+  // The lab TLS mode (encrypted, NOT verified) is a per-flash choice: it is
+  // never preselected, so a remembered profile does not carry it forward.
+  if ($("mqtt-tls").value === String(MQTT_TLS.insecure)) $("mqtt-tls").value = String(MQTT_TLS.plain);
   if (prefs.hubSsid) $("hub-ssid").value = prefs.hubSsid;
 }
 
@@ -764,6 +775,11 @@ async function boot() {
   $("wifi-ssid").addEventListener("change", profileAutofill);
   $("mqtt-host").addEventListener("change", profileAutofill);
   $("mqtt-user").addEventListener("change", profileAutofill);
+  // Broker TLS: the mode picks which of the CA / pin boxes is shown, and a
+  // TLS mode on the plain default port earns the 8883 suggestion.
+  $("mqtt-tls").addEventListener("change", () => tlsRowsRefresh());
+  $("mqtt-port").addEventListener("input", () => tlsRowsRefresh());
+  $("mqtt-port-8883").addEventListener("click", () => { $("mqtt-port").value = "8883"; tlsRowsRefresh(); });
 
   document.querySelectorAll("[data-open]").forEach((a) =>
     a.addEventListener("click", (ev) => {
@@ -3063,6 +3079,7 @@ function onProductChosen(p, ver) {
   if (usbSecrets || broker) $("mqtt-host").value ||= "homeassistant.local";
   profileAutofill();
   renderDials(p); // room presets, for the products whose firmware reads them
+  tlsRowsRefresh(p); // broker TLS rows: mode-gated, plain-only where the build refuses TLS
   const btn = $("flash-btn");
   // Wait for the passport before arming the button. Without this the picker
   // is live during the connect-time read, so a quick hand could start an
@@ -3430,6 +3447,58 @@ function renderNurseryStrip() {
   box.classList.remove("hidden");
 }
 
+// ── broker TLS rows ─────────────────────────────────────────────────────────
+// index.html #mqtt-tls / #mqtt-ca / #mqtt-fp: the CA box shows for the CA
+// mode only, the pin for the fingerprint mode only, and each is `required`
+// exactly while shown — so readProvisioning's validity pass catches an empty
+// one with the browser's own prompt before the native builder would refuse
+// the incomplete pair. A product built plain-only (catalog `broker_tls`
+// false — the nightstand-c6, whose firmware REFUSES a provisioned TLS mode at
+// boot rather than connecting plain) keeps only Plain selectable, with the
+// firmware's own reason under the select. Same behavior, same copy, in the
+// browser flasher (renderWifiFields); tests/desktop_parity.test.js pins it.
+const MQTT_TLS_NOTE =
+  "A TLS mode encrypts the broker link so the username and password above never " +
+  "cross your LAN in the clear; TLS brokers usually listen on 8883. The board never " +
+  "falls back to plain or unverified by itself — an incomplete setup refuses to " +
+  "connect and names the reason on its serial log.";
+const MQTT_TLS_PLAIN_ONLY_NOTE =
+  "This flavor is built plain-only (its OTA slot budget — CANARY_MQTT_PLAIN_ONLY), so " +
+  "only Plain is offered: a provisioned TLS mode would be refused at boot with that " +
+  "reason on its log, never downgraded to plain.";
+function tlsRowsRefresh(product = state.product) {
+  const broker = !!product && product.broker_nvs === true;
+  const tlsOk = broker && product.broker_tls === true;
+  const sel = $("mqtt-tls");
+  sel.querySelectorAll("option").forEach((o) => {
+    if (Number(o.value) !== MQTT_TLS.plain) o.disabled = !tlsOk;
+  });
+  if (!tlsOk) sel.value = String(MQTT_TLS.plain);
+  const mode = Number(sel.value) || MQTT_TLS.plain;
+  $("mqtt-tls-note").textContent = tlsOk ? MQTT_TLS_NOTE : MQTT_TLS_PLAIN_ONLY_NOTE;
+  $("mqtt-ca-row").classList.toggle("hidden", !(broker && mode === MQTT_TLS.ca));
+  $("mqtt-fp-row").classList.toggle("hidden", !(broker && mode === MQTT_TLS.fingerprint));
+  $("mqtt-ca").required = broker && mode === MQTT_TLS.ca;
+  $("mqtt-fp").required = broker && mode === MQTT_TLS.fingerprint;
+  // A TLS mode with the port still at the plain default: SUGGEST 8883. The
+  // port is the owner's ("the broker did not speak TLS on this port" is the
+  // failure the firmware names), so this never rewrites it.
+  $("mqtt-port-nudge").classList.toggle("hidden",
+    !(broker && mode !== MQTT_TLS.plain && $("mqtt-port").value.trim() === "1883"));
+}
+
+// Fingerprint spellings the firmware accepts (mqtt_transport_logic.h
+// fingerprint_normalize: 32 hex pairs, any run of ':' or ' ' between pairs,
+// either case) are the input's own `pattern` (index.html #mqtt-fp — the one
+// source on this side; the parity test pins it equal to the browser's).
+// provisioning.rs accepts the same set; the value is folded to 64 hex so the
+// two flashers seed the same bytes for the same spelling.
+function fingerprintNormalize(raw) {
+  const t = String(raw == null ? "" : raw).trim();
+  const re = new RegExp(`^(?:${$("mqtt-fp").pattern})$`);
+  return re.test(t) ? t.replace(/[: ]/g, "") : t;
+}
+
 function readProvisioning(product) {
   if (!product) return null;
   const usbSecrets = product.provisioning === "usb-secrets";
@@ -3448,9 +3517,15 @@ function readProvisioning(product) {
   // unchecked an explicit 0 — so an empty form no longer means "nothing to
   // write": every flash carries at least the OTA choice.
   const dials = dialsForFlash(product);
+  // Broker TLS: the mode the form shows, or plain where this product's build
+  // refuses TLS (catalog broker_tls) — and only the field that mode uses is
+  // checked and sent, so a value left in a hidden box is never written.
+  const tlsMode = broker && product.broker_tls === true
+    ? Number($("mqtt-tls").value) || MQTT_TLS.plain : MQTT_TLS.plain;
   const fields = ["wifi-ssid", "wifi-pass"]
     .concat(usbSecrets || broker ? ["device-id"] : [])
-    .concat(broker ? ["mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"] : []);
+    .concat(broker ? ["mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass", "mqtt-tls"] : [])
+    .concat(tlsMode === MQTT_TLS.ca ? ["mqtt-ca"] : tlsMode === MQTT_TLS.fingerprint ? ["mqtt-fp"] : []);
   for (const id of fields) {
     const input = $(id);
     if (!input.checkValidity()) {
@@ -3475,6 +3550,13 @@ function readProvisioning(product) {
     mqttPort: broker ? Number($("mqtt-port").value) || 1883 : 1883,
     mqttUser: broker ? $("mqtt-user").value : "",
     mqttPass: broker ? $("mqtt-pass").value : "",
+    // Broker TLS (provisioning.rs: u8 mqtt_tls / string mqtt_ca / string
+    // mqtt_fp — the same keys the browser builder writes). Plain writes
+    // nothing; the CA rides only with the CA mode, the pin only with the
+    // fingerprint mode.
+    mqttTls: tlsMode,
+    mqttCa: tlsMode === MQTT_TLS.ca ? $("mqtt-ca").value.trim() : "",
+    mqttFp: tlsMode === MQTT_TLS.fingerprint ? fingerprintNormalize($("mqtt-fp").value) : "",
     // Which NVS encoding this firmware reads (catalog, from the source):
     // "blob" for canary/wap, "string" for sense/vision/display.
     wifiNvs: product.wifi_nvs || "string",
