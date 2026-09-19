@@ -71,6 +71,26 @@ add-on announces the API to the Supervisor (discovery), so the SecuraCV
 integration appears under **Settings → Devices & Services** without typing
 a URL.
 
+**Witness Wall (Apple TV).** The same API answers `GET /api/fleet`, the
+roll-call the tvOS Witness Wall reads: the kernel's own row first, then
+every Canary the add-on's MQTT publisher has heard on the broker. The add-on
+wires that itself — `run.sh` points both the kernel and `event_mqtt_bridge`
+at `/config/fleet_peers.json` — so there is no option to set. Three honest
+limits. Peers appear only while `mqtt_publish.enabled` is on (the default):
+with it off no bridge listens for Canaries, the roll-call lists the kernel
+alone, and the add-on log says so at startup. The add-on advertises no
+`_securacv._tcp` Bonjour service and, as above, ships the 8799 host port
+disabled, so the Wall cannot find it on its own: enable the port in the
+add-on's Network settings and type the Home Assistant host into the Wall
+once (a typed hub is remembered). And the summary file sits under `/config`,
+so it is part of every HA backup — on purpose, because it holds the public
+key pinned on first sight for each Canary (a restore keeps that trust
+instead of re-pinning) and the per-room wellbeing words the Wall shows; it
+is written `0600`, and `/api/fleet` serves the roll-call's coarse words
+only, never the keys. `online` there is not a liveness proof: it means a
+signed chain publish verified against the pin within the last 180 s, no
+more — see [`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md).
+
 ## Features
 
 - **Zero-config Frigate mode** - broker auto-discovery, auto device key

@@ -859,6 +859,38 @@ automation:
             Confidence: {{ state_attr('sensor.pwk_last_event', 'confidence') }}
 ```
 
+### Witness Wall: the fleet roll-call
+
+The kernel's Event API also answers `GET /api/fleet`, the roll-call the
+tvOS Witness Wall reads: the kernel's own row first, then every Canary the
+app's MQTT publisher has heard on the broker. The app wires this itself —
+its `run.sh` points the kernel and `event_mqtt_bridge` at one file,
+`/config/fleet_peers.json` — so there is no option to set. What the Wall
+still needs from you, and why:
+
+- **Keep MQTT publishing enabled** (`mqtt_publish.enabled: true` above, the
+  default). The publisher is the process that listens for Canaries; with it
+  off, the roll-call lists the kernel alone, and the app log says so at
+  startup.
+- **Open the port and type the host once.** The app advertises no
+  `_securacv._tcp` Bonjour service, and its 8799 host port ships disabled
+  (see [Event API exposure](../privacy_witness_kernel/README.md#event-api-exposure)),
+  so the Wall cannot discover it. Enable the port under **Settings → Apps →
+  Privacy Witness Kernel → Configuration** (Network section), then enter
+  your Home Assistant host in the Wall; a typed hub is remembered and never
+  aged out.
+- **The summary file is in your backups, on purpose.** `/config` is part of
+  every Home Assistant backup, and `/config/fleet_peers.json` holds the
+  public key pinned on first sight for each Canary plus the per-room
+  wellbeing words the Wall shows — a restore therefore keeps that trust
+  instead of re-pinning every device. The file is written `0600`, and
+  `/api/fleet` serves the roll-call's coarse words only, never the keys.
+
+`online` on that roll-call is not a liveness proof: it means a signed chain
+publish verified against the pinned key within the last 180 s, no more —
+the exact wording is in
+[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md).
+
 ---
 
 ## Manual Sensors (Alternative)
