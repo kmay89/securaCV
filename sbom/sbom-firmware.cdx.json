@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:194631de-1491-53a3-a394-13625d55b643",
+  "serialNumber": "urn:uuid:f1648172-a993-5248-86b8-514413853812",
   "version": 1,
   "metadata": {
     "tools": {
@@ -10,8 +10,8 @@
           "type": "application",
           "group": "securacv",
           "name": "gen_firmware_sbom.py",
-          "version": "1.0.0",
-          "description": "scripts/gen_firmware_sbom.py — derives this document from flavors.json, the resolved PlatformIO configs, platforms.ini, the first-party library manifests and the workflows' Arduino core pins"
+          "version": "1.1.0",
+          "description": "scripts/gen_firmware_sbom.py — derives this document from flavors.json, the resolved PlatformIO configs, platforms.ini, the first-party library manifests, the workflows' Arduino core pins and the sketch.yaml profiles (the two Arduino axes are asserted to agree)"
         }
       ]
     },
@@ -36,7 +36,7 @@
     "properties": [
       {
         "name": "securacv:check",
-        "value": "python3 scripts/gen_firmware_sbom.py --check"
+        "value": "python3 scripts/gen_firmware_sbom.py --check --validate"
       },
       {
         "name": "securacv:declared_by_hand",
@@ -942,7 +942,7 @@
       "properties": [
         {
           "name": "securacv:build_paths",
-          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images); platformio (platform_canary); platformio (platform_s3c3)"
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images); platformio (platform_canary); platformio (platform_s3c3); sketch.yaml (canary_display/dash); sketch.yaml (canary_display/watch)"
         },
         {
           "name": "securacv:declared_in",
@@ -968,7 +968,7 @@
       "properties": [
         {
           "name": "securacv:build_paths",
-          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images)"
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli-display); arduino-cli (flasher-release.yml:factory-images); sketch.yaml (canary_display/dash-core3); sketch.yaml (canary_display/modes); sketch.yaml (canary_display/playground); sketch.yaml (canary_display/watch-core3)"
         }
       ]
     },
@@ -990,7 +990,7 @@
       "properties": [
         {
           "name": "securacv:build_paths",
-          "value": "platformio (platform_core3)"
+          "value": "platformio (platform_core3); sketch.yaml (canary_wap/xiao_sense)"
         },
         {
           "name": "securacv:declared_in",

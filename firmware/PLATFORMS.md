@@ -88,9 +88,24 @@ place to record the decision.
 
 - **The Arduino CLI builds** pin their `esp32:esp32` core on their own axis
   (the `.github/actions/setup-arduino-esp32` composite action's `core-version`
-  input and each sketch's `sketch.yaml`). The two axes are meant to agree
-  (core 2.0.17 ↔ `platform_s3c3`, core 3.3.x ↔ `platform_core3`) but nothing
-  enforces it yet.
+  input and each sketch's `sketch.yaml`). `scripts/gen_firmware_sbom.py` reads
+  both and refuses to generate — so `lint.yml`'s `--check` goes red on the PR
+  — unless they agree: every core-version a workflow row pins is pinned by
+  some sketch profile; every core a sketch profile pins is a workflow pin or
+  the Arduino core inside that product's PlatformIO platform (the table
+  above); and every library a workflow row pins on a core line (GFX / lvgl /
+  NimBLE split their majors along the core boundary) is pinned to the same
+  version by that product's profiles on that core
+  ([`sbom/README.md`](../sbom/README.md)). What that leaves, on purpose: the
+  WAP's Arduino-CLI rows (`firmware.yml`, `firmware-release.yml`,
+  `flasher-release.yml`, `csi_module_disable_matrix.yml`, `ram_audit.yml`)
+  pass no `core-version` and build on the action's weekly "latest", while the
+  WAP sketch pins 3.3.8 — the core inside `platform_core3`. The sketch tracks
+  the PlatformIO path; the CI rows float above it by design. Pinning those
+  rows is a release decision (new cache keys, the weekly rotation ends),
+  recorded here when someone makes it, not a lint's call. Note too that the
+  core-3 lines sit on different patch releases (PlatformIO 3.3.8, Arduino-CLI
+  3.3.10); the SBOM lists them as two components rather than one.
 - **`projects/canary-wap/setup.sh`** runs `pio pkg install --global --platform
   espressif32` (unpinned, latest official) for its interactive first-run path.
   That pre-installs a platform; the env's own `platform =` spec still governs

@@ -44,7 +44,8 @@ resolver against PlatformIO's own `pio project config` for every build env
 | each project's `platformio.ini` + its `extra_configs` | the **resolved** config of every build env: `platform`, `framework`, `board`, `lib_deps`, `lib_extra_dirs` — through `extends` chains and `${section.option}` interpolation, the same way PlatformIO reads them |
 | `firmware/envs/platformio/platforms.ini` | which pin section each env's platform literal is ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md)) |
 | `firmware/common/*/library.json` / `library.properties`, `firmware/canary/lib/*/library.json` | the first-party libraries (name, version, license) the images are built from |
-| `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or the action's "latest") |
+| `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or the action's "latest"), with each row's library pins and the sketch it goes on to compile |
+| `firmware/projects/*/arduino/*/sketch.yaml` | the other Arduino axis: the core (`esp32:esp32 (X.Y.Z)`) and library pins of every sketch profile, parsed from YAML — the files' comments quote core numbers too |
 | `firmware/canary/include/canary_config.h` | `FIRMWARE_VERSION` — the one release train (`scripts/lint_fw_version_sync.sh` holds the other five copies to it) |
 
 Each product is a `firmware` component; each PlatformIO platform package a
@@ -52,7 +53,38 @@ Each product is a `firmware` component; each PlatformIO platform package a
 component; every `lib_deps` entry and every first-party library a `library`
 component. The `dependencies` graph joins them: product → platform → Arduino
 core → ESP-IDF, product → libraries. Which envs a platform or library serves is
-in each component's `securacv:envs` property.
+in each component's `securacv:envs` property; which build paths reach an
+Arduino core — PlatformIO platform sections, workflow rows, sketch profiles —
+is in the `framework` component's `securacv:build_paths`.
+
+### The two Arduino axes agree, or nothing generates
+
+The Arduino-CLI path pins its `esp32:esp32` core twice: in the workflows
+(the composite action's `core-version` input) and in each sketch's
+`sketch.yaml` profiles. `firmware.yml` used to ask, in a comment, that the two
+be kept in lockstep. The generator now asserts it, and a disagreement fails
+generation — so `lint.yml`'s `--check` goes red on the PR that introduces
+it — naming the row, the profile and the remedy:
+
+1. every exact core-version a workflow row pins is pinned by some sketch
+   profile;
+2. every core a sketch profile pins is a workflow pin, **or** the Arduino core
+   inside that product's PlatformIO platform (`PLATFORM_FACTS`) — a sketch may
+   track either build path;
+3. every library a workflow row pins on its core line (GFX, lvgl and NimBLE
+   split their majors along the core boundary) is pinned to the same version
+   by every profile, of a product that row builds, on that core. Which product
+   a row builds is read off the job's `run:` blocks (the `.ino` it compiles,
+   or the sketch dir it `cd`s into) — the release jobs install the WAP's core
+   and both display cores in one job.
+
+Not asserted, on purpose: a workflow row on the action's "latest" has no
+version to agree with, and a sketch may pin libraries its row leaves floating.
+That leaves one recorded residual, not a drift: every WAP workflow row builds
+on "latest" while the WAP sketch pins 3.3.8 — the core inside
+`platform_core3`, the PlatformIO path the sketch tracks. Rule 2 is what makes
+that legal; pinning those rows would be a release decision
+([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md)), not a lint's.
 
 ### What is still declared by hand
 
@@ -94,14 +126,22 @@ and never into the committed copy.
 ### Regenerating
 
 ```bash
-python3 scripts/gen_firmware_sbom.py            # rewrites sbom/sbom-firmware.cdx.json
-python3 scripts/gen_firmware_sbom.py --check    # what lint.yml runs
-python3 scripts/gen_firmware_sbom.py --verify-with-pio   # needs `pio` on PATH
+python3 scripts/gen_firmware_sbom.py                       # rewrites sbom/sbom-firmware.cdx.json
+python3 scripts/gen_firmware_sbom.py --check --validate    # what lint.yml runs
+python3 scripts/gen_firmware_sbom.py --validate FILE       # an artifact's bytes (sbom.yml)
+python3 scripts/gen_firmware_sbom.py --verify-with-pio     # needs `pio` on PATH
 ```
 
 Run the first after changing a platform pin, a `lib_deps` line, a library
-manifest, an Arduino core pin in a workflow, or the firmware version, and
-commit the result in the same change. Tests: `scripts/tests/test_gen_firmware_sbom.py`.
+manifest, an Arduino core pin in a workflow, a `sketch.yaml` profile, or the
+firmware version, and commit the result in the same change. `--validate`
+needs `pip install 'cyclonedx-python-lib[json-validation]==11.12.0'` (the
+generator names that spec when the import fails, and the unit tests hold
+every workflow's pip line and this page to that one string); it is read-only,
+like `--check`, and says so: a `--out` or `--timestamp` beside it without
+`--check` is refused up front rather than dropped for a green exit and no
+file — to validate an artifact, write it, then run `--validate FILE` on it.
+Tests: `scripts/tests/test_gen_firmware_sbom.py`.
 
 ## Retrieving the SBOMs
 
@@ -125,7 +165,21 @@ npm install -g @cyclonedx/cyclonedx-cli
 cyclonedx validate --input-file sbom-rust.cdx.json --input-format json
 ```
 
-The committed firmware document validates against the CycloneDX 1.5 JSON
-schema in strict mode (`cyclonedx-python-lib`'s `JsonStrictValidator`) — that
-check is how a registry URL with spaces in it was caught before the first
-commit; it is not yet a CI gate.
+The firmware document is held to the CycloneDX 1.5 JSON schema in **strict
+mode** (`cyclonedx-python-lib`'s `JsonStrictValidator`: no unknown keys,
+format checking on) as a CI gate, twice: `lint.yml` runs
+`python3 scripts/gen_firmware_sbom.py --check --validate` on the committed
+copy on every PR, and `sbom.yml` runs `--validate sbom-firmware.cdx.json` on
+the timestamped artifact — the exact bytes it uploads and attaches to a
+release — before its `jq` step checks what a schema cannot (a non-empty
+component list, a closed dependency graph). The `specVersion` is asserted
+by the generator, not the schema: the 1.5 schema types that field as a free
+string, so a file declaring 1.6 would otherwise pass as "a strict 1.5
+document"; `--validate FILE` refuses it, and reports a missing or non-JSON
+file as one error line. That strict check is how a
+registry URL with spaces in it was caught before the first commit, by hand;
+the `json-validation` extra is what brings the IRI format checker, which is
+why the pin is exact and the extra is not optional. The schema ships inside
+the wheel and `$ref`s resolve from a local registry, so the gate needs no
+network. The Rust and Node documents are not held to 1.5: `cargo-cyclonedx`
+and `cdxgen` choose their own `specVersion`.
