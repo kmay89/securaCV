@@ -151,8 +151,22 @@ them land. Check each on the session's hub:
   survive a hub reboot. Confirm the non-admin login is enough to view the
   shipped dashboards. Record the zoom/rotation values that suit the 7" panel
   and fold them into [`full_stack_setup.md`](full_stack_setup.md).
-- ☐ **Headless unchanged:** a flash with neither tick shows no trace of
-  either add-on — the check that opt-in still means zero footprint.
+- ☐ **Broker TLS** (`--with broker_tls`; a console flag only, no Flasher
+  tick): place a certificate chain and key in Home Assistant's `ssl` folder
+  first (the Let's Encrypt add-on's two default files). From the developer
+  console, `host_provision.sh --with broker_tls --dry-run` must narrate the
+  file check, the `certfile` / `keyfile` options and the restart; the real
+  run must restart the Mosquitto add-on, whose Log must then say
+  "Certificates found: SSL is available". Confirm the host runner's mount
+  guess: `/mnt/data/supervisor/ssl` is where HAOS keeps that folder (if not,
+  the run says "cannot see /ssl" — find the real path, re-run with
+  `SECURACV_HOST_SSL_DIR=<path>`, and fold it into `hub_host_provision.sh`).
+  Then a Canary provisioned for port `8883` in CA mode connects, and one left
+  on `1883` still connects (the plain listener stays). Run it once more with
+  the key removed: the step must refuse by name, and the core plan must
+  already be complete.
+- ☐ **Headless unchanged:** a flash with none of the flags shows no trace of
+  any of the three — the check that opt-in still means zero footprint.
 
 ### Recovery (the "always recovers" bar — try to break it)
 
