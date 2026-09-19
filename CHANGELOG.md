@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### The add-on lists the fleet, both flashers speak broker TLS, the SBOM is schema-checked
+
+- **The Home Assistant add-on and the Docker sidecar point the kernel and
+  the MQTT bridge at one fleet-peers file**, so `GET /api/fleet` lists the
+  Canaries the bridge has heard instead of the kernel alone: `run.sh` names
+  `/config/fleet_peers.json` in both kernel config blocks
+  (`api.fleet_peers_path`) and on `event_mqtt_bridge`'s argv
+  (`--fleet-peers-path`); `docker/sidecar/entrypoint.sh` does the same under
+  `/data`. A render-and-parse test holds every key of every heredoc to what
+  `src/config.rs` accepts under `deny_unknown_fields`, and fails under a
+  misspelled key, a dropped argv element or a key the kernel would refuse.
+  The docs say what the Witness Wall still needs from an add-on install (the
+  8799 host port, which exposes the tokenless roll-call to the LAN;
+  `http://<host>:8799` typed into the Wall once; the MQTT publisher enabled)
+  and that the summary file — pinned public keys, coarse wellbeing words,
+  `0600` — enters HA backups by design. No new option; existing add-ons pick
+  it up at the next product release.
+- **Both flashers (browser Lab and desktop Flasher) now carry the broker TLS
+  controls** — mode select, CA certificate, SHA-256 fingerprint — writing the
+  `mqtt_tls` / `mqtt_ca` / `mqtt_fp` keys the firmware has read since wave 3;
+  the plain-only nightstand-c6 is offered Plain only, with the firmware's
+  reason, via the catalog's new derived `broker_tls`, whose generator refuses
+  a `CANARY_MQTT_PLAIN_ONLY` spelling it cannot parse instead of guessing;
+  the desktop remembers the mode, CA and pin with the host without a
+  plain-only or broker-less board overwriting them; the port is suggested
+  (8883), never rewritten; `desktop_parity.test.js` pins the two forms equal.
+  Host-tested, no bench pass.
+- **SBOM — strict CycloneDX 1.5 schema validation is a hard gate** in
+  lint.yml (committed copy) and sbom.yml (uploaded artifact), via
+  `gen_firmware_sbom.py --validate` on a pinned cyclonedx-python-lib, which
+  also asserts the file's specVersion (the schema cannot) and refuses a write
+  flag it would otherwise drop; the generator reads the sketch.yaml core and
+  library pins, lists the profiles as build paths, refuses a profile-less
+  sketch.yaml, and refuses a tree where the profiles disagree with the
+  workflows' core-version rows; the validator pin is one string across the
+  workflows, README and generator, held by a test. The WAP's Arduino-CLI rows
+  floating on "latest" above its 3.3.8 sketch pin is recorded as a release
+  decision, not fixed here.
+
 ### The device manifest owns its case's board knobs, and the regeneration order is one command
 
 - **`devices/<slug>/device.json` `cad.params` owns the board and module
