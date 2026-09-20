@@ -141,8 +141,8 @@ bool mqtt_tls_clear_ca();
 // the pin or a credential.
 struct MqttTransportStatus {
   bool        loaded;      // false only before mqtt_init() has read NVS (the HTTP server starts first)
-  const char* mode;        // provisioned: "plain" / "tls-ca" / "tls-fingerprint" / "tls-insecure-lab"
-  uint8_t     mode_byte;
+  const char* mode;        // provisioned: "plain" / "tls-ca" / "tls-fingerprint" / "tls-insecure-lab", or "unknown" for a byte outside the table
+  uint8_t     mode_byte;   // the byte as stored (not the table's fallback), so "unknown" comes with the value that was refused
   const char* transport;   // what the socket does: "plain" / "tls-ca" / "tls-fingerprint" / "tls-insecure" / "refused"
   bool        allowed;     // false = refused; nothing connects until reprovisioned
   bool        warn_insecure;

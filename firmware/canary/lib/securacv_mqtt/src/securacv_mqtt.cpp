@@ -49,11 +49,24 @@ static bool s_transport_loaded = false;
 // closed — never between two writes of one request (mqtt_save_config).
 static volatile bool s_reload_pending = false;
 
+// The mode byte as stored, read at every transport (re)load. The transport
+// object only knows the table's fallback (an unknown byte reads back as
+// Plain from mode()), so the status report keeps the raw value to show
+// next to "unknown" / the refusal.
+static uint8_t s_mode_byte_raw = 0;
+
 // Task-watchdog budget. main.cpp arms WATCHDOG_TIMEOUT_SEC (8 s) on the
 // loop task and attempt_connect() runs on it, so every blocking stage of a
-// connect is bounded here and the watchdog is fed between the two stages:
+// connect is bounded here and the watchdog is fed at the top of the attempt
+// (loop() feeds it once at ITS top, then runs mesh / OTA / camera / audio
+// before mqtt_loop(), so the budget below counts from our own feed, not
+// from however long the rest of the pass took) and again between the two
+// stages:
 //   stage 1  TCP connect (+ TLS handshake)  ≤ kConnectTimeoutSec + kHandshakeTimeoutSec = 7 s
 //   stage 2  MQTT CONNECT → CONNACK         ≤ kSocketTimeoutSec = 5 s
+// Outside the budget: the DNS lookup WiFi.hostByName() runs before the
+// connect select, with the core's own wait — pre-existing on the plain
+// path, and not covered by these numbers.
 // The core's WiFiClientSecure defaults are 30 s (connect) / 120 s
 // (handshake) and the shared transport's 15 s handshake is sized for the
 // products with a larger budget; either would panic-reset this firmware
@@ -139,7 +152,10 @@ static const char* NVS_KEY_MQTT_EN   = "mqtt_en";
 // WARNING goes there only when the line changes — Serial gets every
 // attempt. Reset on a successful connect and on a reprovision so the same
 // fault is logged again after a recovery.
-static char s_last_health_warn[64] = {0};
+// 128: the widest line is "MQTT TLS connect failed|<transport>: <reason>
+// (mbedtls -0xNNNN)" and two different mbedTLS codes must not dedupe into
+// one entry — 64 cut the key before the code.
+static char s_last_health_warn[128] = {0};
 
 static void health_warn_changed(const char* message, const char* detail) {
   char key[sizeof(s_last_health_warn)];
@@ -161,6 +177,17 @@ static void transport_reload(const char* why) {
   const auto& d = s_transport.load(NVS_MAIN_NS);
   s_mqtt.setClient(s_transport.client());
   s_transport_loaded = true;
+  // The byte as stored, for the status report: mode() has already folded an
+  // unknown byte to Plain (mode_from_u8), and "provisioned mode: plain" next
+  // to a ModeUnknown refusal misreports the unit.
+  s_mode_byte_raw = static_cast<uint8_t>(s_transport.mode());
+  if (d.reason == canary::net::mqtt_tls::Reason::ModeUnknown) {
+    NvsManager& nvs = NvsManager::instance();
+    if (nvs.beginReadOnly()) {
+      s_mode_byte_raw = nvs.getUChar(canary::net::mqtt_tls::NVS_KEY_MODE, 0);
+      nvs.end();
+    }
+  }
   health_warn_reset();
   Serial.printf("[MQTT] Broker transport: %s (%s)\n", s_transport.name(), why);
   if (!d.allowed()) {
@@ -335,6 +362,11 @@ static bool attempt_connect() {
   if (!WiFi.isConnected()) {
     return false;
   }
+
+  // The stage budgets below count from HERE, not from loop()'s own feed at
+  // its top: everything loop() ran before mqtt_loop() has already spent an
+  // unknown slice of the 8 s. A bounded stage is not a hang.
+  (void)esp_task_wdt_reset();  // a no-op if this task is not subscribed
 
   // Broker transport gate (shared decision, network/mqtt_transport.h): a
   // REFUSED decision never reaches a socket, and the lab opt-in is named on
@@ -795,8 +827,10 @@ void mqtt_transport_status(MqttTransportStatus* out) {
     return;
   }
   const Decision& d = s_transport.decision();
-  out->mode = mode_name(s_transport.mode());
-  out->mode_byte = static_cast<uint8_t>(s_transport.mode());
+  // A byte outside the table is reported as what it is — "unknown" and the
+  // stored value — not as the Plain the transport object folded it to.
+  out->mode = (d.reason == Reason::ModeUnknown) ? "unknown" : mode_name(s_transport.mode());
+  out->mode_byte = s_mode_byte_raw;
   out->transport = s_transport.name();
   out->allowed = d.allowed();
   out->warn_insecure = d.warn_insecure();
