@@ -236,10 +236,12 @@ pushes the bytes back. Two things to know before you rely on it:
   number. Walls, tolerances and the selectors stay in the file: the
   design-language canon is case-owned (`lint_design_lang.py`) and
   `preset` / `host` / `part` are chosen per printable set at render time.
-  What each manifest owns and what it cannot yet (the C6's `model` ternary,
-  the 7" frame's panel record, the 1.69's two-knob line, the doorbell) is
-  in `devices/README.md`. Then `python3 scripts/regen_cad.py --previews
-  <dir>` — the order in "Generated files" above, as one command.
+  What each manifest owns and what it cannot yet (the 7" frame's panel
+  record; the selectors) is in `devices/README.md`, including `cad.also` —
+  one manifest owning a second case file of the same build (the Vision's
+  doorbell), so a Vision knob edit writes both cases and owes both preview
+  sets (26 + 12). Then `python3 scripts/regen_cad.py --previews <dir>` —
+  the order in "Generated files" above, as one command.
 
 - **Always send rendering previews.** Any change to an enclosure `.scad`
   ships with PNG previews of every affected part, shared with the requester

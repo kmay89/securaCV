@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### The add-on lists the fleet, both flashers speak broker TLS, the SBOM is schema-checked
+### The add-on lists the fleet, the whole line speaks broker TLS, the 7" glass takes a location, the SBOM is schema-checked
 
 - **The Home Assistant add-on and the Docker sidecar point the kernel and
   the MQTT bridge at one fleet-peers file**, so `GET /api/fleet` lists the
@@ -46,6 +46,53 @@
   scoped per product — a row's pin is answered only by the profiles of the
   product it builds, and a profile's pin only by that product's rows or its
   own PlatformIO core.
+- **`release_ha` joins `firmware/canary`'s PR-CI build envs** (`firmware/flavors.json`
+  `build_envs`): the Home Assistant MQTT image, the only canary env that
+  compiles `lib/securacv_mqtt`, is built on every PR and its OTA-slot guard
+  fires there instead of on the release; a test pins that every guarded
+  image is one PR CI builds; the SBOM lists the env.
+- **`firmware/canary` (`securacv_mqtt`) adopts the shared broker-TLS
+  transport and gains a way to set it** — the setup wizard's hub step,
+  `POST /api/mqtt/config` (`tls`, `fp`) and `POST`/`DELETE /api/mqtt/ca` —
+  with save-time refusal in the firmware's own words, one NVS session per
+  save (TLS keys before credentials, host-tested order) and a wizard that
+  never re-sends a mode it was not asked to change; the connect runs in
+  bounded stages under the canary's 8 s task watchdog. Compile-tested by CI
+  (`release_ha`); decision, field judgment, write order and wizard
+  host-tested; not yet run against a TLS broker.
+- **Hub plan: opt-in `--with broker_tls` step** (`broker-tls`, last in the
+  plan) requires the broker's certificate chain and key in Home Assistant's
+  `ssl` folder, sets the Mosquitto add-on's two file options and restarts
+  the add-on; generic `require_files` / `restart_addon` executor actions
+  with `--files-root`; the host runner mounts the hub's ssl folder read-only
+  only on request (path inferred, `SECURACV_HOST_SSL_DIR` overrides it and
+  the runner says so when it is absent). The plan is the one place the
+  option and file names are spelled, and a test holds the docs to that.
+  Mints no certificate, chooses no trust anchor, cannot verify the listener;
+  host-tested, not run on a hub.
+- **Enclosure CAD, row 21's leftovers.** The Nightstand C6's `model`
+  ternaries — dead branches behind `assert(model == "1.47")` — became the
+  1.47 literals, and its manifest owns the board trio as `ws147` references;
+  the Touch 1.69's `aa_dx = 0.0; aa_dy = 0.0;` line is two lines and both
+  offsets are owned; a manifest may own a second case file of the same
+  build (`cad.also`), and `devices/canary-vision` names the doorbell's, so a
+  Vision knob edit writes both cases and owes both preview sets. 70 knobs
+  across 10 case files, 40 resolved from the registry; the derived chain
+  re-ran with zero bounding boxes moved; only `enclosures.json` /
+  `catalog.json` moved. The 7" frame's panel record stays open, the reason
+  in `devices/README.md`.
+- **Display: Settings › Weather › Location on dash7 / nightstand7** — the
+  coarse weather location is entered on the glass (hemisphere · degrees ·
+  tenths wheels per axis, options centered in each wheel, a live ~11 km
+  cell caption, an explicit *Use This Location*, a *Forget Location* row);
+  the Weather page shows the stored cell and its status reads "Needs a
+  location - tap Location below" instead of "Set a location from the app".
+  Helpers host-tested (every wheel position is on the 0.1° grid inside the
+  loader's range); the roller centering host-measured against LVGL 8.4 and
+  9.5; the LAN page and the API still never carry the grid point; the
+  on-glass display of the cell is disclosed in SECURITY_MODEL.md.
+  CD_SET_WX-only, enums appended: no emulator dist movement. Compile-tested
+  by CI, not bench-tested.
 
 ### The device manifest owns its case's board knobs, and the regeneration order is one command
 
