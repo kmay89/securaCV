@@ -18,7 +18,8 @@ normative as of this revision: **quorum-gated policy mutation** (§3.1),
 **WYSIWYS approval** (§3.2), and **human-context fields** (§3.6, break-glass
 path — see its inline annotation) — all documented operationally in
 `break_glass.md` — plus **`court export` for event-export bundles** (§5, see
-its inline annotation). Everything else here is design: treat it as the
+its inline annotation) and the per-device anchoring primitives of §4 (typed
+subjects, two-TSA policy). Everything else here is design: treat it as the
 agreed direction, not a shipped contract. Known gaps this design closes are
 tracked canonically in
 [`docs/security/ENTERPRISE_CUSTODY.md`](../docs/security/ENTERPRISE_CUSTODY.md);
@@ -277,7 +278,8 @@ that lands with the §5 unseal-output/sidecar work.)*
   that aggregate goes outward: RFC 3161 to two TSAs (one eIDAS-qualified,
   one independent) plus **OpenTimestamps** as a trust-kind-independent leg.
   Public witness networks / Sigsum are enterprise-tier opt-ins with a
-  rotatable origin.
+  rotatable origin. *(Implemented in part: typed anchor subjects, anchor
+  policy with declared roles, anchor-all, distinctness check; OTS open.)*
 - Each anchor seals a **clock-provenance event** (the measured device-clock
   vs TSA `genTime` offset) — the direct rebuttal to timestamp challenges.
 - Verification trust is a **tlog-policy file** (device-key pin + witness
@@ -325,7 +327,8 @@ that lands with the §5 unseal-output/sidecar work.)*
    ceremony/runbook docs *(done — `docs/security/CEREMONY_RUNBOOK.md` and
    `CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md`; the §3.4 ceremony *mode* in code
    is not, and stays on this line)*.
-2. `court export` + anchoring upgrades (§5, §4 anchor items).
+2. `court export` + anchoring upgrades (§5, §4 anchor items) *(anchoring
+   upgrades: in part)*.
 3. Merkle tree, checkpoints, fleet witnessing, tlog-policy, `log_review`.
 4. Token delay/veto (§3.5) + trustee-credential hardening (§3.7).
 5. VSS-Shamir threshold wrap with resharing (§2) — the one large build;

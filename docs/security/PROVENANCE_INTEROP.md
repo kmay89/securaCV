@@ -275,7 +275,12 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
 5. **Anchoring upgrades**: scheduled anchoring on by default; "two TSAs"
    becomes "one eIDAS-qualified + one independent"; OpenTimestamps as a
    second, trust-kind-independent leg; clock-provenance events (measured
-   device-clock-vs-TSA offset) sealed at each anchor.
+   device-clock-vs-TSA offset) sealed at each anchor. *(Implemented for the
+   per-device ledgers: typed subjects, anchor policy with declared roles,
+   anchor-all with a constant per-run request count, two-TSA distinctness
+   check, TSA identity from the token; scheduled anchoring stays an operator
+   cron — never in witnessd; OpenTimestamps and clock-provenance events
+   remain design.)*
 
 **Tier 2 — the spine (medium):**
 

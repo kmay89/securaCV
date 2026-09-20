@@ -37,6 +37,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "tsa_parse_signer"
+path = "fuzz_targets/tsa_parse_signer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "vault_envelope_decode"
 path = "fuzz_targets/vault_envelope_decode.rs"
 test = false

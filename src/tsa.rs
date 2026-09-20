@@ -13,7 +13,13 @@
 //! never makes on its own: anchoring is operator-initiated (`log_anchor`)
 //! or fully offline (write the query to a file, submit it out-of-band,
 //! import the response). The TSA does learn the requester's IP address and
-//! the time of the request — see docs/timestamping.md.
+//! the time of the request — see docs/timestamping.md. Scheduled anchoring
+//! (`log_anchor anchor-all`) sends a constant number of requests per run —
+//! every configured subject to every configured TSA, an empty ledger anchored
+//! over a fixed sentinel — so the request *count* never tracks whether an
+//! export, a break-glass unseal, or a policy change happened (Invariant III).
+//! The imprints themselves are visible to the TSA; see docs/timestamping.md
+//! for the residual.
 //!
 //! Scope: this module builds `TimeStampReq` and parses `TimeStampResp`
 //! (RFC 3161 §2.4) with a minimal DER reader — enough to check the granted
@@ -23,6 +29,10 @@
 //! toolchain (`openssl ts -verify`), which `log_anchor verify` can invoke.
 //! Relying on a second implementation for the trust-critical step is
 //! deliberate (same stance as the dual JS/Rust envelope verifiers).
+//! A separate best-effort reader (`parse_token_signer`) extracts the TSA's
+//! embedded signing certificate and `SignerInfo` identity so an
+//! offline-imported token still names its issuer; it does not validate that
+//! certificate — `openssl ts -verify` does.
 
 use anyhow::{anyhow, bail, Result};
 
@@ -276,23 +286,9 @@ pub fn parse_response(der: &[u8]) -> Result<TimestampToken> {
 /// Parse a bare DER `TimeStampToken` (CMS ContentInfo wrapping TSTInfo), as
 /// stored in `tsa_anchors.token_der`.
 pub fn parse_token(token_der: &[u8]) -> Result<TimestampToken> {
-    let content_info = Der::new(token_der).expect(0x30, "ContentInfo")?;
-
-    // ContentInfo ::= SEQUENCE { contentType OID, [0] EXPLICIT content }
-    let mut ci = Der::new(content_info);
-    let content_type = ci.expect(0x06, "contentType")?;
-    if content_type != OID_SIGNED_DATA {
-        bail!("TimeStampToken is not CMS SignedData");
-    }
-    let signed_data_wrap = ci.expect(0xa0, "content [0]")?;
-    let signed_data = Der::new(signed_data_wrap).expect(0x30, "SignedData")?;
-
-    // SignedData ::= SEQUENCE { version, digestAlgorithms SET,
-    // encapContentInfo SEQUENCE { eContentType OID, [0] { OCTET STRING } }, … }
-    let mut sd = Der::new(signed_data);
-    sd.expect(0x02, "SignedData.version")?;
-    sd.expect(0x31, "digestAlgorithms")?;
-    let encap = sd.expect(0x30, "encapContentInfo")?;
+    // ContentInfo → SignedData through encapContentInfo is shared with
+    // `parse_token_signer` (`signed_data_reader`) so the two cannot diverge.
+    let (_sd, encap) = signed_data_reader(token_der)?;
     let mut ec = Der::new(encap);
     let e_type = ec.expect(0x06, "eContentType")?;
     if e_type != OID_TST_INFO {
@@ -407,26 +403,547 @@ pub fn gen_time_unix(gen_time: &str) -> Option<i64> {
     Some(days * 86_400 + hh * 3_600 + mm * 60 + ss)
 }
 
+// -------------------- Anchor subjects and TSA identity --------------------
+
+/// What an anchor row says it covers. The stored literal (`as_str`) is also
+/// the CLI `--subject` value, the anchor-policy `subjects` entry, the
+/// `list`/`verify` output and the court-kit file-name component — one
+/// vocabulary, no mapping layer. A label is what a row *claims*; every
+/// consumer re-derives what it can from the token and the ledgers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AnchorSubject {
+    /// The sealed-event chain head (a sealed event's entry hash or a
+    /// retention checkpoint head).
+    ChainHead,
+    /// An operator-supplied artifact digest (export bundle bytes, or an
+    /// empty-ledger sentinel); no ledger membership is asserted.
+    Digest,
+    /// Head of the export-receipt chain.
+    ExportReceiptHead,
+    /// Head of the break-glass receipt chain.
+    BreakGlassReceiptHead,
+    /// Head of the policy-change history.
+    PolicyHead,
+}
+
+/// Domain prefix of the per-subject empty-ledger sentinel digest.
+const EMPTY_LEDGER_SENTINEL_PREFIX: &[u8] = b"securacv:anchor:empty-ledger:v1:";
+
+impl AnchorSubject {
+    /// Every head kind, in the order `anchor-all` and `classify_hash` use.
+    pub const HEADS: [AnchorSubject; 4] = [
+        AnchorSubject::ChainHead,
+        AnchorSubject::ExportReceiptHead,
+        AnchorSubject::BreakGlassReceiptHead,
+        AnchorSubject::PolicyHead,
+    ];
+
+    /// The stored literal.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AnchorSubject::ChainHead => "chain_head",
+            AnchorSubject::Digest => "digest",
+            AnchorSubject::ExportReceiptHead => "export_receipt_head",
+            AnchorSubject::BreakGlassReceiptHead => "break_glass_receipt_head",
+            AnchorSubject::PolicyHead => "policy_head",
+        }
+    }
+
+    /// Exact literal match only (`"Chain_Head"`, `"chain-head"`, `""` are `None`).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "chain_head" => Some(AnchorSubject::ChainHead),
+            "digest" => Some(AnchorSubject::Digest),
+            "export_receipt_head" => Some(AnchorSubject::ExportReceiptHead),
+            "break_glass_receipt_head" => Some(AnchorSubject::BreakGlassReceiptHead),
+            "policy_head" => Some(AnchorSubject::PolicyHead),
+            _ => None,
+        }
+    }
+
+    /// The historical fallthrough, now named: unknown row text is treated as
+    /// a digest anchor (no ledger membership asserted).
+    pub fn from_row(s: &str) -> Self {
+        Self::parse(s).unwrap_or(AnchorSubject::Digest)
+    }
+
+    /// All kinds but `Digest`.
+    pub const fn is_head(self) -> bool {
+        !matches!(self, AnchorSubject::Digest)
+    }
+
+    /// The ledger table a head kind lives in. `ChainHead` is special-cased by
+    /// its readers (sealed events plus checkpoints) and returns `None`, as
+    /// does `Digest`.
+    pub const fn table(self) -> Option<&'static str> {
+        match self {
+            AnchorSubject::ChainHead | AnchorSubject::Digest => None,
+            AnchorSubject::ExportReceiptHead => Some("export_receipts"),
+            AnchorSubject::BreakGlassReceiptHead => Some("break_glass_receipts"),
+            AnchorSubject::PolicyHead => Some("policy_change_history"),
+        }
+    }
+
+    /// Short human name of the ledger, for `… is empty: nothing to anchor`
+    /// and `relabel` messages.
+    pub const fn ledger_short(self) -> &'static str {
+        match self {
+            AnchorSubject::ChainHead => "chain",
+            AnchorSubject::Digest => "artifact digest",
+            AnchorSubject::ExportReceiptHead => "export-receipt chain",
+            AnchorSubject::BreakGlassReceiptHead => "break-glass receipt chain",
+            AnchorSubject::PolicyHead => "policy-change history",
+        }
+    }
+
+    /// The membership clause of an `OK`/`UNVERIFIED` verify line.
+    pub const fn membership_label(self) -> &'static str {
+        match self {
+            AnchorSubject::ChainHead => "in chain history",
+            AnchorSubject::Digest => "digest anchor, chain membership not applicable",
+            AnchorSubject::ExportReceiptHead => "in export-receipt chain history",
+            AnchorSubject::BreakGlassReceiptHead => "in break-glass receipt chain history",
+            AnchorSubject::PolicyHead => "in policy-change history",
+        }
+    }
+
+    /// The `FAIL` problem line when a head kind's hash is missing from its
+    /// declared ledger. Never used for `Digest`.
+    pub const fn not_in_history_label(self) -> &'static str {
+        match self {
+            AnchorSubject::ChainHead => "anchored hash is not in chain history",
+            AnchorSubject::Digest => "digest anchor, chain membership not applicable",
+            AnchorSubject::ExportReceiptHead => {
+                "anchored hash is not in export-receipt chain history"
+            }
+            AnchorSubject::BreakGlassReceiptHead => {
+                "anchored hash is not in break-glass receipt chain history"
+            }
+            AnchorSubject::PolicyHead => "anchored hash is not in policy-change history",
+        }
+    }
+
+    /// SHA-256("securacv:anchor:empty-ledger:v1:" ‖ as_str()); head kinds only
+    /// (`None` for `Digest`). What `anchor-all` requests when this ledger is
+    /// empty, so the per-run request count is constant (Invariant III).
+    pub fn empty_ledger_sentinel(self) -> Option<[u8; 32]> {
+        use sha2::{Digest, Sha256};
+        if !self.is_head() {
+            return None;
+        }
+        let mut h = Sha256::new();
+        h.update(EMPTY_LEDGER_SENTINEL_PREFIX);
+        h.update(self.as_str().as_bytes());
+        Some(h.finalize().into())
+    }
+
+    /// The head kind whose sentinel this hash is, if any — for `list`,
+    /// `verify` and `import` annotations only.
+    pub fn sentinel_owner(hash: &[u8; 32]) -> Option<AnchorSubject> {
+        Self::HEADS
+            .into_iter()
+            .find(|k| k.empty_ledger_sentinel().as_ref() == Some(hash))
+    }
+}
+
+impl std::fmt::Display for AnchorSubject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// How a hash was found in a ledger's history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryWitness {
+    /// A live ledger row carries the hash.
+    LiveRow { id: i64 },
+    /// The hash survives only as a retention checkpoint's chain head.
+    CheckpointHead { checkpoint_id: i64 },
+}
+
+/// Which ledger a hash belongs to, and how it was found there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HashLocation {
+    pub subject: AnchorSubject,
+    pub witness: HistoryWitness,
+}
+
+/// The TSA identity embedded in a token, read best-effort from the CMS
+/// `SignedData` (certificates and the single `SignerInfo.sid`). Nothing here
+/// is validated — `openssl ts -verify` does that; these are the facts a
+/// verifier compares against, and what `list` prints for an offline import.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TsaSigner {
+    /// sha256(issuer Name TLV ‖ serial INTEGER contents) for
+    /// `issuerAndSerialNumber`; sha256(SKI OCTET STRING contents) for the
+    /// `[0]` form.
+    pub sid_hex: String,
+    /// SHA-256 of the issuer `Name` TLV; `None` for the SKI form.
+    pub issuer_sha256: Option<[u8; 32]>,
+    /// The SIGNER CERTIFICATE serial, hex (`TimestampToken.serial_hex` stays
+    /// the TSTInfo token serial).
+    pub serial_hex: Option<String>,
+    /// SHA-256 over the matching embedded certificate's DER, exactly as
+    /// embedded; `None` when no embedded certificate matches the sid.
+    pub signer_fingerprint: Option<[u8; 32]>,
+    /// First `2.5.4.3` (commonName) of the matching certificate's subject;
+    /// printable ASCII only, control characters become `?`, at most 64
+    /// characters. Display only.
+    pub signer_common_name: Option<String>,
+}
+
+/// id-at-commonName (2.5.4.3), body only.
+const OID_COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
+
+/// The `SignedData` walk shared by `parse_token` and `parse_token_signer`:
+/// returns the reader positioned after `encapContentInfo`, plus that
+/// element's content. Factored so the two readers cannot diverge.
+fn signed_data_reader(token_der: &[u8]) -> Result<(Der<'_>, &[u8])> {
+    let content_info = Der::new(token_der).expect(0x30, "ContentInfo")?;
+
+    // ContentInfo ::= SEQUENCE { contentType OID, [0] EXPLICIT content }
+    let mut ci = Der::new(content_info);
+    let content_type = ci.expect(0x06, "contentType")?;
+    if content_type != OID_SIGNED_DATA {
+        bail!("TimeStampToken is not CMS SignedData");
+    }
+    let signed_data_wrap = ci.expect(0xa0, "content [0]")?;
+    let signed_data = Der::new(signed_data_wrap).expect(0x30, "SignedData")?;
+
+    // SignedData ::= SEQUENCE { version, digestAlgorithms SET,
+    // encapContentInfo SEQUENCE { eContentType OID, [0] { OCTET STRING } }, … }
+    let mut sd = Der::new(signed_data);
+    sd.expect(0x02, "SignedData.version")?;
+    sd.expect(0x31, "digestAlgorithms")?;
+    let encap = sd.expect(0x30, "encapContentInfo")?;
+    Ok((sd, encap))
+}
+
+/// The fields of one embedded X.509 certificate that identity matching needs.
+struct EmbeddedSigner<'a> {
+    raw: &'a [u8],
+    serial: &'a [u8],
+    issuer_raw: &'a [u8],
+    subject_raw: &'a [u8],
+    /// The X.509v3 SubjectKeyIdentifier extension value, when the certificate
+    /// carries one — what a `SignerIdentifier` of the `subjectKeyIdentifier`
+    /// form names. `None` when absent or when the extensions tail does not
+    /// parse (that tail is best-effort: it never makes the certificate
+    /// unusable for issuer/serial matching).
+    ski: Option<&'a [u8]>,
+}
+
+/// X.509v3 SubjectKeyIdentifier extension OID, 2.5.29.14.
+const OID_SUBJECT_KEY_IDENTIFIER: &[u8] = &[0x55, 0x1d, 0x0e];
+
+/// Walk the rest of a `TBSCertificate` after `subject` and return the
+/// SubjectKeyIdentifier extension's `KeyIdentifier` contents, if present:
+/// `subjectPublicKeyInfo`, optional `[1]`/`[2]` unique ids, then
+/// `[3] Extensions ::= SEQUENCE OF Extension { extnID, critical?, extnValue }`
+/// whose SKI `extnValue` OCTET STRING wraps a DER OCTET STRING.
+fn subject_key_identifier<'a>(t: &mut Der<'a>) -> Result<Option<&'a [u8]>> {
+    t.expect(0x30, "subjectPublicKeyInfo")?;
+    while matches!(t.peek_tag(), Some(0x81) | Some(0x82)) {
+        t.tlv()?;
+    }
+    if t.peek_tag() != Some(0xa3) {
+        return Ok(None);
+    }
+    let (_, exts_wrapper, _) = t.tlv()?;
+    let exts = Der::new(exts_wrapper).expect(0x30, "Extensions")?;
+    let mut e = Der::new(exts);
+    while e.has_more() {
+        let ext = e.expect(0x30, "Extension")?;
+        let mut x = Der::new(ext);
+        let oid = x.expect(0x06, "extnID")?;
+        if x.peek_tag() == Some(0x01) {
+            x.tlv()?;
+        }
+        let value = x.expect(0x04, "extnValue")?;
+        if oid == OID_SUBJECT_KEY_IDENTIFIER {
+            let ki = Der::new(value).expect(0x04, "KeyIdentifier")?;
+            return Ok(Some(ki));
+        }
+    }
+    Ok(None)
+}
+
+fn parse_embedded_signer(raw: &[u8]) -> Result<EmbeddedSigner<'_>> {
+    // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signature }
+    let cert = Der::new(raw).expect(0x30, "Certificate")?;
+    let tbs = Der::new(cert).expect(0x30, "TBSCertificate")?;
+    // TBSCertificate ::= SEQUENCE { [0] version OPTIONAL, serialNumber,
+    // signature AlgorithmIdentifier, issuer Name, validity, subject Name, … }
+    let mut t = Der::new(tbs);
+    if t.peek_tag() == Some(0xa0) {
+        t.tlv()?;
+    }
+    let serial = t.expect(0x02, "serialNumber")?;
+    t.expect(0x30, "signature AlgorithmIdentifier")?;
+    let (tag, _, issuer_raw) = t.tlv()?;
+    if tag != 0x30 {
+        bail!("DER: expected issuer Name (tag 0x30), got 0x{tag:02x}");
+    }
+    t.expect(0x30, "validity")?;
+    let (tag, _, subject_raw) = t.tlv()?;
+    if tag != 0x30 {
+        bail!("DER: expected subject Name (tag 0x30), got 0x{tag:02x}");
+    }
+    let ski = subject_key_identifier(&mut t).unwrap_or(None);
+    Ok(EmbeddedSigner {
+        raw,
+        serial,
+        issuer_raw,
+        subject_raw,
+        ski,
+    })
+}
+
+/// `SignerIdentifier ::= CHOICE { issuerAndSerialNumber, subjectKeyIdentifier [0] }`.
+enum SignerId<'a> {
+    IssuerSerial {
+        issuer_raw: &'a [u8],
+        serial: &'a [u8],
+    },
+    Ski(&'a [u8]),
+}
+
+/// The embedded certificate a `SignerIdentifier` names, if the token carries
+/// it. `issuerAndSerialNumber` matches on the raw issuer `Name` TLV and the
+/// integer-normalized serial. `subjectKeyIdentifier` matches the certificate
+/// whose SubjectKeyIdentifier extension equals the identifier — a token may
+/// embed the signing certificate and its chain, so the count of certificates
+/// decides nothing; only when the token embeds exactly one certificate and
+/// that certificate carries no SKI extension is it taken as the signer (the
+/// identifier cannot then be checked against anything, and a lone embedded
+/// certificate in a `certReq` reply is the signer by RFC 3161 §2.4.1).
+fn resolve_signer<'c, 'a>(
+    sid: &SignerId<'_>,
+    embedded: &'c [EmbeddedSigner<'a>],
+) -> Option<&'c EmbeddedSigner<'a>> {
+    match sid {
+        SignerId::IssuerSerial { issuer_raw, serial } => embedded.iter().find(|c| {
+            c.issuer_raw == *issuer_raw && uint_normalize(c.serial) == uint_normalize(serial)
+        }),
+        SignerId::Ski(ski) => {
+            embedded
+                .iter()
+                .find(|c| c.ski == Some(*ski))
+                .or_else(|| match embedded {
+                    [only] if only.ski.is_none() => Some(only),
+                    _ => None,
+                })
+        }
+    }
+}
+
+/// First commonName of a DER `Name`, sanitized for display.
+fn name_common_name(name_raw: &[u8]) -> Result<Option<String>> {
+    // Name ::= SEQUENCE OF RelativeDistinguishedName (SET OF
+    // AttributeTypeAndValue ::= SEQUENCE { type OID, value ANY })
+    let rdns = Der::new(name_raw).expect(0x30, "Name")?;
+    let mut r = Der::new(rdns);
+    while r.has_more() {
+        let set = r.expect(0x31, "RelativeDistinguishedName")?;
+        let mut s = Der::new(set);
+        while s.has_more() {
+            let atv = s.expect(0x30, "AttributeTypeAndValue")?;
+            let mut a = Der::new(atv);
+            let oid = a.expect(0x06, "attribute type")?;
+            let (vtag, value, _) = a.tlv()?;
+            if oid != OID_COMMON_NAME {
+                continue;
+            }
+            // UTF8String / PrintableString / IA5String; anything else is
+            // not rendered rather than guessed at.
+            if !matches!(vtag, 0x0c | 0x13 | 0x16) {
+                return Ok(None);
+            }
+            let text: String = String::from_utf8_lossy(value)
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_graphic() || c == ' ' {
+                        c
+                    } else {
+                        '?'
+                    }
+                })
+                .take(64)
+                .collect();
+            return Ok(Some(text));
+        }
+    }
+    Ok(None)
+}
+
+/// Read the TSA's identity from a bare DER `TimeStampToken`: the single
+/// `SignerInfo.sid` and, when the token embeds it, the matching signing
+/// certificate. Best-effort and separate from `parse_token` on purpose — a
+/// real-TSA token with an odd CMS layout must never become un-importable, so
+/// a failure here yields `Err` for the caller to record as "identity not
+/// readable" while the token itself still parses and stores.
+pub fn parse_token_signer(token_der: &[u8]) -> Result<TsaSigner> {
+    use sha2::{Digest, Sha256};
+
+    let (mut sd, _encap) = signed_data_reader(token_der)?;
+
+    // certificates [0] IMPLICIT CertificateSet OPTIONAL — collect every
+    // element that is a Certificate SEQUENCE (other choices are skipped).
+    let mut embedded: Vec<&[u8]> = Vec::new();
+    if sd.peek_tag() == Some(0xa0) {
+        let (_, set, _) = sd.tlv()?;
+        let mut cs = Der::new(set);
+        while cs.has_more() {
+            let (tag, _, raw) = cs.tlv()?;
+            if tag == 0x30 {
+                embedded.push(raw);
+            }
+        }
+    }
+    // crls [1] IMPLICIT RevocationInfoChoices OPTIONAL — skipped.
+    if sd.peek_tag() == Some(0xa1) {
+        sd.tlv()?;
+    }
+    let signer_infos = sd.expect(0x31, "signerInfos")?;
+    let mut sis = Der::new(signer_infos);
+    let mut infos: Vec<&[u8]> = Vec::new();
+    while sis.has_more() {
+        let (tag, content, _) = sis.tlv()?;
+        if tag != 0x30 {
+            bail!("DER: expected SignerInfo (tag 0x30), got 0x{tag:02x}");
+        }
+        infos.push(content);
+    }
+    let info = match infos.len() {
+        0 => bail!("TimeStampToken carries no SignerInfo"),
+        1 => infos[0],
+        _ => bail!(
+            "TimeStampToken carries more than one SignerInfo (RFC 3161 §2.4.2 allows exactly one)"
+        ),
+    };
+
+    // SignerInfo ::= SEQUENCE { version, sid SignerIdentifier, … }
+    // SignerIdentifier ::= CHOICE { issuerAndSerialNumber SEQUENCE,
+    //                               subjectKeyIdentifier [0] }
+    let mut si = Der::new(info);
+    si.expect(0x02, "SignerInfo.version")?;
+    let (sid_tag, sid_content, _) = si.tlv()?;
+    let sid = match sid_tag {
+        0x30 => {
+            let mut r = Der::new(sid_content);
+            let (tag, _, issuer_raw) = r.tlv()?;
+            if tag != 0x30 {
+                bail!("DER: expected issuer Name (tag 0x30), got 0x{tag:02x}");
+            }
+            let serial = r.expect(0x02, "serialNumber")?;
+            SignerId::IssuerSerial { issuer_raw, serial }
+        }
+        0x80 => SignerId::Ski(sid_content),
+        _ => bail!("SignerInfo.sid is neither issuerAndSerialNumber nor subjectKeyIdentifier"),
+    };
+
+    let parsed_signers = embedded
+        .iter()
+        .map(|raw| parse_embedded_signer(raw))
+        .collect::<Result<Vec<_>>>()?;
+    let matched = resolve_signer(&sid, &parsed_signers);
+
+    let (sid_hex, issuer_sha256, serial_hex) = match sid {
+        SignerId::IssuerSerial { issuer_raw, serial } => {
+            let mut h = Sha256::new();
+            h.update(issuer_raw);
+            h.update(serial);
+            let sid_hex = hex::encode(h.finalize());
+            let issuer_sha256: [u8; 32] = Sha256::digest(issuer_raw).into();
+            (
+                sid_hex,
+                Some(issuer_sha256),
+                Some(hex::encode(uint_normalize(serial))),
+            )
+        }
+        SignerId::Ski(ski) => {
+            let sid_hex = hex::encode(Sha256::digest(ski));
+            let serial_hex = matched.map(|c| hex::encode(uint_normalize(c.serial)));
+            (sid_hex, None, serial_hex)
+        }
+    };
+
+    let (signer_fingerprint, signer_common_name) = match matched {
+        Some(c) => (
+            Some(Sha256::digest(c.raw).into()),
+            name_common_name(c.subject_raw)?,
+        ),
+        None => (None, None),
+    };
+
+    Ok(TsaSigner {
+        sid_hex,
+        issuer_sha256,
+        serial_hex,
+        signer_fingerprint,
+        signer_common_name,
+    })
+}
+
 // -------------------- Anchor persistence --------------------
 
 use crate::TimeBucket;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// A stored anchor: an RFC 3161 token over a hash from the witness chain.
 #[derive(Debug, Clone)]
 pub struct AnchorRecord {
     pub id: i64,
     pub created_bucket: TimeBucket,
-    /// What was anchored: `chain_head` or `digest` (operator-supplied).
+    /// What was anchored: an `AnchorSubject` literal (`chain_head`, `digest`,
+    /// `export_receipt_head`, `break_glass_receipt_head`, `policy_head`), or
+    /// unknown text from an older writer (treated as a digest anchor).
     pub subject: String,
     pub subject_hash: [u8; 32],
     pub tsa_url: String,
     pub gen_time: String,
     pub token_der: Vec<u8>,
+    /// The anchor-policy entry name declared at insert time; `None` when the
+    /// row was anchored without a policy.
+    pub tsa_name: Option<String>,
+    /// Cached SHA-256 (64 lowercase hex) of the token's embedded signer
+    /// certificate; verifiers re-derive it from the token and a mismatch is
+    /// `FAIL`.
+    pub signer_fingerprint: Option<String>,
+    /// Cached `TsaSigner::sid_hex`; re-derived by verifiers likewise.
+    pub signer_sid: Option<String>,
+    /// Ledger row id of the anchored head AT INSERT TIME; `None` for digest
+    /// rows, legacy rows, and any head already pruned when the row was
+    /// written. Unsigned: it only sharpens diagnosis text and guards
+    /// `relabel`, never decides pass/fail.
+    pub ledger_id: Option<i64>,
 }
+
+impl AnchorRecord {
+    /// The row's subject as a known kind, or `None` for unknown text.
+    pub fn subject_kind(&self) -> Option<AnchorSubject> {
+        AnchorSubject::parse(&self.subject)
+    }
+
+    /// The row's subject with unknown text falling through to `Digest`.
+    pub fn subject_kind_or_digest(&self) -> AnchorSubject {
+        AnchorSubject::from_row(&self.subject)
+    }
+}
+
+/// The nullable columns added after the frozen `CREATE TABLE` (A.2.1).
+const ANCHOR_EXTRA_COLUMNS: [(&str, &str); 4] = [
+    ("tsa_name", "TEXT"),
+    ("signer_cert_sha256", "TEXT"),
+    ("signer_sid", "TEXT"),
+    ("ledger_id", "INTEGER"),
+];
 
 /// Create the anchors table if missing. Additive and independent of the
 /// sealed-log schema: anchors reference chain hashes but never alter them.
+/// The `CREATE TABLE` text is frozen; newer columns are added with
+/// `ALTER TABLE … ADD COLUMN` so a table an older build wrote migrates in
+/// place. Only writers call this — read-only verbs never migrate.
 pub fn ensure_anchor_table(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
@@ -442,6 +959,7 @@ pub fn ensure_anchor_table(conn: &Connection) -> Result<()> {
         );
         "#,
     )?;
+    crate::storage::ensure_columns(conn, "tsa_anchors", &ANCHOR_EXTRA_COLUMNS)?;
     Ok(())
 }
 
@@ -452,10 +970,50 @@ pub fn insert_anchor(
     tsa_url: &str,
     token: &TimestampToken,
 ) -> Result<i64> {
+    insert_anchor_row(conn, subject, subject_hash, tsa_url, None, token)
+}
+
+/// `insert_anchor` with a typed subject and the anchor-policy entry name the
+/// operator declared for this TSA (recorded, never trusted).
+pub fn insert_anchor_declared(
+    conn: &Connection,
+    subject: AnchorSubject,
+    subject_hash: &[u8; 32],
+    tsa_url: &str,
+    tsa_name: Option<&str>,
+    token: &TimestampToken,
+) -> Result<i64> {
+    insert_anchor_row(
+        conn,
+        subject.as_str(),
+        subject_hash,
+        tsa_url,
+        tsa_name,
+        token,
+    )
+}
+
+fn insert_anchor_row(
+    conn: &Connection,
+    subject: &str,
+    subject_hash: &[u8; 32],
+    tsa_url: &str,
+    tsa_name: Option<&str>,
+    token: &TimestampToken,
+) -> Result<i64> {
     let bucket = TimeBucket::now_10min()?;
+    // Identity is read from the token, never from `tsa_url`; a signer that
+    // cannot be parsed leaves the cache columns NULL (the caller may warn).
+    let signer = parse_token_signer(&token.token_der).ok();
+    let signer_fingerprint = signer
+        .as_ref()
+        .and_then(|s| s.signer_fingerprint.map(hex::encode));
+    let signer_sid = signer.as_ref().map(|s| s.sid_hex.clone());
+    let ledger_id = ledger_position(conn, AnchorSubject::from_row(subject), subject_hash)?;
     conn.execute(
         "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject,
-            subject_hash, tsa_url, gen_time, token_der) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            subject_hash, tsa_url, gen_time, token_der, tsa_name, signer_cert_sha256,
+            signer_sid, ledger_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             bucket.start_epoch_s as i64,
             bucket.size_s as i64,
@@ -464,75 +1022,202 @@ pub fn insert_anchor(
             tsa_url,
             token.gen_time,
             token.token_der,
+            tsa_name,
+            signer_fingerprint,
+            signer_sid,
+            ledger_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
-pub fn list_anchors(conn: &Connection) -> Result<Vec<AnchorRecord>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, created_bucket_start, created_bucket_size, subject, subject_hash,
-                tsa_url, gen_time, token_der FROM tsa_anchors ORDER BY id",
-    )?;
+/// The anchor SELECT, with `NULL AS <col>` for every newer column the table
+/// does not have yet — so a READ_ONLY opener (`court_export`, an observer's
+/// `list`) reads a table an older build wrote without migrating it.
+fn anchor_select_sql(conn: &Connection) -> Result<String> {
+    let mut stmt = conn.prepare("PRAGMA table_info(tsa_anchors)")?;
+    let present: std::collections::HashSet<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<_, _>>()?;
+    let mut cols = vec![
+        "id",
+        "created_bucket_start",
+        "created_bucket_size",
+        "subject",
+        "subject_hash",
+        "tsa_url",
+        "gen_time",
+        "token_der",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    for (name, _) in ANCHOR_EXTRA_COLUMNS {
+        if present.contains(name) {
+            cols.push(name.to_string());
+        } else {
+            cols.push(format!("NULL AS {name}"));
+        }
+    }
+    Ok(format!(
+        "SELECT {} FROM tsa_anchors ORDER BY id",
+        cols.join(", ")
+    ))
+}
+
+type RawAnchorRow = (
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<Vec<u8>>,
+    Option<String>,
+    Option<String>,
+    Option<Vec<u8>>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
+
+fn decode_anchor_row(raw: RawAnchorRow) -> std::result::Result<AnchorRecord, String> {
+    let (
+        id,
+        start,
+        size,
+        subject,
+        hash,
+        tsa_url,
+        gen_time,
+        token_der,
+        tsa_name,
+        signer_fingerprint,
+        signer_sid,
+        ledger_id,
+    ) = raw;
+    let start = start.ok_or("created_bucket_start is NULL")?;
+    let size = size.ok_or("created_bucket_size is NULL")?;
+    let subject = subject.ok_or("subject is NULL")?;
+    let hash = hash.ok_or("subject_hash is NULL")?;
+    let tsa_url = tsa_url.ok_or("tsa_url is NULL")?;
+    let gen_time = gen_time.ok_or("gen_time is NULL")?;
+    let token_der = token_der.ok_or("token_der is NULL")?;
+    let subject_hash: [u8; 32] = hash.try_into().map_err(|_| "subject_hash size")?;
+    Ok(AnchorRecord {
+        id,
+        created_bucket: TimeBucket {
+            start_epoch_s: start as u64,
+            size_s: size as u32,
+        },
+        subject,
+        subject_hash,
+        tsa_url,
+        gen_time,
+        token_der,
+        tsa_name,
+        signer_fingerprint,
+        signer_sid,
+        ledger_id,
+    })
+}
+
+/// Every anchor row in id order, with a malformed row surfaced as
+/// `(id, Err(reason))` instead of aborting the read. A verifier folding
+/// anchors into a verdict uses this so one corrupt auxiliary row cannot turn
+/// into an undiagnosed failure.
+pub fn list_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<AnchorRecord>)>> {
+    let sql = anchor_select_sql(conn)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, i64>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Vec<u8>>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, String>(6)?,
-            row.get::<_, Vec<u8>>(7)?,
+            row.get::<_, Option<i64>>(1)?,
+            row.get::<_, Option<i64>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<Vec<u8>>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+            row.get::<_, Option<Vec<u8>>>(7)?,
+            row.get::<_, Option<String>>(8)?,
+            row.get::<_, Option<String>>(9)?,
+            row.get::<_, Option<String>>(10)?,
+            row.get::<_, Option<i64>>(11)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, start, size, subject, hash, tsa_url, gen_time, token_der) = row?;
-        let subject_hash: [u8; 32] = hash
-            .try_into()
-            .map_err(|_| anyhow!("corrupt anchor {id}: subject_hash size"))?;
-        out.push(AnchorRecord {
+        let raw = row?;
+        let id = raw.0;
+        out.push((
             id,
-            created_bucket: TimeBucket {
-                start_epoch_s: start as u64,
-                size_s: size as u32,
-            },
-            subject,
-            subject_hash,
-            tsa_url,
-            gen_time,
-            token_der,
-        });
+            decode_anchor_row(raw).map_err(|reason| anyhow!("corrupt anchor {id}: {reason}")),
+        ));
     }
     Ok(out)
+}
+
+/// Every anchor row in id order. A malformed row (a `subject_hash` that is
+/// not 32 bytes) is a hard error — `log_anchor` and `court_export` want to
+/// stop there, not paper over it.
+pub fn list_anchors(conn: &Connection) -> Result<Vec<AnchorRecord>> {
+    list_anchors_lenient(conn)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect()
+}
+
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1",
+            [name],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
+
+/// Whether the database has a `tsa_anchors` table at all. A read-only opener
+/// treats its absence as "no anchors stored"; only writers create it.
+pub fn anchor_table_exists(conn: &Connection) -> Result<bool> {
+    table_exists(conn, "tsa_anchors")
+}
+
+fn read32(conn: &Connection, sql: &str) -> Result<Option<[u8; 32]>> {
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query([])?;
+    match rows.next()? {
+        Some(row) => {
+            let bytes: Vec<u8> = row.get(0)?;
+            Ok(Some(bytes.try_into().map_err(|_| {
+                anyhow!("corrupt chain: hash column is not 32 bytes")
+            })?))
+        }
+        None => Ok(None),
+    }
+}
+
+fn chain_head_opt(conn: &Connection) -> Result<Option<[u8; 32]>> {
+    if let Some(head) = read32(
+        conn,
+        "SELECT entry_hash FROM sealed_events ORDER BY id DESC LIMIT 1",
+    )? {
+        return Ok(Some(head));
+    }
+    read32(
+        conn,
+        "SELECT chain_head_hash FROM checkpoints ORDER BY id DESC LIMIT 1",
+    )
 }
 
 /// Current chain head: the newest sealed event's entry hash, else the last
 /// retention checkpoint's head. Errors on an empty log — there is nothing
 /// meaningful to anchor.
 pub fn chain_head(conn: &Connection) -> Result<[u8; 32]> {
-    let read32 = |sql: &str| -> Result<Option<[u8; 32]>> {
-        let mut stmt = conn.prepare(sql)?;
-        let mut rows = stmt.query([])?;
-        match rows.next()? {
-            Some(row) => {
-                let bytes: Vec<u8> = row.get(0)?;
-                Ok(Some(bytes.try_into().map_err(|_| {
-                    anyhow!("corrupt chain: hash column is not 32 bytes")
-                })?))
-            }
-            None => Ok(None),
-        }
-    };
-    if let Some(head) = read32("SELECT entry_hash FROM sealed_events ORDER BY id DESC LIMIT 1")? {
-        return Ok(head);
+    match chain_head_opt(conn)? {
+        Some(head) => Ok(head),
+        None => bail!("sealed log is empty: nothing to anchor"),
     }
-    if let Some(head) = read32("SELECT chain_head_hash FROM checkpoints ORDER BY id DESC LIMIT 1")?
-    {
-        return Ok(head);
-    }
-    bail!("sealed log is empty: nothing to anchor")
 }
 
 /// Whether a hash is part of recorded chain history (a sealed event's entry
@@ -544,6 +1229,102 @@ pub fn hash_in_history(conn: &Connection, hash: &[u8; 32]) -> Result<bool> {
              OR EXISTS(SELECT 1 FROM checkpoints WHERE chain_head_hash = ?1)",
     )?;
     Ok(stmt.query_row([hash.as_slice()], |row| row.get::<_, bool>(0))?)
+}
+
+fn row_id_by_hash(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    hash: &[u8; 32],
+) -> Result<Option<i64>> {
+    if !table_exists(conn, table)? {
+        return Ok(None);
+    }
+    Ok(conn
+        .query_row(
+            &format!("SELECT id FROM {table} WHERE {column} = ?1 ORDER BY id ASC LIMIT 1"),
+            [hash.as_slice()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?)
+}
+
+/// Whether `hash` is in the history of the ledger `subject` DECLARES — a
+/// live row, or (chain head only) a retention checkpoint's head. Membership
+/// is checked in the declared ledger only; `Digest` is always `None`. A
+/// missing ledger table reads as "not present".
+pub fn hash_in_ledger(
+    conn: &Connection,
+    hash: &[u8; 32],
+    subject: AnchorSubject,
+) -> Result<Option<HistoryWitness>> {
+    match subject {
+        AnchorSubject::Digest => Ok(None),
+        AnchorSubject::ChainHead => {
+            if let Some(id) = row_id_by_hash(conn, "sealed_events", "entry_hash", hash)? {
+                return Ok(Some(HistoryWitness::LiveRow { id }));
+            }
+            Ok(
+                row_id_by_hash(conn, "checkpoints", "chain_head_hash", hash)?
+                    .map(|checkpoint_id| HistoryWitness::CheckpointHead { checkpoint_id }),
+            )
+        }
+        other => {
+            let table = other
+                .table()
+                .ok_or_else(|| anyhow!("subject {other} has no ledger table"))?;
+            Ok(row_id_by_hash(conn, table, "entry_hash", hash)?
+                .map(|id| HistoryWitness::LiveRow { id }))
+        }
+    }
+}
+
+/// Which ledger a hash belongs to (chain head first, then the export-receipt,
+/// break-glass receipt and policy-change ledgers), tolerating missing
+/// tables. Sentinel hashes are never classified as heads: they are in no
+/// ledger by construction.
+pub fn classify_hash(conn: &Connection, hash: &[u8; 32]) -> Result<Option<HashLocation>> {
+    for subject in AnchorSubject::HEADS {
+        if let Some(witness) = hash_in_ledger(conn, hash, subject)? {
+            return Ok(Some(HashLocation { subject, witness }));
+        }
+    }
+    Ok(None)
+}
+
+/// The current head of a ledger, or `None` when it is empty (or its table
+/// does not exist). `Digest` has no ledger and is an error.
+pub fn ledger_head(conn: &Connection, subject: AnchorSubject) -> Result<Option<[u8; 32]>> {
+    match subject {
+        AnchorSubject::Digest => bail!("a digest subject needs --digest or --file"),
+        AnchorSubject::ChainHead => chain_head_opt(conn),
+        other => {
+            let table = other
+                .table()
+                .ok_or_else(|| anyhow!("subject {other} has no ledger table"))?;
+            if !table_exists(conn, table)? {
+                return Ok(None);
+            }
+            read32(
+                conn,
+                &format!("SELECT entry_hash FROM {table} ORDER BY id DESC LIMIT 1"),
+            )
+        }
+    }
+}
+
+/// The ledger row id carrying `hash` (chain head: `sealed_events.id`), or
+/// `None` when the head survives only as a checkpoint, is gone, or the
+/// subject is a digest.
+pub fn ledger_position(
+    conn: &Connection,
+    subject: AnchorSubject,
+    hash: &[u8; 32],
+) -> Result<Option<i64>> {
+    match hash_in_ledger(conn, hash, subject)? {
+        Some(HistoryWitness::LiveRow { id }) => Ok(Some(id)),
+        _ => Ok(None),
+    }
 }
 
 // -------------------- HTTP submission (feature-gated) --------------------
@@ -633,6 +1414,339 @@ mod tests {
         assert_eq!(gen_time_unix("20260610123324.5Z"), Some(1781094804));
         assert_eq!(gen_time_unix("garbage"), None);
         assert_eq!(gen_time_unix("20261310123324Z"), None); // month 13
+    }
+
+    fn fixture_token_der() -> Vec<u8> {
+        let path = format!(
+            "{}/tests/fixtures/tsa/reply.tsr",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        parse_response(&std::fs::read(&path).expect("reading TSA fixture"))
+            .expect("fixture token parses")
+            .token_der
+    }
+
+    /// Re-assemble the fixture token with its `signerInfos` SET replaced:
+    /// `Some(list)` writes those SignerInfo TLVs, `None` ends `SignedData`
+    /// right after `encapContentInfo` (no certificates, no signerInfos).
+    /// Lengths are recomputed by `der_tlv`, so the result is well-formed DER.
+    fn rebuild_token(token_der: &[u8], signer_infos: Option<Vec<Vec<u8>>>) -> Vec<u8> {
+        let content_info = Der::new(token_der).expect(0x30, "ContentInfo").unwrap();
+        let mut ci = Der::new(content_info);
+        let (_, oid, _) = ci.tlv().unwrap();
+        let wrap = ci.expect(0xa0, "content [0]").unwrap();
+        let signed_data = Der::new(wrap).expect(0x30, "SignedData").unwrap();
+        let mut sd = Der::new(signed_data);
+        let (_, _, version) = sd.tlv().unwrap();
+        let (_, _, digest_algs) = sd.tlv().unwrap();
+        let (_, _, encap) = sd.tlv().unwrap();
+        let mut body = Vec::new();
+        body.extend_from_slice(version);
+        body.extend_from_slice(digest_algs);
+        body.extend_from_slice(encap);
+        if let Some(infos) = signer_infos {
+            // Keep certificates/crls as they are; swap the SET.
+            while let Some(tag) = sd.peek_tag() {
+                let (_, _, raw) = sd.tlv().unwrap();
+                if tag == 0x31 {
+                    break;
+                }
+                body.extend_from_slice(raw);
+            }
+            let set: Vec<u8> = infos.concat();
+            body.extend(der_tlv(0x31, &set));
+        }
+        let sd_tlv = der_tlv(0x30, &body);
+        let mut ci_body = der_tlv(0x06, oid);
+        ci_body.extend(der_tlv(0xa0, &sd_tlv));
+        der_tlv(0x30, &ci_body)
+    }
+
+    fn fixture_signer_info() -> Vec<u8> {
+        let der = fixture_token_der();
+        let (mut sd, _) = signed_data_reader(&der).unwrap();
+        loop {
+            let (tag, content, _) = sd.tlv().unwrap();
+            if tag == 0x31 {
+                let (_, _, raw) = Der::new(content).tlv().unwrap();
+                return raw.to_vec();
+            }
+        }
+    }
+
+    #[test]
+    fn anchor_subject_literals_round_trip() {
+        for kind in [
+            AnchorSubject::ChainHead,
+            AnchorSubject::Digest,
+            AnchorSubject::ExportReceiptHead,
+            AnchorSubject::BreakGlassReceiptHead,
+            AnchorSubject::PolicyHead,
+        ] {
+            assert_eq!(AnchorSubject::parse(kind.as_str()), Some(kind));
+            assert_eq!(kind.to_string(), kind.as_str());
+            assert_eq!(AnchorSubject::from_row(kind.as_str()), kind);
+        }
+        assert_eq!(AnchorSubject::ChainHead.as_str(), "chain_head");
+        assert_eq!(AnchorSubject::Digest.as_str(), "digest");
+        assert_eq!(
+            AnchorSubject::ExportReceiptHead.as_str(),
+            "export_receipt_head"
+        );
+        assert_eq!(
+            AnchorSubject::BreakGlassReceiptHead.as_str(),
+            "break_glass_receipt_head"
+        );
+        assert_eq!(AnchorSubject::PolicyHead.as_str(), "policy_head");
+        for bad in ["Chain_Head", "chain-head", "", "digest "] {
+            assert_eq!(AnchorSubject::parse(bad), None, "{bad:?}");
+            assert_eq!(AnchorSubject::from_row(bad), AnchorSubject::Digest);
+        }
+        assert!(AnchorSubject::HEADS.iter().all(|k| k.is_head()));
+        assert!(!AnchorSubject::Digest.is_head());
+        assert_eq!(AnchorSubject::ChainHead.table(), None);
+        assert_eq!(
+            AnchorSubject::ExportReceiptHead.table(),
+            Some("export_receipts")
+        );
+        assert_eq!(
+            AnchorSubject::BreakGlassReceiptHead.table(),
+            Some("break_glass_receipts")
+        );
+        assert_eq!(
+            AnchorSubject::PolicyHead.table(),
+            Some("policy_change_history")
+        );
+        // The runbook quotes these two; they must stay byte-identical.
+        assert_eq!(
+            AnchorSubject::ChainHead.membership_label(),
+            "in chain history"
+        );
+        assert_eq!(
+            AnchorSubject::ChainHead.not_in_history_label(),
+            "anchored hash is not in chain history"
+        );
+        assert_eq!(
+            AnchorSubject::Digest.membership_label(),
+            "digest anchor, chain membership not applicable"
+        );
+        assert_eq!(
+            AnchorSubject::ExportReceiptHead.not_in_history_label(),
+            "anchored hash is not in export-receipt chain history"
+        );
+    }
+
+    #[test]
+    fn empty_ledger_sentinels_are_distinct_and_recognized() {
+        let sentinels: Vec<[u8; 32]> = AnchorSubject::HEADS
+            .iter()
+            .map(|k| {
+                k.empty_ledger_sentinel()
+                    .expect("head kinds have a sentinel")
+            })
+            .collect();
+        for (i, a) in sentinels.iter().enumerate() {
+            for (j, b) in sentinels.iter().enumerate() {
+                assert_eq!(a == b, i == j, "sentinels must be distinct per subject");
+            }
+        }
+        for kind in AnchorSubject::HEADS {
+            let h = kind.empty_ledger_sentinel().unwrap();
+            assert_eq!(AnchorSubject::sentinel_owner(&h), Some(kind));
+            // Pinned derivation: SHA-256 of the documented prefix ‖ literal.
+            let expect: [u8; 32] = Sha256::digest(
+                [
+                    b"securacv:anchor:empty-ledger:v1:".as_slice(),
+                    kind.as_str().as_bytes(),
+                ]
+                .concat(),
+            )
+            .into();
+            assert_eq!(h, expect);
+        }
+        assert_eq!(AnchorSubject::Digest.empty_ledger_sentinel(), None);
+        assert_eq!(AnchorSubject::sentinel_owner(&fixture_digest()), None);
+        assert_eq!(AnchorSubject::sentinel_owner(&[0u8; 32]), None);
+    }
+
+    #[test]
+    fn fixture_token_signer_identity() {
+        let der = fixture_token_der();
+        assert_eq!(der.len(), 947);
+        let signer = parse_token_signer(&der).unwrap();
+        assert_eq!(
+            signer.sid_hex,
+            "d806acd919f81e613c74e1b025e3aab8d47502181d30a00bf761bf67aa7ce3ef"
+        );
+        assert_eq!(
+            hex::encode(signer.issuer_sha256.unwrap()),
+            "a1e69de782f4ad7844c668f732a481820710a9a2e66dec6423230f922384e644"
+        );
+        assert_eq!(
+            signer.serial_hex.as_deref(),
+            Some("45c7728db49cb1c57be1b8f3fe5970522be1f00c")
+        );
+        assert_eq!(
+            hex::encode(signer.signer_fingerprint.unwrap()),
+            "fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542"
+        );
+        assert_eq!(
+            signer.signer_common_name.as_deref(),
+            Some("SecuraCV Test TSA")
+        );
+        // The token's own serial is untouched: TSTInfo serial, not the cert's.
+        assert_eq!(parse_token(&der).unwrap().serial_hex, "02");
+        // The embedded certificate is byte-equal to the committed tsa.crt.
+        let pem = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/tsa/tsa.crt",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+        let signer_der = base64_decode(&b64);
+        assert_eq!(signer_der.len(), 448);
+        let signer_sha: [u8; 32] = Sha256::digest(&signer_der).into();
+        assert_eq!(Some(signer_sha), signer.signer_fingerprint);
+    }
+
+    #[test]
+    fn signer_matching_uses_the_subject_key_identifier_extension() {
+        // The fixture certificate carries an SKI extension; a token that
+        // names its signer by subjectKeyIdentifier must match on it — not on
+        // "there is exactly one certificate" — so a token that also embeds
+        // its chain still identifies the signer, and a lone certificate whose
+        // SKI disagrees with the identifier is never mistaken for it.
+        let pem = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/tsa/tsa.crt",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+        let signer_der = base64_decode(&b64);
+        let signer = parse_embedded_signer(&signer_der).unwrap();
+        let ski = signer
+            .ski
+            .expect("fixture certificate carries an SKI extension");
+        assert_eq!(
+            hex::encode(ski),
+            "fed9bb53d2a050b14064eeb457004ad3a2d96b69",
+            "openssl x509 -ext subjectKeyIdentifier"
+        );
+        let embedded = vec![signer];
+        let hit = resolve_signer(&SignerId::Ski(ski), &embedded).expect("SKI matches");
+        assert_eq!(hit.raw, signer_der.as_slice());
+        assert!(
+            resolve_signer(&SignerId::Ski(b"not-this-key"), &embedded).is_none(),
+            "a certificate with a different SKI is not the signer, even when it is the only one"
+        );
+        // The issuerAndSerialNumber form still matches the same certificate.
+        let by_serial = resolve_signer(
+            &SignerId::IssuerSerial {
+                issuer_raw: embedded[0].issuer_raw,
+                serial: embedded[0].serial,
+            },
+            &embedded,
+        );
+        assert!(by_serial.is_some());
+    }
+
+    /// Minimal standard-alphabet base64 decoder for the PEM fixture (no
+    /// base64 crate in the dependency set).
+    fn base64_decode(s: &str) -> Vec<u8> {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = Vec::new();
+        let mut acc = 0u32;
+        let mut bits = 0;
+        for c in s.bytes() {
+            if c == b'=' {
+                break;
+            }
+            let v = ALPHABET.iter().position(|&a| a == c).expect("base64 char") as u32;
+            acc = (acc << 6) | v;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((acc >> bits) as u8);
+                acc &= (1 << bits) - 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn token_with_two_signer_infos_is_rejected() {
+        let info = fixture_signer_info();
+        let two = rebuild_token(&fixture_token_der(), Some(vec![info.clone(), info]));
+        let err = parse_token_signer(&two).unwrap_err().to_string();
+        assert!(err.contains("more than one SignerInfo"), "{err}");
+    }
+
+    #[test]
+    fn token_without_signer_infos_is_rejected() {
+        let none = rebuild_token(&fixture_token_der(), None);
+        assert!(parse_token_signer(&none).is_err());
+        // An explicitly empty SET is the named case.
+        let empty = rebuild_token(&fixture_token_der(), Some(Vec::new()));
+        let err = parse_token_signer(&empty).unwrap_err().to_string();
+        assert!(err.contains("carries no SignerInfo"), "{err}");
+    }
+
+    #[test]
+    fn parse_token_unchanged_on_signer_failure() {
+        let original = parse_token(&fixture_token_der()).unwrap();
+        let info = fixture_signer_info();
+        for surgery in [
+            rebuild_token(&fixture_token_der(), Some(vec![info.clone(), info])),
+            rebuild_token(&fixture_token_der(), None),
+            rebuild_token(&fixture_token_der(), Some(Vec::new())),
+        ] {
+            // A rebuilt token that keeps the original layout is byte-equal,
+            // proving the rebuild itself is faithful.
+            let token = parse_token(&surgery).unwrap();
+            assert_eq!(token.imprint, original.imprint);
+            assert_eq!(token.gen_time, original.gen_time);
+            assert_eq!(token.serial_hex, original.serial_hex);
+            assert_eq!(token.policy_oid, original.policy_oid);
+            assert_eq!(parse_token_imprint(&surgery).unwrap(), fixture_digest());
+        }
+        let faithful = rebuild_token(&fixture_token_der(), Some(vec![fixture_signer_info()]));
+        assert_eq!(faithful, fixture_token_der());
+    }
+
+    #[test]
+    fn list_anchors_lenient_isolates_a_malformed_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_anchor_table(&conn).unwrap();
+        let token = parse_token(&fixture_token_der()).unwrap();
+        let good1 = insert_anchor(&conn, "digest", &fixture_digest(), "(offline)", &token).unwrap();
+        conn.execute(
+            "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject,
+                subject_hash, tsa_url, gen_time, token_der)
+             VALUES (0, 600, 'digest', ?1, '(offline)', '20260610123324Z', x'00')",
+            [vec![0u8; 31]],
+        )
+        .unwrap();
+        let bad = conn.last_insert_rowid();
+        let good2 = insert_anchor(&conn, "digest", &fixture_digest(), "(offline)", &token).unwrap();
+
+        let err = list_anchors(&conn).unwrap_err().to_string();
+        assert!(err.contains(&format!("corrupt anchor {bad}")), "{err}");
+
+        let rows = list_anchors_lenient(&conn).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].0, good1);
+        assert!(rows[0].1.is_ok());
+        assert_eq!(rows[1].0, bad);
+        let reason = rows[1].1.as_ref().unwrap_err().to_string();
+        assert!(reason.contains("subject_hash size"), "{reason}");
+        assert_eq!(rows[2].0, good2);
+        let last = rows[2].1.as_ref().unwrap();
+        assert_eq!(
+            last.signer_fingerprint.as_deref(),
+            Some("fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542")
+        );
+        assert_eq!(last.ledger_id, None);
+        assert_eq!(last.tsa_name, None);
     }
 
     #[test]

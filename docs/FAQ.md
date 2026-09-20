@@ -153,6 +153,15 @@ hold. What survives and what doesn't is documented.
 → [the root paradox](root_paradox.md) ·
 [`spec/threat_model.md`](../spec/threat_model.md)
 
+### Does scheduled anchoring tell the TSA when something happened?
+
+The number of requests per run is constant (every subject to every TSA, an
+empty ledger anchored over a fixed sentinel), so the count carries no signal.
+The TSA does see the digests, so it can notice a receipt-ledger digest that
+stops repeating; anchoring a single per-run ledger-heads leaf (planned with the
+Merkle tree) removes that.
+→ [timestamping](timestamping.md)
+
 ---
 
 ## Honest status
@@ -193,6 +202,14 @@ The day we ship a boxed, pre-flashed device is the day we owe a Part 15B test on
 it — and we'll have done it before that box exists, not after.
 → [`SECURITY.md`](../SECURITY.md) · [claims and risk audit](legal-audit-2026-07.md)
 · [compliance diligence](strategy/29-fcc-and-product-compliance-diligence.md)
+
+### Does SecuraCV verify that my TSA is eIDAS-qualified?
+
+No. `log_anchor verify --policy` checks that two *distinct* TSAs countersigned
+the same ledger head and records which one you declared qualified; whether a
+TSA is on a trusted list is something you check and write down, not something
+the software can prove.
+→ [timestamping](timestamping.md)
 
 ### Should I rely on this for life safety?
 

@@ -59,7 +59,8 @@ jobs:
         run: |
           mkdir -p dist
           for bin in witnessd log_verify break_glass export_events export_verify \
-                     frigate_bridge event_mqtt_bridge witness_api grove_vision2_ingest demo; do
+                     frigate_bridge event_mqtt_bridge witness_api grove_vision2_ingest demo \
+                     log_anchor court_export; do
             if [ -f "target/release/$bin" ]; then
               cp "target/release/$bin" "dist/"
             fi

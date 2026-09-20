@@ -21,8 +21,12 @@ chain under the same device identity, is refused, never packaged.
 export_events --self-export --db witness.db --output witness_export.json
 
 # 2. Anchor the exact bundle bytes at a TSA (strongly recommended first)
-envelope_digest=$(sha256sum witness_export.json | cut -d' ' -f1)
-log_anchor request --db witness.db --url https://freetsa.org/tsr --digest "$envelope_digest"
+log_anchor request --db witness.db --url https://freetsa.org/tsr --file witness_export.json
+# or, with an anchor policy: log_anchor anchor-all --db witness.db --policy anchor-policy.json
+
+# 2b. Optionally anchor the export-receipt chain head too (this export's
+#     receipt is the newest row right after the export)
+log_anchor request --db witness.db --url https://freetsa.org/tsr --subject export_receipt_head
 
 # 3. Assemble the kit
 court_export --bundle witness_export.json --db witness.db --output-dir court_kit/
@@ -43,7 +47,7 @@ with them.
 | `VERIFICATION.md` | Steps runnable with `sha256sum` + `openssl` only; the SecuraCV-tooling path is optional depth |
 | `CERTIFICATION_FRE_902_13.md` / `_14.md` | Draft 28 U.S.C. § 1746 declarations, digests pre-filled, blanks for the certifier |
 | `evidence/` | The bundle exactly as exported (plus its C2PA sidecar, if any) |
-| `anchors/*.der` | The RFC 3161 tokens relevant to THIS disclosure, verbatim as bare DER TimeStampTokens (verified with `openssl ts -verify … -token_in`; a `.tsr` is a full response and takes no such flag), each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such) plus chain-head tokens. Digest anchors for other exports are deliberately excluded — including them would disclose that those exports exist |
+| `anchors/*.der` | The RFC 3161 tokens relevant to THIS disclosure, verbatim as bare DER TimeStampTokens (verified with `openssl ts -verify … -token_in`; a `.tsr` is a full response and takes no such flag), each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such), any token over this disclosure's own signed export receipt entry hash (called out as such, whatever its stored subject — `export_receipt_head` or a `digest` anchor made from `receipts --verbose`), plus chain-head tokens. Digest anchors for other exports, later export-receipt heads, empty-ledger sentinels, break-glass and policy heads are deliberately excluded — including them would disclose that those acts exist |
 | `MANIFEST.json` | Machine-readable list of every kit file with its SHA-256 |
 
 ## What it checks before packaging
@@ -64,11 +68,26 @@ with them.
    embeds, so an unparseable or mismatched token is excluded with a warning
    rather than counted. A chain-head anchor must additionally reference a
    hash recorded in this database's chain history, or it fixes nothing about
-   this ledger. If no valid stored anchor covers the bundle's exact
-   bytes, the kit still assembles but says so loudly — in the terminal, in
-   `VERIFICATION.md`, and as `"anchored": false` in the manifest — with the
-   exact `log_anchor` command to fix it (which accepts the same
-   `--device-key-seed` / `--db-key` options for an encrypted database).
+   this ledger. A token is packaged as covering **this disclosure's export
+   receipt** by hash alone — its `subject_hash` equals the bundle's receipt
+   `entry_hash`, whatever subject text the row carries — because that hash is
+   the disclosure's own signed receipt, already proven a member of the
+   verified chain in check 2; a mislabeled row cannot widen the rule, and
+   every other row (other digests, later export-receipt heads, break-glass and
+   policy heads, sentinels) is skipped without a trace. The manifest records
+   `"receipt_anchored": true|false` beside `"anchored"` and lists every
+   packaged token in an `anchors` array (`file`, the row's stored `subject`,
+   `covers` ∈ `bundle_bytes` / `receipt_entry` / `chain_head`, and the TSA's
+   declared name and signer-certificate SHA-256 read from the token). If no
+   valid stored anchor covers the bundle's exact bytes, the kit still
+   assembles but says so loudly — in the terminal, in `VERIFICATION.md`, and
+   as `"anchored": false` in the manifest — with the exact `log_anchor`
+   command to fix it (which accepts the same `--device-key-seed` / `--db-key`
+   options for an encrypted database) and its offline equivalent.
+   `VERIFICATION.md` states that the receipt entry hash is recomputable from
+   the evidence file alone (the offline viewer's export-bundle mode or the
+   library's `verify_export_bundle`); the database-side checks in its step 4
+   are a separate, deeper check.
 4. **Fresh output directory**: the manifest attests every file in the kit,
    so `--output-dir` must be absent or empty — a directory with any
    pre-existing content is refused.

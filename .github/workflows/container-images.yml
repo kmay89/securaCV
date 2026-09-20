@@ -72,7 +72,7 @@ jobs:
         run: |
           docker run --rm --entrypoint /bin/sh witnessd:ci -c '
             set -e
-            for bin in witnessd log_verify export_events export_verify envelope_verify break_glass; do
+            for bin in witnessd log_verify export_events export_verify envelope_verify break_glass log_anchor court_export; do
               command -v "$bin" >/dev/null
               if ldd "/usr/local/bin/$bin" | grep -q "not found"; then
                 echo "missing shared libraries for $bin" >&2
@@ -82,6 +82,8 @@ jobs:
             log_verify --help >/dev/null
             export_events --help >/dev/null
             export_verify --help >/dev/null
+            log_anchor --help >/dev/null
+            court_export --help >/dev/null
             curl --version >/dev/null
           '
 
