@@ -86,14 +86,32 @@ struct GlassSettings: Sendable, Equatable {
     var clockStyleNames: [String] = []
     var clock12h = true
 
-    // Served only by glass that can fetch its own forecast when no hub was
-    // ever configured (FEATURE_STANDALONE_WEATHER — the 7" line). `wxHub`
-    // means a hub owns weather and the fetcher stands down regardless; the
-    // app says so instead of rendering a switch that appears dead.
+    // Served only by glass that carries the standalone forecast
+    // (FEATURE_STANDALONE_WEATHER — the 7" dash7 / nightstand7 builds), and
+    // served NESTED under `on_glass` on purpose: these are the keys
+    // POST /api/set refuses for every caller, token or not, with
+    // 403 on_glass_only (the policy table in canary/net/settings_policy.h,
+    // handed back as `keys` so the phone and the handler cannot disagree
+    // about which keys those are). The switch and the location take a hand
+    // on the glass (Settings › Weather), so the app SHOWS this block and
+    // never writes it — a control here could only ever fail.
+    //
+    // The block's presence is the tell, like the lamp block below. The two
+    // location-derived facts ride only on requests that are not cross-site
+    // (glass_web.cpp handle_settings_get), so they stay optional: nil means
+    // "the glass did not say", never a guess. The grid point itself is never
+    // served by any route, so there is nothing here that could show it.
     var hasDirectWeather = false
+    /// The keys the glass refuses from the network — its own list. Every
+    /// offered knob is filtered against it (GlassAPI.knobs), so the app
+    /// structurally cannot draw a control the handler would 403.
+    var onGlassKeys: [String] = []
     var wxDirect = false
-    var wxLocSet = false
-    var wxHub = false
+    /// The fetcher's verdict (wx_direct.h): 0 off, 1 needs a location,
+    /// 2 a hub owns weather, 3 on, 4 on but the last fetch failed.
+    var wxStatus: Int?
+    /// Whether a coarse ~11 km grid point is stored — never where.
+    var wxLocSet: Bool?
 
     // Served by displays with a lamp (the nightlight today).
     var hasLamp = false
@@ -114,18 +132,14 @@ struct GlassSettings: Sendable, Equatable {
     var usesCustomHue: Bool { lampHue >= 0 }
 }
 
-enum GlassAPI {
-    /// GET /api/settings. Every field optional by hand: this same call serves
-    /// a Watch Station, a Dash and a nightlight, and each answers with what
-    /// it actually has.
-    static func settings(at base: URL, session: URLSession = .shared) async throws -> GlassSettings {
-        guard DeviceAPI.isPrivate(base) else { throw DeviceError.notPrivateAddress }
-        var req = URLRequest(url: base.appendingPathComponent("/api/settings"))
-        req.timeoutInterval = 4
-        let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-            throw DeviceError.http((resp as? HTTPURLResponse)?.statusCode ?? 0, "settings")
-        }
+extension GlassSettings {
+    /// The body of GET /api/settings, as the device described itself. Split
+    /// from the request (GlassAPI.settings) so a test can feed it the exact
+    /// bytes glass_web.cpp emits — the same shape FleetSelfReport.decode
+    /// takes for /api/fleet. Every field optional by hand: this same body
+    /// serves a Watch Station, a Dash and a nightlight, and each answers
+    /// with what it actually has.
+    static func decode(_ data: Data) throws -> GlassSettings {
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         var s = GlassSettings()
         if let v = obj["day_pct"] as? Int { s.dayPct = v }
@@ -147,10 +161,20 @@ enum GlassAPI {
         if let v = obj["clock_style"] as? Int { s.clockStyle = v }
         if let v = obj["clock_styles"] as? [String] { s.clockStyleNames = v }
         if let v = obj["clock_12h"] as? Int { s.clock12h = v == 1 }
-        // The standalone-weather block: presence of wx_direct is the tell.
-        if let v = obj["wx_direct"] as? Int { s.wxDirect = v == 1; s.hasDirectWeather = true }
-        if let v = obj["wx_loc_set"] as? Int { s.wxLocSet = v == 1 }
-        if let v = obj["wx_hub"] as? Int { s.wxHub = v == 1 }
+        // The standalone-weather block: the `on_glass` object is the tell, and
+        // it is read from the block and nowhere else. No firmware in this
+        // checkout's history (the commits back to b4a9083) ever served these
+        // keys at the top level, and a top-level key is exactly what a client
+        // renders as a control — so a fallback would invent a switch the
+        // glass refuses. Hub ownership is the verdict (wx_status 2), not a
+        // key of its own.
+        if let g = obj["on_glass"] as? [String: Any] {
+            s.hasDirectWeather = true
+            s.onGlassKeys = (g["keys"] as? [String]) ?? []
+            if let v = g["wx_direct"] as? Int { s.wxDirect = v == 1 }
+            if let v = g["wx_status"] as? Int { s.wxStatus = v }
+            if let v = g["wx_loc_set"] as? Int { s.wxLocSet = v == 1 }
+        }
         // The lamp block is the tell: a display without one simply doesn't
         // send these, and the app then offers no lamp controls rather than
         // offering ones that would fail.
@@ -164,6 +188,20 @@ enum GlassAPI {
         if let v = obj["auto_rotate"] as? Int { s.autoRotate = v == 1 }
         if let v = obj["scenes"] as? [String] { s.scenes = v }
         return s
+    }
+}
+
+enum GlassAPI {
+    /// GET /api/settings — the request; GlassSettings.decode reads the body.
+    static func settings(at base: URL, session: URLSession = .shared) async throws -> GlassSettings {
+        guard DeviceAPI.isPrivate(base) else { throw DeviceError.notPrivateAddress }
+        var req = URLRequest(url: base.appendingPathComponent("/api/settings"))
+        req.timeoutInterval = 4
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+            throw DeviceError.http((resp as? HTTPURLResponse)?.statusCode ?? 0, "settings")
+        }
+        return try GlassSettings.decode(data)
     }
 
     /// POST /api/set?k=&v= — one knob per request, the contract the on-glass
@@ -182,6 +220,15 @@ enum GlassAPI {
     /// without a lamp shows no lamp section and nothing has to know which
     /// product it is talking to.
     static func knobs(for s: GlassSettings) -> [GlassKnob] {
+        // THE DEVICE'S OWN REFUSE-LIST HAS THE LAST WORD. GET /api/settings
+        // lists the keys POST /api/set refuses for every caller under
+        // `on_glass.keys` (the settings_policy.h table), and every knob built
+        // below leaves through this filter — so the app structurally cannot
+        // draw a control the glass would 403, including one a future
+        // firmware moves into the class, and no key name is special-cased.
+        func offered(_ knobs: [GlassKnob]) -> [GlassKnob] {
+            knobs.filter { !s.onGlassKeys.contains($0.key) }
+        }
         // ONE brightness control, and it is whichever one this glass can
         // actually obey.
         //
@@ -236,20 +283,6 @@ enum GlassAPI {
                                        "Landscape flipped", "Portrait flipped"]),
                 value: s.orientation))
         }
-        if s.hasDirectWeather {
-            out.append(GlassKnob(
-                key: "wx_direct", title: "Fetch weather itself",
-                blurb: s.wxHub
-                    ? "Your hub provides weather, so this stays idle — the hub "
-                    + "remains the one thing in the house that talks to the "
-                    + "internet."
-                    : "Hub-less homes only: the glass asks a public forecast "
-                    + "service directly, using a coarse ~11 km location and "
-                    + "nothing else — no account, no identifiers. "
-                    + (s.wxLocSet ? "Location is set."
-                                  : "Set a location below to complete it."),
-                kind: .toggle, value: s.wxDirect ? 1 : 0))
-        }
         out.append(contentsOf: [
             GlassKnob(key: "night_screen", title: "At night",
                       blurb: "A glow keeps the face readable in the dark; off blanks it until you look.",
@@ -269,7 +302,7 @@ enum GlassAPI {
                       kind: .choice(labels: ["3 seconds", "5 seconds", "10 seconds"]),
                       value: s.peekSeconds == 3 ? 0 : (s.peekSeconds == 10 ? 2 : 1)),
         ])
-        guard s.hasLamp else { return out }
+        guard s.hasLamp else { return offered(out) }
         out.append(contentsOf: [
             GlassKnob(key: "lamp_pct", title: "Lamp brightness",
                       blurb: "The lamp's own strength, up to this device's \(s.lampMaxDutyPct)% ceiling — a limit the glass sets for heat, not one the app invented.",
@@ -286,7 +319,7 @@ enum GlassAPI {
                       blurb: "The face turns with the device when you stand it up or lay it down.",
                       kind: .toggle, value: s.autoRotate ? 1 : 0),
         ])
-        return out
+        return offered(out)
     }
 
     /// `peek_s` is stored as real seconds, not an index — so the picker's
@@ -298,5 +331,32 @@ enum GlassAPI {
         case 2: return 10
         default: return 5
         }
+    }
+
+    // MARK: - the standalone-weather block, rendered as facts
+
+    /// The state of the glass's own forecast, in the glass's own words — the
+    /// Weather page's Status row and the Settings row on the panel
+    /// (settings_ui.cpp), keyed by wx_direct.h's verdict. A body without a
+    /// verdict (the cross-site shape) falls back to the on/off it did carry,
+    /// the mirror page's rule (mirror_html.h). Never a control: the sheet
+    /// says where the switch is, and it is not on the network.
+    static func weatherStatusText(_ s: GlassSettings) -> String {
+        switch s.wxStatus {
+        case .some(0): return "Off"
+        case .some(1): return "Needs a location"
+        case .some(2): return "Your hub provides weather"
+        case .some(3): return "On"
+        case .some(4): return "On — last fetch failed, retrying"
+        default:       return s.wxDirect ? "On" : "Off"
+        }
+    }
+
+    /// Whether a coarse location is stored — never where. No route serves
+    /// the grid point (it is an in-room disclosure on the glass alone), so
+    /// there is nothing here to render; nil is "the glass did not say".
+    static func weatherLocationText(_ s: GlassSettings) -> String {
+        guard let stored = s.wxLocSet else { return "—" }
+        return stored ? "Stored — a ~11 km grid point" : "Not set"
     }
 }

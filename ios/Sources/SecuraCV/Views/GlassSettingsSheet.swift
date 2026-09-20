@@ -8,7 +8,7 @@
 // name. A firmware that grows a knob shows up when the glass starts reporting
 // it, not when the App Store does.
 //
-// TWO RULES THE INTERACTION FOLLOWS
+// THREE RULES THE INTERACTION FOLLOWS
 //
 //   1. WRITE THROUGH, THEN RE-READ. Every change posts one key and then
 //      re-reads /api/settings, so what you see afterwards is the device's
@@ -18,9 +18,14 @@
 //   2. SAY WHEN IT DIDN'T LAND. A setting that fails goes back to the value
 //      the device reports and says so — the silent optimistic update is how
 //      a settings screen quietly lies about a device it can't reach.
+//   3. SHOW WHAT THE GLASS REFUSES TO TAKE, AND NEVER OFFER IT. The device
+//      lists the keys /api/set refuses for every caller under `on_glass`
+//      (the standalone-weather opt-in and its coarse location — a hand on
+//      the glass sets them, so nobody on the Wi-Fi can). The sheet renders
+//      that block as facts and filters every knob against the list, so no
+//      control on this screen can 403. No control, no post, no geocoder.
 
 import SwiftUI
-import CoreLocation
 
 struct GlassSettingsSheet: View {
     let witness: Witness
@@ -31,8 +36,6 @@ struct GlassSettingsSheet: View {
     @State private var knobs: [GlassKnob] = []
     @State private var problem: String?
     @State private var busy = false
-    @State private var wxPlace = ""
-    @State private var wxPlaceStatus: String?
     /// Every knob as the device reported it when this sheet OPENED — the
     /// safety net under a session of fiddling. Captured once; "Undo
     /// changes" replays it through the ordinary write path (SettingsRevert).
@@ -72,28 +75,20 @@ struct GlassSettingsSheet: View {
                             }
                         }
 
-                        if settings.hasDirectWeather && !settings.wxHub {
+                        if settings.hasDirectWeather {
+                            // Shown, never written (rule 3). The two rows are
+                            // the glass's own words for its state and whether
+                            // a grid point is stored — never the point, which
+                            // no route serves. A control here would only 403.
                             Section {
-                                TextField("City, region — e.g. Austin, TX", text: $wxPlace)
-                                    .textInputAutocapitalization(.words)
-                                    .autocorrectionDisabled()
-                                Button(settings.wxLocSet ? "Replace stored location"
-                                                        : "Set weather location") {
-                                    Task { await setWeatherLocation() }
-                                }
-                                .disabled(wxPlace.trimmingCharacters(in: .whitespaces).isEmpty || busy)
-                                if let wxPlaceStatus {
-                                    Text(wxPlaceStatus)
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                }
+                                LabeledContent("Fetches weather itself",
+                                               value: GlassAPI.weatherStatusText(settings))
+                                LabeledContent("Coarse location",
+                                               value: GlassAPI.weatherLocationText(settings))
                             } header: {
-                                Text("Weather location")
+                                Text("Weather")
                             } footer: {
-                                Text("Type a place; the phone looks it up and sends the glass a "
-                                   + "coarse ~11 km grid point — never your exact address, and "
-                                   + "never this phone's location. The glass keeps only that "
-                                   + "rounded point.")
+                                Text("Set on the glass, not here: Settings › Weather › Fetch Weather Itself, and the location under Settings › Weather › Location. The glass keeps a ~11 km grid point and never sends it to your network, so nobody on your Wi-Fi — this phone included — can switch on the one thing it would ever fetch. With a hub, the hub stays the one thing in the house that talks to the internet.")
                             }
                         }
                     }
@@ -182,36 +177,6 @@ struct GlassSettingsSheet: View {
     private func reload(after ok: Bool) async {
         if !ok { problem = "The glass didn't take that color." }
         await load()
-    }
-
-    /// Geocode the typed place ON THE PHONE (no location permission — this is
-    /// a text lookup, not a fix), coarsen to the 0.1° grid, and send the one
-    /// combined integer the firmware accepts atomically (wx_loc_encode in
-    /// glass_settings.h: (lat10+900)*4000 + (lon10+1800)).
-    private func setWeatherLocation() async {
-        busy = true
-        defer { busy = false }
-        wxPlaceStatus = "Looking up…"
-        do {
-            let marks = try await CLGeocoder().geocodeAddressString(wxPlace)
-            guard let loc = marks.first?.location else {
-                wxPlaceStatus = "Couldn't find that place — try adding a region."
-                return
-            }
-            let lat10 = Int((loc.coordinate.latitude * 10).rounded())
-            let lon10 = Int((loc.coordinate.longitude * 10).rounded())
-            guard (-900...900).contains(lat10), (-1800...1800).contains(lon10) else {
-                wxPlaceStatus = "That point is outside the valid grid."
-                return
-            }
-            let combined = (lat10 + 900) * 4000 + (lon10 + 1800)
-            try await GlassAPI.set("wx_loc", combined, at: base)
-            wxPlaceStatus = "Stored as a coarse grid point."
-            wxPlace = ""
-            await load()
-        } catch {
-            wxPlaceStatus = "Didn't stick — \(error.localizedDescription)"
-        }
     }
 }
 
