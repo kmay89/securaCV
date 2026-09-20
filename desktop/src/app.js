@@ -5042,6 +5042,15 @@ function renderReceipts(forceVision = false) {
       ? "waiting for ESP32 flash — plug the XIAO's own USB-C port"
       : "waiting for ESP32 flash";
   setReceipt("receipt-host-image", !!host, hostLabel);
+  // The broker TLS mode as SEALED — the line the writer returned, built from
+  // the NVS bytes it wrote (lib.rs flash → broker_receipt.rs), never from the
+  // form; the same words the browser's done card uses. Hidden when no broker
+  // host was sealed, and for a local file. It says sealed, not connected: the
+  // boot manifest carries no transport field, so nothing here can vouch for
+  // the link itself.
+  const brokerTls = host && host.broker_tls;
+  $("receipt-host-broker").classList.toggle("hidden", !brokerTls);
+  if (brokerTls) setReceipt("receipt-host-broker", true, "✓ " + brokerTls.line);
   setReceipt(
     "receipt-host-boot",
     !!(boot && boot.ready),
