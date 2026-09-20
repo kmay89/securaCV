@@ -22,6 +22,7 @@
 // first — the canary-sense / -vision / -display precedent.
 #include <WiFiClientSecure.h>
 #include "network/mqtt_transport.h"  // plain / TLS-CA / pinned / lab broker socket, decided once fleet-wide
+#include "mqtt_tls_fields.h"         // write_order: the sequence one reprovision's NVS writes land in (host-tested)
 #include <esp_task_wdt.h>            // the connect stages feed the loop task's watchdog between them
 #include "securacv_crypto.h"
 #include "securacv_witness.h"
@@ -44,6 +45,8 @@ static bool s_transport_loaded = false;
 // Set by the NVS writers (any task) and consumed by mqtt_loop() on the main
 // task: drop the live link, re-read credentials and the transport, retry
 // at once. Keeps every PubSubClient call on the one task that pumps it.
+// Raised exactly ONCE per writer call, after that writer's NVS session has
+// closed — never between two writes of one request (mqtt_save_config).
 static volatile bool s_reload_pending = false;
 
 // Task-watchdog budget. main.cpp arms WATCHDOG_TIMEOUT_SEC (8 s) on the
@@ -625,31 +628,80 @@ bool mqtt_load_credentials(MqttCredentials* creds) {
   return creds->configured;
 }
 
-bool mqtt_save_credentials(const MqttCredentials* creds) {
+// The credential row, inside a session the caller opened. Every write is
+// checked: a row that half-landed must fail the request, not answer ok.
+static bool write_credentials(NvsManager& nvs, const MqttCredentials* creds) {
+  const size_t host_len = strlen(creds->host);
+  bool ok = nvs.putBytes(NVS_KEY_MQTT_HOST, creds->host, host_len) == host_len;
+  ok = (nvs.putUInt(NVS_KEY_MQTT_PORT, creds->port) == sizeof(uint32_t)) && ok;
+
+  const size_t user_len = strlen(creds->username);
+  if (user_len > 0) {
+    ok = (nvs.putBytes(NVS_KEY_MQTT_USER, creds->username, user_len) == user_len) && ok;
+  }
+  const size_t pass_len = strlen(creds->password);
+  if (pass_len > 0) {
+    ok = (nvs.putBytes(NVS_KEY_MQTT_PASS, creds->password, pass_len) == pass_len) && ok;
+  }
+
+  ok = (nvs.putBool(NVS_KEY_MQTT_EN, creds->enabled) == 1) && ok;
+  return ok;
+}
+
+bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls) {
+  using namespace canary::net::mqtt_tls;
+  namespace tf = canary::net::mqtt_tls_fields;
+  if (creds == nullptr) return false;
+
+  const bool set_fp   = tls != nullptr && tls->set_fp;
+  const bool clear_fp = tls != nullptr && tls->clear_fp;
+  const bool set_mode = tls != nullptr && tls->set_mode;
+  if (set_fp && (tls->fp_canonical == nullptr || tls->fp_canonical[0] == '\0')) return false;
+  if (set_fp && clear_fp) return false;  // plan() never asks for both
+
+  // The order is the header's, not this function's: pin → mode → credentials,
+  // and stop at the first failed write, so a later step only ever lands on
+  // top of every earlier one (the credentials never next to a mode they were
+  // not asked for; a mode never without its pin).
+  const tf::WriteOrder order = tf::write_order(set_fp, clear_fp, set_mode, /*credentials=*/true);
+
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
 
-  nvs.putBytes(NVS_KEY_MQTT_HOST, creds->host, strlen(creds->host));
-  nvs.putUInt(NVS_KEY_MQTT_PORT, creds->port);
-
-  if (strlen(creds->username) > 0) {
-    nvs.putBytes(NVS_KEY_MQTT_USER, creds->username, strlen(creds->username));
+  bool ok = true;
+  for (uint8_t i = 0; i < order.count && ok; i++) {
+    switch (order.steps[i]) {
+      case tf::Write::PinSet:      ok = nvs.putString(NVS_KEY_FP, tls->fp_canonical) > 0; break;
+      case tf::Write::PinClear:    ok = !nvs.isKey(NVS_KEY_FP) || nvs.remove(NVS_KEY_FP); break;
+      case tf::Write::ModeSet:     ok = nvs.putUChar(NVS_KEY_MODE, tls->mode) == 1; break;
+      case tf::Write::Credentials: ok = write_credentials(nvs, creds); break;
+    }
   }
-  if (strlen(creds->password) > 0) {
-    nvs.putBytes(NVS_KEY_MQTT_PASS, creds->password, strlen(creds->password));
-  }
-
-  nvs.putBool(NVS_KEY_MQTT_EN, creds->enabled);
   nvs.end();
 
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT credentials saved", creds->host);
-
-  // The live copy is re-read from NVS by the main loop (apply_pending_reload),
-  // the one task that pumps PubSubClient — the HTTP task that called us
-  // never touches the client or the struct the connect path reads.
+  // ONE reload, after the session has closed — whatever landed is what NVS
+  // holds now, and the link must follow it (a failed request included: the
+  // main task re-reads and reconnects with the row as it actually is). The
+  // live copy is re-read by the main loop (apply_pending_reload), the one
+  // task that pumps PubSubClient — the HTTP task that called us never
+  // touches the client or the struct the connect path reads.
   s_reload_pending = true;
 
+  if (!ok) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "MQTT settings: NVS write failed", nullptr);
+    return false;
+  }
+  if (tls != nullptr && (set_mode || set_fp || clear_fp)) {
+    // The mode NAME is a constant; the pin never goes on a log line.
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT broker TLS settings saved",
+               set_mode ? mode_name(mode_from_u8(tls->mode)) : (clear_fp ? "pin cleared" : "pin set"));
+  }
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT credentials saved", creds->host);
   return true;
+}
+
+bool mqtt_save_credentials(const MqttCredentials* creds) {
+  return mqtt_save_config(creds, nullptr);
 }
 
 bool mqtt_clear_credentials() {
@@ -692,30 +744,6 @@ bool mqtt_tls_read_current(MqttTlsCurrent* out) {
   }
 
   nvs.end();
-  return true;
-}
-
-bool mqtt_tls_save(bool set_mode, uint8_t mode, bool set_fp, const char* fp_canonical, bool clear_fp) {
-  using namespace canary::net::mqtt_tls;
-  if (set_fp && (fp_canonical == nullptr || fp_canonical[0] == '\0')) return false;
-
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadWrite()) return false;
-
-  bool ok = true;
-  if (set_mode) ok = (nvs.putUChar(NVS_KEY_MODE, mode) == 1) && ok;
-  if (set_fp) ok = (nvs.putString(NVS_KEY_FP, fp_canonical) > 0) && ok;
-  if (clear_fp && nvs.isKey(NVS_KEY_FP)) ok = nvs.remove(NVS_KEY_FP) && ok;
-  nvs.end();
-
-  if (!ok) {
-    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "MQTT broker TLS settings: NVS write failed", nullptr);
-    return false;
-  }
-  // The mode NAME is a constant; the pin never goes on a log line.
-  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT broker TLS settings saved",
-             set_mode ? mode_name(mode_from_u8(mode)) : (clear_fp && !set_fp ? "pin cleared" : "pin set"));
-  s_reload_pending = true;
   return true;
 }
 

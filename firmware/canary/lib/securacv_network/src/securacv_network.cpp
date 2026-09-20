@@ -2573,11 +2573,16 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
     return send_tls_refusal(req, verdict, tls_plan.decision);
   }
 
-  if (!mqtt_save_credentials(&creds)) {
-    return http_send_error(req, 500, "save_failed");
-  }
-  if ((tls_plan.set_mode || tls_plan.set_fp || tls_plan.clear_fp) &&
-      !mqtt_tls_save(tls_plan.set_mode, tls_plan.mode, tls_plan.set_fp, tls_plan.fp, tls_plan.clear_fp)) {
+  // One NVS session for the whole request — the TLS keys first, the
+  // credentials last, one reload after the session closes (mqtt_save_config
+  // walks mqtt_tls_fields::write_order, host-tested). Two sessions with the
+  // credentials first would let the main task reconnect with the NEW
+  // password on the OLD, plain socket in the gap between them, and close the
+  // shared NVS handle under the second write.
+  const MqttTlsWrite tls_write = {tls_plan.set_mode, tls_plan.mode, tls_plan.set_fp, tls_plan.fp,
+                                  tls_plan.clear_fp};
+  const bool any_tls = tls_plan.set_mode || tls_plan.set_fp || tls_plan.clear_fp;
+  if (!mqtt_save_config(&creds, any_tls ? &tls_write : nullptr)) {
     return http_send_error(req, 500, "save_failed");
   }
 

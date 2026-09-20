@@ -123,6 +123,43 @@ inline Verdict plan(const Current& cur, const Request& req, Plan& out) {
   return Verdict::Ok;
 }
 
+// ── The order one request's writes land ─────────────────────────────────────
+// POST /api/mqtt/config may write up to three keys and the credential row.
+// They land in ONE NVS session, in this order, and the writer raises the
+// main loop's reload ONCE after that session closes:
+//
+//   the pin (set or cleared)  →  the mode byte  →  the credentials
+//
+// The main task's reload re-reads NVS and reconnects at once, and the two
+// tasks share one NVS handle, so a credential row committed in a session of
+// its own — with the mode byte still to come in a second — is a window in
+// which the link comes up with the NEW password on the OLD (plain) socket,
+// and in which whichever task closes the shared handle first closes it under
+// the other. Writing the mode before the credentials, and stopping at the
+// first failed write, means a later step can only ever land on top of every
+// earlier one: the credentials never sit next to a mode they were not asked
+// for, and a mode never lands without its pin. Sequenced here, pure, so the
+// host test holds the order; securacv_mqtt.cpp's mqtt_save_config walks it.
+enum class Write : uint8_t { PinSet, PinClear, ModeSet, Credentials };
+
+struct WriteOrder {
+  uint8_t count = 0;
+  Write steps[4] = {};
+};
+
+inline WriteOrder write_order(bool set_fp, bool clear_fp, bool set_mode, bool credentials) {
+  WriteOrder o;
+  if (set_fp)      o.steps[o.count++] = Write::PinSet;
+  if (clear_fp)    o.steps[o.count++] = Write::PinClear;
+  if (set_mode)    o.steps[o.count++] = Write::ModeSet;
+  if (credentials) o.steps[o.count++] = Write::Credentials;
+  return o;
+}
+
+inline WriteOrder write_order(const Plan& p, bool credentials) {
+  return write_order(p.set_fp, p.clear_fp, p.set_mode, credentials);
+}
+
 // Judge the body of POST /api/mqtt/ca before it can reach NVS. `len` is the
 // received byte count (the caller NUL-terminates). An empty body is NOT a
 // valid PEM — whether it means "forget the CA" is the route's decision.

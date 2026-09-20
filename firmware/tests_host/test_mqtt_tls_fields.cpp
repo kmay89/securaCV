@@ -249,6 +249,69 @@ static void ca_upload_is_bounded_and_pem_shaped() {
   CHECK(check_ca(nullptr, 0) == Verdict::CaMalformed, "nullptr is malformed");
 }
 
+// ── One request's writes land TLS-first, credentials last, nothing dropped ──
+// The review of the first cut found POST /api/mqtt/config committing the
+// credentials (and raising the main loop's reload) in a session of its own,
+// with the mode byte still to come in a second: a reload in that gap connects
+// with the new password on the old, plain socket. The order is now a pure
+// sequence the firmware writer walks, so this holds it: every TLS step comes
+// before the credentials, the pin before the mode, exactly one step per
+// requested write.
+static void config_writes_land_tls_first_and_credentials_last() {
+  for (int mask = 0; mask < 16; mask++) {
+    const bool set_fp = mask & 1, clear_fp = mask & 2, set_mode = mask & 4, creds = mask & 8;
+    if (set_fp && clear_fp) continue;  // plan() never produces both
+    const WriteOrder o = write_order(set_fp, clear_fp, set_mode, creds);
+    const int expected = (int)set_fp + (int)clear_fp + (int)set_mode + (int)creds;
+    CHECK(o.count == expected, "mask %d: %d steps planned, %d requested", mask, o.count, expected);
+    CHECK(o.count <= 4, "mask %d: never more steps than the array holds", mask);
+    int pos_pin = -1, pos_mode = -1, pos_creds = -1;
+    int n_pin = 0, n_mode = 0, n_creds = 0;
+    for (int i = 0; i < o.count; i++) {
+      switch (o.steps[i]) {
+        case Write::PinSet:
+        case Write::PinClear:  pos_pin = i;   n_pin++;   break;
+        case Write::ModeSet:   pos_mode = i;  n_mode++;  break;
+        case Write::Credentials: pos_creds = i; n_creds++; break;
+      }
+    }
+    CHECK(n_pin == (int)(set_fp || clear_fp), "mask %d: the pin step appears exactly when asked", mask);
+    CHECK(n_mode == (int)set_mode, "mask %d: the mode step appears exactly when asked", mask);
+    CHECK(n_creds == (int)creds, "mask %d: the credentials step appears exactly when asked", mask);
+    if (creds && (set_fp || clear_fp || set_mode)) {
+      CHECK(pos_creds == o.count - 1, "mask %d: the credentials land LAST (at %d of %d)", mask, pos_creds, o.count);
+      if (pos_mode >= 0) CHECK(pos_mode < pos_creds, "mask %d: the mode byte lands before the credentials", mask);
+      if (pos_pin >= 0) CHECK(pos_pin < pos_creds, "mask %d: the pin lands before the credentials", mask);
+    }
+    if (set_mode && (set_fp || clear_fp)) {
+      CHECK(pos_pin < pos_mode, "mask %d: the pin lands before the mode byte, so a mode never lands without its secret", mask);
+    }
+    if (set_fp) CHECK(o.steps[pos_pin] == Write::PinSet, "mask %d: a set is a PinSet", mask);
+    if (clear_fp) CHECK(o.steps[pos_pin] == Write::PinClear, "mask %d: a clear is a PinClear", mask);
+  }
+
+  // The Plan overload agrees with the flag form for what plan() produces:
+  // the wizard's usual body (mode 2 + a pin + credentials) and the
+  // credentials-only body (no TLS field named).
+  Current cur;
+  Request req;
+  req.has_mode = true;
+  req.mode = 2;
+  req.fp = kFpBare;
+  Plan p;
+  CHECK(plan(cur, req, p) == Verdict::Ok, "pin + mode is Ok");
+  const WriteOrder full = write_order(p, true);
+  CHECK(full.count == 3, "pin, mode, credentials: three steps (%d)", full.count);
+  CHECK(full.steps[0] == Write::PinSet && full.steps[1] == Write::ModeSet && full.steps[2] == Write::Credentials,
+        "in that order");
+  Request host_only;
+  CHECK(plan(cur, host_only, p) == Verdict::Ok, "host-only is Ok");
+  const WriteOrder creds_only = write_order(p, true);
+  CHECK(creds_only.count == 1 && creds_only.steps[0] == Write::Credentials, "credentials alone: one step");
+  const WriteOrder nothing = write_order(p, false);
+  CHECK(nothing.count == 0, "no credentials and no TLS field: nothing to write");
+}
+
 // ── Every verdict has a code; every non-Ok verdict has text ─────────────────
 static void every_verdict_has_a_code_and_text() {
   const Verdict all[] = {Verdict::Ok, Verdict::ModeInvalid, Verdict::FingerprintMalformed,
@@ -279,6 +342,7 @@ int main() {
   empty_fp_clears_the_pin_and_is_judged_against_the_mode();
   a_stored_malformed_pin_is_named_as_such();
   ca_upload_is_bounded_and_pem_shaped();
+  config_writes_land_tls_first_and_credentials_last();
   every_verdict_has_a_code_and_text();
   if (g_failures) {
     std::printf("test_mqtt_tls_fields: %d FAILED\n", g_failures);

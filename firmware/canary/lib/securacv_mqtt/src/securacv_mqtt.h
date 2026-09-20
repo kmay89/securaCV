@@ -72,7 +72,10 @@ void mqtt_disconnect();
 
 // Credential management (stored in NVS). A save or clear takes effect on
 // the main loop's next pass — the live link is dropped and re-made with the
-// new settings, no reboot needed.
+// new settings, no reboot needed. mqtt_save_credentials is the
+// credentials-only form of mqtt_save_config (below); a request that also
+// carries TLS fields MUST go through mqtt_save_config so its writes land in
+// one NVS session with one reload.
 bool mqtt_load_credentials(MqttCredentials* creds);
 bool mqtt_save_credentials(const MqttCredentials* creds);
 bool mqtt_clear_credentials();
@@ -104,11 +107,28 @@ struct MqttTlsCurrent {
 };
 bool mqtt_tls_read_current(MqttTlsCurrent* out);
 
-// Write the mode byte and/or the pin exactly as a validated plan says
-// (mqtt_tls_fields::plan): `fp_canonical` is the 95-char "AA:BB:..." form,
-// `clear_fp` forgets the stored pin. Reloads the transport on the main
-// loop's next pass. Returns false when NVS could not be opened for writing.
-bool mqtt_tls_save(bool set_mode, uint8_t mode, bool set_fp, const char* fp_canonical, bool clear_fp);
+// The TLS half of one POST /api/mqtt/config, exactly as a validated plan
+// says (mqtt_tls_fields::plan): `fp_canonical` is the 95-char "AA:BB:..."
+// form, `clear_fp` forgets the stored pin.
+struct MqttTlsWrite {
+  bool        set_mode;
+  uint8_t     mode;
+  bool        set_fp;
+  const char* fp_canonical;
+  bool        clear_fp;
+};
+
+// One request, one NVS session, one reload. Writes the TLS keys FIRST (the
+// pin, then the mode byte — mqtt_tls_fields::write_order, host-tested) and
+// the credentials LAST, stops at the first failed write, closes the session
+// and only then raises the main loop's reload. So the main task — which
+// re-reads NVS and reconnects the moment it sees the flag, and shares this
+// NVS handle — can never observe the new credentials next to the old (plain)
+// mode byte, nor close the handle under a write still in flight. `tls` may
+// be nullptr (credentials only). Returns false when NVS could not be opened
+// or a write failed; a reload is raised either way, so the link follows what
+// NVS actually holds.
+bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls);
 
 // Store / forget the broker CA. `pem` has already passed
 // mqtt_tls_fields::check_ca and ends in '\n' (the caller adds it, as the
