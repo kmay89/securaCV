@@ -109,6 +109,19 @@ MQTTTLS_BIN = $(BUILD_DIR)/test_mqtt_transport_logic
 MQTTFIELDS_HDR = ../canary/lib/securacv_mqtt/src/mqtt_tls_fields.h
 MQTTFIELDS_BIN = $(BUILD_DIR)/test_mqtt_tls_fields
 
+# The shared Host-header guard (common/network/host_guard.h): the display's
+# Origin + CSRF write guard and the canary tree's bearer gate both compare
+# what the browser sent, which DNS rebinding satisfies (a public domain
+# re-pointed at the device's LAN IP arrives with Origin == Host, and loads
+# the token-bearing page same-origin), so writes, the CSRF token, the bearer
+# token and every token-gated route also require a Host that can only mean
+# this device — an IP literal, the .local name, a single label, or a
+# private-use suffix. Pins every way a household reaches the device true,
+# every registrable public domain false (the captive-probe names included),
+# degenerate and oversized authorities foreign. Pure header, no Arduino.
+HOSTGUARD_HDR = ../common/network/host_guard.h
+HOSTGUARD_BIN = $(BUILD_DIR)/test_host_guard
+
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
 # is lifted out of the C++ raw string and driven against a stub DOM and a
@@ -355,6 +368,9 @@ $(MQTTTLS_BIN): test_mqtt_transport_logic.cpp $(MQTTTLS_HDR) Makefile | $(BUILD_
 $(MQTTFIELDS_BIN): test_mqtt_tls_fields.cpp $(MQTTFIELDS_HDR) $(MQTTTLS_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common -I ../canary/lib/securacv_mqtt/src test_mqtt_tls_fields.cpp -o $@
 
+$(HOSTGUARD_BIN): test_host_guard.cpp $(HOSTGUARD_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_host_guard.cpp -o $@
+
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
 
@@ -420,7 +436,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -432,6 +448,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WIFIJOIN_BIN)
 	./$(MQTTTLS_BIN)
 	./$(MQTTFIELDS_BIN)
+	./$(HOSTGUARD_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)

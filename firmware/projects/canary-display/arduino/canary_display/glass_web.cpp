@@ -10,7 +10,7 @@
 
 #include "glass_web.h"
 #include "settings_policy.h"  // the on-glass-only write class
-#include "host_guard.h"       // Host must name THIS device
+#include "host_guard.h"          // Host must name THIS device (firmware/common; the canary tree shares it)
 #include "wifi_mgr.h"
 #include "tz_auto.h"
 #include "mqtt_mgr.h"   // hub state for the /api/fleet self-report
