@@ -23,6 +23,7 @@
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_board_lib.scad>  // board registry — vm_l/vm_w read it; the knobs cite it
+use <canary_rib_lib.scad>    // the long-axis rib bars (board_rail) and their ceilings
 
 /* [What to render] */
 part  = "plate";     // ["plate"]
@@ -63,6 +64,10 @@ xiao_below = 5.5;    // air under a stacked XIAO's USB face (shell + half a plug
 clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 
 /* [Extras] */
+rib_h     = 3.0;     // two rib bars along the plate's long axis, board side, between the vent columns and
+                     // outboard of the tie slots: a 158 x 88 x 2.4 plate had no third dimension anywhere
+                     // (canary_rib_lib). 0 = flat. They stand on the board side because the plate prints
+                     // that way up — the underside is the bed  // [0:0.5:6]
 tie_slots = true;    // zip-tie slots for cable dressing / battery strap
 tol_hole  = 0.30;
 
@@ -77,6 +82,11 @@ soff = (stack == "wap") ? standoff_h : stack_sock_h + xiao_below;
 assert(b_w + 6 < plate_w && b_l + 6 < plate_l, "board exceeds the plate — grow plate_l/w");
 assert(boss_dx/2 + 1 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_l/2 && boss_dy/2 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_w/2,
        "boss slots too close to the plate edge (need >= 2 mm web) — grow plate_l/plate_w");
+rib_y = b_w/2 + 8 + 4 + 1.5 + 0.8;          // outboard of the tie slots (b_w/2 + 8, 8 tall)
+rib_l = 2*(plate_l/2 - 14 - 5 - 2);         // between the vent columns (plate_l/2 - 14, 10 wide)
+assert(rib_h == 0 || rib_y + 0.8 + 1.0 <= boss_dy/2 - (boss_screw_d + 2*tol_hole)/2 - 1,
+       "the rib bars run into the boss slots — shorten the board zone or set rib_h = 0");
+assert(rib_h == 0 || rib_h <= rib_h_max(rib_t_max(plate_t)), "rib_h is past the rib_lib slenderness ceiling for this plate");
 echo(str("Canary Hammond chassis v0.2-dev — plate ", plate_l, "x", plate_w,
          ", stack=", stack, " on ", soff, " mm rails  (IN DEVELOPMENT)"));
 
@@ -128,6 +138,11 @@ module plate() {
             edgeclip(s*b_w/2, cyc, s > 0 ? 0 : 180);
             if (half) translate([s*(xiao_w/2 + 1.1), -b_l/2 + 1.2, plate_t - 0.01]) cylinder(d = 2.0, h = soff + 0.01);
         }
+        // long-axis rib bars (canary_rib_lib board_rail, turned to run along X):
+        // the width derives from the plate (rib_t_max), the root is coved
+        if (rib_h > 0) for (sy = [1, -1])
+            translate([0, sy*rib_y, plate_t - 0.01]) rotate([0, 0, 90])
+                board_rail(0, 0, rib_l, rib_h + 0.01, plate_t, fil = 0.8, dir = sy);
     }
 }
 

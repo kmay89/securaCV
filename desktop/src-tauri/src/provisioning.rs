@@ -22,6 +22,19 @@ pub struct Provisioning {
     pub mqtt_port: u16,
     pub mqtt_user: String,
     pub mqtt_pass: String,
+    // Broker TLS (firmware/common/network/mqtt_transport_logic.h): the mode
+    // byte — 0 plain (default, nothing written), 1 CA-verified, 2
+    // fingerprint-pinned, 3 lab/unverified — plus the CA (PEM) and the
+    // SHA-256 fingerprint. Written as u8 mqtt_tls / string mqtt_ca /
+    // string mqtt_fp, byte-for-byte what the browser's mqttProvisioningToNvs
+    // writes. The firmware fails closed on an incomplete pair, so validate()
+    // refuses the same combinations before anything is sealed.
+    #[serde(default)]
+    pub mqtt_tls: u8,
+    #[serde(default)]
+    pub mqtt_ca: String,
+    #[serde(default)]
+    pub mqtt_fp: String,
     // Which NVS encoding this firmware reads its Wi-Fi with (catalog
     // `wifi_nvs`, derived from the firmware source): "string" (Preferences
     // getString — sense/vision/display) or "blob" (getBytes + a wifi_en
@@ -174,6 +187,34 @@ fn validate(config: &Provisioning) -> Result<(), String> {
         if config.mqtt_port == 0 {
             return Err("MQTT port must be between 1 and 65535".into());
         }
+        if config.mqtt_tls > 3 {
+            return Err(
+                "MQTT TLS mode must be 0 (plain), 1 (CA), 2 (fingerprint) or 3 (lab)".into(),
+            );
+        }
+        let ca = config.mqtt_ca.trim();
+        let fp = config.mqtt_fp.trim();
+        if !ca.is_empty() {
+            if byte_len(ca) > 3070 {
+                return Err("MQTT broker CA must be at most 3070 bytes of PEM".into());
+            }
+            if !ca.contains("-----BEGIN CERTIFICATE-----")
+                || !ca.contains("-----END CERTIFICATE-----")
+            {
+                return Err(
+                    "MQTT broker CA must be a PEM certificate (BEGIN/END CERTIFICATE lines)".into(),
+                );
+            }
+        }
+        if !fp.is_empty() && !fingerprint_shape_ok(fp) {
+            return Err("MQTT broker fingerprint must be a SHA-256 (64 hex digits, ':' separators optional)".into());
+        }
+        if config.mqtt_tls == 1 && ca.is_empty() {
+            return Err("MQTT TLS mode 'CA' needs the broker CA certificate".into());
+        }
+        if config.mqtt_tls == 2 && fp.is_empty() {
+            return Err("MQTT TLS mode 'fingerprint' needs the broker fingerprint".into());
+        }
     }
     if !config.api_token.is_empty() && !api_token_shape_ok(&config.api_token) {
         return Err("device API token must be \"cv_\" + 32 base62 characters".into());
@@ -186,6 +227,27 @@ fn validate(config: &Provisioning) -> Result<(), String> {
 /// nvs_load_token the same). Anything else would seed a token the device
 /// ignores — worse than not seeding, because the flasher would keep a copy it
 /// believes in.
+// 32 hex pairs, optionally separated by ':' or ' ' — the spelling the ESP32
+// core's WiFiClientSecure::verify() parses (mqtt_transport_logic.h
+// fingerprint_normalize accepts exactly this set).
+fn fingerprint_shape_ok(fp: &str) -> bool {
+    let mut pairs = 0usize;
+    let b = fp.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] == b':' || b[i] == b' ' {
+            i += 1;
+            continue;
+        }
+        if i + 1 >= b.len() || !b[i].is_ascii_hexdigit() || !b[i + 1].is_ascii_hexdigit() {
+            return false;
+        }
+        pairs += 1;
+        i += 2;
+    }
+    pairs == 32
+}
+
 fn api_token_shape_ok(token: &str) -> bool {
     token.len() == 35
         && token.starts_with("cv_")
@@ -404,6 +466,20 @@ fn build_nvs(config: &Provisioning, partition_size: usize) -> Result<Vec<u8>, St
         if !config.mqtt_pass.is_empty() {
             writer.string("mqtt_pass", &config.mqtt_pass)?;
         }
+        // Broker TLS: mode 0 is the firmware default and is not written; the
+        // CA keeps its trailing newline (PEM parsers want the END line
+        // terminated) — same bytes the browser builder produces.
+        if config.mqtt_tls != 0 {
+            writer.u8("mqtt_tls", config.mqtt_tls)?;
+        }
+        let ca = config.mqtt_ca.trim();
+        if !ca.is_empty() {
+            writer.string("mqtt_ca", &format!("{ca}\n"))?;
+        }
+        let fp = config.mqtt_fp.trim();
+        if !fp.is_empty() {
+            writer.string("mqtt_fp", fp)?;
+        }
     }
     if !config.api_token.is_empty() {
         // Both loaders read the token with Preferences getBytes — a BLOB, not
@@ -469,11 +545,84 @@ mod tests {
             mqtt_port: 1883,
             mqtt_user: "canary".into(),
             mqtt_pass: "broker-secret".into(),
+            mqtt_tls: 0,
+            mqtt_ca: String::new(),
+            mqtt_fp: String::new(),
             wifi_nvs: String::new(),
             api_token: String::new(),
             dials: Dials::default(),
             auto_update: None,
         }
+    }
+
+    const PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+    const FP: &str = "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9";
+
+    // Broker TLS rides the string-scheme row: the mode byte as a u8, the CA
+    // and pin as strings, and an incomplete pair (mode without its
+    // credential) refused before anything is sealed — the firmware fails
+    // closed on exactly that, so the flasher must not produce it.
+    #[test]
+    fn broker_tls_fields_seed_and_incomplete_pairs_are_refused() {
+        let mut c = config();
+        c.wifi_nvs = "string".into();
+        c.mqtt_tls = 1;
+        c.mqtt_ca = PEM.into();
+        c.mqtt_fp = FP.into();
+        let img = build_nvs(&c, 0x6000).unwrap();
+        let page = &img[..4096];
+        // Keys are written without a terminator into a 0xff-filled page
+        // (header()), so match the key bytes and accept 0xff or NUL after
+        // them — the same shape the other tests in this module use.
+        let has_key = |k: &str| {
+            (2..128).any(|i| {
+                let o = i * 32;
+                &page[o + 8..o + 8 + k.len()] == k.as_bytes()
+                    && matches!(page[o + 8 + k.len()], 0 | 0xff)
+            })
+        };
+        assert!(has_key("mqtt_tls") && has_key("mqtt_ca") && has_key("mqtt_fp"));
+        // The u8 payload is the mode byte.
+        let idx = (1..126)
+            .find(|i| &page[i * 32 + 8..i * 32 + 16] == b"mqtt_tls")
+            .unwrap();
+        assert_eq!(page[idx * 32 + 1], 0x01, "mqtt_tls is a u8 item");
+        assert_eq!(page[idx * 32 + 24], 1, "mode byte = 1 (CA)");
+
+        // Plain (0) writes none of the three keys.
+        let plain = build_nvs(&config(), 0x6000).unwrap();
+        let p = &plain[..4096];
+        let plain_has =
+            |k: &str| (1..126).any(|i| p[i * 32 + 8..i * 32 + 8 + k.len()] == *k.as_bytes());
+        assert!(!plain_has("mqtt_tls") && !plain_has("mqtt_ca") && !plain_has("mqtt_fp"));
+
+        let mut no_ca = config();
+        no_ca.mqtt_tls = 1;
+        assert!(validate(&no_ca)
+            .unwrap_err()
+            .contains("needs the broker CA"));
+        let mut no_fp = config();
+        no_fp.mqtt_tls = 2;
+        assert!(validate(&no_fp)
+            .unwrap_err()
+            .contains("needs the broker fingerprint"));
+        let mut bad_fp = config();
+        bad_fp.mqtt_tls = 2;
+        bad_fp.mqtt_fp = FP[..40].into();
+        assert!(validate(&bad_fp).unwrap_err().contains("SHA-256"));
+        let mut bad_ca = config();
+        bad_ca.mqtt_tls = 1;
+        bad_ca.mqtt_ca = FP.into();
+        assert!(validate(&bad_ca).unwrap_err().contains("PEM"));
+        let mut bad_mode = config();
+        bad_mode.mqtt_tls = 9;
+        assert!(validate(&bad_mode).unwrap_err().contains("TLS mode"));
+        let mut lab = config();
+        lab.mqtt_tls = 3;
+        assert!(
+            validate(&lab).is_ok(),
+            "lab mode needs no credential (the firmware warns on every connect)"
+        );
     }
 
     // A well-formed bearer credential for the token tests below.

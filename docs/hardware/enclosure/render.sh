@@ -58,6 +58,9 @@ for cfg in "xiao_indoor:xiao:vision_indoor" "xiao_weather:xiao:vision_weather" "
 done
 vstl "canary_vision_enclosure_xiao_weather_gasket.stl" \
     -D 'host="xiao"' -D 'preset="vision_weather"' -D 'part="gasket"'
+# the rain hood is its own part (a hood grown on the front had no printable pose)
+vstl "canary_vision_enclosure_xiao_weather_hood.stl" \
+    -D 'host="xiao"' -D 'preset="vision_weather"' -D 'part="hood"'
 vstl "canary_vision_enclosure_bracket.stl" -D 'part="bracket"'
 vstl "canary_vision_enclosure_knob.stl"    -D 'part="knob"'
 

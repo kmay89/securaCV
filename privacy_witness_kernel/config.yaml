@@ -39,9 +39,13 @@ ports:
   8799/tcp: null
 ports_description:
   8799/tcp: >-
-    Event API (token-required) for privacy-preserving event claims. Leave
-    disabled unless a client outside Home Assistant needs it; the SecuraCV
-    integration already reaches the API over the internal add-on network.
+    Event API for privacy-preserving event claims. Every data endpoint
+    requires the capability token except the fleet roll-call, GET /api/fleet
+    (names, online state and coarse per-room wellbeing words; no keys, no
+    events), which anything on your LAN can read once this port is open —
+    the Apple TV Witness Wall needs exactly that. Leave disabled unless a
+    client outside Home Assistant needs it; the SecuraCV integration already
+    reaches the API over the internal add-on network.
 
 # Persistent storage
 map:

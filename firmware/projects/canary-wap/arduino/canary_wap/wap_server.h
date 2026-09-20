@@ -110,6 +110,9 @@ struct RateLimitEntry {
  * GET  /api/chain           - Chain state (head hash, sequence)
  *
  * GET  /api/witness         - List witness records (paginated)
+ * GET  /api/v1/witness      - The shared witness-page contract (spec/witness_api_v1.md):
+ *                             newest N signed records with their chain-hash pre-image,
+ *                             from the RAM ring (witness_page.h); ?last=N, 1..100
  * GET  /api/witness/:seq    - Get specific witness record
  * GET  /api/witness/stats   - Witness statistics
  *

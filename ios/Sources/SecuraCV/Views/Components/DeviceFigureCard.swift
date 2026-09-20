@@ -13,6 +13,8 @@ import SwiftUI
 struct DeviceFigureCard: View {
     let witness: Witness
     @State private var show3D = false
+    @ScaledMetric(relativeTo: .largeTitle) private var fallbackGlyphSize: CGFloat = 44
+    @ScaledMetric(relativeTo: .largeTitle) private var fallbackWellHeight: CGFloat = 80
 
     private var figure: FleetFigure? {
         FleetFigure.resolve(deviceType: witness.deviceType,
@@ -26,7 +28,7 @@ struct DeviceFigureCard: View {
                 FleetFigureTurntable(massing, title: figure.title)
                     .frame(height: 200)
                     .frame(maxWidth: .infinity)
-                VStack(spacing: 2) {
+                VStack(spacing: Theme.xxs) {
                     Text(productName)
                         .font(.subheadline.weight(.medium))
                     Text(rungLine(figure.confidence) + dimsLine(massing.envelope))
@@ -53,11 +55,11 @@ struct DeviceFigureCard: View {
                 }
             } else {
                 Image(systemName: witness.deviceType.sfSymbol)
-                    .font(.system(size: 44))
+                    .font(.system(size: fallbackGlyphSize))
                     .foregroundStyle(.secondary)
-                    .frame(height: 80)
+                    .frame(height: fallbackWellHeight)
                 Text("No honest picture of this hardware yet — it wears the generic marker until the fleet figures carry it.")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }

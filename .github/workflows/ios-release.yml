@@ -1,11 +1,13 @@
 # iOS release — build a signed .ipa of the native SecuraCV companion.
 #
-# Mirrors desktop-mobile-release.yml exactly where it matters: manual dispatch
-# ONLY (never blocks PR/CI), double-gated behind the ENABLE_IOS_BUILD repo
-# variable (green no-op until set), and signs with an App Store Connect API key
-# materialized from a base64 secret to a real .p8 on the runner ("a secret is a
-# string, so the key must be a file"). Reuses the SAME Apple secret names as the
-# desktop mobile pipeline so there is one signing story for the whole repo.
+# The house pattern for an Apple target (it was modeled on the Lab's Tauri
+# iOS workflow, desktop-mobile-release.yml, retired 2026-09-08 without ever
+# producing a build): manual dispatch ONLY (never blocks PR/CI), double-gated
+# behind the ENABLE_IOS_BUILD repo variable (green no-op until set), and signs
+# with an App Store Connect API key materialized from a base64 secret to a real
+# .p8 on the runner ("a secret is a string, so the key must be a file"). The
+# Apple secret names are the ones desktop-lab/MOBILE.md documents, so there is
+# one signing story for the whole repo.
 #
 # House style honored (.github/CI.md): explicit permissions, timeout-minutes,
 # and a concurrency group that never cancels a publishing run mid-flight.
@@ -117,8 +119,8 @@ jobs:
       # cloud-created certificate, so the NEXT run finds the account's cert
       # with no local key and dies with "Revoke certificate: … private key is
       # not installed" (RELEASE_LESSONS 2026-07-28 (e)). A persistent identity
-      # imported from the APPLE_CERTIFICATE secret (the same secret names the
-      # desktop mobile pipeline documents in desktop-lab/MOBILE.md) makes
+      # imported from the APPLE_CERTIFICATE secret (the same secret names
+      # desktop-lab/MOBILE.md documents for every Apple target) makes
       # signing deterministic. Skipped when the secret is unset — signing then
       # falls back to per-run cloud certificates, which works only until the
       # first orphaned cert accumulates.

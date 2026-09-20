@@ -1636,6 +1636,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div class="stat-item"><div class="stat-label">Drop: rate-limit</div><div class="stat-value" id="snDropRate">0</div></div>
           <div class="stat-item"><div class="stat-label">Drop: RSSI floor</div><div class="stat-value" id="snDropRssi">0</div></div>
           <div class="stat-item"><div class="stat-label">Drop: ring full</div><div class="stat-value" id="snDropFull">0</div></div>
+          <div class="stat-item"><div class="stat-label">Drop: other transmitters</div><div class="stat-value" id="snDropForeign">0</div></div>
         </div>
       </div>
     </div>
@@ -3227,6 +3228,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       set('snDropRate', st.frames_dropped_rate || 0);
       set('snDropRssi', st.frames_dropped_rssi || 0);
       set('snDropFull', st.frames_dropped_full || 0);
+      // Frames from transmitters other than the associated router (neighbor
+      // beacons); '--' until the STA has associated and the filter is armed.
+      set('snDropForeign', st.filter_armed === false ? '--' : (st.frames_dropped_foreign || 0));
 
       // ─── Acoustic alarms (T3 smoke / T4 CO) ──────────────────────────
       // Card stays hidden if the firmware build doesn't include

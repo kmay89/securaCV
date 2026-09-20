@@ -12,8 +12,19 @@ case), canary-local/devices/flash.json (which flasher product) and the website
 id each of those files uses for one device and nothing else. This lint proves
 every one of those names against the file that owns it.
 
-Nothing consumes the manifests yet (docs/IMPROVEMENT_ROADMAP.md §4, wave 1:
-"Describe"), so this gate is the only thing that can catch a stale join.
+Since wave 2 ("Consume", docs/IMPROVEMENT_ROADMAP.md §4) the generators read
+the manifests — gen_flash.py takes each flasher product's chip, flash size,
+board and project from them, gen_figures.mjs builds the hardware→figure map
+from them — so a stale join now moves a generated file and trips its byte
+gate. This lint still fails FIRST, and names the file that owns the fact.
+The ini resolver and the build-matrix join it uses are shared with
+scripts/lint_build_matrix.py through scripts/_device_join.py.
+
+Since wave 3 ("Parametrize") a manifest also OWNS the board/module knobs of
+its case (`cad.params`): docs/hardware/enclosure/gen_cad_params.py writes
+them into the .scad as the literals the Customizer, the web builder and
+lint_design_lang.py already read, and this lint runs its check() — so a
+manifest edit and a .scad edit meet at the same gate.
 
 What is PROVED (each a hard error, exit 1):
   schema       every manifest validates against devices/device.schema.json —
@@ -47,8 +58,17 @@ What is PROVED (each a hard error, exit 1):
                that flavor; every dist display flavor is claimed exactly once.
   build_matrix every product has a manifest (by id, else by flavor + env);
                its board, mcu and env(s) agree with that manifest.
-  cad          scad exists; enclosure sets exist in enclosures.json; scad is
-               the source of at least one listed set.
+  cad          scad and every cad.also file exist; enclosure sets exist in
+               enclosures.json; scad, and each also-file, is the source of
+               at least one listed set (cad.also: the further case files
+               one manifest's cad.params own — the Vision's doorbell form).
+  cad.params   every owned knob is a literal Customizer knob of that scad
+               (never a selector, a computed value or a two-knob line),
+               manifests sharing one case agree on every shared key, and the
+               .scad's literal equals the manifest — in cad.scad and in every
+               cad.also file — gen_cad_params.check(), the same code its own
+               --check runs. The generator WRITES the literal, so a mismatch
+               means "run it", not "retype it".
   site         shape only — those paths live in the website repository.
 
 Output: one table row per device (slug · mcu · envs · emulator · confidence ·
@@ -65,23 +85,28 @@ import re
 import sys
 from pathlib import Path
 
+from _device_join import (
+    env_pins_boards,
+    env_pio_board,
+    load_project_ini,
+    manifest_for_matrix_product,
+    matrix_product_envs,
+    norm_chip,
+    unknown_envs,
+)
+
 REPO = Path(__file__).resolve().parents[1]
 DEVICES_DIR = REPO / "devices"
 
-# ── chip vocabulary ─────────────────────────────────────────────────────────
-# esptool's names (ESP32, ESP32-S3, ESP32-C3, ESP32-C6) are the canon; the
-# build matrix says things like "ESP32 (classic dual-core)" and "ESP32-C6 ·
-# MR60BHA2 radar", so compare the leading chip token, case- and hyphen-blind.
-CHIP_RE = re.compile(r"ESP32(?:[-_ ]?([SC]\d))?", re.I)
-
-
-def norm_chip(text: str | None) -> str | None:
-    m = CHIP_RE.search(text or "")
-    if not m:
-        return None
-    suffix = m.group(1)
-    return "ESP32" + (f"-{suffix.upper()}" if suffix else "")
-
+# The cad.params check lives beside the enclosure generators because it
+# shares gen_builder_manifest.parse_scad (the knobs a manifest may own are
+# the knobs the builder shows — one parser). That directory goes on sys.path
+# explicitly: CI runs this file from the repo root and the unittest harness
+# loads it by path, so neither can rely on the cwd.
+ENCLOSURE_DIR = REPO / "docs" / "hardware" / "enclosure"
+if str(ENCLOSURE_DIR) not in sys.path:
+    sys.path.insert(0, str(ENCLOSURE_DIR))
+import gen_cad_params  # noqa: E402
 
 # ── a small JSON Schema (2020-12) validator ─────────────────────────────────
 # Only the keywords devices/device.schema.json uses. Unknown keywords are
@@ -158,92 +183,6 @@ def validate(instance, schema: dict, path: str = "$") -> list[str]:
             for i, item in enumerate(instance):
                 errs.extend(validate(item, schema["items"], f"{path}[{i}]"))
     return errs
-
-
-# ── PlatformIO ini reading (no PlatformIO needed) ───────────────────────────
-INLINE_COMMENT_RE = re.compile(r"\s+;.*$")
-SECTION_RE = re.compile(r"^\[([^\]]+)\]\s*$")
-KEY_RE = re.compile(r"^([A-Za-z_][\w.]*)\s*=\s*(.*)$")
-INTERP_RE = re.compile(r"\$\{([^}.]+)\.([^}]+)\}")
-PINS_INCLUDE_RE = re.compile(r"boards/([A-Za-z0-9_-]+)/pins")
-
-
-def parse_ini(text: str, sections: dict[str, dict[str, str]]) -> None:
-    """Fill `sections` ({section: {key: value}}) from one ini file. Multi-line
-    values (PlatformIO's indented continuation lines) are joined with '\\n';
-    full-line and trailing `;` comments are dropped."""
-    current: str | None = None
-    last_key: str | None = None
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if not line.strip() or line.lstrip().startswith((";", "#")):
-            continue
-        line = INLINE_COMMENT_RE.sub("", line)
-        m = SECTION_RE.match(line)
-        if m:
-            current = m.group(1)
-            sections.setdefault(current, {})
-            last_key = None
-            continue
-        if current is None:
-            continue
-        if line[0] in " \t":
-            if last_key is not None:
-                sections[current][last_key] += "\n" + line.strip()
-            continue
-        m = KEY_RE.match(line)
-        if m:
-            last_key = m.group(1)
-            sections[current][last_key] = m.group(2).strip()
-
-
-def load_project_ini(project_dir: Path) -> dict[str, dict[str, str]]:
-    """The project's platformio.ini plus every file its extra_configs names."""
-    sections: dict[str, dict[str, str]] = {}
-    root = project_dir / "platformio.ini"
-    if not root.exists():
-        return sections
-    parse_ini(root.read_text(encoding="utf-8"), sections)
-    for rel in sections.get("platformio", {}).get("extra_configs", "").split():
-        extra = (project_dir / rel).resolve()
-        if extra.exists():
-            parse_ini(extra.read_text(encoding="utf-8"), sections)
-    return sections
-
-
-def resolve_key(sections, section: str, key: str, depth: int = 0) -> str | None:
-    """A section's value for key, following `extends` and the [env] base."""
-    if depth > 16 or section not in sections:
-        return None
-    body = sections[section]
-    if key in body:
-        return body[key]
-    for parent in (body.get("extends") or "").split():
-        found = resolve_key(sections, parent, key, depth + 1)
-        if found is not None:
-            return found
-    if section.startswith("env:") and key in sections.get("env", {}):
-        return sections["env"][key]
-    return None
-
-
-def expand(sections, text: str | None, depth: int = 0) -> str:
-    """Expand `${section.key}` references (PlatformIO interpolation)."""
-    if not text or depth > 8:
-        return text or ""
-    return INTERP_RE.sub(
-        lambda m: expand(sections, resolve_key(sections, m.group(1), m.group(2)), depth + 1),
-        text)
-
-
-def env_pins_boards(sections, env: str) -> set[str]:
-    flags = expand(sections, resolve_key(sections, f"env:{env}", "build_flags"))
-    return set(PINS_INCLUDE_RE.findall(flags))
-
-
-def env_pio_board(sections, env: str) -> str | None:
-    value = resolve_key(sections, f"env:{env}", "board")
-    return value.split()[0] if value else None
 
 
 # ── emulator build.sh facts ─────────────────────────────────────────────────
@@ -375,8 +314,9 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
             sections = ini_cache[flavor["dir"]]
 
         # envs exist, and are claimed once
+        missing = set(unknown_envs(m, sections)) if sections is not None else set()
         for env in board["envs"]:
-            if sections is not None and f"env:{env}" not in sections:
+            if env in missing:
                 err(f"{slug}: env '{env}' is not an [env:{env}] in "
                     f"{flavor['dir']}/platformio.ini (extra_configs included)")
             if env in claimed_env:
@@ -454,6 +394,13 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
         flasher_col = "—"
         fl = m.get("flasher")
         if fl:
+            # gen_flash.py reads the product's flash size from board.flash_mb
+            # and refuses to run without it; the schema leaves the key optional
+            # because a device nobody flashes needs none. Catch it here, in
+            # the lint every PR runs, not only in the generator's gate.
+            if "flash_mb" not in board:
+                err(f"{slug}: has a flasher block but board.flash_mb is missing — "
+                    f"gen_flash.py takes the product's flash size from it")
             products = [fl["product"], *fl.get("variants", [])]
             flasher_col = fl["product"] + (f" +{len(products) - 1}" if len(products) > 1 else "")
             for pid in products:
@@ -508,24 +455,33 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
                 err(f"{slug}: build.sh compiles boards/{emu_board}/pins for flavor '{fl_name}', "
                     f"manifest board_id is {board_id}")
 
-        # cad: real files, real sets, and the scad is one of theirs
+        # cad: real files, real sets, and every case file — cad.scad and each
+        # cad.also entry — is the source of one of the listed sets
         cad = m.get("cad")
         if cad:
-            scad = repo / cad["scad"]
-            if not scad.exists():
-                err(f"{slug}: cad.scad {cad['scad']} does not exist")
             sets = cad.get("enclosure_sets", [])
             for s in sets:
                 if s not in set_by_id:
                     err(f"{slug}: enclosure set '{s}' is not in "
                         f"canary-local/devices/enclosures.json")
             known = [s for s in sets if s in set_by_id]
-            if known and not any(set_by_id[s].get("scad") == scad.name for s in known):
-                err(f"{slug}: cad.scad {scad.name} is not the source of any listed enclosure set "
-                    f"({', '.join(set_by_id[s].get('scad', '?') for s in known)})")
+            for key, rel_path in [("cad.scad", cad["scad"]),
+                                  *(("cad.also", a) for a in cad.get("also", []))]:
+                scad = repo / rel_path
+                if not scad.exists():
+                    err(f"{slug}: {key} {rel_path} does not exist")
+                if known and not any(set_by_id[s].get("scad") == scad.name for s in known):
+                    err(f"{slug}: {key} {scad.name} is not the source of any listed enclosure "
+                        f"set ({', '.join(set_by_id[s].get('scad', '?') for s in known)})")
 
         rows.append({"slug": slug, "mcu": board["mcu"], "envs": len(board["envs"]),
                      "emulator": emu_col, "confidence": confidence, "flasher": flasher_col})
+
+    # ── 2b. cad.params: the manifests OWN these knobs; the .scad must agree ─
+    # (gen_cad_params.py writes the literal; its check() renders in memory
+    # and names knob, manifest value and .scad value — the same code its own
+    # --check runs in lint.yml and in enclosure.yml's render job)
+    errors.extend(gen_cad_params.check(devices_dir, repo))
 
     # ── 3. completeness: every fact on the other side is claimed ────────────
     unclaimed_envs: dict[str, dict] = {}
@@ -560,28 +516,14 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
                 f"{fl_name}.js) is claimed by no manifest")
 
     # ── 4. build_matrix.json: every product lane has a manifest that agrees ─
-    by_slug = {m["slug"]: m for m in manifests}
+    # (the same resolution scripts/lint_build_matrix.py applies from the
+    # matrix's side — one definition, in _device_join.py)
     for prod in matrix.get("products", []):
         pid = prod["id"]
-        if prod.get("hasLevels"):
-            envs = [lv.get("env") for lv in (prod.get("levels") or {}).values()]
-        else:
-            envs = [(prod.get("build") or {}).get("env")]
-        envs = [e for e in envs if e]
-        target = by_slug.get(pid)
+        envs = matrix_product_envs(prod)
+        target, why = manifest_for_matrix_product(prod, manifests)
         if target is None:
-            flavor_of = prod.get("flavor", pid)
-            cands = [m for m in manifests
-                     if m["family"] == flavor_of and all(e in m["board"]["envs"] for e in envs)]
-            if len(cands) == 1:
-                target = cands[0]
-            elif not cands:
-                err(f"build_matrix.json product '{pid}' has no manifest: no devices/{pid}/ and no "
-                    f"{flavor_of} manifest claims env(s) {', '.join(envs) or '(none)'}")
-            else:
-                err(f"build_matrix.json product '{pid}' matches several manifests by flavor+env: "
-                    f"{', '.join(c['slug'] for c in cands)}")
-        if target is None:
+            err(why)
             continue
         if prod.get("board") and prod["board"] != target["board"]["board_id"]:
             err(f"build_matrix.json product '{pid}' board {prod['board']} != "
@@ -621,7 +563,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ✗ {e}")
         return 1
     print(f"\nlint_device_manifests.py: OK — {len(rows)} device manifests; every env, board, "
-          f"figure, flasher, emulator and CAD join holds.")
+          f"figure, flasher, emulator and CAD join holds, and every manifest-owned CAD knob "
+          f"equals its case.")
     return 0
 
 

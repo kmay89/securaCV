@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.1
+//  SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.2
 // @env cer=2 ip="radome (sheltered)"
 //  Hardware: Seeed MR60BHA2 60 GHz mmWave kit — radar carrier board with a
 //  XIAO ESP32-C6 seated in its stacking socket (design doc:
@@ -57,6 +57,7 @@ use <canary_snap_lib.scad>    // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>    // bridge-safe USB opening (the WAP's print-validated profile)
 use <canary_board_lib.scad>   // board registry — the MR60 carrier numbers the knobs cite
 use <canary_mark_lib.scad>    // the house wordmark (opt_mark)
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>  // the colorway registry — assembled-preview spools
 
 /* [What to render] */
@@ -118,6 +119,8 @@ lp_d   = 3.0;        // WS2812 light pipe (press fit)
 lp_dx  = 13.0;
 lp_dy  = -14.0;
 lux_d  = 3.5;        // BH1750 light aperture (open hole; glue a clear disc behind it when sealing)
+lux_disc_d = 0;      // 0 = bare hole; > 0 cuts a recessed seat on the outer face for a glued clear
+                     // disc of that diameter (6 mm x 1 mm is easy to find) — use it with opt_seal
 lux_dx = -13.0;
 lux_dy = -14.0;
 vent_pad_d     = 12.0;
@@ -142,6 +145,11 @@ lip_h    = 4.0;
 lip_t    = 1.2;
 corner_r = 3.0;
 cav_extra = 1.0;
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
 /* [Print tolerances] — defaults = the catalog trio (core_tol_*(), canary_core_lib), dialed on the fit coupon */
 tol_slide = 0.20;    // sliding fits: front lip, drip skirt — core_tol_slide()
@@ -280,8 +288,11 @@ base_d = floor_t + cav_d;
 // MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
 // interference: coplanar faces intersect to a zero-volume patch that CGAL
 // reports as non-2-manifold, which is a dirty render, not a pass.
-module sense_fitcheck(lift = 0.1) {
-    intersection() { translate([0, 0, base_d + lift]) front(); back(); }
+// `turned` seats the lid rotated 180° about Z — the poka-yoke CONTROL: with
+// lid_key on, this must NOT be empty (the lip lands on the key rib). A gate
+// that can only pass has proved nothing; this is the case it must fail.
+module sense_fitcheck(lift = 0.1, turned = false) {
+    intersection() { translate([0, 0, base_d + lift]) rotate([0, 0, turned ? 180 : 0]) front(); back(); }
 }
 
 vm_cx  = 0;
@@ -314,7 +325,8 @@ function post_xy() = concat([
 function _win_clear(dx, dy, d) =
     max(abs(vm_cx + dx - rad_cx) - rad_win_x/2, abs(vm_cy + dy - rad_cy) - rad_win_y/2) >= d/2 + 1.0;
 assert(!opt_led || _win_clear(lp_dx, lp_dy, lp_d + 2*tol_press), "the LED light pipe sits inside the radome window");
-assert(!opt_lux || _win_clear(lux_dx, lux_dy, lux_d), "the lux aperture sits inside the radome window");
+assert(!opt_lux || _win_clear(lux_dx, lux_dy, max(lux_d, lux_disc_d)), "the lux aperture sits inside the radome window");
+assert(lux_disc_d == 0 || lux_disc_d > lux_d + 1.5, "lux_disc_d must overlap the aperture by >= 0.75 a side");
 assert(!opt_vent || _win_clear(vent_dx, vent_dy, vent_pad_d), "the vent cluster sits inside the radome window");
 assert(!opt_tamper || _win_clear(mag_dx, mag_dy, mag_d + 2*tol_press + 2.4),
        "the tamper magnet sits inside the radome window — NdFeB in the beam; move mag_dx/mag_dy");
@@ -323,9 +335,13 @@ assert(radome_t >= 1.3 && radome_t < lid_t,
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the front");
 assert(screw_head == "flat" || head_h + 1.0 - lid_t <= 1.5, "pan-head seat needs more than 1.5 mm of inside pad — thicken lid_t");
 assert(!head_seal || screw_head == "pan", "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\"");
+assert(!e_seal || opt_vent || opt_weep,
+       "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep (field_ratings.md)");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode");
 assert(usb_axis - usb_h/2 >= 0.6, "the XIAO port opening breaches the floor — raise xiao_below");
 assert(lid_rib_h <= cav_extra, "lid_rib_h must stay within cav_extra, the headroom over the carrier's tallest part");
+assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the structural wall floor");
+key_x = inner_x/2 - post_corner - 2.5;   // lid key: on the +Y wall, inboard of the +X corner post
 assert(2*fin_r <= base_d + mount_extra + 0.01, "fin_r too large — prongs must not exceed the shell depth");
 assert(rad_gap >= 3.0, "antenna-to-radome gap < 3 mm — raise cav_extra");
 assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y + 2*abs(rad_dy) <= vm_l,
@@ -357,6 +373,21 @@ assert(!opt_mark || mark_word_ink_w("securaCV", label_size) <= plate_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", label_size),
            " mm at label_size ", label_size, " on a ", plate_x,
            " mm face (2 mm margin per side) — shrink label_size"));
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
+hw_echo("Sense", [
+    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
+    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    opt_vent     ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
+    opt_led      ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    opt_lux && lux_disc_d > 0 ? hw_item(1, str("Ø", lux_disc_d, " x 1 clear disc (lux aperture; bond)")) : "",
+    opt_tamper   ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(1, str("M", hinge_bolt_d, " x 25 bolt + nut (hinge; Vision knob/bracket parts)")) : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#6 pan wall screw (bracket)") : "",
+    e_mount && (m_style == "keyhole" || m_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+]);
 echo(str("Canary Sense RADOME enclosure v0.2 — MR60", radar == "fda2" ? "FDA2" : "BHA2",
          ", outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r, " mm prongs)  (radome ",
@@ -438,6 +469,7 @@ module foot_chamfer_cut() {
 module back() {
     posts = post_xy();
     gusset_h = max(2, cav_d - lip_h - 1.0);
+    gusset_w = min(2.0, rib_t_max(wall_eff));
     union() {
         difference() {
             union() {
@@ -447,7 +479,8 @@ module back() {
                 if (e_mount && (m_style == "hinge" || m_style == "both"))
                     case_hinge();
             }
-            translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
+                cavity_cut(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1, floor_cove);
             // seam reveal — the shadow line under the parting line
             // (canary_core_lib): the indoor build closes front-on-back at the
             // exact same footprint, a raw butt joint on a show surface. The
@@ -497,16 +530,11 @@ module back() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
-                for (p = posts) {
+                // constant-width webs (canary_rib_lib corner_gusset) — no hull flare
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    if (sx != 0) hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
-                    if (sy != 0) hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
+                    if (sx != 0) corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
+                    if (sy != 0) corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2.0])
@@ -515,21 +543,27 @@ module back() {
                 for (p = posts) translate([p[0], p[1], floor_t + cav_d - head_pad - ins_h - 0.5])
                     cylinder(d = ins_od - 0.3, h = ins_h + 1);
         }
+        // lid key (canary_core_lib): a rib on the +Y wall inside the lip zone
+        if (lid_key) lid_key_rib(key_x, inner_y/2, 270, base_d, lip_h);
         // +Y end stops: two bumps just past the carrier's top edge, so the board
         // (hooked only on its ±X edges) cannot slide up and take the antenna array
         // out from under its window — it had 8 mm of travel
         for (s = [1, -1])
             translate([vm_cx + s*(vm_w/2 - 4) - 1.5, vm_cy + vm_l/2 + board_clear, floor_t])
                 cube([3, 2.0, vm_standoff + pcb_t + 1.0]);
-        // carrier rails (notched at the clips); the stacked XIAO hangs beneath
+        // carrier rails (notched at the clips); the stacked XIAO hangs beneath.
+        // TWO clips per edge, at the quarter points: one hook at mid-span let
+        // the carrier's ends rock 4 mm about the hook line in a drop
         for (s = [1, -1]) {
             difference() {
                 translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
                     cube([3, vm_l - 1, vm_standoff]);
-                translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy, floor_t + vm_standoff/2])
-                    cube([5, clip_w + 2, vm_standoff + 1], center = true);
+                for (dy = [-vm_l/4, vm_l/4])
+                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy + dy, floor_t + vm_standoff/2])
+                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
             }
-            edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
+            for (dy = [-vm_l/4, vm_l/4])
+                edgeclip(vm_cx + s*vm_w/2, vm_cy + dy, s > 0 ? 0 : 180, vm_standoff);
         }
     }
 }
@@ -565,7 +599,12 @@ module front() {
                 linear_extrude(lid_t - radome_t + 1)
                     rrect2d(rad_win_x, rad_win_y, 3);
             if (opt_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
-            if (opt_lux) translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
+            if (opt_lux) {
+                translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
+                if (lux_disc_d > 0)   // recessed seat on the outer face for a glued clear disc
+                    translate([vm_cx + lux_dx, vm_cy + lux_dy, lid_t - 1.2])
+                        cylinder(d = lux_disc_d + 2*tol_slide, h = 1.3);
+            }
             if (opt_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
                                               vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats by the head in the bag (canary_core_lib): flat floor for
@@ -626,14 +665,11 @@ module front() {
         }
         // lip, cleared at posts + USB notch
         difference() {
-            translate([0, 0, -lip_h])
-                difference() {
-                    rrect(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
-                          max(0.1, corner_r - wall_eff - tol_slide), lip_h);
-                    rrect(inner_x - 2*tol_slide - 2*lip_t, inner_y - 2*tol_slide - 2*lip_t, 0.1, lip_h + 1);
-                }
+            lip_ring(inner_x - 2*tol_slide, inner_y - 2*tol_slide,
+                     max(0.1, corner_r - wall_eff - tol_slide), lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
             for (p = post_xy())
                 translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            if (lid_key) lid_key_slot(key_x, inner_y/2, 270, lip_h, lip_t);
             translate([usb_cx, -inner_y/2, -lip_h/2])
                 cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
         }

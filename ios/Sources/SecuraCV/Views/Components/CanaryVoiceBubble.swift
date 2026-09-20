@@ -42,41 +42,38 @@ struct CanaryVoiceBubble: View {
     }
 
     private func bubble(_ m: CanaryVoiceMessage) -> some View {
-        HStack(spacing: Theme.s) {
-            CanaryActor(face: store.canaryFace, posture: store.canaryPosture, height: 26)
-            VStack(alignment: .leading, spacing: Theme.xs) {
-                Text(m.text)
-                    .font(.footnote)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let action = m.action {
-                    Button(action.label) {
-                        onNavigate(action.section)
-                        voice.actionTaken()
+        Card(variant: .chip) {
+            HStack(spacing: Theme.s) {
+                CanaryActor(face: store.canaryFace, posture: store.canaryPosture, height: 26)
+                VStack(alignment: .leading, spacing: Theme.xs) {
+                    Text(m.text)
+                        .font(.footnote)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let action = m.action {
+                        Button(action.label) {
+                            onNavigate(action.section)
+                            voice.actionTaken()
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.color(.info))
                     }
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.color(.info))
                 }
+                Spacer(minLength: 0)
+                Button {
+                    voice.dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(Theme.s)          // a finger-sized target
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
             }
-            Spacer(minLength: 0)
-            Button {
-                voice.dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(Theme.s)          // a finger-sized target
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss")
         }
-        .padding(.vertical, Theme.s)
-        .padding(.leading, Theme.m)
-        .padding(.trailing, Theme.xs)
-        .background(.ultraThinMaterial,
-                    in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
         .overlay(alignment: .leading) {
             if let role = Self.accent(for: m.tone) {
                 RoundedRectangle(cornerRadius: 2)

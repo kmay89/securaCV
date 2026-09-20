@@ -129,6 +129,20 @@ another machine connect, set `SECURACV_MQTT_PASSWORD` and
 walks through it. The full environment-variable contract is documented at
 the top of [`docker/sidecar/entrypoint.sh`](../docker/sidecar/entrypoint.sh).
 
+What the sidecar does and does not run: `witness_api`, `frigate_bridge` and
+`event_mqtt_bridge`, all in one container that owns `/data` — no `witnessd`
+(Frigate owns the cameras). The publisher also keeps the fleet roll-call
+for the Witness Wall: the entrypoint points `witness_api` and the bridge at
+one file, `/data/fleet_peers.json`, so `GET /api/fleet` lists the Canaries
+the bridge hears on the same broker (only while `SECURACV_PUBLISH` is
+`true`, the default; the file holds each Canary's first-seen public key and
+per-room wellbeing words, is written `0600`, and rides in the `/data` volume
+you already back up). That API binds loopback inside the container and the
+image exposes no port, so today the roll-call is reachable from the
+container itself (`docker compose exec securacv curl -s
+http://127.0.0.1:8799/api/fleet`), not from an Apple TV; a Wall-reachable
+sidecar is a bind and port decision that has not been made here.
+
 Verify the sealed log from the host at any time:
 
 ```bash

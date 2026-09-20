@@ -121,6 +121,7 @@ PRINT_SETTINGS = {
 # filename-substring → note (first match wins). Sources: scad comments.
 PART_NOTES = [
     ("gasket", "TPU 90–95A, 100% infill, slow — the seal is the print"),
+    ("_hood", "prints drip-edge-down, spigot up — press into the front's groove and bond (neutral-cure silicone)"),
     ("lid", "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)"),
     ("base", "prints flat, open side up — no supports"),
     ("_drum", "prints open-face-up; keyhole pockets in the back (canary_watch_station.scad)"),
@@ -558,10 +559,13 @@ def parse_assembly(md):
 
 
 SBOM_INFO = {
-    "note": "Software Bill of Materials: CycloneDX 1.5 JSON, generated in CI "
-            "on every main push (sbom.yml) — Rust kernel, Node tools, and the "
-            "ESP32 firmware stack (esp-idf, FreeRTOS, mbedtls, lwip, cJSON…). "
-            "Download from the SBOM Generation workflow's artifacts.",
+    "note": "Software Bill of Materials: CycloneDX 1.5 JSON. The firmware SBOM "
+            "(the ESP32 stack: Arduino cores, PlatformIO platforms, first-party "
+            "and pinned libraries) is committed at sbom/sbom-firmware.cdx.json, "
+            "regenerated and schema-validated on every PR (lint.yml); sbom.yml "
+            "generates the Rust kernel's and the Node tools' SBOMs and a "
+            "timestamped firmware copy on every main push — download those from "
+            "its artifacts.",
     "source": "sbom/README.md",
     "link": "https://github.com/kmay89/securaCV/actions/workflows/sbom.yml",
 }

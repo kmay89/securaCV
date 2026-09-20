@@ -147,6 +147,12 @@ Almost nothing in `massing.mjs` is a typed dimension. A part declares the
 build time and hands it to the figure as its envelope. The figure is a
 *function of* the CAD, not a copy of it: re-export the STL and the figure
 follows.
+That stays true now that the device manifests own the board knobs a case
+is cut around (`devices/<slug>/device.json` `cad.params`, written into the
+`.scad` by `docs/hardware/enclosure/gen_cad_params.py`): a figure never
+reads a manifest number — the manifest moves the CAD, the CAD moves the
+STL, and the STL and the assembled envelopes below are what the figure
+measures. Unchanged doctrine, stated beside the new upstream.
 
 On top of that, the **drift guard**: a single-part figure must fill the same
 box as its part, or the picture and the print have parted company. The check
@@ -304,9 +310,19 @@ A figure is a picture first.
 
 The generator refuses to emit a figure for a board whose pins header is
 missing that line, so the id and the pins can never drift apart. Boards we
-can't draw yet (the 4.3B and 4.3C housings, the 1.47″ boards, the Sentinel
-line) are listed in the ledger's `hardware.unmapped` with the builds they
-cover — a gap you can query, not a silent `nullptr`.
+can't draw yet (the 4.3B and 4.3C housings, the C6 1.47″ board, the C3 Super
+Mini, the Sentinel line) are listed in the ledger's `hardware.unmapped` with
+the builds they cover — a gap you can query, not a silent `nullptr`.
+
+**Which figure a board draws is not typed in the generator.** It is read from
+the device manifests (`devices/<slug>/device.json`, see `devices/README.md`):
+a manifest's `figure` draws its `board.board_id`, and only that — its
+`variants` are different housings and stay unmapped — and two manifests
+drawing one board differently fail the build. The coarse config→device-type
+map stays in the generator (a config directory is not one board), validated
+against the manifests in both directions, with its one recorded dispute
+(`canary-vision/default`, compiled by the DevKit and the XIAO hosts under two
+figures) waiting on a decision rather than a coin flip.
 
 > One candidate that looked right and wasn't: `SECURACV_OTA_PRODUCT`. It's an
 > **update channel**, and it deliberately groups `dash-b` with `dash`. Keying

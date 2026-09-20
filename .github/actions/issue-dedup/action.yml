@@ -1,0 +1,87 @@
+name: Open or refresh one deduplicated issue
+description: >
+  The scheduled freshness workflows deliver their result as ONE open issue
+  per subject: if an open issue whose title carries `title-prefix` exists,
+  append `comment` to it; otherwise open a new issue with `title` and
+  `body`. Five workflows used to inline this open-or-comment pattern, each
+  a slightly different copy (CI.md R10). The reason it exists at all: this
+  repository's Actions settings refuse to let the default GITHUB_TOKEN open
+  pull requests, and issues are not gated by that setting — so a refreshed
+  branch is announced where humans look instead of failing in a log nobody
+  reads.
+
+  The literal token `{date}` in `body` or `comment` is replaced with today's
+  UTC date (YYYY-MM-DD) — the messages say when the branch was last pushed,
+  and a workflow expression has no clock.
+
+inputs:
+  token:
+    description: >
+      Token with issues:write on `repo` (GITHUB_TOKEN for this repository, a
+      PAT for another one).
+    required: true
+  title-prefix:
+    description: >
+      The stable part of the title, searched as `"<prefix>" in:title` among
+      open issues. Keep it free of anything that changes run to run.
+    required: true
+  title:
+    description: Title for a NEW issue. Defaults to title-prefix.
+    required: false
+    default: ""
+  body:
+    description: Body for a NEW issue (Markdown; `{date}` is substituted).
+    required: true
+  comment:
+    description: >
+      Comment appended when an open issue already exists (Markdown; `{date}`
+      is substituted).
+    required: true
+  repo:
+    description: '`owner/name` to open the issue in. Defaults to this repository.'
+    required: false
+    default: ${{ github.repository }}
+
+outputs:
+  number:
+    description: The issue number opened or commented on.
+    value: ${{ steps.dedup.outputs.number }}
+  outcome:
+    description: '`created` or `commented`.'
+    value: ${{ steps.dedup.outputs.outcome }}
+
+runs:
+  using: composite
+  steps:
+    - name: Open or comment
+      id: dedup
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repo }}
+        TITLE_PREFIX: ${{ inputs.title-prefix }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        COMMENT: ${{ inputs.comment }}
+      run: |
+        set -euo pipefail
+        TODAY=$(date -u +%Y-%m-%d)
+        BODY=${BODY//\{date\}/$TODAY}
+        COMMENT=${COMMENT//\{date\}/$TODAY}
+        TITLE=${TITLE:-$TITLE_PREFIX}
+        # `.[0].number // empty` instead of `| head -1`: this shell runs with
+        # pipefail, and head closing the pipe early would fail the step.
+        OPEN=$(gh issue list --repo "$REPO" --state open \
+                 --search "\"${TITLE_PREFIX}\" in:title" \
+                 --json number --jq '.[0].number // empty')
+        if [ -n "$OPEN" ]; then
+          gh issue comment "$OPEN" --repo "$REPO" --body "$COMMENT"
+          echo "reused open issue #${OPEN} in ${REPO} (\"${TITLE_PREFIX}\" in:title)"
+          echo "number=${OPEN}" >> "$GITHUB_OUTPUT"
+          echo "outcome=commented" >> "$GITHUB_OUTPUT"
+        else
+          URL=$(gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY")
+          echo "opened ${URL}"
+          echo "number=${URL##*/}" >> "$GITHUB_OUTPUT"
+          echo "outcome=created" >> "$GITHUB_OUTPUT"
+        fi

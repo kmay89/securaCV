@@ -47,7 +47,16 @@ an exemption must be visible and reviewable, with a comment saying why):
       `requires-python` is the one floor (`python-version-file:
       pyproject.toml`), and a job that needs a specific interpreter says
       why next to its explicit `python-version` (exemptions:
-      `system_python_ok`, `<workflow>.yml:<job>`)
+      `system_python_ok`, `<workflow>.yml:<job>`); a local composite
+      action that carries the setup-python step itself
+      (`./.github/actions/setup-platformio`) satisfies the rule for the
+      job that uses it
+  R10 toolchain provisioning is a composite action under .github/actions/,
+      never a `run:` block copied between jobs — the machine-checked half:
+      a job that `pip install`s PlatformIO or fetches the Emscripten SDK
+      inline (git clone / curl / wget of emsdk, or `emsdk install`) fails;
+      the composite actions themselves are where those lines live
+      (exemptions: `inline_toolchain_ok`, `<workflow>.yml:<job>`)
 """
 
 from __future__ import annotations
@@ -88,6 +97,106 @@ _COMMAND_BOUNDARY_RE = re.compile(r"\|\||&&|;|\||\$\(|\(|`")
 # R8 (comment half): a `uses:` line pinned to a 40-hex SHA, with whatever
 # follows the SHA captured so the trailing comment can be checked.
 SHA_USES_LINE_RE = re.compile(r"uses:\s*([^\s#]+)@([0-9a-f]{40})(.*)$")
+
+# R10: the toolchains that have a composite action, and how an inline copy
+# of their setup looks in COMMAND position. Each entry: (label, predicate on
+# the command's argv) — the predicate sees the words of one command segment
+# after shell keywords and VAR=value prefixes are stripped.
+_PIP_WORDS = {"pip", "pip3"}
+
+
+def _argv_words(segment: str) -> list[str]:
+    words = segment.split()
+    while words and (words[0] in _COMMAND_PREFIX_WORDS
+                     or _ASSIGNMENT_RE.match(words[0])):
+        words.pop(0)
+    return words
+
+
+def _is_pip_install(words: list[str]) -> bool:
+    """`pip install …`, `pip3 install …`, `python -m pip install …`."""
+    cmd = words[0].rsplit("/", 1)[-1] if words else ""
+    if cmd in _PIP_WORDS:
+        return "install" in words[1:]
+    if cmd in {"python", "python3"} and words[1:3] == ["-m", "pip"]:
+        return "install" in words[3:]
+    return False
+
+
+def _mentions(words: list[str], needle: str) -> bool:
+    return any(needle in w.strip("'\"").lower() for w in words)
+
+
+def inline_toolchain_in(run: str) -> str | None:
+    """The first inline toolchain install a `run:` block performs, or None.
+
+    Same walk as python_command_in: command positions only, so a `# pip
+    install platformio` comment, an `echo "…emsdk…"` or `source
+    /tmp/emsdk/emsdk_env.sh` (sourcing the env the composite action set up
+    is exactly what callers are meant to do) never count.
+    """
+    for line in run.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        for segment in _COMMAND_BOUNDARY_RE.split(stripped):
+            words = _argv_words(segment)
+            if not words:
+                continue
+            cmd = words[0].rsplit("/", 1)[-1]
+            if _is_pip_install(words) and _mentions(words[1:], "platformio"):
+                return "pip install platformio"
+            if cmd == "git" and "clone" in words[1:] and _mentions(words[1:], "emsdk"):
+                return "git clone … emsdk"
+            if cmd in {"curl", "wget"} and _mentions(words[1:], "emsdk"):
+                return f"{cmd} … emsdk"
+            if cmd == "emsdk" and "install" in words[1:]:
+                return "emsdk install"
+    return None
+
+
+def check_inline_toolchains(label: str, jobs: dict, policy: dict) -> list[str]:
+    """R10 (machine-checked half): no job provisions a shared toolchain
+    inline when a composite action under .github/actions/ owns that setup."""
+    problems = []
+    exempt = set(policy.get("inline_toolchain_ok") or [])
+    for job, spec in jobs.items():
+        spec = spec or {}
+        if "uses" in spec or f"{label}:{job}" in exempt:
+            continue
+        for s in (spec.get("steps") or []):
+            offender = inline_toolchain_in(str((s or {}).get("run") or ""))
+            if offender:
+                problems.append(
+                    f"{label}: R10 — job `{job}` runs `{offender}` inline. "
+                    f"Toolchain setup is a composite action: use "
+                    f"`./.github/actions/setup-platformio` (interpreter, "
+                    f"cache and pins as inputs) or "
+                    f"`./.github/actions/setup-emsdk`, so every job "
+                    f"provisions the same way and a fix lands once. Or exempt "
+                    f"`{label}:{job}` in inline_toolchain_ok with a reason."
+                )
+                break
+    return problems
+
+
+def _local_action_sets_up_python(uses: str) -> bool:
+    """True when `./path` names a local composite action whose own steps
+    include actions/setup-python — the caller job then has an interpreter
+    it chose, which is what R9 is about."""
+    if not uses.startswith("./"):
+        return False
+    base = os.path.join(REPO_ROOT, uses[2:].rstrip("/"))
+    for candidate in ("action.yml", "action.yaml"):
+        path = os.path.join(base, candidate)
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            action = yaml.safe_load(f) or {}
+        steps = (action.get("runs") or {}).get("steps") or []
+        return any(str((s or {}).get("uses", "")).startswith("actions/setup-python@")
+                   for s in steps)
+    return False
 
 
 def load_policy() -> dict:
@@ -149,7 +258,9 @@ def check_python_setup(label: str, jobs: dict, policy: dict) -> list[str]:
         if "uses" in spec or f"{label}:{job}" in exempt:
             continue
         steps = [s or {} for s in (spec.get("steps") or [])]
-        if any(str(s.get("uses", "")).startswith("actions/setup-python@") for s in steps):
+        if any(str(s.get("uses", "")).startswith("actions/setup-python@")
+               or _local_action_sets_up_python(str(s.get("uses", "")))
+               for s in steps):
             continue
         offender = None
         for s in steps:
@@ -359,6 +470,9 @@ def check_workflow(path: str, policy: dict) -> list[str]:
 
     # R9 — a job that runs Python sets up its own interpreter
     problems.extend(check_python_setup(name, jobs, policy))
+
+    # R10 — toolchain setup is a composite action, not an inline run: block
+    problems.extend(check_inline_toolchains(name, jobs, policy))
 
     return problems
 

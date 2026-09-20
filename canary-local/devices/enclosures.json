@@ -147,6 +147,12 @@
      "material": "PETG / ASA (PLA indoors)"
     },
     {
+     "name": "hood",
+     "file": "canary_vision_enclosure_xiao_weather_hood.stl",
+     "print_note": "prints drip-edge-down, spigot up — press into the front's groove and bond (neutral-cure silicone)",
+     "material": "PETG / ASA (PLA indoors)"
+    },
+    {
      "name": "gasket",
      "file": "canary_vision_enclosure_xiao_weather_gasket.stl",
      "print_note": "TPU 90–95A, 100% infill, slow — the seal is the print",
@@ -357,7 +363,7 @@
   {
    "id": "solar-lora-relay-pod",
    "name": "Solar LoRa relay pod",
-   "for": "off-grid mesh backhaul: LoRa board + 18650, SMA top, solar roof bracket, pole straps",
+   "for": "off-grid mesh backhaul: LoRa board + 18650, SMA top on a washer land, solar roof bracket with a drained panel bed, pole straps, weeps",
    "status": "in-development",
    "note": "sealed body + roof",
    "device": null,
@@ -522,7 +528,7 @@
   {
    "id": "c6-display-pocket-case",
    "name": "C6 display pocket case",
-   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (stripped: no headers, corner pillars removed) or `headers=\"male\"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. `model=\"1.47\"` is drawn from the Waveshare mechanical drawing; a `\"1.69\"` preset is parameterised. The bezel face prints flat on the plate — the same untapered \"edge chamfer\" the C3 sibling carried, drawing the same 0.80 mm square rabbet around the first-layer perimeter, is gone here too (390.33 mm² of bed contact where flat gives 493.69), and [`check_foot_relief.py`](./check_foot_relief.py) is what keeps it gone. Heat-escape slots on the sides + a back grille",
+   "for": "Waveshare ESP32-C6-LCD-1.47 (portrait), both board builds: `headers=\"none\"` (stripped: no headers, corner pillars removed) or `headers=\"male\"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind \"ear\"/\"chin\" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. The board record is the 1.47's, from the Waveshare mechanical drawing — the board trio (`board_l` / `board_w` / `pcb_t`) is owned by its device manifest as `ws147` registry references; the 1.69 board has its own case, `canary_s3_touch169.scad`. The bezel face prints flat on the plate — the same untapered \"edge chamfer\" the C3 sibling carried, drawing the same 0.80 mm square rabbet around the first-layer perimeter, is gone here too (390.33 mm² of bed contact where flat gives 493.69), and [`check_foot_relief.py`](./check_foot_relief.py) is what keeps it gone. Heat-escape slots on the sides + a back grille",
    "status": "in-development",
    "note": "snap-fit, vented, 2 board builds",
    "device": "canary-display-watch",
@@ -654,7 +660,7 @@
  ],
  "scads": {
   "canary_wap_enclosure.scad": {
-   "title": "SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.7",
+   "title": "SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.8",
    "groups": [
     {
      "name": "What to render",
@@ -1153,6 +1159,16 @@
        "comment": "outside corner radius"
       },
       {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+      },
+      {
        "name": "tol_slide",
        "default": "0.20",
        "comment": "sliding fits: lid lip <-> base, drip skirt, camera-disc seat — core_tol_slide()"
@@ -1640,19 +1656,32 @@
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
       },
       {
+       "name": "lid_headroom",
+       "default": "1.0 + (cav_h - cav_h_min)"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_l/2 - post_corner - 2.5",
+       "comment": "lid key: on the +Y wall, inboard of the +X corner post"
+      },
+      {
        "name": "cam_throw",
        "default": "base_h + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0) - (pcb_z + board_h + cam_lens_h)"
       },
       {
        "name": "cam_need",
        "default": "2*cam_throw*tan(cam_fov/2) + 2.0"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }
    ]
   },
   "canary_vision_enclosure.scad": {
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.3",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.4",
    "groups": [
     {
      "name": "What to render",
@@ -1667,7 +1696,8 @@
         "all",
         "gasket",
         "bracket",
-        "knob"
+        "knob",
+        "hood"
        ]
       }
      ]
@@ -1714,7 +1744,7 @@
       {
        "name": "opt_hood",
        "default": "false",
-       "comment": "rain/glare hood over the lens window"
+       "comment": "rain/glare hood over the lens window — its OWN part (part=\"hood\"), pressed into a groove on the front and bonded"
       },
       {
        "name": "opt_seal",
@@ -1971,6 +2001,16 @@
        "name": "corner_r",
        "default": "3.0",
        "comment": "outside corner radius"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       },
       {
        "name": "standoff_h",
@@ -2279,12 +2319,17 @@
       {
        "name": "hood_len",
        "default": "9.0",
-       "comment": "rain-hood protrusion from the front face (a hooded front exports FACE-UP)"
+       "comment": "rain-hood protrusion from the front face  // [5:0.5:15]"
       },
       {
        "name": "hood_t",
        "default": "1.8",
        "comment": "hood wall thickness"
+      },
+      {
+       "name": "hood_seat",
+       "default": "0.6",
+       "comment": "groove in the front's show face the hood's spigot presses into (tol_press); bond with"
       },
       {
        "name": "lp_d",
@@ -2619,19 +2664,32 @@
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
       },
       {
+       "name": "lid_headroom",
+       "default": "cav_extra + (cav_d - cav_d_min)"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: on the +Y wall, inboard of the +X corner post"
+      },
+      {
        "name": "cam_throw",
        "default": "(cam_post_eff - cam_lens_h) + lid_t - (cam_disc_t > 0 ? cam_disc_t + 0.2 : 0)"
       },
       {
        "name": "cam_need",
        "default": "2*max(0, cam_throw)*tan(cam_fov/2) + 4.0"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }
    ]
   },
   "canary_vision_doorbell.scad": {
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.3",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.4",
    "groups": [
     {
      "name": "What to render",
@@ -2878,6 +2936,16 @@
        "comment": "headroom over the tallest component"
       },
       {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+      },
+      {
        "name": "zone_top",
        "default": "8.0",
        "comment": "margin above the camera (top posts live here)"
@@ -2940,7 +3008,7 @@
       {
        "name": "screw_insert",
        "default": "false",
-       "comment": "M2 brass heat-set inserts in the corner posts"
+       "comment": "M2 brass heat-set inserts in the corner posts AND the security boss (the one"
       },
       {
        "name": "insert_d",
@@ -3298,10 +3366,6 @@
        "default": "(cam_ap_d >= cam_lens_sq*1.4142 + 0.6) ? cam_post_h : max(cam_post_h, cam_lens_h + 0.3)"
       },
       {
-       "name": "inner_x",
-       "default": "max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5)"
-      },
-      {
        "name": "inner_y",
        "default": "zone_btn + zone_well + (vm_l + board_clear) + zone_gap + cam_h + zone_top"
       },
@@ -3358,13 +3422,21 @@
       {
        "name": "plate_r",
        "default": "e_seal ? rr + skirt_gap + skirt_t : rr"
+      },
+      {
+       "name": "lid_headroom",
+       "default": "cav_extra + (cav_d - (vm_standoff + pcb_t + vm_front_h + cav_extra))"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }
    ]
   },
   "canary_sense_enclosure.scad": {
-   "title": "SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.1",
+   "title": "SecuraCV Canary Sense — 3D-printable RADOME enclosure (parametric)  v0.2",
    "groups": [
     {
      "name": "What to render",
@@ -3587,6 +3659,11 @@
        "comment": "BH1750 light aperture (open hole; glue a clear disc behind it when sealing)"
       },
       {
+       "name": "lux_disc_d",
+       "default": "0",
+       "comment": "0 = bare hole; > 0 cuts a recessed seat on the outer face for a glued clear"
+      },
+      {
        "name": "lux_dx",
        "default": "-13.0"
       },
@@ -3676,6 +3753,16 @@
       {
        "name": "cav_extra",
        "default": "1.0"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       }
      ]
     },
@@ -4182,6 +4269,15 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: on the +Y wall, inboard of the +X corner post"
+      },
+      {
+       "name": "hw_thread",
+       "default": "screw_insert ? \"machine (into the inserts)\" : \"self-tap"
       }
      ]
     }
@@ -4320,6 +4416,16 @@
        "name": "snap_n",
        "default": "4",
        "comment": "nubs / wall slots"
+      },
+      {
+       "name": "pry_notch",
+       "default": "true",
+       "comment": "a fingernail notch in the drum rim at pry_ang (mid-wall between two snap windows,"
+      },
+      {
+       "name": "pry_ang",
+       "default": "0",
+       "comment": "degrees, 0 = +X  // [0:15:345]"
       },
       {
        "name": "snap_w",
@@ -4764,6 +4870,11 @@
        "name": "corner_r",
        "default": "3.0",
        "comment": "plate corner radius — core_corner_r(); was a bare 4 in a part whose whole job is making Sense units read as a set"
+      },
+      {
+       "name": "back_rim",
+       "default": "1.5",
+       "comment": "rim on the back, inboard of the edge (rib_lib loop): the plate bears on its rim like a"
       }
      ]
     },
@@ -4946,7 +5057,7 @@
    ]
   },
   "canary_relay_solar.scad": {
-   "title": "Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — SOLAR LoRa/MESHTASTIC RELAY POD  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -4972,6 +5083,26 @@
       {
        "name": "opt_seal",
        "default": "true"
+      },
+      {
+       "name": "opt_weep",
+       "default": "true",
+       "comment": "Ø2 drains, angled down through the BOTTOM wall (the pod hangs USB-down on"
+      },
+      {
+       "name": "sma_boss",
+       "default": "true",
+       "comment": "raised Ø(sma_d + 6) x 1.0 land around the SMA on the sky wall: the EPDM"
+      },
+      {
+       "name": "roof_ribs",
+       "default": "true",
+       "comment": "rib_lib loop + two spines under the panel bed (a 76 x 114 x 2 plate on two struts)"
+      },
+      {
+       "name": "seal_mid_posts",
+       "default": "true",
+       "comment": "one extra lid screw mid-way along each long (±X) wall: four corner screws"
       }
      ]
     },
@@ -5056,6 +5187,16 @@
        "name": "roof_ang",
        "default": "30",
        "comment": "panel angle  // [15:5:45]"
+      },
+      {
+       "name": "roof_stop_t",
+       "default": "3.0",
+       "comment": "the stop at the bed's low end the panel rests on under gravity"
+      },
+      {
+       "name": "roof_drain_w",
+       "default": "6.0",
+       "comment": "three drain notches at bed level through that stop (0 = none)  // [0:1:12]"
       }
      ]
     },
@@ -5096,6 +5237,16 @@
       {
        "name": "foot_cham",
        "default": "0.5"
+      },
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
       }
      ]
     },
@@ -5218,6 +5369,10 @@
        "comment": "on the connector AXIS, not PCB-top + h/2"
       },
       {
+       "name": "weep_x_gap",
+       "default": "lb_cx + lb_w/2 + 0.75 + weep_d()/2"
+      },
+      {
        "name": "skirt_gap",
        "default": "tol_slide + 0.2"
       },
@@ -5232,6 +5387,11 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: +Y wall, inboard of the +X corner post (battery side)"
       }
      ]
     }
@@ -5335,6 +5495,16 @@
      "name": "Shared",
      "note": "",
      "params": [
+      {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+      },
       {
        "name": "lid_edge",
        "default": "0.8",
@@ -5500,6 +5670,11 @@
       {
        "name": "plate_r",
        "default": "e_seal ? corner_r + skirt_gap + skirt_t : corner_r"
+      },
+      {
+       "name": "key_x",
+       "default": "inner_x/2 - post_corner - 2.5",
+       "comment": "lid key: +Y wall, inboard of the +X corner post"
       }
      ]
     }
@@ -5804,6 +5979,11 @@
      "note": "",
      "params": [
       {
+       "name": "rib_h",
+       "default": "3.0",
+       "comment": "two rib bars along the plate's long axis, board side, between the vent columns and"
+      },
+      {
        "name": "tie_slots",
        "default": "true",
        "comment": "zip-tie slots for cable dressing / battery strap"
@@ -5833,6 +6013,16 @@
       {
        "name": "soff",
        "default": "(stack == \"wap\") ? standoff_h : stack_sock_h + xiao_below"
+      },
+      {
+       "name": "rib_y",
+       "default": "b_w/2 + 8 + 4 + 1.5 + 0.8",
+       "comment": "outboard of the tie slots (b_w/2 + 8, 8 tall)"
+      },
+      {
+       "name": "rib_l",
+       "default": "2*(plate_l/2 - 14 - 5 - 2)",
+       "comment": "between the vent columns (plate_l/2 - 14, 10 wide)"
       }
      ]
     }
@@ -6134,6 +6324,16 @@
        "comment": "deviates: squared, utilitarian — the service box reads as gear, not decor"
       },
       {
+       "name": "floor_cove",
+       "default": "0.8",
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+      },
+      {
+       "name": "lid_key",
+       "default": "true",
+       "comment": "poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit"
+      },
+      {
        "name": "boss_d",
        "default": "12.0",
        "comment": "fake conduit boss diameter (fits the body height; a true 1/2\" boss needs a taller shell)"
@@ -6258,6 +6458,16 @@
       {
        "name": "screws",
        "default": "true"
+      },
+      {
+       "name": "back_ribs",
+       "default": "false",
+       "comment": "rib_lib loop + two cross ribs on the BACK (rib_h tall): a 110 x 70 x 3 sheet stays"
+      },
+      {
+       "name": "rib_h",
+       "default": "2.0",
+       "comment": "back rib height  // [1:0.5:6]"
       }
      ]
     },
@@ -6696,7 +6906,8 @@
       },
       {
        "name": "back_t",
-       "default": "2.4"
+       "default": "3.0",
+       "comment": "3.0 (was 2.4): the back carries the four dock pads the cradle assumes COPLANAR,"
       },
       {
        "name": "r_out",
@@ -7544,12 +7755,13 @@
       },
       {
        "name": "board_l",
-       "default": "(model == \"1.69\") ? 36.0  : 36.37",
-       "comment": "1.69 = MEASURE (placeholder)"
+       "default": "36.37",
+       "comment": "brd_l(\"ws147\") — the drawing's long axis (portrait height, Y)"
       },
       {
        "name": "board_w",
-       "default": "(model == \"1.69\") ? 25.0  : 20.32"
+       "default": "20.32",
+       "comment": "brd_w(\"ws147\") — the drawing's short axis (X)"
       },
       {
        "name": "pcb_t",
@@ -7589,22 +7801,22 @@
      "params": [
       {
        "name": "aa_l",
-       "default": "(model == \"1.69\") ? 27.972 : 32.35",
-       "comment": "active-area long (Y) — 1.69 = MEASURE"
+       "default": "32.35",
+       "comment": "active-area long (Y) — the 1.47 drawing"
       },
       {
        "name": "aa_w",
-       "default": "(model == \"1.69\") ? 27.972 : 17.39",
+       "default": "17.39",
        "comment": "active-area short (X)"
       },
       {
        "name": "lcm_l",
-       "default": "(model == \"1.69\") ? 32.0   : 36.28",
+       "default": "36.28",
        "comment": "LCD module outline long"
       },
       {
        "name": "lcm_w",
-       "default": "(model == \"1.69\") ? 28.0   : 19.39",
+       "default": "19.39",
        "comment": "LCD module outline short"
       },
       {
@@ -7741,6 +7953,16 @@
        "name": "ear_skin",
        "default": "1.2",
        "comment": "wall skin left outside a button/USB clearance channel"
+      },
+      {
+       "name": "pry_notch",
+       "default": "true",
+       "comment": "a fingernail notch in the bezel's TOP (+Y) wall rear rim, centered — the only wall"
+      },
+      {
+       "name": "pry_w",
+       "default": "6.0",
+       "comment": "notch width  // [4:1:10]"
       },
       {
        "name": "nub_w",
@@ -10705,6 +10927,16 @@
        "comment": "active area height (240 px)"
       },
       {
+       "name": "aa_dx",
+       "default": "0.0",
+       "comment": "AA center X offset from glass center — MEASURE"
+      },
+      {
+       "name": "aa_dy",
+       "default": "0.0",
+       "comment": "AA center Y offset from glass center — MEASURE"
+      },
+      {
        "name": "glass_relief",
        "default": "0.25",
        "comment": "face stand-off over the innermost lip band, so the"
@@ -10916,6 +11148,16 @@
        "name": "snap_play",
        "default": "0.15",
        "comment": "window clearance per side — the catalog default (a"
+      },
+      {
+       "name": "pry_notch",
+       "default": "true",
+       "comment": "fingernail notches in the bezel's BOTTOM (-Y) wall rear rim, either side of the USB"
+      },
+      {
+       "name": "pry_w",
+       "default": "4.0",
+       "comment": "notch width  // [3:0.5:8]"
       }
      ]
     },
@@ -11011,6 +11253,10 @@
       {
        "name": "grille_x0",
        "default": "kh_pad_x/2 + vent_w/2 + 0.4"
+      },
+      {
+       "name": "pry_x",
+       "default": "(opt_usb ? abs(usb_dx) + usb_ch_w/2 + 1.5 : 4.0) + pry_w/2"
       },
       {
        "name": "snap_w",

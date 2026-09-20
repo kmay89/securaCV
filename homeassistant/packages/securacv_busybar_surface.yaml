@@ -1,0 +1,129 @@
+# SecuraCV BUSY Bar surface — Home Assistant controls
+#
+# Install as a package: drop this at /config/packages/securacv_busybar_surface.yaml
+# with `packages: !include_dir_named packages` under `homeassistant:` in
+# configuration.yaml, then restart.
+#
+# What this is: the control lane for the BUSY Bar *surface*
+# (docs/design/busybar_surface.md). The bar's own button, dial, mode switch and
+# lever are not wired yet and the design doc says exactly why (section 6: the
+# device pushes input over a protobuf WebSocket whose schema is not published,
+# and the key names have not been matched to the physical controls). Until a
+# bench session settles that, these helpers are how a person drives the glass.
+#
+# READ THIS BEFORE YOU WORRY ABOUT IT: none of these can affect witnessing.
+# The surface has no write path — it subscribes the broker and it makes GET
+# requests to the kernel, and the only thing any command can produce is a
+# drawing. Anyone who can publish to your broker can change what the glass
+# SHOWS. Nobody, through this path, can change what your house witnesses, pause
+# the kernel, alter the sealed log, or quiet a Canary. "Dark" blanks the
+# displays and the witnessing continues; the bar's rear display says so.
+#
+# Change the topic prefix here if you changed `command_prefix` in
+# busybar_surface.toml. They must match.
+
+mqtt:
+  button:
+    - name: "BUSY Bar surface: acknowledge"
+      unique_id: securacv_busybar_surface_ack
+      command_topic: "securacv/surface/busybar/cmd/ack"
+      payload_press: "press"
+      icon: mdi:check-circle-outline
+      entity_category: config
+
+    - name: "BUSY Bar surface: next mode"
+      unique_id: securacv_busybar_surface_mode_next
+      command_topic: "securacv/surface/busybar/cmd/mode"
+      payload_press: "next"
+      icon: mdi:rotate-right
+      entity_category: config
+
+    # One detent back through the verified timeline. The front shows that
+    # event's public card; the bar's rear display shows what was actually
+    # verified about it. Read-only: scrubbing cannot alter, export or unseal
+    # anything.
+    - name: "BUSY Bar surface: scrub back"
+      unique_id: securacv_busybar_surface_scrub_back
+      command_topic: "securacv/surface/busybar/cmd/scrub"
+      payload_press: "-1"
+      icon: mdi:skip-previous
+      entity_category: config
+
+    - name: "BUSY Bar surface: scrub forward"
+      unique_id: securacv_busybar_surface_scrub_forward
+      command_topic: "securacv/surface/busybar/cmd/scrub"
+      payload_press: "1"
+      icon: mdi:skip-next
+      entity_category: config
+
+    # Close the quiet-display window early.
+    - name: "BUSY Bar surface: end quiet window"
+      unique_id: securacv_busybar_surface_quiet_off
+      command_topic: "securacv/surface/busybar/cmd/quiet"
+      payload_press: "off"
+      icon: mdi:bell-ring-outline
+      entity_category: config
+
+  select:
+    # The mode switch, as a dropdown. `dark` blanks both displays and does
+    # NOT pause witnessing.
+    - name: "BUSY Bar surface mode"
+      unique_id: securacv_busybar_surface_mode
+      command_topic: "securacv/surface/busybar/cmd/mode"
+      options:
+        - live
+        - timeline
+        - chain
+        - dark
+      icon: mdi:monitor-dashboard
+      entity_category: config
+
+  number:
+    # The top lever, as a slider: open a quiet-display window for this many
+    # seconds. The bar's rear display counts it down on its own clock, so the
+    # countdown stays correct even if the bridge restarts.
+    #
+    # The quiet window suppresses presence cards on the front matrix. It does
+    # NOT suppress a life-safety advisory, a degraded chain, a tamper report,
+    # or the NO LINK state. The lever quiets cards, never the honesty about
+    # whether the witness system is working.
+    - name: "BUSY Bar surface: quiet window"
+      unique_id: securacv_busybar_surface_quiet
+      command_topic: "securacv/surface/busybar/cmd/quiet"
+      min: 60
+      max: 14400
+      step: 60
+      unit_of_measurement: s
+      mode: slider
+      icon: mdi:volume-off
+      entity_category: config
+
+# Optional: the camera/microphone passthrough.
+#
+# The bar has a native "on call" state, but it is driven host-side by the
+# vendor's desktop app and the device's HTTP API does not expose it — so the
+# surface cannot read it. The closest achievable design is a signal you
+# already own. Point `on_call_topic` in busybar_surface.toml at a topic like
+# the one below and publish "on"/"off" to it from whatever knows: a desktop
+# agent, a USB-microphone power sensor, a smart plug on a ring light.
+#
+# The front matrix then shows ON CALL while it is true. It says nothing about
+# SecuraCV — Canaries do not stream — it is a fact about the room's other
+# devices, which is precisely the fact worth putting where people can see it.
+#
+# template:
+#   - binary_sensor:
+#       - name: "Office capture live"
+#         state: "{{ is_state('switch.desk_ring_light', 'on') }}"
+#
+# automation:
+#   - alias: "Publish office capture state to the BUSY Bar surface"
+#     trigger:
+#       - platform: state
+#         entity_id: binary_sensor.office_capture_live
+#     action:
+#       - service: mqtt.publish
+#         data:
+#           topic: "home/office/mic_or_camera_live"
+#           payload: "{{ 'on' if is_state('binary_sensor.office_capture_live','on') else 'off' }}"
+#           retain: true

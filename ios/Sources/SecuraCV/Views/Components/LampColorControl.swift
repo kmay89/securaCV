@@ -42,9 +42,9 @@ struct LampColorControl: View {
                 Circle()
                     .fill(settings.usesCustomHue
                           ? Color(hue: Double(settings.lampHue) / 360, saturation: 0.85, brightness: 1)
-                          : Color.secondary.opacity(0.3))
+                          : Color.secondary.opacity(Theme.dim))
                     .frame(width: 22, height: 22)
-                    .overlay(Circle().strokeBorder(.secondary.opacity(0.35)))
+                    .overlay(Circle().strokeBorder(.secondary.opacity(Theme.dim)))
                 Text(currentLabel).font(.subheadline)
                 Spacer()
                 if sending { ProgressView().controlSize(.small) }
@@ -98,8 +98,8 @@ struct LampColorControl: View {
                                     .padding(.vertical, Theme.s)
                                     .background(
                                         Capsule().fill(!settings.usesCustomHue && settings.lampScene == index
-                                                       ? Theme.color(.info).opacity(0.25)
-                                                       : Color.secondary.opacity(0.12)))
+                                                       ? Theme.color(.info).opacity(Theme.dim)
+                                                       : Color.secondary.opacity(Theme.faint)))
                             }
                             .buttonStyle(.plain)
                         }

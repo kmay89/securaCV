@@ -126,12 +126,24 @@ required for the device to function:
    a 0.1° grid point (~11 km); the exact request shape is pinned by a host
    test (`tests_host/test_wx_core.cpp`) so it cannot quietly grow an
    identifier. The device never serves or republishes the stored grid
-   point. Honest status: closing the network path also closed the only
-   way a location was ever stored (the phone app posted `wx_loc`), and
-   this firmware has no on-glass location entry yet — so on a fresh
-   device the second gate stays unsatisfied and the fetcher stays idle
-   until one lands. A grid point stored by an earlier build keeps working;
-   a settings reset clears it. Compile-tested, not yet bench-tested.
+   point. The location is entered **on the glass itself**: the two 7"
+   flavors that carry the standalone forecast (`dash7`, `nightstand7`)
+   have a Location page under settings → weather — hemisphere, degrees
+   and tenths wheels per axis, committed by one explicit *Use This
+   Location* — whose helpers can only produce a point on the 0.1° grid
+   inside the range the loader accepts (host-tested,
+   `tests_host/test_display_settings.cpp`). There is no place-name lookup:
+   entering a location makes no network request at all. **The stored cell
+   is displayed on the glass** — on the Weather page's Location row and as
+   the page's live caption — and that is a deliberate in-room disclosure:
+   anyone who can stand at the glass and open its settings can read the
+   ~11 km cell, exactly as they could read the forecast it produces. The
+   disclosure stops at the glass: the LAN page and `GET /api/settings`
+   still never carry the grid point, only whether one is stored. Closing
+   the network path closed the phone app's `wx_loc` post for good; a grid
+   point stored by an earlier build keeps working, *Forget Location* and a
+   settings reset both clear it. Compile-tested by CI on the two 7" builds,
+   wheel helpers host-tested, not yet bench-tested.
 4. **Signed update checks** — a daily, jittered HTTPS GET of a small
    signed JSON manifest from the release host (`docs/firmware_ota.md`;
    the desktop Flasher can also ask the glass to run one over the LAN).
@@ -191,6 +203,28 @@ Only someone with **all three** of the following:
 All communication between your phone/computer and the device is
 encrypted with TLS (the same encryption used by banks and secure websites).
 
+**One link is yours to encrypt: the MQTT broker.** A Canary that publishes
+to a broker opens that socket in plain text by default, so the broker
+username and password cross your LAN unencrypted until you provision TLS —
+verified against a CA you supply, or pinned to the broker certificate's
+SHA-256 fingerprint (which products support which is in
+[`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
+incomplete TLS setup refuses to connect rather than quietly downgrading, and
+the unverified "lab" mode exists only as a mode chosen by name that warns on
+every connect. This is compile-tested, not yet bench-tested.
+
+**One read on the hub is open on purpose: the fleet roll-call**
+(`GET /api/fleet`). It answers anyone who can reach the kernel's port with
+the coarse words the Witness Wall paints — each Canary's name, whether it is
+online, its chain verdict and product, and the presence / occupants /
+breathing words while it is proven online — never an event, a zone or a key.
+That is why the kernel listens on loopback by default and the port is yours
+to expose; the origin allow-list only stops other websites' scripts, not a
+device on your LAN. And "online" there is a verified, chain-advancing
+signature seen within three minutes — stronger than a heartbeat, but not a
+liveness proof against someone who can publish on your MQTT broker
+(`tvos/discovery/DISCOVERY.md` spells out the difference).
+
 ---
 
 ## Who Cannot Access Your Data
@@ -201,7 +235,7 @@ encrypted with TLS (the same encryption used by banks and secure websites).
 | **Law enforcement** (without the physical device) | The device makes no network connections. There is no server to subpoena. |
 | **Network observers** | The device creates no outbound traffic to intercept. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | No internet connection, no exposed services, TLS on all local traffic. |
+| **Remote attackers** | No internet connection, no exposed services, TLS on the device's own API; the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -216,6 +250,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
 | Transport encryption | TLS 1.2+ (RSA-2048) | mbedTLS (ESP-IDF) |
+| Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification (all four); SHA-256 certificate pin (display / sense / vision only) | mbedTLS via WiFiClientSecure (display/sense/vision) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 
 No custom cryptographic implementations are used. All primitives come

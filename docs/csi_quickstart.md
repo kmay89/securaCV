@@ -117,6 +117,15 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
   bench log for the breathing path yet; `csi_stats_t`'s `windows_held`,
   `windows_merged` and `window_period_ms` show how far a real loop's
   cadence was from the grid.
+- **One link feeds a window.** Frames from any transmitter other than the
+  router this Canary is associated with (and registered peer Canaries) are
+  dropped before they are buffered and counted in `frames_dropped_foreign`;
+  a window that alternated between neighbor beacons and router echoes would
+  read the difference between links as motion. Until the Canary has joined a
+  network there is nothing to compare against and every frame is accepted,
+  so an AP-only install senses as before. The transmitter address is
+  compared in place and never stored, logged or exported. Host-tested; the
+  bench pass has to show the false-positive floor moved.
 
 The dashboard's `?` affordance opens a "What it can / can't see" sheet
 that shows users the same seams.

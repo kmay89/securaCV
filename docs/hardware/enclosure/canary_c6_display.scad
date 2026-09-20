@@ -53,8 +53,8 @@
 //      way and the keyhole can hang the case port-up or port-down. Keep any
 //      new lid feature symmetric under (x,y)→(−x,−y), or flipping breaks.
 //
-//  Model presets are parametric — `model = "1.47"` is dimensioned from the
-//  Waveshare mechanical drawing; the 1.69 preset lands when its drawing does.
+//  The board record is the 1.47's, from the Waveshare mechanical drawing: the
+//  board trio is manifest-owned (ws147); the 1.69 board has its own case file.
 //
 //  Orientation: +Y = up (portrait), USB-C exits the BOTTOM (−Y) short wall,
 //  +Z = toward the glass. All parts print flat, no supports.
@@ -86,8 +86,8 @@ headers = "none";   // ["none","male"]
 /* [Board] — ESP32-C6-LCD-1.47. From the Waveshare drawing (mm); the 1.47
    outline is the ws147 family record in canary_board_lib. */
 // long axis (portrait height, Y), short axis (X), PCB thickness
-board_l = (model == "1.69") ? 36.0  : 36.37;   // 1.69 = MEASURE (placeholder)
-board_w = (model == "1.69") ? 25.0  : 20.32;
+board_l = 36.37;     // brd_l("ws147") — the drawing's long axis (portrait height, Y)
+board_w = 20.32;     // brd_w("ws147") — the drawing's short axis (X)
 pcb_t   = 1.6;       // brd_t("ws147") — the drawing-backed family thickness;
                      // the drawing does not call it out, so MEASURE stays
 lcd_rise   = 3.65;   // LCD glass front above the PCB front face — the drawing's
@@ -113,10 +113,10 @@ brass_h = 3.0;       // factory corner pillar height above the PCB back (0 =
                      // pillar tops (the C3's print-2 floating board) — MEASURE
 
 /* [Screen] — active area = the window; the LCD module border sits under the lip */
-aa_l  = (model == "1.69") ? 27.972 : 32.35;    // active-area long (Y) — 1.69 = MEASURE
-aa_w  = (model == "1.69") ? 27.972 : 17.39;    // active-area short (X)
-lcm_l = (model == "1.69") ? 32.0   : 36.28;    // LCD module outline long
-lcm_w = (model == "1.69") ? 28.0   : 19.39;    // LCD module outline short
+aa_l  = 32.35;    // active-area long (Y) — the 1.47 drawing
+aa_w  = 17.39;    // active-area short (X)
+lcm_l = 36.28;    // LCD module outline long
+lcm_w = 19.39;    // LCD module outline short
 
 /* [Glass protection] — the panel's front face IS glass, and glass fails from
    stress at its edges. The bezel face touches the panel only on a LAND over
@@ -199,6 +199,11 @@ ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
    back_t + snap_depth so it lands on the skirt AND lines up with the bezel
    window; keep snap_depth + snap_h/2 ≤ skirt_dep. */
 snap_n = 4; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
+pry_notch = true;    // a fingernail notch in the bezel's TOP (+Y) wall rear rim, centered — the only wall
+                     // with no opening (USB below, buttons and vents on the sides): the back snaps closed
+                     // on a flush parting line with nothing to lift it by. 0.6 into the wall, 0.8 below
+                     // the rim; the lid stays flippable (the notch is the bezel's, the skirt passes inside)
+pry_w = 6.0;         // notch width  // [4:1:10]
 // THE WINDOW IS DERIVED FROM THE RIDGE (canary_snap_lib's rule; the C3
 // sibling's lid-slide print taught it). One knob — snap_w — used to place the
 // ridge's end plates AND size the window, but the end plates draw 1.0 in from
@@ -312,6 +317,8 @@ assert(z_usb + usb_h/2 <= face_t + cav_d - 0.8,
        "no printable bridge left between the USB opening and the rear rim — raise back_stack/hdr_drop or lower usb_dz");
 assert(z_btn + btn_d/2 <= face_t + cav_d, "button hole overruns the cavity depth — check btn_dz/back_stack");
 assert(skirt_dep <= stack_eff + 0.01, "skirt_dep > component clearance — the skirt would drive into the PCB");
+assert(!pry_notch || pry_w/2 <= xo/2 - r_out - 1.0, "pry_w runs into the corner radii — narrow it");
+assert(!pry_notch || wall - 0.6 >= 1.2, "the pry notch leaves under 1.2 mm of wall");
 assert(skirt_dep >= snap_depth + snap_h/2, "skirt too short to carry the snap nub (nub sits at back_t + snap_depth)");
 assert(stand_len >= 0.6, "press bosses shorter than 0.6 — brass_h nearly fills the cavity; check hdr_drop/brass_h");
 assert(headers != "male" || hdr_drop >= brass_h + 0.5,
@@ -414,6 +421,9 @@ module bezel() {
         for (sx = [1, -1], yc0 = nub_ys())
             translate([sx*xo/2, yc0, bez_h - snap_depth])
                 cube([wall*3, snap_w, snap_h], center = true);
+        // pry notches: the ±Y walls' rear rim, both ends, outboard of the USB
+        // span and inboard of the corner radius
+        if (pry_notch) translate([0, yo/2, bez_h]) cube([pry_w, 2*0.6, 2*0.8], center = true);
     }
 }
 module bezel_print() { bezel(); }   // already in print (face-down) orientation

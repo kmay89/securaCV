@@ -23,7 +23,21 @@
     "scad": "docs/hardware/enclosure/canary_c3_lcd147.scad",
     "enclosure_sets": [
       "c3-pocket-display-case"
-    ]
+    ],
+    "params": {
+      "board_l": {
+        "brd": "ws147",
+        "dim": "l"
+      },
+      "board_w": {
+        "brd": "ws147",
+        "dim": "w"
+      },
+      "pcb_t": {
+        "brd": "ws147",
+        "dim": "t"
+      }
+    }
   },
   "flasher": {
     "product": "securacv-canary-display-nightlight-c3"

@@ -332,12 +332,21 @@ kbd {
   gap: 10px 12px; margin-top: 12px;
 }
 .form-grid label { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
-.form-grid input {
+.form-grid input, .form-grid select, .form-grid textarea {
   display: block; width: 100%; margin-top: 4px; padding: 8px 9px;
   border: 1px solid var(--border-strong); border-radius: 8px;
   background: var(--surface); color: var(--text); font: inherit; font-weight: 400;
 }
-.form-grid input:focus { border-color: var(--brand); outline: none; }
+.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { border-color: var(--brand); outline: none; }
+/* Broker TLS rows (tlsRowsRefresh): a note or the CA box spans both columns;
+   the CA is a 2–3 KB PEM paste, so it is monospace and grows only by hand. */
+.form-grid .span-2 { grid-column: 1 / -1; }
+.form-grid p.muted { margin: 0; }
+.form-grid textarea {
+  min-height: 96px; resize: vertical; font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.form-grid .prov-nudge { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 @media (max-width: 620px) { .form-grid { grid-template-columns: 1fr; } }
 
 /* Wi-Fi / broker secrets are EXISTING passwords, not new-account credentials:

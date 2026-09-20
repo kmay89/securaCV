@@ -173,6 +173,15 @@ jobs:
           cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
           mkdir -p canary-local/devices
           cp _tooling/canary-local/devices/flash.json canary-local/devices/flash.json
+          # The display env list is derived, not typed (flavor_envs.py,
+          # roadmap item 23), and a tag may predate the script or the
+          # `release_envs` key it reads — so both come from the dispatch
+          # ref, like the rest of the packaging tooling: the script in
+          # place, and today's flavors.json BESIDE the tag's, never over it
+          # (the tag's own copy stays what the tag built from). The resolve
+          # step below prefers this copy when it exists.
+          cp _tooling/firmware/scripts/flavor_envs.py firmware/scripts/flavor_envs.py
+          cp _tooling/firmware/flavors.json /tmp/flavors.today.json
           # The local composite actions below resolve from the WORKSPACE, which
           # on this channel is the tag's tree — so `uses: ./.github/actions/...`
           # would load whatever that tag shipped. A tag cut before
@@ -185,37 +194,32 @@ jobs:
           # symlinked file inside the action is copied as content
           # (RELEASE_LESSONS principle 1).
           mkdir -p .github/actions
-          rm -rf .github/actions/setup-arduino-esp32
+          rm -rf .github/actions/setup-arduino-esp32 .github/actions/setup-platformio
           cp -RL _tooling/.github/actions/setup-arduino-esp32 .github/actions/setup-arduino-esp32
+          # Same reason for the PlatformIO provisioning action: a tag cut
+          # before it existed has no .github/actions/setup-platformio at all,
+          # and the step below would fail outright on that channel.
+          cp -RL _tooling/.github/actions/setup-platformio .github/actions/setup-platformio
           rm -rf _tooling
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Python + build tools (PlatformIO, cached)
+        # The shared composite action (CI.md R10); the pins stay here. Exact
+        # pins, same as firmware-release.yml: this job can hold the OTA release
+        # key, and a PyPI install runs package code on the runner. Bump
+        # deliberately; Dependabot does not watch these lines.
+        #   cryptography — what build_flash_manifest.py --signing-key needs
+        #                  (via ota_release.py). Installed unconditionally:
+        #                  whether this run signs depends on a secret, and
+        #                  discovering a missing dependency after a 40-minute
+        #                  build would be the worst possible moment.
+        #   intelhex     — esptool 4.11 imports it without declaring it (same
+        #                  workaround as the release workflow)
+        #   esptool      — <5 keeps `merge_bin` stable for make_factory.py
+        uses: ./.github/actions/setup-platformio
         with:
-          python-version: "3.11"
-
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip
-          # cryptography is what build_flash_manifest.py --signing-key needs
-          # (via ota_release.py). Installed unconditionally: whether this run
-          # signs depends on a secret, and discovering a missing dependency
-          # after a 40-minute build would be the worst possible moment.
-          # Exact pins, same as firmware-release.yml: this job can hold the OTA
-          # release key, and a PyPI install runs package code on the runner.
-          # Bump deliberately; Dependabot does not watch these lines.
-          pip install "platformio==6.1.19" "cryptography==50.0.1"
-          # esptool 4.11 imports intelhex without declaring it (same workaround
-          # as the release workflow); esptool<5 keeps `merge_bin` stable for
-          # make_factory.py.
-          pip install "intelhex==2.3.0"
-          pip install "esptool==4.12.0"
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v6
-        with:
-          path: ~/.platformio
-          key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
+          platformio-version: "6.1.19"
+          extras: cryptography==50.0.1 intelhex==2.3.0 esptool==4.12.0
+          cache-key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-canary-release-
             ${{ runner.os }}-pio-canary-
@@ -414,16 +418,49 @@ jobs:
           rm -f flavor_local.h
           cd "$GITHUB_WORKSPACE"
 
+      - name: Resolve the canary-display release envs (firmware/flavors.json)
+        id: display_envs
+        # The ONE place the display env list comes from — the same step
+        # firmware-release.yml runs, so the two buttons can never disagree
+        # about which display products exist (they did: RELEASE_LESSONS
+        # 2026-08-23). flavor_envs.py emits flavors.json `release_envs` in
+        # the core-dir order the build step depends on.
+        #
+        # On the release channel the tree is the TAG's, so the script and
+        # the flavors.json it reads are the ones the tooling overlay copied
+        # from the dispatch ref (today's): the list is today's, and an env
+        # the tag's ini predates fails its `pio run` and warns away, exactly
+        # as the typed list used to. On the dev channel the tree IS the
+        # dispatch ref, so its own flavors.json is today's already.
+        #
+        # The assignment form matters: a failing command substitution inside
+        # `echo` does not fail the step, and an empty matrix would let every
+        # display product drop out with nothing but ::warning lines.
+        run: |
+          set -euo pipefail
+          FLAVORS=firmware/flavors.json
+          if [ -f /tmp/flavors.today.json ]; then FLAVORS=/tmp/flavors.today.json; fi
+          python3 firmware/scripts/flavor_envs.py --flavors "$FLAVORS" canary-display --release --with-core
+          MATRIX="$(python3 firmware/scripts/flavor_envs.py --flavors "$FLAVORS" canary-display --release --json)"
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+
       - name: Build canary-display board envs (PlatformIO, non-blocking)
-        # The Nightstand Line boards (dash7 / nightstand-s3 / nightstand-c6)
-        # release from their PlatformIO envs — same step as
-        # firmware-release.yml, same older-tag tolerance as the profile builds
-        # above: a tag whose ini predates an env just warns that env away
-        # (build_flash_manifest only packages the build dirs that exist). The
-        # pioarduino core-3.x envs (dash7 for its RGB bounce buffers, the C6
-        # for its chip) get their own PLATFORMIO_CORE_DIRs — that platform
-        # cannot share a core dir with the espressif32 platform the sibling
-        # envs use.
+        # The board-env display products (flavors.json `release_envs`, from
+        # the resolve step above) release from their PlatformIO envs — same
+        # step as firmware-release.yml, same older-tag tolerance as the
+        # profile builds above: a tag whose ini predates an env just warns
+        # that env away (build_flash_manifest only packages the build dirs
+        # that exist). The pioarduino core-3.x envs (the dash7/nightstand7
+        # pair for their RGB bounce buffers, the C6 for its chip) get their
+        # own PLATFORMIO_CORE_DIRs — that platform cannot share a core dir
+        # with the espressif32 platform the sibling envs use. Which core dir
+        # an env gets is the `core` word beside it in the resolved list: a
+        # group label → the shared `.pio-core-<label>`, `isolated` → its own
+        # `.pio-core-<env>`, `default` → the runner's ~/.platformio.
+        env:
+          # fromJSON() round-trips the resolved list, so a malformed matrix
+          # fails here at expression time, not halfway through the builds.
+          DISPLAY_ENVS: ${{ toJSON(fromJSON(steps.display_envs.outputs.matrix)) }}
         run: |
           if [ ! -d firmware/projects/canary-display ]; then
             echo "::warning::this tag predates canary-display — board-env products absent from this rebuild"
@@ -449,42 +486,33 @@ jobs:
           # so build_flash_manifest reads the same .pio/build paths as always.
           STAGE=/tmp/pio-display-staged
           mkdir -p "$STAGE"
-          # dash7 rides the pioarduino core-3 platform (canary-display.ini —
-          # the RGB bounce-buffer pairing) and cannot share a core dir with
-          # the espressif32 envs, exactly like the C6. It builds FIRST: its
-          # CORE_DIR switch changes the project checksum and wipes
-          # .pio/build, so it must never run after an env whose outputs
-          # aren't staged yet.
-          if PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-display-pio3" \
-              pio run -e canary-display-dash7; then
-            rm -rf "${STAGE:?}/canary-display-dash7"
-            cp -R ".pio/build/canary-display-dash7" "$STAGE/canary-display-dash7"
-          else
-            echo "::warning::canary-display-dash7 build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
+          # An empty list here is a broken resolve, not "no display products":
+          # the loop below would run zero times and every board-env product
+          # would vanish from the flasher behind ::warning lines.
+          if [ "$(jq -r 'length' <<<"$DISPLAY_ENVS")" -lt 1 ]; then
+            echo "::error::resolved display env list is empty — firmware/flavors.json release_envs / flavor_envs.py"
+            exit 1
           fi
-          # The bedside sibling on the SAME 7" glass rides the SAME core-3
-          # platform, so it must build inside this core dir too — right after
-          # dash7 and before the espressif32 envs below reclaim the default
-          # core dir.
-          if PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-display-pio3" \
-              pio run -e canary-display-nightstand7; then
-            rm -rf "${STAGE:?}/canary-display-nightstand7"
-            cp -R ".pio/build/canary-display-nightstand7" "$STAGE/canary-display-nightstand7"
-          else
-            echo "::warning::canary-display-nightstand7 build failed — absent from the browser flasher this rebuild"
-          fi
-          for E in canary-display-nightstand-s3 canary-display-touch169 canary-display-amoled241 canary-display-nightlight-c3; do
-            if pio run -e "$E"; then
+          # One env at a time, in the order the resolve step emitted (its
+          # comment says why the order is load-bearing). Every env's outputs
+          # are staged the moment it builds, because the next core-dir switch
+          # wipes .pio/build; everything is restored afterwards so
+          # build_flash_manifest reads the same .pio/build paths as always.
+          # `</dev/null` keeps the build from swallowing the rest of the list
+          # on the loop's stdin.
+          while IFS=$'\t' read -r E CORE; do
+            case "$CORE" in
+              default)  PIO=(pio run -e "$E") ;;
+              isolated) PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$E" pio run -e "$E") ;;
+              *)        PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$CORE" pio run -e "$E") ;;
+            esac
+            if "${PIO[@]}" </dev/null; then
               rm -rf "${STAGE:?}/$E"
               cp -R ".pio/build/$E" "$STAGE/$E"
             else
               echo "::warning::${E} build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
             fi
-          done
-          if ! PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-display-nightstand-c6" \
-              pio run -e canary-display-nightstand-c6; then
-            echo "::warning::canary-display-nightstand-c6 build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
-          fi
+          done < <(jq -r '.[] | [.env, .core] | @tsv' <<<"$DISPLAY_ENVS")
           mkdir -p .pio/build
           cp -R "$STAGE"/. .pio/build/
           cd "$GITHUB_WORKSPACE"

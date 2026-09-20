@@ -111,3 +111,62 @@ fn the_vectors_pin_the_online_default_to_false() {
         "no vector has a device with `online` silent — the default is not pinned"
     );
 }
+
+#[test]
+fn the_kernel_vector_lists_a_peer_beside_the_kernel_itself() {
+    // The repo-root kernel serves this exact `input` for one planted peer
+    // (its `fleet_document_matches_the_shared_two_row_vector` test pins the
+    // bytes). This side pins what the Wall makes of them: a two-row fleet,
+    // the kernel first and a Canary the hub's bridge heard second, with the
+    // peer's presence proven (`online: true`) and its room words intact.
+    const NAME: &str =
+        "the kernel's aggregated document (fleet_document, verbatim): itself plus one Canary the bridge heard";
+    let vectors = load_vectors();
+    let vector = vectors
+        .iter()
+        .find(|v| v["name"] == NAME)
+        .unwrap_or_else(|| panic!("the kernel's two-row vector {NAME:?} is missing"));
+    let input = vector["input"].as_str().expect("input is a string");
+    let snapshot = parse_fleet(input).expect("the kernel's document parses as a fleet");
+    assert_eq!(snapshot.kernel.as_deref(), Some("witness-kernel"));
+    assert_eq!(
+        snapshot.devices.len(),
+        2,
+        "two rows: the kernel, then the peer"
+    );
+    assert_eq!(
+        snapshot.devices[0].product.as_deref(),
+        Some("witness-kernel")
+    );
+    assert!(snapshot.devices[0].online);
+    let peer = &snapshot.devices[1];
+    assert_eq!(peer.name, "Bedroom");
+    assert!(
+        peer.online,
+        "a signed chain publish inside the window proves presence"
+    );
+    assert_eq!(peer.chain.as_deref(), Some("ok"));
+    assert_eq!(peer.presence.as_deref(), Some("present"));
+    assert_eq!(peer.occupants.as_deref(), Some("1"));
+    assert_eq!(peer.breathing, Some(true));
+    assert!(!snapshot.has_chain_trouble());
+    assert_eq!(snapshot.summary(), "2 Canaries, all online");
+
+    // The bridge's private bookkeeping never reaches the wire: the kernel
+    // projects its summary file through an allowlist, and these are the
+    // fields that file carries which the contract does not.
+    for private in [
+        "pinned_key",
+        "public_key",
+        "device_id",
+        "last_seen",
+        "last_signed",
+        "wellbeing_epoch",
+        "\"fp\"",
+    ] {
+        assert!(
+            !input.contains(private),
+            "{private} is bridge bookkeeping and must not be served: {input}"
+        );
+    }
+}

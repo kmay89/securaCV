@@ -79,6 +79,7 @@ jobs:
       - name: Verify against the honesty gate before proposing anything
         run: node --test canary-local/tests/homeassistant.test.js
       - name: Open a PR if upstream moved
+        id: propose
         env:
           GH_TOKEN: ${{ secrets.FRESHNESS_PAT || github.token }}
         run: |
@@ -117,23 +118,44 @@ jobs:
               # had something to propose failed right here — the refreshed
               # branch was pushed, the run went red, and the only record was
               # a log nobody reads. Issues are NOT gated by that setting, so
-              # the snapshot is delivered as one deduplicated issue carrying
-              # the compare link (the same pattern bom-pricing.yml uses for
-              # supply-chain exceptions), and the run exits green with a
-              # warning annotation. Set FRESHNESS_PAT or flip the setting to
-              # get PRs again; this branch keeps working either way.
-              TITLE_PREFIX="The Hub: upstream snapshot"
-              TITLE="${TITLE_PREFIX} → HA OS ${HAOS} / Core ${HA} (needs a PR)"
-              OPEN=$(gh issue list --state open --search "\"${TITLE_PREFIX}\" in:title" --json number --jq '.[].number' | head -1)
-              if [ -n "$OPEN" ]; then
-                gh issue comment "$OPEN" --body "Refreshed again on $(date -u +%Y-%m-%d): branch \`${BRANCH}\` was force-pushed with the latest snapshot — [open the PR](https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1)."
-                echo "::warning::PR creation refused; updated open issue #$OPEN with the compare link instead."
-              else
-                gh issue create --title "$TITLE" --body "Weekly freshness run: version.home-assistant.io moved to **HA OS ${HAOS} / Core ${HA}** (hub image **${PIN}**). The refreshed snapshot is pushed on branch [\`${BRANCH}\`](https://github.com/${GITHUB_REPOSITORY}/tree/${BRANCH}) and already passed \`tests/homeassistant.test.js\`, but this repo does not let Actions open pull requests, so a human has to: [open the PR](https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1). To make this automatic, enable *Allow GitHub Actions to create and approve pull requests* (Settings → Actions → General) or add a \`FRESHNESS_PAT\` secret. Raised by \`homeassistant-freshness.yml\`; this issue is reused while it stays open."
-                echo "::warning::PR creation refused; opened an issue with the compare link instead. Enable 'Allow GitHub Actions to create and approve pull requests' or add FRESHNESS_PAT to get PRs."
-              fi
+              # the next step delivers the snapshot as one deduplicated issue
+              # carrying the compare link (.github/actions/issue-dedup — the
+              # pattern every freshness workflow shares), and the run exits
+              # green with a warning annotation. Set FRESHNESS_PAT or flip
+              # the setting to get PRs again; this branch keeps working
+              # either way.
+              {
+                echo "pr_refused=true"
+                echo "branch=$BRANCH"
+                echo "haos=$HAOS"
+                echo "ha=$HA"
+                echo "pin=$PIN"
+              } >> "$GITHUB_OUTPUT"
+              echo "::warning::PR creation refused; the compare link goes out through a deduplicated issue instead. Enable 'Allow GitHub Actions to create and approve pull requests' or add FRESHNESS_PAT to get PRs."
             }
           fi
+      - name: Deliver the branch as one deduplicated issue (PR creation refused)
+        if: steps.propose.outputs.pr_refused == 'true'
+        uses: ./.github/actions/issue-dedup
+        with:
+          token: ${{ secrets.FRESHNESS_PAT || github.token }}
+          title-prefix: "The Hub: upstream snapshot"
+          title: "The Hub: upstream snapshot → HA OS ${{ steps.propose.outputs.haos }} / Core ${{ steps.propose.outputs.ha }} (needs a PR)"
+          body: >-
+            Weekly freshness run: version.home-assistant.io moved to
+            **HA OS ${{ steps.propose.outputs.haos }} / Core ${{ steps.propose.outputs.ha }}** (hub image **${{ steps.propose.outputs.pin }}**).
+            The refreshed snapshot is pushed on branch
+            [`${{ steps.propose.outputs.branch }}`](https://github.com/${{ github.repository }}/tree/${{ steps.propose.outputs.branch }})
+            and already passed `tests/homeassistant.test.js`, but this repo does not let
+            Actions open pull requests, so a human has to:
+            [open the PR](https://github.com/${{ github.repository }}/compare/main...${{ steps.propose.outputs.branch }}?expand=1). To make this automatic, enable
+            *Allow GitHub Actions to create and approve pull requests* (Settings → Actions →
+            General) or add a `FRESHNESS_PAT` secret. Raised by `homeassistant-freshness.yml`;
+            this issue is reused while it stays open.
+          comment: >-
+            Refreshed again on {date}: branch `${{ steps.propose.outputs.branch }}` was
+            force-pushed with the latest snapshot —
+            [open the PR](https://github.com/${{ github.repository }}/compare/main...${{ steps.propose.outputs.branch }}?expand=1).
 
   # The alarm half of the pin ceremony, independent of the refresh so a
   # transient snapshot problem can't mask it (and vice versa). Re-fetches

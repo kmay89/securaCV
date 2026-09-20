@@ -165,10 +165,18 @@ report_privacy "High-precision lat/lon format string (>=4 dp)" "$GPS_PREC"
 
 echo ""
 
+# Keyword filters below look at a hit's CONTENT, never its path: `grep -rn`
+# prefixes every line with `file:line:`, and a checkout path that happened to
+# contain "witness" or "transmit" (a worktree name, a user's home directory)
+# used to fail these checks on files nobody touched.
+content_grep() { # content_grep <ERE> — case-insensitive match on the text after file:line:
+  awk -v re="$1" '{ s = $0; sub(/^[^:]*:[0-9]+:/, "", s); if (tolower(s) ~ tolower(re)) print }'
+}
+
 # ── Check: Token not in witness chain ──────────────────────────
 echo "── Security: Token isolation ──"
 
-TOKEN_CHAIN_HITS=$(grep -rn 'api_token\|api_tkn' "${SRC_DIRS[@]}" 2>/dev/null | grep -i "chain\|witness\|record\|cbor\|payload" | grep -v "//" || true)
+TOKEN_CHAIN_HITS=$(grep -rn 'api_token\|api_tkn' "${SRC_DIRS[@]}" 2>/dev/null | content_grep 'chain|witness|record|cbor|payload' | grep -v "//" || true)
 if [ -n "$TOKEN_CHAIN_HITS" ]; then
   check_fail "API token may be leaking into witness chain — tokens are transport-only"
   echo "$TOKEN_CHAIN_HITS" | while read -r line; do blue "  $line"; done
@@ -321,7 +329,7 @@ echo "── Security: Private key isolation ──"
 # SD card, or included in API responses. It excludes legitimate internal uses like
 # Ed25519::sign(), derive_api_token(), nvs_store_key(), and nvs_load_key().
 PRIVKEY_LEAK=$(grep -rEn 'priv(ate)?_?key|privkey|NVS_KEY_PRIV' "${SRC_DIRS[@]}" 2>/dev/null \
-  | grep -i 'print\|log\|serial\|json\|response\|send\|export\|write.*sd\|write.*file\|transmit\|broadcast' \
+  | content_grep 'print|log|serial|json|response|send|export|write.*sd|write.*file|transmit|broadcast' \
   | grep -v "//\|store_key\|load_key\|nvs_.*key\|\.h:\|\.md:\|derive_api_token\|Ed25519::sign\|crypto_sign\|HKDF\|hmac" \
   | head -10 || true)
 if [ -n "$PRIVKEY_LEAK" ]; then

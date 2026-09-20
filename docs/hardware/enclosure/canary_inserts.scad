@@ -83,8 +83,16 @@ module gland_body() {
             cylinder(d = cg_flange, h = 2.0);                            // outer flange
             translate([0, 0, 2.0 - 0.01]) cylinder(d = cg_hole - 2*tol_slide, h = cg_panel + 0.5);
             translate([0, 0, 2.0 + cg_panel + 0.4]) cylinder(d = cg_hole - 2*tol_slide, h = 5);  // nose (>=0.7 mm wall)
-            translate([0, 0, 2.0 + cg_panel + 5.4]) cylinder(d1 = cg_hole - 0.2, d2 = cg_hole - 1.2, h = 1.8); // barb at the
-                                                                 // nose tip, aligned with the seated cap's relief
+            // barb at the nose tip: a STEP over the nose (0.5 proud of it), tapering to
+            // the tip so it enters the panel hole and the cap; the cap's bore passes
+            // the nose free and snaps only over this step
+            translate([0, 0, 2.0 + cg_panel + 5.4]) cylinder(d1 = cg_hole + 0.1, d2 = cg_hole - 1.2, h = 1.8);
+        }
+        // O-ring groove in the flange's panel face (Ø1 cord, 25 % squeeze):
+        // a flat flange sealed nothing — this is what makes it a gland
+        translate([0, 0, 2.0 - 0.75]) difference() {
+            cylinder(d = cg_hole + 2*1.0 + 1.3, h = 0.8);
+            translate([0, 0, -0.1]) cylinder(d = cg_hole + 0.7, h = 1.0);
         }
         // two-step bore sized so every wall stays >= 0.7 mm (mesh-check catch:
         // a wide full-depth bore hollowed the stem and nose into a floating ring)
@@ -103,8 +111,10 @@ module gland_bush() {
 module gland_cap() {
     difference() {
         cylinder(d = cg_hole + 3.2, h = 5.5);
-        translate([0, 0, 1.2]) cylinder(d = cg_hole - 0.6, h = 6);   // 0.4 diametral interference over the
-                                                                     // barb (~2.5 % hoop strain) — actually snaps
+        translate([0, 0, 1.2]) cylinder(d = cg_hole - 0.2, h = 6);   // passes the Ø(hole - 0.4) nose free;
+                                                                     // 0.3 diametral interference over the
+                                                                     // barb step alone (~2 % hoop) — a snap,
+                                                                     // not a 5 mm press
         translate([0, 0, -0.1]) cylinder(d = cg_cable + 1.2, h = 6);
         translate([0, 0, 3.4]) cylinder(d1 = cg_hole - 0.4, d2 = cg_hole + 0.6, h = 2.2); // barb relief
     }

@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      # The shared witness-page fixture: the canary-wap host test byte-compares
+      # it and the generator's --check pins it, so an edit here must run this job.
+      - 'spec/fixtures/witness_page_v1.json'
+      - 'spec/fixtures/gen_witness_page_v1.py'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -16,6 +20,10 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      # The shared witness-page fixture: the canary-wap host test byte-compares
+      # it and the generator's --check pins it, so an edit here must run this job.
+      - 'spec/fixtures/witness_page_v1.json'
+      - 'spec/fixtures/gen_witness_page_v1.py'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -57,9 +65,9 @@ concurrency:
   # "canceled" reads like housekeeping, not like a gap in coverage.
   #
   # Per-commit groups cost concurrent runners on a busy day; an unverified
-  # main costs a bad release. Revisit if runner minutes become the binding
-  # constraint — sharding the 18-env display job would shorten the window
-  # that makes this bite at all.
+  # main costs a bad release. The display job is sharded now (flavors.json
+  # `shards`), which shortens the window that makes this bite; revisit if
+  # runner minutes become the binding constraint.
   group: firmware-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -74,7 +82,8 @@ jobs:
   # PlatformIO-built firmware flavor. Adding a future flavor means
   # adding one manifest entry (plus its envs/ ini + configs/ dir per
   # firmware/ARCHITECTURE.md) — no new CI jobs. Each entry drives one
-  # matrix leg of `build-platformio` and one of `pio-check` below.
+  # matrix leg of `pio-check` and one or more legs of `build-platformio`
+  # below (one per shard when the entry declares `shards`).
   #
   # Manifest fields:
   #   name               — display name + cache-key component
@@ -115,6 +124,17 @@ jobs:
   #   pre_step           — named setup hook; "secrets_header" writes a
   #                        CI-only secrets/secrets.h (build verification,
   #                        not deployment)
+  #   shards             — optional map of label → env list. With it the
+  #                        product builds as one `build-platformio` leg per
+  #                        shard — job "PlatformIO Build (<name>/<label>)",
+  #                        cache key <name>-shard-<label> — each leg
+  #                        compiling only its envs and running only the size
+  #                        guards whose bins those envs produce. Every build
+  #                        env must sit in exactly one shard, and a shard may
+  #                        not mix PLATFORMIO_CORE_DIR classes (one toolchain
+  #                        download per leg); flavor_envs.py checks both, in
+  #                        the `flavors` job below and in lint.yml. Without
+  #                        it a product is one leg, exactly as before.
   #   size_guards        — list of {bin, slot_bytes, slot_name}: fail if
   #                        `bin` exceeds `slot_bytes` (an image bigger
   #                        than its OTA A/B slot can never be installed
@@ -131,62 +151,74 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.load.outputs.matrix }}
+      build_matrix: ${{ steps.load.outputs.build_matrix }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       - id: load
-        run: echo "matrix=$(jq -c . firmware/flavors.json)" >> "$GITHUB_OUTPUT"
+        # `matrix` is the manifest as-is — one leg per product, what
+        # pio-check runs on. `build_matrix` is the same manifest with each
+        # product's `shards` expanded into one leg per shard (build_envs
+        # narrowed to the shard, size_guards narrowed to the bins those envs
+        # produce) by flavor_envs.py, the one place the workflows read
+        # flavors.json through. It validates the manifest first — every
+        # build env in exactly one shard, one PLATFORMIO_CORE_DIR class per
+        # shard — so a shard list that drops an env fails HERE instead of
+        # quietly not compiling it.
+        run: |
+          MATRIX=$(jq -c . firmware/flavors.json)
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+          BUILD_MATRIX=$(python3 firmware/scripts/flavor_envs.py --build-matrix)
+          echo "build_matrix=${BUILD_MATRIX}" >> "$GITHUB_OUTPUT"
 
   build-platformio:
-    name: PlatformIO Build (${{ matrix.flavor.name }})
+    name: PlatformIO Build (${{ matrix.flavor.leg }})
     needs: flavors
     runs-on: ubuntu-latest
-    # 90, not 45. Measured on main: canary-display takes 43-44 minutes against
-    # the old 45-minute limit — about 60 seconds of headroom, i.e. one slow
-    # runner away from a red X that reads like a broken build but is really a
-    # stopwatch. Every other flavor finishes in 2-5 minutes.
+    # The display used to build all 21 of its environments in ONE leg —
+    # measured at 43-44 minutes on main, against a limit first set at 45 and
+    # then raised to 90 — while every other flavor finishes in 2-5 minutes.
+    # Sharding it was kept out of that fix because it changes job names,
+    # which can break required-status checks configured on main; this is that
+    # separate change. flavors.json's `shards` split the display by board
+    # family (the 4.3" dash and its feature variants across two legs, the 7"
+    # boards, the core-2 SPI/QSPI panels, the C6 nightstand alone on its
+    # isolated core dir), each leg on one PLATFORMIO_CORE_DIR, and a red leg
+    # now names the family that broke instead of "display failed".
     #
-    # The asymmetry is not a slow toolchain, it is arithmetic: canary-display
-    # builds 18 environments in this one job (dash and its nine feature
-    # variants, dash7, nightstand7, watch, watch-modes, two nightstands,
-    # touch169, playground); canary-wap and canary-sense build 2,
-    # canary-vision 3. The 18th (nightstand7) shares dash7's core-3 platform,
-    # so it costs a compile, not another toolchain download.
-    #
-    # The RIGHT fix is to shard those 18 across parallel jobs — it would cut
-    # wall-clock enormously AND tell you WHICH environment broke instead of
-    # "display failed". That changes job names, which can break required-status
-    # checks configured on main, so it is deliberately left as a separate,
-    # reviewable change rather than smuggled in here. Raising the ceiling stops
-    # the bleeding today.
-    timeout-minutes: 90
+    # 60: no leg has been timed since the split. The largest (six dash envs
+    # on one core-3 toolchain) should land well under half the old job;
+    # tighten toward 2-3x the measured time once a week of runs is in.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        flavor: ${{ fromJSON(needs.flavors.outputs.matrix) }}
+        flavor: ${{ fromJSON(needs.flavors.outputs.build_matrix) }}
     defaults:
       run:
         working-directory: ${{ matrix.flavor.dir }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Python + PlatformIO (cached)
+        # Interpreter, ~/.platformio cache and the pip install, in the shared
+        # composite action (CI.md R10). The cache key is computed HERE: one
+        # entry per leg (cache_name is the flavor name, or
+        # <flavor>-shard-<label> for a sharded flavor — legs of one flavor
+        # populate ~/.platformio differently, so they must not overwrite one
+        # another's entry), over the leg's platformio.ini plus the shared
+        # envs/platformio/*.ini set. An unsharded flavor's key is byte-for-
+        # byte what it was; a sharded leg falls back to its flavor's old
+        # whole-product entry on its first run.
+        uses: ./.github/actions/setup-platformio
         with:
-          python-version: '3.11'
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.platformio
-          key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
+          extras: ${{ matrix.flavor.pip_extras }}
+          cache-key: ${{ runner.os }}-pio-${{ matrix.flavor.cache_name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
           restore-keys: |
+            ${{ runner.os }}-pio-${{ matrix.flavor.cache_name }}-
             ${{ runner.os }}-pio-${{ matrix.flavor.name }}-
-
-      - name: Install PlatformIO
-        run: |
-          python -m pip install --upgrade pip
-          pip install --upgrade platformio ${{ matrix.flavor.pip_extras }}
 
       - name: Generate CI secrets header (build-only, not from committed file)
         if: matrix.flavor.pre_step == 'secrets_header'
@@ -203,7 +235,7 @@ jobs:
           #define MQTT_PASS "ci"
           HEADER
 
-      - name: Build all environments (+ OTA-slot size guard)
+      - name: Build this leg's environments (+ OTA-slot size guard)
         # The size guard runs IMMEDIATELY after the env that produces the
         # guarded binary, inside the loop — not as a separate step. A later
         # env build can recreate .pio/build and drop sibling envs' artifacts
@@ -276,24 +308,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Python + PlatformIO (cached)
+        # Interpreter, ~/.platformio cache and the pip install, in the shared
+        # composite action (CI.md R10). The cache key is computed HERE so the
+        # move changed no key: one entry per flavor, over its platformio.ini
+        # plus the shared envs/platformio/*.ini set.
+        uses: ./.github/actions/setup-platformio
         with:
-          python-version: '3.11'
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.platformio
-          key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
+          extras: ${{ matrix.flavor.pip_extras }}
+          cache-key: ${{ runner.os }}-pio-${{ matrix.flavor.name }}-${{ hashFiles(format('{0}/platformio.ini', matrix.flavor.dir), 'firmware/envs/platformio/*.ini') }}
           restore-keys: |
             ${{ runner.os }}-pio-${{ matrix.flavor.name }}-
-
-      - name: Install PlatformIO
-        run: |
-          python -m pip install --upgrade pip
-          pip install --upgrade platformio ${{ matrix.flavor.pip_extras }}
 
       - name: Generate CI secrets header (build-only, not from committed file)
         if: matrix.flavor.pre_step == 'secrets_header'
@@ -687,6 +712,17 @@ jobs:
           chmod +x firmware/scripts/check_provision_core_sync.sh
           firmware/scripts/check_provision_core_sync.sh
 
+      - name: Verify mqtt_transport_logic.h stays identical in common/ and the canary-wap sketch
+        # The broker-socket decision (plain / verified-CA TLS / pinned /
+        # explicit lab opt-in, fail-closed otherwise) lives once in
+        # common/network and is host-tested there; the wap sketch carries a
+        # byte-identical staged copy for its esp_mqtt bridge, like every other
+        # staged family above. Drift here means two products disagree about
+        # whether a provisioning is safe to connect with.
+        run: |
+          chmod +x firmware/scripts/check_mqtt_transport_sync.sh
+          firmware/scripts/check_mqtt_transport_sync.sh
+
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and
         # draws a hollow box for anything else — no build error, and the browser
@@ -843,6 +879,11 @@ jobs:
         #  11. Anomaly events bypass the Quiet Hours gate
         #  12. core.multilink_fusion strips unauthorized fields (PR 3 + PR 6)
         #  13. ble.scout strips unauthorized fields (PR 5 + PR 6)
+        #  14. (separate step below) the CSI HAL's transmitter filter drops
+        #      and counts frames from any transmitter but the associated
+        #      BSSID / registered peers, and no slot, stat or feature vector
+        #      ever carries a MAC byte — the HAL compiled as shipped, driven
+        #      through a stubbed ESP-IDF surface
         #
         # If a future PR (or LLM coder) breaks any of these, this job
         # fails before the firmware build even starts.
@@ -933,6 +974,21 @@ jobs:
               firmware/common/csi/src/csi_bundler.cpp \
               -I firmware/common/csi/src -o /tmp/csi_empty_room_test
           /tmp/csi_empty_room_test
+      - name: Build + run host transmitter-filter test (csi_hal)
+        # The real ESP-IDF backend (csi_hal.cpp, unity-included by the test)
+        # against firmware/common/csi/host_stubs/ standing in for Arduino.h
+        # and esp_wifi.h. Frames from two transmitter addresses: the
+        # associated BSSID is processed, the other is dropped and counted
+        # under frames_dropped_foreign, and a byte scan of the ring, the
+        # stats and the emitted feature vector finds neither address.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -DCSI_TEST_HOST_BUILD -Wall -Wextra -Wno-unused-parameter \
+              firmware/common/csi/csi_hal_transmitter_filter_test.cpp \
+              firmware/common/csi/src/csi_features.cpp \
+              -I firmware/common/csi/host_stubs \
+              -I firmware/common/csi/src -o /tmp/csi_hal_filter_test
+          /tmp/csi_hal_filter_test
 
   # ──────────────────────────────────────────────────────────────────
   # Mesh + Scout host test suites
@@ -1523,6 +1579,26 @@ jobs:
           /tmp/witness_store_logic | tee /tmp/witness_store_logic.log
           grep -q "ALL .* PASSED" /tmp/witness_store_logic.log
 
+      - name: Build + run canary-wap witness page host test (+ fixture drift)
+        # GET /api/v1/witness (witness_page.h, spec/witness_api_v1.md): the
+        # ?last=N parser, the RAM ring, the coarse ten-minute anchoring, and a
+        # byte-exact render of the shared fixture spec/fixtures/
+        # witness_page_v1.json rebuilt from real Ed25519-signed records
+        # (OpenSSL). The same fixture is what the iPhone app's
+        # WitnessPageFixtureTests decodes, against the same public key — one
+        # fixture, both ends of the contract. The generator's --check then
+        # proves the committed fixture is what the generator writes.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_witness_page.cpp \
+              -lcrypto -o /tmp/witness_page
+          /tmp/witness_page spec/fixtures/witness_page_v1.json | tee /tmp/witness_page.log
+          grep -q "ALL .* PASSED" /tmp/witness_page.log
+          python3 -m pip install --quiet cryptography
+          python3 spec/fixtures/gen_witness_page_v1.py --check
+
       - name: Build + run canary-wap beacon audit recovery host test
         # The beacon-audit chain-head SD recovery guard
         # (beacon_audit_recover.h): only adopt the newest COMPLETE line's head
@@ -1538,6 +1614,26 @@ jobs:
               -o /tmp/beacon_audit_recover
           /tmp/beacon_audit_recover | tee /tmp/beacon_audit_recover.log
           grep -q "ALL .* PASSED" /tmp/beacon_audit_recover.log
+
+      - name: Build + run canary-wap BLE OTA policy host test
+        # BLE OTA protocol v2 (ble_ota_policy.h): the 168-byte header's
+        # layout and strict parse, the domain-separated canonical message
+        # pinned against the fixture shared with test_ota_release.py, and
+        # the accept / refuse / break-glass decision matrix — product
+        # binding, the anti-rollback floor shared with the pull engine
+        # (securacv_ota_update_decision), and the legacy v1 header admitted
+        # only when the owner has armed break-glass — with real Ed25519
+        # signatures (libcrypto is preinstalled on ubuntu-latest).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+              -DSECURACV_OTA_HOST_BUILD \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_ble_ota_policy.cpp \
+              firmware/projects/canary-wap/arduino/canary_wap/securacv_ota.cpp \
+              -lcrypto -o /tmp/ble_ota_policy
+          /tmp/ble_ota_policy | tee /tmp/ble_ota_policy.log
+          grep -q "ALL .* PASSED" /tmp/ble_ota_policy.log
 
       - name: Build + run canary-wap camera gate logic host test
         # Camera power management decisions (camera_gate_logic.h): the
@@ -1673,8 +1769,9 @@ jobs:
 
       - name: Build + run canary-wap project host tests
         # The canary-wap project keeps its own host-test Makefile (mesh
-        # coexistence, chirp/beacon invariants, device signature, and the
-        # captive-portal DNS response builder). Its `run` target builds and
+        # coexistence, chirp/beacon invariants, device signature, the
+        # captive-portal DNS response builder, the BLE OTA header policy).
+        # Its `run` target builds and
         # runs every suite; each test exits non-zero on failure, so make's
         # exit code gates the job. Needs libcrypto for the beacon tamper
         # suite — preinstalled on ubuntu-latest.

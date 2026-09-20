@@ -55,6 +55,10 @@ Rules:
 3. **Referrals persist.** An adopted endpoint is written to the same NVS
    keys runtime config reads (`mqtt_host`/`mqtt_port`), so the magic
    survives reboots and OTA.
+   The broker's *transport* is not part of a referral: `mqtt_tls` /
+   `mqtt_ca` / `mqtt_fp` stay as provisioned, so a gossiped plain `1883`
+   endpoint on a TLS-mode display fails closed ("did not speak TLS on
+   this port") rather than downgrading the link.
 4. **Self-healing rebind.** WiFi healthy but broker dark past 2 min → the
    device re-asks the fleet and rebinds. This is the DHCP-moved-broker fix:
    as long as *one* device on the LAN has found the broker's new address

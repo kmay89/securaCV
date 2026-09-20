@@ -18,8 +18,10 @@
  *   user has explicitly enabled the local-update-server option (the Ed25519
  *   signature — not the transport — is what protects image integrity).
  * - Firmware images are verified against the manifest SHA-256, then the
- *   Ed25519 release signature over (image_size_LE32 || sha256) — the same
- *   scheme as BLE OTA (ble_ota.h), so one release key signs every channel.
+ *   Ed25519 release signature over (image_size_LE32 || sha256). BLE OTA
+ *   (ble_ota_policy.h) signs a domain-separated canonical header with the
+ *   same key and the same NUL-separated field convention as the manifest
+ *   signature, so one release key signs every channel.
  * - An all-zero release public key fail-closes: installs are refused.
  * - A monotonically increasing NVS version floor rejects replayed older
  *   firmware even when validly signed.
@@ -468,6 +470,21 @@ esp_err_t securacv_ota_set_local_http_allowed(bool allowed);
 bool securacv_ota_get_local_http_allowed(void);
 
 /**
+ * @brief Read the NVS anti-rollback floor ("" if none has been recorded)
+ *
+ * Read-only view of the monotonic minimum version the engine persists.
+ * BLE OTA (ble_ota.cpp) feeds it to securacv_ota_update_decision() so both
+ * install channels refuse the same images. Nothing outside this engine
+ * raises the floor: it rises only when a booted image is confirmed by
+ * securacv_ota_boot_self_test() / securacv_ota_init().
+ *
+ * @param buf Output buffer — size it SECURACV_OTA_VERSION_MAX. Set to ""
+ *            on any failure so a caller can pass it straight through.
+ * @return ESP_OK if a floor was read, otherwise the NVS error.
+ */
+esp_err_t securacv_ota_get_min_version(char *buf, size_t buf_len);
+
+/**
  * @brief Record that an install was written and the next boot targets @p version
  *
  * The pull engine calls this itself the moment the boot partition flips
@@ -579,7 +596,8 @@ bool securacv_ota_build_manifest_message(const securacv_ota_manifest_t *m,
  * @brief Build the 36-byte Ed25519-signed message for a firmware image
  *
  * Layout: image_size as uint32 little-endian || sha256 digest (32 bytes).
- * Identical to the BLE OTA scheme (ble_ota.h) and ota_release.py.
+ * Identical to ota_release.py's `signature` and to the legacy BLE OTA v1
+ * header (ble_ota_policy.h), which break-glass alone still admits.
  *
  * @param image_size Firmware image size in bytes
  * @param sha256 32-byte SHA-256 digest of the image

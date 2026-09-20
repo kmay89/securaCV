@@ -13,6 +13,14 @@
 //! - `sensor.pwk_daily_digest`: Rolling 24h summary (daemon mode)
 //! - `binary_sensor.pwk_chain_problem`: Sealed-log integrity (daemon mode)
 //! - `button.pwk_verify_now`: One-click verification (daemon mode)
+//!
+//! With `--fleet-peers-path` (daemon mode) the bridge also keeps the fleet
+//! roll-call for the kernel's `GET /api/fleet`: it subscribes to the Canaries'
+//! `securacv/<device_id>/{availability,status,health,chain,state,meta}`
+//! topics, pins each device's public key on first sight, verifies its signed
+//! `chain` publishes, and writes the summary file the kernel projects into
+//! fleet rows (`witness_kernel::fleet_peers`). Nothing heard there is ever
+//! republished; `events` and `sensing` are deliberately not subscribed.
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
@@ -26,6 +34,10 @@ use std::net::{IpAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use witness_kernel::fleet_peers::{
+    PeerSummaryFile, PeerTable, FLEET_PEER_CLOCK_JUMP_SECS, FLEET_PEER_FORGET_SECS, FLEET_PEER_MAX,
+    FLEET_PEER_TOPIC_FILTERS,
+};
 use witness_kernel::transport::{
     parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
 };
@@ -138,6 +150,13 @@ struct Args {
     #[arg(long, env = "NO_DISCOVERY")]
     no_discovery: bool,
 
+    /// Keep the fleet roll-call for the kernel's `GET /api/fleet` in this
+    /// file (daemon mode). Point witnessd's `api.fleet_peers_path` (or
+    /// WITNESS_FLEET_PEERS_PATH — the same variable serves both) at the same
+    /// path. Unset: the bridge never subscribes to any Canary topic.
+    #[arg(long, env = "WITNESS_FLEET_PEERS_PATH")]
+    fleet_peers_path: Option<PathBuf>,
+
     /// UI mode for stderr progress (auto|plain|pretty).
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
@@ -242,7 +261,19 @@ struct EventStatePayload {
 
 /// Zone state for tracking event counts.
 /// Command publishes forwarded to the daemon poll loop as (topic, payload).
-type CommandTx = mpsc::Sender<(String, Vec<u8>)>;
+/// `(topic, payload, retained)` — `retained` is the wire flag the broker sets
+/// only when replaying a retained message to a new subscription.
+///
+/// Bounded: the eventloop thread `try_send`s and drops on a full queue, so a
+/// broker that floods the fleet filters while the poll loop is inside an HTTP
+/// round trip costs at most [`COMMAND_QUEUE_DEPTH`] messages of memory, not
+/// an unbounded backlog. A dropped fleet publish is a missed observation the
+/// next one repairs; a dropped verify command is re-issued by the interval.
+type CommandTx = mpsc::SyncSender<(String, Vec<u8>, bool)>;
+
+/// Depth of the eventloop → poll-loop queue. Sized for a burst of every
+/// fleet topic from a full [`FLEET_PEER_MAX`]-device table with headroom.
+const COMMAND_QUEUE_DEPTH: usize = 512;
 
 /// Daemon-mode eventloop wiring. Bundled so the reconnect handler can, on
 /// every ConnAck, both re-subscribe the command filter (clean-start drops
@@ -253,8 +284,14 @@ type CommandTx = mpsc::Sender<(String, Vec<u8>)>;
 /// first reconnect.
 struct DaemonWiring {
     commands: CommandTx,
+    /// `<prefix>/cmd/` — the subtree `cmd_filter` subscribes to, used to
+    /// decide what is worth queueing.
+    cmd_prefix: String,
     cmd_filter: String,
     availability_topic: String,
+    /// The fleet roll-call filters (`FLEET_PEER_TOPIC_FILTERS`) when
+    /// `--fleet-peers-path` is set; empty otherwise.
+    fleet_filters: Vec<String>,
 }
 
 #[derive(Default)]
@@ -301,6 +338,13 @@ impl MqttRuntime {
             const BACKOFF_CAP: Duration = Duration::from_secs(60);
             let mut backoff = BACKOFF_START;
             let mut outage_logged = false;
+            // One warn/info pair per full episode of the inbound queue: set on
+            // the first drop, cleared when a publish is accepted again after
+            // QUEUE_DRAIN_QUIET of no drops (so a queue hovering at full does
+            // not flap the pair on every message).
+            let mut queue_full_logged = false;
+            let mut queue_last_full: Option<Instant> = None;
+            const QUEUE_DRAIN_QUIET: Duration = Duration::from_secs(5);
             for event in connection.iter() {
                 if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
@@ -312,6 +356,7 @@ impl MqttRuntime {
                             outage_logged = false;
                         }
                         backoff = BACKOFF_START;
+                        queue_full_logged = false;
                         thread_connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         if let Some(w) = &daemon {
                             // Re-assert availability (broker holds the retained
@@ -331,6 +376,15 @@ impl MqttRuntime {
                             {
                                 log::warn!("MQTT command (re)subscribe failed: {}", e);
                             }
+                            for filter in &w.fleet_filters {
+                                if let Err(e) = thread_client.subscribe(filter, QoS::AtLeastOnce) {
+                                    log::warn!(
+                                        "MQTT fleet (re)subscribe failed for {}: {}",
+                                        filter,
+                                        e
+                                    );
+                                }
+                            }
                         }
                     }
                     Ok(Event::Incoming(Incoming::Publish(publish))) => {
@@ -339,8 +393,44 @@ impl MqttRuntime {
                                 Ok(topic) => topic.to_string(),
                                 Err(_) => continue,
                             };
-                            if w.commands.send((topic, publish.payload.to_vec())).is_err() {
-                                break;
+                            // Only what the poll loop handles is queued at
+                            // all: the command subtree, and the fleet
+                            // roll-call topics when that is on.
+                            let wanted = topic.starts_with(&w.cmd_prefix)
+                                || (!w.fleet_filters.is_empty() && topic.starts_with("securacv/"));
+                            if !wanted {
+                                continue;
+                            }
+                            match w.commands.try_send((
+                                topic,
+                                publish.payload.to_vec(),
+                                publish.retain,
+                            )) {
+                                Ok(()) => {
+                                    if queue_full_logged
+                                        && queue_last_full
+                                            .is_some_and(|t| t.elapsed() >= QUEUE_DRAIN_QUIET)
+                                    {
+                                        log::info!(
+                                            "MQTT inbound queue drained; publishes are \
+                                             being queued again"
+                                        );
+                                        queue_full_logged = false;
+                                    }
+                                }
+                                Err(mpsc::TrySendError::Full(_)) => {
+                                    queue_last_full = Some(Instant::now());
+                                    if !queue_full_logged {
+                                        log::warn!(
+                                            "MQTT inbound queue full ({} messages); \
+                                             dropping publishes until the poll loop \
+                                             catches up",
+                                            COMMAND_QUEUE_DEPTH
+                                        );
+                                        queue_full_logged = true;
+                                    }
+                                }
+                                Err(mpsc::TrySendError::Disconnected(_)) => break,
                             }
                         }
                     }
@@ -568,11 +658,26 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
         ctx.args.verify_interval_secs
     );
 
-    let (cmd_tx, cmd_rx) = mpsc::channel::<(String, Vec<u8>)>();
+    let (cmd_tx, cmd_rx) = mpsc::sync_channel::<(String, Vec<u8>, bool)>(COMMAND_QUEUE_DEPTH);
     // Scoped to the command subtree only — this daemon must never consume
     // event or sensor traffic. Subscribed from the eventloop thread on every
-    // ConnAck so it survives broker reconnects.
+    // ConnAck so it survives broker reconnects. The one opt-in beyond it is
+    // the fleet roll-call (`--fleet-peers-path`): presence/health/chain/meta
+    // topics only, never `events` or `sensing` (see FLEET_PEER_TOPIC_FILTERS).
     let cmd_filter = format!("{}/cmd/#", ctx.args.mqtt_topic_prefix);
+    let mut peers = ctx
+        .args
+        .fleet_peers_path
+        .clone()
+        .map(FleetPeerTracker::open);
+    let fleet_filters: Vec<String> = if peers.is_some() {
+        FLEET_PEER_TOPIC_FILTERS
+            .iter()
+            .map(|f| f.to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let conn = {
         let _stage = ctx.ui.stage("Connect to MQTT broker");
         connect_mqtt(
@@ -584,8 +689,10 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
             ctx.availability_topic,
             Some(DaemonWiring {
                 commands: cmd_tx,
+                cmd_prefix: format!("{}/cmd/", ctx.args.mqtt_topic_prefix),
                 cmd_filter,
                 availability_topic: ctx.availability_topic.to_string(),
+                fleet_filters,
             }),
         )?
     };
@@ -628,6 +735,12 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     let mut publish_cursor: Option<PublishCursor> = None;
 
     loop {
+        // Each poll tick flushes whatever the roll-call heard since the last
+        // one (the wait loop below also flushes, rate-limited, as it hears).
+        if let Some(tracker) = peers.as_mut() {
+            tracker.flush_if_due(true);
+        }
+
         // Only fetch+publish while the broker is reachable. During an outage
         // the eventloop thread is reconnecting with backoff and cannot drain
         // the bounded request queue, so a blocking publish would wedge this
@@ -757,16 +870,20 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                 break;
             }
             match cmd_rx.recv_timeout(remaining) {
-                Ok((topic, _payload)) if topic == verify_cmd_topic => {
+                Ok((topic, _payload, _)) if topic == verify_cmd_topic => {
                     log::info!("Verify command received via {}", topic);
                     if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
                         log::warn!("Verification failed to run: {}", e);
                     }
                     last_auto_verify = Instant::now();
                 }
-                Ok((topic, _)) => {
-                    log::debug!("Ignoring unknown command topic {}", topic);
-                }
+                Ok((topic, payload, retained)) => match peers.as_mut() {
+                    Some(tracker) if topic.starts_with("securacv/") => {
+                        tracker.observe(&topic, &payload, retained);
+                        tracker.flush_if_due(false);
+                    }
+                    _ => log::debug!("Ignoring unknown command topic {}", topic),
+                },
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     // The eventloop thread has exited (only on shutdown now
@@ -778,6 +895,138 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
             }
         }
     }
+}
+
+/// How often the roll-call summary is rewritten while messages keep
+/// arriving. Every poll tick flushes regardless; this only bounds the write
+/// rate under a chatty fleet.
+const FLEET_PEERS_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The fleet roll-call (`--fleet-peers-path`): the [`PeerTable`] the
+/// subscribed Canary topics feed, flushed atomically to the summary file the
+/// kernel's `/api/fleet` reads. Rehydrated from that file on start so pins
+/// survive a bridge restart.
+struct FleetPeerTracker {
+    path: PathBuf,
+    table: PeerTable,
+    dirty: bool,
+    last_flush: Option<Instant>,
+    /// Evictions already reported, so each displacement is logged once.
+    evictions_logged: u64,
+    /// A clock jump has been reported (once per process).
+    jump_logged: bool,
+}
+
+impl FleetPeerTracker {
+    fn open(path: PathBuf) -> Self {
+        let table = match PeerSummaryFile::read(&path) {
+            Ok(Some(summary)) => {
+                // No expiry at startup: the file's pins are the one thing a
+                // restart must keep. Expiry (flush time) can only ever forget
+                // ids that hold neither a pin nor a verified length, and the
+                // pass that straddles a clock jump is skipped besides — so a
+                // host clock that is wrong at boot (a dead RTC, a bad NTP
+                // answer) cannot cost a single pin.
+                let table = PeerTable::from_summary(summary);
+                log::info!(
+                    "fleet roll-call: rehydrated {} peer(s) from {}",
+                    table.len(),
+                    path.display()
+                );
+                table
+            }
+            Ok(None) => PeerTable::default(),
+            Err(err) => {
+                log::warn!(
+                    "fleet roll-call: ignoring unreadable {} ({err:#}); starting empty, \
+                     so every device's key is pinned afresh on its next health publish",
+                    path.display()
+                );
+                PeerTable::default()
+            }
+        };
+        Self {
+            path,
+            table,
+            // Write once at start even if nothing is heard, so a kernel
+            // pointed at the path sees a valid (possibly empty) summary.
+            dirty: true,
+            last_flush: None,
+            evictions_logged: 0,
+            jump_logged: false,
+        }
+    }
+
+    fn observe(&mut self, topic: &str, payload: &[u8], retained: bool) {
+        if self
+            .table
+            .observe(topic, payload, retained, unix_now_secs())
+        {
+            self.dirty = true;
+        }
+        let evictions = self.table.evictions();
+        // Each displacement drops that id's pin; say so, because a steady
+        // stream of these is what a broker flood looks like — but a flood
+        // must not turn into one warning per inbound publish, so the line is
+        // emitted on the first displacement and then each time the count
+        // doubles (1, 2, 4, 8, …), which keeps the journal readable while the
+        // number stays honest.
+        if evictions > self.evictions_logged && evictions >= self.evictions_logged * 2 {
+            log::warn!(
+                "fleet roll-call: at the {}-id cap, {} id(s) displaced so far \
+                 (a displaced Canary is re-pinned on its next health publish)",
+                FLEET_PEER_MAX,
+                evictions
+            );
+            self.evictions_logged = evictions;
+        }
+    }
+
+    fn flush_if_due(&mut self, force: bool) {
+        let now = unix_now_secs();
+        if self.table.clock_jumped_since(now) && !self.jump_logged {
+            log::warn!(
+                "fleet roll-call: the clock moved more than {} h since the table last saw it; \
+                 no id is expired this round (a pinned id is never expired by the clock)",
+                FLEET_PEER_CLOCK_JUMP_SECS / 3600
+            );
+            self.jump_logged = true;
+        }
+        let forgotten = self.table.prune(now);
+        if forgotten > 0 {
+            log::info!(
+                "fleet roll-call: {} never-proven id(s) unheard for {} days forgotten",
+                forgotten,
+                FLEET_PEER_FORGET_SECS / 86_400
+            );
+            self.dirty = true;
+        }
+        if !self.dirty {
+            return;
+        }
+        let due = force
+            || self
+                .last_flush
+                .is_none_or(|at| at.elapsed() >= FLEET_PEERS_FLUSH_INTERVAL);
+        if !due {
+            return;
+        }
+        self.last_flush = Some(Instant::now());
+        match self.table.summary(unix_now_secs()).write_atomic(&self.path) {
+            Ok(()) => self.dirty = false,
+            Err(err) => log::warn!(
+                "fleet roll-call: could not write {}: {err:#}",
+                self.path.display()
+            ),
+        }
+    }
+}
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// POST /verify on the witness API and publish the outcome:
@@ -1563,6 +1812,37 @@ mod tests {
         assert!(json.contains("command_topic"));
         assert!(json.contains("witness/cmd/verify"));
         assert!(json.contains("payload_press"));
+    }
+
+    #[test]
+    fn fleet_tracker_writes_the_summary_the_kernel_reads_and_rehydrates_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fleet_peers.json");
+        let mut tracker = FleetPeerTracker::open(path.clone());
+        tracker.flush_if_due(true);
+        let empty = PeerSummaryFile::read(&path)
+            .expect("read")
+            .expect("written at start");
+        assert!(empty.peers.is_empty());
+
+        tracker.observe(
+            "securacv/porch/status",
+            br#"{"status":"online","device_type":"canary-wap"}"#,
+            false,
+        );
+        // Rate-limited: a second write right after the first waits...
+        tracker.flush_if_due(false);
+        let still_empty = PeerSummaryFile::read(&path).expect("read").expect("exists");
+        assert!(still_empty.peers.is_empty());
+        // ...but the poll tick forces it.
+        tracker.flush_if_due(true);
+        let written = PeerSummaryFile::read(&path).expect("read").expect("exists");
+        assert_eq!(written.peers.len(), 1);
+        assert_eq!(written.peers[0].device_id, "porch");
+        assert_eq!(written.peers[0].device_type.as_deref(), Some("canary-wap"));
+
+        let reopened = FleetPeerTracker::open(path);
+        assert_eq!(reopened.table.len(), 1);
     }
 
     #[test]

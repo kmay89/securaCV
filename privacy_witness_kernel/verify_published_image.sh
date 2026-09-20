@@ -139,9 +139,16 @@ probe() {
     # `|| echo 000`: under `set -e` a network-level curl failure (DNS, timeout)
     # would otherwise abort the script and skip the retry loop entirely. 000 is
     # treated as transient below so genuine blips get retried, not hard-failed.
+    # The Accept list names every manifest media type buildx can leave behind.
+    # GHCR answers 404 ("OCI manifest found, but Accept header does not
+    # support OCI manifests") for an image that is public and present when
+    # the stored type is missing from it; the add-on's single-arch images
+    # pushed with provenance:false are plain OCI manifests, not indexes, and
+    # the omission of that one type kept this gate red 2026-08-30 → 09-08.
     code="$(curl -s -o /dev/null -w '%{http_code}' \
               -H "Authorization: Bearer ${token}" \
               -H 'Accept: application/vnd.oci.image.index.v1+json' \
+              -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
               -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
               "https://ghcr.io/v2/${repo}/manifests/${tag}" || echo "000")"

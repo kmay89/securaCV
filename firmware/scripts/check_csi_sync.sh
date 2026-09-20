@@ -142,11 +142,127 @@ if [ -f "$GNSSTIME_CANONICAL" ]; then
     fi
 fi
 
+# ── One CSI HAL: the canary product's lib/securacv_csi is an adapter ──
+# firmware/canary/lib/securacv_csi/src/securacv_csi.cpp used to be a second
+# copy of csi_hal.cpp + csi_features.cpp (~1150 lines), kept equal to the
+# canonical by hand — the September 2026 pass did exactly that (roadmap 22).
+# It is now a thin csi:: adapter over csi_hal::, and the canonical two files
+# are compiled into the canary build by platformio.ini's build_src_filter.
+# Five guards keep it that way:
+#
+#   1. Body divergence, name-based. No function the canonical HAL or
+#      extractor DEFINES may also be defined in the adapter, unless
+#      securacv_csi.h declares that name (init/start/stop/... exist in both
+#      the csi:: and csi_hal:: namespaces by design). This reads
+#      definition-shaped lines with grep — it does not parse C++ — so a
+#      body hidden behind a macro or a lambda, or a copy of a body under a
+#      NEW name, gets past it. The line budget (3) is the backstop for the
+#      renamed copy; a copy under the canonical name also fails to link in
+#      firmware/tests_host/test_csi_hal_adapter.cpp, which links the adapter
+#      beside the canonical objects on the host; and for a second callback
+#      registration the backstop is the canary CI build itself (two
+#      esp_wifi_set_csi_rx_cb registrations crash at boot).
+#   2. The adapter may not call the esp_wifi CSI driver itself — the one
+#      registration in the image is csi_hal.cpp's.
+#   3. A line budget. The adapter was $ADAPTER_LINES_AT_WRITING lines when
+#      this guard was written; past $ADAPTER_LINE_BUDGET it fails, so a body
+#      cannot creep back one helper at a time.
+#   4. securacv_csi.h must include csi_types.h and must not re-declare its
+#      contract (csi_features_t / csi_config_t / csi_stats_t / csi_cap_t or
+#      the CSI_* constants). One typedef in the build is what lets main.cpp
+#      and the module bridge share the struct without a cast dance.
+#   5. platformio.ini must name csi_hal.cpp and csi_features.cpp in its
+#      build_src_filter — the adapter links against nothing otherwise, and
+#      the failure would be an undefined reference long after compile.
+
+ADAPTER_DIR="firmware/canary/lib/securacv_csi/src"
+ADAPTER_CPP="$ADAPTER_DIR/securacv_csi.cpp"
+ADAPTER_H="$ADAPTER_DIR/securacv_csi.h"
+ADAPTER_LINES_AT_WRITING=76
+ADAPTER_LINE_BUDGET=120
+CANARY_INI="firmware/canary/platformio.ini"
+
+# Names of the functions a C++ file DEFINES (not merely declares): lines of
+# the form `[qualifiers] type name(args...` that are not prototypes (`);`),
+# control statements, assignments, member calls or preprocessor lines.
+# Matches the flat one-definition-per-line style both files use — see the
+# limits above.
+defined_function_names() {
+    sed -E 's/^[[:space:]]+//' "$@" \
+    | grep -vE '^(//|/\*|\*|#|\})' \
+    | grep -E '^[A-Za-z_][A-Za-z0-9_:<>,*& ]*[ *&][A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(' \
+    | grep -vE '\)[[:space:]]*(const)?[[:space:]]*;[[:space:]]*$' \
+    | grep -vE '^(return|else|if|for|while|switch|case|do|goto|using|typedef|extern|namespace)\b' \
+    | sed -E 's/^([^(=]*[ *&])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*$/\2/' \
+    | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' \
+    | sort -u
+}
+
+# Names a header DECLARES (prototype lines ending in `);`).
+declared_function_names() {
+    sed -E 's/^[[:space:]]+//' "$@" \
+    | grep -E '^[A-Za-z_][A-Za-z0-9_:<>,*& ]*[ *&][A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(.*\)[[:space:]]*;[[:space:]]*$' \
+    | sed -E 's/^([^(=]*[ *&])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*$/\2/' \
+    | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' \
+    | sort -u
+}
+
+if [ -f "$ADAPTER_CPP" ]; then
+    # 1. Body divergence.
+    canonical_defs=$(defined_function_names "$CANONICAL/csi_hal.cpp" "$CANONICAL/csi_features.cpp")
+    adapter_defs=$(defined_function_names "$ADAPTER_CPP")
+    header_decls=$(declared_function_names "$ADAPTER_H")
+    shared=$(comm -12 <(echo "$canonical_defs") <(echo "$adapter_defs"))
+    offending=$(comm -23 <(echo "$shared") <(echo "$header_decls") | sed '/^$/d')
+    if [ -n "$offending" ]; then
+        echo "::error::$ADAPTER_CPP defines functions the canonical CSI HAL/extractor also defines:"
+        echo "$offending" | sed 's/^/           /'
+        echo "         The adapter delegates to csi_hal:: — it must not carry a copy of a body."
+        drift=1
+    fi
+
+    # 2. No direct driver calls in the adapter.
+    if sed -E 's/^[[:space:]]+//' "$ADAPTER_CPP" | grep -vE '^(//|/\*|\*)' \
+         | grep -nE 'esp_wifi_set_csi[a-z_]*[[:space:]]*\(' ; then
+        echo "::error::$ADAPTER_CPP calls the esp_wifi CSI driver directly."
+        echo "         The only registration in the image is csi_hal.cpp's; a second one crashes at boot."
+        drift=1
+    fi
+
+    # 3. Line budget.
+    adapter_lines=$(wc -l < "$ADAPTER_CPP")
+    if [ "$adapter_lines" -gt "$ADAPTER_LINE_BUDGET" ]; then
+        echo "::error::$ADAPTER_CPP is $adapter_lines lines; the adapter budget is $ADAPTER_LINE_BUDGET."
+        echo "         New CSI behavior belongs in $CANONICAL (both products get it), not in the adapter."
+        drift=1
+    fi
+
+    # 4. The header consumes the canonical contract instead of restating it.
+    if ! grep -qE '^[[:space:]]*#[[:space:]]*include[[:space:]]+["<]csi_types\.h[">]' "$ADAPTER_H"; then
+        echo "::error::$ADAPTER_H must #include csi_types.h — it is the one csi_features_t in the build."
+        drift=1
+    fi
+    if grep -nE '^[[:space:]]*\}[[:space:]]*(csi_features_t|csi_config_t|csi_stats_t|csi_cap_t)[[:space:]]*;|^[[:space:]]*#[[:space:]]*define[[:space:]]+(CSI_FEATURE_DIM|CSI_MAX_SUBCARRIERS|CSI_WINDOW_MS|CSI_RSSI_NOISE_FLOOR_DBM|CSI_CONFIG_DEFAULT)\b' "$ADAPTER_H"; then
+        echo "::error::$ADAPTER_H re-declares part of the csi_types.h contract (above)."
+        drift=1
+    fi
+
+    # 5. The canary build compiles the canonical HAL.
+    for src in csi_hal.cpp csi_features.cpp; do
+        if ! grep -qE "^[[:space:]]*\+<\.\./\.\./common/csi/src/$src>" "$CANARY_INI"; then
+            echo "::error::$CANARY_INI build_src_filter does not name ../../common/csi/src/$src."
+            echo "         The adapter in $ADAPTER_DIR delegates to it; without it the link fails."
+            drift=1
+        fi
+    done
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
-    echo "The committed copies under $STAGED/ must match their canonical sources."
+    echo "The committed copies under $STAGED/ must match their canonical sources,"
+    echo "and the canary CSI library must stay a thin adapter over them."
     echo "Re-stage with: firmware/projects/canary-wap/setup.sh arduino"
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time library copies are in sync."
+echo "CSI + identity + witness-store + provision-qr + gnss-time library copies are in sync; the canary CSI adapter is thin."

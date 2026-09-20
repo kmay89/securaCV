@@ -51,6 +51,9 @@ Usage
 
   # Do it for real, from inside a context that has SUPERVISOR_TOKEN:
   python3 canary-local/tools/hub_seed_apply.py
+
+  # With an opt-in extra (the plan's optional_features; repeatable):
+  python3 canary-local/tools/hub_seed_apply.py --dry-run --with broker_tls
 """
 from __future__ import annotations
 
@@ -74,6 +77,16 @@ _here = Path(__file__).resolve()
 REPO = _here.parents[2] if len(_here.parents) > 2 else _here.parent
 DEFAULT_PLAN = REPO / "canary-local/devices/hub_seed.json"
 DEFAULT_BASE_URL = os.environ.get("SUPERVISOR_URL", "http://supervisor")
+# Where a step's `requires_files` (absolute, on-device paths such as /ssl/...)
+# are looked for: the hub's own filesystem. Tests point it at a temp tree, and
+# so would a runner that mounts the hub's ssl folder somewhere other than /ssl.
+DEFAULT_FILES_ROOT = Path("/")
+
+
+def under_root(root: Path, path: str) -> Path:
+    """An absolute on-device path as seen from `root`: /ssl/x under /tmp/t is /tmp/t/ssl/x."""
+    p = Path(path)
+    return root / (p.relative_to("/") if p.is_absolute() else p)
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +135,8 @@ class Action:
     """One concrete thing to do (or skip). The atom the executor performs."""
 
     kind: str  # register_repo | install_addon | set_options | start_addon |
-               # write_config | core_config_entry | mqtt_login
+               # write_config | core_config_entry | mqtt_login |
+               # require_files | restart_addon
     label: str  # human-facing target (a URL, a slug, a path)
     already: bool = False  # true => this is already satisfied; skip it
     reason: str = ""  # why it is being skipped, or an extra note
@@ -136,6 +150,8 @@ class Action:
     handler: str = ""  # core_config_entry: the integration domain (e.g. "mqtt")
     data: dict = field(default_factory=dict)  # core_config_entry: the flow answers
     username: str = ""  # mqtt_login: the broker account the devices sign in as
+    paths: list = field(default_factory=list)  # require_files: on-device paths that must exist
+    note: str = ""  # require_files: what supplies them — named in the refusal
 
 
 @dataclass
@@ -310,20 +326,46 @@ def plan_actions(
                 )
             )
 
+        # A step may REQUIRE files it does not create — the certificate and key
+        # an operator placed for the broker's TLS listener. A read-only check,
+        # planned first so a missing file stops the step before it writes
+        # anything. "Present" is read from the same existing_files snapshot the
+        # config write uses (observe() fills it under --files-root); on the
+        # FRESH_HUB assumption nothing is present, so a dry-run always narrates
+        # the requirement.
+        required = list(step.get("requires_files") or [])
+        if required:
+            present = all(p in files_present for p in required)
+            sp.actions.append(
+                Action(
+                    kind="require_files",
+                    label=" and ".join(required),
+                    paths=required,
+                    note=step.get("requires_files_note", ""),
+                    already=present,
+                    reason="present" if present else "",
+                )
+            )
+
         if "addon" in step:
             sup = step.get("supervisor_slug") or step["addon"]
             friendly = step["addon"]
-            installed = sup in addons
-            sp.actions.append(
-                Action(
-                    kind="install_addon",
-                    label=friendly,
-                    slug=sup,
-                    friendly=friendly,
-                    already=installed,
-                    reason="already installed" if installed else "",
+            # A step that only CONFIGURES an add-on an earlier step installed
+            # says `install: false` and plans no install: the snapshot a fresh
+            # run plans from predates that earlier step, so an install here
+            # would be a second install POSTed onto a present add-on.
+            if step.get("install", True):
+                installed = sup in addons
+                sp.actions.append(
+                    Action(
+                        kind="install_addon",
+                        label=friendly,
+                        slug=sup,
+                        friendly=friendly,
+                        already=installed,
+                        reason="already installed" if installed else "",
+                    )
                 )
-            )
             if step.get("options"):
                 desired = step["options"]
                 # Configure BEFORE starting: the kernel reads its mode at launch,
@@ -352,6 +394,15 @@ def plan_actions(
                         already=running,
                         reason="already running" if running else "",
                     )
+                )
+            if step.get("restart"):
+                # Never `already`: the restart IS the step's point. An add-on
+                # re-reads its options and re-tests for its files only when it
+                # starts, and nothing observable says whether it has done so
+                # since they landed — so every run that asks for the step
+                # cycles the add-on once, and its clients reconnect.
+                sp.actions.append(
+                    Action(kind="restart_addon", label=friendly, slug=sup, friendly=friendly)
                 )
 
         if "dest" in step:
@@ -414,8 +465,15 @@ def describe(action: Action, base_url: str) -> str:
         )
     if action.kind == "start_addon":
         return f"start add-on {action.slug}  (POST {base_url}/addons/{action.slug}/start)"
+    if action.kind == "restart_addon":
+        return (
+            f"restart add-on {action.slug} so it re-reads its options and files  "
+            f"(POST {base_url}/addons/{action.slug}/restart)"
+        )
     if action.kind == "write_config":
         return f"copy {action.src} -> {action.dest}"
+    if action.kind == "require_files":
+        return f"require {action.label} to exist  (a read-only check; nothing is written there)"
     return action.kind
 
 
@@ -581,9 +639,13 @@ class SupervisorClient:
         self._req("POST", f"/addons/{slug}/restart")
 
 
-def observe(client: SupervisorClient, seed: dict) -> dict:
+def observe(client: SupervisorClient, seed: dict, files_root: Path = DEFAULT_FILES_ROOT) -> dict:
     """Snapshot the hub so plan_actions can decide what still needs doing."""
     dests = [s["dest"] for s in seed.get("steps", []) if s.get("dest")]
+    # Files a step REQUIRES (and never writes): present if they exist under
+    # files_root — `/` on the hub. Looked up for every step that names any, so
+    # one snapshot serves whichever features are enabled.
+    required = [p for s in seed.get("steps", []) for p in (s.get("requires_files") or [])]
     addons = client.get_addons()
     # Current options for any installed add-on a step will configure — so we can
     # skip the write when it is already set (and merge, not stomp, when it isn't).
@@ -614,7 +676,10 @@ def observe(client: SupervisorClient, seed: dict) -> dict:
         "config_entries": config_entries,
         # A config is "present" if EITHER accepted extension exists (see
         # config_siblings) — otherwise we'd write a duplicate config.yml.
-        "existing_files": {d for d in dests if any(os.path.exists(p) for p in config_siblings(d))},
+        "existing_files": (
+            {d for d in dests if any(os.path.exists(p) for p in config_siblings(d))}
+            | {p for p in required if under_root(files_root, p).exists()}
+        ),
         "addon_options": addon_options,
     }
 
@@ -652,7 +717,12 @@ def steps_to_json(steps: list[StepPlan]) -> str:
     return json.dumps([dataclasses.asdict(s) for s in steps], indent=2)
 
 
-def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) -> list[str]:
+def execute(
+    steps: list[StepPlan],
+    client: SupervisorClient,
+    assets_root: Path,
+    files_root: Path = DEFAULT_FILES_ROOT,
+) -> list[str]:
     """Perform the plan, narrating as it goes. Fail-closed: on the first error,
     stop and say so — re-running is safe because every action is idempotent.
 
@@ -672,7 +742,7 @@ def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) 
                 continue
             print(f"    - {describe(a, client.base)}")
             try:
-                _perform(a, client, assets_root)
+                _perform(a, client, assets_root, files_root)
             except (SupervisorError, OSError) as e:
                 if a.optional:
                     # Advisory: say it clearly and carry on. A hub that stopped
@@ -695,11 +765,46 @@ def execute(steps: list[StepPlan], client: SupervisorClient, assets_root: Path) 
     return incomplete
 
 
-def _perform(a: Action, client: SupervisorClient, assets_root: Path) -> None:
+def _perform(
+    a: Action,
+    client: SupervisorClient,
+    assets_root: Path,
+    files_root: Path = DEFAULT_FILES_ROOT,
+) -> None:
     if a.kind == "register_repo":
         client.register_repository(a.url)
     elif a.kind == "install_addon":
         client.install_addon(a.slug)
+    elif a.kind == "require_files":
+        # Read-only, and re-checked here rather than trusted from the
+        # snapshot (which may be the FRESH_HUB assumption). Two refusals,
+        # deliberately distinct: a missing FILE names the path and what
+        # belongs there; a folder this run cannot see at all says that, so a
+        # runner without the mount is never reported as a missing certificate.
+        missing = [p for p in a.paths if not under_root(files_root, p).exists()]
+        if not missing:
+            return
+        unseen = sorted(
+            {
+                str(Path(p).parent)
+                for p in missing
+                if not under_root(files_root, str(Path(p).parent)).is_dir()
+            }
+        )
+        if unseen:
+            raise OSError(
+                f"this run cannot see {', '.join(unseen)} — the folder is not visible from "
+                "here, so whether the files exist is unknown. Run provision.sh from the Home "
+                "Assistant terminal (the Terminal & SSH add-on sees it), or point "
+                "host_provision.sh at the folder's host path (it names the setting when the "
+                "path it expects is not there)."
+            )
+        raise OSError(
+            f"{', '.join(missing)} not found — what belongs there: "
+            + (a.note or "a file this plan needs and does not create")
+        )
+    elif a.kind == "restart_addon":
+        client.restart_addon(a.slug)
     elif a.kind == "set_options":
         # Merge over whatever is currently set so we change only the keys we
         # mean to (e.g. `mode`) and never wipe a user's other options.
@@ -777,6 +882,15 @@ def main(argv: list[str] | None = None) -> int:
         default=REPO,
         help="root the plan's `source` paths resolve against (default: repo root)",
     )
+    ap.add_argument(
+        "--files-root",
+        type=Path,
+        default=DEFAULT_FILES_ROOT,
+        help=(
+            "root the plan's `requires_files` paths are looked for under (default: /, the hub "
+            "itself); a runner that mounts the hub's ssl folder elsewhere points this at it"
+        ),
+    )
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Supervisor base URL")
     ap.add_argument(
         "--token",
@@ -834,7 +948,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.token:
                 print("--observe needs a token (SUPERVISOR_TOKEN) to query the hub", file=sys.stderr)
                 return 2
-            observed = observe(SupervisorClient(args.base_url, args.token), seed)
+            observed = observe(SupervisorClient(args.base_url, args.token), seed, args.files_root)
         steps = plan_actions(seed, observed, features)
         if args.format == "json":
             print(steps_to_json(steps))
@@ -853,12 +967,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     client = SupervisorClient(args.base_url, args.token)
     try:
-        observed = observe(client, seed)
+        observed = observe(client, seed, args.files_root)
     except SupervisorError as e:
         print(f"hub_seed_apply.py: cannot reach the hub: {e}", file=sys.stderr)
         return 1
     steps = plan_actions(seed, observed, features)
-    incomplete = execute(steps, client, Path(args.assets_root))
+    incomplete = execute(steps, client, Path(args.assets_root), args.files_root)
     todo, done = counts(steps)
     print(f"\nHub provisioned: {done} step-action(s) were already in place, {todo} applied.")
     if incomplete:

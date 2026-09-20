@@ -1,19 +1,19 @@
 /*
  * SecuraCV Canary — CSI module pipeline integration (PIO build)
  *
- * Bridges the canary product's existing low-level CSI HAL
- * (`firmware/canary/lib/securacv_csi/`) into the cross-product CSI
+ * Bridges the canary product's CSI feed (the `csi::` adapter in
+ * `firmware/canary/lib/securacv_csi/`, over the canonical HAL in
+ * `firmware/common/csi/src/csi_hal.cpp`) into the cross-product CSI
  * module pipeline + privacy chokepoint + 10-min sliding-window
  * bundler that lives in `firmware/common/csi/`.
  *
- * Why a bridge: the canary PIO build has its own `csi_features_t`
- * declared in `securacv_csi.h`, byte-identical to the common library's
- * `csi_features_t` in `csi_types.h`. To avoid pulling both headers
- * into the same translation unit (typedef collision), the bridge
- * functions take `const void*` and the integration TU only sees the
- * common definition. The shared 32-byte vector layout is enforced by
- * a runtime size check at init() so any future drift breaks loud and
- * early instead of silently scrambling features.
+ * Why a bridge: main.cpp should not have to include every module header
+ * to feed one window, so the bridge is a small C ABI. It takes
+ * `const void*` for historical reasons — the canary build once carried a
+ * second `csi_features_t` typedef and the two could not meet in one TU.
+ * Since roadmap 22 `securacv_csi.h` includes `csi_types.h`, there is one
+ * struct, and main.cpp's `static_assert(sizeof(csi_features_t) == 36)`
+ * pins the layout the pointer is cast back to.
  *
  * Privacy: every event committed by the modules registered here flows
  * through `csi_event_emit()`, which strips fields outside the per-event
@@ -58,9 +58,8 @@ bool securacv_csi_modules_init(void);
  * sensing aggregator has consumed the same window. Safe from any
  * task / timer the canary CSI HAL invokes the callback from.
  *
- * `features_blob` MUST point to a `csi_features_t` matching the
- * canary HAL's struct layout; the bridge static-asserts the size is
- * equal to the common library's expectation at init time.
+ * `features_blob` MUST point to a `csi_features_t` (csi_types.h — the
+ * one definition both sides use); main.cpp's static_assert pins its size.
  *
  * Pass nullptr to no-op (e.g. before init has run).
  */
@@ -71,10 +70,10 @@ void securacv_csi_modules_feed(const void* features_blob);
  * facts only main.cpp can see together: the boot's reset classification
  * (crash / watchdog / brownout, the canary-wap reset_is_crash mapping)
  * and the SD state in the module's pinned ABSENT=0 / MOUNTED=1 / ERROR=2
- * numbering. Plain-typed on purpose — main.cpp cannot include
- * tamper_events_module.h without pulling the common `csi_features_t`
- * into the same translation unit as the canary HAL's (the same typedef
- * collision this whole bridge exists to avoid).
+ * numbering. Plain-typed on purpose — it keeps main.cpp free of the
+ * module headers. (The typedef collision that first forced this shape is
+ * gone since roadmap 22; the narrow ABI stays because it is the right
+ * shape.)
  *
  * Safe to call before init(): an emit before the module is registered is
  * silently dropped by the chokepoint, and the module re-attempts the

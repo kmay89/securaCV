@@ -26,7 +26,8 @@
 /* Forward-declared (deliberately NOT #included): PlatformIO's LDF chain scanner
  * ignores #if guards on #include lines, so #including securacv_csi.h here would
  * drag the whole CSI lib into non-CSI builds. This C-ABI predicate is defined
- * in securacv_csi when FEATURE_CSI is built. */
+ * by the canonical CSI HAL (firmware/common/csi/src/csi_hal.cpp, compiled into
+ * every canary env by platformio.ini's build_src_filter — roadmap 22). */
 extern "C" bool csi_is_running(void);
 #endif
 

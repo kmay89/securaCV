@@ -78,6 +78,9 @@ tol_press = 0.10;    // catalog default — core_tol_press() (canary_core_lib)
 
 /* [Snap bezel] */
 snap_n       = 4;     // nubs / wall slots
+pry_notch    = true;  // a fingernail notch in the drum rim at pry_ang (mid-wall between two snap windows,
+                      // away from the USB and keyhole): the bezel snaps flush Ø-for-Ø with nothing to lift it by
+pry_ang      = 0;     // degrees, 0 = +X  // [0:15:345]
 snap_w       = 6.5;   // slot width (arc chord)
 snap_h       = 1.8;   // slot height
 snap_depth   = 2.6;   // slot center below the drum rim
@@ -150,6 +153,9 @@ snap_defl = skirt_od/2 + snap_proud - bore_d/2;
 assert(snap_strain(skirt_t, snap_defl, skirt_dep - 0.6) <= snap_budget_cycle(),
        str("bezel fingers strain ", round(snap_strain(skirt_t, snap_defl, skirt_dep - 0.6)*1000)/10,
            " % — over the ", round(snap_budget_cycle()*1000)/10, " % cycle budget: thin skirt_t or shrink snap_proud"));
+assert(!pry_notch || min([for (a = snap_angs()) abs(((pry_ang - a + 540) % 360) - 180)]) >= 20,
+       "pry_ang lands on a snap window — keep it 20 degrees off snap_angs()");
+assert(!pry_notch || abs(((pry_ang - usb_ang + 540) % 360) - 180) >= 25, "pry_ang lands on the USB slot");
 assert(drum_h - skirt_dep >= z_pcb + pcb_t + 0.2,
        "the bezel skirt lands on the display PCB rim — shorten skirt_dep (it must float 0.2 over pcb_t)");
 module drum() {
@@ -178,6 +184,9 @@ module drum() {
         }
         // rim lead-in — the disc and the bezel skirt both enter here
         translate([0, 0, drum_h - 0.6]) cylinder(d1 = bore_d, d2 = bore_d + 1.2, h = 0.61);
+        // pry notch: 8 wide, 0.6 into the rim's outer edge, 0.8 down
+        if (pry_notch) rotate([0, 0, pry_ang])
+            translate([drum_d/2, 0, drum_h]) cube([2*0.6, 8, 2*0.8], center = true);
     }
     // LiPo fence rails on the drum floor (cell strapped with foam tape)
     if (opt_batt) for (s2 = [1, -1])
@@ -217,7 +226,10 @@ module bezel() {
                 nz = -snap_depth;             // slot center, bezel frame
                 translate([skirt_od/2 - 0.5, 0, nz]) hull() {
                     translate([0, -snap_w/2 + 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
-                    translate([snap_proud + 0.5, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
+                    // tip cube is 0.5 wide: its OUTER face lands at skirt_od/2 + snap_proud,
+                    // so the strain assert's snap_defl is the travel the finger really makes
+                    // (drawn +0.5 it stood 0.25 prouder than the number the budget was run on)
+                    translate([snap_proud + 0.25, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
                     translate([0, snap_w/2 - 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
                 }
             }

@@ -34,9 +34,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Self-update, the same shape as the Flasher (desktop/): the updater plugin
 # polls the rolling `lab-latest` release pointer, the dialog plugin asks the
 # user (with the release's own notes) before anything installs, and the
-# process plugin relaunches into the new version. Desktop only — the iOS /
-# iPadOS builds (desktop-mobile-release.yml) update through the App Store,
-# and the updater plugin doesn't exist there.
+# process plugin relaunches into the new version. Desktop only — an iOS /
+# iPadOS build of this shell (desktop-lab/MOBILE.md) would update through the
+# App Store, and the updater plugin doesn't exist there.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"

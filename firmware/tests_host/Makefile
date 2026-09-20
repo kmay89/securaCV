@@ -11,6 +11,7 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Werror
+NODE     ?= node
 
 MR60_DIR = ../common/sensors/mmwave_mr60
 MR60_SRC = $(MR60_DIR)/mr60_uart.cpp \
@@ -86,6 +87,36 @@ BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 # join fails again, forever — reproduced as a unit test so it cannot come back.
 WIFIJOIN_HDR = ../common/network/wifi_join_policy.h
 WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
+
+# MQTT broker transport decision (common/network/mqtt_transport_logic.h): the
+# ONE place the fleet decides whether the broker socket is plain, TLS with a
+# verified CA, TLS pinned to a certificate fingerprint, or the explicit lab
+# opt-in — consumed by canary-display / -sense / -vision (WiFiClientSecure)
+# and canary-wap (esp_mqtt). The headline property is fail-closed: a TLS mode
+# with a missing or malformed CA / pin is REFUSED, never quietly downgraded
+# to an unverified handshake. Also pins the pin spelling the ESP32 core's
+# verify() parses (SHA-256, 32 bytes) and the secret-free failure texts.
+# Pure header, no Arduino deps.
+MQTTTLS_HDR = ../common/network/mqtt_transport_logic.h
+MQTTTLS_BIN = $(BUILD_DIR)/test_mqtt_transport_logic
+
+# The canary (firmware/canary) API half of that decision
+# (canary/lib/securacv_mqtt/src/mqtt_tls_fields.h): POST /api/mqtt/config's
+# optional `tls` / `fp` and POST /api/mqtt/ca's PEM, turned into the NVS
+# writes decide_u8() will accept — or refused at save time with the header's
+# own constant text. The HTTP handler around it is compile-tested by CI only
+# (release_ha), so this is where the validation is proven. Pure header.
+MQTTFIELDS_HDR = ../canary/lib/securacv_mqtt/src/mqtt_tls_fields.h
+MQTTFIELDS_BIN = $(BUILD_DIR)/test_mqtt_tls_fields
+
+# The canary setup wizard's hub step (canary/lib/securacv_webui/src/
+# securacv_setup_page.cpp), the one UI that writes those fields: its script
+# is lifted out of the C++ raw string and driven against a stub DOM and a
+# recording fetch (node --test, no browser, no npm), asserting on the body
+# that reaches POST /api/mqtt/config — a re-save must never flip a TLS unit
+# back to plain. Runs with the C++ suites below; node is on every runner
+# this Makefile runs on.
+SETUPPAGE_JS = test_canary_setup_page.test.js
 
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
@@ -265,6 +296,26 @@ STORY_DIR  = ../common/story
 STORY_HDRS = $(STORY_DIR)/story.h $(STORY_DIR)/story_scripts.h
 STORY_BIN  = $(BUILD_DIR)/test_story
 
+# The canary product's CSI adapter over the canonical HAL (roadmap 22):
+# canary/lib/securacv_csi/src/securacv_csi.cpp is the csi:: spelling of
+# csi_hal::, and the canary PlatformIO envs compile common/csi/src/csi_hal.cpp
+# + csi_features.cpp beside it. This links all three against a stubbed
+# esp_wifi CSI driver (stubs/csi_hal/) and pushes frames through the one
+# registered callback: the adapter resolves to the canonical symbols (a HAL
+# body that grew back under the same external name fails to link), the
+# canary/include/health_log.h bridge answers csi_hal.cpp's __has_include
+# probe, v[25] (dropped-frame estimate) is filled, and the silence watchdog
+# fires on the csi::process() path. Host-only — the device build is
+# firmware.yml's PlatformIO leg; check_csi_sync.sh is the shape gate.
+CSIHAL_DIR  = ../common/csi/src
+CSIHAL_ADP  = ../canary/lib/securacv_csi/src
+CSIHAL_SRC  = $(CSIHAL_ADP)/securacv_csi.cpp \
+              $(CSIHAL_DIR)/csi_hal.cpp $(CSIHAL_DIR)/csi_features.cpp
+CSIHAL_HDRS = $(CSIHAL_ADP)/securacv_csi.h ../canary/include/health_log.h \
+              $(CSIHAL_DIR)/csi_hal.h $(CSIHAL_DIR)/csi_features.h \
+              $(CSIHAL_DIR)/csi_types.h $(wildcard stubs/csi_hal/*.h)
+CSIHAL_BIN  = $(BUILD_DIR)/test_csi_hal_adapter
+
 .PHONY: all run clean
 all: run
 
@@ -297,6 +348,12 @@ $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
+
+$(MQTTTLS_BIN): test_mqtt_transport_logic.cpp $(MQTTTLS_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_mqtt_transport_logic.cpp -o $@
+
+$(MQTTFIELDS_BIN): test_mqtt_tls_fields.cpp $(MQTTFIELDS_HDR) $(MQTTTLS_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common -I ../canary/lib/securacv_mqtt/src test_mqtt_tls_fields.cpp -o $@
 
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
@@ -358,7 +415,12 @@ $(CALMATH_BIN): test_calendar_math.cpp $(CALMATH_HDR) Makefile | $(BUILD_DIR)
 $(WXCORE_BIN): test_wx_core.cpp $(WXCORE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../projects/canary-display/include test_wx_core.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN)
+$(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCONFIG_IDF_TARGET_ESP32S3=1 -DCONFIG_ESP_WIFI_CSI_ENABLED=1 \
+	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
+	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -368,6 +430,8 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
 	./$(WIFIJOIN_BIN)
+	./$(MQTTTLS_BIN)
+	./$(MQTTFIELDS_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
@@ -388,6 +452,8 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FIGART_BIN)
 	./$(CALMATH_BIN)
 	./$(WXCORE_BIN)
+	./$(CSIHAL_BIN)
+	$(NODE) --test $(SETUPPAGE_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

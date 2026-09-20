@@ -77,7 +77,7 @@ struct Args {
     #[arg(long, env = "MQTT_CLIENT_ID", default_value = "securacv-alert-relay")]
     mqtt_client_id: String,
 
-    /// The ntfy topic URL to POST pokes to, e.g. https://ntfy.sh/<unguessable>.
+    /// The ntfy topic URL to POST pokes to, e.g. `https://ntfy.sh/<unguessable>`.
     /// The topic name is the secret — generate it, don't pick it.
     #[arg(long, env = "NTFY_URL")]
     ntfy_url: Option<String>,

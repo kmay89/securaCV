@@ -1,10 +1,12 @@
 name: PWK Wizard Tests
 
 # Scoped to the Privacy Witness Kernel add-on only. Runs the pairing-
-# wizard proxy unit tests (PR-8). The custom_components/securacv tests are
-# run separately by python.yml (ruff + mypy + pytest). Triggers only on
-# changes under privacy_witness_kernel/** so it stays off the firmware
-# build path.
+# wizard proxy unit tests (PR-8), shellcheck over the entry scripts, the
+# run_lib unit tests and the kernel-config render check (which also covers
+# the Docker sidecar's copy of the same heredoc). The
+# custom_components/securacv tests are run separately by python.yml
+# (ruff + mypy + pytest). Triggers only on changes under
+# privacy_witness_kernel/** so it stays off the firmware build path.
 
 on:
   push:
@@ -54,7 +56,15 @@ jobs:
           shellcheck --shell=bash --exclude=SC1091 \
             privacy_witness_kernel/run.sh \
             privacy_witness_kernel/run_lib.sh \
-            privacy_witness_kernel/tests/test_run_lib.sh
+            privacy_witness_kernel/tests/test_run_lib.sh \
+            privacy_witness_kernel/tests/test_config_render.sh
 
       - name: Run run_lib tests
         run: bash privacy_witness_kernel/tests/test_run_lib.sh
+
+      # Lifts the kernel config heredocs out of run.sh (and the sidecar's
+      # entrypoint), renders them with bash and parses them with jq against
+      # the key sets src/config.rs accepts — deny_unknown_fields makes a
+      # typo there a boot crash that nothing else in this job would see.
+      - name: Render and parse the kernel config blocks
+        run: bash privacy_witness_kernel/tests/test_config_render.sh

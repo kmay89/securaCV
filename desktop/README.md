@@ -49,7 +49,13 @@ NVS provisioning, the serial monitor/receipt parser, and the WE2 engine are
 split into `release.rs`, `provisioning.rs`, `serial_monitor.rs`, and `we2.rs`.
 
 For `usb-secrets` images, Wi-Fi and MQTT values are patched into the ESP32 NVS
-partition only after the untouched release image verifies. Passwords are not
+partition only after the untouched release image verifies. The broker block
+also carries the TLS mode with its CA certificate or SHA-256 fingerprint
+(`mqtt_tls` / `mqtt_ca` / `mqtt_fp` — the same keys the browser flasher
+seeds; `canary-local/tests/desktop_parity.test.js` pins the two forms equal,
+and the catalog's `broker_tls` withholds the TLS modes from a build that
+refuses them). The CA and the fingerprint are public values and persist with
+the host in local prefs, never in the OS secret store. Passwords are not
 logged or serialized, and the UI clears them after a successful write. The
 patched image is handed to `espflash` through an atomically-created, randomly
 named private temporary file (mode 0600 on Unix) that is removed on every
@@ -88,20 +94,16 @@ The workflow downloads the espflash sidecars, builds a **universal** macOS
 `latest.json` self-update manifest. You can also run it from the Actions tab
 (**Run workflow**) for a smoke build.
 
-### One-button Mac app build/release
+### Both desktop apps at once
 
-To build both native Mac apps at once:
-
-1. Open [**Actions → Build Mac apps (Flasher + Lab)**](https://github.com/kmay89/securaCV/actions/workflows/mac-apps-release.yml).
-2. Click **Run workflow**, choose the **main** branch, and leave **publish**
-   unchecked for a build-only smoke run.
-3. Check **publish** only when you want to publish the Flasher release and
-   create the sibling SecuraCV Lab draft release.
-
-GitHub only shows a newly added workflow in the Actions sidebar after its file
-exists on the repository's default branch. The launcher is now on **main**. If
-the entry is still missing, refresh the Actions page; as a fallback, run
-**Desktop Flasher — build & release** and **Desktop app release** separately.
+**Actions → "Update everything (only what needs it)"** is the launcher for
+both apps (and everything else). Leave **publish** unchecked for build-only
+smoke runs, tick it to publish the Flasher and cut the sibling Lab draft. It
+dispatches only what is ahead of its last tag; to build both apps regardless,
+set **force** to `flasher,lab` (`force` does not narrow the run — the other
+targets are still planned; tick **plan_only** first to see what a press would
+do). Which button, when, and when not:
+[`docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md).
 
 ### One-time: real self-update signing (recommended)
 

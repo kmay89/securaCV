@@ -94,7 +94,16 @@ jobs:
         #    basis volume and that a qty-1 price yields UNRESOLVED, not GO.
         #  • BOM pricing — a distributor miss must demote, never republish stale
         #    data as live; every exception kind fires only when its condition holds.
-        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+        #  • Firmware SBOM (test_gen_firmware_sbom.py) — imports the generator,
+        #    which reads the Arduino core pins out of workflow YAML and the
+        #    sketch.yaml profiles, so PyYAML is installed here as well as in
+        #    the byte-gate step below; and it runs the strict CycloneDX 1.5
+        #    schema check, so cyclonedx-python-lib is too, at the same exact
+        #    pin as that step. The tests import it unconditionally: a
+        #    skipTest on ImportError reads as covered while catching nothing.
+        run: |
+          python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0'
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
@@ -221,6 +230,17 @@ jobs:
         # the manifests yet (roadmap §4 wave 1), so this is the only gate that
         # can catch a stale join.
         run: python3 scripts/lint_device_manifests.py
+      - name: Manifest-owned CAD knobs equal the case literals
+        # Since roadmap §4 wave 3 (Parametrize) a manifest's `cad.params` OWNS
+        # the board/module knobs of its case: gen_cad_params.py writes them
+        # into the .scad as the same literals the Customizer, the web builder
+        # and lint_design_lang.py already read, and this proves the file still
+        # says what the manifest says. The manifests step above already runs
+        # this check; the generator's own --check runs here too because its
+        # failure prints the regen order to follow after an intended edit,
+        # and because this workflow is unfiltered — a manifest-only edit is
+        # gated here even though enclosure.yml never sees it.
+        run: python3 docs/hardware/enclosure/gen_cad_params.py --check
       - name: One home for the espressif32 / pioarduino platform pin
         # The same pioarduino release URL was typed in six .ini files and the
         # official espressif32 pin in three more, each trusting a "bump in
@@ -230,19 +250,41 @@ jobs:
         # that is not there, and a section no env uses. The table and the open
         # question about the version spread: firmware/PLATFORMS.md.
         run: python3 firmware/scripts/lint_platform_pins.py
-      - name: Display env names in workflows exist in flavors.json
+      - name: Display env list is derived from flavors.json, never typed
         # The release workflows (firmware-release.yml, flasher-release.yml)
-        # build the Canary Display board envs from lists typed into each by
-        # hand, with no gate against flavors.json — and the two disagreed:
-        # the AMOLED shipped from the tag ceremony and was missing from every
-        # dev publish. flavors.json now carries `release_envs` (the set both
-        # must build) and this checks every literal canary-display-<env> a
-        # workflow names against it, so a typo or a retired env cannot hide,
-        # and that release_envs is a subset of what CI builds with a flasher
-        # product for each. Deriving the release steps themselves from
-        # `flavor_envs.py --release --with-core` is the follow-up
-        # (docs/IMPROVEMENT_ROADMAP.md item 23).
+        # used to build the Canary Display board envs from lists typed into
+        # each by hand, with no gate against flavors.json — and the two
+        # disagreed: the AMOLED shipped from the tag ceremony and was missing
+        # from every dev publish. flavors.json carries `release_envs` (the
+        # set both must build); each workflow now has a "Resolve the
+        # canary-display release envs" step that emits that list through
+        # `flavor_envs.py canary-display --release --json` and iterates it.
+        # This checks that shape (the derivation present, no literal
+        # `pio run -e canary-display-<env>` creeping back), that every
+        # literal canary-display-<env> a workflow still names is a declared
+        # env, and that release_envs is a subset of what CI builds with a
+        # flasher product for each (docs/IMPROVEMENT_ROADMAP.md item 23).
         run: python3 firmware/scripts/flavor_envs.py --check-workflows
+      - name: Firmware SBOM is derived from the build inputs and is strict CycloneDX 1.5
+        # sbom/sbom-firmware.cdx.json is generated and committed
+        # (scripts/gen_firmware_sbom.py). It used to be a heredoc in sbom.yml
+        # naming a core the shipped images had left behind. A platform pin,
+        # lib_deps line, library manifest, Arduino core pin, sketch.yaml
+        # profile or firmware version that moves without the file is a bill
+        # of materials naming the wrong parts; this byte-compares it on every
+        # PR. --validate holds the same document to the CycloneDX 1.5 JSON
+        # schema in strict mode (cyclonedx-python-lib's JsonStrictValidator;
+        # the schema ships in the wheel, no network) — a registry URL with a
+        # space in it passed every other check until that one ran by hand,
+        # and now it is a gate. The pin is exact and the json-validation
+        # extra is not optional: it brings the format checkers, and a bare
+        # install would quietly stop checking IRIs. The generator also
+        # refuses a tree whose sketch.yaml core pins disagree with the
+        # workflows' core-version rows (sbom/README.md, firmware/PLATFORMS.md).
+        # PyYAML: both Arduino axes are YAML.
+        run: |
+          python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0'
+          python3 scripts/gen_firmware_sbom.py --check --validate
       - name: common/ library manifests are LDF-consistent
         run: python3 scripts/lint_common_lib_manifests.py
       - name: BOM CSVs — schema-clean and wired into the generator

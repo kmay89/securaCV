@@ -17,6 +17,12 @@ addr = "127.0.0.1:8799"    # Loopback only by default for security
 # Per-IP request cap on every endpoint except /health (0 disables).
 # Also overridable via WITNESS_API_RATE_LIMIT_PER_MINUTE.
 # rate_limit_per_minute = 120
+# The fleet peer summary event_mqtt_bridge writes (its --fleet-peers-path /
+# WITNESS_FLEET_PEERS_PATH). When set, GET /api/fleet lists the Canaries the
+# bridge has heard over MQTT beside the kernel's own row, so the Witness Wall
+# shows the fleet. A peer reads online only after a signed publish verified
+# against the key pinned for it (see src/fleet_peers.rs).
+# fleet_peers_path = "/run/witness/fleet_peers.json"
 
 # Ingest backend selection ("file", "rtsp", "v4l2", or "esp32")
 [ingest]
@@ -224,6 +230,7 @@ skew_tolerance_s = 30
 #   WITNESS_SENSITIVE_ZONES - Comma-separated list of sensitive zones
 #   WITNESS_API_ADDR    - Override api.addr
 #   WITNESS_API_TOKEN_PATH - Override api.token_path
+#   WITNESS_FLEET_PEERS_PATH - Override api.fleet_peers_path
 #   WITNESS_RETENTION_SECS - Override retention.seconds
 #   WITNESS_RETENTION_CHECK_INTERVAL_SECS - Override retention.check_interval_seconds
 #   WITNESS_STORAGE_HEALTH_ENABLED - Override storage_health.enabled (true/false)

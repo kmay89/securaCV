@@ -19,6 +19,7 @@
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_board_lib.scad>  // board registry — the MR60 numbers the knobs cite
+use <canary_rib_lib.scad>    // the back rim (plate_ribs loop)
 
 /* [What to render] */
 part = "plate";      // ["plate"]
@@ -31,6 +32,9 @@ screw_gap = 83.3;    // 6-32 device-screw spacing (single-gang standard)
 dev_screw_d = 3.7;   // 6-32 clearance
 lid_edge = 0.8;      // face edge chamfer — core_face_edge()
 corner_r = 3.0;      // plate corner radius — core_corner_r(); was a bare 4 in a part whose whole job is making Sense units read as a set
+back_rim = 1.5;      // rim on the back, inboard of the edge (rib_lib loop): the plate bears on its rim like a
+                     // molded wallplate does, so a rough wall cannot rock it and the 6-32s pull on a frame.
+                     // 0 = flat back  // [0:0.5:3]
 
 /* [Boards] — MR60BHA2 carrier + stacked XIAO ESP32-C6. MEASURE */
 vm_l     = 44.0;      // brd_l("mr60") — canary_board_lib
@@ -66,6 +70,8 @@ rail_h  = vm_standoff;                // solid plate back; the XIAO hangs deeper
 assert(vm_standoff > vm_front_h, "vm_standoff must clear the carrier's front-side parts (vm_front_h)");
 assert(radome_t >= 0.6 && radome_t < plate_t, "radome_t must be printable and thinner than plate_t");
 assert(vm_w + 2*(clip_clear + clip_t) + 2 < plate_w, "carrier too wide for the plate");
+assert(back_rim == 0 || plate_h/2 - 1.0 - 1.6 > screw_gap/2 + dev_screw_d/2 + 1.0,
+       "the back rim runs over the device-screw holes — shrink screw_gap or drop back_rim");
 echo(str("Canary Sense single-gang plate v0.1-dev — ", plate_w, " x ", plate_h,
          " mm, radome ", radome_t, " mm  (IN DEVELOPMENT)"));
 
@@ -96,6 +102,9 @@ module plate() {
             translate([lp_dx, lp_dy, -0.1]) cylinder(d = lp_d + 2*tol_press, h = plate_t + 1);
             translate([lux_dx, lux_dy, -0.1]) cylinder(d = lux_d, h = plate_t + 1);
         }
+        // back rim (canary_rib_lib): the loop only — the box opening owns the middle
+        if (back_rim > 0)
+            mirror([0, 0, 1]) plate_ribs(plate_w, plate_h, plate_t, back_rim, r = corner_r, inset = 1.0, n = 0);
         // carrier rails + clips on the BACK (single-gang box device opening is ~45 x 65:
         // the carrier + XIAO recess into the box; rails only need to clear the clips)
         for (s = [1, -1]) {

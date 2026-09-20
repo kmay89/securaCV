@@ -31,6 +31,8 @@ common/
 ├── network/        # Network modules
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h
+│   ├── mqtt_transport_logic.h   # broker socket decision: plain / TLS-CA / pinned / lab, fail-closed (host-tested)
+│   ├── mqtt_transport.h         # its WiFiClientSecure half for the PubSubClient products (header-only)
 │   └── setup_portal*.{h,cpp}
 ├── bluetooth/      # BLE management
 │   └── bluetooth_mgr.h

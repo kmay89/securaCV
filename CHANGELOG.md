@@ -91,6 +91,584 @@
   imported within the retention window (`[retention]`, default 7 days); a
   head pruned before import can only be stored as `digest`. The full
   reader/writer compatibility matrix is in `docs/timestamping.md`.
+### The add-on lists the fleet, the whole line speaks broker TLS, the 7" glass takes a location, the SBOM is schema-checked
+
+- **The Home Assistant add-on and the Docker sidecar point the kernel and
+  the MQTT bridge at one fleet-peers file**, so `GET /api/fleet` lists the
+  Canaries the bridge has heard instead of the kernel alone: `run.sh` names
+  `/config/fleet_peers.json` in both kernel config blocks
+  (`api.fleet_peers_path`) and on `event_mqtt_bridge`'s argv
+  (`--fleet-peers-path`); `docker/sidecar/entrypoint.sh` does the same under
+  `/data`. A render-and-parse test holds every key of every heredoc to what
+  `src/config.rs` accepts under `deny_unknown_fields`, and fails under a
+  misspelled key, a dropped argv element or a key the kernel would refuse.
+  The docs say what the Witness Wall still needs from an add-on install (the
+  8799 host port, which exposes the tokenless roll-call to the LAN;
+  `http://<host>:8799` typed into the Wall once; the MQTT publisher enabled)
+  and that the summary file — pinned public keys, coarse wellbeing words,
+  `0600` — enters HA backups by design. No new option; existing add-ons pick
+  it up at the next product release. Review round (Codex on #1686): the api
+  blocks name the file only while a bridge keeps it, so turning the
+  publisher off stops serving the rows a past bridge pinned — the file is
+  kept for its keys, not deleted — and the render test covers both states.
+- **Both flashers (browser Lab and desktop Flasher) now carry the broker TLS
+  controls** — mode select, CA certificate, SHA-256 fingerprint — writing the
+  `mqtt_tls` / `mqtt_ca` / `mqtt_fp` keys the firmware has read since wave 3;
+  the plain-only nightstand-c6 is offered Plain only, with the firmware's
+  reason, via the catalog's new derived `broker_tls`, whose generator refuses
+  a `CANARY_MQTT_PLAIN_ONLY` spelling it cannot parse instead of guessing;
+  the desktop remembers the mode, CA and pin with the host without a
+  plain-only or broker-less board overwriting them; the port is suggested
+  (8883), never rewritten; `desktop_parity.test.js` pins the two forms equal.
+  Host-tested, no bench pass.
+- **SBOM — strict CycloneDX 1.5 schema validation is a hard gate** in
+  lint.yml (committed copy) and sbom.yml (uploaded artifact), via
+  `gen_firmware_sbom.py --validate` on a pinned cyclonedx-python-lib, which
+  also asserts the file's specVersion (the schema cannot) and refuses a write
+  flag it would otherwise drop; the generator reads the sketch.yaml core and
+  library pins, lists the profiles as build paths, refuses a profile-less
+  sketch.yaml, and refuses a tree where the profiles disagree with the
+  workflows' core-version rows; the validator pin is one string across the
+  workflows, README and generator, held by a test. The WAP's Arduino-CLI rows
+  floating on "latest" above its 3.3.8 sketch pin is recorded as a release
+  decision, not fixed here. Review round (Codex on #1686): the agreement is
+  scoped per product — a row's pin is answered only by the profiles of the
+  product it builds, and a profile's pin only by that product's rows or its
+  own PlatformIO core.
+- **`release_ha` joins `firmware/canary`'s PR-CI build envs** (`firmware/flavors.json`
+  `build_envs`): the Home Assistant MQTT image, the only canary env that
+  compiles `lib/securacv_mqtt`, is built on every PR and its OTA-slot guard
+  fires there instead of on the release; a test pins that every guarded
+  image is one PR CI builds; the SBOM lists the env.
+- **`firmware/canary` (`securacv_mqtt`) adopts the shared broker-TLS
+  transport and gains a way to set it** — the setup wizard's hub step,
+  `POST /api/mqtt/config` (`tls`, `fp`) and `POST`/`DELETE /api/mqtt/ca` —
+  with save-time refusal in the firmware's own words, one NVS session per
+  save (TLS keys before credentials, host-tested order) and a wizard that
+  never re-sends a mode it was not asked to change; the connect runs in
+  bounded stages under the canary's 8 s task watchdog. Compile-tested by CI
+  (`release_ha`); decision, field judgment, write order and wizard
+  host-tested; not yet run against a TLS broker.
+- **Hub plan: opt-in `--with broker_tls` step** (`broker-tls`, last in the
+  plan) requires the broker's certificate chain and key in Home Assistant's
+  `ssl` folder, sets the Mosquitto add-on's two file options and restarts
+  the add-on; generic `require_files` / `restart_addon` executor actions
+  with `--files-root`; the host runner mounts the hub's ssl folder read-only
+  only on request (path inferred, `SECURACV_HOST_SSL_DIR` overrides it and
+  the runner says so when it is absent). The plan is the one place the
+  option and file names are spelled, and a test holds the docs to that.
+  Mints no certificate, chooses no trust anchor, cannot verify the listener;
+  host-tested, not run on a hub.
+- **Enclosure CAD, row 21's leftovers.** The Nightstand C6's `model`
+  ternaries — dead branches behind `assert(model == "1.47")` — became the
+  1.47 literals, and its manifest owns the board trio as `ws147` references;
+  the Touch 1.69's `aa_dx = 0.0; aa_dy = 0.0;` line is two lines and both
+  offsets are owned; a manifest may own a second case file of the same
+  build (`cad.also`), and `devices/canary-vision` names the doorbell's, so a
+  Vision knob edit writes both cases and owes both preview sets. 70 knobs
+  across 10 case files, 40 resolved from the registry; the derived chain
+  re-ran with zero bounding boxes moved; only `enclosures.json` /
+  `catalog.json` moved. The 7" frame's panel record stays open, the reason
+  in `devices/README.md`.
+- **Display: Settings › Weather › Location on dash7 / nightstand7** — the
+  coarse weather location is entered on the glass (hemisphere · degrees ·
+  tenths wheels per axis, options centered in each wheel, a live ~11 km
+  cell caption, an explicit *Use This Location*, a *Forget Location* row);
+  the Weather page shows the stored cell and its status reads "Needs a
+  location - tap Location below" instead of "Set a location from the app".
+  Helpers host-tested (every wheel position is on the 0.1° grid inside the
+  loader's range); the roller centering host-measured against LVGL 8.4 and
+  9.5; the LAN page and the API still never carry the grid point; the
+  on-glass display of the cell is disclosed in SECURITY_MODEL.md.
+  CD_SET_WX-only, enums appended: no emulator dist movement. Compile-tested
+  by CI, not bench-tested.
+
+### The device manifest owns its case's board knobs, and the regeneration order is one command
+
+- **`devices/<slug>/device.json` `cad.params` owns the board and module
+  knobs of the released and display cases** — the dimensions a case is cut
+  around (`board_l`, `vm_w`, `stack_sock_h`), never its walls, never a
+  selector. `docs/hardware/enclosure/gen_cad_params.py` **writes** them into
+  the `.scad` as the literal Customizer knob the file always had (the token
+  on the knob's own line, nothing else; CRLF stays CRLF) and `--check`
+  proves the file still says them — in `lint.yml`, in `enclosure.yml`, and
+  through `scripts/lint_device_manifests.py`, which stays the one manifest
+  gate. Nothing reads a manifest at render time: the Customizer, `render.sh`,
+  the fit check, both catalog parsers and `lint_design_lang.py` keep seeing
+  the literal they saw before, so the manifest moved to the front of the
+  chain rather than replacing a link of it. What a maintainer can now do:
+  change a board dimension in the manifest, see the one-line `.scad` diff
+  with `--dry-run <slug>:<knob>=<value>` before anything moves, and let the
+  generator write it.
+- **A knob that is a board fact references the registry; a case measurement
+  is a number.** A value may be `{"brd": "xiao", "dim": "w"}` (a
+  `BRD_REGISTRY` row and column of `canary_board_lib.scad`) or `{"brd_fn":
+  "brd_xiao_w_measured"}` (one of its measured facts), resolved before the
+  write — so correcting a board dimension is an edit to the registry and
+  every owned case follows, with `--check` reporting drift as "registry says
+  X, file says Y". Converted only where the knob's help comment already
+  cites the registry; a knob that merely equals a row by coincidence stays a
+  number. 54 knobs across 8 case files (the WAP, the Vision — shared by the
+  DevKit — the Sense, the two 1.47 sticks, the Watch, the Touch 1.69 and the
+  Dash), 29 of them references; several manifests may name one case, each
+  asserting a subset, and a shared key must agree or the gate names both.
+- **The byte-identity proof.** Every value is the file's literal as it
+  stood, so the wave landed with **zero `.scad` bytes moved**: a write-mode
+  run prints "nothing to write", `git diff --stat` from the wave's base lists
+  no `.scad`, `.stl`, catalog or builder-manifest file, and every generator's
+  `--check` is green. No previews were owed, and none are claimed.
+- **`scripts/regen_cad.py` runs the enclosure regeneration chain as one
+  command**, in the order each generator's inputs dictate: the manifest into
+  the `.scad`, the design-language lint, `render.sh`, the assembled
+  envelopes, the figures and their firmware and Swift mirrors, the flashers'
+  models, the display sketch mirror — then it **stops**, because the
+  emulator dist is upstream of the catalogs and only Actions can build it —
+  and `--from gen_flash` finishes `flash.json`, the builder manifest and the
+  enclosure catalog. `--check` runs every step's check form and names the
+  first stale one; `--previews DIR` renders every part of every changed case
+  at both angles through the README's own recipe, so the preview obligation
+  is a directory, not a memory. It refuses the OpenSCAD steps up front when
+  the binary is missing and says honestly that no button renders STLs for
+  you. Review round (Codex on #1682): a relative `--previews DIR` was handed
+  to OpenSCAD as typed while it ran in the enclosure directory, so every
+  preview reported failed; the directory is resolved once, before any argv
+  is built, with a test that failed 26 of 26 before the fix.
+- **The rehearsal.** The chain was run end to end on a scratch branch with
+  one real edit (`canary-wap` `board_w` 17.5 → 17.8): one `.scad` line, 116
+  clean renders, the WAP's assembled height 36.6 → 36.9 mm, four figure
+  revisions, a moved builder pin, 46 files in all, 26 previews — then
+  reverted. A full run on the landed tree is a fixed point (only OpenSCAD's
+  nondeterministic STL bytes churn; every bounding-box gate stays green).
+- **The CAD ledger the website pins to carries the knobs, the seams and the
+  board registry.** `gen_builder_manifest.py --site` adds, per figure, the
+  resolved `knobs` and the measured `seams_mm`, and `board_registry` /
+  `board_facts` with their evidence rung, to `scad/cad-dims.json` —
+  additively (strip the four keys and the website's committed bytes are
+  reproduced) and unrounded, refused while a manifest disagrees with its
+  case. `--site <checkout> --check` is the carry's first gate; a write run
+  writes only what changed, and `builder_manifest.json` is no longer
+  rewritten when it is already current.
+- **What stays typed, on purpose, and what is open.** `envelope_mm` is not
+  a manifest input — every case derives its outer size from board dims plus
+  walls and the ledger measures it off the STLs, so `figure` stays the join
+  to the AR model. Walls and tolerances are case-owned (the design-language
+  canon); the selectors are chosen per printable set in `render.sh` — a
+  render-plan package that would make them manifest-owned rewrites enclosure
+  CI and re-homes five Lab cards and was not built without the maintainer's
+  yes. Still unowned by construction: the Nightstand C6 (`board_l` /
+  `board_w` are a `model` ternary), the 7" frame (its panel record is typed
+  in `canary_panel_lib.scad`), the Touch 1.69's `aa_dx = 0.0; aa_dy = 0.0;`
+  line, and the doorbell (no manifest names its case). The website's
+  reading of the new ledger keys is the website repo's change, landed on
+  the website branch (website PR #197). One disagreement recorded, not fixed: `canary-local/devices/registry.json`'s
+  hand-typed Dash `body_mm` (113.7 × 73.6 × 16) against the ledger's
+  measured 118 × 79 × 38.9.
+- **One lesson kept (`CLAUDE.md`, "Generated files").** The review round
+  found the generator's checker answering "the file already says it" for a
+  value it could not spell as a Customizer literal — an exponent-form
+  number, NaN, a string holding a comment opener — so a wrong manifest
+  passed `--check` and a write wrote nothing. Every such value is refused by
+  manifest, knob and reason now, a two-statement line is refused whatever
+  the statements, and the registry is read with its comments stripped, as
+  OpenSCAD reads it. A generator that cannot spell a value must refuse, not
+  pass.
+
+### The BUSY Bar surface: witness state on someone else's glass, with the room and the operator reading different things
+
+- **A first-class SecuraCV *display surface*** (`busybar_surface`, the
+  `surface-busybar` feature, pure core in `src/surface/busybar/`) drives a
+  Flipper Devices BUSY Bar over its local HTTP API as a two-audience readout.
+  The design rests on one idea: **the device's two displays map onto the Canary
+  Cards privacy classing.** The room-facing 72x16 matrix renders public-class
+  content only; the operator-facing rear carries chain status, per-Canary
+  liveness with last-seen, the recent verified count, the mode and the
+  transport path. Both come from the same card set a Canary already announces
+  to Home Assistant, through one classing gate — and a unit test pins the card
+  ids and privacy classes to `canary-local/assets/canary-cards.js`, because a
+  drift in classing is a privacy bug rather than a cosmetic one. Design,
+  status and the bench-validation list: `docs/design/busybar_surface.md`.
+- **PII on the front matrix is a `can't`, not a `won't`.** The renderer takes a
+  closed `PublicPhrase` type, never a string: no `From<String>`, no `FromStr`,
+  no constructor accepting free text, and a source-level test asserts none
+  appear. The only variable word is a `ZoneWord` — a place, read from the
+  operator's own config and validated once at load — so no MQTT field, kernel
+  event or HTTP response can be interpolated onto the glass (the retained
+  `meta` name is rear-only for exactly that reason). The grammar closes the
+  abbreviation route specifically: `K. AT DOOR` is refused for its punctuation
+  and `K AT DOOR` for its initial, both at startup with a message naming the
+  zone.
+- **A dead-man's switch answers "fail visible, not silent."** Every drawing
+  carries a device-side expiry shorter than the redraw cadence, so a bridge
+  that dies, a hub that loses power or a LAN that drops takes the calm pulse
+  off the glass instead of freezing it there. No error handling inside the
+  process can give you that, because the dangerous cases are the ones where the
+  process is not running. Losing the broker or the kernel is also its own front
+  state, `NO LINK`, distinct from both healthy and degraded.
+- **Stillness is the alert; motion is reassurance.** The breath means the chain
+  is intact and the witnesses are alive; verification failure or a dropped
+  Canary stops it and shifts the color. There are no flashing alert states and
+  there will not be — an animated alarm trains a household to feel watched by
+  the object whose job is to make watching legible. The breath is also the
+  liveness proof: one redraw cadence drives the motion and arms the expiry, so
+  a dead bridge stops breathing and then goes dark, in that order.
+- **No control on the device can affect witnessing**, built three ways and
+  grepped for in CI: the effect vocabulary has two variants and both are
+  drawing; witness state reaches controls as `&`, never `&mut`; and the broker
+  handle is `SubscribeOnly` with a private inner client, while the kernel is
+  reached with `GET` only (`POST /verify` is deliberately not called — a dial
+  detent must not schedule kernel work). The named cost: you cannot acknowledge
+  the fleet from the bar, only clear the card from this glass. Dark blanks the
+  displays and the rear says out loud that witnessing continues.
+- **The rotary dial scrubs the verified timeline**, one event per detent, over
+  a signed export bundle — read-only, and it cannot un-bucket time. The rear
+  reads `bundle signed`, never `bundle verified`: the kernel's per-event
+  records carry no signature of their own, so claiming one would overclaim
+  (AD-Core section 2.5). A test pins the wording.
+- **Reuse over parallel paths (FR-13).** The surface feeds
+  `fleet_peers::PeerTable` for TOFU pinning, Ed25519 chain verification and
+  replay rejection rather than writing a second verifier; `acoustic_advisory`
+  was factored out of the alert relay so both lanes read the smoke/CO enum by
+  one rule (including the trap that the cumulative counters must never be the
+  gate); and the cloud refusal is the relay's own `validate_url`. The two lanes
+  draw under different application names with the surface's priorities entirely
+  below the relay's, so a real alert always wins the glass.
+- **Two defects found in the shipped Busy Bar lane, fixed in all three places
+  the product touches this hardware.** Colors were six hex digits and the
+  firmware types them `^#[a-fA-F0-9]{8}$` (RGBA) — on firmware that enforces
+  the pattern the draw was rejected and the bar stayed dark with no error an
+  owner could see; the relay, the blueprint and the recipe now all emit eight.
+  And the troubleshooting doc named the wrong status: an unauthenticated Wi-Fi
+  request gets 403, not 401, and USB and loopback bypass the access key
+  entirely, so it is a Wi-Fi-only symptom. A third finding is recorded and
+  deliberately not acted on: `scroll_rate` is documented in pixels per *minute*,
+  which would make the relay's shipped `20` about three and a half minutes to
+  cross the matrix. That one needs a bench, not a guess.
+- **Status honesty.** Nothing here has been run against a real BUSY Bar — the
+  protocol shapes come from the firmware's own OpenAPI specification and the
+  two official client libraries. The physical controls are **designed and not
+  implemented**, because the device pushes input over a protobuf WebSocket
+  whose `BSB_State.State` schema is not published and whose key names have not
+  been matched to the physical dial, switch and lever; guessing either would be
+  worse than waiting. The control lane that works today is MQTT, with a
+  drop-in Home Assistant package. A test fails if the docs stop saying bench
+  validation is pending.
+
+### Release buttons: three redundant launchers retired, one rule for adding the next
+
+- **`release-one-click.yml`, `firmware-release-if-changed.yml` and
+  `mac-apps-release.yml` are gone, and nothing they could do is lost.** None
+  had run since July, and each was one input combination of **"Update
+  everything (only what needs it)"**: `only: firmware` is the firmware-only
+  "release if it moved" check, `force: flasher,lab` re-cuts both desktop apps
+  whether or not they moved (with `publish` unchecked, the build-only smoke
+  run; the rest of the plan still runs — `only:` is the narrowing knob — and
+  the targets with no smoke mode, firmware and the site, sit a build-only run
+  out instead of falling back to a real release; a typo'd target name now
+  fails the run rather than being ignored), and
+  a dev-channel firmware build is `firmware-release.yml`
+  dispatched directly with `channel: dev`, as it always was. The one thing
+  only the one-click launcher did — warn that publishing an already-tagged
+  app version overwrites the shipped release's assets — is now said by the
+  plan itself, in the forced target's summary row (`release_plan.py`, two
+  new unit tests); the `force` input's help text says it takes
+  comma-separated names, which the CLI always accepted.
+  `docs/RELEASE_BUTTONS.md` maps each retired button to what to press
+  instead. The rule going forward: a new thing to ship is a row in
+  `.github/release-targets.yml`, never a new launcher
+  (`.github/RELEASE_LESSONS.md`, 2026-09-08).
+- **`desktop-mobile-release.yml` ("Mobile (iOS) build") is retired too, in
+  its own commit.** It wrapped the Lab's Tauri v2 iOS shell
+  (`desktop-lab/MOBILE.md`), was dispatched once (gated to a no-op) and never
+  produced a build; the iPhone / iPad app that ships is the native companion
+  in `ios/`, through `ios-release.yml` and the `ios` target row. This is a
+  distinct capability, not a duplicate — the local `npm run ios:build` recipe
+  stays, and `MOBILE.md` says how to bring a CI build back (a per-target
+  workflow plus a `release-targets.yml` row, not a launcher).
+
+### The Home Assistant integration carries its own icon, and the HACS mirror carries it too
+
+- **`custom_components/securacv/brand/` is part of the integration.** The
+  icon (256 and 512 px) and logo moved byte-for-byte from `brands/submission/`
+  into the integration directory. Home Assistant 2026.3 and newer serves them
+  at `/api/brands/integration/securacv/…` (a local file takes priority over
+  the brands CDN; no manifest key needed), and HACS's `brands` validation
+  accepts the same folder — so `homeassistant-mirror.yml` no longer excludes
+  it, the mirror's `check_mirror_sync.py` no longer special-cases it, the
+  whole directory is one byte-exact copy, and the monorepo's `validate.yml`
+  runs the brands check instead of ignoring it. The unused root
+  `custom_components/securacv/icon.png` / `icon@2x.png` (read by nothing) are
+  gone. Older Home Assistant shows the generic placeholder; nothing has been
+  submitted to home-assistant/brands — `brands/home-assistant/README.md`
+  records the sizes and the optional recipe. Closes roadmap row 51 with its
+  premise corrected: the mirror README's "HACS does not read `brand/`" was
+  the false claim, not the folder.
+
+### Firmware: one CSI HAL — the canary library is an adapter over `common/csi`
+
+- **`firmware/canary/lib/securacv_csi` no longer carries its own copy of the
+  CSI HAL and feature extractor** (roadmap 22). `securacv_csi.cpp` went from
+  1146 lines to a 76-line `csi::` adapter that delegates to `csi_hal::`, and
+  `securacv_csi.h` includes the canonical `csi_types.h` instead of declaring a
+  twin `csi_features_t`. `firmware/canary/platformio.ini` compiles
+  `common/csi/src/csi_hal.cpp` + `csi_features.cpp` directly, so the image has
+  exactly one `esp_wifi_set_csi_rx_cb` registration.
+- **Three behaviors the canary copy had and canonical lacked moved into
+  `csi_hal.cpp`** (both products get them): `stop()` drains the ring by
+  advancing the consumer's own index; `get_caps()` honors
+  `CONFIG_IDF_TARGET_ESP32S3` / `ESP32S2` as well as the sketch's board
+  macro; and `process()` fills `v[25]` — canonical had left it 0 — with the
+  frames the rate limiter shed that window, the busy-channel meaning
+  `wifi.channel_activity` reads it in (the canary copy had filled the slot
+  with the shortfall, expected minus arrived, which points the other way;
+  one HAL means one meaning, and the canary's `/api/sensing`
+  `dropped_estimate` now carries the shed count).
+- **The canary PIO build's CSI watchdog now runs.** The old `csi_hal::` shim
+  checked it only inside a `csi_hal::process()` nobody called, so the
+  5 s-silence recovery `csi_modules_integration.cpp` configures had never
+  fired there. `firmware/canary/include/health_log.h` answers the HAL's
+  `__has_include` probe so its diagnostics keep landing in the canary health
+  log rather than only on the serial console.
+- **`firmware/scripts/check_csi_sync.sh` guards the shape:** a name-based
+  check that the adapter defines nothing the canonical HAL or extractor
+  defines (limits stated in the script), no direct driver calls, a 120-line
+  budget, the header must consume `csi_types.h`, and the ini must compile the
+  HAL. `firmware/tests_host/test_csi_hal_adapter.cpp` (run by `make -C
+  firmware/tests_host`) links the adapter against the real `csi_hal.cpp` +
+  `csi_features.cpp` over a stubbed esp_wifi driver and pushes frames through
+  the one registered callback — single registration, `v[25]`, and the
+  watchdog firing on `csi::process()`. Host-tested only; the canary envs are
+  compile-tested by `firmware.yml`'s PlatformIO leg.
+
+### CSI: one transmitter per window
+
+- **The CSI HAL filters on the transmitter address.** Every decoded frame on
+  the channel used to land in the same 1 s window — neighbor APs' beacons,
+  other households' stations, peer probes, router echoes — and the variance
+  between links' channel responses read as motion. `csi_hal.cpp` now compares
+  each frame's transmitter address, in place, against the BSSID of the AP the
+  station is associated with (and, on the WAP, against the probe layer's peer
+  table) and drops the rest before anything is buffered, counting them under
+  `frames_dropped_foreign`. Until the STA associates there is nothing to
+  compare against and every frame passes, so an AP-only install senses as
+  before. The BSSID is the one identifier the HAL holds: one static, read
+  back from `esp_wifi_sta_get_ap_info()` on the main loop, never exported or
+  logged, wiped on `deinit()`; the transmitter address itself is never copied
+  into a slot, a stat, a log line or a wire format. Surfaces: `/api/status`
+  gains `frames_dropped_foreign`, `filter_foreign` and `filter_armed`;
+  `/api/settings` gains `filter_foreign` (bool, default on, persisted); the
+  canary webui's driver-health tile gains "Drop: other transmitters". The
+  canary tree's `securacv_csi.cpp` carries the BSSID half. Host-tested
+  (`csi_hal_transmitter_filter_test.cpp` drives the shipped HAL through a
+  stubbed ESP-IDF surface and scans ring, stats and feature vector for both
+  addresses); the device path is compiled only by CI's firmware build — no
+  board has run it — and the bench pass in `docs/IMPROVEMENT_ROADMAP.md` §5
+  is what shows the false-positive floor moved.
+
+### Tooling: `regression_check.sh` judges a hit by its content, not its path
+
+- The token-isolation and private-key checks piped `grep -rn` output — which
+  starts every line with `file:line:` — through a keyword grep, so a checkout
+  whose path contained "witness" or "transmit" (a worktree named for its
+  task, a home directory) failed both checks on files nobody had touched, and
+  two reviewers in one day spent time proving the same false positive. The
+  keyword match now runs on the text after `file:line:`; the report still
+  names the file.
+
+### One witness-page contract, a TLS pin the app actually uses, and a Wi-Fi rollout that says when the password is in the clear
+
+- **`GET /api/v1/witness` is one contract** ([`spec/witness_api_v1.md`](spec/witness_api_v1.md)).
+  The iPhone app verified a page no firmware in this repository served: it
+  fetched `/api/v1/witness` in the canary-vision reference shape while
+  canary-wap answered only `/api/witness` (one record, another shape, no
+  signature). canary-wap now serves the page from a 16-record RAM ring
+  (`witness_page.h`, `handle_witness_v1`, Bearer-gated, chunked) as
+  `chain_format: wap_v1` — the firmware's own domain-separated chain hash
+  and its existing per-record Ed25519 signature over the raw hash, no new
+  signing scheme — with coarse ten-minute timestamps only when the device
+  has met a clock (Invariant III), and never its own self-check flag. The
+  reference server's shape is `reference_v1` (absent `chain_format`). One
+  shared fixture, `spec/fixtures/witness_page_v1.json` (generator
+  `--check`ed in CI), is byte-compared by a firmware host test that rebuilds
+  it from real Ed25519-signed records and decoded by a Swift XCTest against
+  the same public key. The app's decoder tolerates an absent or empty
+  signature (Unsigned — never Verified) and an absent timestamp (anchored
+  coarsely from `time_bucket × time_bucket_ms` and `uptime_s`); the
+  verifier recomputes `wap_v1` links and signs over the right message;
+  a WAP row's trust badge is now set by that verification. Written
+  without a Swift toolchain; the PR's iOS self-heal run compiled the app
+  and ran its 618 tests (one expectation corrected). The WAP endpoint and
+  fixture are host-tested.
+- **The app pins the receipt's `tls_cert_fp`.** The pairing receipt always
+  carried the SHA-256 of the WAP's self-signed certificate; the app dropped
+  it and dialed with `URLSession.shared`, so a TLS-enabled WAP was
+  unreachable. `PairedDeviceRef` keeps the fingerprint (also synced as
+  `PairedDevice.tlsCertFP` — **run `ios/scripts/cloudkit_schema.sh promote`
+  before the next iOS release**, production rejects a field the schema
+  lacks); `DeviceAPI` dials https through a `PinnedTrustDelegate` that
+  hashes the leaf certificate's DER and compares exactly, cancels on
+  mismatch with a user-readable `certificateMismatch`, and refuses an https
+  device with no pin (`tlsPinMissing` — a TLS device the app cannot check is
+  not a checked device); PairView refuses such a receipt at paste time; the
+  liveness sentinel and the rollout's return-watch probe through the same
+  pin. Plain-http devices are unchanged. Compiled and tested by the PR's
+  iOS self-heal run. Review round (Codex on #1675): the compact pairing QR (`GET /api/pairing-qr`)
+  now carries `tls_cert_fp` on a TLS-enabled device too — without it the
+  app's new refusal made the QR fallback unable to add any https Canary;
+  `GET /api/v1/witness` takes its ring snapshot before it writes the
+  header, so `total` can never trail a `seq` on the same page; and the
+  contract's §3 now states both time floors exactly (a ten-minute
+  wall-clock bucket, and the chain's native 5 s uptime bucket that rides
+  because the hash binds it and every existing surface already carries it)
+  instead of claiming only the first.
+- **Fleet Wi-Fi rollout: the password's wire is named, and plain http asks
+  first.** The planner prefers the bonded BLE lane over plain http even for
+  an online Canary, uses HTTP freely only when the device is pinned https,
+  and puts every remaining plain-http push behind a one-time disclosure
+  ("sends it across your Wi-Fi unencrypted") the sheet must acknowledge; the
+  runner refuses an unapproved cleartext push with the reason on the row.
+  Planner tests extended; compiled and run by the PR's iOS self-heal.
+
+### The device manifests drive the generators, and the release env list is derived
+
+- **`gen_flash.py`, `gen_figures.mjs` and `lint_build_matrix.py` read
+  `devices/<slug>/device.json`.** The flasher catalog takes each product's
+  chip, flash size, registry board and PlatformIO project from the manifest
+  that claims it (the hand-typed `BOARD_CHIP` / `BOARD_FLASH_MB` tables are
+  gone); the fleet figures build the exact hardware→figure map from the
+  manifests and validate the coarse config→device-type map against them,
+  recording one dispute (`canary-vision/default`: DevKit vs XIAO drawings
+  under one device type) for a maintainer to settle; the build-matrix lint
+  applies the matrix's side of the join through the shared
+  `scripts/_device_join.py`. Every generated output is byte-identical.
+- **Both release workflows derive the Canary Display env list from
+  `firmware/flavors.json`** ("Resolve the canary-display release envs",
+  `flavor_envs.py --release --json`, consumed through `fromJSON`) instead of
+  typing it twice; `flavor_envs.py --check-workflows` fails a workflow that
+  types a `pio run -e canary-display-<env>` back in, and
+  `check_ota_channels.py` reads the same derivation. Host-tested only —
+  watch the first real release run (`.github/RELEASE_LESSONS.md`,
+  2026-09-08).
+
+### Kernel: `/api/fleet` has an origin allow-list and lists the Canaries the bridge heard
+
+- **No more CORS wildcard.** `/api/fleet` echoes an `Origin` only from
+  `FLEET_ALLOWED_ORIGINS` (the Lab/flasher origin, `https://securacv.com`,
+  and `http://localhost` / `http://127.0.0.1` on any port); native readers
+  send no Origin and get no CORS header; anything else gets none and the
+  browser blocks the read. A Lab page served from a LAN host can no longer
+  read the kernel's fleet (`tvos/discovery/DISCOVERY.md`). Firmware boards
+  still answer `*`.
+- **Peer aggregation, opt-in.** `event_mqtt_bridge --fleet-peers-path` (or
+  `WITNESS_FLEET_PEERS_PATH`) keeps a table of the Canaries it hears on
+  `securacv/<id>/{availability,status,health,chain,state,meta}`, pins each
+  device's public key on first `health`, and verifies chain publishes with
+  Ed25519; `api.fleet_peers_path` makes the kernel serve those rows beside
+  its own. `online` is claimed only for a live chain publish that verified
+  against the pin **and advanced the chain length past the last one
+  verified**, within 180 s — stronger than a heartbeat, weaker than a
+  liveness proof, and `tvos/discovery/DISCOVERY.md` now says exactly what a
+  peer with broker publish rights can still do (replay a capture for at
+  most one window per missed advance; invent ids; hold a real id in
+  `degraded` by signing under a second key). A second key merely announced
+  on an unsigned `health` changes no verdict; one that signs is the sticky
+  conflict. Wellbeing words ride only on a proven row while fresh. The
+  two-row document is a shared vector with the Apple TV core, and its bytes
+  come from typed rows so they cannot move with `serde_json`'s feature set.
+- **The roll-call's file and table, hardened after review.** The summary
+  file is written `0600` and fsynced (it holds per-room words beside the
+  pins); the kernel refuses to read one past 256 KiB; the projection
+  re-cleans every served field and caps the rows at 64; at the cap a new id
+  displaces the least useful one (never-proven first, then least recently
+  heard) instead of locking real Canaries out until someone deletes the
+  file; ids holding neither a pin nor a verified length are forgotten after
+  30 days unheard, a pinned id is never expired by the clock, and the expiry
+  pass that straddles a clock jump is skipped (a Codex review finding on the
+  first cut, which pruned everything at startup under a clock 30 days ahead;
+  the second adversarial pass then showed the guard alone still let a
+  pinned-but-never-proven id go, hence the pin rule); the canary-wap's LWT
+  (`{"online":false}` on `status`) now counts as offline; the bridge's
+  inbound queue is bounded and only the topics it handles are queued;
+  `http://[::1]` joins the local origins; `src/fleet_peers.rs` is
+  registered with `lint_dictionary_sync.py`, so its `securacv-canary-sig`
+  prefix and schema version are pinned to `spec/witness_dictionary.json`
+  like every other verifier's.
+- **CI: rustdoc warnings fail the Rust build** (`cargo doc --no-deps
+  --document-private-items` with `RUSTDOCFLAGS=-D warnings`); the two
+  failures it found are fixed.
+
+### BLE OTA protocol v2: product and version under the signature, the floor enforced over Bluetooth
+
+- The 168-byte `BEGIN_V2` header carries product, version, size and digest
+  under one domain-separated Ed25519 signature (`scv-ble-ota-v2`), emitted by
+  `ota_release.py` as the manifest's `ble_signature` for every product whose
+  id and version fit the header's 31-byte slots (the longer display ids have
+  no Bluetooth OTA path and carry none). The Canary verifies
+  first, refuses an image for another product, and runs the version through
+  the pull engine's own decision against max(running, NVS floor) — the same
+  rule as network updates. Rescue downgrades and legacy v1 headers still work
+  through the BOOT-button gate (short tap within 30 s, single use); every such
+  acceptance is logged as a floor bypass and shown as `break_glass` in
+  `/api/bluetooth/ota`. The companion page sends v2 automatically and says
+  when an older manifest can only be installed via that rescue path.
+  Host-tested with real Ed25519 (255 checks); device path compile-tested.
+
+### CI: a sharded display build, composite toolchain actions, a derived SBOM
+
+- **The canary-display PlatformIO build runs as five parallel legs by board
+  family** (`flavors.json` `shards`; `flavor_envs.py --build-matrix`
+  derives the matrix and per-leg size guards, and refuses a partition that
+  drops an env). The display's check is now five checks named `PlatformIO
+  Build (canary-display/<shard>)`.
+- **PlatformIO, Emscripten, libseccomp and the freshness workflows' issue
+  fallback are each provisioned by one composite action** under
+  `.github/actions/`; `CI.md` R10 is machine-checked, and R9 recognizes a
+  composite that carries `setup-python`.
+- **The firmware SBOM is generated from the build inputs and committed**
+  (`scripts/gen_firmware_sbom.py` → `sbom/sbom-firmware.cdx.json`, byte-gated
+  in `lint.yml`, resolver cross-checked against `pio project config` in
+  `sbom.yml`) instead of typed into a workflow; a platform pin that moves
+  without `PLATFORM_FACTS` fails generation.
+
+### MQTT: a verified TLS option for every broker link, fail-closed
+
+- **One shared decision, four products.** `firmware/common/network/
+  mqtt_transport_logic.h` (host-tested) decides the broker transport from
+  the provisioned mode: plain (the default — every already-flashed unit is
+  unchanged), CA-verified (PEM), SHA-256 certificate-fingerprint pin, or an
+  explicit lab mode that logs a warning on every connect. canary-display,
+  canary-sense and canary-vision use it through a `WiFiClientSecure`
+  transport header (every display flavor but the nightstand-c6, whose
+  0x1F0000 OTA slot has no room for the TLS client: that image is built
+  plain-only and refuses a provisioned TLS mode with the reason rather than
+  connecting plain); canary-wap's esp_mqtt bridge applies the same decision
+  from a drift-gated staged copy, with plain and CA-verified only: esp_mqtt
+  has no fingerprint hook, and the pinned core's esp-tls cannot skip
+  verification, so both of those modes are refused there at save time and
+  at connect with the reason. Anything incomplete — CA mode without a CA, pin mode
+  without a pin, a malformed PEM or pin, an unknown mode byte — refuses to
+  connect and names the reason without printing the secret.
+- **Provisioning.** NVS keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` on the
+  products, `mqtt.tlsmode` / `mqtt.ca` on the WAP; both flashers' NVS
+  builders seed them byte-alike (parity-gated), and the WAP's `/mqtt` page
+  gained an encryption selector and CA upload. Flasher form fields for the
+  new keys are a follow-up, in both frontends at once.
+- **Breaking, on purpose, for canary-wap units that had "Use TLS" on with
+  no CA:** that setting produced an unverified `mqtts://` handshake that
+  looked secured. Such units now refuse to connect until a CA is uploaded
+  on the `/mqtt` page; the reason is on the page and the serial log. `SECURITY_MODEL.md` no longer claims TLS on all
+  local traffic; the per-variant truth table is
+  `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested and host-tested; no
+  bench pass against a TLS broker yet.
+
+### Lab / emulator: the preview runs the firmware's Wi-Fi join policy
+
+- `emu_net.cpp` includes `common/network/wifi_join_policy.h` directly and
+  drives its retry through it with the display's own constants; the local
+  copy of the outage decision is gone. An emulator booted with Wi-Fi off no
+  longer reboots after five minutes, and the serial and wire logs show the
+  firmware's real reconnect cadence. `scripts/lint_wifi_join_policy.py` now
+  refuses any supervisor that does not consume the shared header directly or
+  regrows a local schedule.
 
 ### Break-glass: who asked, and why, is part of what the trustees sign (§3.6)
 
@@ -231,8 +809,11 @@
   instead of under QEMU, which had been hitting the 90-minute timeout on
   `main`. `verify_published_image.sh` now cross-probes GHCR with the workflow
   token, so it can say whether a package is private (a one-time visibility
-  flip by the owner) or a tag was never pushed — the 30 August failure was the
-  former, and the anonymous probe alone could not tell.
+  flip by the owner) or a tag was never pushed. The 30 August failure turned
+  out to be neither: the probe's `Accept` list lacked the OCI manifest media
+  type buildx writes for single-arch images, so GHCR answered 404 for images
+  that were public and present. That type is now in the list, and the gate
+  reports all four images pullable from an anonymous client.
 - **`homeassistant-mirror.yml` pushes `custom_components/securacv/` to the HACS
   mirror as a PR on every `main` change**, proving the copy exact with the
   mirror's own check. It needs a `MIRROR_PAT` secret; without one the run stays
@@ -290,6 +871,12 @@
 - **`desktop/package-lock.json` is committed** and the Flasher release
   workflow installs with `npm ci`; the audit workflow and Dependabot cover it.
   Both Tauri apps now pin the same `@tauri-apps/cli` release.
+- **No compiled test binary in the tree.** A 20 KB x86-64 executable
+  (`canary-display/tests_host/test_motion`, built by `make`) had been committed
+  since #1566 because the host-test `.gitignore` listed binaries by name and
+  the list was two entries behind. It is untracked now, and the display and
+  tincan host-test directories ignore by shape (`test_*`, sources kept by
+  extension) so a new test needs no ignore edit.
 
 ### The website's carries are generated, not hand-mirrored
 

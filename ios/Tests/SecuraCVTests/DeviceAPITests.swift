@@ -102,5 +102,99 @@ final class DeviceAPITests: XCTestCase {
         let receipt = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
         XCTAssertEqual(receipt.deviceID, "canary-a3f7")
         XCTAssertEqual(receipt.token, "cv_x")
+        XCTAssertNil(receipt.tlsCertFingerprint, "no tls_cert_fp → no pin")
+    }
+
+    // ── the receipt's TLS fingerprint (roadmap row 5) ──
+    // canary_wap.ino send_provisioning_receipt writes `tls_cert_fp` as the
+    // 64-hex SHA-256 of the certificate DER, or "" on an http-only device.
+    private let fixtureFP = "cdfcca58db62ca948e8741d19e28ce1c79b4a818755559b419b1dd17c439dcfa"
+
+    func testReceiptKeepsTheTLSFingerprint() throws {
+        let json = Data(#"{"device_id":"canary-a3f7","base_url":"https://192.168.4.1","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#.utf8)
+        let receipt = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
+        XCTAssertEqual(receipt.tlsCertFingerprint, fixtureFP)
+    }
+
+    func testReceiptEmptyFingerprintIsNoPin() throws {
+        // An http-only WAP writes "" — that is "no certificate", not a pin.
+        let json = Data(#"{"device_id":"c","base_url":"http://192.168.4.1","token":"t","tls_cert_fp":""}"#.utf8)
+        let receipt = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
+        XCTAssertNil(receipt.tlsCertFingerprint)
+    }
+
+    // ── TLSPin: the hashing/compare helper behind PinnedTrustDelegate ──
+    // A real self-signed Ed25519 certificate (DER, 325 bytes) minted with
+    // `openssl req -x509 -newkey ed25519 … -outform DER`; fixtureFP above is
+    // `sha256sum` of those bytes, computed on the host that minted it.
+    private let fixtureDERBase64 =
+        "MIIBQTCB9KADAgECAgEBMAUGAytlcDAgMR4wHAYDVQQDDBVzZWN1cmFjdi10ZXN0LWZpeHR1cmUwHhcNMjYwOTA4"
+        + "MjEzODAxWhcNMzYwOTA1MjEzODAxWjAgMR4wHAYDVQQDDBVzZWN1cmFjdi10ZXN0LWZpeHR1cmUwKjAFBgMrZXAD"
+        + "IQAr/seDrmDQ/U99fdEa0643C2Iqb9j2jiMAeX4k+2H6jaNTMFEwHQYDVR0OBBYEFKI3Aee8oBC1xb2/lTAGFpDL"
+        + "sSjrMB8GA1UdIwQYMBaAFKI3Aee8oBC1xb2/lTAGFpDLsSjrMA8GA1UdEwEB/wQFMAMBAf8wBQYDK2VwA0EAW5LG"
+        + "81Tdgou7cSeujQSQ18aNSUo8f95jxtexjLwPM/YMnbpjtn+oe0vT6trsuqfL6uqq13yX9C9XRuECWDU3AQ=="
+
+    private var fixtureDER: Data { Data(base64Encoded: fixtureDERBase64)! }
+
+    func testFingerprintOfDERMatchesTheHostHash() {
+        XCTAssertEqual(fixtureDER.count, 325)
+        XCTAssertEqual(TLSPin.fingerprintHex(ofDER: fixtureDER), fixtureFP)
+    }
+
+    func testPinMatchesExactlyAndTolerantly() {
+        XCTAssertTrue(TLSPin.matches(der: fixtureDER, pinned: fixtureFP))
+        // Case and separators are presentation, not identity.
+        XCTAssertTrue(TLSPin.matches(der: fixtureDER, pinned: fixtureFP.uppercased()))
+        let colons = stride(from: 0, to: 64, by: 2).map { i -> String in
+            let start = fixtureFP.index(fixtureFP.startIndex, offsetBy: i)
+            return String(fixtureFP[start..<fixtureFP.index(start, offsetBy: 2)])
+        }.joined(separator: ":")
+        XCTAssertTrue(TLSPin.matches(der: fixtureDER, pinned: colons))
+    }
+
+    func testPinRejectsAnyOtherCertificate() {
+        var flipped = fixtureDER
+        flipped[flipped.count - 1] ^= 0x01            // one bit of the signature
+        XCTAssertFalse(TLSPin.matches(der: flipped, pinned: fixtureFP))
+        XCTAssertFalse(TLSPin.matches(der: fixtureDER, pinned: String(repeating: "0", count: 64)))
+        XCTAssertFalse(TLSPin.matches(der: fixtureDER, pinned: ""), "an empty pin never matches")
+        XCTAssertFalse(TLSPin.matches(der: fixtureDER, pinned: String(fixtureFP.dropLast())))
+    }
+
+    func testNormalizeAcceptsOnlyA64HexPin() {
+        XCTAssertEqual(TLSPin.normalize(fixtureFP), fixtureFP)
+        XCTAssertEqual(TLSPin.normalize(" " + fixtureFP.uppercased() + "\n"), fixtureFP)
+        XCTAssertNil(TLSPin.normalize(nil))
+        XCTAssertNil(TLSPin.normalize(""))
+        XCTAssertNil(TLSPin.normalize("not-a-fingerprint"))
+        XCTAssertNil(TLSPin.normalize(String(repeating: "g", count: 64)), "g is not hex")
+        XCTAssertNil(TLSPin.normalize(String(fixtureFP.dropLast(2))), "62 hex is not a SHA-256")
+    }
+
+    // ── DeviceAPI refuses an https Canary it cannot check ──
+    func testHTTPSWithoutAPinIsRefused() {
+        XCTAssertThrowsError(try DeviceAPI(base: URL(string: "https://192.168.1.20")!, token: "t")) { error in
+            guard case DeviceError.tlsPinMissing = error else {
+                return XCTFail("expected .tlsPinMissing, got \(error)")
+            }
+            XCTAssertFalse(error.localizedDescription.isEmpty, "the refusal names itself")
+        }
+        XCTAssertThrowsError(try DeviceAPI(base: URL(string: "https://192.168.1.20")!, token: "t",
+                                           tlsFingerprint: ""))
+    }
+
+    func testHTTPSWithAPinAndPlainHTTPAreAccepted() {
+        XCTAssertNoThrow(try DeviceAPI(base: URL(string: "https://192.168.1.20")!, token: "t",
+                                       tlsFingerprint: fixtureFP))
+        XCTAssertNoThrow(try DeviceAPI(base: URL(string: "http://192.168.1.20")!, token: "t"))
+        // The private-host gate still comes first, pin or no pin.
+        XCTAssertThrowsError(try DeviceAPI(base: URL(string: "https://securacv.com")!, token: "t",
+                                           tlsFingerprint: fixtureFP))
+    }
+
+    func testIsTLSReadsTheScheme() {
+        XCTAssertTrue(DeviceAPI.isTLS(URL(string: "https://192.168.1.20")!))
+        XCTAssertTrue(DeviceAPI.isTLS(URL(string: "HTTPS://canary.local")!))
+        XCTAssertFalse(DeviceAPI.isTLS(URL(string: "http://192.168.1.20")!))
     }
 }

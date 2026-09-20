@@ -3658,6 +3658,52 @@ function renderReflexes(box, product) {
   };
 }
 
+// ── broker TLS controls — one copy here, one in the desktop Flasher ─────────
+// The two flashers share no UI code (AGENTS.md rule 7), so the mode labels,
+// the hints, the CA cap and the fingerprint spelling below are repeated
+// verbatim in desktop/src/index.html + app.js and pinned equal by
+// tests/desktop_parity.test.js ("both flashers offer the TLS controls").
+// Mode values are the firmware's (mqtt_transport_logic.h Mode: 0 plain,
+// 1 CA, 2 fingerprint, 3 lab — "do not renumber"), via core.MQTT_TLS_MODES.
+const MQTT_TLS_OPTIONS = [
+  [0, "Plain MQTT (default — what every Canary shipped with)"],
+  [1, "TLS, CA-verified — paste the broker's CA below"],
+  [2, "TLS, SHA-256 fingerprint pin"],
+  [3, "TLS, lab only: encrypted but NOT verified — warns on every connect"],
+];
+const MQTT_CA_MAX = 3070; // + the builder's trailing "\n" = the firmware's 3071-char cap
+const MQTT_CA_PLACEHOLDER =
+  "-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- (PEM: the CA that signed the broker's certificate)";
+const MQTT_FP_PLACEHOLDER =
+  "AA:BB:CC:… (paste just the 64 hex after “Fingerprint=” from: openssl x509 -in broker.crt -noout -fingerprint -sha256)";
+const MQTT_TLS_NOTE =
+  "A TLS mode encrypts the broker link so the username and password above never " +
+  "cross your LAN in the clear; TLS brokers usually listen on 8883. The board never " +
+  "falls back to plain or unverified by itself — an incomplete setup refuses to " +
+  "connect and names the reason on its serial log.";
+const MQTT_TLS_PLAIN_ONLY_NOTE =
+  "This flavor is built plain-only (its OTA slot budget — CANARY_MQTT_PLAIN_ONLY), so " +
+  "only Plain is offered: a provisioned TLS mode would be refused at boot with that " +
+  "reason on its log, never downgraded to plain.";
+const MQTT_TLS_PORT_NUDGE =
+  "TLS brokers usually listen on 8883 and this port is still 1883 — a plain " +
+  "listener on a TLS mode fails as “the broker did not speak TLS on this port”. " +
+  "The port stays yours:";
+// Fingerprint spellings the firmware accepts (mqtt_transport_logic.h
+// fingerprint_normalize): 32 hex pairs, any run of ':' or ' ' between
+// pairs, none inside a pair, either case — the set provisioning.rs
+// fingerprint_shape_ok accepts too, and the desktop input's `pattern`.
+const MQTT_FP_PATTERN = "[: ]*(?:[0-9a-fA-F]{2}[: ]*){32}";
+const MQTT_FP_RE = new RegExp(`^${MQTT_FP_PATTERN}$`);
+// The builder's own check is narrower (at most one separator between
+// pairs), so a firmware-valid spelling is folded to the 64-hex form before
+// it gets there; anything else is passed through as typed so the builder's
+// message names the shape.
+const mqttFingerprintNormalize = (s) => {
+  const t = String(s == null ? "" : s).trim();
+  return MQTT_FP_RE.test(t) ? t.replace(/[: ]/g, "") : t;
+};
+
 // ── optional WiFi fields (confirm card) ─────────────────────────────────────
 function renderWifiFields(box, product) {
   const sec = el("div", "flash-wifi");
@@ -3870,13 +3916,76 @@ function renderWifiFields(box, product) {
     const row1 = el("div", "flash-wifi-inputs"); row1.append(devId);
     const row2 = el("div", "flash-wifi-inputs"); row2.append(host, port);
     const row3 = el("div", "flash-wifi-inputs"); row3.append(user, mpass);
-    ha.append(row1, row2, row3);
+
+    // Broker TLS — the same three NVS keys the native app seeds (mqtt_tls /
+    // mqtt_ca / mqtt_fp; firmware/common/network/mqtt_transport_logic.h),
+    // validated by the same builder (core.mqttProvisioningToNvs) with its
+    // own messages. Plain is what every Canary shipped with and stays the
+    // default. The CA box shows for the CA mode only and the pin for the
+    // fingerprint mode only, and only the SHOWN one reaches the builder —
+    // a value left behind in a box the mode does not use is never written.
+    // The lab option is labeled for what it is (encrypted, NOT verified, a
+    // warning on every connect) and is never preselected.
+    //
+    // `broker_tls` is a build fact from the catalog (gen_flash.py reads the
+    // env's build flags): the nightstand-c6 is built plain-only and REFUSES
+    // a provisioned TLS mode at boot rather than connecting plain, so its
+    // TLS modes are disabled here with the firmware's own reason instead of
+    // seeding a board that will not connect.
+    const tlsOk = product.broker_tls === true;
+    const tlsSel = el("select", "flash-mqtt-tls");
+    tlsSel.setAttribute("aria-label", "Broker encryption");
+    for (const [v, label] of MQTT_TLS_OPTIONS) {
+      const o = el("option", null, label);
+      o.value = String(v);
+      if (v !== core.MQTT_TLS_MODES.plain && !tlsOk) o.disabled = true;
+      tlsSel.append(o);
+    }
+    tlsSel.value = String(core.MQTT_TLS_MODES.plain);
+    const tlsNote = el("p", "fineprint", tlsOk ? MQTT_TLS_NOTE : MQTT_TLS_PLAIN_ONLY_NOTE);
+    const ca = el("textarea", "flash-mqtt-ca flash-hidden");
+    ca.maxLength = MQTT_CA_MAX; ca.rows = 5; ca.spellcheck = false;
+    ca.placeholder = MQTT_CA_PLACEHOLDER;
+    ca.setAttribute("aria-label", "Broker CA certificate (PEM)");
+    const fp = mk(MQTT_FP_PLACEHOLDER);
+    fp.classList.add("flash-mqtt-fp", "flash-hidden");
+    fp.spellcheck = false;
+    fp.setAttribute("autocapitalize", "none");
+    fp.setAttribute("autocorrect", "off");
+    fp.setAttribute("aria-label", "Broker certificate SHA-256 fingerprint");
+    // A TLS mode with the port still at the plain default: SUGGEST 8883.
+    // The port is the owner's ("the broker did not speak TLS on this port"
+    // is the failure the firmware names), so this never rewrites it.
+    const portNudge = el("p", "flash-note flash-note-soft flash-mqtt-port-nudge flash-hidden");
+    portNudge.append(el("span", null, MQTT_TLS_PORT_NUDGE));
+    const useTlsPort = el("button", "ghost small", "Use 8883");
+    useTlsPort.type = "button";
+    portNudge.append(useTlsPort);
+    const refreshTls = () => {
+      const mode = Number(tlsSel.value) || 0;
+      ca.classList.toggle("flash-hidden", mode !== core.MQTT_TLS_MODES.ca);
+      fp.classList.toggle("flash-hidden", mode !== core.MQTT_TLS_MODES.fingerprint);
+      portNudge.classList.toggle("flash-hidden",
+        !(mode !== core.MQTT_TLS_MODES.plain && port.value.trim() === "1883"));
+    };
+    useTlsPort.addEventListener("click", () => { port.value = "8883"; refreshTls(); });
+    tlsSel.addEventListener("change", refreshTls);
+    port.addEventListener("input", refreshTls);
+    const row4 = el("div", "flash-wifi-inputs"); row4.append(tlsSel);
+    const row5 = el("div", "flash-wifi-inputs"); row5.append(ca, fp);
+    ha.append(row1, row2, row3, row4, tlsNote, row5, portNudge);
     sec.append(ha);
-    mqttUI = { values: () => ({
-      deviceId: devId.value, mqttHost: host.value,
-      mqttPort: port.value ? Number(port.value) : 1883,
-      mqttUser: user.value, mqttPass: mpass.value,
-    }) };
+    mqttUI = { values: () => {
+      const mode = tlsOk ? Number(tlsSel.value) || 0 : core.MQTT_TLS_MODES.plain;
+      return {
+        deviceId: devId.value, mqttHost: host.value,
+        mqttPort: port.value ? Number(port.value) : 1883,
+        mqttUser: user.value, mqttPass: mpass.value,
+        mqttTls: mode,
+        mqttCa: mode === core.MQTT_TLS_MODES.ca ? ca.value : "",
+        mqttFp: mode === core.MQTT_TLS_MODES.fingerprint ? mqttFingerprintNormalize(fp.value) : "",
+      };
+    } };
   }
 
   // Keep itself updated (default ON): seeds the shared OTA engine's opt-in —
@@ -4107,7 +4216,7 @@ async function startFlash(opts) {
         const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
-        const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {} };
+        const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {}, u8: {} };
         // Blob-scheme boards (canary/wap) load their local-API bearer token
         // from NVS before deriving one — so mint it HERE and seed it, and the
         // owner leaves with the credential in hand instead of digging it out
@@ -4121,7 +4230,7 @@ async function startFlash(opts) {
           { wifi: opts.wifi || null,
             wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
             strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
-            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 },
+            u8: { ...dInts.u8, ...prov.u8 }, u32: { ...dInts.u32, ...rInts.u32 },
             // The OTA opt-in, seeded into the engine's own namespace
             // ("securacv_ota"/auto_upd) — null means the checkbox never
             // appeared (rescue, local file), and nothing is written.

@@ -26,6 +26,7 @@ use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the blind 
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>   // bridge-safe USB openings (the WAP's print-validated profile)
 use <canary_board_lib.scad>  // board registry — the Grove/MR60 numbers the knobs cite
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 
 /* [What to render] */
@@ -64,6 +65,11 @@ lp_d = 3.0;   lp_dx = 13.0;   lp_dy = -14.0;
 /* [Shared] */
 pcb_t = 1.0;  board_clear = 0.6;  cav_extra = 1.0;
 wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_r = 3.0;
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // the catalog trio — core_tol_*(), canary_core_lib
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
 usb_w = 12.0;  usb_h = 6.5;   // 12: clears rugged cable boots (the WAP's validated opening)
@@ -151,6 +157,7 @@ assert(rad_gap >= 3.0, "antenna-to-radome gap < 3 mm — raise cav_extra");
 assert(rad_win_x + 2*abs(rad_dx) <= col_s && rad_win_y + 2*abs(rad_dy) <= sm_l,
        "radome window exceeds the sense column — shrink rad_win/rad_dx/rad_dy");
 assert(lip_h < cav_d, "lip_h vs cavity");
+key_x = inner_x/2 - post_corner - 2.5;   // lid key: +Y wall, inboard of the +X corner post
 assert(!opt_mark || (mark_depth > 0 && mark_depth < lid_t),
        "mark_depth must be between 0 and lid_t");
 // the wordmark's two gates, from the mark library's measured type metrics:
@@ -165,6 +172,14 @@ assert(!opt_mark || mark_word_ink_w("securaCV", mark_size) <= plate_x - 4.0,
        str("the wordmark draws ", mark_word_ink_w("securaCV", mark_size),
            " mm at mark_size ", mark_size, " on a ", plate_x,
            " mm face (2 mm margin per side) — shrink mark_size"));
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_echo("Combo witness", [
+    hw_item(len(post_xy()), hw_screw("m2", "pan", hw_len(lid_t, head_pad, 6), "self-tap")),
+    hw_item(4, "M2 pan x 6 self-tap (OV5647 to the front posts)"),
+    e_seal ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    opt_led ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    opt_mount ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+]);
 echo(str("Canary COMBO witness v0.1-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t + mount_extra,
          " mm, radar gap ", rad_gap, " mm  (IN DEVELOPMENT)"));
 
@@ -222,7 +237,8 @@ module back() {
                 rrect(out_x, out_y, corner_r, base_d);
                 if (mount_extra > 0) translate([0, 0, -mount_extra]) rrect(out_x, out_y, corner_r, mount_extra);
             }
-            translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
+            translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
+                cavity_cut(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1, floor_cove);
             // Vision stack: module port + XIAO port (stacked); Sense stack: C6
             // port. All three: 45°-chamfered top corners halve the unsupported
             // bridge in the upright-printed wall and keep any droop out of the
@@ -239,16 +255,18 @@ module back() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - head_pad);
-                for (p = posts) {
+                // constant-width webs (canary_rib_lib corner_gusset) — no hull flare
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
-                             translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
-                    hull() { translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d - lip_h - 1);
-                             translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = cav_d - lip_h - 1); }
+                    gw = min(2.0, rib_t_max(wall_eff));
+                    corner_gusset(p[0], p[1], sx*(inner_x/2 + 0.5), p[1], cav_d - lip_h - 1, wall_eff, pd, gw);
+                    corner_gusset(p[0], p[1], p[0], sy*(inner_y/2 + 0.5), cav_d - lip_h - 1, wall_eff, pd, gw);
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2]) cylinder(d = screw_d, h = cav_d);
         }
+        // lid key (canary_core_lib): a rib on the +Y wall inside the lip zone
+        if (lid_key) lid_key_rib(key_x, inner_y/2, 270, base_d, lip_h);
         // Vision column: rails on the TOP HALF only — the stacked XIAO (17.8 wide
         // under the 20 mm module) hangs beneath the lower half, so full-length
         // rails ran straight through it (the Vision case's fix, ported); two
@@ -315,12 +333,10 @@ module front() {
                 }
         // lip
         difference() {
-            translate([0, 0, -lip_h]) difference() {
-                rrect(inner_x - 2*tol_slide, inner_y - 2*tol_slide, max(0.1, corner_r - wall_eff - tol_slide), lip_h);
-                rrect(inner_x - 2*tol_slide - 2*lip_t, inner_y - 2*tol_slide - 2*lip_t, 0.1, lip_h + 1);
-            }
+            lip_ring(inner_x - 2*tol_slide, inner_y - 2*tol_slide, max(0.1, corner_r - wall_eff - tol_slide), lip_h, lip_t);
             for (p = post_xy()) translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
             for (cx = [v_cx, s_cx]) translate([cx, -inner_y/2, -lip_h/2]) cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
+            if (lid_key) lid_key_slot(key_x, inner_y/2, 270, lip_h, lip_t);
         }
         // hood over the lens
         if (opt_hood)

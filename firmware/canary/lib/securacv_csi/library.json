@@ -1,7 +1,7 @@
 {
     "name": "securacv_csi",
     "version": "0.1.0",
-    "description": "SecuraCV WiFi CSI — privacy-preserving environmental sensing (motion / breathing / micro-activity) via subcarrier dynamics. No identifiers, no raw samples — only a 32-byte int8 feature vector per 1 s window.",
+    "description": "SecuraCV WiFi CSI — the canary product's csi:: adapter over the canonical HAL in firmware/common/csi (csi_hal.cpp + csi_features.cpp, compiled by platformio.ini's build_src_filter). Privacy-preserving environmental sensing (motion / breathing / micro-activity) via subcarrier dynamics: no identifiers, no raw samples — only a 32-byte int8 feature vector per 1 s window.",
     "keywords": ["securacv", "wifi", "csi", "presence", "sensing", "motion", "breathing"],
     "repository": {
         "type": "git",

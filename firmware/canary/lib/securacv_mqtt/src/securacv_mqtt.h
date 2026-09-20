@@ -70,10 +70,85 @@ void mqtt_loop();
 bool mqtt_connected();
 void mqtt_disconnect();
 
-// Credential management (stored in NVS)
+// Credential management (stored in NVS). A save or clear takes effect on
+// the main loop's next pass — the live link is dropped and re-made with the
+// new settings, no reboot needed. mqtt_save_credentials is the
+// credentials-only form of mqtt_save_config (below); a request that also
+// carries TLS fields MUST go through mqtt_save_config so its writes land in
+// one NVS session with one reload.
 bool mqtt_load_credentials(MqttCredentials* creds);
 bool mqtt_save_credentials(const MqttCredentials* creds);
 bool mqtt_clear_credentials();
+
+// ── Broker transport (TLS) ──────────────────────────────────────────────
+// The socket PubSubClient rides is decided fleet-wide by
+// firmware/common/network/mqtt_transport_logic.h from three NVS keys that
+// sit next to the credentials in the same "securacv" namespace:
+//   mqtt_tls  u8      0 plain (default) / 1 CA-verified / 2 SHA-256 pin / 3 lab
+//   mqtt_ca   string  the CA certificate, PEM
+//   mqtt_fp   string  the broker certificate's SHA-256 pin
+// Plain unless provisioned. An incomplete TLS setup (mode 1 with no CA,
+// mode 2 with no pin, a malformed value, an unknown byte) is REFUSED at
+// connect with the reason on the serial log, in the health log and on
+// /api/mqtt/status — never downgraded to plain or to an unverified socket.
+// The functions below are this product's writer and reporter for those
+// keys; validation of what to write lives in mqtt_tls_fields.h (pure,
+// host-tested) so the API refuses exactly what the connect would.
+
+// What NVS holds now, for the API's save-time judgment and for status:
+// the mode byte (0 when absent), the stored pin as-is ("" when absent;
+// "?" for a set-but-unreadable key, as the transport itself reports it),
+// and whether a CA is present. Never the CA itself.
+struct MqttTlsCurrent {
+  uint8_t mode_byte;
+  bool    fp_set;
+  bool    ca_set;
+  char    fp[128];
+};
+bool mqtt_tls_read_current(MqttTlsCurrent* out);
+
+// The TLS half of one POST /api/mqtt/config, exactly as a validated plan
+// says (mqtt_tls_fields::plan): `fp_canonical` is the 95-char "AA:BB:..."
+// form, `clear_fp` forgets the stored pin.
+struct MqttTlsWrite {
+  bool        set_mode;
+  uint8_t     mode;
+  bool        set_fp;
+  const char* fp_canonical;
+  bool        clear_fp;
+};
+
+// One request, one NVS session, one reload. Writes the TLS keys FIRST (the
+// pin, then the mode byte — mqtt_tls_fields::write_order, host-tested) and
+// the credentials LAST, stops at the first failed write, closes the session
+// and only then raises the main loop's reload. So the main task — which
+// re-reads NVS and reconnects the moment it sees the flag, and shares this
+// NVS handle — can never observe the new credentials next to the old (plain)
+// mode byte, nor close the handle under a write still in flight. `tls` may
+// be nullptr (credentials only). Returns false when NVS could not be opened
+// or a write failed; a reload is raised either way, so the link follows what
+// NVS actually holds.
+bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls);
+
+// Store / forget the broker CA. `pem` has already passed
+// mqtt_tls_fields::check_ca and ends in '\n' (the caller adds it, as the
+// flashers do). Reloads the transport on the main loop's next pass.
+bool mqtt_tls_save_ca(const char* pem);
+bool mqtt_tls_clear_ca();
+
+// The transport as decided at init or the last reprovision. Every string is
+// a constant from the shared header — safe for any channel; never the CA,
+// the pin or a credential.
+struct MqttTransportStatus {
+  bool        loaded;      // false only before mqtt_init() has read NVS (the HTTP server starts first)
+  const char* mode;        // provisioned: "plain" / "tls-ca" / "tls-fingerprint" / "tls-insecure-lab", or "unknown" for a byte outside the table
+  uint8_t     mode_byte;   // the byte as stored (not the table's fallback), so "unknown" comes with the value that was refused
+  const char* transport;   // what the socket does: "plain" / "tls-ca" / "tls-fingerprint" / "tls-insecure" / "refused"
+  bool        allowed;     // false = refused; nothing connects until reprovisioned
+  bool        warn_insecure;
+  const char* reason;      // the refusal, "" when allowed
+};
+void mqtt_transport_status(MqttTransportStatus* out);
 
 // ── Publishing functions ────────────────────────────────────────────────
 // All publish functions return true if message was sent (or buffered).

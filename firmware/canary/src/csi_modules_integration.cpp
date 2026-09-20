@@ -1,12 +1,12 @@
 /*
  * SecuraCV Canary — CSI module pipeline integration (PIO build)
  *
- * Includes ONLY the common library headers so the local
- * `csi_features_t` (declared in `securacv_csi.h`) and the common
- * `csi_features_t` (declared in `csi_types.h`) never collide in the
- * same translation unit. The bridge takes a `void*` from main.cpp's
- * features callback; the runtime size check below verifies the two
- * structs stay byte-compatible.
+ * Includes only the common library headers — main.cpp feeds this TU
+ * through the small C ABI in csi_modules_integration.h. The `void*` in
+ * that ABI predates roadmap 22, when `securacv_csi.h` declared its own
+ * `csi_features_t`; today it includes `csi_types.h`, so the cast in
+ * securacv_csi_modules_feed() is between one type and itself, and
+ * main.cpp's static_assert pins the size.
  */
 
 #include "csi_modules_integration.h"
@@ -546,13 +546,9 @@ extern "C" void securacv_csi_modules_feed(const void* features_blob) {
   channel_hop_tick((uint32_t)millis());
 #endif
 
-  /* Both csi_features_t structs are layout-identical (same field order,
-   * same int8/uint16/uint8 widths). The library's csi_types.h
-   * static-asserts the 32-byte vector width and we trust the canary HAL
-   * to honor the documented contract — this cast is the bridge.
-   *
-   * The size assertion guarding this lives in main.cpp where both types
-   * are visible (this TU only sees the common one). */
+  /* One csi_features_t (csi_types.h) on both sides since roadmap 22 —
+   * the cast only undoes the C ABI's void*. csi_types.h static-asserts
+   * the 32-byte vector width; main.cpp's static_assert pins the struct. */
   const csi_features_t* f = static_cast<const csi_features_t*>(features_blob);
   csi_module_tick_all(f);
   /* Drain bundled events whose 10-minute window has elapsed. The

@@ -27,8 +27,8 @@ jobs:
           components: clippy, rustfmt
       # Restores the default-branch cargo cache — tag builds start warm.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Install system dependencies
-        run: sudo apt-get install -y libseccomp-dev
+      - name: Install libseccomp
+        uses: ./.github/actions/setup-libseccomp
       - name: Check formatting
         run: cargo fmt --check
       - name: Clippy
@@ -51,8 +51,8 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Install system dependencies
-        run: sudo apt-get install -y libseccomp-dev
+      - name: Install libseccomp
+        uses: ./.github/actions/setup-libseccomp
       - name: Build release
         run: cargo build --release
       - name: Package binaries

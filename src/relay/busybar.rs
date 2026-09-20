@@ -34,16 +34,24 @@ pub const APPLICATION_NAME: &str = "securacv";
 pub const DRAW_PATH: &str = "/api/display/draw";
 
 impl PokeClass {
-    /// The bar color for this class, `#RRGGBB`. Red is reserved for the top
-    /// of the ladder (tamper, a heard alarm); integrity and offline are
+    /// The bar color for this class, `#RRGGBBAA`. Red is reserved for the
+    /// top of the ladder (tamper, a heard alarm); integrity and offline are
     /// amber nudges — the same split the Hue alert-light blueprint ships.
     /// The drill is green: a test that lights up red teaches people that
     /// red is usually a drill.
+    ///
+    /// **Eight hex digits, not six.** The bar's firmware types both
+    /// `led_notification_color` and an element's `color` with the pattern
+    /// `^#[a-fA-F0-9]{8}$` — RGBA — which a six-digit CSS color does not
+    /// match. This lane shipped the six-digit form from the day it was
+    /// written, so on firmware that enforces the pattern the draw was
+    /// rejected and the bar stayed dark with no error the owner could see.
+    /// The trailing `FF` is full opacity.
     pub fn busybar_color(self) -> &'static str {
         match self {
-            PokeClass::Tamper | PokeClass::Pattern => "#FF0000",
-            PokeClass::Integrity | PokeClass::Offline => "#FF8C00",
-            PokeClass::Drill => "#00BE50",
+            PokeClass::Tamper | PokeClass::Pattern => "#FF0000FF",
+            PokeClass::Integrity | PokeClass::Offline => "#FF8C00FF",
+            PokeClass::Drill => "#00BE50FF",
         }
     }
 
@@ -221,13 +229,13 @@ mod tests {
 
     #[test]
     fn red_is_reserved_for_the_top_of_the_ladder() {
-        assert_eq!(PokeClass::Tamper.busybar_color(), "#FF0000");
-        assert_eq!(PokeClass::Pattern.busybar_color(), "#FF0000");
-        assert_ne!(PokeClass::Offline.busybar_color(), "#FF0000");
-        assert_ne!(PokeClass::Integrity.busybar_color(), "#FF0000");
+        assert_eq!(PokeClass::Tamper.busybar_color(), "#FF0000FF");
+        assert_eq!(PokeClass::Pattern.busybar_color(), "#FF0000FF");
+        assert_ne!(PokeClass::Offline.busybar_color(), "#FF0000FF");
+        assert_ne!(PokeClass::Integrity.busybar_color(), "#FF0000FF");
         // The drill must never wear an alarm's clothes — same rule as its
         // ntfy priority, enforced in color here.
-        assert_ne!(PokeClass::Drill.busybar_color(), "#FF0000");
+        assert_ne!(PokeClass::Drill.busybar_color(), "#FF0000FF");
         assert!(PokeClass::Drill.busybar_priority() < PokeClass::Offline.busybar_priority());
     }
 

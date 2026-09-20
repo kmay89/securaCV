@@ -81,6 +81,23 @@ bool csi_running();
  *  windows_emitted, frames_dropped_*, etc. Returns false on null arg. */
 bool csi_get_stats(csi_stats_t* out);
 
+/** Transmitter filter (csi_hal.h). csi_filter_foreign(): the persisted
+ *  on/off choice (default on). csi_filter_armed(): the setting is on AND
+ *  the HAL holds the associated AP's BSSID, so the filter is actually
+ *  comparing — false with the setting off, on an AP-only install, or
+ *  before the STA associates; in all three every frame passes. Both
+ *  booleans; neither exposes an address. */
+bool csi_filter_foreign();
+bool csi_filter_armed();
+
+/**
+ * Call from the ARDUINO_EVENT_WIFI_STA_GOT_IP handler. Asks the HAL to
+ * re-read the associated BSSID on its next process() tick so the
+ * transmitter filter follows a (re)association immediately instead of at
+ * the next poll. Safe from the Wi-Fi event task: it only sets a flag.
+ */
+void on_wifi_sta_connected();
+
 /**
  * Length of the hex-encoded session cookie value (32 random bytes →
  * 64 hex chars). Callers issuing a Set-Cookie need this to size their

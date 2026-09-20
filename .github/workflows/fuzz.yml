@@ -68,7 +68,7 @@ jobs:
         # Linux (the witnessd syscall filter), so without the headers every
         # target compiles cleanly and then dies at link with `unable to find
         # library -lseccomp`. Found by building this suite for the first time.
-        run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+        uses: ./.github/actions/setup-libseccomp
       - name: Install nightly (libFuzzer needs it)
         run: |
           rustup toolchain install nightly --profile minimal
@@ -121,7 +121,7 @@ jobs:
         # Linux (the witnessd syscall filter), so without the headers every
         # target compiles cleanly and then dies at link with `unable to find
         # library -lseccomp`. Found by building this suite for the first time.
-        run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+        uses: ./.github/actions/setup-libseccomp
       - name: Install nightly (libFuzzer needs it)
         run: |
           rustup toolchain install nightly --profile minimal

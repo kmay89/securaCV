@@ -99,7 +99,9 @@ ap_d   = 8.0;        // aperture through the web behind the disc
 
 /* [Vent] — Ø3 hole + adhesive ePTFE patch on the INSIDE face */
 vent_d = 3.0;
-vent_x = -15.0;  vent_y = 6.0;
+vent_x = 30.0;   vent_y = 0.0;    // over the plug room beyond the board's USB edge: at (-15, 6) the
+                                  // membrane sat under the battery's foam-over pad and got pressed
+                                  // on every close; the lens keep-out and the wall are asserted
 
 /* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
@@ -195,6 +197,11 @@ assert(lob_off - wall_t - lan_d/2 >= 1.5, "lanyard bore too close to the pressur
 assert(insert_h + 1.5 <= base_h, "insert pocket too deep");
 assert(end_lob_y + lob_d/2 <= inner_w/2 - r_in, "end lobes ride onto the corner radius");
 assert(wall_t >= 2.4 && floor_t >= 2.4 && lid_t >= 2.4, "field case needs >= 2.4 mm shell minimum");
+assert(batt_h + 2*foam_t + 1.0 <= cav_h, "battery + foam bed + foam over exceed the cavity — thin foam_t or raise stack_h");
+assert(sqrt(pow(vent_x - lens_x, 2) + pow(vent_y - lens_y, 2)) >= (bez_on ? bez_o : disc_d)/2 + vent_d/2 + 2.4,
+       "the vent's inner spot-face runs into the lens seat — move vent_x/vent_y");
+assert(abs(vent_x) + vent_d/2 + 1.2 + 1.0 <= inner_l/2 && abs(vent_y) + vent_d/2 + 1.2 + 1.0 <= inner_w/2,
+       "the vent's spot-face reaches the wall — move vent_x/vent_y inboard");
 
 echo(str("Canary FIELD case v0.1-dev — outer ", out_l, " x ", out_w, " x ", total_h,
          " (+boot ", out_l + 2*(boot_w + lob_off + lob_d/2 - wall_t), " wide at lobes)"));

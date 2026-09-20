@@ -194,7 +194,7 @@ action:
           - service: rest_command.securacv_busybar_alert
             data:
               text: "{{ alert_text }}"
-              color: "#FF8C00"
+              color: "#FF8C00FF"
               priority: 60
               timeout_ms: 180000
 
@@ -240,7 +240,7 @@ action:
       - service: rest_command.securacv_busybar_alert
         data:
           text: "{{ critical_text }}"
-          color: "#FF0000"
+          color: "#FF0000FF"
           priority: 100
           timeout_ms: 0
 
@@ -262,7 +262,7 @@ action:
       - service: rest_command.securacv_busybar_alert
         data:
           text: "ALL CLEAR"
-          color: "#00BE50"
+          color: "#00BE50FF"
           priority: 100
           timeout_ms: 5000
       - delay:

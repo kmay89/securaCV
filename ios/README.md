@@ -65,7 +65,8 @@ ios/
     SecuraCVNotificationService/  NSE: shape the content-free wake into a shown alert
     SecuraCVWatch/         SecuraCV on your wrist: WristStore + 3 screens (glance/heartbeat/about)
     SecuraCVWatchWidgets/  watch complications + Smart Stack card (read the watch-local cache)
-  Tests/SecuraCVTests/     ChainVerifier + model/push-discipline + wrist-contract tests
+  Tests/SecuraCVTests/     ChainVerifier + model/push-discipline + wrist-contract tests,
+                           WitnessPageFixtureTests (spec/fixtures/witness_page_v1.json)
   Support/                 Info.plists, entitlements (incl. Watch-*.plist / Watch*.entitlements)
   Assets.xcassets/         iPhone app icon + Canary mascot — generated, committed
   WatchAssets.xcassets/    watch app icon + Canary mascot  — same generators, same contract
@@ -150,14 +151,36 @@ Four rules keep "beautiful" from decaying into "busy":
   host-tested) sends ONE pilot Canary first and touches nothing else until
   the pilot actually answers on the new network — a typo'd password strands
   one device (which keeps its rescues), never the fleet. Each device rides
-  the transport it can actually use right now: HTTP (`/api/wifi/connect`)
-  when it's answering, the firmware's bonded BLE provisioning service when
-  the password already changed under it, and the display family is named
-  hands-on up front (its credentials live in its own first-boot portal).
+  the transport it can actually use right now — and the sheet names the
+  wire: a pinned https Canary takes `/api/wifi/connect` over its checked
+  TLS connection, a Canary whose console is connected takes the firmware's
+  bonded BLE provisioning service (preferred over plain http even while it
+  is online), plain http is offered only when nothing encrypted reaches the
+  device and then only behind a disclosure you switch on ("sends it across
+  your Wi-Fi unencrypted"), and the display family is named hands-on up
+  front (its credentials live in its own first-boot portal).
   Every verdict on the sheet is a device that actually came back — not a
   hope. The same honesty landed under the glass settings sheet as an undo:
   the sheet snapshots every knob at open, and "Undo changes" replays the
   snapshot through the ordinary write path (`SettingsRevert`, host-tested).
+- **"Verified" is checked against this repo's firmware.** The chain page
+  the app verifies is one contract, `spec/witness_api_v1.md`
+  (`GET /api/v1/witness?last=N`), served by the canary-vision reference
+  device-api (`chain_format` absent → `reference_v1`) and by canary-wap
+  (`wap_v1`: the firmware's domain-separated chain hash, Ed25519 over the
+  raw hash). `ChainVerifier` recomputes every link in the page's own
+  construction and checks the head's signature against the key pinned on
+  first sight; an absent or empty signature is Unsigned, an unknown format
+  is Unverified, never a guess. Coarse time only (Invariant III): a
+  ten-minute bucket, and a Canary that has not met a clock sends none — the
+  decoder anchors it from `time_bucket × time_bucket_ms` and `uptime_s`.
+  One fixture, `spec/fixtures/witness_page_v1.json`, is byte-compared by
+  the firmware's host test and decoded by `WitnessPageFixtureTests` against
+  the same public key. A WAP that serves https is dialed through the
+  certificate fingerprint its pairing receipt carried (`tls_cert_fp` →
+  `PinnedTrustDelegate`, exact SHA-256 compare of the leaf DER); a mismatch
+  is a named refusal, and an https receipt with no fingerprint is refused at
+  pairing rather than paired into a device every call then rejects.
 - **The character earns its moments.** The one standard Canary
   (`brands/logo_512x512.png`, staged by `make_brand_assets.py` — never
   redrawn) appears in the calm places, breathing gently (still, under Reduce
@@ -362,10 +385,10 @@ Simulator opens straight into a sample fleet, and
 `APPLE_DEVELOPMENT_TEAM=YOURTEAMID scripts/heal.sh generate` makes device
 signing survive regeneration.
 
-Signing (device / TestFlight / App Store) uses the **same** Apple secrets as the
-desktop mobile pipeline (`ENABLE_IOS_BUILD`, `APPLE_DEVELOPMENT_TEAM`,
+Signing (device / TestFlight / App Store) uses the **same** Apple secrets as
+every Apple target in the repo (`ENABLE_IOS_BUILD`, `APPLE_DEVELOPMENT_TEAM`,
 `APPLE_API_ISSUER`/`APPLE_API_KEY`/`APPLE_API_KEY_BASE64`, …). See
-`.github/workflows/ios-release.yml` and `desktop-lab/MOBILE.md`.
+`.github/workflows/ios-release.yml` and the CI section of `desktop-lab/MOBILE.md`.
 
 ## What it will never do (invariant guardrails)
 

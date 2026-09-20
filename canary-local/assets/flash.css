@@ -348,11 +348,24 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-wifi-saved-i { color: #7CFF9B; font-weight: 700; flex: none; }
 .flash-wifi-saved strong { color: #dff1e0; font-weight: 640; }
 .flash-wifi-inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-.flash-wifi-inputs input {
+.flash-wifi-inputs input,
+.flash-wifi-inputs select,
+.flash-wifi-inputs textarea {
   flex: 1; min-width: 180px; background: #0c0c0d; border: 1px solid var(--edge);
   border-radius: 10px; color: var(--text); padding: 9px 12px; font-size: 14px;
 }
-.flash-wifi-inputs input:focus { outline: none; border-color: var(--canary-deep); }
+.flash-wifi-inputs input:focus,
+.flash-wifi-inputs select:focus,
+.flash-wifi-inputs textarea:focus { outline: none; border-color: var(--canary-deep); }
+/* Broker TLS (renderWifiFields): the mode select and the CA box each take
+   the whole row; the CA is a 2–3 KB PEM paste, so it is monospace and grows
+   only by the owner's hand. */
+.flash-wifi-inputs select { flex-basis: 100%; }
+.flash-wifi-inputs textarea {
+  flex-basis: 100%; min-height: 108px; resize: vertical; font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.flash-mqtt-port-nudge { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 /* Existing-secret fields (Wi-Fi key, broker password) are TEXT inputs masked
    here, never type=password — the OS reads a bare password field as sign-up
    and offers to invent a key the router has never seen

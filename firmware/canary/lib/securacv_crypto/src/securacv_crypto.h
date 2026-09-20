@@ -51,6 +51,11 @@ public:
   // chars copied (0 when the key is absent, not string-typed, or the value
   // plus NUL does not fit in maxLen).
   size_t getString(const char* key, char* buf, size_t maxLen);
+  // Stores a NUL-terminated value as an NVS STRING (not a blob): the type
+  // the shared broker transport reads mqtt_ca / mqtt_fp back with
+  // (Preferences::getString, network/mqtt_transport.h). Returns bytes
+  // written, 0 on failure or when the handle is read-only.
+  size_t putString(const char* key, const char* value);
 
   // Key management
   bool isKey(const char* key);

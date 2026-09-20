@@ -1,0 +1,20 @@
+name: Install libseccomp-dev
+description: >
+  The kernel links libseccomp on Linux — witnessd's syscall filter
+  (src/module_runtime/sandbox.rs) — so without the headers every cargo
+  target compiles cleanly and then dies at link with
+  `unable to find library -lseccomp`. Found by building the fuzz suite for
+  the first time; nine jobs then carried their own copy of the same apt-get
+  line. This is the one copy (CI.md R10). Jobs that install libseccomp-dev
+  in the same apt-get call as other packages (ffmpeg, mosquitto, GStreamer)
+  keep their combined line — one apt transaction beats two.
+
+runs:
+  using: composite
+  steps:
+    - name: apt-get install libseccomp-dev
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y libseccomp-dev

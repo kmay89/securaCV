@@ -56,7 +56,10 @@ tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;   // catalog trio — can
 /* [Shell] */
 frame_w = 3.5;       // side wall thickness
 face_t  = 2.4;       // bezel face thickness
-back_t  = 2.4;
+back_t  = 3.0;       // 3.0 (was 2.4): the back carries the four dock pads the cradle assumes COPLANAR,
+                     // and a 114 x 74 sheet at 2.4 does not stay a plane. Ribs cannot go on it — the
+                     // inner face is the bed and the pads own the outer face — so the stiffness is t^3:
+                     // 1.95x for 0.6 mm and 4.7 g  // [2.4:0.2:4]
 r_out   = 5.0;   // deviates: display-frame radius class — scaled to the 4.3-inch face (palm shells run core_corner_r())
 
 /* [Fasteners] — M2 x 8 self-tappers into corner lobes OUTSIDE the cavity

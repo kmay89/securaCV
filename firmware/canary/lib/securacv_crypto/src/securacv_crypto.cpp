@@ -97,6 +97,11 @@ size_t NvsManager::getString(const char* key, char* buf, size_t maxLen) {
   return n;
 }
 
+size_t NvsManager::putString(const char* key, const char* value) {
+  if (key == nullptr || value == nullptr || !m_open || m_readOnly) return 0;
+  return m_prefs.putString(key, value);
+}
+
 bool NvsManager::isKey(const char* key) {
   return m_prefs.isKey(key);
 }

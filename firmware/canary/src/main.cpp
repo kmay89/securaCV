@@ -57,12 +57,13 @@
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
 
-/* Bridge the canary HAL's csi_features_t into the common module
- * pipeline. Both structs share the same int8 vector + telemetry layout;
- * the assertion below is the wire-protocol guarantee that a refactor of
- * either side breaks the build instead of scrambling features at runtime. */
+/* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
+ * includes it rather than declaring a twin — roadmap 22), so the module
+ * bridge below hands the pipeline the very type it consumes. The assertion
+ * stays as the wire-protocol guarantee: a refactor that widens the struct
+ * breaks the build instead of scrambling features at runtime. */
 static_assert(sizeof(csi_features_t) == 36,
-              "canary HAL csi_features_t must be 32 (vector) + 2 (frames) + 1 (bucket) + 1 (caps) bytes");
+              "csi_features_t must be 32 (vector) + 2 (frames) + 1 (bucket) + 1 (caps) bytes");
 #endif
 
 #if FEATURE_MESH_NETWORK
@@ -1121,11 +1122,11 @@ void setup() {
 
     csi::set_features_callback([](const csi_features_t* f) {
       sensing_feed_csi(f);
-      /* Forward the same window into the common module pipeline.
-       * Pass as void* so this TU stays the only place where both
-       * csi_features_t typedefs are visible (canary HAL and common
-       * library); the size_t static_assert at the top of this file
-       * guards against future struct drift. */
+      /* Forward the same window into the common module pipeline. The
+       * bridge keeps its C-ABI void* signature (main.cpp does not
+       * include the module headers); since roadmap 22 both sides see
+       * the one csi_types.h struct, and the static_assert at the top of
+       * this file pins its size. */
       securacv_csi_modules_feed(static_cast<const void*>(f));
     });
     /* WiFi may not yet be running; start() defers itself if so and the
@@ -2897,11 +2898,21 @@ static void handle_serial_commands() {
 
 #if FEATURE_HA_MQTT
     case 'm':
-    case 'M':
+    case 'M': {
       Serial.println("\n=== MQTT ===");
       Serial.printf("  Connected: %s\n", mqtt_connected() ? "Yes" : "No");
+      // Broker transport as decided from NVS (mqtt_tls / mqtt_ca / mqtt_fp):
+      // constant, secret-free text — the mode name, what the socket does
+      // with it, and the refusal when there is one. Never the CA or the pin.
+      MqttTransportStatus tls;
+      mqtt_transport_status(&tls);
+      Serial.printf("  Transport: %s (provisioned mode: %s%s)\n", tls.transport, tls.mode,
+                    tls.loaded ? "" : ", not read yet");
+      if (!tls.allowed) Serial.printf("  Refused: %s\n", tls.reason);
+      if (tls.warn_insecure) Serial.println("  WARNING: lab mode - encrypted but the broker is NOT verified");
       Serial.println();
       break;
+    }
 #endif
 
 #if FEATURE_DATA_MGMT

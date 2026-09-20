@@ -54,3 +54,10 @@ main_queue_ok:
 # actions/setup-python step. Entries are `<workflow>.yml:<job>`, each with a
 # reason; should stay empty.
 system_python_ok: []
+
+# R10: jobs allowed to provision a shared toolchain inline (pip-install
+# PlatformIO, fetch the Emscripten SDK) instead of through the composite action
+# that owns that setup (.github/actions/setup-platformio, setup-emsdk). Entries
+# are `<workflow>.yml:<job>`, each with a reason; should stay empty — an inline
+# copy is exactly the drift the actions exist to end.
+inline_toolchain_ok: []

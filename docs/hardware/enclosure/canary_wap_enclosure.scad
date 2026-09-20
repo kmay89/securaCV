@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.7
+//  SecuraCV Canary WAP — 3D-printable enclosure (parametric)  v0.8
 //  @env cer=2 ip="~IP54" basis="weather preset"
 //  Board: Seeed XIAO ESP32-S3 Sense + optional LiPo (placed beside the board)
 //  Features: light-pipe port, buzzer/pressure vent, camera/sensor window with
@@ -57,6 +57,7 @@ use <canary_snap_lib.scad>    // the cantilever board clip + its strain budget
 use <canary_port_lib.scad>    // bridge-safe USB opening (this file's polygon, promoted)
 use <canary_board_lib.scad>   // board registry — the XIAO numbers the knobs cite
 use <canary_mark_lib.scad>    // the house wordmark (opt_mark)
+use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
 use <canary_color_lib.scad>   // the colorway registry — assembled-preview spools
 
 /* [What to render] */
@@ -188,6 +189,11 @@ lid_t          = 2.0;   // lid top thickness
 lip_h          = 4.0;   // how far the lid lip drops into the base
 lip_t          = 1.2;   // lid lip wall thickness
 corner_r       = 3.0;   // outside corner radius
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp
+                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
+                   // floor about it along one layer boundary. 0 = the old square corner  // [0:0.2:1.2]
+lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
+                   // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
 /* [Print tolerances] — per-side clearances; tune these once for your printer
    (defaults = the catalog trio, core_tol_*() in canary_core_lib, dialed on the fit coupon) */
@@ -370,8 +376,11 @@ base_h = floor_t + cav_h;
 // MUST RENDER EMPTY. `lift` separates intended face-on-face contact from real
 // interference: coplanar faces intersect to a zero-volume patch that CGAL
 // reports as non-2-manifold, which is a dirty render, not a pass.
-module wap_fitcheck(lift = 0.1) {
-    intersection() { translate([0, 0, base_h + lift]) lid(); base(); }
+// `turned` seats the lid rotated 180° about Z — the poka-yoke CONTROL: with
+// lid_key on, this must NOT be empty (the lip lands on the key rib). A gate
+// that can only pass has proved nothing; this is the case it must fail.
+module wap_fitcheck(lift = 0.1, turned = false) {
+    intersection() { translate([0, 0, base_h + lift]) rotate([0, 0, turned ? 180 : 0]) lid(); base(); }
 }
 
 pcb_z    = floor_t + standoff_h;                // absolute z of PCB underside
@@ -399,6 +408,21 @@ assert(standoff_h > 0, "standoff_h must be positive");
 assert(lip_h < cav_h, "lip_h must be less than the cavity height or the lid bottoms out");
 assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
 assert(head_d > scr_c, "the screw head must be larger than its clearance hole, or it falls through the lid");
+// the lid rib ring may reach down only as far as the headroom over the tallest
+// component (the +1.0 in cav_h_min, plus whatever the USB rule added)
+lid_headroom = 1.0 + (cav_h - cav_h_min);
+assert(!lid_ribs || lid_rib_h <= lid_headroom,
+       str("lid_rib_h ", lid_rib_h, " reaches past the ", lid_headroom, " mm headroom over the stack — the ribs land on a component"));
+assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the structural wall floor");
+// the floor cove eats 0.8 of cavity width at floor level: the GPS pocket must clear it
+assert(!(e_gps && floor_cove > 0) || inner_w/2 - (gps_w + 0.8)/2 >= floor_cove + 0.3,
+       "the GPS pocket runs into the floor cove — set floor_cove = 0 or widen the cavity");
+key_x = inner_l/2 - post_corner - 2.5;   // lid key: on the +Y wall, inboard of the +X corner post
+// a sealed box with no pressure path pumps air past its gasket on every
+// thermal cycle (field_ratings.md): the buzzer cluster's membrane seat or a
+// weep must be in the build — nothing asserted this before
+assert(!e_seal || e_buzzer || e_weep,
+       "seal mode with no pressure path — enable opt_buzzer (the vent cluster + GORE seat) or opt_weep");
 assert(!head_seal || screw_head == "pan",
        "head_seal seats an O-ring under a PAN head — set screw_head = \"pan\" (a flat head's cone ejects the ring)");
 assert(!head_seal || e_seal, "head_seal only means something in seal mode (opt_seal / the weather preset)");
@@ -462,6 +486,26 @@ assert(!e_battery || cav_h >= batt_h + 1.0, "battery bay taller than the cavity"
 assert(!e_gps || cav_h >= gps_h + 1.0, "GPS bay taller than the cavity");
 assert(base_h - (e_seal ? gasket_groove : 0) - (pcb_z + board_h + usb_h + usb_z) >= usb_web - 1e-6,
        "less than usb_web of wall above the USB opening");
+// the hardware, DERIVED from the same knobs that draw the holes (canary_core_lib)
+hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
+hw_echo("WAP", [
+    hw_item(len(post_xy()), hw_screw(screw_size, screw_head, hw_len(lid_t, head_pad, hw_engage(screw_size)), hw_thread)),
+    screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
+    head_seal    ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
+    e_buzzer && e_seal ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
+    e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
+    e_camera && cam_disc_t > 0 ? hw_item(1, str("Ø", cam_disc_d, " x ", cam_disc_t, " clear disc (bond)")) : "",
+    e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
+    e_mount && (mount_style == "keyhole" || mount_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
+    // the anti-lift knockouts exist only with keyholes + a battery bay (the floor they sit under)
+    mount_extra > 0 && kh_lock && e_battery ? hw_item(2, "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)") : "",
+    // the thermal shield rides on the corner screws: they pass the shield panel and its
+    // standoffs (sh_t + sh_gap) before the lid, so the shield render lists the long ones
+    part == "shield" ? hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head,
+                           hw_len(lid_t, head_pad + sh_t + sh_gap, hw_engage(screw_size)), hw_thread),
+                           " — REPLACES the lid screws when the shield is fitted")) : "",
+]);
 echo(str("Canary WAP enclosure v0.8 — outer ", out_l, " x ", out_w, " x ",
          base_h + lid_t + mount_extra, " mm  (preset=", preset, ", seal=", e_seal, ", mount=", e_mount, ")"));
 echo(str("lid screws: ", screw_size, " ", screw_head, " head, max length ",
@@ -589,6 +633,7 @@ module base() {
                 [board_cx-bx, board_cy-by], [board_cx-bx, board_cy+by] ];   // standoff/board-rest corners
     posts    = post_xy();
     gusset_h = max(2, cav_h - lip_h - 1.0);   // keep wall gussets below where the lid lip nests
+    gusset_w = min(2.0, rib_t_max(wall_eff));   // the landing width, capped at the old 2.0 target
 
     union() {
         // hollow shell with the USB-C wall opening (+ optional mounting/seal features)
@@ -600,8 +645,14 @@ module base() {
                 if (e_mount && (mount_style == "tabs" || mount_style == "both"))
                     mount_tabs();
             }
-            translate([0, 0, floor_t])
-                rrect(inner_l, inner_w, max(0.1, corner_r - wall_eff), cav_h + 1);
+            // the cavity, with the floor cove left standing (canary_core_lib); the
+            // battery bay keeps the square corner — the cell lies 0.5 off both
+            // ±Y walls at floor level and a cove there would ride up its edge
+            translate([0, 0, floor_t]) union() {
+                cavity_cut(inner_l, inner_w, max(0.1, corner_r - wall_eff), cav_h + 1, floor_cove);
+                if (e_battery && floor_cove > 0)
+                    translate([batt_cx - batt_l/2 - 1.1, -inner_w/2, 0]) cube([batt_l + 2.2, inner_w, floor_cove + 0.01]);
+            }
             // seam reveal — the shadow line under the parting line
             // (canary_core_lib): the indoor variants close lid-on-base at the
             // exact same footprint, a raw butt joint on a show surface. The
@@ -668,16 +719,13 @@ module base() {
         difference() {
             union() {
                 for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_h - head_pad);
-                for (p = posts) {
+                // constant-width webs to both walls (canary_rib_lib corner_gusset):
+                // a hull between a Ø5 post and a Ø2 target flares and lands wider
+                // than drawn; this lands at gusset_w, 0.5 into the wall, sloped
+                for (p = posts) translate([0, 0, floor_t]) {
                     sx = sign(p[0]); sy = sign(p[1]);
-                    hull() {  // web to the X wall
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([sx*(inner_l/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
-                    hull() {  // web to the Y wall
-                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
-                        translate([p[0], sy*(inner_w/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
-                    }
+                    corner_gusset(p[0], p[1], sx*(inner_l/2 + 0.5), p[1], gusset_h, wall_eff, pd, gusset_w);
+                    corner_gusset(p[0], p[1], p[0], sy*(inner_w/2 + 0.5), gusset_h, wall_eff, pd, gusset_w);
                 }
             }
             // self-tap pilot — or, with inserts, a clearance bore the whole way (a machine
@@ -690,6 +738,9 @@ module base() {
                     cylinder(d = ins_bore, h = ins_h + 1);
         }
 
+        // lid key (canary_core_lib): a rib on the +Y wall inside the lip zone, just
+        // inboard of the +X corner post; the lid's lip carries the slot
+        if (lid_key) lid_key_rib(key_x, inner_w/2, 270, base_h, lip_h);
         // board support: standoffs + a perimeter frame + ribs that tie it into the screw posts
         for (c = corners) translate([c[0], c[1], floor_t]) cylinder(d = standoff_d, h = standoff_h);
         for (i = [0:3]) floorrib(corners[i], corners[(i+1) % 4], 2.6);          // perimeter cradle frame
@@ -863,16 +914,13 @@ module lid() {
 
         // lid lip that nests into the base (with sliding clearance), cleared around the posts
         difference() {
-            translate([0, 0, -lip_h])
-                difference() {
-                    rrect(inner_l - 2*tol_slide, inner_w - 2*tol_slide,
-                          max(0.1, corner_r - wall_eff - tol_slide), lip_h);
-                    rrect(inner_l - 2*tol_slide - 2*lip_t, inner_w - 2*tol_slide - 2*lip_t,
-                          0.1, lip_h + 1);
-                }
+            // the lip ring with its lead-in chamfer (canary_core_lib lip_ring)
+            lip_ring(inner_l - 2*tol_slide, inner_w - 2*tol_slide,
+                     max(0.1, corner_r - wall_eff - tol_slide), lip_h, lip_t);
             for (p = post_xy())
                 translate([p[0], p[1], -lip_h - 0.1])
                     cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            if (lid_key) lid_key_slot(key_x, inner_w/2, 270, lip_h, lip_t);
             // notch the lip at the USB end so the cable plug/overmold clears it
             translate([-inner_l/2, board_cy, -lip_h/2])
                 cube([lip_t * 4, usb_w + 4, lip_h + 0.2], center = true);

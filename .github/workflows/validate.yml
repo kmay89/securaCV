@@ -41,7 +41,12 @@ jobs:
       - uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
         with:
           category: integration
-          ignore: brands
+          # The brands check passes on custom_components/securacv/brand/icon.png
+          # (the validator looks for it in the tree before consulting
+          # brands.home-assistant.io) — the same folder the HACS mirror has
+          # validated with since 2026-08 and Home Assistant 2026.3+ serves.
+          # release.yml still ignores the check; drop it there once this has
+          # been seen green on main.
 
   validate-hassfest:
     name: Hassfest Validation

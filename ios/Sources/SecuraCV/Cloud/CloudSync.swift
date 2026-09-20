@@ -61,6 +61,11 @@ final class CloudSync {
             record["deviceType"] = ref.deviceType.rawValue as CTKValue
             record["baseURL"] = ref.baseURL?.absoluteString as CTKValue?
             record["pairedAt"] = ref.pairedAt as CTKValue
+            // The TLS pin travels with the URL it belongs to: a second
+            // iPhone that "just has your fleet" must be able to dial an
+            // https Canary and check it, or it would refuse the device
+            // until re-paired. Public data, like the URL.
+            record["tlsCertFP"] = ref.tlsCertFingerprint as CTKValue?
             db.save(record) { _, _ in /* best-effort; local mirror is source */ }
         }
         #endif
@@ -93,7 +98,9 @@ final class CloudSync {
             let type = DeviceType(rawValue: rec["deviceType"] as? String ?? "") ?? .unknown
             let url = (rec["baseURL"] as? String).flatMap(URL.init(string:))
             let paired = rec["pairedAt"] as? Date ?? .distantPast
-            return PairedDeviceRef(id: idString, name: name, deviceType: type, baseURL: url, pairedAt: paired)
+            let pin = TLSPin.normalize(rec["tlsCertFP"] as? String)
+            return PairedDeviceRef(id: idString, name: name, deviceType: type, baseURL: url,
+                                   pairedAt: paired, tlsCertFingerprint: pin)
         }
         #else
         return []

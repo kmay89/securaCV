@@ -401,10 +401,11 @@ SERIAL = {
 MQTT_PREFIX = grab(CSI_MQTT_CPP, r'DEFAULT_PREFIX\s*=\s*"([a-z]+)"', "MQTT DEFAULT_PREFIX")
 must(CSI_MQTT_CPP, '"%s/%s/%s"', "MQTT build_topic format")
 must(CSI_MQTT_CPP, '{\\"online\\":false}', "MQTT LWT payload")
+must(CSI_MQTT_CPP, '\\"device_type\\":\\"canary-wap\\"', "MQTT status device_type")
 
 TOPICS = [
     {"suffix": "status", "retained": True, "cadence": "on connect + ~30 s",
-     "payload": '{"online":true,"csi_running":true,"wifi_connected":true,"rssi":-58}'},
+     "payload": '{"online":true,"device_type":"canary-wap","csi_running":true,"wifi_connected":true,"rssi":-58}'},
     {"suffix": "events", "retained": False, "cadence": "per committed CSI event",
      "payload": '{"event_id":1234,"event_type":"motion","state":"motion","motion":72,"breathing":8,"signed":true,"v":1,"alg":"ed25519","fp":"7f3a9c21","sig":"…"}'},
     {"suffix": "chain", "retained": True, "cadence": "on each new record",
@@ -509,7 +510,7 @@ MQTT = {
     "keepalive": 60,
     "broker_uri": "mqtt://<host>:1883  (mqtts://<host>:8883 with TLS)",
     "lwt": {"topic": f"{MQTT_PREFIX}/<id>/status", "payload": '{"online":false}',
-            "note": "retained Last-Will; on connect the device replaces it with {\"online\":true}"},
+            "note": "retained Last-Will; on connect the device replaces it with {\"online\":true,\"device_type\":\"canary-wap\"}"},
     "topics": TOPICS,
     "subscribed": SUBSCRIBED,
     "discovery": {

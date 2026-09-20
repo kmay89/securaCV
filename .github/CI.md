@@ -18,6 +18,7 @@ introducing PR — the rules below can't rot by forgetting.
 | R6 | `push` and `pull_request` path lists are identical | Copy-paste drift between the two silently makes main verify different things than PRs |
 | R7 | A paths filter includes the workflow's own file | Editing a workflow must run it — the classic "merged a broken workflow that never triggered" gap |
 | R8 | Third-party actions (any owner outside `actions/` and `github/`) are pinned to a full commit SHA with a `# <version>` comment | A tag is a mutable ref in someone else's hands — a compromised or careless owner can move it under a run that holds secrets. SHA pins make the supply chain content-addressed; Dependabot bumps the pin and comment together. Exemptions: `ci-policy.yml → third_party_tag_ok`, each with a reason |
+| R10 | Toolchain setup is a composite action under `.github/actions/` — PlatformIO (`setup-platformio`), the Arduino CLI + ESP32 core (`setup-arduino-esp32`), the Emscripten SDK (`setup-emsdk`), libseccomp (`setup-libseccomp`), and the freshness workflows' open-or-comment issue (`issue-dedup`). A job passes its pins and cache key as inputs; it never `pip install`s PlatformIO or fetches emsdk in a `run:` block | The same setup used to be typed into four PlatformIO jobs, two emsdk jobs and nine cargo jobs, and copies drift: a fix (an interpreter pin, a cache path, the emsdk activation-every-run rule) lands in one and not the others, and the emulator refresh workflow's whole promise — byte-identical output to the CI rebuild — depends on the two being the same steps. The checker catches the easy half (an inline PlatformIO install or emsdk fetch); a new toolchain hand-rolled somewhere else is on the reviewer. A composite action that runs Python carries its own `actions/setup-python` step (R9 counts it for the calling job). Exemptions: `ci-policy.yml → inline_toolchain_ok` |
 | R9 | A job that runs Python — `python3`, `pip`, `ruff`, `mypy`, `pytest`, directly or through a script — has an `actions/setup-python` step, normally `python-version-file: pyproject.toml`, placed right after checkout | The runner image's `python3` is whatever `ubuntu-latest` ships this month and it moves under you (24.04 went to 3.12 while `pyproject.toml` targets 3.11), and packages that merely happen to be preinstalled there (PyYAML) are not on the setup-python interpreter — so a job `pip install`s what it imports. `pyproject.toml`'s `requires-python` is the ONE interpreter range for the repo's tooling (a floor and a ceiling: the versions the tests have actually run on — setup-python picks the newest release inside it, so an open floor would drift to whatever CPython shipped last month): move it there and every job follows. A job that needs a specific interpreter (PlatformIO, the Vela compiler) may pin `python-version` explicitly and says why in a comment. The checker sees commands in `run:` blocks; a Python call hidden inside a shell script is on the reviewer. Exemptions: `ci-policy.yml → system_python_ok` (`<workflow>.yml:<job>`) |
 
 Exemptions live in `.github/ci-policy.yml`, never in the checker — each
@@ -32,8 +33,15 @@ one carries a comment saying why. Run the checker locally with
   rotation so "latest" can't go stale) and installs libraries fresh
   (small on purpose, so lib changes never fragment the toolchain cache).
   Never hand-roll `arduino-cli core install` in a workflow.
-- **PlatformIO** jobs cache `~/.platformio` keyed on the relevant
-  `platformio.ini` set (see firmware.yml).
+- **PlatformIO** jobs go through `.github/actions/setup-platformio`
+  (interpreter, `~/.platformio` cache, one `pip install`); the caller
+  passes the cache key — keyed on the relevant `platformio.ini` set (see
+  firmware.yml) — and, on a signing path, exact version pins as inputs.
+- **The Emscripten SDK** comes from `.github/actions/setup-emsdk` (pinned
+  version in the cache key, activated on every run); **libseccomp** from
+  `.github/actions/setup-libseccomp`; a scheduled workflow that must tell a
+  human something opens or refreshes ONE issue through
+  `.github/actions/issue-dedup`. Rule R10 above.
 - **Rust** jobs use `Swatinem/rust-cache@v2`. Cargo *tools* built from
   source (`cargo install <tool>`) cache the built binary under a weekly
   key — pattern in audit.yml / sbom.yml.
@@ -77,5 +85,8 @@ one carries a comment saying why. Run the checker locally with
    pyproject.toml` right after checkout, and `pip install` what it imports.
 7. Reuse the caching patterns above instead of inventing new ones.
 
-The policy check tells you about 1–6 on the PR if you forget; 7 is on
-the reviewer.
+8. Provisioning a toolchain? Use (or extend) the composite action that owns
+   it (R10) instead of pasting its steps.
+
+The policy check tells you about 1–6 and the easy half of 8 on the PR if
+you forget; 7 is on the reviewer.

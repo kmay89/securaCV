@@ -66,7 +66,7 @@ struct BirthCertificateCard: View {
     var body: some View {
         if let certificate {
             VStack(alignment: .leading, spacing: Theme.s) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: Theme.xxs) {
                     Text(HatchSpec.kicker.uppercased())
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
@@ -112,14 +112,14 @@ struct BirthCertificateCard: View {
                 // also the reason there is no "rename" button here: the name
                 // is not a field, it is a rendering of the key.
                 Text("This name comes from the device's own key — any SecuraCV app derives the same one, and it changes only if the key does.")
-                    .font(.caption2)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
 
                 // Said once, where the claim is, rather than left for someone
                 // to wonder why one Canary says "Born" and another doesn't.
                 if witness.bornOn != nil, !witness.bornExact {
                     Text("This Canary met a clock later than it was made, so this is the first day it could date itself — its real birthday is on or before it.")
-                        .font(.caption2)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -134,7 +134,7 @@ struct BirthCertificateCard: View {
                 Label("No certificate yet", systemImage: "seal")
                     .font(.subheadline.weight(.medium))
                 Text("A Canary's name is derived from its key. Pair this one and its key gets pinned here — then the certificate appears, the same on every app you open it in.")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

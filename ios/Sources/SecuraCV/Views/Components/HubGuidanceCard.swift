@@ -72,13 +72,13 @@ struct HubGuidanceCard: View {
             Label(title, systemImage: icon)
                 .font(.subheadline.weight(.medium))
             Text(body)
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Link(link, destination: Self.setupURL)
-                .font(.caption.weight(.medium))
+                .font(.footnote.weight(.semibold))
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Theme.xs)
     }
 }
 
