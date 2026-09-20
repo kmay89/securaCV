@@ -95,8 +95,12 @@ broker you point them at (plain by default; CA-verified or SHA-256-pinned
 TLS once you provision it, refusing to connect rather than downgrading), a
 daily jittered check of a small signed update manifest on the products with
 pull-OTA, and on the display line SNTP and the opt-in standalone forecast.
-None of those carries an identifier, and each is pinned by a test so it
-cannot quietly grow one.
+The third-party paths carry no identifier; the broker link carries your
+device's own id and name to the broker you run, in every topic. The
+forecast and the update fetch's URL policy are pinned by host tests
+(`firmware/tests_host/test_wx_core.cpp`,
+`firmware/common/ota/test_ota_logic.cpp`); SNTP's two hosts are literals
+in the display firmware's `tz_auto.cpp`, with no test of their own.
 
 This means:
 - A WAP on its own access point is invisible to anyone watching your
@@ -113,10 +117,12 @@ This means:
 Every product that joins a home network — the displays (Dash / Nightstand /
 Watch Station) to render the fleet, the sense and vision Canaries and the
 `firmware/canary` flagship to publish, a WAP once you join it to your WiFi —
-carries only the outbound paths listed here. None carries an identifier and
-none is required for the device to witness. A new outbound path is a change
-to this list and to `THREAT_MODEL.md` Principle 2, with a host test pinning
-its request shape the way `tests_host/test_wx_core.cpp` pins the forecast.
+carries only the outbound paths listed here. The third-party paths carry no
+identifier (the broker link carries your device's own id and name, to the
+broker you run) and none is required for the device to witness. A new
+outbound path is a change to this list and to `THREAT_MODEL.md` Principle 2,
+with a host test pinning its request shape the way
+`firmware/tests_host/test_wx_core.cpp` pins the forecast.
 
 1. **The MQTT broker you chose** — sense, vision, the flagship and the
    WAP's bridge publish to it; the displays subscribe. The socket is plain
@@ -142,8 +148,10 @@ The display line adds three of its own:
 
 3. **Time (SNTP)** — always on when networked: UTC from two public time
    sources (`pool.ntp.org`, `time.nist.gov`). This is what keeps a
-   bedside clock honest. (A witness's clock comes from GPS; the displays
-   have none.)
+   bedside clock honest. (The flagship and the WAP take their time from
+   GPS; sense and vision have no clock source of their own — no GPS, no
+   SNTP — and sense stamps `ts_ms` from uptime; the displays have no
+   GPS, so they sync.)
 4. **Timezone lookup** — compile-time opt-in only (`CD_TZ_WEB_LOOKUP` in
    `secrets.h`); off in every shipped image. Without it the zone comes
    from configuration or the app.
@@ -162,7 +170,7 @@ The display line adds three of its own:
    location is stored only to callers that are not cross-site. The query
    is an anonymous HTTPS forecast request (Open-Meteo, pinned root CA) over
    a 0.1° grid point (~11 km); the exact request shape is pinned by a host
-   test (`tests_host/test_wx_core.cpp`) so it cannot quietly grow an
+   test (`firmware/tests_host/test_wx_core.cpp`) so it cannot quietly grow an
    identifier. The device never serves or republishes the stored grid
    point. The location is entered **on the glass itself**: the two 7"
    flavors that carry the standalone forecast (`dash7`, `nightstand7`)
@@ -186,17 +194,33 @@ The display line adds three of its own:
 ### No Tracking Identifiers
 
 - The WiFi network name ("Canary-XXXX") reveals no manufacturer identity,
-  serial number, or information linking back to ERRERlabs or the owner
+  serial number, or information linking back to ERRERlabs or the owner.
+  The radio's hardware address is a separate disclosure: nothing in the
+  firmware sets a derived or random MAC, so the access point's BSSID and
+  the BLE advertising address are the chip's factory addresses and carry
+  Espressif's OUI, as every ESP32's do — they say which vendor made the
+  radio, not which device or owner this is
 - BLE (NimBLE) is compiled into the shipped Canary WAP build
   (`BUILD_PROFILE_FULL`) for owner pairing and provisioning, the GATT
-  status service, signed BLE firmware updates and the Scout scanner that
-  attributes rooms to the owner's own paired beacons by hashed MAC; the
-  MINIMAL profile compiles it out and DEV keeps only the pairing channel
-  and status service. The `firmware/canary` flagship's `release` and
-  `release_ha` images build it out; its `full` env turns the GATT status
-  service on. It advertises the device's own name, never a manufacturer identity, and
-  never classes or tracks other people's devices; Classic Bluetooth does
-  not exist on these chips
+  status service, signed BLE firmware updates, the Scout scanner that
+  attributes rooms to the owner's own paired beacons by hashed MAC, and
+  two passive scanners: BLE presence, a listen-only feed into the same
+  presence pipeline as the WiFi one that keeps no MAC, OUI or name from
+  the scanner, and Nearby discovery, which recognizes other Canaries by
+  the SecuraCV service UUID and only counts everything else. The MINIMAL
+  profile compiles it out; DEV keeps the pairing channel (with the BLE
+  OTA and the presence listener that ride it) and the status service.
+  The `firmware/canary` flagship's `release` and `release_ha` images
+  build it out; its `full` env compiles the Scout scanner and the GATT
+  status service (`securacv_ble_scan`, `securacv_ble_status`), the only
+  BLE code in that tree. Its advertisements carry the device's own name
+  and the SecuraCV service UUID; the fleet beacon and Chirp add a
+  manufacturer-data field under the Bluetooth SIG's reserved test id
+  `0xFFFF` — type, flags, battery, health, chain height and the two
+  fingerprint bytes already in the device's name (`fleet_beacon.h`) —
+  never a serial. Nothing classes or tracks other people's devices. The
+  S3 / C3 the BLE-bearing builds run on have no Classic (BR/EDR) radio;
+  the classic-ESP32 boards have one and no build compiles a stack for it
 - Service discovery (mDNS `_securacv._tcp`) is advertised only on the
   network the device is on — its own access point, or the home network you
   joined it to — never beyond it
@@ -387,11 +411,11 @@ Espressif is a Chinese semiconductor company. The WiFi firmware contains
 proprietary binary blobs from Espressif. A sufficiently resourced
 state-level adversary could theoretically compromise these blobs.
 The mitigation that always applies is architectural: the firmware opens
-no undisclosed outbound path — the few it has are named above and pinned
-by tests — so a compromised blob would have to originate traffic of its
-own, on a network whose expected traffic is short and known, and a WAP on
-its own access point gives it no route out at all. Secure boot and flash
-encryption are additional
+no undisclosed outbound path — the few it has are named above, two of
+them pinned by host tests — so a compromised blob would have to
+originate traffic of its own, on a network whose expected traffic is
+short and known, and a WAP on its own access point gives it no route
+out at all. Secure boot and flash encryption are additional
 mitigations, but they are **off unless you turn them on** — see
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 

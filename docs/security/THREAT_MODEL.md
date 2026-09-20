@@ -73,7 +73,7 @@ physical extraction as the separately-documented trade it is.
 
 ### 2. Zero Phone-Home
 
-**Nothing outbound that is not disclosed, named and tested.** No Canary
+**Nothing outbound that is not disclosed and named.** No Canary
 contacts ERRERlabs, a cloud, an analytics or crash-report service, and a
 WAP used as its own access point opens no outbound socket at all: it runs
 a WiFi Access Point and is a **server**, never a client. A product on a
@@ -87,11 +87,15 @@ home network opens exactly these paths, and nothing else:
 - **A daily, jittered signed-manifest check** on every product with
   pull-OTA — an anonymous HTTPS GET that installs nothing; Install is a
   button and the per-device Auto Update switch an explicit opt-in
-  (`docs/firmware_ota.md`)
-- **SNTP** on the display line — a witness's clock comes from GPS, a
-  display has none
+  (`docs/firmware_ota.md`; the fetch's URL policy is pinned by
+  `firmware/common/ota/test_ota_logic.cpp`)
+- **SNTP** on the display line — the flagship and the WAP take time from
+  GPS; sense and vision have no clock source of their own (no GPS, no
+  SNTP; sense stamps `ts_ms` from uptime); the displays have no GPS.
+  Two host literals in the display firmware's `tz_auto.cpp`
+  (`pool.ntp.org`, `time.nist.gov`), with no host test of their own
 - **The opt-in standalone forecast** on the two 7" displays, switched on
-  at the glass only and pinned by `tests_host/test_wx_core.cpp`
+  at the glass only and pinned by `firmware/tests_host/test_wx_core.cpp`
 
 DNS resolves only those hosts. There is no telemetry, no cloud sync and no
 other HTTP request. The user-facing list, with each path's test, is
@@ -110,12 +114,21 @@ socket and points here.
 
 ### 3. No Identifier Leaks
 
-- WiFi AP BSSID derived from device identity (no manufacturer OUI leak)
+- The AP's name ("Canary-XXXX") carries no manufacturer identity or
+  serial. Its BSSID is the radio's factory MAC and carries Espressif's
+  OUI: nothing in the firmware sets a derived or random address, so the
+  radio discloses the chip vendor, as every ESP32 does, and nothing more
 - No probe responses containing manufacturer information
-- BLE advertises the device's own name, never a manufacturer OUI or a
-  serial; it is compiled into the WAP's FULL and DEV profiles (MINIMAL
-  compiles it out); the `firmware/canary` flagship builds it out of
-  `release` / `release_ha` and its `full` env turns the status service on
+- BLE advertising carries the device's own name and the SecuraCV service
+  UUID; the fleet beacon and Chirp add a manufacturer-data field under
+  the Bluetooth SIG's reserved test id `0xFFFF` holding type, flags,
+  battery, health, chain height and the two fingerprint bytes already in
+  the name (`fleet_beacon.h`) — never a serial. The advertising address
+  is the chip's public BLE address (Espressif's OUI), the same disclosure
+  as the Wi-Fi radio's factory MAC. BLE is compiled into the WAP's FULL
+  and DEV profiles (MINIMAL compiles it out); the `firmware/canary`
+  flagship builds it out of `release` / `release_ha`, and its `full` env
+  compiles the Scout scanner and the GATT status service
 - mDNS (`_securacv._tcp`) only on the network the device is on — its own
   AP, or the LAN it was joined to; no SSDP/UPnP
 - The CSI HAL holds one identifier, the BSSID of the router it is
@@ -167,7 +180,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 
 | Surface | Decision |
 |---------|----------|
-| Bluetooth | BLE (NimBLE) in the WAP's FULL profile (and, reduced to the pairing channel and status service, in DEV; MINIMAL compiles it out), gated on `HW_HAS_BLE`: owner pairing / provisioning, the GATT status service, signed BLE OTA v2, and the Scout scanner that attributes rooms to the owner's own paired beacons by hashed MAC. No Classic Bluetooth exists on these chips; nothing classes or tracks other people's devices. The `firmware/canary` flagship's `release` / `release_ha` images have `FEATURE_BLE_STATUS=0` / `FEATURE_BLE_SCAN=0`; its `full` env turns the status service on |
+| Bluetooth | BLE (NimBLE) in the WAP's FULL profile (and, reduced to the pairing channel — with the BLE OTA and the presence listener that ride it — and the status service, in DEV; MINIMAL compiles it out), gated on `HW_HAS_BLE`: owner pairing / provisioning, the GATT status service, signed BLE OTA v2, the Scout scanner that attributes rooms to the owner's own paired beacons by hashed MAC, and two passive scanners — BLE presence (listen-only, feeding the same presence pipeline as the WiFi one; no MAC, OUI or name kept from the scanner) and Nearby discovery of other Canaries by service UUID (everything else counted only). Nothing classes or tracks other people's devices. The S3 / C3 the BLE-bearing builds run on have no Classic (BR/EDR) radio; the classic-ESP32 boards have one and no build compiles a stack for it. The `firmware/canary` flagship's `release` / `release_ha` images have `FEATURE_BLE_STATUS=0` / `FEATURE_BLE_SCAN=0`; its `full` env compiles the Scout scanner and the GATT status service (`securacv_ble_scan`, `securacv_ble_status`), the only BLE code in that tree |
 | USB Serial | Disabled in production |
 | JTAG | Disabled via eFuse |
 | OTA | Owner-initiated by default: the device checks a signed manifest daily and installs nothing; Install is a button, and the per-device Auto Update switch is an explicit owner opt-in (off by default). Every install verifies the Ed25519 release signature and the version floor first. The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
@@ -213,7 +226,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | GPS no fix | Record events without location |
 | Chain verify fail | Create tamper event, alert user, keep recording |
 | Auth failure | Lock out with exponential backoff |
-| Client presents an expired or unknown certificate to the API | Rejected |
+| TLS client cannot verify the WAP's self-signed certificate | The iPhone app pins the receipt's `tls_cert_fp` and refuses an https Canary whose certificate does not match or that has no pin on record (`DeviceAPI.swift`, `PinnedTrustDelegate`); browsers show their self-signed warning. No API asks the client for a certificate — the kernel's rustls config is `with_no_client_auth()` and the WAP's `httpd_ssl_config_t` carries only the server certificate and key |
 | HTTPS server fails to start on the WAP | Serves plain HTTP and logs `[HTTPS] Server start FAILED — falling back to HTTP`; setup mode is HTTP-only by design (both stated, never silent) |
 | Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT enabled on default builds — see [Scope of this principle](#scope-of-this-principle)); the default tier relies on the OTA signature check before the image is written |
 | Watchdog trigger | Reboot, resume from last good state |
@@ -544,14 +557,18 @@ To change any security-hardened default, a developer must:
 ## Definition of Done (Security)
 
 1. `SECURITY_MODEL.md` exists and is included in every evidence export
-2. Every outbound path is one of the disclosed, tested set (Principle 2);
-   `regression_check.sh` greps for a new client socket
+2. Every outbound path is one of the disclosed set in Principle 2, each
+   named with its host test or its lack of one; `regression_check.sh`
+   greps for a new client socket
 3. Ed25519 private key has no read/export interface of any kind
 4. All cryptographic operations use vetted libraries (no custom crypto)
 5. All security-sensitive defaults are hardened (see `secure_defaults.h`)
 6. BLE is compiled only where a profile names it (the WAP's FULL and DEV
-   profiles, gated on `HW_HAS_BLE`; the flagship's `full` env) and carries no
-   identity-linked data
+   profiles, gated on `HW_HAS_BLE`; the flagship's `full` env, Scout
+   scanner and status service only); its adverts carry the device's own
+   name and fleet-beacon state, never a serial or anything about other
+   people, and its two passive scanners (presence, Nearby) keep no MAC,
+   OUI or name from other people's devices
 7. The WAP serves HTTPS after setup; plain HTTP is a stated posture (setup
    mode and start failure on the WAP, both logged; the flagship's port 80;
    the displays' LAN page), never a silent downgrade of a TLS session
