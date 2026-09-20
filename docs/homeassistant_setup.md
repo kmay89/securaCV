@@ -196,8 +196,15 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
      connect; the WAP offers plain or CA-verified only. None of this has
      been run against a TLS broker on hardware yet — the paths are
      compile-tested by CI and the decision is host-tested. Per-variant
-     status: [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md).
-5. Save and reboot the Canary
+     status: [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md). Coming
+     back to the wizard later (a new hub password, say) keeps the
+     encryption you set: its *Encryption* select shows what the Canary
+     holds and travels only when you change it, and a CA or pin the Canary
+     already holds stands in for an empty box.
+5. Save. The Canary drops its hub link and reconnects with the new settings
+   on its own — no reboot. The wizard's *Restart the Canary now* button only
+   closes the setup network once you are done there; the hub link does not
+   need it.
 
 ### Step 4: Verify Discovery
 

@@ -110,7 +110,13 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   transport decision and presence flags only. What may be written is judged
   by `lib/securacv_mqtt/src/mqtt_tls_fields.h` (host-tested in
   `firmware/tests_host/test_mqtt_tls_fields.cpp`) with the shared decision
-  header, so the API refuses exactly what the connect would.
+  header, so the API refuses exactly what the connect would. One request's
+  writes land in one NVS session (`mqtt_save_config`: the pin, the mode
+  byte, then the credentials — `mqtt_tls_fields::write_order`) with one
+  main-loop reload after it, never a reload between two writes. Every
+  route registration now goes through `register_route()`, which names a
+  registration the handler table dropped on the serial log, and the
+  `max_uri_handlers` budget counts the dev-only `POST /api/ota`.
 
 ### Phase 3 — Provisioning gate + hardware state
 
