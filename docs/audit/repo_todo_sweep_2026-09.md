@@ -52,11 +52,13 @@ items below.
   checksum alone. See `docs/RELEASE_BUTTONS.md`. Un-gates: signed-release
   verification everywhere; the flashers' "no signed release yet" fallbacks
   retire themselves.
-- [ ] **U3 [human] Apple Developer account.** `tvos-release.yml`,
-  `ios-release.yml` and `ios-selfheal.yml` are deliberate no-ops without it
-  (`tvos/README.md`, "Status"). Un-gates: A8, A9, tvOS/iOS App Store
-  presence, Critical Alerts entitlement request, signed builds that exercise
-  the CloudKit path.
+- [ ] **U3 [human] Apple Developer account.** The signed release workflows
+  (`tvos-release.yml`, `ios-release.yml`) exit green until their enable
+  variables and `APPLE_*` signing secrets exist (`tvos/README.md`, "Status").
+  `ios-selfheal.yml` is *not* gated on it — PRs always get an unsigned
+  simulator build with no Apple credentials. Un-gates: A8, A13, tvOS/iOS
+  App Store presence, Critical Alerts entitlement request, signed builds
+  that exercise the CloudKit path.
 - [ ] **U4 [human] FCC authorization work + responsible-party facts.**
   `store.json` has `part15b_sdoc: false` and blank responsible-party and
   `ship_from` blocks; `docs/strategy/29-fcc-and-product-compliance-diligence.md`
@@ -80,10 +82,12 @@ Two smaller one-time human acts, same flavor:
 ## 1. Firmware (securaCV monorepo)
 
 The canonical defect ledger is `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md`
-(30 prioritized items; its own §6 table governs). The sweep spot-verified the
-P0 rows; status below reflects that verification, not the doc's claims.
+(30 prioritized items; its own §6 table governs). The sweep spot-checked the
+P0 rows by source inspection; status below reflects that inspection, not the
+doc's claims. ("Verified" is reserved in this repo for a signature checked
+against a pinned key or a claim proven on hardware — nothing below claims it.)
 
-### P0 — verified still open
+### P0 — confirmed still open by source inspection
 
 - [ ] **F1 [code] BLE Scout never scans in the PlatformIO build.**
   `ble_scout_allow_radio()` has no caller under `firmware/canary/src` (its only
@@ -92,8 +96,9 @@ P0 rows; status below reflects that verification, not the doc's claims.
 - [ ] **F2 [code] `sd_storage_remount()` is declared and defined nowhere.**
   Declared in `firmware/common/storage/storage.h`; an SD glitch disables
   logging until reboot. Roadmap item 5.
-- [ ] **F3 [code] Camera never deinits on battery.** ~40–60 mA continuous
-  drain; no `esp_camera_deinit()` on the battery path. Roadmap item 4.
+- [ ] **F3 [code] Camera never deinits on battery.** No `esp_camera_deinit()`
+  on the battery path; the roadmap's estimate of the continuous drain
+  (~40–60 mA) is unmeasured — the bench number is U1 work. Roadmap item 4.
 - [ ] **F4 [code] CSI probes bypass the airtime governor.**
   `firmware/common/csi/src/csi_probe.h` says probe sends are not routed
   through `airtime_governor::try_reserve_routine()`; ~13% channel use vs the
@@ -103,9 +108,9 @@ P0 rows; status below reflects that verification, not the doc's claims.
   deferred work"). Decide the enforcement posture, then implement. Roadmap
   item 8.
 - [ ] **F6 [code] Camera init/deinit vs peek-task race.** Roadmap item 7 —
-  not yet verified either way; verify first, then fix or close.
+  not yet source-checked either way; confirm first, then fix or close.
 
-(Roadmap items 1 and 2 were verified **fixed** — if you open the roadmap doc,
+(Roadmap items 1 and 2 were confirmed **fixed** — if you open the roadmap doc,
 update its rows to say so. That is item D2 below.)
 
 ### Timeline & time
@@ -355,7 +360,8 @@ major, by theme") — work its themes, then tick here.
   section retracts itself** ("Nothing in this section is open") — restructure
   so fixed items read as fixed.
 - [ ] **D2 [code] `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` items 1 and 2 are
-  fixed in source but still listed open** — update the rows (verified: XGA
+  fixed in source but still listed open** — update the rows (confirmed by
+  source inspection: XGA
   ceiling raised in `securacv_vision.cpp`; deep-sleep guard real in
   `firmware/canary/src/main.cpp`).
 - [ ] **D3 [code] `docs/review/01-flag-report.md` F-12 is resolved** — sweep
@@ -381,8 +387,9 @@ major, by theme") — work its themes, then tick here.
 | `securacv_website/docs/render-roadmap.md` | 3D/AR quality roadmap (W3, W9) |
 | `securacv_website/docs/roadmap.md` | Website roadmap (stale — W2) |
 
-**Provenance.** Findings verified during the 2026-09-20 sweep (five parallel
+**Provenance.** Findings confirmed by source inspection during the
+2026-09-20 sweep (five parallel
 audits over the three repos; classic TODO-marker counts were near zero — this
 project records debt as honest-status prose and checklists, which is what this
 file indexes). Items listed here were spot-checked against source at sweep
-time; re-verify a line before building on it.
+time; re-read the source before building on a line.
