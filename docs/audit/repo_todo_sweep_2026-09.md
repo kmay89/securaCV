@@ -1,0 +1,388 @@
+# Repo-wide TODO sweep — working backlog (2026-09)
+
+**What this is.** On 2026-09-20 a full sweep of all three repositories
+(`kmay89/securaCV`, `kmay89/securacv_website`, `kmay89/securacv-homeassistant`)
+cataloged every marker of incomplete work: stubs, deferred features, unchecked
+checklists, placeholder data, and honest-status admissions. This file is the
+**cross-session work plan** distilled from that sweep: what we are trying to
+accomplish, in what order, and what each item is blocked on. Sessions (human or
+AI) pick items from here, do them, and check them off — so progress survives
+context resets.
+
+**Where this sits.** Read [`IMPROVEMENT_ROADMAP.md`](../IMPROVEMENT_ROADMAP.md)
+for the 2026-09-02 three-repo audit — most of its 60 items have landed, and
+this file deliberately does not repeat the residuals its rows still track
+(the device-package leftovers, the TLS bench passes, the platform-pin
+decision). This is the 2026-09-20 picture: a marker-level sweep of what is
+stubbed, deferred, or checklist-gated *now*, organized as pickable work items
+rather than audit findings.
+
+**How to work this file**
+
+- Item IDs are stable. Never renumber; add new items at the end of a section.
+- When you start an item, append `— in progress (YYYY-MM-DD)` to its line.
+  When you finish, tick the box and append the PR number. Do both **in the
+  same PR as the fix** so this file never lags reality.
+- Line numbers below are as of the sweep date and will drift; the file paths
+  and quoted phrases are the durable pointers.
+- This file does not restate the repo's own ledgers — where a canonical
+  open-work document already exists (see "Canonical ledgers" at the bottom),
+  an item here just points into it. Fix the ledger's item, then tick both.
+- Gate tags: **[code]** an AI session can do it end-to-end · **[human]** needs
+  hands, hardware, an account, or money · **[decision]** needs a maintainer
+  call before code is written.
+
+---
+
+## 0. The five unlocks (do these and whole sections light up)
+
+These are the choke points the sweep kept hitting. Each one un-gates many
+items below.
+
+- [ ] **U1 [human] One bench session on real hardware.** Seven built firmware
+  capabilities are "Built · bench-gated" (`docs/hardware/dev_playground_todo.md`,
+  "the real gating work" section), the 23-item
+  `docs/audit/hardware_verification_checklist.md` is entirely unrun, and 12
+  board pin maps carry "NOT yet validated on bench". The playground doc calls
+  this "the thing an AI cannot do from CI." Un-gates: F-section flags,
+  C6, C7, plus the sentinel/sense bench boxes.
+- [ ] **U2 [human] The release signing-key ceremony.** The pinned key is the
+  all-zero placeholder (`desktop/src-tauri/src/release.rs`,
+  `canary-local/assets/flash-core.js`), so both flashers accept firmware on
+  checksum alone. See `docs/RELEASE_BUTTONS.md`. Un-gates: signed-release
+  verification everywhere; the flashers' "no signed release yet" fallbacks
+  retire themselves.
+- [ ] **U3 [human] Apple Developer account.** `tvos-release.yml`,
+  `ios-release.yml` and `ios-selfheal.yml` are deliberate no-ops without it
+  (`tvos/README.md`, "Status"). Un-gates: A8, A9, tvOS/iOS App Store
+  presence, Critical Alerts entitlement request, signed builds that exercise
+  the CloudKit path.
+- [ ] **U4 [human] FCC authorization work + responsible-party facts.**
+  `store.json` has `part15b_sdoc: false` and blank responsible-party and
+  `ship_from` blocks; `docs/strategy/29-fcc-and-product-compliance-diligence.md`
+  holds the checklist. Un-gates: W-section store items for radio SKUs.
+- [ ] **U5 [human] Stripe + PirateShip one-time setup (~1 hour).**
+  `securacv_website/store-README.md` "One-time setup". Un-gates: W1 — the two
+  already-FCC-clear parts SKUs could sell today.
+
+Two smaller one-time human acts, same flavor:
+
+- [ ] **U6 [human] Set `MIRROR_PAT` in the monorepo secrets.** Until then the
+  HACS mirror refresh is inert-but-green
+  (`.github/workflows/homeassistant-mirror.yml` warns and files an issue).
+  The trees are byte-identical today; nothing guarantees they stay so.
+- [ ] **U7 [human] Open the staged home-assistant/brands submission.**
+  `brands/home-assistant/README.md` says "not submitted"; it is the only route
+  to an integration icon on HA < 2026.3.
+
+---
+
+## 1. Firmware (securaCV monorepo)
+
+The canonical defect ledger is `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md`
+(30 prioritized items; its own §6 table governs). The sweep spot-verified the
+P0 rows; status below reflects that verification, not the doc's claims.
+
+### P0 — verified still open
+
+- [ ] **F1 [code] BLE Scout never scans in the PlatformIO build.**
+  `ble_scout_allow_radio()` has no caller under `firmware/canary/src` (its only
+  caller is `canary_wap.ino`). Room attribution and the fleet roster are inert
+  in the PIO build. Roadmap item 3.
+- [ ] **F2 [code] `sd_storage_remount()` is declared and defined nowhere.**
+  Declared in `firmware/common/storage/storage.h`; an SD glitch disables
+  logging until reboot. Roadmap item 5.
+- [ ] **F3 [code] Camera never deinits on battery.** ~40–60 mA continuous
+  drain; no `esp_camera_deinit()` on the battery path. Roadmap item 4.
+- [ ] **F4 [code] CSI probes bypass the airtime governor.**
+  `firmware/common/csi/src/csi_probe.h` says probe sends are not routed
+  through `airtime_governor::try_reserve_routine()`; ~13% channel use vs the
+  2% budget in larger fleets. Roadmap item 6.
+- [ ] **F5 [code+decision] Ed25519 private key in NVS without enforced flash
+  encryption.** `firmware/canary/lib/securacv_mesh/src/mesh_state.h` ("audit-O2
+  deferred work"). Decide the enforcement posture, then implement. Roadmap
+  item 8.
+- [ ] **F6 [code] Camera init/deinit vs peek-task race.** Roadmap item 7 —
+  not yet verified either way; verify first, then fix or close.
+
+(Roadmap items 1 and 2 were verified **fixed** — if you open the roadmap doc,
+update its rows to say so. That is item D2 below.)
+
+### Timeline & time
+
+- [ ] **F7 [code] Device timeline is one block deep.**
+  `loadMoreTimeline()` in `firmware/canary/lib/securacv_webui/src/securacv_webui.cpp`
+  is an empty handler and `/api/chain` returns only the latest block. Needs a
+  paged endpoint plus the JS to consume it.
+- [ ] **F8 [code] `time_bucket` is session-relative, not wall-clock.**
+  `firmware/common/csi/src/csi_event.cpp` — wire
+  `csi_event_set_clock_offset_minutes()` at first time sync (tracked there as
+  the Phase-4 follow-up).
+- [ ] **F9 [code] MQTT offline queue.** Events are dropped while the broker is
+  down; roadmap item 17 (P1), anchor `securacv_mqtt.cpp`. Also: HA entities
+  stay "unknown" after a broker restart until the next toggle
+  (`securacv_mqtt.cpp`, three call-sites note it).
+
+### Mesh / fleet / beacon
+
+- [ ] **F10 [code] Five of eleven specced mesh REST endpoints are deferred**
+  (remove/leave/name/enable/alerts-DELETE) —
+  `firmware/canary/lib/securacv_network/src/securacv_network.cpp`, per
+  `spec/canary_mesh_network_v0.md` §8.
+- [ ] **F11 [code] Fleet peer liveness is fabricated.** `/api/mesh/peers`
+  reports state "OFFLINE"/rssi 0 best-effort placeholders (no MAC↔fingerprint
+  join), and `alerts_received` is a hardcoded 0. Same file, ~:3617 and ~:3657.
+- [ ] **F12 [code] `ble_mesh.cpp` (canary-wap) is a stub module** — every
+  publish returns `false` with a "transport not wired" log. Decide whether to
+  build the transport or delete the seam.
+- [ ] **F13 [code] Beacon gaps (canary-wap `beacon_channel`):** CAP-gateway
+  upstream-signature path specified but not implemented; `BEACON_MSG_CANCEL`
+  not built (paired devices stay in ALARM until expiry); COSIGN_REQ pairing
+  channel is an unencrypted broadcast. Tracked in the file header as "v0.3".
+- [ ] **F14 [code] Staged mesh PRs referenced in headers never landed** —
+  `mesh_envelope.h` / `mesh_session.h` name PR 2g/2h/2i (peer table, replay
+  counters, NVS persistence) and record a live canary-wap pair-frame bug.
+  Re-scope these into real issues or land them.
+
+### Network surface & provisioning
+
+- [ ] **F15 [code] No TLS on the canary.local HTTP/peek surface.** The one
+  gap `firmware/PARITY_PLAN.md` marks ❌ in *both* trees.
+- [ ] **F16 [code] WPA3/PMF + per-device AP password** on the WAP join path —
+  roadmap item 21; `pre_build.py` already warns on the hardcoded AP password.
+- [ ] **F17 [code] `provision_core.h` exists in two byte-identical copies**
+  held together by `check_provision_core_sync.sh`. Do the migration the
+  script's header promises.
+- [ ] **F18 [code] `DEVICE_CHIP_ID="placeholder"` fallback** in
+  `firmware/provisioning/provision_canary.sh` — make it refuse instead.
+- [ ] **F19 [code] `FEATURE_TAMPER_GPIO` is defined but never consumed** by
+  canary-wap firmware (status "planned" in `boards/boards.config.json` and the
+  canary-local device JSON).
+
+### Parity & sub-projects
+
+- [ ] **F20 [code] Arduino↔PlatformIO parity debt.** Canonical ledgers:
+  `firmware/FEATURES.md` (the ❌/⚠️ dashboard) and
+  `firmware/canary/CONSOLIDATION.md` (15-row gap inventory; phases 3, 5–8
+  unstarted; gap #11, the unauthenticated provisioning-receipt endpoint, is
+  marked security-High — do that one first).
+- [ ] **F21 [code] canary-wap enterprise readiness** —
+  `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`, 18 unchecked
+  boxes incl. three unmet acceptance criteria. §1 (security/privacy) is done.
+- [ ] **F22 [code+human] canary-sentinel is Phase 0** — Phase 1 wiring plus 7
+  bench boxes (`firmware/projects/canary-sentinel/README.md`). Bench half is U1.
+- [ ] **F23 [code] canary-ota reference project lags the main trees** — no
+  signature verification ("Phase 3"), 6 unchecked boxes, placeholder Wi-Fi
+  creds in sdkconfig. Either lift it to parity with `common/ota/` or label it
+  a teaching sample at the top of its README.
+- [ ] **F24 [code] Emulator wave 2: first-boot captive-portal theater.**
+  `canary-local/emulator/src/emu_net.cpp` hardcodes `provision_needed() =
+  false`; the most important first-run UX is unemulated. Roadmapped in
+  `canary-local/README.md` §6, with the chirp-fallback and live-pins waves.
+
+---
+
+## 2. Apps (desktop Flasher, Lab, iOS, tvOS)
+
+- [ ] **A1 [code] tvOS has no timeline view.** iOS has the parity-proven
+  `TimelineScrubView` + `viewer/timeline_core.js`; `tvos/` has zero
+  timeline/scrub code. Port the shared core to the Wall.
+- [ ] **A2 [code+decision] tvOS verification is structurally dark.**
+  `WallCanary.swift` hard-codes `allVerified = false`; no pairing ceremony
+  pins a key and the TV sends no sealed-log token (`tvos/README.md`). Design
+  the pairing/token flow (decision), then wire it (code).
+- [ ] **A3 [decision] Wall-reachable sidecar bind/port** —
+  `tvos/discovery/DISCOVERY.md` "a bind and port decision not yet made";
+  Docker-sidecar users cannot reach the Wall at all.
+- [ ] **A4 [code] Lab native serial is a Phase-2 stub.** The real
+  `list_serial_ports()` sits in a comment above the stub in
+  `desktop-lab/src-tauri/src/lib.rs`; `serial:false`, `notifications:false`.
+  This is the stated reason the native Lab exists.
+- [ ] **A5 [code] Lab mDNS + BLE discovery** (HTTP-poll only today) and the
+  menubar companion with the signed timeline — `desktop-lab/README.md`
+  Roadmap items 2–3.
+- [ ] **A6 [code] iOS Unseal screen is an empty placeholder**
+  (`ios/Sources/SecuraCV/Views/KeysView.swift`); the crypto exists repo-side
+  in `tools/unseal_snapshot.py`. Build the import + decrypt flow.
+- [ ] **A7 [code+decision] Secure-Enclave-backed key custody on iOS** —
+  named a roadmap item in `ios/README.md`; today keys are Keychain
+  generic-password items.
+- [ ] **A8 [human-gated by U3] Exercise the CloudKit household/away path.**
+  `HouseholdShare.swift` degrades to a no-op in unsigned builds, so CI has
+  never touched iCloud. Needs a signed build (U3), then a test pass.
+- [ ] **A9 [human] Windows enablement.** The hub-io raw-disk write backend is
+  complete but staged off pending a VM/hardware pass
+  (`desktop/hub-io/src/write.rs`, "STAGED — NOT YET ENABLED"), and
+  `secret_store.rs`'s Windows branch has never been compiled by CI.
+- [ ] **A10 [code] Linux secret-store backend** — currently "none": profile
+  passwords and bearer tokens land in a plaintext prefs file
+  (`desktop/src-tauri/src/secret_store.rs`). The frontend discloses it; fix it
+  anyway (libsecret/keyring).
+- [ ] **A11 [code] Native Flasher hardcodes what the browser derives.**
+  `canary-local/tests/desktop_parity.test.js` header: chip tables, USB IDs and
+  the release host are literals in the native app, kept in sync only by CI.
+  Make native read the embedded catalog; delete the matching assertions.
+- [ ] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
+  browser flasher has (espflash has no fuse-read; the parity test currently
+  forces a "browser-only" disclosure). Needs an espflash upstream check or a
+  raw-command implementation — investigate, then either implement or record
+  why not beside the disclosure.
+- [ ] **A13 [human-gated by U3/certs] macOS signing/notarization** — both Mac
+  apps ship unsigned until `ENABLE_MACOS_SIGNING` + certs exist
+  (`desktop-lab/README.md`, `desktop/INSTALL.md`).
+
+---
+
+## 3. Home Assistant (monorepo `custom_components/` + HACS mirror)
+
+- [ ] **HA1 [code] Watch persistence.** Voice-started watches live in
+  `hass.data` and die on restart — the one spoken promise the code can't keep
+  (`custom_components/securacv/intent.py`, storage note). Use a
+  `homeassistant.helpers.storage.Store`.
+- [ ] **HA2 [code] Wire entity translations.** `strings.json` declares 9
+  entity keys but no entity sets `_attr_translation_key` — the translations
+  are dead and entity names are hardcoded English. Wire them, extend coverage
+  to the other ~21 entity classes, then translations beyond `en.json` become
+  possible.
+- [ ] **HA3 [code] Stop swallowing malformed MQTT payloads silently.** Two
+  `except TypeError: pass` sites in `binary_sensor.py` (~:664, ~:961) — add
+  debug-level logs so a firmware field-type regression is visible.
+- [ ] **HA4 [code] Timeline card: say when history is unavailable.**
+  `www/securacv-timeline-card.js` falls back to current-state rows when the
+  recorder is off, looking like "nothing happened". Render an explicit notice.
+- [ ] **HA5 [decision] Service surface.** The integration registers zero
+  services — everything is intents + options flow. Decide whether
+  pin/rotate/unpin/start-watch should also be services for automations.
+- [ ] **HA6 [code] Guard `FUTURE_TRANSPORTS`/`FUTURE_TAMPER_TYPES` in-package.**
+  Today only `scripts/lint_feature_flags.sh` keeps them out of the advertised
+  sets; add a unit test beside the constants.
+- [ ] **HA7 [code] Give `integrations/ha_frigate_mqtt/TASKS.md` a header**
+  saying whether it is a tick-as-you-go operator runbook or an unexecuted
+  plan; 26 unchecked boxes are currently ambiguous. If runbook: retitle
+  RUNBOOK.md.
+- [ ] **HA8 [human-gated by U1] Ship a working example camera** for the
+  Frigate config once a real camera is on the bench (today: one disabled
+  example so the config parses).
+- [ ] *(Mirror repo itself: no code work — it is byte-identical today. Its
+  health items are U6 and U7 above, plus the three monorepo-fixture tests its
+  CI deselects, which is by design.)*
+
+---
+
+## 4. Website (`kmay89/securacv_website`)
+
+- [ ] **W1 [code, gated by U5] Wire buy links for the two FCC-clear SKUs**
+  (`wap-parts`, `vision-parts` in `store.json`) once Stripe exists. Everything
+  else stays waitlist-only until U4.
+- [ ] **W2 [code] Refresh the stale `docs/roadmap.md`** — it still TODOs the
+  `/fleet` page and disclaims `/witness`; both shipped. Quick win.
+- [ ] **W3 [code] Showroom AR button is hardcoded to the Doorbell**
+  (`showroom.html`, `data-ar-model`). Make it follow the selected product —
+  the plan is already written at `docs/render-roadmap.md` "view what's on
+  screen AR" (mind the mm→m warning there).
+- [ ] **W4 [code] Dash and Combo have live Showroom products but no `.glb`**
+  (no AR, no view-in-room). Add generators on the shared `scripts/lib/glb.mjs`
+  builder; envelopes come from the carried CAD ledger, never hand-typed.
+- [ ] **W5 [code] Blender hero bake** — all 5 shipped GLBs are procedural
+  stand-ins; `blender/bake_hero.py` exists but has never produced output, and
+  the AO bake has "one manual step" left (`blender/README.md`).
+- [ ] **W6 [code, paired with U4/U5 work] Supplier quotes are placeholders** —
+  5 rows in `suppliers.json` marked `"status": "placeholder"`. When real RFQs
+  land, also invert `tests/quote-compare.edge.test.mjs` ("honesty flag" test
+  currently asserts placeholders exist — it will fail the moment they don't).
+- [ ] **W7 [code] Claims-audit remediation** —
+  `docs/claims-audit-2026-07.md` open items (soften "no one can forge" claims,
+  fiscal-host, "All rights reserved" drop, illustrative-token label).
+- [ ] **W8 [code] IA deferred editorial pass** — `docs/ia-review-2026-07.md`
+  four items (homepage reduction, one-owner-per-message trim, sitewide
+  availability vocabulary — the last "belongs with a store-opening pass", so
+  pair with U5).
+- [ ] **W9 [code] `render-roadmap.md` quality items** (spot-varnish masks,
+  roughness variation, WebGPU cinematic mode) — nice-to-have, after W3–W5.
+- [ ] **W10 [human] Tizen TV package has `REPLACEME` app IDs**
+  (`tv/tizen/config.xml`) — needs Samsung Seller Office issuance before any
+  submission.
+- [ ] **W11 [code] Advisory Claude review workflow is inert** if
+  `ANTHROPIC_API_KEY` is unset (`.github/workflows/claude-review.yml` skips
+  green) — either set the secret (human) or note the intended state in the
+  workflow header.
+
+---
+
+## 5. Hardware, CAD, print files (monorepo)
+
+The canonical ledger is `docs/hardware/enclosure/AUDIT_2026_09.md` ("Open —
+major, by theme") — work its themes, then tick here.
+
+- [ ] **C1 [code] Parametric-UX debt, cheapest first:** 174 of 1704 Customizer
+  parameters have help text that is written but mechanically discarded —
+  restore it; then chip at the 705 with none, the 14 names for the two-stud
+  interface group, and presets for the released cases (audit §"Parametric UX").
+- [ ] **C2 [code] Naming collisions across case files** (`usb_w`, `vm_*`,
+  `skirt_t`, `clip_w` mean different things in different files) — audit's
+  "transferred skill actively wrong" theme.
+- [ ] **C3 [code] Lid-rib proportions + hardware counts** — audit themes;
+  ribs need a per-case clearance probe, and nothing in the catalog counts
+  hardware (the one header BOM already drifted).
+- [ ] **C4 [decision] The C6 `brass_h` disagreement** — registry says 5.0, the
+  file prints the C3's measured 3.0; `devices/README.md` says owning either
+  number would bless it. A maintainer measures and decides.
+- [ ] **C5 [code] Draw the Watch Station figure from its parts** — today it
+  is a hand-authored sketch in `canary-local/tools/figures/massing.mjs`, so
+  the first Watch knob edit desyncs the website's carried copy.
+- [ ] **C6 [human] Caliper passes for the board registry** — 2 of 9
+  `BRD_REGISTRY` rows are measured; `ws147`/`ws169` (which drive three
+  display cases) are vendor-drawing rungs; ~2,460 `MEASURE` tags across 26
+  `.scad` files. Pairs with U1.
+- [ ] **C7 [human] Print-validate the in-development enclosures** — only 4 of
+  ~35 printable designs have committed STLs
+  (`docs/hardware/enclosure/README.md` "In development" lists 22). Print,
+  fit-check, then commit per the regen order in CLAUDE.md
+  (`scripts/regen_cad.py`). Every environmental rating in `field_ratings.md`
+  is also still "untested" — that protocol needs real units too.
+- [ ] **C8 [code] Kiri:Moto slicer is not vendored** — the Enclosure Lab's
+  slice button degrades to a model-based estimate
+  (`canary-local/assets/enclosure-lab.js`); vendor the engine or keep the
+  honest note deliberately (then mark this item closed-as-intended).
+- [ ] **C9 [code] Nightstand-line 3D figures reuse the Dash mesh**
+  (`canary-local/assets/scene3d.js` "dedicated meshes are follow-up work").
+
+---
+
+## 6. Documentation hygiene (small, do alongside other work)
+
+- [ ] **D1 [code] `docs/hardware/enclosure/AUDIT_2026_09.md` "Open — blocking"
+  section retracts itself** ("Nothing in this section is open") — restructure
+  so fixed items read as fixed.
+- [ ] **D2 [code] `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` items 1 and 2 are
+  fixed in source but still listed open** — update the rows (verified: XGA
+  ceiling raised in `securacv_vision.cpp`; deep-sleep guard real in
+  `firmware/canary/src/main.cpp`).
+- [ ] **D3 [code] `docs/review/01-flag-report.md` F-12 is resolved** — sweep
+  confirmed the README marker is gone; annotate the report.
+- [ ] **D4 [code] `canary-local/devices/assembly.json` notes steps "authored
+  here, not yet in the catalog README"** — carry them over.
+
+---
+
+## Canonical ledgers (do not duplicate — point here)
+
+| Ledger | Governs |
+|---|---|
+| [`IMPROVEMENT_ROADMAP.md`](../IMPROVEMENT_ROADMAP.md) | The 2026-09-02 audit's open residuals (device package, TLS bench passes, platform pins) |
+| `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` | The 30 prioritized firmware defects (8 P0) |
+| `firmware/FEATURES.md` | Arduino↔PIO parity dashboard |
+| `firmware/canary/CONSOLIDATION.md` | Consolidation phases + gap inventory |
+| `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md` | WAP enterprise checklist |
+| `docs/hardware/dev_playground_todo.md` | Bench-gated capability list (U1) |
+| `docs/audit/hardware_verification_checklist.md` | The 23 hardware verification cases (U1) |
+| `docs/hardware/enclosure/AUDIT_2026_09.md` | Enclosure open themes (C1–C3) |
+| `docs/RELEASE_BUTTONS.md` | Release/ship operations (U2) |
+| `securacv_website/docs/render-roadmap.md` | 3D/AR quality roadmap (W3, W9) |
+| `securacv_website/docs/roadmap.md` | Website roadmap (stale — W2) |
+
+**Provenance.** Findings verified during the 2026-09-20 sweep (five parallel
+audits over the three repos; classic TODO-marker counts were near zero — this
+project records debt as honest-status prose and checklists, which is what this
+file indexes). Items listed here were spot-checked against source at sweep
+time; re-verify a line before building on it.
