@@ -1,19 +1,23 @@
-// Host test for the Host-header guard (include/canary/net/host_guard.h): the
-// glass's web API refuses writes, the CSRF token and the per-witness reads
-// unless the Host a request targeted can only mean this device on this
-// network. Pins the rule that defeats DNS rebinding — a public domain
-// re-pointed at the device's LAN IP arrives with Origin == Host and would
-// otherwise pass the same-site check — while keeping every way a household
-// reaches the glass (the .local name, the raw IP, a private-suffix alias).
+// Host test for the shared Host-header guard (firmware/common/network/
+// host_guard.h): the display's web API refuses writes, the CSRF token and the
+// per-witness reads, and the canary tree's device API refuses every
+// token-gated route and withholds the page's bearer token, unless the Host a
+// request targeted can only mean this device on this network. Pins the rule
+// that defeats DNS rebinding — a public domain re-pointed at the device's LAN
+// IP arrives with Origin == Host (or loads the token-bearing page
+// same-origin) and would otherwise pass — while keeping every way a household
+// reaches the device (the .local name, the raw IP, a private-suffix alias).
+// One header, one test, one list (firmware/tests_host/Makefile, -Werror).
 // No Arduino, no board.
 //
-// Prints "ALL HOST GUARD TESTS PASSED" on success (a CI grep makes a silent
-// pass impossible to fake). Build (from the repo root):
+// Prints "ALL HOST GUARD TESTS PASSED" on success (the exit code gates the
+// Makefile; the line makes a silent pass impossible to fake). Build (from
+// the repo root):
 //
-//   g++ -std=c++17 -Wall -Wextra -I firmware/projects/canary-display/include
-//     firmware/projects/canary-display/tests_host/test_host_guard.cpp -o t && ./t
+//   g++ -std=c++17 -Wall -Wextra -Werror -I firmware/common
+//     firmware/tests_host/test_host_guard.cpp -o t && ./t
 
-#include "canary/net/host_guard.h"
+#include "network/host_guard.h"
 
 #include <cstdio>
 #include <cstring>
@@ -41,6 +45,7 @@ static void test_own_names_and_addresses_pass() {
   CHECK(host_names_this_device("canary-watch-001-a1b2c3"),
         "the bare single-label name (LAN resolver only)");
   CHECK(host_names_this_device("192.168.4.1"), "the AP-mode address");
+  CHECK(host_names_this_device("192.168.4.1:80"), "the AP-mode address with the port a sheet may add");
   CHECK(host_names_this_device("10.0.0.23:8080"), "an IPv4 literal with port");
   CHECK(host_names_this_device("[fe80::1]"), "a bracketed IPv6 literal");
   CHECK(host_names_this_device("[fe80::1]:80"),
@@ -70,6 +75,13 @@ static void test_public_domains_are_foreign() {
         "a private-looking label that is not the suffix");
   CHECK(!host_names_this_device("evil.lan.example"),
         ".lan in the middle is not the .lan suffix");
+  // The captive-portal probe names a phone on the canary's setup AP arrives
+  // with are public domains too: the guard says foreign, and it is the
+  // canary's securacv_network that exempts requests arriving over its own
+  // softAP (where its DNS answers every name with the AP address) — a
+  // property of that interface, never of the name.
+  CHECK(!host_names_this_device("captive.apple.com"), "Apple's probe host is a public domain");
+  CHECK(!host_names_this_device("connectivitycheck.gstatic.com"), "Android's probe host too");
 }
 
 // ── Degenerate authorities are foreign, never a free pass ───────────────

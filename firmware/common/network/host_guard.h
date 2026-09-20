@@ -1,14 +1,18 @@
-// include/canary/net/host_guard.h — does the Host a request targeted name
-// THIS device?
+// firmware/common/network/host_guard.h — does the Host a request targeted
+// name THIS device? Shared by every Canary that serves a LAN page.
 //
-// The glass's write guard (net/glass_web.cpp) compares the Origin header's
-// authority to the Host header: the page this device serves POSTs back with
-// the two equal; a drive-by page on another site does not. Both headers are
-// the browser's, though, and DNS rebinding makes them agree for the attacker:
-// a page at http://evil.example whose name is re-pointed at this device's LAN
-// IP arrives with Origin == Host == evil.example, passes as same-site, reads
-// the CSRF token GET /api/settings hands out, and writes. So Host must ALSO be
-// something that can only mean this device on this network:
+// The display's write guard (canary-display src/net/glass_web.cpp) compares
+// the Origin header's authority to the Host header: the page this device
+// serves POSTs back with the two equal; a drive-by page on another site does
+// not. Both headers are the browser's, though, and DNS rebinding makes them
+// agree for the attacker: a page at http://evil.example whose name is
+// re-pointed at this device's LAN IP arrives with Origin == Host ==
+// evil.example, passes as same-site, reads the CSRF token GET /api/settings
+// hands out, and writes. The canary tree (firmware/canary, securacv_network)
+// has the same exposure with a bearer token instead of a CSRF token: GET /
+// and GET /setup inject it into the page for whoever can load them, and a
+// rebinding page loads them same-origin. So Host must ALSO be something that
+// can only mean this device on this network:
 //
 //   · an IP literal — no DNS was involved, so nothing was rebound;
 //   · a name public DNS cannot mint: `.local` (mDNS), `.lan` / `.internal` /
@@ -16,11 +20,15 @@
 //     the LAN resolver only);
 //
 // and nothing else. The device's own mDNS name is a single label under
-// `.local`, so every way a household actually reaches the glass — the .local
+// `.local`, so every way a household actually reaches the device — the .local
 // name, the raw IP, a router alias under a private suffix — still passes,
-// while a rebinding page's registrable public domain fails. Header-only and
-// Arduino-free so the rule is host-tested (tests_host/test_host_guard.cpp);
-// the WebServer handler passes hostHeader().c_str() in.
+// while a rebinding page's registrable public domain fails. A household that
+// reaches its device by a PUBLIC split-horizon name is the one trade: it gets
+// the page without its token and 403 on the API, and the docs say so.
+// Header-only and Arduino-free so the rule is host-tested once
+// (firmware/tests_host/test_host_guard.cpp); the display's WebServer handler
+// passes hostHeader().c_str() in, the canary's esp_http_server handler the
+// Host header it read with httpd_req_get_hdr_value_str().
 
 #pragma once
 #include <stddef.h>

@@ -10,7 +10,7 @@
 
 #include "canary/net/glass_web.h"
 #include "canary/net/settings_policy.h"  // the on-glass-only write class
-#include "canary/net/host_guard.h"       // Host must name THIS device
+#include "network/host_guard.h"          // Host must name THIS device (firmware/common; the canary tree shares it)
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/tz_auto.h"
 #include "canary/net/mqtt_mgr.h"   // hub state for the /api/fleet self-report

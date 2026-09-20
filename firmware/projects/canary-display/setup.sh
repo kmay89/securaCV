@@ -133,6 +133,10 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    # The Host-header guard glass_web.cpp gates writes and the CSRF token
+    # with (shared with the canary tree's securacv_network; host-tested once
+    # in firmware/tests_host).
+    "${FIRMWARE_ROOT}/common/network/host_guard.h"
     # The broker socket decision + its WiFiClientSecure half (mqtt_mgr.cpp
     # includes the transport, which includes the logic bare, same directory).
     "${FIRMWARE_ROOT}/common/network/mqtt_transport_logic.h"
