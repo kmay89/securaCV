@@ -25,7 +25,8 @@ been the other end of.
 
 **What holds now.** The decision lives once, in
 `firmware/common/network/mqtt_transport_logic.h` (pure, host-tested by
-`firmware/tests_host/test_mqtt_transport_logic.cpp`), and the four clients
+`firmware/tests_host/test_mqtt_transport_logic.cpp`), and the five clients
+(four products plus the `firmware/canary` tree's `securacv_mqtt` library)
 apply it rather than deciding for themselves:
 
 | Provisioned mode (byte) | Socket | Needs |
@@ -40,7 +41,8 @@ Fail-closed is the rule: mode `1` with no CA, mode `2` with no pin, a
 malformed PEM, or a mode byte outside the table refuses to connect and says
 why. Nothing ever downgrades to plain or to unverified on its own; the
 unverified socket exists only as a mode chosen by name, and only on the
-transports that can honor it (display / sense / vision — not the WAP).
+transports that can honor it (display / sense / vision and the
+`firmware/canary` tree — not the WAP).
 
 | Variant | MQTT stack | Plain | TLS, CA-verified | TLS, SHA-256-pinned | Lab opt-in (unverified, warns every connect) | Provisioned through | Test tier |
 |---|---|---|---|---|---|---|---|
@@ -49,7 +51,7 @@ transports that can honor it (display / sense / vision — not the WAP).
 | canary-sense | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
 | canary-vision | same shared transport | ✅ default | ✅ | ✅ | ✅ | same NVS row; the shared setup portal provisions Wi-Fi only | compile-tested; decision host-tested |
 | canary-wap | esp_mqtt (ESP-IDF) applying the same decision (staged copy of the header, drift-gated by `check_mqtt_transport_sync.sh`) | ✅ default | ✅ `mqtt.tlsmode=1` + `mqtt.ca` — the device's `/mqtt` page or `POST /api/mqtt/config` | ❌ refused at save time and at connect: esp_mqtt has no fingerprint hook — use the CA mode | ❌ refused at save time and at connect: the pinned Arduino core builds esp-tls without `CONFIG_ESP_TLS_INSECURE` (every chip's sdkconfig in framework-arduinoespressif32-libs 3.3.8), so a session with no verification option fails with `ESP_ERR_INVALID_STATE` — the mode is not offered on the `/mqtt` page | the device's own `/mqtt` page / API (NVS namespace `csi`) | compile-tested (Arduino CLI); decision host-tested |
-| `firmware/canary` (PIO tree, `securacv_mqtt` lib) | PubSubClient over a plain WiFiClient | ✅ | ❌ | ❌ | — | — | **not changed in this pass — the gap remains on this variant** |
+| `firmware/canary` (PIO tree, `securacv_mqtt` lib) | same shared transport | ✅ default | ✅ `mqtt_tls=1` + `mqtt_ca` | ✅ `mqtt_tls=2` + `mqtt_fp` | ✅ `mqtt_tls=3` | same NVS row, written by the device itself — the flashers do not seed these rows (`broker_nvs=false`: this tree stores its credentials as blobs/u32, not the fleet's strings). The setup wizard's hub step carries the same *Encryption* select (four modes), CA box, fingerprint field and 8883 suggestion as the flashers; the API is `POST /api/mqtt/config` with optional `tls` (0-3) and `fp`, plus `POST` / `DELETE /api/mqtt/ca` for the PEM (raw body, bounded to the firmware's 3071 bytes), all behind the same bearer gate and rate limit as the other mutating handlers. A save is judged at save time with the shared decision (`mqtt_tls_fields.h`) and refused with the header's own reason when the connect would refuse; `GET /api/mqtt/status` (`tls`, `transport`, `tls_reason`, `ca_set` / `fp_set` presence only) and the serial `m` menu report the transport and the refusal, never the CA, pin or credentials. A reprovision reconnects without a reboot. | compile-tested by CI's `release_ha` leg only — the one env that compiles `securacv_mqtt`; decision and the API's field judgment host-tested (`test_mqtt_transport_logic`, `test_mqtt_tls_fields`); **no bench pass against a TLS broker** |
 
 Behavior worth knowing before you flip a mode on:
 
@@ -88,6 +90,17 @@ Behavior worth knowing before you flip a mode on:
   same from esp-tls's stack error and X.509 verify flags, and shows it on
   `/mqtt` and in `POST /api/mqtt/test`. Every text is a constant; the CA, the
   pin and the credentials are never formatted into a log line.
+- **`firmware/canary` bounds each connect stage to its 8 s task watchdog.**
+  That tree arms an 8 s task watchdog on the loop that connects, and the
+  core's WiFiClientSecure defaults (30 s connect, 120 s handshake) or the
+  shared transport's 15 s handshake would panic-reset it on a black-holed
+  broker address. So `securacv_mqtt` brings the socket up itself with a 3 s
+  connect and a 4 s handshake budget, feeds the watchdog, then lets
+  PubSubClient send CONNECT with a 5 s socket timeout. Those are
+  watchdog-derived numbers, not bench-measured ones: a legitimate handshake
+  that needs more than 4 s on an S3 fails there with *TLS handshake failed*
+  on the log — the recoverable side of that trade — and the first hardware
+  pass should measure it.
 - **The Hub's Mosquitto add-on** (installed by the one-command hub plan)
   listens on plain `1883` by default; TLS on the broker side is an add-on
   configuration the plan does not perform. See
@@ -96,7 +109,10 @@ Behavior worth knowing before you flip a mode on:
 Gaps still open after this pass:
 
 - The shared setup portal and the display's on-glass onboarding carry no
-  MQTT fields at all (pre-existing).
-- `firmware/canary`'s `securacv_mqtt` library is still plain-only.
+  MQTT fields at all (pre-existing); the `firmware/canary` tree's own setup
+  wizard is the exception, above.
+- `firmware/canary`'s adoption is compile-tested by the `release_ha` leg
+  only and has not run against a TLS broker; its 4 s handshake budget is a
+  watchdog constraint awaiting a bench number.
 - No bench pass: nothing above has connected to a real TLS broker on
   hardware. The claim is *compile-tested*.

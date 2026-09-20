@@ -173,19 +173,30 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
      TLS listener (its `certfile` / `keyfile` options, port `8883`), then
      provision each Canary with port `8883` and a TLS mode: **CA** (the PEM
      certificate that signed the broker's certificate — the one that always
-     works) or, on canary-display / -sense / -vision, a **SHA-256
-     fingerprint pin** of the broker certificate. On canary-wap this is the
-     `/mqtt` page's "Encryption" setting; on the other three it is the NVS
-     keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` next to `mqtt_host`, set from
-     the *Broker encryption* select in either flasher's broker block (the
-     CA box or the fingerprint field appears for the mode that uses it; the
-     plain-only nightstand-c6 is offered Plain only, with the reason). A
-     Canary never falls back to plain or unverified on its own: an
-     incomplete TLS setup refuses to connect and names the reason on its
-     serial log. The unverified "lab" mode exists only as an explicit choice
-     on display / sense / vision and warns on every connect; the WAP offers
-     plain or CA-verified only. Per-variant status:
-     [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md).
+     works) or, on canary-display / -sense / -vision and the
+     `firmware/canary` build, a **SHA-256 fingerprint pin** of the broker
+     certificate. On canary-wap this is the `/mqtt` page's "Encryption"
+     setting; on canary-display / -sense / -vision it is the NVS keys
+     `mqtt_tls` / `mqtt_ca` / `mqtt_fp` next to `mqtt_host`, set from the
+     *Broker encryption* select in either flasher's broker block (the CA
+     box or the fingerprint field appears for the mode that uses it; the
+     plain-only nightstand-c6 is offered Plain only, with the reason); on
+     the `firmware/canary` build (the wizard above) it is the hub step's
+     own *Encryption* select, CA box and fingerprint field, or the API —
+     `POST /api/mqtt/config` with `tls` (0 plain, 1 CA, 2 fingerprint, 3
+     lab) and `fp`, and the PEM as the raw body of `POST /api/mqtt/ca`
+     (`DELETE` forgets it), behind the same bearer token as the other
+     endpoints; `GET /api/mqtt/status` reports the mode, the transport and
+     any refusal, never the certificate or the pin. A Canary never falls
+     back to plain or unverified on its own: an incomplete TLS setup
+     refuses to connect and names the reason on its serial log (and, on the
+     `firmware/canary` build, at save time and on its status endpoint). The
+     unverified "lab" mode exists only as an explicit choice on display /
+     sense / vision and the `firmware/canary` build and warns on every
+     connect; the WAP offers plain or CA-verified only. None of this has
+     been run against a TLS broker on hardware yet — the paths are
+     compile-tested by CI and the decision is host-tested. Per-variant
+     status: [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md).
 5. Save and reboot the Canary
 
 ### Step 4: Verify Discovery
