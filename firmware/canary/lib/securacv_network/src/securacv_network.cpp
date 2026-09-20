@@ -14,6 +14,8 @@
 #if FEATURE_WIFI_AP || FEATURE_HTTP_SERVER
 
 #include <ArduinoJson.h>
+#include <lwip/sockets.h>         // getsockname(): which of the two interfaces a request arrived on (host_is_foreign)
+#include "network/host_guard.h"   // the Host a request targeted must name THIS device — shared with the display, host-tested once
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -804,6 +806,104 @@ bool rate_limit_check(httpd_req_t* req, bool is_action) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// HOST GUARD — the Host a request targeted must name THIS device
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The bearer token is injected into GET / and GET /setup for whoever can load
+// them, and every API route is gated on it. A browser page on another site
+// cannot read those pages (no Access-Control-Allow-Origin on the HTML, and
+// the Authorization header forces a preflight no route answers) — unless DNS
+// rebinding makes the page same-origin with this device: a page at
+// http://evil.example whose name is re-pointed at the Canary's LAN IP loads
+// http://evil.example/ from the victim's browser, reads __CV_TOKEN__ out of
+// the HTML, and drives every gated route, the broker-password writer included.
+// The display closed exactly this with network/host_guard.h (its LAN page's
+// token and writes require a Host that can only mean this device: an IP
+// literal, the .local name, a single label, or a private-use suffix); the
+// canary applies the same header, host-tested once, to its token delivery
+// (send_html_with_token) and its gate (auth_gate).
+//
+// One exemption, and it is a property of the INTERFACE, never of the name: a
+// request that arrived over the Canary's own softAP. main.cpp runs the captive
+// DNS redirector for the AP's lifetime, answering every non-.local name with
+// the AP address, and the phone's captive sheet loads the setup wizard under
+// whatever probe name its OS used (captive.apple.com) and calls the API under
+// that name too — including the hub step, which POSTs the broker password
+// after setup_mark_complete() has already fired. Over the AP the Host is
+// this device by construction (this device minted the answer), and a
+// rebinding page has nowhere to load from (the softAP has no upstream). Over
+// the home LAN — the STA address — the guard applies in full.
+//
+// The trade, the same one the display took (glass_web.cpp, note 2b): a
+// household that reaches the Canary by a PUBLIC split-horizon DNS name
+// (canary.example.com resolving to a LAN address) gets the dashboard without
+// its token — the page loads and its calls fail with 403 {"error":"host"}, so
+// the failure is visible on the dashboard, never a blank 403 — and must use
+// the IP, the .local name, or a private-suffix alias instead. Documented in
+// firmware/canary/CONSOLIDATION.md.
+
+// The IPv4 address in a socket address, network byte order (the order
+// sin_addr.s_addr and IPAddress both use). The server's listener is dual-
+// stack when lwIP has IPv6 on (CONFIG_LWIP_IPV6), so an IPv4 client shows up
+// as a v4-mapped IPv6 address (::ffff:a.b.c.d); both shapes are read. False
+// for anything else, and the caller treats that as "not the AP".
+static bool sockaddr_v4(const struct sockaddr_storage& ss, uint32_t* out) {
+  if (ss.ss_family == AF_INET) {
+    *out = ((const struct sockaddr_in*)&ss)->sin_addr.s_addr;
+    return true;
+  }
+#if LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const uint8_t* b = ((const struct sockaddr_in6*)&ss)->sin6_addr.s6_addr;
+    bool mapped = (b[10] == 0xff && b[11] == 0xff);
+    for (int i = 0; i < 10 && mapped; i++) mapped = (b[i] == 0);
+    if (!mapped) return false;
+    memcpy(out, b + 12, sizeof(*out));
+    return true;
+  }
+#endif
+  return false;
+}
+
+// True when this request came in over the setup/management AP and not the
+// home LAN: the socket's LOCAL address is the softAP's own address AND the
+// peer sits in the softAP's subnet. Both, because lwIP accepts a packet for
+// any of its own addresses on any interface: a LAN host that hand-routes
+// 192.168.4.1 through the Canary's STA address would reach the AP address
+// from a LAN source, and it is not exempt (a browser-driven rebinding page
+// cannot steer that route at all — its target is whatever LAN address the
+// router forwards to). Anything unreadable is "not the AP".
+static bool request_arrived_on_ap(httpd_req_t* req) {
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return false;
+  struct sockaddr_storage local, peer;
+  memset(&local, 0, sizeof(local));
+  memset(&peer, 0, sizeof(peer));
+  socklen_t llen = sizeof(local), plen = sizeof(peer);
+  if (getsockname(fd, (struct sockaddr*)&local, &llen) != 0) return false;
+  if (getpeername(fd, (struct sockaddr*)&peer, &plen) != 0) return false;
+  uint32_t local_v4 = 0, peer_v4 = 0;
+  if (!sockaddr_v4(local, &local_v4) || !sockaddr_v4(peer, &peer_v4)) return false;
+  const uint32_t ap_v4 = (uint32_t)WiFi.softAPIP();          // 0 when the AP is down
+  const uint32_t ap_mask = (uint32_t)WiFi.softAPSubnetMask();
+  if (local_v4 == 0 || ap_v4 == 0 || ap_mask == 0) return false;
+  return local_v4 == ap_v4 && (peer_v4 & ap_mask) == (ap_v4 & ap_mask);
+}
+
+// True when the Host the request targeted cannot name this device — the
+// rebinding case (network/host_guard.h) — unless the request arrived over the
+// softAP (above). A missing or oversize Host is foreign, never a free pass. A
+// direct client (curl, the apps, the flashers) addresses the Canary by its IP
+// or .local name and never trips this. Must run before the response starts:
+// esp_http_server purges the request headers on the first send.
+static bool host_is_foreign(httpd_req_t* req) {
+  if (request_arrived_on_ap(req)) return false;
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return true;
+  return !canary::net::host_names_this_device(host);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // AUTH GATE
 // ════════════════════════════════════════════════════════════════════════════
 //
@@ -811,8 +911,18 @@ bool rate_limit_check(httpd_req_t* req, bool is_action) {
 // On failure the AuthManager has already written the 401/403/429 response,
 // so the handler can return ESP_OK directly after this returns false.
 // Tracks http_errors so the status endpoint surfaces rejected calls.
+// A foreign Host (host_is_foreign) is refused first, before the token is
+// even looked at: a rebinding page that somehow holds a token still cannot
+// use it, and learns nothing about the provisioning state either.
 
 static bool auth_gate(httpd_req_t* req) {
+  if (host_is_foreign(req)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"error\":\"host\"}");
+    witness_get_health().http_errors++;
+    return false;
+  }
   const char* token = auth_get_token();
   if (!token || token[0] == '\0') {
     // Fail closed: if the bearer credential isn't provisioned, refuse.
@@ -1209,6 +1319,13 @@ void ScvNetworkManager::registerHttpHandlers() {
 // than allocating a rendered copy. Shared by the dashboard (/) and the
 // first-boot setup wizard (/setup + the captive-portal probe paths).
 static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
+  // Read before any header is set or byte is sent (the request headers are
+  // purged on the first send). A foreign Host gets the page with an EMPTY
+  // token in place of the placeholder: the page's fetch helper then sends no
+  // Authorization header, every call answers 403 {"error":"host"} (auth_gate),
+  // and the failure shows on the dashboard instead of a blank 403 — see the
+  // HOST GUARD note above for why and for the split-horizon trade.
+  const bool foreign = host_is_foreign(req);
   httpd_resp_set_type(req, "text/html");
   // no-store: captive sheets cache aggressively, and a cached copy of this
   // page carries the PREVIOUS Canary's bearer token when the same phone
@@ -1224,7 +1341,7 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html) {
     return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
   }
 
-  const char* token = auth_get_token();
+  const char* token = foreign ? "" : auth_get_token();
   if (!token) token = "";
   const size_t token_len = strlen(token);
   const size_t prefix_len = needle - html;
@@ -2448,8 +2565,12 @@ static esp_err_t send_tls_refusal(httpd_req_t* req, canary::net::mqtt_tls_fields
   doc["reason"] = canary::net::mqtt_tls_fields::reason(v, d);
   String response;
   serializeJson(doc, response);
-  httpd_resp_set_status(req, v == canary::net::mqtt_tls_fields::Verdict::CaTooLarge
-                                 ? "413 Payload Too Large" : "400 Bad Request");
+  // 413 for a body that does not fit; 409 for a stored CA the firmware cannot
+  // read back (the row conflicts with itself — DELETE /api/mqtt/ca and upload
+  // again); 400 for everything else, the credential-carry refusal included.
+  httpd_resp_set_status(req, v == canary::net::mqtt_tls_fields::Verdict::CaTooLarge   ? "413 Payload Too Large"
+                             : v == canary::net::mqtt_tls_fields::Verdict::CaUnreadable ? "409 Conflict"
+                                                                                        : "400 Bad Request");
   witness_get_health().http_errors++;
   return http_send_json(req, response.c_str());
 }
@@ -2487,8 +2608,12 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req) {
   if (tls.warn_insecure) doc["tls_warning"] = canary::net::mqtt_tls::insecure_warning();
   MqttTlsCurrent cur;
   if (mqtt_tls_read_current(&cur)) {
-    doc["ca_set"] = cur.ca_set;
+    doc["ca_set"] = cur.ca_set;  // present AND readable — what the connect will actually use
     doc["fp_set"] = cur.fp_set;
+    // A CA key the firmware cannot read back (a third-party writer; the
+    // shipped paths cap at 3071): named, so the operator knows to DELETE
+    // /api/mqtt/ca and upload again. Absent from the body otherwise.
+    if (cur.ca_unreadable) doc["ca_unreadable"] = true;
   }
 
   String response;
@@ -2507,7 +2632,11 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req) {
 // NVS already holds, with the shared decision, BEFORE anything is written:
 // a body the firmware would refuse at connect (mode 1 with no CA uploaded,
 // mode 2 with no pin here or stored, a malformed pin, an unknown mode) is a
-// 400 with the header's own reason text, and NVS is untouched.
+// 400 with the header's own reason text, and NVS is untouched. So is a body
+// that moves the link to a new host or port while a password is stored and
+// gives none (400 password_required_for_new_host): a stored broker password
+// never follows the link to a new endpoint (mqtt_tls_fields::credential_carry).
+// A stored CA the firmware cannot read back is a 409 ca_unreadable.
 static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   namespace tf = canary::net::mqtt_tls_fields;
   if (!rate_limit_check(req, true)) return ESP_OK;
@@ -2561,6 +2690,29 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   creds.enabled = input["enabled"] | true;
   creds.configured = true;
 
+  // What this body may carry over from the stored row — decided by the one
+  // rule in mqtt_tls_fields.h (credential_carry, host-tested) BEFORE any
+  // write: the same endpoint keeps a username / password the body omitted
+  // (the /setup re-run that changes only a password stands as before); a
+  // new host or port carries nothing, and is refused outright when a
+  // password is stored and the body gave none — the only thing that request
+  // could do is send the stored broker password to an address it was never
+  // given for. The stored row is read in a read-only session of its own,
+  // like the TLS read below; the WRITE session stays one. The wizard posts
+  // the CA before the config, so a refused config can leave a freshly
+  // uploaded CA stored — harmless, and the retry re-sends it.
+  MqttCredentials stored_row;
+  const bool have_row = mqtt_load_credentials(&stored_row);
+  const tf::CredentialCarry carry = tf::credential_carry(
+      have_row ? stored_row.host : "", stored_row.port,
+      have_row && stored_row.password[0] != '\0',
+      creds.host, creds.port, creds.password[0] != '\0');
+  memset(&stored_row, 0, sizeof(stored_row));  // the stored password was on this frame
+  if (carry.refuse) {
+    const canary::net::mqtt_tls::Decision none;
+    return send_tls_refusal(req, tf::Verdict::PasswordRequiredForNewHost, none);
+  }
+
   // The optional TLS pair, typed strictly: a `tls` that is not an integer or
   // an `fp` that is not a string is the same refusal a bad value gets.
   tf::Request tls_req;
@@ -2598,7 +2750,8 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   const MqttTlsWrite tls_write = {tls_plan.set_mode, tls_plan.mode, tls_plan.set_fp, tls_plan.fp,
                                   tls_plan.clear_fp};
   const bool any_tls = tls_plan.set_mode || tls_plan.set_fp || tls_plan.clear_fp;
-  if (!mqtt_save_config(&creds, any_tls ? &tls_write : nullptr)) {
+  const MqttCredentialCarry keep = {carry.keep_user, carry.keep_pass};
+  if (!mqtt_save_config(&creds, any_tls ? &tls_write : nullptr, &keep)) {
     return http_send_error(req, 500, "save_failed");
   }
 
