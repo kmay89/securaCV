@@ -163,6 +163,10 @@ Four rules keep "beautiful" from decaying into "busy":
   hope. The same honesty landed under the glass settings sheet as an undo:
   the sheet snapshots every knob at open, and "Undo changes" replays the
   snapshot through the ordinary write path (`SettingsRevert`, host-tested).
+  The sheet also mirrors the 7" glass's standalone-weather state read-only
+  from `on_glass`: the switch and the location live on the glass
+  (Settings › Weather), and the phone shows them without ever being able to
+  flip them.
 - **"Verified" is checked against this repo's firmware.** The chain page
   the app verifies is one contract, `spec/witness_api_v1.md`
   (`GET /api/v1/witness?last=N`), served by the canary-vision reference
