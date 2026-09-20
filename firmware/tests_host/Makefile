@@ -11,6 +11,7 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Werror
+NODE     ?= node
 
 MR60_DIR = ../common/sensors/mmwave_mr60
 MR60_SRC = $(MR60_DIR)/mr60_uart.cpp \
@@ -107,6 +108,15 @@ MQTTTLS_BIN = $(BUILD_DIR)/test_mqtt_transport_logic
 # (release_ha), so this is where the validation is proven. Pure header.
 MQTTFIELDS_HDR = ../canary/lib/securacv_mqtt/src/mqtt_tls_fields.h
 MQTTFIELDS_BIN = $(BUILD_DIR)/test_mqtt_tls_fields
+
+# The canary setup wizard's hub step (canary/lib/securacv_webui/src/
+# securacv_setup_page.cpp), the one UI that writes those fields: its script
+# is lifted out of the C++ raw string and driven against a stub DOM and a
+# recording fetch (node --test, no browser, no npm), asserting on the body
+# that reaches POST /api/mqtt/config — a re-save must never flip a TLS unit
+# back to plain. Runs with the C++ suites below; node is on every runner
+# this Makefile runs on.
+SETUPPAGE_JS = test_canary_setup_page.test.js
 
 # Shared headless setup portal (common/network): the pure timing choreography
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
@@ -443,6 +453,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CALMATH_BIN)
 	./$(WXCORE_BIN)
 	./$(CSIHAL_BIN)
+	$(NODE) --test $(SETUPPAGE_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)

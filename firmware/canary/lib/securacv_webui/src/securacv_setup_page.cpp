@@ -152,10 +152,12 @@ textarea.txt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:
 <label for="mca">Broker CA certificate (PEM)</label>
 <textarea class="txt" id="mca" rows="5" spellcheck="false" autocapitalize="none" autocorrect="off" placeholder="-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- (PEM: the CA that signed the broker's certificate)"></textarea>
 <p class="hint">Sent to the Canary on its own, first. It stays on the device and is never shown back.</p>
+<p class="hint" id="mcakept" style="display:none">This Canary already holds a CA. Leave the box empty to keep it, or paste a new one to replace it.</p>
 </div>
 <div id="mfpbox" style="display:none">
 <label for="mfp">Broker certificate SHA-256 fingerprint</label>
 <input class="txt" id="mfp" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="AA:BB:CC:… (paste just the 64 hex after “Fingerprint=” from: openssl x509 -in broker.crt -noout -fingerprint -sha256)">
+<p class="hint" id="mfpkept" style="display:none">This Canary already holds a pin. Leave the field empty to keep it, or paste a new one to replace it.</p>
 </div>
 <button class="btn" id="mqttsave" type="button">Save hub settings</button>
 <p class="hint" id="mqttmsg" style="display:none"></p>
@@ -220,6 +222,7 @@ function showDone(ip){
   $('done').style.display='block';
   $('donelead').textContent=chosen?'It joined “'+chosen+'” and is settling onto its perch.':'It joined your network and is settling onto its perch.';
   if(ip)$('ipalt').innerHTML=' (or <span class="addr"></span>)',$('ipalt').querySelector('.addr').textContent=ip;
+  loadHub();
 }
 function poll(){
   fetch('/api/wifi/status',{headers:hdrs()}).then(function(r){return r.json()}).then(function(d){
@@ -262,33 +265,60 @@ function mqttMsg(t){$('mqttmsg').textContent=t;$('mqttmsg').style.display='block
 // same controls both flashers carry. Only the field the chosen mode uses is
 // shown and sent; a TLS mode with the port still at 1883 gets an 8883
 // SUGGESTION with a button, never a rewrite.
+//
+// This page is reachable at canary.local/setup for the life of the device,
+// so a re-save (a new hub password, say) must not quietly flip a TLS unit
+// back to plain: the select is pre-set from what the Canary holds
+// (/api/mqtt/status) once the finish line shows, and `tls` travels in the
+// body ONLY when the person changed the select — an absent field leaves the
+// stored mode alone (the API's contract). A stored CA or pin likewise
+// stands in for an empty box.
+var hub={loaded:false,tls:0,ca_set:false,fp_set:false},hubAsked=false,mtlsTouched=false;
 function tlsMode(){return parseInt($('mtls').value,10)||0}
 function refreshTls(){
   var m=tlsMode();
   $('mcabox').style.display=m===1?'block':'none';
   $('mfpbox').style.display=m===2?'block':'none';
+  $('mcakept').style.display=(m===1&&hub.ca_set)?'block':'none';
+  $('mfpkept').style.display=(m===2&&hub.fp_set)?'block':'none';
   var port=parseInt($('mport').value,10)||1883;
   $('mportnudge').style.display=(m!==0&&port===1883)?'block':'none';
 }
-$('mtls').addEventListener('change',refreshTls);
+function loadHub(){
+  if(hubAsked)return;hubAsked=true;
+  fetch('/api/mqtt/status',{headers:hdrs()}).then(function(r){return r.json()}).then(function(d){
+    if(!d||!d.ok)return;
+    hub.loaded=true;
+    if(d.host){$('mhost').value=d.host}
+    if(d.port){$('mport').value=String(d.port)}
+    var m=parseInt(d.tls_mode,10);
+    if(m>=0&&m<=3){hub.tls=m;$('mtls').value=String(m)}
+    hub.ca_set=!!d.ca_set;hub.fp_set=!!d.fp_set;
+    if(d.tls_reason){mqttMsg('The hub link is currently refused: '+d.tls_reason)}
+    refreshTls();
+  }).catch(function(){});
+}
+$('mtls').addEventListener('change',function(){mtlsTouched=true;refreshTls()});
 $('mport').addEventListener('input',refreshTls);
 $('use8883').addEventListener('click',function(){$('mport').value='8883';refreshTls()});
 $('mqttsave').addEventListener('click',function(){
   var host=$('mhost').value.trim();
   if(!host){mqttMsg('Type the hub address first (homeassistant.local is the usual one).');return}
   var m=tlsMode();
-  var body={host:host,port:parseInt($('mport').value,10)||1883,enabled:true,tls:m};
+  var body={host:host,port:parseInt($('mport').value,10)||1883,enabled:true};
+  if(mtlsTouched)body.tls=m;
   if($('muser').value.trim())body.username=$('muser').value.trim();
   if($('mpass').value)body.password=$('mpass').value;
   var ca=$('mca').value.trim();
-  if(m===1&&!ca){mqttMsg('Paste the broker’s CA certificate first — the PEM that signed its certificate.');return}
-  if(m===2){var fp=$('mfp').value.trim();if(!fp){mqttMsg('Paste the broker certificate’s SHA-256 fingerprint first.');return}body.fp=fp}
+  if(m===1&&!ca&&!hub.ca_set){mqttMsg('Paste the broker’s CA certificate first — the PEM that signed its certificate.');return}
+  if(m===2){var fp=$('mfp').value.trim();if(fp){body.fp=fp}else if(!hub.fp_set){mqttMsg('Paste the broker certificate’s SHA-256 fingerprint first.');return}}
   $('mqttsave').disabled=true;
   var refused=function(d,fallback){var e=new Error((d&&(d.reason||d.error))||fallback);e.cvRefused=true;return e};
   var step=Promise.resolve();
-  if(m===1){
+  if(m===1&&ca){
     // The CA travels on its own route, first: /api/mqtt/config refuses the
-    // CA-verified mode until the Canary holds a CA to verify against.
+    // CA-verified mode until the Canary holds a CA to verify against. A CA
+    // it already holds needs no second trip.
     step=fetch('/api/mqtt/ca',{method:'POST',headers:hdrs(),body:ca}).then(function(r){return r.json()}).then(function(d){
       if(!d||!d.ok)throw refused(d,'the CA was not accepted');
     });
@@ -299,8 +329,12 @@ $('mqttsave').addEventListener('click',function(){
     $('mqttsave').disabled=false;
     if(d&&d.ok){
       var how=(d.transport&&d.transport!=='plain')?(' over '+d.transport):'';
-      mqttMsg('Saved — the Canary connects to the hub with these settings'+how+', no restart needed.'+(d.warning?(' '+d.warning):''));
+      mqttMsg('Saved — the Canary connects to the hub with these settings'+how+' right away; the hub link needs no restart. Restart only when you are done here: it drops the setup network for a minute.'+(d.warning?(' '+d.warning):''));
       $('rebootnow').style.display='block';
+      if(m===1&&ca)hub.ca_set=true;
+      if(m===2&&body.fp)hub.fp_set=true;
+      if(mtlsTouched){hub.tls=m}
+      refreshTls();
     }else{throw refused(d,'that didn’t save')}
   }).catch(function(e){
     $('mqttsave').disabled=false;
