@@ -394,6 +394,62 @@ fn verify_reports_membership_per_kind() -> Result<()> {
 }
 
 #[test]
+fn verify_fails_a_cached_identity_the_token_no_longer_supports() -> Result<()> {
+    // Step 2 of `verify`: the cache columns are re-derived from the token
+    // every time. A row that remembers a certificate its token does not
+    // embed, or a signer its token no longer names, is a contradiction —
+    // not a pass with a stale line in `list`.
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    let chain_head = tsa::chain_head(&kernel.conn)?;
+    drop(kernel);
+
+    let f = write_response(temp.path(), "chain.tsr", &chain_head);
+    assert_ok(&log_anchor(&db, &["import", "--response", &f]));
+    let rows = anchor_rows(&db);
+    assert!(
+        rows[0].signer_fingerprint.is_some(),
+        "identity cached at import"
+    );
+
+    // Certificate set stripped: cached cert, token embeds none.
+    let kernel = Kernel::open(&cfg)?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET token_der = ?1 WHERE id = 1",
+        rusqlite::params![common::token_without_certificates(&chain_head)],
+    )?;
+    drop(kernel);
+    let out = log_anchor(&db, &["verify"]);
+    assert_exit1(&out);
+    let text = stdout(&out);
+    assert!(text.contains("anchor #1: FAIL"), "{text}");
+    assert!(
+        text.contains(
+            "row records signer cert sha256:fbf1c838f80923a0… but the token embeds no certificate"
+        ),
+        "{text}"
+    );
+
+    // Signer not readable at all: still a contradiction with the cache.
+    let kernel = Kernel::open(&cfg)?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET token_der = ?1 WHERE id = 1",
+        rusqlite::params![common::token_with_unreadable_signer(&chain_head)],
+    )?;
+    drop(kernel);
+    let out = log_anchor(&db, &["verify"]);
+    assert_exit1(&out);
+    let text = stdout(&out);
+    assert!(text.contains("anchor #1: FAIL"), "{text}");
+    assert!(
+        text.contains("row records signer cert sha256:fbf1c838f80923a0… but the token's SignerInfo is not readable:"),
+        "{text}"
+    );
+    Ok(())
+}
+#[test]
 fn file_flag_hashes_bytes() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;

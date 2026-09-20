@@ -994,27 +994,51 @@ fn verify(
             Err(e) => problems.push(format!("token unparseable: {e}")),
         }
 
-        // 2. Cached identity vs the token (the token is the authority).
-        let signer = tsa::parse_token_signer(&a.token_der).ok();
-        let token_fp = signer
-            .as_ref()
-            .and_then(|s| s.signer_fingerprint.map(hex::encode));
-        if let (Some(row_fp), Some(tok_fp)) = (&a.signer_fingerprint, &token_fp) {
-            if row_fp != tok_fp {
+        // 2. Cached identity vs the token (the token is the authority). A
+        //    cache the token can no longer support is a contradiction too:
+        //    a row that remembers a certificate its token does not embed,
+        //    or a signer its token no longer names, must not pass as if the
+        //    two agreed.
+        let signer_res = tsa::parse_token_signer(&a.token_der);
+        let signer = signer_res.as_ref().ok();
+        let token_fp = signer.and_then(|s| s.signer_fingerprint.map(hex::encode));
+        match &signer_res {
+            Err(e) if a.signer_fingerprint.is_some() || a.signer_sid.is_some() => {
+                let (what, cached) = match (&a.signer_fingerprint, &a.signer_sid) {
+                    (Some(fp), _) => ("cert sha256:", fp.as_str()),
+                    (None, Some(sid)) => ("sid:", sid.as_str()),
+                    (None, None) => unreachable!("guarded by the match arm"),
+                };
                 problems.push(format!(
-                    "row records signer cert sha256:{}… but the token embeds {}…",
-                    &row_fp[..16.min(row_fp.len())],
-                    &tok_fp[..16]
+                    "row records signer {what}{}… but the token's SignerInfo is not readable: {e}",
+                    &cached[..16.min(cached.len())]
                 ));
             }
-        }
-        if let (Some(row_sid), Some(s)) = (&a.signer_sid, &signer) {
-            if row_sid != &s.sid_hex {
-                problems.push(format!(
-                    "row records signer sid:{}… but the token carries {}…",
-                    &row_sid[..16.min(row_sid.len())],
-                    &s.sid_hex[..16]
-                ));
+            Err(_) => {}
+            Ok(s) => {
+                if let Some(row_fp) = &a.signer_fingerprint {
+                    match &token_fp {
+                        Some(tok_fp) if row_fp != tok_fp => problems.push(format!(
+                            "row records signer cert sha256:{}… but the token embeds {}…",
+                            &row_fp[..16.min(row_fp.len())],
+                            &tok_fp[..16]
+                        )),
+                        Some(_) => {}
+                        None => problems.push(format!(
+                            "row records signer cert sha256:{}… but the token embeds no certificate",
+                            &row_fp[..16.min(row_fp.len())]
+                        )),
+                    }
+                }
+                if let Some(row_sid) = &a.signer_sid {
+                    if row_sid != &s.sid_hex {
+                        problems.push(format!(
+                            "row records signer sid:{}… but the token carries {}…",
+                            &row_sid[..16.min(row_sid.len())],
+                            &s.sid_hex[..16]
+                        ));
+                    }
+                }
             }
         }
 

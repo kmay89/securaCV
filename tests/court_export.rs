@@ -694,6 +694,99 @@ fn receipt_head_anchor_is_packaged_and_marked() -> Result<()> {
 }
 
 #[test]
+fn kit_identity_comes_only_from_the_packaged_token() -> Result<()> {
+    // The row's cache columns were written from the token at insert time;
+    // if the stored token later cannot support them, the kit must not
+    // repeat them — a recipient can only reproduce what the token embeds.
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let entry_hash = bundle_entry_hash(&bundle)?;
+
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    // Row 1: cache populated, token rewritten without its certificate set.
+    let id1 = tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &entry_hash,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&entry_hash),
+    )?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET token_der = ?1 WHERE id = ?2",
+        rusqlite::params![common::token_without_certificates(&entry_hash), id1],
+    )?;
+    let rows = tsa::list_anchors(&kernel.conn)?;
+    assert!(
+        rows[0].signer_fingerprint.is_some(),
+        "the cache still remembers the certificate the token no longer embeds"
+    );
+    drop(kernel);
+
+    let kit = temp.path().join("kit_cache");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("by TSA (no certificate embedded; signer id d806acd919f81e61…)"),
+        "{custody}"
+    );
+    assert!(!custody.contains("TSA certificate sha256:"), "{custody}");
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["anchors"][0]["covers"], "receipt_entry");
+    assert_eq!(
+        manifest["anchors"][0]["tsa"]["signer_cert_sha256"],
+        serde_json::Value::Null
+    );
+    assert!(!std::fs::read_to_string(kit.join("MANIFEST.json"))?.contains("fbf1c838"));
+
+    // Row 2 (a second kit): the token's signer is not readable at all and a
+    // bogus cache was planted; neither the bogus value nor the fixture's
+    // certificate hash may reach the kit.
+    let kernel = Kernel::open(&cfg)?;
+    kernel.conn.execute("DELETE FROM tsa_anchors", [])?;
+    let id2 = tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &entry_hash,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&entry_hash),
+    )?;
+    let bogus = "ab".repeat(32);
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET token_der = ?1, signer_cert_sha256 = ?2 WHERE id = ?3",
+        rusqlite::params![
+            common::token_with_unreadable_signer(&entry_hash),
+            bogus,
+            id2
+        ],
+    )?;
+    drop(kernel);
+    let kit2 = temp.path().join("kit_unreadable");
+    let out = run_court_export(&db, &bundle, &kit2);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let custody = std::fs::read_to_string(kit2.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("by TSA (identity not readable from the token)"),
+        "{custody}"
+    );
+    let manifest_text = std::fs::read_to_string(kit2.join("MANIFEST.json"))?;
+    for leaked in [bogus.as_str(), "fbf1c838"] {
+        assert!(!custody.contains(leaked), "custody leaks {leaked}");
+        assert!(!manifest_text.contains(leaked), "manifest leaks {leaked}");
+    }
+    Ok(())
+}
+#[test]
 fn legacy_digest_row_over_own_receipt_is_packaged_by_hash() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db_path = temp.path().join("witness.db");

@@ -79,6 +79,119 @@ pub fn spliced_token(h: &[u8; 32]) -> tsa::TimestampToken {
     tsa::parse_token(&token_with_imprint(h)).expect("spliced token parses")
 }
 
+/// One DER TLV at `at`: (tag, header length, content length).
+fn der_tlv(buf: &[u8], at: usize) -> (u8, usize, usize) {
+    let tag = buf[at];
+    let first = buf[at + 1] as usize;
+    if first < 0x80 {
+        return (tag, 2, first);
+    }
+    let n = first & 0x7f;
+    let mut len = 0usize;
+    for b in &buf[at + 2..at + 2 + n] {
+        len = (len << 8) | *b as usize;
+    }
+    (tag, 2 + n, len)
+}
+
+fn der_encode(tag: u8, content: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    out.extend(der_len(content.len()));
+    out.extend_from_slice(content);
+    out
+}
+
+/// The `SignedData` content of a bare token, with the ContentInfo OID TLV
+/// that precedes it: (oid_tlv, signed_data_content).
+fn split_signed_data(token: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let (t, h, l) = der_tlv(token, 0);
+    assert_eq!(t, 0x30, "ContentInfo");
+    let ci = &token[h..h + l];
+    let (t, h, l) = der_tlv(ci, 0);
+    assert_eq!(t, 0x06, "contentType OID");
+    let oid_tlv = ci[..h + l].to_vec();
+    let (t, h2, l2) = der_tlv(ci, h + l);
+    assert_eq!(t, 0xa0, "[0] content");
+    let wrapped = &ci[h + l + h2..h + l + h2 + l2];
+    let (t, h3, l3) = der_tlv(wrapped, 0);
+    assert_eq!(t, 0x30, "SignedData");
+    (oid_tlv, wrapped[h3..h3 + l3].to_vec())
+}
+
+fn assemble_token(oid_tlv: &[u8], signed_data_content: &[u8]) -> Vec<u8> {
+    let sd = der_encode(0x30, signed_data_content);
+    let a0 = der_encode(0xa0, &sd);
+    let mut ci = oid_tlv.to_vec();
+    ci.extend(a0);
+    der_encode(0x30, &ci)
+}
+
+/// Offsets of the elements of a `SignedData` content: returns the index of
+/// the element AFTER `encapContentInfo` (where `certificates [0]` would sit).
+fn after_encap(sd: &[u8]) -> usize {
+    let mut at = 0;
+    for (want, what) in [
+        (0x02, "version"),
+        (0x31, "digestAlgorithms"),
+        (0x30, "encapContentInfo"),
+    ] {
+        let (t, h, l) = der_tlv(sd, at);
+        assert_eq!(t, want, "{what}");
+        at += h + l;
+    }
+    at
+}
+
+/// `token_with_imprint(h)` with its embedded `certificates [0]` set removed.
+/// `parse_token` still succeeds (it never reads the set) and the imprint is
+/// `h`, but `parse_token_signer` now finds a `SignerInfo` without the
+/// certificate it names — the shape of a row whose cached identity its own
+/// token can no longer support.
+pub fn token_without_certificates(h: &[u8; 32]) -> Vec<u8> {
+    let token = token_with_imprint(h);
+    let (oid, sd) = split_signed_data(&token);
+    let at = after_encap(&sd);
+    let (t, hh, ll) = der_tlv(&sd, at);
+    assert_eq!(t, 0xa0, "the fixture token embeds a certificate set");
+    let mut rebuilt = sd[..at].to_vec();
+    rebuilt.extend_from_slice(&sd[at + hh + ll..]);
+    let out = assemble_token(&oid, &rebuilt);
+    assert!(tsa::parse_token(&out).is_ok(), "token still parses");
+    assert!(
+        tsa::parse_token_signer(&out)
+            .expect("signer still readable")
+            .signer_fingerprint
+            .is_none(),
+        "no certificate left to match"
+    );
+    out
+}
+
+/// `token_with_imprint(h)` whose `signerInfos` SET tag is rewritten so the
+/// identity reader fails while `parse_token` (which stops at
+/// `encapContentInfo`) still succeeds: a token that imports and verifies
+/// structurally but whose signer is not readable.
+pub fn token_with_unreadable_signer(h: &[u8; 32]) -> Vec<u8> {
+    let token = token_with_imprint(h);
+    let (oid, mut sd) = split_signed_data(&token);
+    let mut at = after_encap(&sd);
+    loop {
+        let (t, hh, ll) = der_tlv(&sd, at);
+        match t {
+            0xa0 | 0xa1 => at += hh + ll,
+            0x31 => {
+                sd[at] = 0x30;
+                break;
+            }
+            other => panic!("unexpected tag 0x{other:02x} before signerInfos"),
+        }
+    }
+    let out = assemble_token(&oid, &sd);
+    assert!(tsa::parse_token(&out).is_ok(), "token still parses");
+    assert!(tsa::parse_token_signer(&out).is_err(), "signer unreadable");
+    out
+}
+
 pub fn openssl_available() -> bool {
     Command::new("openssl")
         .arg("version")

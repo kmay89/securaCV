@@ -385,14 +385,16 @@ fn package_anchors(
             tsa_url: anchor.tsa_url,
             covers,
             declared_tsa: anchor.tsa_name,
+            // Identity is what the PACKAGED token carries — never the row's
+            // cache columns. A kit is handed to third parties who can only
+            // reproduce what the token embeds; a cached value the token no
+            // longer supports would be a statement the kit's own evidence
+            // contradicts, so a token without a readable identity renders as
+            // exactly that.
             signer_fingerprint: signer
                 .as_ref()
-                .and_then(|s| s.signer_fingerprint.map(hex::encode))
-                .or(anchor.signer_fingerprint),
-            signer_sid: signer
-                .as_ref()
-                .map(|s| s.sid_hex.clone())
-                .or(anchor.signer_sid),
+                .and_then(|s| s.signer_fingerprint.map(hex::encode)),
+            signer_sid: signer.as_ref().map(|s| s.sid_hex.clone()),
             signer_cn: signer.and_then(|s| s.signer_common_name),
         });
     }
