@@ -482,8 +482,10 @@ tools — an older `witnessd` prunes anchored heads at every retention pass
 checkpoint row). A head already lost that way reports `anchored hash is not
 in chain history`; `log_anchor … relabel --id <n> --subject digest` records
 that membership is no longer asserted without touching the token (it refuses
-a head newer than the signed retention cutoff — that shape is truncation, not
-a legacy prune — and never upgrades a subject) (**CODE**). Record every
+a head newer than the signed retention cutoff, or any head when no retention
+checkpoint exists — either shape is truncation, not a legacy prune — refuses
+receipt-ledger and policy heads outright, and never upgrades a subject)
+(**CODE**). Record every
 `relabel` in the exceptions register (**PROC**).
 
 **`policy_head` note:** the policy-change history is empty only on a database
@@ -501,9 +503,12 @@ cross-bound into `log_verify` / `run_full_verify` — a `valid` verdict there
 says nothing about the anchors table (**GAP** → §4; `ENTERPRISE_CUSTODY.md`
 §2). The anchors table is not itself chained: export `tsa_anchors.token_der`
 with every backup (**PROC**). An OpenTimestamps leg and clock-provenance
-events are **GAP** (§4). No shipped image carries the `openssl` CLI or the
-`tsa` feature: online `anchor-all` and `verify --ca` / `--policy` run from an
-operator host (**PROC**).
+events are **GAP** (§4). No shipped image enables the `tsa` feature: online
+`anchor-all` runs from an operator host (**PROC**). The Debian-based
+`witnessd` image carries the `openssl` CLI (via `ca-certificates`), so
+`verify --ca` / `--policy` can run inside it against a mounted CA or policy
+file; the Alpine add-on image does not install it, and there those checks
+run from an operator host (**PROC**).
 
 ### C6 — Keyguard issuance (vault passphrase)
 

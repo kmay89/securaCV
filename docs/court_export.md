@@ -77,8 +77,12 @@ with them.
    policy heads, sentinels) is skipped without a trace. The manifest records
    `"receipt_anchored": true|false` beside `"anchored"` and lists every
    packaged token in an `anchors` array (`file`, the row's stored `subject`,
-   `covers` ∈ `bundle_bytes` / `receipt_entry` / `chain_head`, and the TSA's
-   declared name and signer-certificate SHA-256 read from the token). If no
+   `covers` ∈ `bundle_bytes` / `receipt_entry` / `chain_head`, and a `tsa`
+   object holding the operator-declared TSA name recorded on the anchor row
+   (`declared_name` — a policy label the token does not attest; null for
+   rows anchored without a policy) and the signer-certificate SHA-256 read
+   from the packaged token (`signer_cert_sha256`, null when the token embeds
+   no certificate)). If no
    valid stored anchor covers the bundle's exact bytes, the kit still
    assembles but says so loudly — in the terminal, in `VERIFICATION.md`, and
    as `"anchored": false` in the manifest — with the exact `log_anchor`

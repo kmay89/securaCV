@@ -1021,14 +1021,15 @@ fn verify_policy_satisfied_and_not() -> Result<()> {
         "{text}"
     );
     assert!(text.contains(&note), "{text}");
-    assert!(
-        stderr(&out).contains(&format!(
-            "anchor policy {}: NOT SATISFIED (1 subject(s) uncovered)",
-            policy_path.display()
-        )),
-        "{}",
-        stderr(&out)
+    // The verdict line is on stdout with the per-subject lines (the doc
+    // sample shows it there) and is also the process error on stderr.
+    let verdict = format!(
+        "anchor policy {}: NOT SATISFIED (1 subject(s) uncovered)",
+        policy_path.display()
     );
+    assert!(text.contains(&verdict), "{text}");
+    assert_eq!(text.matches("NOT SATISFIED").count(), 1, "{text}");
+    assert!(stderr(&out).contains(&verdict), "{}", stderr(&out));
 
     // Re-cover, then advance the ledger: covered, but not the current head.
     import_from(&beta, "beta", &head);
@@ -1323,5 +1324,323 @@ fn verify_policy_shared_root_needs_pins() -> Result<()> {
         "{text}"
     );
     assert!(!text.contains("SATISFIED\n"), "{text}");
+    Ok(())
+}
+
+#[test]
+fn import_takes_several_paths_after_one_response_flag() -> Result<()> {
+    // The printed hint and the runbook say `--response out/*.tsr`; the shell
+    // expands that to several values after ONE flag, which must parse.
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    let chain_head = tsa::chain_head(&kernel.conn)?;
+    drop(kernel);
+    let a = write_response(temp.path(), "a.tsr", &chain_head);
+    let b = write_response(temp.path(), "b.tsr", &[0x42u8; 32]);
+    let c = write_response(temp.path(), "c.tsr", &[0x43u8; 32]);
+    let out = log_anchor(
+        &db,
+        &[
+            "import",
+            "--response",
+            &a,
+            &b,
+            &c,
+            "--url",
+            "https://tsa.example/tsr",
+        ],
+    );
+    assert_ok(&out);
+    let rows = anchor_rows(&db);
+    assert_eq!(rows.len(), 3, "{}", stdout(&out));
+    assert_eq!(rows[0].subject, "chain_head");
+    assert_eq!(rows[1].subject, "digest");
+    assert_eq!(rows[2].subject, "digest");
+    assert!(rows.iter().all(|r| r.tsa_url == "https://tsa.example/tsr"));
+    // The repeated form still works, mixed with the multi-value one.
+    let out = log_anchor(&db, &["import", "--response", &a, "--response", &b, &c]);
+    assert_ok(&out);
+    assert_eq!(anchor_rows(&db).len(), 6);
+    Ok(())
+}
+
+#[test]
+fn verify_and_list_report_a_malformed_signer_cache_instead_of_panicking() -> Result<()> {
+    // The cache columns are operator-reachable text. A cell that is not the
+    // lowercase hex this tool writes is its own FAIL problem — reported, and
+    // the run carries on to the summary — never a byte slice through a
+    // multibyte character that aborts the process with no verdict.
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    let chain_head = tsa::chain_head(&kernel.conn)?;
+    drop(kernel);
+    let f = write_response(temp.path(), "chain.tsr", &chain_head);
+    assert_ok(&log_anchor(&db, &["import", "--response", &f]));
+
+    // Fifteen ASCII bytes then a two-byte character: byte 16 is not a char
+    // boundary. The sid cell is sixteen two-byte characters for the same
+    // reason.
+    let kernel = Kernel::open(&cfg)?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET signer_cert_sha256 = 'aaaaaaaaaaaaaaaé', \
+         signer_sid = 'ßßßßßßßßßßßßßßßß' WHERE id = 1",
+        [],
+    )?;
+    drop(kernel);
+
+    let out = log_anchor(&db, &["verify"]);
+    assert_exit1(&out);
+    let text = stdout(&out);
+    assert!(text.contains("anchor #1: FAIL"), "{text}");
+    assert!(
+        text.contains(
+            "    row records a malformed signer cache (cert sha256:\"aaaaaaaaaaaaaaaé\"); \
+             expected 64 lowercase hex characters"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "    row records a malformed signer cache (sid:\"ßßßßßßßßßßßßßßßß\"); expected 64 \
+             lowercase hex characters"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("CRYPTOGRAPHICALLY UNVERIFIED"),
+        "verify ran through to its summary: {text}"
+    );
+    assert!(
+        stderr(&out).contains("1 anchor(s) failed verification"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = log_anchor(&db, &["list"]);
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains("cert sha256:aaaaaaaaaaaaaaaé…"),
+        "{}",
+        stdout(&out)
+    );
+
+    // Uppercase hex is also not what this tool writes.
+    let kernel = Kernel::open(&cfg)?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET signer_cert_sha256 = upper(signer_cert_sha256), \
+         signer_sid = NULL WHERE id = 1",
+        [],
+    )?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET signer_cert_sha256 = ?1 WHERE id = 1",
+        ["FBF1C838F80923A0".to_string() + &"0".repeat(48)],
+    )?;
+    drop(kernel);
+    let out = log_anchor(&db, &["verify"]);
+    assert_exit1(&out);
+    assert!(
+        stdout(&out)
+            .contains("row records a malformed signer cache (cert sha256:\"FBF1C838F80923A0"),
+        "{}",
+        stdout(&out)
+    );
+    Ok(())
+}
+
+#[test]
+fn relabel_refuses_without_a_retention_checkpoint_and_for_receipt_heads() -> Result<()> {
+    // With no checkpoint no prune ever happened, so a chain head missing from
+    // the ledger is truncation or rollback whatever the row's ledger_id says
+    // — including when it says nothing (the legacy shape). Receipt ledgers
+    // are never pruned, so a missing receipt head is refused outright.
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let (id2, h2): (i64, Vec<u8>) = kernel.conn.query_row(
+        "SELECT id, entry_hash FROM sealed_events ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let h2: [u8; 32] = h2.try_into().unwrap();
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    let legacy = tsa::insert_anchor(
+        &kernel.conn,
+        "chain_head",
+        &h2,
+        "(offline)",
+        &common::spliced_token(&h2),
+    )?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET ledger_id = NULL WHERE id = ?1",
+        [legacy],
+    )?;
+    let stray_hash = [0x42u8; 32];
+    let stray = tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &stray_hash,
+        "(offline)",
+        &common::spliced_token(&stray_hash),
+    )?;
+    kernel
+        .conn
+        .execute("DELETE FROM sealed_events WHERE id = ?1", [id2])?;
+    let checkpoints: i64 = kernel
+        .conn
+        .query_row("SELECT COUNT(*) FROM checkpoints", [], |r| r.get(0))?;
+    assert_eq!(checkpoints, 0, "retention never ran");
+    drop(kernel);
+
+    let out = log_anchor(&db_path, &["verify"]);
+    assert_exit1(&out);
+    assert!(
+        stdout(&out).contains("anchored hash is not in chain history"),
+        "{}",
+        stdout(&out)
+    );
+
+    let legacy_id = legacy.to_string();
+    let out = log_anchor(
+        &db_path,
+        &["relabel", "--id", &legacy_id, "--subject", "digest"],
+    );
+    assert_exit1(&out);
+    assert!(
+        stderr(&out).contains(&format!(
+            "anchor #{legacy}: no retention checkpoint exists, so the anchored head did not go \
+             missing through retention — that is truncation or rollback, not a legacy prune; \
+             refusing to relabel"
+        )),
+        "{}",
+        stderr(&out)
+    );
+    let stray_id = stray.to_string();
+    let out = log_anchor(
+        &db_path,
+        &["relabel", "--id", &stray_id, "--subject", "digest"],
+    );
+    assert_exit1(&out);
+    assert!(
+        stderr(&out).contains(&format!(
+            "anchor #{stray}: the export-receipt chain is never pruned, so its missing head is \
+             truncation or rollback, not a legacy prune; refusing to relabel"
+        )),
+        "{}",
+        stderr(&out)
+    );
+    let rows = anchor_rows(&db_path);
+    assert_eq!(rows[0].subject, "chain_head");
+    assert_eq!(rows[1].subject, "export_receipt_head");
+    Ok(())
+}
+
+#[test]
+fn verify_policy_without_an_anchors_table_matches_the_empty_table() -> Result<()> {
+    // A database no writer has touched has no `tsa_anchors` table. Under
+    // --policy that is zero rows, not a different verdict: an empty ledger
+    // has nothing to cover and a non-empty one is uncovered, exactly as when
+    // the (empty) table exists — same lines, same count, same exit code.
+    if !common::openssl_available() {
+        eprintln!("skipping: openssl not available");
+        return Ok(());
+    }
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    let cfg = test_cfg(&db);
+    // No row is ever checked against it, so the CA file only has to exist.
+    let ca = temp.path().join("ca.pem");
+    std::fs::write(&ca, b"")?;
+    let ca_s = ca.to_string_lossy().into_owned();
+    let entries: &[(&str, &str, &str, &[String])] = &[
+        ("alpha", "qualified", &ca_s, &[]),
+        ("beta", "independent", &ca_s, &[]),
+    ];
+    let all = temp.path().join("all.json");
+    std::fs::write(
+        &all,
+        policy_json(
+            entries,
+            &[
+                "chain_head",
+                "export_receipt_head",
+                "break_glass_receipt_head",
+                "policy_head",
+            ],
+        ),
+    )?;
+    let one = temp.path().join("one.json");
+    std::fs::write(&one, policy_json(entries, &["break_glass_receipt_head"]))?;
+    let all_s = all.to_string_lossy().into_owned();
+    let one_s = one.to_string_lossy().into_owned();
+    let before = std::fs::read(&db)?;
+
+    let run = |policy: &str| log_anchor(&db, &["verify", "--policy", policy]);
+    let out = run(&all_s);
+    assert_exit1(&out);
+    let all_text = stdout(&out);
+    assert!(all_text.contains("no anchors stored"), "{all_text}");
+    assert!(
+        all_text.contains(
+            "policy: chain_head: NOT covered — anchored by no attributed TSA; missing role(s): "
+        ),
+        "{all_text}"
+    );
+    for subject in [
+        "export_receipt_head",
+        "break_glass_receipt_head",
+        "policy_head",
+    ] {
+        assert!(
+            all_text.contains(&format!(
+                "policy: {subject}: ledger is empty; nothing to cover"
+            )),
+            "{all_text}"
+        );
+    }
+    assert!(
+        !all_text.contains("NOT covered — no anchors stored"),
+        "{all_text}"
+    );
+    let verdict = format!(
+        "anchor policy {}: NOT SATISFIED (1 subject(s) uncovered)",
+        all.display()
+    );
+    assert!(all_text.contains(&verdict), "{all_text}");
+    assert!(stderr(&out).contains(&verdict), "{}", stderr(&out));
+
+    let out = run(&one_s);
+    assert_ok(&out);
+    let one_text = stdout(&out);
+    assert!(
+        one_text.contains("policy: break_glass_receipt_head: ledger is empty; nothing to cover"),
+        "{one_text}"
+    );
+    assert!(
+        one_text.contains(&format!("anchor policy {}: SATISFIED", one.display())),
+        "{one_text}"
+    );
+    assert_eq!(
+        std::fs::read(&db)?,
+        before,
+        "verify --policy must not write"
+    );
+
+    // The same database once a writer has created the (still empty) table.
+    let kernel = Kernel::open(&cfg)?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    drop(kernel);
+    let out = run(&all_s);
+    assert_exit1(&out);
+    assert_eq!(stdout(&out), all_text);
+    let out = run(&one_s);
+    assert_ok(&out);
+    assert_eq!(stdout(&out), one_text);
     Ok(())
 }

@@ -59,8 +59,11 @@ COPY --from=build /app/target/release/witnessd /usr/local/bin/witnessd
 # database out of the volume. Already compiled by the build above (none of
 # these are feature-gated); adds binaries only, no extra runtime deps and
 # no new listening ports. (`log_anchor` here is the offline flow plus
-# `list`/`verify` structural checks: this image has neither the `tsa` feature
-# nor the `openssl` CLI.)
+# `list`/`verify`: this image does not enable the `tsa` feature, so online
+# `request`/`anchor-all` run elsewhere, but it does carry the `openssl` CLI —
+# a hard dependency of `ca-certificates` above — so `verify --ca`/`--policy`
+# work against a mounted CA or policy file. The smoke test in
+# container-images.yml pins that.)
 COPY --from=build /app/target/release/log_verify /usr/local/bin/log_verify
 COPY --from=build /app/target/release/export_events /usr/local/bin/export_events
 COPY --from=build /app/target/release/export_verify /usr/local/bin/export_verify

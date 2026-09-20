@@ -1431,6 +1431,17 @@ mod tests {
     /// right after `encapContentInfo` (no certificates, no signerInfos).
     /// Lengths are recomputed by `der_tlv`, so the result is well-formed DER.
     fn rebuild_token(token_der: &[u8], signer_infos: Option<Vec<Vec<u8>>>) -> Vec<u8> {
+        rebuild_token_certs(token_der, None, signer_infos)
+    }
+
+    /// `rebuild_token` with the `certificates [0]` set under control too:
+    /// `None` keeps the fixture's certificate set as it is, `Some(list)`
+    /// replaces it with those Certificate TLVs (an empty list drops it).
+    fn rebuild_token_certs(
+        token_der: &[u8],
+        certificates: Option<Vec<Vec<u8>>>,
+        signer_infos: Option<Vec<Vec<u8>>>,
+    ) -> Vec<u8> {
         let content_info = Der::new(token_der).expect(0x30, "ContentInfo").unwrap();
         let mut ci = Der::new(content_info);
         let (_, oid, _) = ci.tlv().unwrap();
@@ -1445,11 +1456,19 @@ mod tests {
         body.extend_from_slice(digest_algs);
         body.extend_from_slice(encap);
         if let Some(infos) = signer_infos {
-            // Keep certificates/crls as they are; swap the SET.
+            let replace_certs = certificates.is_some();
+            if let Some(certs) = certificates.filter(|c| !c.is_empty()) {
+                body.extend(der_tlv(0xa0, &certs.concat()));
+            }
+            // Keep crls (and, unless replaced, certificates) as they are;
+            // swap the SET.
             while let Some(tag) = sd.peek_tag() {
                 let (_, _, raw) = sd.tlv().unwrap();
                 if tag == 0x31 {
                     break;
+                }
+                if tag == 0xa0 && replace_certs {
+                    continue;
                 }
                 body.extend_from_slice(raw);
             }
@@ -1460,6 +1479,160 @@ mod tests {
         let mut ci_body = der_tlv(0x06, oid);
         ci_body.extend(der_tlv(0xa0, &sd_tlv));
         der_tlv(0x30, &ci_body)
+    }
+
+    /// The one certificate the fixture token embeds (its signing certificate,
+    /// the same bytes as `tests/fixtures/tsa/tsa.crt`).
+    fn fixture_certificate() -> Vec<u8> {
+        let der = fixture_token_der();
+        let (mut sd, _) = signed_data_reader(&der).unwrap();
+        let set = sd.expect(0xa0, "certificates [0]").unwrap();
+        let mut cs = Der::new(set);
+        let (_, _, cert) = cs.tlv().unwrap();
+        assert!(!cs.has_more(), "the fixture embeds exactly one certificate");
+        cert.to_vec()
+    }
+
+    /// The fixture SignerInfo with its `sid` rewritten from
+    /// `issuerAndSerialNumber` to the `[0] subjectKeyIdentifier` form over
+    /// `ski`; everything after the sid is carried over unchanged.
+    fn ski_signer_info(ski: &[u8]) -> Vec<u8> {
+        let si = fixture_signer_info();
+        let content = Der::new(&si).expect(0x30, "SignerInfo").unwrap();
+        let mut r = Der::new(content);
+        let (_, _, version) = r.tlv().unwrap();
+        let (tag, _, sid) = r.tlv().unwrap();
+        assert_eq!(
+            tag, 0x30,
+            "the fixture names its signer by issuer and serial"
+        );
+        let rest = &content[version.len() + sid.len()..];
+        let mut body = version.to_vec();
+        body.extend(der_tlv(0x80, ski));
+        body.extend_from_slice(rest);
+        der_tlv(0x30, &body)
+    }
+
+    /// `cert` with its `[3] extensions` removed from the TBSCertificate (the
+    /// signature over it no longer verifies, which the identity reader never
+    /// checks): a certificate that carries no SubjectKeyIdentifier.
+    fn strip_extensions(cert: &[u8]) -> Vec<u8> {
+        let content = Der::new(cert).expect(0x30, "Certificate").unwrap();
+        let mut c = Der::new(content);
+        let tbs = c.expect(0x30, "tbsCertificate").unwrap();
+        let (_, _, sig_alg) = c.tlv().unwrap();
+        let (_, _, sig) = c.tlv().unwrap();
+        let mut t = Der::new(tbs);
+        let mut body = Vec::new();
+        let mut dropped = false;
+        while t.has_more() {
+            let (tag, _, raw) = t.tlv().unwrap();
+            if tag == 0xa3 {
+                dropped = true;
+                continue;
+            }
+            body.extend_from_slice(raw);
+        }
+        assert!(dropped, "the fixture certificate carries extensions");
+        let mut out = der_tlv(0x30, &body);
+        out.extend_from_slice(sig_alg);
+        out.extend_from_slice(sig);
+        der_tlv(0x30, &out)
+    }
+
+    const FIXTURE_SKI_HEX: &str = "fed9bb53d2a050b14064eeb457004ad3a2d96b69";
+
+    #[test]
+    fn signer_named_by_subject_key_identifier_is_read_through_the_token() {
+        // The `[0]` arm of the sid CHOICE, end to end through
+        // `parse_token_signer`: the SKI names the embedded certificate, so
+        // the fingerprint and commonName are the same ones the
+        // issuerAndSerialNumber reading gives, and the sid digest is over the
+        // identifier itself (no issuer to hash).
+        let ski = hex::decode(FIXTURE_SKI_HEX).unwrap();
+        let by_serial = parse_token_signer(&fixture_token_der()).unwrap();
+        let token = rebuild_token(&fixture_token_der(), Some(vec![ski_signer_info(&ski)]));
+        let signer = parse_token_signer(&token).expect("SKI-form token reads");
+        let cert_sha: [u8; 32] = Sha256::digest(fixture_certificate()).into();
+        assert_eq!(signer.signer_fingerprint, Some(cert_sha));
+        assert_eq!(signer.signer_fingerprint, by_serial.signer_fingerprint);
+        assert_eq!(signer.signer_common_name, by_serial.signer_common_name);
+        assert!(signer.signer_common_name.is_some());
+        assert_eq!(signer.sid_hex, hex::encode(Sha256::digest(&ski)));
+        assert_ne!(signer.sid_hex, by_serial.sid_hex);
+        assert_eq!(signer.issuer_sha256, None);
+        assert_eq!(signer.serial_hex, by_serial.serial_hex);
+
+        // A lone certificate whose SKI disagrees with the identifier is not
+        // the signer: no fingerprint, and so no commonName and no serial.
+        let token = rebuild_token(
+            &fixture_token_der(),
+            Some(vec![ski_signer_info(b"not-this-key")]),
+        );
+        let signer = parse_token_signer(&token).unwrap();
+        assert_eq!(signer.signer_fingerprint, None);
+        assert_eq!(signer.signer_common_name, None);
+        assert_eq!(signer.serial_hex, None);
+        assert_eq!(signer.sid_hex, hex::encode(Sha256::digest(b"not-this-key")));
+    }
+
+    #[test]
+    fn lone_certificate_without_ski_is_the_signer_only_when_it_is_alone() {
+        // The single-cert fallback: a token that embeds exactly one
+        // certificate with no SubjectKeyIdentifier extension names it as the
+        // signer (RFC 3161 §2.4.1: a lone embedded certificate in a certReq
+        // reply is the signer). Beside a second certificate the count decides
+        // nothing.
+        let bare = strip_extensions(&fixture_certificate());
+        assert!(parse_embedded_signer(&bare).unwrap().ski.is_none());
+        let si = ski_signer_info(b"any-identifier");
+        let token = rebuild_token_certs(
+            &fixture_token_der(),
+            Some(vec![bare.clone()]),
+            Some(vec![si.clone()]),
+        );
+        let signer = parse_token_signer(&token).unwrap();
+        let bare_sha: [u8; 32] = Sha256::digest(&bare).into();
+        assert_eq!(signer.signer_fingerprint, Some(bare_sha));
+        assert!(signer.signer_common_name.is_some());
+
+        let token = rebuild_token_certs(
+            &fixture_token_der(),
+            Some(vec![bare, fixture_certificate()]),
+            Some(vec![si]),
+        );
+        let signer = parse_token_signer(&token).unwrap();
+        assert_eq!(signer.signer_fingerprint, None);
+        assert_eq!(signer.signer_common_name, None);
+    }
+
+    #[test]
+    fn signer_fuzz_seeds_walk_the_whole_reader() {
+        // `fuzz/seeds/tsa_parse_signer` is the regression gate for
+        // `parse_token_signer`; a seed that ends before `signerInfos` never
+        // reaches the code the target exists for. Pin each seed to a token
+        // this module builds and to a full identity read, so the corpus
+        // cannot silently stop covering the reader.
+        let dir = format!("{}/fuzz/seeds/tsa_parse_signer", env!("CARGO_MANIFEST_DIR"));
+        let real = std::fs::read(format!("{dir}/token.der")).unwrap();
+        assert_eq!(
+            real,
+            fixture_token_der(),
+            "token.der is the bare fixture token"
+        );
+        let ski = hex::decode(FIXTURE_SKI_HEX).unwrap();
+        let ski_form = std::fs::read(format!("{dir}/token_ski.der")).unwrap();
+        assert_eq!(
+            ski_form,
+            rebuild_token(&fixture_token_der(), Some(vec![ski_signer_info(&ski)])),
+            "token_ski.der is the fixture token with an SKI-form SignerInfo"
+        );
+        for (name, seed) in [("token.der", real), ("token_ski.der", ski_form)] {
+            let signer = parse_token_signer(&seed).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(signer.signer_fingerprint.is_some(), "{name}");
+            assert!(signer.signer_common_name.is_some(), "{name}");
+            assert_eq!(signer.sid_hex.len(), 64, "{name}");
+        }
     }
 
     fn fixture_signer_info() -> Vec<u8> {
