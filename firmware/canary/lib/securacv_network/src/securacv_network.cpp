@@ -2643,11 +2643,13 @@ static esp_err_t handle_mqtt_ca(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  // One static receive buffer: the PEM, the '\n' appended below if the
-  // upload lacks one, the NUL. The HTTP server runs its handlers on a
-  // single task, so a static is safe here and keeps 3 KB off that task's
-  // stack. Wiped after use either way.
-  static char s_ca_body[canary::net::mqtt_tls::kCaBufBytes + 1];
+  // One static receive buffer: the PEM (kCaPemMax at most, the '\n' this
+  // handler appends counted inside it) plus the NUL — sized from the logic
+  // header this file includes, not the Arduino transport header's
+  // kCaBufBytes, which lives one include away. The HTTP server runs its
+  // handlers on a single task, so a static is safe here and keeps 3 KB off
+  // that task's stack. Wiped after use either way.
+  static char s_ca_body[canary::net::mqtt_tls::kCaPemMax + 1];
   const canary::net::mqtt_tls::Decision none;
   if (req->content_len > canary::net::mqtt_tls::kCaPemMax) {
     return send_tls_refusal(req, tf::Verdict::CaTooLarge, none);
