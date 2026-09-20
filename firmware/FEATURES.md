@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-09-19 (`firmware/canary`'s `securacv_mqtt` rides the shared broker-TLS transport — plain / CA-verified / SHA-256-pinned / named lab mode, fail-closed — provisioned by the device itself (setup wizard hub step, `POST /api/mqtt/config`, `POST`/`DELETE /api/mqtt/ca`); its `release_ha` image, the one canary env that compiles the lib, is built and slot-guarded on every PR. Compile-tested by CI, decision and wizard host-tested, not bench-tested against a TLS broker. Also: canary-wap's HTTPS cell corrected to ⚠️ (a runtime, after-setup opt-in with an HTTP fallback), and the CSI active-probe row restated to the code's rates. 2026-09-08: MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` joined on 2026-09-19. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
+**Last updated:** 2026-09-19 (`firmware/canary`'s `securacv_mqtt` rides the shared broker-TLS transport — plain / CA-verified / SHA-256-pinned / named lab mode, fail-closed — provisioned by the device itself (setup wizard hub step, `POST /api/mqtt/config`, `POST`/`DELETE /api/mqtt/ca`); its `release_ha` image — the one CI-built canary env that compiles the lib (`dev_ha` compiles it too but is not in `flavors.json`'s `build_envs`) — is built and slot-guarded on every PR. Compile-tested by CI, decision and wizard host-tested, not bench-tested against a TLS broker. Also: canary-wap's HTTPS cell corrected to ⚠️ (a runtime, after-setup opt-in with an HTTP fallback), and the CSI active-probe row restated to the code's rates. 2026-09-08: MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` joined on 2026-09-19. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -68,7 +68,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | RF presence detection | ❌ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | WiFi CSI sensing (motion / breathing / micro-activity) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI module pipeline + privacy chokepoint + 10-min bundler (v1: presence, breathing, ribbon, daily summary, anomaly) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
-| CSI active probe (ESP-NOW unicast at 20 Hz per paired peer, low-rate broadcast while unpaired — 10 Hz on the WAP; deterministic frame rate; not yet airtime-governed, `csi_probe.h`) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| CSI active probe (ESP-NOW unicast at 20 Hz per paired peer, low-rate broadcast while unpaired — 10 Hz on the WAP; deterministic frame rate; not yet airtime-governed, `csi_probe.h`; the WAP drives it — the flagship compiles `csi_probe.cpp` but nothing in its tree calls `csi_probe::init()`) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Multi-link fusion (2-link confirmation gate, motion direction, breathing median) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | Multipath shimmer filter (RSSI swing >8 dB without Doppler → reject) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | CSI watchdog (5 s silence → rx toggle; 3× escalation → WiFi restart) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
@@ -176,8 +176,9 @@ Single-row-per-capability summary across every non-archived variant. This is the
 > compile/CI-verified; the generated Arduino sketch is byte-synced to it.
 
 > **canary (PIO) MQTT broker TLS cell (2026-09-19):** `release_ha` only —
-> the one canary env that compiles `lib/securacv_mqtt`, built and
-> OTA-slot-guarded on every PR. The flashers do not seed its rows
+> the one CI-built canary env that compiles `lib/securacv_mqtt` (`dev_ha`
+> compiles it too but is not built on PRs), built and OTA-slot-guarded on
+> every PR. The flashers do not seed its rows
 > (`broker_nvs=false`: this tree stores its credentials as blobs, not the
 > fleet's strings); the device provisions itself through the setup wizard's
 > hub step, `POST /api/mqtt/config` and `POST`/`DELETE /api/mqtt/ca`, judged
@@ -406,7 +407,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `create_manifest.py` | ✅ | Fleet device manifest management |
 | `platformio_secure.ini` | ✅ | Secure Boot v2 + Flash Encryption env |
 | `partitions_secure.csv` | ✅ | OTA A/B + encrypted NVS |
-| BT disabled at compile time | ✅ | CVE-2025-27840 mitigation |
+| BT disabled at compile time | ✅ | in the `firmware/provisioning/platformio_secure.ini` env only (`-DFEATURE_BLUETOOTH=0`), not the shipped profiles — CVE-2025-27840 mitigation |
 
 ## Home Assistant Integration
 
