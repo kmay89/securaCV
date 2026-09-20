@@ -359,14 +359,14 @@ major, by theme") — work its themes, then tick here.
 - [x] **D1 [code] `docs/hardware/enclosure/AUDIT_2026_09.md` "Open — blocking"
   section retracts itself** — done: retitled "Blocking — found by this audit,
   all four since fixed", with the fix dates in the intro and the entries kept
-  as the proof record.
+  as the proof record (#1693).
 - [x] **D2 [code] `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` items 1 and 2 are
   fixed in source but were still listed open** — done: §2 items 1–2 and their
   §6 table rows now read (fixed); the remaining follow-up (a sensor-side small
-  capture for frames above XGA) stays named in item 1.
+  capture for frames above XGA) stays named in item 1 (#1693).
 - [x] **D3 [code] `docs/review/01-flag-report.md` F-12** — no change needed:
   the report's minors status block already carries "F-12 ✅ Resolved
-  (#673/#706)".
+  (#673/#706)" (checked in #1693).
 - [ ] **D4 [code+decision] Carry the Watch Station and Dash assembly steps
   into the catalog README.** `canary-local/devices/assembly.json` authors
   their steps with every `readmeStep: null` ("not yet in the catalog
