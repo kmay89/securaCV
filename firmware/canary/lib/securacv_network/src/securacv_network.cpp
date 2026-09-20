@@ -117,6 +117,7 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
   httpd_resp_set_status(req, status_code == 400 ? "400 Bad Request" :
                               status_code == 404 ? "404 Not Found" :
                               status_code == 409 ? "409 Conflict" :
+                              status_code == 413 ? "413 Payload Too Large" :
                               status_code == 503 ? "503 Service Unavailable" :
                               status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
   char response[128];
@@ -856,6 +857,7 @@ static esp_err_t handle_peers(httpd_req_t* req);
 #if FEATURE_HA_MQTT
 static esp_err_t handle_mqtt_status(httpd_req_t* req);
 static esp_err_t handle_mqtt_config(httpd_req_t* req);
+static esp_err_t handle_mqtt_ca(httpd_req_t* req);  // POST stores the broker CA (PEM), DELETE forgets it
 #endif
 
 #if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
@@ -932,14 +934,15 @@ bool ScvNetworkManager::startHttpServer() {
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  // 42 base (incl. /api/witness + /api/thermal) + 8 captive-portal routes
+  // 44 base (incl. /api/witness + /api/thermal, and /api/mqtt/ca twice —
+  // POST and DELETE are separate registrations) + 8 captive-portal routes
   // (6 OS connectivity probes + /setup + the wildcard fallback) + 6 mesh
   // endpoints (PR-8) when the mesh feature is compiled in. Each registered
   // httpd_uri_t needs a slot.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 56;
+  config.max_uri_handlers = 58;
   #else
-  config.max_uri_handlers = 50;
+  config.max_uri_handlers = 52;
   #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
@@ -1035,6 +1038,14 @@ void ScvNetworkManager::registerHttpHandlers() {
 
   httpd_uri_t mqtt_cfg = { .uri = "/api/mqtt/config", .method = HTTP_POST, .handler = handle_mqtt_config };
   httpd_register_uri_handler(m_http_server, &mqtt_cfg);
+
+  // The broker CA (PEM, up to kCaPemMax) has its own route: the config body
+  // is 512 bytes and a certificate is not. POST stores, DELETE forgets —
+  // an explicit verb, so a body that arrives empty can never mean "clear".
+  httpd_uri_t mqtt_ca_post = { .uri = "/api/mqtt/ca", .method = HTTP_POST, .handler = handle_mqtt_ca };
+  httpd_register_uri_handler(m_http_server, &mqtt_ca_post);
+  httpd_uri_t mqtt_ca_del = { .uri = "/api/mqtt/ca", .method = HTTP_DELETE, .handler = handle_mqtt_ca };
+  httpd_register_uri_handler(m_http_server, &mqtt_ca_del);
   #endif
 
   #if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
@@ -2407,6 +2418,25 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
 
 #if FEATURE_HA_MQTT
 #include "securacv_mqtt.h"
+#include "mqtt_tls_fields.h"  // save-time judgment of tls / fp / the CA — the shared decision, host-tested
+
+// A refusal from the TLS field judgment: the API's error code plus the
+// shared header's constant reason, so the response says exactly what the
+// serial log would have said at connect. Never the pin, the PEM or a
+// credential (the header cannot format them).
+static esp_err_t send_tls_refusal(httpd_req_t* req, canary::net::mqtt_tls_fields::Verdict v,
+                                  const canary::net::mqtt_tls::Decision& d) {
+  JsonDocument doc;
+  doc["ok"] = false;
+  doc["error"] = canary::net::mqtt_tls_fields::error_code(v);
+  doc["reason"] = canary::net::mqtt_tls_fields::reason(v, d);
+  String response;
+  serializeJson(doc, response);
+  httpd_resp_set_status(req, v == canary::net::mqtt_tls_fields::Verdict::CaTooLarge
+                                 ? "413 Payload Too Large" : "400 Bad Request");
+  witness_get_health().http_errors++;
+  return http_send_json(req, response.c_str());
+}
 
 static esp_err_t handle_mqtt_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
@@ -2428,22 +2458,67 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req) {
     doc["configured"] = false;
   }
 
+  // Broker transport: the provisioned mode, what the socket does with it,
+  // and — when refused — the reason (a constant from the shared header).
+  // Presence flags only for the CA and the pin: never their values.
+  MqttTransportStatus tls;
+  mqtt_transport_status(&tls);
+  doc["tls_loaded"] = tls.loaded;
+  doc["tls"] = tls.mode;
+  doc["tls_mode"] = tls.mode_byte;
+  doc["transport"] = tls.transport;
+  if (!tls.allowed) doc["tls_reason"] = tls.reason;
+  if (tls.warn_insecure) doc["tls_warning"] = canary::net::mqtt_tls::insecure_warning();
+  MqttTlsCurrent cur;
+  if (mqtt_tls_read_current(&cur)) {
+    doc["ca_set"] = cur.ca_set;
+    doc["fp_set"] = cur.fp_set;
+  }
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
 }
 
+// POST /api/mqtt/config — host / port / username / password / enabled as
+// before, plus two optional broker-TLS fields:
+//   tls  0 plain, 1 CA-verified, 2 SHA-256 fingerprint pin, 3 lab (unverified, warns)
+//   fp   the broker certificate's SHA-256 pin, any spelling the firmware
+//        accepts ("AA:BB:...", "aabb...", spaces); "" forgets the stored pin
+// A field the body does not name leaves its NVS key alone. The CA is not a
+// field here — it has its own route (POST /api/mqtt/ca) because it does not
+// fit this body. The pair is judged by mqtt_tls_fields::plan against what
+// NVS already holds, with the shared decision, BEFORE anything is written:
+// a body the firmware would refuse at connect (mode 1 with no CA uploaded,
+// mode 2 with no pin here or stored, a malformed pin, an unknown mode) is a
+// 400 with the header's own reason text, and NVS is untouched.
 static esp_err_t handle_mqtt_config(httpd_req_t* req) {
+  namespace tf = canary::net::mqtt_tls_fields;
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
+  // Body budget: the longest well-formed body is host 63 + username 31 +
+  // password 63 (the MqttCredentials field widths) + port 5 + enabled +
+  // tls 1 + fp 95 (the canonical pin) and the JSON framing around them —
+  // about 340 bytes, so 512 holds it with room for escapes in the password.
+  // Anything longer is not this API's body and is refused as such rather
+  // than truncated into an "invalid_json".
   char body[512];
-  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (recv <= 0) {
+  if (req->content_len >= sizeof(body)) {
+    return http_send_error(req, 413, "payload_too_large");
+  }
+  int total = 0;
+  while (total < (int)sizeof(body) - 1) {
+    int r = httpd_req_recv(req, body + total, sizeof(body) - 1 - total);
+    if (r <= 0) break;
+    total += r;
+    if (total >= (int)req->content_len) break;
+  }
+  if (total <= 0) {
     return http_send_error(req, 400, "empty_body");
   }
-  body[recv] = '\0';
+  body[total] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, body) != DeserializationError::Ok) {
@@ -2470,14 +2545,136 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   creds.enabled = input["enabled"] | true;
   creds.configured = true;
 
+  // The optional TLS pair, typed strictly: a `tls` that is not an integer or
+  // an `fp` that is not a string is the same refusal a bad value gets.
+  tf::Request tls_req;
+  if (!input["tls"].isNull()) {
+    if (!input["tls"].is<int>()) return http_send_error(req, 400, "tls_mode_invalid");
+    tls_req.has_mode = true;
+    tls_req.mode = input["tls"].as<long>();
+  }
+  if (!input["fp"].isNull()) {
+    if (!input["fp"].is<const char*>()) return http_send_error(req, 400, "fp_malformed");
+    tls_req.fp = input["fp"].as<const char*>();
+  }
+
+  MqttTlsCurrent stored;
+  if (!mqtt_tls_read_current(&stored)) {
+    return http_send_error(req, 500, "nvs_read_failed");
+  }
+  tf::Current cur;
+  cur.mode_byte = stored.mode_byte;
+  cur.fp = stored.fp_set ? stored.fp : nullptr;
+  cur.ca_set = stored.ca_set;
+
+  tf::Plan tls_plan;
+  const tf::Verdict verdict = tf::plan(cur, tls_req, tls_plan);
+  if (verdict != tf::Verdict::Ok) {
+    return send_tls_refusal(req, verdict, tls_plan.decision);
+  }
+
   if (!mqtt_save_credentials(&creds)) {
+    return http_send_error(req, 500, "save_failed");
+  }
+  if ((tls_plan.set_mode || tls_plan.set_fp || tls_plan.clear_fp) &&
+      !mqtt_tls_save(tls_plan.set_mode, tls_plan.mode, tls_plan.set_fp, tls_plan.fp, tls_plan.clear_fp)) {
     return http_send_error(req, 500, "save_failed");
   }
 
   JsonDocument doc;
   doc["ok"] = true;
-  doc["message"] = "MQTT configuration saved. Reboot to apply.";
+  doc["message"] = "MQTT configuration saved. The Canary reconnects with these settings.";
+  // What the socket will do with the saved settings — the same words the
+  // serial log uses — so a caller sees "tls-ca" / "tls-fingerprint" / "plain"
+  // come back, and the lab opt-in's warning with it.
+  doc["transport"] = canary::net::mqtt_tls::transport_name(tls_plan.decision.transport);
+  if (tls_plan.decision.warn_insecure()) doc["warning"] = canary::net::mqtt_tls::insecure_warning();
 
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/mqtt/ca — the broker's CA certificate, PEM, as the RAW body
+// (text/plain, not JSON: a 3 KB certificate is not escaped into a 6 KB
+// string, and the 512-byte config body never has to hold it). Bounded to
+// the firmware's kCaPemMax (3071), judged by the shared ca_pem_looks_valid()
+// before it can reach NVS, stored as the NVS string BrokerTransport::load
+// reads back (with the trailing newline the flashers write), never echoed.
+// DELETE /api/mqtt/ca forgets the stored CA. Same auth gate and rate limit
+// as every other mutating handler; the socket is re-decided on the main
+// loop's next pass. Storing a CA does not switch the mode: POST
+// /api/mqtt/config with tls=1 does, and is refused until this has landed.
+static esp_err_t handle_mqtt_ca(httpd_req_t* req) {
+  namespace tf = canary::net::mqtt_tls_fields;
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  if (req->method == HTTP_DELETE) {
+    if (!mqtt_tls_clear_ca()) return http_send_error(req, 500, "save_failed");
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["ca_set"] = false;
+    doc["message"] = "Broker CA forgotten. A CA-verified mode now refuses to connect until a CA is uploaded again.";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  // One static receive buffer: the PEM, the '\n' appended below if the
+  // upload lacks one, the NUL. The HTTP server runs its handlers on a
+  // single task, so a static is safe here and keeps 3 KB off that task's
+  // stack. Wiped after use either way.
+  static char s_ca_body[canary::net::mqtt_tls::kCaBufBytes + 1];
+  const canary::net::mqtt_tls::Decision none;
+  if (req->content_len > canary::net::mqtt_tls::kCaPemMax) {
+    return send_tls_refusal(req, tf::Verdict::CaTooLarge, none);
+  }
+  if (req->content_len == 0) {
+    return http_send_error(req, 400, "empty_body");
+  }
+  size_t total = 0;
+  while (total < req->content_len) {
+    int r = httpd_req_recv(req, s_ca_body + total, req->content_len - total);
+    if (r <= 0) break;
+    total += (size_t)r;
+  }
+  if (total != req->content_len) {
+    memset(s_ca_body, 0, sizeof(s_ca_body));
+    return http_send_error(req, 400, "short_body");
+  }
+  // One trailing newline, exactly: strip what came, add ours, so the stored
+  // bytes match what the flashers write and the cap counts the newline.
+  while (total > 0 && (s_ca_body[total - 1] == '\n' || s_ca_body[total - 1] == '\r' ||
+                       s_ca_body[total - 1] == ' ' || s_ca_body[total - 1] == '\t')) {
+    total--;
+  }
+  if (total + 1 > canary::net::mqtt_tls::kCaPemMax) {
+    memset(s_ca_body, 0, sizeof(s_ca_body));
+    return send_tls_refusal(req, tf::Verdict::CaTooLarge, none);
+  }
+  s_ca_body[total++] = '\n';
+  s_ca_body[total] = '\0';
+
+  const tf::Verdict verdict = tf::check_ca(s_ca_body, total);
+  if (verdict != tf::Verdict::Ok) {
+    memset(s_ca_body, 0, sizeof(s_ca_body));
+    return send_tls_refusal(req, verdict, none);
+  }
+
+  const bool saved = mqtt_tls_save_ca(s_ca_body);
+  const size_t stored_bytes = total;
+  memset(s_ca_body, 0, sizeof(s_ca_body));
+  if (!saved) {
+    return http_send_error(req, 500, "save_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["ca_set"] = true;
+  doc["bytes"] = (uint32_t)stored_bytes;
+  doc["message"] = "Broker CA saved. Set tls=1 on /api/mqtt/config and the Canary verifies the broker against it.";
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
