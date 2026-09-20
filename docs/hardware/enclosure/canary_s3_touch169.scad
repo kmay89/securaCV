@@ -66,7 +66,8 @@ glass_t = 2.6;       // glass + LCD module thickness at the edge — MEASURE
 r_glass = 7.0;       // glass corner radius (watch-style) — MEASURE
 aa_w = 32.634;       // active area width  (280 px long axis, landscape)
 aa_h = 27.972;       // active area height (240 px)
-aa_dx = 0.0; aa_dy = 0.0;   // AA center offset from glass center — MEASURE
+aa_dx = 0.0;         // AA center X offset from glass center — MEASURE
+aa_dy = 0.0;         // AA center Y offset from glass center — MEASURE
 
 /* [Glass protection] — locate, don't clamp (the C3's print-proven band,
    carried here: this bezel's lip is the only thing holding the slab, and it

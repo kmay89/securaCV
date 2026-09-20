@@ -88,6 +88,13 @@
           "pattern": "^docs/hardware/enclosure/[a-z0-9_]+\\.scad$",
           "description": "The primary OpenSCAD source of this device's enclosure."
         },
+        "also": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^docs/hardware/enclosure/[a-z0-9_]+\\.scad$" },
+          "description": "Further OpenSCAD sources of this device's enclosure that the same `cad.params` own — a second FORM of one build cut around the same board with the same knob names and values (the Vision's doorbell). gen_cad_params.py writes cad.params into every file of [scad, *also] and --check proves each; the linter proves each is the source of a listed enclosure set. Never a different device's case — that device gets its own manifest."
+        },
         "enclosure_sets": {
           "type": "array",
           "uniqueItems": true,
@@ -107,7 +114,7 @@
             },
             "description": "A literal (number, string, boolean), or a reference into the board registry — exactly {\"brd\", \"dim\"} or exactly {\"brd_fn\"}. The generator resolves a reference to the registry's number before writing, and checks the shape (the schema cannot say brd+dim XOR brd_fn)."
           },
-          "description": "Literal Customizer knobs of `cad.scad` this device asserts (board/module dimensions). A knob that IS a board fact references the registry (canary_board_lib.scad) rather than retyping its number — the manifest carries the join, the registry the number, and which entry is named is the design decision (brd_w(\"xiao\") spec in clips, brd_xiao_w_measured() in pins); a case measurement with no registry home stays a number. docs/hardware/enclosure/gen_cad_params.py WRITES the values into the .scad and its --check proves equality; manifests sharing one .scad may each assert a subset and must agree on shared keys; enum/selector knobs (host, preset, radar, headers, port, model, panel_variant, part) are refused — they are chosen per set at render time."
+          "description": "Literal Customizer knobs of `cad.scad` (and of every `cad.also` file) this device asserts (board/module dimensions). A knob that IS a board fact references the registry (canary_board_lib.scad) rather than retyping its number — the manifest carries the join, the registry the number, and which entry is named is the design decision (brd_w(\"xiao\") spec in clips, brd_xiao_w_measured() in pins); a case measurement with no registry home stays a number. docs/hardware/enclosure/gen_cad_params.py WRITES the values into the .scad and its --check proves equality; manifests sharing one .scad may each assert a subset and must agree on shared keys; enum/selector knobs (host, preset, radar, headers, port, model, panel_variant, part) are refused — they are chosen per set at render time."
         }
       }
     },

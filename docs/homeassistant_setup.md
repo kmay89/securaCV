@@ -57,7 +57,8 @@ Two things stay yours, and the installer says so when it finishes:
    Step 3 of the manual walkthrough covers the device side. That link is
    plain MQTT: the installer leaves Mosquitto on its default `1883`
    listener, so the `canary` password crosses your LAN unencrypted unless
-   you add a TLS listener to the add-on and provision the Canaries for it
+   you ask the plan for the broker's TLS listener (`--with broker_tls`,
+   from a certificate you supply) and provision the Canaries for it
    (Step 3 says how).
 
 ### Prefer clicking?
@@ -169,22 +170,53 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
      **Settings → Apps → Mosquitto broker → Configuration → Logins**)
    - **Encryption (optional, off by default)**: the broker link is plain
      MQTT unless you say otherwise, and the username/password above then
-     cross your LAN in the clear. To encrypt it, give the Mosquitto add-on a
-     TLS listener (its `certfile` / `keyfile` options, port `8883`), then
-     provision each Canary with port `8883` and a TLS mode: **CA** (the PEM
+     cross your LAN in the clear. To encrypt it, run the hub plan with
+     `--with broker_tls` (`sh provision.sh --with broker_tls` from the
+     Terminal & SSH add-on, or `host_provision.sh --with broker_tls` from
+     the developer console): it checks Home Assistant's `ssl` folder for the
+     broker certificate and key you placed there (the two files the Let's
+     Encrypt add-on writes by default — `hub_seed_apply.py --dry-run --with
+     broker_tls` names them and the run refuses by name if either is
+     missing), sets the Mosquitto add-on's two file options and restarts
+     it; the plan step is the one place the file and option names are
+     spelled. It mints no certificate, chooses no trust anchor, does not
+     verify that the listener came up (the add-on's Log tab says why if the
+     port stays closed), and leaves Home Assistant's own MQTT entry on the
+     internal `1883`. Then provision each Canary with port `8883` and a TLS
+     mode: **CA** (the PEM
      certificate that signed the broker's certificate — the one that always
-     works) or, on canary-display / -sense / -vision, a **SHA-256
-     fingerprint pin** of the broker certificate. On canary-wap this is the
-     `/mqtt` page's "Encryption" setting; on the other three it is the NVS
-     keys `mqtt_tls` / `mqtt_ca` / `mqtt_fp` next to `mqtt_host` (the
-     flashers' NVS builders write them; form fields are still to come). A
-     Canary never falls back to plain or unverified on its own: an
-     incomplete TLS setup refuses to connect and names the reason on its
-     serial log. The unverified "lab" mode exists only as an explicit choice
-     on display / sense / vision and warns on every connect; the WAP offers
-     plain or CA-verified only. Per-variant status:
-     [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md).
-5. Save and reboot the Canary
+     works) or, on canary-display / -sense / -vision and the
+     `firmware/canary` build, a **SHA-256 fingerprint pin** of the broker
+     certificate. On canary-wap this is the `/mqtt` page's "Encryption"
+     setting; on canary-display / -sense / -vision it is the NVS keys
+     `mqtt_tls` / `mqtt_ca` / `mqtt_fp` next to `mqtt_host`, set from the
+     *Broker encryption* select in either flasher's broker block (the CA
+     box or the fingerprint field appears for the mode that uses it; the
+     plain-only nightstand-c6 is offered Plain only, with the reason); on
+     the `firmware/canary` build (the wizard above) it is the hub step's
+     own *Encryption* select, CA box and fingerprint field, or the API —
+     `POST /api/mqtt/config` with `tls` (0 plain, 1 CA, 2 fingerprint, 3
+     lab) and `fp`, and the PEM as the raw body of `POST /api/mqtt/ca`
+     (`DELETE` forgets it), behind the same bearer token as the other
+     endpoints; `GET /api/mqtt/status` reports the mode, the transport and
+     any refusal, never the certificate or the pin. A Canary never falls
+     back to plain or unverified on its own: an incomplete TLS setup
+     refuses to connect and names the reason on its serial log (and, on the
+     `firmware/canary` build, at save time and on its status endpoint). The
+     unverified "lab" mode exists only as an explicit choice on display /
+     sense / vision and the `firmware/canary` build and warns on every
+     connect; the WAP offers plain or CA-verified only. None of this has
+     been run against a TLS broker on hardware yet — the paths are
+     compile-tested by CI and the decision is host-tested. Per-variant
+     status: [firmware variant audit](FIRMWARE_VARIANT_AUDIT.md). Coming
+     back to the wizard later (a new hub password, say) keeps the
+     encryption you set: its *Encryption* select shows what the Canary
+     holds and travels only when you change it, and a CA or pin the Canary
+     already holds stands in for an empty box.
+5. Save. The Canary drops its hub link and reconnects with the new settings
+   on its own — no reboot. The wizard's *Restart the Canary now* button only
+   closes the setup network once you are done there; the hub link does not
+   need it.
 
 ### Step 4: Verify Discovery
 
@@ -858,6 +890,47 @@ automation:
             Motion at front door.
             Confidence: {{ state_attr('sensor.pwk_last_event', 'confidence') }}
 ```
+
+### Witness Wall: the fleet roll-call
+
+The kernel's Event API also answers `GET /api/fleet`, the roll-call the
+tvOS Witness Wall reads: the kernel's own row first, then every Canary the
+app's MQTT publisher has heard on the broker. The app wires this itself —
+its `run.sh` points the kernel and `event_mqtt_bridge` at one file,
+`/config/fleet_peers.json` — so there is no option to set. What the Wall
+still needs from you, and why:
+
+- **Keep MQTT publishing enabled** (`mqtt_publish.enabled: true` above, the
+  default). The publisher is the process that listens for Canaries; with it
+  off, the roll-call lists the kernel alone — the kernel is not pointed at
+  the file, so rows a past bridge pinned are kept for their keys, not served
+  — and the app log says so at startup.
+- **Open the port and type the address once.** The app advertises no
+  `_securacv._tcp` Bonjour service, and its 8799 host port ships disabled
+  (see [Event API exposure](../privacy_witness_kernel/README.md#event-api-exposure)),
+  so the Wall cannot discover it. Enable the port under **Settings → Apps →
+  Privacy Witness Kernel → Configuration** (Network section), then enter
+  `http://<your-home-assistant-host>:8799` in the Wall — with the port,
+  because the Wall adds only `http://` to a bare host and would otherwise
+  poll port 80; a typed hub is remembered and never aged out. Know what the
+  open port means: `/api/fleet` is the one endpoint that answers without
+  the capability token, so once the host port is enabled anything on your
+  LAN can read the roll-call — name, online, chain verdict, product, and
+  the per-room presence/occupants/breathing words while a peer is proven
+  online (the posture [`docs/security/THREAT_MODEL.md`](security/THREAT_MODEL.md)
+  states for the one open read on the hub). Every other endpoint still
+  requires the token.
+- **The summary file is in your backups, on purpose.** `/config` is part of
+  every Home Assistant backup, and `/config/fleet_peers.json` holds the
+  public key pinned on first sight for each Canary plus the per-room
+  wellbeing words the Wall shows — a restore therefore keeps that trust
+  instead of re-pinning every device. The file is written `0600`, and
+  `/api/fleet` serves the roll-call's coarse words only, never the keys.
+
+`online` on that roll-call is not a liveness proof: it means a signed chain
+publish verified against the pinned key within the last 180 s, no more —
+the exact wording is in
+[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md).
 
 ---
 

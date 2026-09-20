@@ -7,7 +7,11 @@
 #      (device key auto-generated, all three daemons started);
 #   2. the published event is ingested into the sealed log;
 #   3. the sealed log verifies in-container (log_verify, derived keys);
-#   4. the HA MQTT Discovery config topic is retained on the broker.
+#   4. the HA MQTT Discovery config topic is retained on the broker;
+#   5. GET /api/fleet answers with the kernel's own row: the config named
+#      api.fleet_peers_path and the kernel accepted it (deny_unknown_fields),
+#      and a summary the bridge has not written yet is an empty peer list,
+#      never an error.
 #
 # Usage (repo root): docker/sidecar/ci_e2e.sh [image-tag]
 set -euo pipefail
@@ -99,6 +103,21 @@ if ! docker exec "$SIDECAR" sh -c 'DEVICE_KEY_SEED=$(head -n1 /data/device_key) 
     exit 1
 fi
 
+echo "==> Checking GET /api/fleet answers with the kernel's own row"
+# The entrypoint names api.fleet_peers_path in the kernel config and hands
+# the same file to event_mqtt_bridge. No Canary speaks on this broker, so
+# the bridge has written nothing yet: the roll-call must still be a 200 with
+# the kernel's row (a missing summary is an empty peer list, not an error).
+fleet_doc=$(docker exec "$SIDECAR" curl -fsS http://127.0.0.1:8799/api/fleet || true)
+case "$fleet_doc" in
+    *'"witness-kernel"'*)
+        echo "✓ /api/fleet serves the kernel's row (api.fleet_peers_path accepted)" ;;
+    *)
+        echo "❌ /api/fleet did not answer with the kernel's row: ${fleet_doc:-<no response>}" >&2
+        docker logs "$SIDECAR" >&2 || true
+        exit 1 ;;
+esac
+
 echo "==> Checking the HA Discovery config topic is retained"
 # Generous window: the publisher polls the event API every 30s.
 if docker run --rm --network "$NET" eclipse-mosquitto:2 \
@@ -126,4 +145,4 @@ else
     exit 1
 fi
 
-echo "✅ sidecar e2e passed: zero-config start, ingest, verify, discovery, button"
+echo "✅ sidecar e2e passed: zero-config start, ingest, verify, fleet roll-call, discovery, button"

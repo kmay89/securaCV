@@ -72,7 +72,8 @@ committed. After step 1, every case .scad whose bytes moved (git status)
 is rendered for EVERY value of its `part` enum — the enum the builder's
 parser reads, so a new part is previewed without editing this file — with
 the -D selector sets render.sh uses for that file (WAP presets, Vision
-host x preset, the doorbell's wedge), at ROTX 62 (top three-quarter) and
+host x preset, the doorbell's wedge, the C6's two header builds), at ROTX 62
+(top three-quarter) and
 ROTX 245 (underside), through the README's own command. A changed library
 (no `part` knob) is named, not rendered: every case that uses it owes
 previews, and that list is the requester's to judge. With --from, step 1 is
@@ -225,6 +226,12 @@ _VISION_SETS = [("xiao_indoor", {"host": "xiao", "preset": "vision_indoor"}),
                 ("xiao_weather", {"host": "xiao", "preset": "vision_weather"}),
                 ("devkit_indoor", {"host": "devkit", "preset": "vision_indoor"})]
 _VISION_WEATHER = [("xiao_weather", {"host": "xiao", "preset": "vision_weather"})]
+# render.sh cuts the C6 twice — dev_c6_147_* for the stripped board and
+# dev_c6_147_hdr_* for the as-shipped one (down-facing headers + brass
+# pillars) — so every part owes both builds; `model` is passed as render.sh
+# passes it (the one option, asserted in the file).
+_C6_BUILDS = [("headers_none", {"model": "1.47", "headers": "none"}),
+              ("headers_male", {"model": "1.47", "headers": "male"})]
 PREVIEW_SETS: dict[str, dict[str, list[tuple[str, dict]]]] = {
     "canary_wap_enclosure.scad": {
         "base": _WAP_PRESETS, "lid": _WAP_PRESETS, "all": _WAP_PRESETS,
@@ -238,6 +245,7 @@ PREVIEW_SETS: dict[str, dict[str, list[tuple[str, dict]]]] = {
         "plate": [("", {}), ("wedge15", {"plate_wedge": 15})],
     },
     "canary_sense_enclosure.scad": {},
+    "canary_c6_display.scad": {"bezel": _C6_BUILDS, "back": _C6_BUILDS, "all": _C6_BUILDS},
 }
 # README "Preview renders": ROTX 62 -> top three-quarter, 245 -> underside; ROTZ 25.
 PREVIEW_VIEWS = (("top", 62), ("under", 245))

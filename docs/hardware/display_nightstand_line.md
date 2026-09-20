@@ -407,10 +407,16 @@ everything else on these boards):
   `403 on_glass_only` (`net/settings_policy.h`, host-tested; the mirror page shows them as
   read-only rows pointing at settings → weather → fetch itself), so a host on the LAN
   cannot flip the glass's one opt-in outbound path or plant a location. That also closed
-  the app's typed-place location path, and no on-glass location entry exists yet — a
-  fresh device's second gate stays unsatisfied until one lands, and the weather page's own
-  "set a coarse location from the app" caption is stale until the next emulator-dist
-  rebuild carries a `settings_ui.cpp` fix (compile-tested). Disclosed in
+  the app's typed-place location path; the location is entered on the glass instead —
+  settings → weather → location: three wheels per axis (N/S · degrees · tenths, E/W ·
+  degrees · tenths) editing a draft, a live "~11 km cell" caption, one explicit *Use This
+  Location* and a *Forget Location* row — so a fresh device's second gate is satisfiable
+  without a phone, and the Weather page's status reads "Needs a location - tap Location
+  below" until it is (`docs/hardware/display_settings.md` has the page). The stored cell
+  is shown on the glass, an in-room disclosure the network promise does not cover; the
+  LAN page still never carries it. The page lives behind `FEATURE_STANDALONE_WEATHER`,
+  which no emulator flavor defines, so it never reaches the emulator dist (compile-tested
+  by CI on the two 7" builds, wheel helpers host-tested, not bench-tested). Disclosed in
   `docs/security/SECURITY_MODEL.md`; request shape pinned by `tests_host/test_wx_core.cpp`.
 
 **Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**

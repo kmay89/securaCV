@@ -57,6 +57,14 @@ jobs:
             docker/sidecar/ci_e2e.sh \
             docker/sidecar/verify_published_image.sh
 
+      # The sidecar writes the kernel's config from a heredoc that the kernel
+      # parses with deny_unknown_fields; this renders and parses it (and
+      # checks the fleet-peers wiring between witness_api and the bridge)
+      # without building the image. The test lives with the add-on, which
+      # has the same two seams, and covers both scripts in one run.
+      - name: Render and parse the sidecar's kernel config
+        run: bash privacy_witness_kernel/tests/test_config_render.sh
+
       - name: Validate compose files
         env:
           # Required-variable placeholder: the integrations compose marks the
@@ -96,7 +104,7 @@ jobs:
           echo "image=ghcr.io/${owner}/securacv-sidecar" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -106,7 +114,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: docker/sidecar/Dockerfile

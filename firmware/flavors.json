@@ -5,6 +5,7 @@
     "build_envs": [
       "dev",
       "release",
+      "release_ha",
       "full",
       "esp32cam",
       "esp32-wroom",
@@ -24,7 +25,7 @@
       {
         "bin": ".pio/build/release_ha/firmware.bin",
         "slot_bytes": 1966080,
-        "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1 — release_ha is the published OTA image; PR CI builds `release`, so this entry fires via check_slot_budget.py at release time)"
+        "slot_name": "0x1E0000 OTA slot (partitions_ota.csv ota_0/ota_1 — release_ha is the published OTA image; it is in build_envs, so this entry fires in firmware.yml on every PR and again via check_slot_budget.py on the staged release artifact)"
       }
     ]
   },

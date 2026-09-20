@@ -10,7 +10,9 @@
 // settings_loop() commits ~2 s after the last change, so a slider drag costs
 // one flash write, not hundreds.
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 namespace canary::glass {
 
@@ -262,6 +264,58 @@ inline bool wx_loc_decode(long v, int16_t* lat10, int16_t* lon10) {
   *lat10 = (int16_t)la;
   *lon10 = (int16_t)lo;
   return true;
+}
+
+// The on-glass location wheels (settings → weather → location, on the 7"
+// flavors that carry the standalone forecast). The Location page edits a
+// coordinate as three wheels per axis — hemisphere · whole degrees · tenths
+// — rather than one long wheel: the settings panel packs a wheel's position
+// into an 8-bit dispatch value, so no wheel may hold more than 256 options
+// (a 0..3600 tenths wheel would truncate silently), and three short wheels
+// are also how a hand reads a coordinate. Every position the wheels can
+// take is a point ON the 0.1° grid and inside the range the loader's
+// sanitizer accepts (glass_settings.cpp), by construction: the entry cannot
+// store finer than the policy discloses.
+//   hemi   0 = N / E (non-negative), 1 = S / W (negative)
+//   deg    0..max_deg (WX_LAT_MAX_DEG for latitude, WX_LON_MAX_DEG for longitude)
+//   tenth  0..9
+// The pole and the antimeridian clamp (90.x -> 90.0, 180.x -> 180.0) rather
+// than wrap, so a wheel can never aim the fetcher at the wrong sky.
+constexpr int WX_LAT_MAX_DEG = 90;
+constexpr int WX_LON_MAX_DEG = 180;
+static_assert(WX_LON_MAX_DEG + 1 <= 256,
+              "a degrees wheel must fit the panel's 8-bit dispatch value");
+
+inline int16_t wx_wheel_to_tenths(int hemi, int deg, int tenth, int max_deg) {
+  if (deg < 0) deg = 0;
+  if (tenth < 0) tenth = 0;
+  if (tenth > 9) tenth = 9;
+  const long lim = (long)max_deg * 10L;
+  long v = (long)deg * 10L + (long)tenth;
+  if (v > lim) v = lim;
+  return (int16_t)(hemi ? -v : v);
+}
+
+inline void wx_tenths_to_wheel(int tenths, int max_deg,
+                               uint8_t* hemi, uint8_t* deg, uint8_t* tenth) {
+  const int lim = max_deg * 10;
+  if (tenths > lim) tenths = lim;
+  if (tenths < -lim) tenths = -lim;
+  const int a = tenths < 0 ? -tenths : tenths;
+  *hemi = tenths < 0 ? 1 : 0;
+  *deg = (uint8_t)(a / 10);
+  *tenth = (uint8_t)(a % 10);
+}
+
+// The ~11 km cell as the glass shows it — "37.4 N, 122.4 W": one decimal,
+// exactly the precision the forecast query carries (net/wx_core.h), never
+// finer. Truncates inside `cap` and returns `out`.
+inline const char* wx_cell_text(char* out, size_t cap, int lat10, int lon10) {
+  const int la = lat10 < 0 ? -lat10 : lat10;
+  const int lo = lon10 < 0 ? -lon10 : lon10;
+  snprintf(out, cap, "%d.%d %c, %d.%d %c", la / 10, la % 10,
+           lat10 < 0 ? 'S' : 'N', lo / 10, lo % 10, lon10 < 0 ? 'W' : 'E');
+  return out;
 }
 
 // ── Rendered brightness (host-testable) ──────────────────────────────────

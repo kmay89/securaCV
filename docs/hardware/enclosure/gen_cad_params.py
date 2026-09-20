@@ -13,7 +13,13 @@ plain JSON numbers, strings or booleans, or as REFERENCES into the board
 registry (next section). This generator WRITES those values into the
 .scad's top-of-file literals (the line the knob already lives on, the
 token only) and `--check` proves the file still says what the manifest
-says. Nothing reads the manifest at render time: OpenSCAD, the Customizer,
+says. A manifest may own MORE THAN ONE case file: `cad.also` lists the
+further sources the same cad.params own — a second FORM of one build, cut
+around the same board with the same knob names and values (the Vision's
+doorbell, canary_vision_doorbell.scad) — and every file of [cad.scad,
+*cad.also] receives the same values and is checked the same way, so an
+edit to a Vision knob writes both cases and owes both preview sets. Nothing
+reads the manifest at render time: OpenSCAD, the Customizer,
 render.sh, canary_case_fitcheck.scad, gen_builder_manifest.py,
 gen_enclosures.py and scripts/lint_design_lang.py all keep seeing the same
 literal knob they see today. The literal-knob contract lint_design_lang.py
@@ -80,6 +86,9 @@ WHAT IT REFUSES (exit 1, naming the manifest, the knob and why):
     code, comments and strings aside — split the line first, so a rewrite
     can never touch its neighbor;
   * a knob assigned twice at top level (OpenSCAD warns and takes the last);
+  * a `cad.also` that is not a list of case file paths, names cad.scad
+    again, or lists one file twice — the manifest then owns nothing, not
+    even its primary, until the list is right;
   * two manifests naming one .scad that disagree on a shared key. Several
     manifests may name one case (the three Vision hosts); each asserts any
     SUBSET of its literal knobs, the union is written, shared keys must agree;
@@ -112,9 +121,11 @@ scripts/lint_device_manifests.py imports check(), so `python3
 scripts/lint_device_manifests.py` stays THE manifest gate; lint.yml and
 enclosure.yml also run --check directly. --check also prints, as INFO
 (never an error), the registry rows and facts no manifest references: the
-cases whose manifests own no knobs yet (the Nightstand C6, the 7" frame)
-and the cases with no manifest (the doorbell, the gang plate, the Hammond
-chassis, the J-box, the bench fixture) cite them by comment.
+7" frame's manifests own no knobs yet (its panel record is computed from
+canary_panel_lib.scad), the cases with no manifest (the gang plate, the
+Hammond chassis, the J-box, the bench fixture) cite entries by comment, and
+an owned case may still cite a fact it does not own (the two brass pillar
+heights; the C6's brass_h is maintainer-gated).
 """
 
 from __future__ import annotations
@@ -210,7 +221,7 @@ class Rendered(NamedTuple):
 
 
 class Planned(NamedTuple):
-    scad_rel: str          # the owned-map key: cad.scad, canonical (see load_params)
+    scad_rel: str          # the owned-map key: cad.scad or a cad.also file, canonical (see load_params)
     path: Path
     rendered: Rendered
 
@@ -514,7 +525,8 @@ def resolve_ref(ref: dict, registry: Registry) -> tuple[float, str, str]:
 def unreferenced(owned: dict[str, dict[str, Owned]],
                  registry: Registry) -> tuple[list[str], list[str]]:
     """(rows, facts) of the registry no manifest references, in file order.
-    INFO, never an error: cases with no manifest cite them by comment."""
+    INFO, never an error: cases with no manifest, and owned cases whose
+    manifest does not own that particular knob, cite them by comment."""
     rows = {o.ref["brd"] for k in owned.values() for o in k.values()
             if o.ref is not None and "brd" in o.ref}
     fns = {o.ref["brd_fn"] for k in owned.values() for o in k.values()
@@ -534,16 +546,61 @@ def _rel(path: Path, repo: Path) -> str:
         return str(path)
 
 
+def _case_files(slug: str, scad: str, also) -> tuple[list[str], list[str]]:
+    """The case files devices/<slug> owns — cad.scad first, then every
+    cad.also entry in order — each canonical (the key every lookup uses; a
+    path the pattern admits is already canonical, and normalizing anyway
+    means two spellings of one file can never render independently and
+    clobber each other on write). Any problem returns ([], errors): a
+    manifest whose case list is broken owns nothing, not even its primary,
+    rather than half of what it says."""
+    errors: list[str] = []
+    if not SCAD_PATH_RE.match(scad):
+        errors.append(f"devices/{slug}: cad.scad {json.dumps(scad)} is not a case file path — "
+                      f"devices/device.schema.json spells it docs/hardware/enclosure/<name>"
+                      f".scad (lowercase letters, digits, underscores; no `./` or `..` "
+                      f"segment), and cad.params owns nothing until it is")
+        return [], errors
+    files = [Path(os.path.normpath(scad)).as_posix()]
+    if also is None:
+        return files, errors
+    if not isinstance(also, list) or not all(isinstance(a, str) for a in also):
+        errors.append(f"devices/{slug}: cad.also must be a list of case file paths "
+                      f"(docs/hardware/enclosure/<name>.scad) — the FURTHER case files this "
+                      f"manifest's cad.params own beside cad.scad; cad.params owns nothing "
+                      f"until it is")
+        return [], errors
+    for entry in also:
+        if not SCAD_PATH_RE.match(entry):
+            errors.append(f"devices/{slug}: cad.also entry {json.dumps(entry)} is not a case file "
+                          f"path — devices/device.schema.json spells it docs/hardware/enclosure/"
+                          f"<name>.scad (lowercase letters, digits, underscores; no `./` or `..` "
+                          f"segment), and cad.params owns nothing until it is")
+            continue
+        rel = Path(os.path.normpath(entry)).as_posix()
+        if rel == files[0]:
+            errors.append(f"devices/{slug}: cad.also names its own cad.scad again ({entry}) — "
+                          f"cad.also lists the FURTHER case files the same cad.params own")
+        elif rel in files:
+            errors.append(f"devices/{slug}: cad.also lists {entry} twice")
+        else:
+            files.append(rel)
+    return ([], errors) if errors else (files, errors)
+
+
 def load_params(devices_dir: Path = DEVICES_DIR, repo: Path = REPO,
                 overrides: dict[str, dict[str, object]] | None = None,
                 ) -> tuple[dict[str, dict[str, Owned]], list[str]]:
-    """{cad.scad (repo-relative): {knob: Owned(value, [slugs], …)}}, errors.
+    """{case file (repo-relative): {knob: Owned(value, [slugs], …)}}, errors.
 
     Every devices/*/device.json with a `cad.params` contributes to its
-    `cad.scad`; a reference is resolved from the board registry here, so
-    everything downstream sees a literal. A knob two manifests assert with
-    different values is an error naming both. The first assertion's value
-    stays in the map so the caller can still report the rest of the file.
+    `cad.scad` and to every `cad.also` file — the same knobs, the same
+    values, one Owned per file; a reference is resolved from the board
+    registry here, once per manifest, so everything downstream sees a
+    literal. A knob two manifests assert with different values is an error
+    naming both (per file, when the files differ). The first assertion's
+    value stays in the map so the caller can still report the rest of the
+    file.
 
     `overrides` ({slug: {knob: value}}, the --dry-run edits) are laid over
     the manifests' cad.params as if the files said so — a slug no manifest
@@ -575,20 +632,16 @@ def load_params(devices_dir: Path = DEVICES_DIR, repo: Path = REPO,
         if not isinstance(scad, str) or not scad:
             errors.append(f"devices/{slug}: cad.params without a cad.scad — nothing to own")
             continue
-        if not SCAD_PATH_RE.match(scad):
-            errors.append(f"devices/{slug}: cad.scad {json.dumps(scad)} is not a case file path — "
-                          f"devices/device.schema.json spells it docs/hardware/enclosure/<name>"
-                          f".scad (lowercase letters, digits, underscores; no `./` or `..` "
-                          f"segment), and cad.params owns nothing until it is")
+        files, bad = _case_files(slug, scad, cad.get("also"))
+        if bad:
+            errors.extend(bad)
             continue
         if not isinstance(params, dict):
             errors.append(f"devices/{slug}: cad.params must be an object of knob -> literal")
             continue
-        # The key every lookup uses. A path the pattern admits is already
-        # canonical; normalizing anyway means two spellings of one file can
-        # never render independently and clobber each other on write.
-        scad = Path(os.path.normpath(scad)).as_posix()
-        per = owned.setdefault(scad, {})
+        # Resolved once per manifest, then laid into every case file it owns:
+        # a bad reference is one message, not one per file.
+        entries: list[tuple[str, Owned]] = []
         for key, value in params.items():
             if isinstance(value, dict):
                 if registry is None:            # reported once, above
@@ -615,18 +668,25 @@ def load_params(devices_dir: Path = DEVICES_DIR, repo: Path = REPO,
                 continue
             else:
                 entry = Owned(value, [slug])
-            if key in per:
-                prev = per[key]
-                if not _same(prev.value, entry.value):
-                    others = ", ".join(f"devices/{s}" for s in prev.slugs)
-                    errors.append(
-                        f"{Path(scad).name}: cad.params.{key} is asserted by {others} as "
-                        f"{_show(prev)} and by devices/{slug} as {_show(entry)} — manifests "
-                        f"sharing one case must agree on a shared key")
-                    continue
-                prev.slugs.append(slug)
-            else:
-                per[key] = entry
+            entries.append((key, entry))
+        for scad_rel in files:
+            per = owned.setdefault(scad_rel, {})
+            for key, entry in entries:
+                if key in per:
+                    prev = per[key]
+                    if not _same(prev.value, entry.value):
+                        others = ", ".join(f"devices/{s}" for s in prev.slugs)
+                        errors.append(
+                            f"{Path(scad_rel).name}: cad.params.{key} is asserted by {others} as "
+                            f"{_show(prev)} and by devices/{slug} as {_show(entry)} — manifests "
+                            f"sharing one case must agree on a shared key")
+                        continue
+                    prev.slugs.append(slug)
+                else:
+                    # one Owned per file: a later manifest agreeing on this key
+                    # appends its slug to THIS file's entry, not to a shared one
+                    per[key] = Owned(entry.value, list(entry.slugs), entry.ref, entry.cite,
+                                     entry.where)
     for slug in overrides:
         errors.append(f"devices/{slug}: no such manifest (devices/{slug}/device.json) — a dry run "
                       f"edits a manifest that exists")
@@ -760,8 +820,8 @@ def _plan(devices_dir: Path, repo: Path,
         path = repo / scad_rel
         slugs = sorted({s for o in keys.values() for s in o.slugs})
         if not path.is_file():
-            errors.append(f"{scad_rel} (cad.scad of devices/{', devices/'.join(slugs)}) does not "
-                          f"exist")
+            errors.append(f"{scad_rel} (a case file of devices/{', devices/'.join(slugs)} — its "
+                          f"cad.scad or a cad.also entry) does not exist")
             continue
         r = render(path, {k: o.value for k, o in keys.items()},
                    {k: o.slugs for k, o in keys.items()})
@@ -919,10 +979,12 @@ def main(argv: list[str] | None = None) -> int:
         rows, facts = unreferenced(owned, parse_board_registry())   # parsed: check() was clean
         if rows or facts:
             print(f"INFO: registry entries no manifest references — rows: "
-                  f"{', '.join(rows) or 'none'}; facts: {', '.join(facts) or 'none'}. Cases whose "
-                  f"manifests own no knobs yet (the C6 display, the 7\" frame) and cases with no "
-                  f"manifest (the doorbell, the gang plate, the Hammond chassis, the J-box, the "
-                  f"bench fixture) cite them by comment; not an error")
+                  f"{', '.join(rows) or 'none'}; facts: {', '.join(facts) or 'none'}. The 7\" "
+                  f"frame's manifests own no knobs yet (its panel record is computed from "
+                  f"canary_panel_lib.scad), the cases with no manifest (the gang plate, the "
+                  f"Hammond chassis, the J-box, the bench fixture) cite entries by comment, and "
+                  f"an owned case may still cite a fact it does not own (the two brass pillar "
+                  f"heights); not an error")
         return 0
 
     written, errors = write()

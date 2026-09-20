@@ -15,6 +15,15 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+// PlatformIO's chain-mode Library Dependency Finder follows only the
+// #includes it can see in project and library sources; network/mqtt_transport.h
+// is reached through -I ../common, so its own <WiFiClientSecure.h> is
+// invisible to it and the library would never be linked. Name it here,
+// first — the canary-sense / -vision / -display precedent.
+#include <WiFiClientSecure.h>
+#include "network/mqtt_transport.h"  // plain / TLS-CA / pinned / lab broker socket, decided once fleet-wide
+#include "mqtt_tls_fields.h"         // write_order: the sequence one reprovision's NVS writes land in (host-tested)
+#include <esp_task_wdt.h>            // the connect stages feed the loop task's watchdog between them
 #include "securacv_crypto.h"
 #include "securacv_witness.h"
 #include "log_level.h"
@@ -23,8 +32,51 @@
 // INTERNAL STATE
 // ════════════════════════════════════════════════════════════════════════════
 
-static WiFiClient s_wifi_client;
-static PubSubClient s_mqtt(s_wifi_client);
+// The socket PubSubClient rides: a plain WiFiClient or a configured
+// WiFiClientSecure per the TLS mode provisioned in NVS (mqtt_tls / mqtt_ca /
+// mqtt_fp, "securacv" namespace, next to the credentials). Decided by the
+// shared header so every product answers identically; this object owns the
+// CA buffer setCACert() keeps a pointer to. Defined before s_mqtt so the
+// client it hands back exists first; rebound on every (re)load.
+static canary::net::mqtt_tls::BrokerTransport s_transport;
+static PubSubClient s_mqtt(s_transport.client());
+static bool s_transport_loaded = false;
+
+// Set by the NVS writers (any task) and consumed by mqtt_loop() on the main
+// task: drop the live link, re-read credentials and the transport, retry
+// at once. Keeps every PubSubClient call on the one task that pumps it.
+// Raised exactly ONCE per writer call, after that writer's NVS session has
+// closed — never between two writes of one request (mqtt_save_config).
+static volatile bool s_reload_pending = false;
+
+// The mode byte as stored, read at every transport (re)load. The transport
+// object only knows the table's fallback (an unknown byte reads back as
+// Plain from mode()), so the status report keeps the raw value to show
+// next to "unknown" / the refusal.
+static uint8_t s_mode_byte_raw = 0;
+
+// Task-watchdog budget. main.cpp arms WATCHDOG_TIMEOUT_SEC (8 s) on the
+// loop task and attempt_connect() runs on it, so every blocking stage of a
+// connect is bounded here and the watchdog is fed at the top of the attempt
+// (loop() feeds it once at ITS top, then runs mesh / OTA / camera / audio
+// before mqtt_loop(), so the budget below counts from our own feed, not
+// from however long the rest of the pass took) and again between the two
+// stages:
+//   stage 1  TCP connect (+ TLS handshake)  ≤ kConnectTimeoutSec + kHandshakeTimeoutSec = 7 s
+//   stage 2  MQTT CONNECT → CONNACK         ≤ kSocketTimeoutSec = 5 s
+// Outside the budget: the DNS lookup WiFi.hostByName() runs before the
+// connect select, with the core's own wait — pre-existing on the plain
+// path, and not covered by these numbers.
+// The core's WiFiClientSecure defaults are 30 s (connect) / 120 s
+// (handshake) and the shared transport's 15 s handshake is sized for the
+// products with a larger budget; either would panic-reset this firmware
+// on a black-holed broker address. These are watchdog-derived numbers, not
+// bench-measured ones: a legitimate handshake that needs more than 4 s on
+// an S3 fails here with "TLS handshake failed" on the log, which is the
+// recoverable side of that trade.
+static constexpr uint32_t      kConnectTimeoutSec   = 3;  // same as WiFiClient's plain default (3000 ms)
+static constexpr unsigned long kHandshakeTimeoutSec = 4;
+static constexpr uint16_t      kSocketTimeoutSec    = 5;
 
 static MqttCredentials s_creds;
 static char s_device_id[32];
@@ -87,10 +139,72 @@ static const char* NVS_KEY_MQTT_PORT = "mqtt_port";
 static const char* NVS_KEY_MQTT_USER = "mqtt_user";
 static const char* NVS_KEY_MQTT_PASS = "mqtt_pass";
 static const char* NVS_KEY_MQTT_EN   = "mqtt_en";
+// The TLS trio's keys come from the shared transport header
+// (canary::net::mqtt_tls::NVS_KEY_MODE / _CA / _FP) so the writer below and
+// the reader in BrokerTransport::load cannot spell them differently.
 
 // ════════════════════════════════════════════════════════════════════════════
 // INTERNAL HELPERS
 // ════════════════════════════════════════════════════════════════════════════
+
+// The health ring is small and the dashboard reads it; a broker that stays
+// down would fill it with one repeated line at every backoff tick. A
+// WARNING goes there only when the line changes — Serial gets every
+// attempt. Reset on a successful connect and on a reprovision so the same
+// fault is logged again after a recovery.
+// 128: the widest line is "MQTT TLS connect failed|<transport>: <reason>
+// (mbedtls -0xNNNN)" and two different mbedTLS codes must not dedupe into
+// one entry — 64 cut the key before the code.
+static char s_last_health_warn[128] = {0};
+
+static void health_warn_changed(const char* message, const char* detail) {
+  char key[sizeof(s_last_health_warn)];
+  snprintf(key, sizeof(key), "%s|%s", message ? message : "", detail ? detail : "");
+  if (strcmp(key, s_last_health_warn) == 0) return;
+  strncpy(s_last_health_warn, key, sizeof(s_last_health_warn) - 1);
+  s_last_health_warn[sizeof(s_last_health_warn) - 1] = '\0';
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, message, detail);
+}
+
+static void health_warn_reset() { s_last_health_warn[0] = '\0'; }
+
+// Read mqtt_tls / mqtt_ca / mqtt_fp, decide, and hand PubSubClient the
+// socket that decision calls for. Logs the transport name; a refused
+// decision is logged now (health WARNING + Serial) and named again on
+// every connect attempt (Serial), never silently plain. `why` is "boot" or
+// "reprovisioned" — a human reading the log should know which.
+static void transport_reload(const char* why) {
+  const auto& d = s_transport.load(NVS_MAIN_NS);
+  s_mqtt.setClient(s_transport.client());
+  s_transport_loaded = true;
+  // The byte as stored, for the status report: mode() has already folded an
+  // unknown byte to Plain (mode_from_u8), and "provisioned mode: plain" next
+  // to a ModeUnknown refusal misreports the unit.
+  s_mode_byte_raw = static_cast<uint8_t>(s_transport.mode());
+  if (d.reason == canary::net::mqtt_tls::Reason::ModeUnknown) {
+    NvsManager& nvs = NvsManager::instance();
+    if (nvs.beginReadOnly()) {
+      s_mode_byte_raw = nvs.getUChar(canary::net::mqtt_tls::NVS_KEY_MODE, 0);
+      nvs.end();
+    }
+  }
+  health_warn_reset();
+  Serial.printf("[MQTT] Broker transport: %s (%s)\n", s_transport.name(), why);
+  if (!d.allowed()) {
+    const char* text = canary::net::mqtt_tls::reason_text(d.reason);
+    Serial.printf("[MQTT] %s\n", text);
+    health_warn_changed("MQTT broker transport refused", text);
+  } else if (d.warn_insecure()) {
+    Serial.printf("[MQTT] %s\n", canary::net::mqtt_tls::insecure_warning());
+  }
+}
+
+static void backoff_after_failure() {
+  s_reconnect_delay_ms *= 2;
+  if (s_reconnect_delay_ms > MQTT_RECONNECT_MAX_MS) {
+    s_reconnect_delay_ms = MQTT_RECONNECT_MAX_MS;
+  }
+}
 
 static void build_topics(const char* device_id) {
   snprintf(s_topic_status,    sizeof(s_topic_status),    "securacv/%s/status",    device_id);
@@ -249,10 +363,76 @@ static bool attempt_connect() {
     return false;
   }
 
+  // The stage budgets below count from HERE, not from loop()'s own feed at
+  // its top: everything loop() ran before mqtt_loop() has already spent an
+  // unknown slice of the 8 s. A bounded stage is not a hang.
+  (void)esp_task_wdt_reset();  // a no-op if this task is not subscribed
+
+  // Broker transport gate (shared decision, network/mqtt_transport.h): a
+  // REFUSED decision never reaches a socket, and the lab opt-in is named on
+  // every attempt — the condition that makes an unverified socket acceptable
+  // at all. The text is secret-free by construction (constants only).
+  char tls_msg[224];
+  switch (s_transport.prepare(tls_msg, sizeof(tls_msg))) {
+    case canary::net::mqtt_tls::Prepared::Refused:
+      Serial.printf("[MQTT] %s\n", tls_msg);
+      health_warn_changed("MQTT connect refused", tls_msg);
+      backoff_after_failure();
+      return false;
+    case canary::net::mqtt_tls::Prepared::OkWarnInsecure:
+      Serial.printf("[MQTT] %s\n", tls_msg);
+      break;
+    case canary::net::mqtt_tls::Prepared::Ok:
+      break;
+  }
+
   s_mqtt.setServer(s_creds.host, s_creds.port);
   s_mqtt.setKeepAlive(MQTT_KEEPALIVE_SEC);
   s_mqtt.setBufferSize(MQTT_BUFFER_SIZE);
+  s_mqtt.setSocketTimeout(kSocketTimeoutSec);
 
+  // Stage 1 — the socket, brought up here rather than left to
+  // PubSubClient::connect() so its timeouts are ours (see the watchdog
+  // budget above) and the watchdog is fed before stage 2. PubSubClient
+  // reuses a client it finds already connected. For every TLS decision
+  // client() hands back the transport's PinnedClient (a WiFiClientSecure),
+  // and the virtual connect() below still lands in PinnedClient, so the pin
+  // is checked before a single application byte leaves.
+  Client& sock = s_transport.client();
+  if (s_transport.decision().tls()) {
+    WiFiClientSecure& tls = static_cast<WiFiClientSecure&>(sock);
+    tls.setTimeout(kConnectTimeoutSec);             // seconds: the TCP connect select + socket recv/send
+    tls.setHandshakeTimeout(kHandshakeTimeoutSec);  // seconds: the mbedTLS handshake loop
+  }
+  Serial.printf("[MQTT] Connecting to %s:%u (%s)...\n", s_creds.host, (unsigned)s_creds.port,
+                s_transport.name());
+  const bool socket_up = sock.connect(s_creds.host, s_creds.port) == 1;
+  (void)esp_task_wdt_reset();  // checkpoint between the two bounded stages; a no-op if this task is not subscribed
+  if (!socket_up) {
+    // A TLS socket that failed to come up says WHY (pin mismatch, CA verify
+    // failure, plaintext listener on a TLS port) — the reason a person can
+    // act on, never the CA or the credential. A plain socket has no TLS
+    // line to add; its failure is "host or port unreachable" by elimination.
+    if (s_transport.describe_failure(tls_msg, sizeof(tls_msg))) {
+      Serial.printf("[MQTT] %s\n", tls_msg);
+      // start_ssl_client() returns -1 (not an mbedTLS code) for both a TCP
+      // connect that timed out and a handshake that ran past its budget;
+      // the shared formatter can only print it as a generic code, so say
+      // what it means here, next to the budget that produced it.
+      if (strstr(tls_msg, "-0x0001") != nullptr) {
+        Serial.printf("[MQTT] (-0x0001 is the core's generic failure: the TCP connect or the TLS handshake "
+                      "did not finish within %lu s + %lu s)\n",
+                      (unsigned long)kConnectTimeoutSec, (unsigned long)kHandshakeTimeoutSec);
+      }
+      health_warn_changed("MQTT TLS connect failed", tls_msg);
+    } else {
+      Serial.println("[MQTT] Broker socket did not come up (host or port unreachable)");
+    }
+    backoff_after_failure();
+    return false;
+  }
+
+  // Stage 2 — MQTT CONNECT over the socket PubSubClient finds already up.
   bool connected;
   if (strlen(s_creds.username) > 0) {
     connected = s_mqtt.connect(
@@ -282,8 +462,16 @@ static bool attempt_connect() {
 
     s_reconnect_delay_ms = MQTT_RECONNECT_MIN_MS;
     s_discovery_sent = false; // Re-send discovery on reconnect
+    health_warn_reset();
 
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT connected", s_creds.host);
+    // The lab opt-in's mandatory warning, on the channel the dashboard
+    // reads, once per link that actually came up (Serial has it on every
+    // attempt above).
+    if (s_transport.decision().warn_insecure()) {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "MQTT broker TLS is lab mode: NOT verified",
+                 canary::net::mqtt_tls::insecure_warning());
+    }
 
     // Inbound command path: register dispatcher + subscribe to the mic
     // mute command topic. Re-subscribed on every reconnect (broker may
@@ -329,12 +517,12 @@ static bool attempt_connect() {
     return true;
   }
 
-  // Exponential backoff
-  s_reconnect_delay_ms *= 2;
-  if (s_reconnect_delay_ms > MQTT_RECONNECT_MAX_MS) {
-    s_reconnect_delay_ms = MQTT_RECONNECT_MAX_MS;
-  }
-
+  // The socket was up, so this is the MQTT layer: refused credentials, a
+  // full broker, a dead listener behind a live TLS terminator. rc is
+  // PubSubClient's state code; the CA, the pin and the credentials stay
+  // out of the line.
+  Serial.printf("[MQTT] Connect failed rc=%d - retrying on backoff\n", s_mqtt.state());
+  backoff_after_failure();
   return false;
 }
 
@@ -350,6 +538,11 @@ bool mqtt_init(const char* device_id, const char* firmware_version) {
 
   build_topics(device_id);
   build_client_id();
+
+  // Broker transport first, credentials or not: /api/mqtt/status and the
+  // serial menu report the provisioned mode from the moment MQTT is up,
+  // and a refused decision is on the log before anyone types a host.
+  transport_reload("boot");
 
   // Load credentials from NVS
   if (!mqtt_load_credentials(&s_creds)) {
@@ -370,8 +563,31 @@ bool mqtt_init(const char* device_id, const char* firmware_version) {
   return true;
 }
 
+// A reprovision (credentials, TLS mode, pin or CA) lands here, on the task
+// that pumps PubSubClient: drop the live link cleanly, re-read everything
+// from NVS, and try again at once. No reboot.
+static void apply_pending_reload() {
+  s_reload_pending = false;
+  if (s_mqtt.connected()) {
+    s_mqtt.publish(s_topic_avail, "offline", true);
+    s_mqtt.disconnect();
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT disconnected to apply new settings", nullptr);
+  }
+  mqtt_load_credentials(&s_creds);
+  transport_reload("reprovisioned");
+  s_reconnect_delay_ms = MQTT_RECONNECT_MIN_MS;
+  s_last_reconnect_attempt = 0;
+  s_discovery_sent = false;
+}
+
 void mqtt_loop() {
-  if (!s_initialized || !s_creds.configured || !s_creds.enabled) {
+  if (!s_initialized) {
+    return;
+  }
+  if (s_reload_pending) {
+    apply_pending_reload();
+  }
+  if (!s_creds.configured || !s_creds.enabled) {
     return;
   }
 
@@ -444,30 +660,80 @@ bool mqtt_load_credentials(MqttCredentials* creds) {
   return creds->configured;
 }
 
-bool mqtt_save_credentials(const MqttCredentials* creds) {
+// The credential row, inside a session the caller opened. Every write is
+// checked: a row that half-landed must fail the request, not answer ok.
+static bool write_credentials(NvsManager& nvs, const MqttCredentials* creds) {
+  const size_t host_len = strlen(creds->host);
+  bool ok = nvs.putBytes(NVS_KEY_MQTT_HOST, creds->host, host_len) == host_len;
+  ok = (nvs.putUInt(NVS_KEY_MQTT_PORT, creds->port) == sizeof(uint32_t)) && ok;
+
+  const size_t user_len = strlen(creds->username);
+  if (user_len > 0) {
+    ok = (nvs.putBytes(NVS_KEY_MQTT_USER, creds->username, user_len) == user_len) && ok;
+  }
+  const size_t pass_len = strlen(creds->password);
+  if (pass_len > 0) {
+    ok = (nvs.putBytes(NVS_KEY_MQTT_PASS, creds->password, pass_len) == pass_len) && ok;
+  }
+
+  ok = (nvs.putBool(NVS_KEY_MQTT_EN, creds->enabled) == 1) && ok;
+  return ok;
+}
+
+bool mqtt_save_config(const MqttCredentials* creds, const MqttTlsWrite* tls) {
+  using namespace canary::net::mqtt_tls;
+  namespace tf = canary::net::mqtt_tls_fields;
+  if (creds == nullptr) return false;
+
+  const bool set_fp   = tls != nullptr && tls->set_fp;
+  const bool clear_fp = tls != nullptr && tls->clear_fp;
+  const bool set_mode = tls != nullptr && tls->set_mode;
+  if (set_fp && (tls->fp_canonical == nullptr || tls->fp_canonical[0] == '\0')) return false;
+  if (set_fp && clear_fp) return false;  // plan() never asks for both
+
+  // The order is the header's, not this function's: pin → mode → credentials,
+  // and stop at the first failed write, so a later step only ever lands on
+  // top of every earlier one (the credentials never next to a mode they were
+  // not asked for; a mode never without its pin).
+  const tf::WriteOrder order = tf::write_order(set_fp, clear_fp, set_mode, /*credentials=*/true);
+
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
 
-  nvs.putBytes(NVS_KEY_MQTT_HOST, creds->host, strlen(creds->host));
-  nvs.putUInt(NVS_KEY_MQTT_PORT, creds->port);
-
-  if (strlen(creds->username) > 0) {
-    nvs.putBytes(NVS_KEY_MQTT_USER, creds->username, strlen(creds->username));
+  bool ok = true;
+  for (uint8_t i = 0; i < order.count && ok; i++) {
+    switch (order.steps[i]) {
+      case tf::Write::PinSet:      ok = nvs.putString(NVS_KEY_FP, tls->fp_canonical) > 0; break;
+      case tf::Write::PinClear:    ok = !nvs.isKey(NVS_KEY_FP) || nvs.remove(NVS_KEY_FP); break;
+      case tf::Write::ModeSet:     ok = nvs.putUChar(NVS_KEY_MODE, tls->mode) == 1; break;
+      case tf::Write::Credentials: ok = write_credentials(nvs, creds); break;
+    }
   }
-  if (strlen(creds->password) > 0) {
-    nvs.putBytes(NVS_KEY_MQTT_PASS, creds->password, strlen(creds->password));
-  }
-
-  nvs.putBool(NVS_KEY_MQTT_EN, creds->enabled);
   nvs.end();
 
+  // ONE reload, after the session has closed — whatever landed is what NVS
+  // holds now, and the link must follow it (a failed request included: the
+  // main task re-reads and reconnects with the row as it actually is). The
+  // live copy is re-read by the main loop (apply_pending_reload), the one
+  // task that pumps PubSubClient — the HTTP task that called us never
+  // touches the client or the struct the connect path reads.
+  s_reload_pending = true;
+
+  if (!ok) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "MQTT settings: NVS write failed", nullptr);
+    return false;
+  }
+  if (tls != nullptr && (set_mode || set_fp || clear_fp)) {
+    // The mode NAME is a constant; the pin never goes on a log line.
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT broker TLS settings saved",
+               set_mode ? mode_name(mode_from_u8(tls->mode)) : (clear_fp ? "pin cleared" : "pin set"));
+  }
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT credentials saved", creds->host);
-
-  // Update live credentials
-  memcpy(&s_creds, creds, sizeof(MqttCredentials));
-  s_creds.configured = true;
-
   return true;
+}
+
+bool mqtt_save_credentials(const MqttCredentials* creds) {
+  return mqtt_save_config(creds, nullptr);
 }
 
 bool mqtt_clear_credentials() {
@@ -481,12 +747,94 @@ bool mqtt_clear_credentials() {
   nvs.remove(NVS_KEY_MQTT_EN);
   nvs.end();
 
-  memset(&s_creds, 0, sizeof(MqttCredentials));
-  s_creds.port = MQTT_PORT;
-
-  mqtt_disconnect();
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT credentials cleared", nullptr);
+  // The main loop drops the link and re-reads (now empty) credentials.
+  s_reload_pending = true;
   return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BROKER TRANSPORT (TLS) — writer and reporter for mqtt_tls / mqtt_ca / mqtt_fp
+// ════════════════════════════════════════════════════════════════════════════
+
+bool mqtt_tls_read_current(MqttTlsCurrent* out) {
+  using namespace canary::net::mqtt_tls;
+  if (!out) return false;
+  memset(out, 0, sizeof(*out));
+
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+
+  out->mode_byte = nvs.getUChar(NVS_KEY_MODE, 0);
+  out->ca_set = nvs.isKey(NVS_KEY_CA);
+  out->fp_set = nvs.isKey(NVS_KEY_FP);
+  if (out->fp_set && nvs.getString(NVS_KEY_FP, out->fp, sizeof(out->fp)) == 0) {
+    // Set but unreadable (or too long for the buffer): the transport's
+    // load() reports the same as a malformed pin, so the API's judgment
+    // matches — FingerprintMalformed, never Missing, for a key that exists.
+    strncpy(out->fp, "?", sizeof(out->fp) - 1);
+  }
+
+  nvs.end();
+  return true;
+}
+
+bool mqtt_tls_save_ca(const char* pem) {
+  using namespace canary::net::mqtt_tls;
+  if (pem == nullptr || pem[0] == '\0') return false;
+
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  const size_t wrote = nvs.putString(NVS_KEY_CA, pem);
+  nvs.end();
+
+  if (wrote == 0) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_NETWORK, "MQTT broker CA: NVS write failed", nullptr);
+    return false;
+  }
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT broker CA saved", nullptr);
+  s_reload_pending = true;
+  return true;
+}
+
+bool mqtt_tls_clear_ca() {
+  using namespace canary::net::mqtt_tls;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  bool ok = true;
+  if (nvs.isKey(NVS_KEY_CA)) ok = nvs.remove(NVS_KEY_CA);
+  nvs.end();
+  if (!ok) return false;
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT broker CA cleared", nullptr);
+  s_reload_pending = true;
+  return true;
+}
+
+void mqtt_transport_status(MqttTransportStatus* out) {
+  using namespace canary::net::mqtt_tls;
+  if (!out) return;
+  out->loaded = s_transport_loaded;
+  if (!s_transport_loaded) {
+    // Before mqtt_init(): nothing has been decided yet. Say so (loaded =
+    // false) rather than report the object's default (Refused) as if it
+    // were provisioned; the fields below are the pre-TLS defaults.
+    out->mode = "plain";
+    out->mode_byte = 0;
+    out->transport = "plain";
+    out->allowed = true;
+    out->warn_insecure = false;
+    out->reason = "";
+    return;
+  }
+  const Decision& d = s_transport.decision();
+  // A byte outside the table is reported as what it is — "unknown" and the
+  // stored value — not as the Plain the transport object folded it to.
+  out->mode = (d.reason == Reason::ModeUnknown) ? "unknown" : mode_name(s_transport.mode());
+  out->mode_byte = s_mode_byte_raw;
+  out->transport = s_transport.name();
+  out->allowed = d.allowed();
+  out->warn_insecure = d.warn_insecure();
+  out->reason = reason_text(d.reason);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

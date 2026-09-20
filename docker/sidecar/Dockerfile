@@ -13,7 +13,7 @@
 # 1.78+, the rumqttc-next family needs 1.89+); pinned to a recent stable.
 # The -bookworm variant matters: the runtime stage below is bookworm, and
 # the binaries must link against the same glibc/libssl generation.
-FROM rust:1.98-slim-bookworm@sha256:1469a27c125cb5a3aebfa4f4e4665d935b02fb72cc093b2c974b3d740e43f157 AS build
+FROM rust:1.98-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \

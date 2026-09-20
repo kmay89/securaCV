@@ -235,7 +235,21 @@ one-header change instead of a per-board copy-paste.
     fsynced, and the kernel refuses to read one past 256 KiB. A file rather
     than a kernel endpoint because the event API's parser is header-only by
     design (no request bodies), and because the token already crosses
-    between the two processes as a path on the same host.
+    between the two processes as a path on the same host. The Home
+    Assistant add-on wires exactly this: `privacy_witness_kernel/run.sh`
+    names `/config/fleet_peers.json` in both kernel config blocks and on the
+    bridge's argv, so an add-on install lists its Canaries as soon as its
+    MQTT publisher runs (the default) — and the Docker sidecar does the same
+    under `/data`. Neither advertises `_securacv._tcp`, and they differ in
+    what is left to the owner. The add-on ships its 8799 host port disabled:
+    the Wall reaches it once the owner enables that port and types
+    `http://<home-assistant-host>:8799` — with the port, because the Wall
+    adds only `http://` to a bare host (`FleetAddress.normalize`) and would
+    otherwise poll port 80. The sidecar, not yet: its API binds
+    `127.0.0.1:8799` inside the container and there is no setting for it,
+    so no published port mapping reaches it (`docs/frigate_integration.md`
+    says so; a Wall-reachable sidecar is a bind and port decision not yet
+    made).
   - `name` is the owner's name from the retained `meta` topic, else the
     device id (exactly what a Canary calls itself in its own self-report);
     `product` is the announced `device_type`. No firmware in this repo

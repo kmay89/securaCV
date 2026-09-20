@@ -149,9 +149,10 @@ here stays inside your home network.</p>
   &rarr; weather &rarr; fetch itself</b>. This page shows it and cannot change
   it &mdash; the display refuses that switch, and a location, from anything on
   your network, so no one on your WiFi can turn on the one thing it would ever
-  fetch. A location cannot be stored from here either; this firmware has no
-  on-glass entry for one yet. A stored location is a ~11 km grid point and is
-  never shown here.</p>
+  fetch. A location cannot be stored from here either: that too is set on
+  the glass, under <b style="color:var(--tx)">settings &rarr; weather &rarr;
+  location</b>. A stored location is a ~11 km grid point, shown on the glass
+  and never here.</p>
   </div>
 </div>
 

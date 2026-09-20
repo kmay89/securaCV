@@ -49,7 +49,9 @@
       "pcb_t": {
         "brd": "ws169",
         "dim": "t"
-      }
+      },
+      "aa_dx": 0.0,
+      "aa_dy": 0.0
     }
   },
   "emulator": {
