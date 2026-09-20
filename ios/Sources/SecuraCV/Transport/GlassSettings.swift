@@ -134,11 +134,11 @@ struct GlassSettings: Sendable, Equatable {
 
 extension GlassSettings {
     /// The body of GET /api/settings, as the device described itself. Split
-    /// from the request (GlassAPI.settings) so a test can feed it the exact
-    /// bytes glass_web.cpp emits — the same shape FleetSelfReport.decode
-    /// takes for /api/fleet. Every field optional by hand: this same body
-    /// serves a Watch Station, a Dash and a nightlight, and each answers
-    /// with what it actually has.
+    /// from the request (GlassAPI.settings) so a test can feed it a body in
+    /// the shape and key order glass_web.cpp emits — the same split
+    /// FleetSelfReport.decode makes for /api/fleet. Every field optional by
+    /// hand: this same body serves a Watch Station, a Dash and a nightlight,
+    /// and each answers with what it actually has.
     static func decode(_ data: Data) throws -> GlassSettings {
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         var s = GlassSettings()

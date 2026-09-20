@@ -152,22 +152,25 @@ final class GlassSettingsTests: XCTestCase {
 
     // MARK: - the standalone-weather block: shown, never offered
 
-    /// The bytes a 7" glass (dash7 / nightstand7, FEATURE_STANDALONE_WEATHER)
-    /// emits for GET /api/settings on a same-site request — glass_web.cpp
-    /// handle_settings_get, in its order: the ordinary knobs, the zone and
-    /// the per-boot token, the scrim block, the look ring, then `on_glass`.
+    /// GET /api/settings from a 7" glass (dash7 / nightstand7,
+    /// FEATURE_STANDALONE_WEATHER) on a same-site request, in the shape and
+    /// key order glass_web.cpp handle_settings_get writes it: the ordinary
+    /// knobs, the zone and the per-boot token (32 lowercase hex — the value
+    /// is random per boot, so the fixture's is representative, the rest
+    /// are a real glass's), the scrim block, the look ring, then `on_glass`.
     /// `keys` is the policy table itself (settings_policy.h); `wx_direct`
     /// goes to every caller; `wx_loc_set` and `wx_status` only to a caller
     /// that is not cross-site, which a URLSession GET from the app is not.
     static let dash7SameSiteBody = #"""
-    {"day_pct":60,"night_screen":0,"red_shift":1,"peek_s":5,"night_start_hh":20,"night_end_hh":7,"night_step":2,"night_steps":10,"tz":"CST6CDT,M3.2.0,M11.1.0","csrf":"3fa9c0de1b2c4d5e","bright_pct":80,"bright_min_pct":50,"orientation":0,"character":0,"clock_style":0,"characters":["Quiet Glass"],"clock_styles":["Segment"],"on_glass":{"keys":["wx_direct","wx_loc"],"wx_direct":1,"wx_loc_set":0,"wx_status":1}}
+    {"day_pct":60,"night_screen":0,"red_shift":1,"peek_s":5,"night_start_hh":20,"night_end_hh":7,"night_step":2,"night_steps":10,"tz":"CST6CDT,M3.2.0,M11.1.0","csrf":"3fa9c0de1b2c4d5e6f708192a3b4c5d6","bright_pct":80,"bright_min_pct":50,"orientation":0,"character":0,"clock_style":0,"characters":["Quiet Glass"],"clock_styles":["Segment"],"on_glass":{"keys":["wx_direct","wx_loc"],"wx_direct":1,"wx_loc_set":0,"wx_status":1}}
     """#
 
-    /// The same route on a nightlight (glass_web.cpp, CD_NIGHTLIGHT): the
-    /// lamp block and its scene catalog by name — and no `on_glass` block,
-    /// because a lamp never carries the standalone forecast.
+    /// The same route on a nightlight (glass_web.cpp, CD_NIGHTLIGHT), in its
+    /// key order: the lamp block and the scene catalog by display name
+    /// (look_engine.cpp kScenes[].name, all eleven) — and no `on_glass`
+    /// block, because a lamp never carries the standalone forecast.
     static let nightlightBody = #"""
-    {"day_pct":60,"night_screen":0,"red_shift":1,"peek_s":5,"night_start_hh":20,"night_end_hh":7,"night_step":2,"night_steps":10,"tz":"UTC0","csrf":"3fa9c0de1b2c4d5e","lamp_scene":1,"lamp_auto":1,"lamp_pct":72,"lamp_max_duty_pct":50,"clock_12h":1,"orientation":0,"auto_rotate":1,"lamp_hue":-1,"lamp_minutes":15,"scenes":["Candle","Dawn"]}
+    {"day_pct":60,"night_screen":0,"red_shift":1,"peek_s":5,"night_start_hh":20,"night_end_hh":7,"night_step":2,"night_steps":10,"tz":"UTC0","csrf":"3fa9c0de1b2c4d5e6f708192a3b4c5d6","lamp_scene":1,"lamp_auto":1,"lamp_pct":72,"lamp_max_duty_pct":50,"clock_12h":1,"orientation":0,"auto_rotate":1,"lamp_hue":-1,"lamp_minutes":15,"scenes":["Canary Dawn","Ember","Aurora","Deep Calm","Forest","Tropical","Lantern","Nocturne","Signal","Rainbow","Moonbeam"]}
     """#
 
     /// The keys the display refuses from the network for every caller —
@@ -304,6 +307,17 @@ final class GlassSettingsTests: XCTestCase {
                        "a key the glass moves into the class leaves the sheet the same day")
         XCTAssertTrue(keys.contains("bright_pct"), "and the ordinary knobs stay")
 
+        // The lamp's knobs leave through the OTHER return site (the one
+        // after the lamp block), and nothing above reaches it with a key
+        // it actually builds — so the same probe, on the lamp path. Drop
+        // that one filter and this is the line that goes red.
+        var lampFuture = lamp
+        lampFuture.onGlassKeys = ["wx_direct", "wx_loc", "lamp_auto"]
+        let lampKeys = GlassAPI.knobs(for: lampFuture).map(\.key)
+        XCTAssertFalse(lampKeys.contains("lamp_auto"),
+                       "the lamp path's knobs leave through the same filter")
+        XCTAssertTrue(lampKeys.contains("lamp_pct"), "and the rest of the lamp stays")
+
         // And a glass that serves no block at all offers no weather control
         // either — there is nothing to filter and nothing to draw.
         XCTAssertTrue(Set(GlassAPI.knobs(for: GlassSettings()).map(\.key))
@@ -335,7 +349,9 @@ final class GlassSettingsTests: XCTestCase {
         XCTAssertEqual(s.lampMinutes, 15)
         XCTAssertEqual(s.lampHue, -1)
         XCTAssertFalse(s.usesCustomHue)
-        XCTAssertEqual(s.scenes, ["Candle", "Dawn"])
+        XCTAssertEqual(s.scenes.count, 11, "the look engine's catalog, by display name")
+        XCTAssertEqual(s.scenes.first, "Canary Dawn")
+        XCTAssertEqual(s.scenes.last, "Moonbeam")
         XCTAssertTrue(s.clock12h)
         XCTAssertTrue(s.autoRotate)
         XCTAssertFalse(s.hasRenderedDim)
