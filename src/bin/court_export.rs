@@ -96,9 +96,8 @@ struct KitAnchor {
     covers: Covers,
     /// The anchor-policy entry name the operator declared, if any.
     declared_tsa: Option<String>,
-    /// SHA-256 of the signing certificate embedded in the token, if any.
-    /// SHA-256 of the TSA signing certificate embedded in the token, when readable
-    /// (manifest key `signer_fingerprint`).
+    /// SHA-256 of the TSA signing certificate embedded in the token, when
+    /// readable (manifest key `tsa.signer_cert_sha256`).
     signer_fingerprint: Option<String>,
     /// The embedded certificate's commonName, display only.
     signer_cn: Option<String>,

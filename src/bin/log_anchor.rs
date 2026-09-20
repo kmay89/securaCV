@@ -120,8 +120,9 @@ enum Command {
     },
     /// Import and store TSA responses obtained out-of-band
     Import {
-        /// Path to a DER .tsr response (repeatable)
-        #[arg(long, value_name = "PATH", action = ArgAction::Append, required = true)]
+        /// Path to a DER .tsr response (repeatable; one `--response` also
+        /// takes several paths, so a shell glob like `out/*.tsr` works)
+        #[arg(long, value_name = "PATH", action = ArgAction::Append, num_args = 1.., required = true)]
         response: Vec<String>,
         /// TSA URL to record alongside the anchor (provenance only; default
         /// "(offline)", or the policy entry's url under --policy)
@@ -836,6 +837,20 @@ fn anchor_all_offline(conn: &Connection, db: &str, policy_path: &Path, dir: &Pat
     Ok(())
 }
 
+/// The first 16 characters of a string read back from the database, for the
+/// abbreviated `…` lines. A cache cell is operator-reachable text, so it is
+/// cut on a character boundary, not a byte offset — a byte slice panics on a
+/// multibyte character straddling the cut and takes the verdict with it.
+fn prefix16(s: &str) -> String {
+    s.chars().take(16).collect()
+}
+
+/// What a cached identity column must look like: the lowercase hex SHA-256
+/// `insert_anchor` writes. Anything else was not written by this tool.
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 // -------------------- list --------------------
 
 fn list(conn: &Connection) -> Result<()> {
@@ -865,10 +880,10 @@ fn list(conn: &Connection) -> Result<()> {
         let cn = signer.as_ref().and_then(|s| s.signer_common_name.clone());
         let signer_text = match (fp, sid) {
             (Some(c), _) => match cn {
-                Some(cn) => format!("cert sha256:{}… ({cn})", &c[..16.min(c.len())]),
-                None => format!("cert sha256:{}…", &c[..16.min(c.len())]),
+                Some(cn) => format!("cert sha256:{}… ({cn})", prefix16(&c)),
+                None => format!("cert sha256:{}…", prefix16(&c)),
             },
-            (None, Some(s)) => format!("sid:{}…", &s[..16.min(s.len())]),
+            (None, Some(s)) => format!("sid:{}…", prefix16(&s)),
             (None, None) => "(not readable)".to_string(),
         };
         let sentinel = match AnchorSubject::sentinel_owner(&a.subject_hash) {
@@ -948,29 +963,21 @@ fn verify(
     };
     let checks_countersignature = !cas.is_empty() || policy.is_some();
 
-    if !tsa::anchor_table_exists(conn)? {
+    // A database no writer has touched has no anchors table; it reads as
+    // zero rows, never as a table to create. Under --policy the coverage
+    // block below still runs over the ledgers themselves, so an absent
+    // table and an empty one reach the same per-subject verdicts (an empty
+    // ledger has nothing to cover; a non-empty one is uncovered).
+    let anchors = if tsa::anchor_table_exists(conn)? {
+        tsa::list_anchors(conn)?
+    } else {
+        Vec::new()
+    };
+    if anchors.is_empty() {
         println!("no anchors stored");
-        if let Some((p, path)) = &policy {
-            for subject in p.subject_kinds() {
-                println!("policy: {subject}: NOT covered — no anchors stored");
-                println!(
-                    "  anchor now: log_anchor --db {db} anchor-all --policy {}",
-                    path.display()
-                );
-            }
-            print_policy_note(path);
-            bail!(
-                "anchor policy {}: NOT SATISFIED ({} subject(s) uncovered)",
-                path.display(),
-                p.subjects.len()
-            );
+        if policy.is_none() {
+            return Ok(());
         }
-        return Ok(());
-    }
-    let anchors = tsa::list_anchors(conn)?;
-    if anchors.is_empty() && policy.is_none() {
-        println!("no anchors stored");
-        return Ok(());
     }
 
     let mut failures = 0usize;
@@ -1002,39 +1009,57 @@ fn verify(
         let signer_res = tsa::parse_token_signer(&a.token_der);
         let signer = signer_res.as_ref().ok();
         let token_fp = signer.and_then(|s| s.signer_fingerprint.map(hex::encode));
+        // The cache columns are text this tool wrote as lowercase hex
+        // SHA-256; a cell that is anything else was not written by it and is
+        // its own contradiction, reported before any comparison rather than
+        // fed into one (or into a byte slice that a multibyte character
+        // would make panic mid-run, with no verdict at all).
+        let mut row_fp = a.signer_fingerprint.as_deref();
+        let mut row_sid = a.signer_sid.as_deref();
+        for (what, slot) in [("cert sha256:", &mut row_fp), ("sid:", &mut row_sid)] {
+            if let Some(v) = *slot {
+                if !is_hex64(v) {
+                    problems.push(format!(
+                        "row records a malformed signer cache ({what}{v:?}); expected 64 \
+                         lowercase hex characters"
+                    ));
+                    *slot = None;
+                }
+            }
+        }
         match &signer_res {
-            Err(e) if a.signer_fingerprint.is_some() || a.signer_sid.is_some() => {
-                let (what, cached) = match (&a.signer_fingerprint, &a.signer_sid) {
-                    (Some(fp), _) => ("cert sha256:", fp.as_str()),
-                    (None, Some(sid)) => ("sid:", sid.as_str()),
+            Err(e) if row_fp.is_some() || row_sid.is_some() => {
+                let (what, cached) = match (row_fp, row_sid) {
+                    (Some(fp), _) => ("cert sha256:", fp),
+                    (None, Some(sid)) => ("sid:", sid),
                     (None, None) => unreachable!("guarded by the match arm"),
                 };
                 problems.push(format!(
                     "row records signer {what}{}… but the token's SignerInfo is not readable: {e}",
-                    &cached[..16.min(cached.len())]
+                    prefix16(cached)
                 ));
             }
             Err(_) => {}
             Ok(s) => {
-                if let Some(row_fp) = &a.signer_fingerprint {
+                if let Some(row_fp) = row_fp {
                     match &token_fp {
                         Some(tok_fp) if row_fp != tok_fp => problems.push(format!(
                             "row records signer cert sha256:{}… but the token embeds {}…",
-                            &row_fp[..16.min(row_fp.len())],
+                            prefix16(row_fp),
                             &tok_fp[..16]
                         )),
                         Some(_) => {}
                         None => problems.push(format!(
                             "row records signer cert sha256:{}… but the token embeds no certificate",
-                            &row_fp[..16.min(row_fp.len())]
+                            prefix16(row_fp)
                         )),
                     }
                 }
-                if let Some(row_sid) = &a.signer_sid {
-                    if row_sid != &s.sid_hex {
+                if let Some(row_sid) = row_sid {
+                    if row_sid != s.sid_hex {
                         problems.push(format!(
                             "row records signer sid:{}… but the token carries {}…",
-                            &row_sid[..16.min(row_sid.len())],
+                            prefix16(row_sid),
                             &s.sid_hex[..16]
                         ));
                     }
@@ -1306,19 +1331,21 @@ fn verify(
             } else {
                 String::new()
             };
-            policy_failure = Some(format!(
+            let msg = format!(
                 "anchor policy {}: NOT SATISFIED ({uncovered} subject(s) uncovered{current_part})",
                 path.display()
-            ));
+            );
+            // The verdict line goes to stdout either way, on the same stream
+            // as SATISFIED and the per-subject lines; the bail below carries
+            // it to stderr for the exit status.
+            println!("{msg}");
+            policy_failure = Some(msg);
         } else {
             println!("anchor policy {}: SATISFIED", path.display());
         }
     }
 
     if failures > 0 {
-        if let Some(msg) = &policy_failure {
-            println!("{msg}");
-        }
         bail!("{failures} anchor(s) failed verification");
     }
     if let Some(msg) = policy_failure {
@@ -1368,22 +1395,34 @@ fn relabel(conn: &Connection, id: i64, subject: &str) -> Result<()> {
             old.ledger_short()
         );
     }
-    if let Some(ledger_id) = a.ledger_id {
-        // Only retention removes chain rows legitimately, and only up to the
-        // signed cutoff; receipt ledgers are never pruned at all. Anything
-        // else is truncation or rollback.
-        let cutoff = if old == AnchorSubject::ChainHead {
-            witness_kernel::verify::latest_checkpoint(conn)?.cutoff_event_id
-        } else {
-            None
-        };
-        if cutoff.map(|c| ledger_id > c).unwrap_or(true) {
-            bail!(
-                "anchor #{id}: the anchored head (ledger row {ledger_id}) is newer than the \
-                 retention cutoff — that is truncation or rollback, not a legacy prune; refusing \
-                 to relabel"
-            );
-        }
+    // Only retention removes chain rows legitimately, and only up to the
+    // signed cutoff; receipt ledgers are never pruned at all. Anything else
+    // is truncation or rollback — whatever the row's `ledger_id` says, and
+    // especially when it says nothing (a legacy row): the decision is the
+    // checkpoint's, not the row's.
+    if old != AnchorSubject::ChainHead {
+        bail!(
+            "anchor #{id}: the {} is never pruned, so its missing head is truncation or \
+             rollback, not a legacy prune; refusing to relabel",
+            old.ledger_short()
+        );
+    }
+    let cutoff = witness_kernel::verify::latest_checkpoint(conn)?.cutoff_event_id;
+    match (cutoff, a.ledger_id) {
+        (None, _) => bail!(
+            "anchor #{id}: no retention checkpoint exists, so the anchored head did not go \
+             missing through retention — that is truncation or rollback, not a legacy prune; \
+             refusing to relabel"
+        ),
+        (Some(c), Some(ledger_id)) if ledger_id > c => bail!(
+            "anchor #{id}: the anchored head (ledger row {ledger_id}) is newer than the \
+             retention cutoff — that is truncation or rollback, not a legacy prune; refusing \
+             to relabel"
+        ),
+        // A checkpoint exists and the row is at or below its cutoff, or is a
+        // legacy row whose position was never recorded: the shape a prune
+        // by an older build leaves.
+        _ => {}
     }
     conn.execute(
         "UPDATE tsa_anchors SET subject = ?1 WHERE id = ?2",

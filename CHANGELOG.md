@@ -70,8 +70,12 @@
   from the evidence file alone and no longer implies step 4 does that.
 - **`log_anchor` and `court_export` ship in the images and the release
   tarball.** The offline flow and the structural `list`/`verify` checks work
-  there; no image enables the `tsa` feature or carries the `openssl` CLI, so
-  online `request`/`anchor-all` and `verify --ca`/`--policy` run from an
+  there; no image enables the `tsa` feature, so online `request`/`anchor-all`
+  run from an operator host. The Debian-based `witnessd` image carries the
+  `openssl` CLI (a hard dependency of its `ca-certificates` package), so
+  `verify --ca`/`--policy` and the import-time countersignature check run
+  inside it against a mounted CA or policy file; the Alpine Home Assistant
+  add-on image does not install it, and there those checks run from an
   operator host. (`release.yml`'s `-f` guard silently skips a binary that
   did not build; both are default-build binaries.) CI now compiles and tests
   the `tsa` build offline.
@@ -84,7 +88,9 @@
   before this release survive only via `log_anchor relabel --id N --subject
   digest`, which records that membership is no longer asserted without
   touching the token and refuses a head newer than the signed retention
-  cutoff. **Upgrade `witnessd` before anchoring chain heads with these
+  cutoff, or any head when no retention checkpoint exists (nothing was ever
+  pruned, so the head did not go missing through retention). **Upgrade
+  `witnessd` before anchoring chain heads with these
   tools** — an older `witnessd` keeps pruning anchored heads at every
   retention pass, and the planned fold of anchors into the ledger verdict
   will fail after each prune until it is upgraded. Offline responses must be

@@ -66,8 +66,10 @@ jobs:
           tags: witnessd:ci
 
       # Smoke-test the image: every shipped binary must load with no missing
-      # shared libraries (catches runtime-stage packaging gaps), and curl —
-      # which the HEALTHCHECK depends on — must be present.
+      # shared libraries (catches runtime-stage packaging gaps), curl —
+      # which the HEALTHCHECK depends on — must be present, and so must the
+      # openssl CLI, which docs/timestamping.md promises for
+      # `log_anchor verify --ca`/`--policy` inside this image.
       - name: Smoke-test witnessd image
         run: |
           docker run --rm --entrypoint /bin/sh witnessd:ci -c '
@@ -85,6 +87,7 @@ jobs:
             log_anchor --help >/dev/null
             court_export --help >/dev/null
             curl --version >/dev/null
+            openssl version >/dev/null
           '
 
   publish:
