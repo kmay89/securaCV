@@ -795,8 +795,9 @@ def _perform(
             raise OSError(
                 f"this run cannot see {', '.join(unseen)} — the folder is not visible from "
                 "here, so whether the files exist is unknown. Run provision.sh from the Home "
-                "Assistant terminal (the Terminal & SSH add-on sees it), or update "
-                "host_provision.sh to mount it."
+                "Assistant terminal (the Terminal & SSH add-on sees it), or point "
+                "host_provision.sh at the folder's host path (it names the setting when the "
+                "path it expects is not there)."
             )
         raise OSError(
             f"{', '.join(missing)} not found — what belongs there: "

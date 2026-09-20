@@ -56,8 +56,9 @@ fi
 # convention, not yet proven on a hub, hence one overridable string — so it is
 # mounted read-only, and ONLY when the feature is asked for: an unconditional
 # bind of a missing host path would make docker create it, empty and
-# root-owned. If it isn't there, say so and let the executor's own "cannot see
-# /ssl" refusal stand rather than reporting a missing certificate.
+# root-owned. If it isn't there, say so, name the override, and let the
+# executor's own "cannot see /ssl" refusal stand rather than reporting a
+# missing certificate.
 ssl_src="${SECURACV_HOST_SSL_DIR:-/mnt/data/supervisor/ssl}"
 ssl_mount=""
 prev=""
@@ -66,7 +67,8 @@ for arg in "$@"; do
     if [ -d "$ssl_src" ]; then
       ssl_mount="$ssl_src:/ssl:ro"
     else
-      echo "host_provision.sh: $ssl_src is not here, so the broker_tls step will not see /ssl." >&2
+      echo "host_provision.sh: $ssl_src is not here, so the broker_tls step will not see /ssl" >&2
+      echo "  (if the hub keeps it elsewhere: SECURACV_HOST_SSL_DIR=<path> sh host_provision.sh --with broker_tls)." >&2
     fi
   fi
   prev="$arg"

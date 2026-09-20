@@ -287,6 +287,10 @@ class HostRunnerSslMount(unittest.TestCase):
             self.assertIsNone(self.mount_of(r.stdout))
             self.assertIn(missing, r.stderr)
             self.assertIn("broker_tls", r.stderr)
+            # The note names the remedy, not just the symptom: the executor's
+            # later "cannot see /ssl" refusal is generic, so the ONE place the
+            # override is spelled for the console path is here.
+            self.assertIn("SECURACV_HOST_SSL_DIR=", r.stderr)
 
     def test_the_default_host_path_is_beside_addon_configs(self):
         # The path is inferred from the Supervisor's data layout (the same
