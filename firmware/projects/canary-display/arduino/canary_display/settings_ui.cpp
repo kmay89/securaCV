@@ -1196,8 +1196,9 @@ void build_weather() {
 // Location" the one erase. Every position the wheels can take is on the
 // 0.1° grid inside the sanitizer's range by construction (glass_settings.h),
 // and no wheel exceeds the 8-bit dispatch value (181 options at most).
-// Only roller / label / flex calls the Hours page already makes: the file
-// builds on LVGL 9 here and on LVGL 8 in the emulator.
+// Only roller / label / flex calls that exist in both majors (row-wrap and
+// pad_column are the two the Hours page does not use): the file builds on
+// LVGL 9 here and on LVGL 8 in the emulator.
 
 static_assert(ID_WX_LAT_DEG == ID_WX_LAT_HEMI + 1 && ID_WX_LAT_TENTH == ID_WX_LAT_HEMI + 2 &&
               ID_WX_LON_HEMI == ID_WX_LAT_HEMI + 3 && ID_WX_LON_DEG == ID_WX_LAT_HEMI + 4 &&
@@ -1237,6 +1238,15 @@ const char* wx_deg_opts(int max_deg) {
 
 // mk_hour_roller's styling, restated: that helper is compiled into every
 // emulator flavor and must not change shape for a page they never build.
+// Plus one line the hour wheel never needed: this glass runs without a
+// theme (LV_USE_THEME_DEFAULT 0), so a roller's text_align is AUTO, which
+// both majors resolve to LEFT — the roller places its option label by that
+// inherited property (refr_position in lv_roller.c). Every "%02d:00" is the
+// same width, so the hour wheel never showed it; the degrees wheel is the
+// first here with unequal options ("0" beside "180"), and without this its
+// digits sit flush-left in a box the widest option sized while the selected
+// tier's highlight spans the full width. Centering is what the default theme
+// adds to every roller, and all three wheels of a trio get it.
 lv_obj_t* mk_wx_roller(lv_obj_t* parent, const char* opts, bool infinite,
                        int width, int sel, int id) {
   lv_obj_t* r = lv_roller_create(parent);
@@ -1244,6 +1254,7 @@ lv_obj_t* mk_wx_roller(lv_obj_t* parent, const char* opts, bool infinite,
                                           : LV_ROLLER_MODE_NORMAL);
   lv_roller_set_visible_row_count(r, 3);
   lv_obj_set_width(r, width);
+  lv_obj_set_style_text_align(r, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_font(r, font_body(), LV_PART_MAIN);
   lv_obj_set_style_text_color(r, col_muted(), LV_PART_MAIN);
   lv_obj_set_style_text_line_space(r, M.compact ? 10 : 16, LV_PART_MAIN);

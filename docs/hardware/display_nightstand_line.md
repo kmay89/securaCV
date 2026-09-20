@@ -416,7 +416,7 @@ everything else on these boards):
   is shown on the glass, an in-room disclosure the network promise does not cover; the
   LAN page still never carries it. The page lives behind `FEATURE_STANDALONE_WEATHER`,
   which no emulator flavor defines, so it never reaches the emulator dist (compile-tested
-  on the two 7" builds, wheel helpers host-tested, not bench-tested). Disclosed in
+  by CI on the two 7" builds, wheel helpers host-tested, not bench-tested). Disclosed in
   `docs/security/SECURITY_MODEL.md`; request shape pinned by `tests_host/test_wx_core.cpp`.
 
 **Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**

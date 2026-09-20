@@ -234,9 +234,12 @@ become the next query. *Use This Location* is the one write (both axes and
 the flag in one mutation, so the store never holds half a coordinate) and
 returns to Weather; *Forget Location* (alert-colored, muted while nothing is
 stored) clears it. There is no place-name lookup: entering a location makes
-no network request. It is the second third-level page, after Microphone ›
-Sensitivity — a location is set once, so it need not be one tap from the
-root.
+no network request. It is the second third-level editor, after Microphone ›
+Sensitivity (the Modes confirm dialog is the other page one level below a
+group) — a location is set once, so it need not be one tap from the root.
+The wheels center their options: the glass runs without an LVGL theme, so a
+roller's text align is otherwise left, which the equal-width hour wheel never
+showed and the degrees wheel ("0" beside "180") would.
 
 Both axes sit on one line in the 620 × 440 landscape sheet and wrap to two
 in the 480 px portrait column (flex wrap, measured from the live canvas). In

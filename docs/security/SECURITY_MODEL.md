@@ -142,7 +142,7 @@ required for the device to function:
    still never carry the grid point, only whether one is stored. Closing
    the network path closed the phone app's `wx_loc` post for good; a grid
    point stored by an earlier build keeps working, *Forget Location* and a
-   settings reset both clear it. Compile-tested on the two 7" builds,
+   settings reset both clear it. Compile-tested by CI on the two 7" builds,
    wheel helpers host-tested, not yet bench-tested.
 4. **Signed update checks** — a daily, jittered HTTPS GET of a small
    signed JSON manifest from the release host (`docs/firmware_ota.md`;
