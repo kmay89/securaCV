@@ -30,10 +30,16 @@ const html = (() => {
   assert.ok(m, "CANARY_SETUP_HTML raw string not found");
   return m[1];
 })();
+// The page has exactly one inline script block; lift it out by its literal
+// markers (no HTML-filtering regex: this is the firmware's own raw string
+// being read for execution under the stub DOM, not untrusted markup being
+// sanitized — CodeQL reads a <script> regex as the latter).
 const script = (() => {
-  const m = html.match(/<script>([\s\S]*?)<\/script>/);
-  assert.ok(m, "the page's <script> not found");
-  return m[1];
+  const open = html.indexOf("<script>");
+  const close = open < 0 ? -1 : html.indexOf("</script>", open);
+  assert.ok(open >= 0 && close > open, "the page's <script> not found");
+  assert.strictEqual(html.indexOf("<script", open + 1), -1, "the page has one script block");
+  return html.slice(open + "<script>".length, close);
 })();
 
 // ── a stub DOM seeded from the markup ───────────────────────────────────────
