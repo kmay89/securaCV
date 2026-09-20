@@ -1,7 +1,9 @@
 // Host test for the pure display-settings geometry + brightness helpers
 // (include/canary/glass_settings.h): orientation dims, the touch un-rotation
-// (round-tripped against the forward render rotation), and the rendered
-// brightness scrim. No Arduino, no LVGL, no board.
+// (round-tripped against the forward render rotation), the rendered
+// brightness scrim, and the standalone-weather location wheels (wheel
+// positions <-> stored tenths, and the cell caption). No Arduino, no LVGL,
+// no board.
 //
 // Prints "ALL DISPLAY SETTINGS TESTS PASSED" on success (a CI grep makes a
 // silent pass impossible to fake). Build (from the repo root):
@@ -156,6 +158,104 @@ static void test_lvgl_indev_feed() {
   CHECK(x == 123 && y == 45, "landscape feeds the point through untouched");
 }
 
+// ── The on-glass location wheels ─────────────────────────────────────────
+// The Location page (settings → weather → location) edits a coordinate as
+// hemisphere · degrees · tenths wheels per axis. These helpers are the only
+// path from a wheel position to the stored tenths, so the properties that
+// keep the privacy promise true live here: every producible value is ON the
+// 0.1° grid and inside the range glass_settings.cpp's sanitizer accepts, the
+// pole and the antimeridian clamp rather than wrap, and no wheel needs more
+// options than the panel's 8-bit dispatch value can carry.
+static void test_wx_wheels_examples() {
+  // The canonical cell every wx test uses: 37.4 N, 122.4 W.
+  CHECK(wx_wheel_to_tenths(0, 37, 4, WX_LAT_MAX_DEG) == 374, "37.4 N -> 374");
+  CHECK(wx_wheel_to_tenths(1, 122, 4, WX_LON_MAX_DEG) == -1224, "122.4 W -> -1224");
+  uint8_t h = 9, d = 9, t = 9;
+  wx_tenths_to_wheel(374, WX_LAT_MAX_DEG, &h, &d, &t);
+  CHECK(h == 0 && d == 37 && t == 4, "374 -> N 37 .4");
+  wx_tenths_to_wheel(-1224, WX_LON_MAX_DEG, &h, &d, &t);
+  CHECK(h == 1 && d == 122 && t == 4, "-1224 -> W 122 .4");
+
+  // Zero: both hemispheres of 0.0 are the same point, and it reads N / E.
+  CHECK(wx_wheel_to_tenths(0, 0, 0, WX_LAT_MAX_DEG) == 0, "0.0 N is 0");
+  CHECK(wx_wheel_to_tenths(1, 0, 0, WX_LAT_MAX_DEG) == 0, "0.0 S is 0 too");
+  wx_tenths_to_wheel(0, WX_LON_MAX_DEG, &h, &d, &t);
+  CHECK(h == 0 && d == 0 && t == 0, "0 reads E 0 .0");
+
+  // The poles: 90.0 exactly; any tenth past the pole clamps to the pole.
+  CHECK(wx_wheel_to_tenths(0, 90, 0, WX_LAT_MAX_DEG) == 900, "north pole");
+  CHECK(wx_wheel_to_tenths(0, 90, 5, WX_LAT_MAX_DEG) == 900, "90.5 N clamps to 90.0");
+  CHECK(wx_wheel_to_tenths(1, 90, 9, WX_LAT_MAX_DEG) == -900, "90.9 S clamps to the south pole");
+  // The antimeridian: 180.0, and 180.x clamps rather than wrapping to -179.x.
+  CHECK(wx_wheel_to_tenths(0, 180, 0, WX_LON_MAX_DEG) == 1800, "antimeridian east");
+  CHECK(wx_wheel_to_tenths(0, 180, 3, WX_LON_MAX_DEG) == 1800, "180.3 E clamps to 180.0");
+  CHECK(wx_wheel_to_tenths(1, 180, 9, WX_LON_MAX_DEG) == -1800, "180.9 W clamps to 180.0 W");
+
+  // Garbage wheel positions clamp instead of escaping the grid.
+  CHECK(wx_wheel_to_tenths(0, 200, 0, WX_LAT_MAX_DEG) == 900, "deg past the pole clamps");
+  CHECK(wx_wheel_to_tenths(0, 12, 12, WX_LAT_MAX_DEG) == 129, "tenth past 9 clamps to 9");
+  CHECK(wx_wheel_to_tenths(0, -3, -3, WX_LAT_MAX_DEG) == 0, "negative wheel positions clamp to 0");
+  // Stored values outside the range (a blob the sanitizer would have
+  // rejected anyway) land on the nearest edge, never on a wrong sky.
+  wx_tenths_to_wheel(950, WX_LAT_MAX_DEG, &h, &d, &t);
+  CHECK(h == 0 && d == 90 && t == 0, "950 clamps to the north pole");
+  wx_tenths_to_wheel(-1900, WX_LON_MAX_DEG, &h, &d, &t);
+  CHECK(h == 1 && d == 180 && t == 0, "-1900 clamps to 180.0 W");
+}
+
+static void test_wx_wheels_grid() {
+  // Round trip over the whole grid: every storable tenth survives
+  // tenths -> wheels -> tenths unchanged.
+  for (int v = -900; v <= 900; v++) {
+    uint8_t h, d, t;
+    wx_tenths_to_wheel(v, WX_LAT_MAX_DEG, &h, &d, &t);
+    CHECK(wx_wheel_to_tenths(h, d, t, WX_LAT_MAX_DEG) == v, "latitude round-trips");
+  }
+  for (int v = -1800; v <= 1800; v++) {
+    uint8_t h, d, t;
+    wx_tenths_to_wheel(v, WX_LON_MAX_DEG, &h, &d, &t);
+    CHECK(wx_wheel_to_tenths(h, d, t, WX_LON_MAX_DEG) == v, "longitude round-trips");
+  }
+  // Every position the wheels can take is inside the sanitizer's range
+  // (glass_settings.cpp: -900..900 / -1800..1800) — the mirror of the
+  // clamp that turns an out-of-range blob back into "unset".
+  for (int h = 0; h <= 1; h++)
+    for (int d = 0; d <= WX_LAT_MAX_DEG; d++)
+      for (int t = 0; t <= 9; t++) {
+        const int v = wx_wheel_to_tenths(h, d, t, WX_LAT_MAX_DEG);
+        CHECK(v >= -900 && v <= 900, "every latitude wheel position is storable");
+      }
+  for (int h = 0; h <= 1; h++)
+    for (int d = 0; d <= WX_LON_MAX_DEG; d++)
+      for (int t = 0; t <= 9; t++) {
+        const int v = wx_wheel_to_tenths(h, d, t, WX_LON_MAX_DEG);
+        CHECK(v >= -1800 && v <= 1800, "every longitude wheel position is storable");
+      }
+  // The panel packs a wheel's position into 8 bits: no wheel may carry
+  // more than 256 options, and the widest one here is the 0..180 degrees.
+  CHECK(WX_LAT_MAX_DEG + 1 <= 256, "the latitude degrees wheel fits 8 bits");
+  CHECK(WX_LON_MAX_DEG + 1 <= 256, "the longitude degrees wheel fits 8 bits");
+}
+
+static void test_wx_cell_text() {
+  char b[32];
+  CHECK(std::string(wx_cell_text(b, sizeof(b), 374, -1224)) == "37.4 N, 122.4 W",
+        "the canonical cell");
+  CHECK(std::string(wx_cell_text(b, sizeof(b), 0, 0)) == "0.0 N, 0.0 E", "zero reads N / E");
+  CHECK(std::string(wx_cell_text(b, sizeof(b), -900, 1800)) == "90.0 S, 180.0 E",
+        "the pole and the antimeridian");
+  CHECK(std::string(wx_cell_text(b, sizeof(b), -5, 15)) == "0.5 S, 1.5 E",
+        "sub-degree tenths keep their leading zero");
+  // One decimal, always — the exact precision the forecast query carries.
+  CHECK(std::string(wx_cell_text(b, sizeof(b), 900, -1800)).find('.') != std::string::npos,
+        "one decimal is printed");
+  // A short buffer truncates and terminates; it never overruns.
+  char s[8];
+  s[7] = 'X';
+  wx_cell_text(s, 7, 374, -1224);
+  CHECK(s[6] == '\0' && s[7] == 'X', "a small cap is NUL-terminated inside the cap");
+}
+
 int main() {
   test_dims();
   test_touch_roundtrip();
@@ -163,6 +263,9 @@ int main() {
   test_touch_corners();
   test_brightness();
   test_names();
+  test_wx_wheels_examples();
+  test_wx_wheels_grid();
+  test_wx_cell_text();
   if (g_fail == 0) {
     std::printf("ALL DISPLAY SETTINGS TESTS PASSED\n");
     return 0;
