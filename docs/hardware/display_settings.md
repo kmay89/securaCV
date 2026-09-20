@@ -51,7 +51,8 @@ Settings                                       (Done · a stationary hold · idl
 │     ↳ "During quiet hours the glass dims and goes quiet. An unacknowledged alert always lights it."
 ├─ CONNECTION
 │  ├─ Wi-Fi                <network> ›  read-only: network · signal · hub link · this glass's address
-│  ├─ Weather              Off ›        dash + standalone weather: the opt-in and its gates
+│  ├─ Weather              Off ›        dash7 / nightstand7: Fetch Weather Itself switch · Status · Location ›
+│  │   └─ Location         Not set ›    N/S · degrees · tenths, E/W · degrees · tenths → Use This Location · Forget Location
 │  └─ Firmware             v2.x.y ›     installed · available · Auto-Update switch · the one action
 ├─ SIREN        (4.3B)     Wired Siren [switch]  + footer
 ├─ MICROPHONE   (4.3C)     Listening ›  Listening switch · Sensitivity › · Wake on Sound switch
@@ -199,6 +200,80 @@ day scrim on top.
 Analog / Calendar, each with its one-line caption) share a page; the footer
 says the face wears it when you leave Settings, because the hero digits live
 under the sheet.
+
+## The Weather rows — the opt-in and its location (7" glass)
+
+Only the two flavors that carry the standalone forecast render these —
+`dash7` and `nightstand7` (`FEATURE_STANDALONE_WEATHER`, hub-less homes).
+Every other glass has no Weather row at all, and no emulator flavor defines
+the flag, so none of this reaches the browser twin; a bench photo is the only
+pixel proof.
+
+**Weather.** One decision — *Fetch Weather Itself* — the truth about its
+three gates as a Status line (*Your hub provides weather* · *Needs a location
+- tap Location below* · *Waiting for the first fetch* · *Fetched 12m ago* ·
+*Last fetch failed, retrying* · *Off*), then a *Location ›* row showing the
+stored ~11 km cell (`37.4 N, 122.4 W`) or *Not set*. The footer carries the
+privacy contract in the fewest honest words. Showing the cell on the glass is
+deliberate — the screen is the preview, and a wrong sky should be visible to
+the hand that set it — and it is an in-room disclosure only: the LAN page and
+the API never carry the grid point (`docs/security/SECURITY_MODEL.md`).
+
+**Location.** The one place a coarse location enters this firmware, since
+`/api/set` refuses one from every caller. Three wheels per axis on the Quiet
+Hours wheel pattern — hemisphere · whole degrees · tenths — so no wheel needs
+more than 181 options (the panel packs a wheel's position into 8 bits) and
+every position they can take is a point on the 0.1° grid inside the range the
+loader accepts, by construction (`wx_wheel_to_tenths` / `wx_tenths_to_wheel`
+in `glass_settings.h`, host-tested in `tests_host/test_display_settings.cpp`;
+the pole and the antimeridian clamp rather than wrap). The wheels edit a
+page-local **draft**: a settle relabels the `~11 km cell:` caption and
+nothing else — never the store, never a rebuild under the finger — because
+the fetcher runs whenever its timer is due and a half-turned wheel must not
+become the next query. *Use This Location* is the one write (both axes and
+the flag in one mutation, so the store never holds half a coordinate) and
+returns to Weather; *Forget Location* (alert-colored, muted while nothing is
+stored) clears it. There is no place-name lookup: entering a location makes
+no network request. It is the second third-level page, after Microphone ›
+Sensitivity — a location is set once, so it need not be one tap from the
+root.
+
+Both axes sit on one line in the 620 × 440 landscape sheet and wrap to two
+in the 480 px portrait column (flex wrap, measured from the live canvas). In
+the sheet the footer's last lines sit below the fold and the list scrolls
+them into view; a drag that starts on a wheel never scrolls the list (LVGL
+rollers do not chain scroll), and a hold on a wheel never counts as the
+long-press exit.
+
+```
+620 × 440 sheet (Regular: nav 60 · row 56 · inset 20 · roller_w 150 → 60 / 90 / 75 px wheels)
+┌───────────────────────────────────────────────────────────────────────┐
+│ ‹ Weather                    Location                                 │
+├───────────────────────────────────────────────────────────────────────┤
+│         L A T I T U D E                     L O N G I T U D E         │
+│    ┌────┐ ┌──────┐ ┌─────┐            ┌────┐ ┌──────┐ ┌─────┐         │
+│    │    │ │  36  │ │ .3  │            │ E  │ │ 121  │ │ .3  │         │
+│    │ N  │ │  37  │ │ .4  │            │ W  │ │ 122  │ │ .4  │         │  3 visible rows,
+│    │ S  │ │  38  │ │ .5  │            │    │ │ 123  │ │ .5  │         │  selected on the edge tier
+│    └────┘ └──────┘ └─────┘            └────┘ └──────┘ └─────┘         │
+│                                                                       │
+│                     ~11 km cell: 37.4 N, 122.4 W                      │  relabeled on settle
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                       Use This Location                         │  │  primary: the ONE write
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                        Forget Location                          │  │  destructive; muted when unset
+│  └─────────────────────────────────────────────────────────────────┘  │
+│   Kept on this glass as a ~11 km grid point, a tenth of a degree. It  │
+└───────────────────────────────────────────────────────────────────────┘
+    leaves only inside the forecast query, and only while Fetch Weather      ← below the fold;
+    Itself is on - never served on your network.                             the list scrolls
+```
+
+In the 480 × 800 column the LONGITUDE trio wraps under the LATITUDE trio and
+the whole page fits without scrolling.
 
 ## Connection rows — on every touch glass
 
