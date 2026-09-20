@@ -886,6 +886,100 @@ test("mqttProvisioningToNvs: maps the optional broker/identity fields to native'
   assert.throws(() => mqttProvisioningToNvs({ deviceId: "d".repeat(33) }), /Device ID/i);
 });
 
+// ── the broker TLS receipt line: what was SEALED, in the native app's words ──
+// One table in two places (flash-core.js MQTT_TLS_RECEIPT and
+// desktop/src-tauri/src/broker_receipt.rs MODE_LABELS), held equal by
+// desktop_parity.test.js. These pin the browser's half to the firmware's mode
+// byte and to the bytes the builder actually seals — never the form, never a
+// credential, never a claim that anything connected. Same fixtures as the
+// Rust tests: a 58-byte PEM (59 sealed) and a 64-hex pin.
+const RECEIPT_PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+const RECEIPT_FP = "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9";
+const RECEIPT_BROKER = { mqttHost: "homeassistant.local", mqttPort: 8883, mqttUser: "canary", mqttPass: "broker-secret" };
+const receiptLeaks = (line) => /broker-secret|BEGIN CERTIFICATE|MIIB|homeassistant\.local|\{[A-Z]+\}/.test(line);
+
+test("brokerTlsReceipt: no line when no broker host was sealed", async () => {
+  const { brokerTlsReceipt, mqttProvisioningToNvs } = await core();
+  assert.strictEqual(brokerTlsReceipt(mqttProvisioningToNvs({})), null);
+  assert.strictEqual(brokerTlsReceipt(mqttProvisioningToNvs({ deviceId: "just_me" })), null);
+  // TLS fields without a host are dropped by the builder with the rest of the
+  // broker row — so there is nothing sealed to describe.
+  assert.strictEqual(brokerTlsReceipt(mqttProvisioningToNvs({ mqttTls: 1, mqttCa: RECEIPT_PEM })), null);
+  for (const empty of [null, undefined, {}, { strings: {} }]) assert.strictEqual(brokerTlsReceipt(empty), null);
+});
+
+test("brokerTlsReceipt: plain (mode 0) names the default and says not encrypted", async () => {
+  const { MQTT_TLS_RECEIPT, brokerTlsReceipt, mqttProvisioningToNvs } = await core();
+  const prov = mqttProvisioningToNvs(RECEIPT_BROKER);
+  assert.deepStrictEqual(prov.u8, {}, "plain writes no mqtt_tls byte — the receipt still names the mode");
+  const line = brokerTlsReceipt(prov);
+  assert.strictEqual(line, MQTT_TLS_RECEIPT[0]);
+  assert.strictEqual(line, "plain MQTT — not encrypted (the default every Canary shipped with)");
+  assert.ok(!receiptLeaks(line), line);
+  // An explicit 0 or the mode's name is the same row.
+  assert.strictEqual(brokerTlsReceipt(mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: 0 })), line);
+  assert.strictEqual(brokerTlsReceipt(mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: "plain" })), line);
+});
+
+test("brokerTlsReceipt: CA mode counts the SEALED bytes (trimmed PEM + newline), never the PEM", async () => {
+  const { brokerTlsReceipt, mqttProvisioningToNvs } = await core();
+  // Whatever whitespace the paste carried, the builder seals trim + "\n" and
+  // the receipt counts THAT: 58 + 1 = 59. provisioning.rs's
+  // broker_tls_summary test pins the same fixture to the same 59, and
+  // desktop_parity.test.js holds the two numbers together.
+  const prov = mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: 1, mqttCa: `  ${RECEIPT_PEM}\n\n` });
+  assert.strictEqual(prov.strings.mqtt_ca, RECEIPT_PEM + "\n");
+  assert.strictEqual(new TextEncoder().encode(prov.strings.mqtt_ca).length, 59);
+  const line = brokerTlsReceipt(prov);
+  assert.strictEqual(line, "TLS, CA-verified — CA certificate sealed, 59 bytes of PEM");
+  assert.ok(!receiptLeaks(line), line);
+  // Bytes, not characters: a two-byte UTF-8 character in the paste counts as
+  // two (the builder's own 3070 cap is in bytes for the same reason).
+  const wide = mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: 1, mqttCa: RECEIPT_PEM.replace("MIIB", "MIIBé") });
+  assert.strictEqual(wide.strings.mqtt_ca.length, 60);
+  assert.strictEqual(brokerTlsReceipt(wide), "TLS, CA-verified — CA certificate sealed, 61 bytes of PEM");
+});
+
+test("brokerTlsReceipt: fingerprint mode carries the sealed 64-hex verbatim", async () => {
+  const { brokerTlsReceipt, mqttProvisioningToNvs } = await core();
+  // Case as typed, no separators added or removed: the owner compares this
+  // against openssl's own line, so it must be the sealed string exactly.
+  const mixed = RECEIPT_FP.toUpperCase().replace("A", "a");
+  const prov = mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: 2, mqttFp: mixed });
+  assert.strictEqual(prov.strings.mqtt_fp, mixed);
+  const line = brokerTlsReceipt(prov);
+  assert.strictEqual(line, `TLS, SHA-256 fingerprint pin — ${mixed}`);
+  assert.ok(line.endsWith(prov.strings.mqtt_fp), "the pin on the receipt is the pin that was sealed");
+  assert.ok(!receiptLeaks(line), line);
+  assert.strictEqual(brokerTlsReceipt(mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: "fingerprint", mqttFp: RECEIPT_FP })),
+    `TLS, SHA-256 fingerprint pin — ${RECEIPT_FP}`);
+});
+
+test("brokerTlsReceipt: lab mode keeps both warnings; no row leaks a credential; the table is four single lines", async () => {
+  const { MQTT_TLS_RECEIPT, MQTT_TLS_RECEIPT_UNKNOWN, brokerTlsReceipt, mqttProvisioningToNvs } = await core();
+  const lab = brokerTlsReceipt(mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: 3 }));
+  assert.strictEqual(lab, MQTT_TLS_RECEIPT[3]);
+  assert.match(lab, /NOT verified/);
+  assert.match(lab, /warns on every connect/);
+  assert.strictEqual(brokerTlsReceipt(mqttProvisioningToNvs({ ...RECEIPT_BROKER, mqttTls: "insecure" })), lab);
+  // Every row, with a password, a CA and a pin all on the form: the line
+  // names the mode and at most the CA's byte count or the pin.
+  const all = { ...RECEIPT_BROKER, mqttCa: RECEIPT_PEM, mqttFp: RECEIPT_FP };
+  for (const mode of [0, 1, 2, 3]) {
+    const line = brokerTlsReceipt(mqttProvisioningToNvs({ ...all, mqttTls: mode }));
+    assert.ok(!receiptLeaks(line), `mode ${mode}: ${line}`);
+    assert.ok(!/connected/i.test(line), `mode ${mode} must describe what was sealed, never a connection`);
+  }
+  assert.strictEqual(MQTT_TLS_RECEIPT.length, 4, "the firmware knows four modes");
+  assert.ok(Object.isFrozen(MQTT_TLS_RECEIPT));
+  for (const row of MQTT_TLS_RECEIPT) assert.ok(!row.includes("\n"), "each row stays one line (desktop_parity reads the Rust source)");
+  // A byte outside the table (the builder refuses one; a hand-built prov
+  // could still carry it) gets the firmware's own answer, never a borrowed row.
+  const odd = brokerTlsReceipt({ strings: { mqtt_host: "h" }, u16: {}, u8: { mqtt_tls: 9 } });
+  assert.strictEqual(odd, MQTT_TLS_RECEIPT_UNKNOWN.replace("{M}", "9"));
+  assert.match(odd, /^TLS mode byte 9 — not one the firmware knows/);
+});
+
 test("buildNvsSeedImage bakes dev_id + MQTT the firmware reads back — same keys/types as native", async () => {
   const { buildNvsSeedImage, mqttProvisioningToNvs, parseNvs } = await core();
   const { strings, u16 } = mqttProvisioningToNvs({

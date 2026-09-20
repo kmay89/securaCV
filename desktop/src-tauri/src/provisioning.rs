@@ -532,6 +532,25 @@ pub fn patch_factory_image(image: &mut Vec<u8>, config: &Provisioning) -> Result
     Ok(())
 }
 
+/// What a receipt may say about the broker TLS that build_nvs SEALED, and the
+/// only shape of a `Provisioning` that may reach a log line (lib.rs `flash`):
+/// `None` when no broker host was sealed (the TLS keys ride the broker row and
+/// are skipped with it), else the mode byte, the byte count of the `mqtt_ca`
+/// string as written (the trimmed PEM plus the newline build_nvs appends; 0
+/// when none) and the `mqtt_fp` string as written (trimmed; empty when none).
+/// The same trims as build_nvs, so the count describes the bytes on the chip,
+/// not the textarea — the browser's brokerTlsReceipt measures its sealed
+/// string the same way (desktop_parity holds the two to one number for one
+/// paste). Never the PEM, never a password.
+pub(crate) fn broker_tls_summary(config: &Provisioning) -> Option<(u8, usize, String)> {
+    if config.mqtt_host.is_empty() {
+        return None;
+    }
+    let ca = config.mqtt_ca.trim();
+    let ca_sealed_len = if ca.is_empty() { 0 } else { ca.len() + 1 };
+    Some((config.mqtt_tls, ca_sealed_len, config.mqtt_fp.trim().to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -623,6 +642,50 @@ mod tests {
             validate(&lab).is_ok(),
             "lab mode needs no credential (the firmware warns on every connect)"
         );
+    }
+
+    // The receipt's view of the broker row: what build_nvs SEALED (the same
+    // trims, proven against the string item it writes), never the PEM or a
+    // password, and nothing at all without a host.
+    #[test]
+    fn broker_tls_summary_describes_the_sealed_bytes() {
+        assert_eq!(broker_tls_summary(&config()), Some((0, 0, String::new())));
+        let mut no_host = config();
+        no_host.mqtt_host = String::new();
+        no_host.mqtt_tls = 1;
+        no_host.mqtt_ca = PEM.into();
+        assert_eq!(
+            broker_tls_summary(&no_host),
+            None,
+            "the TLS keys ride the broker row: no host sealed, no receipt line"
+        );
+
+        // 59 = the 58-byte fixture + the newline build_nvs appends, whatever
+        // whitespace the paste carried. The browser pins the same number for
+        // the same paste (canary-local/tests/flash.test.js), and
+        // desktop_parity.test.js holds this literal to that computation.
+        let mut ca = config();
+        ca.mqtt_tls = 1;
+        ca.mqtt_ca = format!("  {PEM}\n\n");
+        assert_eq!(broker_tls_summary(&ca), Some((1, 59, String::new())));
+        assert_eq!(format!("{}\n", PEM.trim()).len(), 59);
+        // ...and it is the string item's own size field minus its NUL: the
+        // count on the receipt is the count on the chip.
+        let img = build_nvs(&ca, 0x6000).unwrap();
+        let page = &img[..4096];
+        let idx = (1..126)
+            .find(|i| &page[i * 32 + 8..i * 32 + 15] == b"mqtt_ca")
+            .expect("mqtt_ca item");
+        let stored = u16::from_le_bytes([page[idx * 32 + 24], page[idx * 32 + 25]]) as usize;
+        assert_eq!(stored, 59 + 1, "NVS string size = sealed bytes + NUL");
+
+        let mut pin = config();
+        pin.mqtt_tls = 2;
+        pin.mqtt_fp = format!(" {FP} ");
+        assert_eq!(broker_tls_summary(&pin), Some((2, 0, FP.to_string())));
+        let mut lab = config();
+        lab.mqtt_tls = 3;
+        assert_eq!(broker_tls_summary(&lab), Some((3, 0, String::new())));
     }
 
     // A well-formed bearer credential for the token tests below.

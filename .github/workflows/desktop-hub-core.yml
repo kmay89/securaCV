@@ -238,3 +238,11 @@ jobs:
         run: |
           rustc --edition 2021 --test desktop/src-tauri/src/sscma.rs -o /tmp/sscma_test
           /tmp/sscma_test
+      - name: broker_receipt.rs unit tests
+        # The four-row broker TLS receipt table both flashers print
+        # (desktop_parity.test.js holds it equal to flash-core.js). std-only,
+        # so it runs here without the crate's GTK/WebKit stack — the same
+        # command a contributor runs locally.
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/broker_receipt.rs -o /tmp/broker_receipt_test
+          /tmp/broker_receipt_test
