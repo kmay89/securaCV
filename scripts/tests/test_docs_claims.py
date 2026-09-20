@@ -14,7 +14,9 @@ and three product READMEs said the flashers had no field for a select both
 flashers already carried.
 
 Each of those sentences was rewritten to the shipped posture, with the
-CHANGELOG's status words. This test pins the retirement: the EXACT retired
+CHANGELOG's status words; the review of that rewrite retired three more
+(a client-certificate check no API performs, a GPS clock two products do
+not have, a derived BSSID no code sets). This test pins the retirement: the EXACT retired
 sentences are the needles, so a later true sentence that happens to share a
 fragment ("not compiled in", "plain by default") cannot trip it, and a
 sentence that comes back verbatim — a merge that resurrects an old hunk, a
@@ -73,12 +75,24 @@ BANNED = (
     ("TLS is required for all API access (no HTTP fallback)",
      "plain HTTP is a stated posture: setup mode and start failure on the "
      "WAP, the flagship's port 80, the displays' LAN page"),
-    ("still plain",
+    ("`securacv_mqtt` still plain",
      "firmware/canary's securacv_mqtt rides the shared broker-TLS transport "
      "(plain / CA / pin / lab, fail-closed) since 2026-09-19"),
     ("there is no form field or on-device setting yet",
      "both flashers carry the Broker encryption select with the CA box or "
      "fingerprint field; desktop_parity.test.js pins the two forms equal"),
+    # Retired by the review of the rewrite above — sentences the rewrite
+    # itself introduced and that turned out untrue.
+    ("Client presents an expired or unknown certificate to the API",
+     "no API asks a client for a certificate: the kernel's rustls config is "
+     "with_no_client_auth() and the WAP's httpd_ssl_config_t carries only the "
+     "server certificate and key; the iPhone app pins the receipt's tls_cert_fp"),
+    ("a witness's clock comes from GPS",
+     "only the flagship and the WAP take time from GPS; sense and vision have "
+     "no clock source of their own; the displays sync SNTP"),
+    ("WiFi AP BSSID derived from device identity",
+     "nothing in the firmware sets a derived or random MAC; the BSSID is the "
+     "radio's factory address and carries Espressif's OUI"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -93,6 +107,12 @@ MUST_PASS = [
     "set from the Broker encryption select in either flasher's broker block",
     "nothing outbound that is not disclosed, named and tested",
     "the token stops drive-by web pages, not a LAN host",
+    # A true sentence that shares its last two words with a retired one —
+    # the review caught the fragment needle tripping on exactly this.
+    "the socket is still plain until you provision TLS",
+    "the AP's BSSID is the radio's factory MAC and carries Espressif's OUI",
+    "the flagship and the WAP take their time from GPS",
+    "no API asks the client for a certificate",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -107,6 +127,10 @@ MUST_FAIL = [
     "`firmware/canary`'s `securacv_mqtt` still plain.",
     "(the flashers' NVS builders seed them; there is no form field or on-device\n"
     "setting yet):",
+    "| Client presents an expired or unknown certificate to the API | Rejected |",
+    "- **SNTP** on the display line — a witness's clock comes from GPS, a\n"
+    "  display has none",
+    "- WiFi AP BSSID derived from device identity (no manufacturer OUI leak)",
 ]
 
 
