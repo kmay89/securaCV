@@ -88,7 +88,7 @@ struct GlassSettingsSheet: View {
                             } header: {
                                 Text("Weather")
                             } footer: {
-                                Text("Set on the glass, not here: Settings › Weather › Fetch Weather Itself, and the location under Settings › Weather › Location. The glass keeps a ~11 km grid point and never sends it to your network, so nobody on your Wi-Fi — this phone included — can switch on the one thing it would ever fetch. With a hub, the hub stays the one thing in the house that talks to the internet.")
+                                Text("Set on the glass, not here: Settings › Weather › Fetch Weather Itself, and the location under Settings › Weather › Location. The glass keeps a ~11 km grid point and never serves it on your network. Nobody on your Wi-Fi — this phone included — can switch on the one thing it would ever fetch. With a hub, the hub stays the one thing in the house that talks to the internet.")
                             }
                         }
                     }
