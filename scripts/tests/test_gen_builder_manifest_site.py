@@ -11,8 +11,9 @@ What is pinned and why:
     order, so the carry stays byte-reproducible;
   • `knobs` appears on exactly the figures a params-bearing manifest draws and
     equals gen_cad_params' resolved, merged values — a reference is already
-    the registry's number; the doorbell (no manifest) and the XIAO S3 (no
-    params) add nothing; the DevKit's three knobs land on its own figure, not
+    the registry's number; the doorbell (owned through the Vision manifest's
+    cad.also, but no manifest DRAWS device.canary-vision-doorbell) and the
+    XIAO S3 (no params) add nothing; the DevKit's three knobs land on its own figure, not
     the stacked-XIAO's, though both manifests name one case file;
   • `seams_mm` is the ledger's assembled.seams_fig_d verbatim, unrounded
     (decision 7: the AR models place seams in meters; the page rounds);
@@ -199,8 +200,14 @@ class LedgerShape(unittest.TestCase):
                                  "device.canary-nightlight"})
         with_knobs = {fid for fid, e in self.dims["figures"].items() if "knobs" in e}
         self.assertEqual(with_knobs, drawn)
-        # the doorbell has no manifest; every part figure has none either
+        # the doorbell's case is owned (devices/canary-vision cad.also) but no
+        # manifest names device.canary-vision-doorbell as its figure, and knobs
+        # ride on the figure a manifest draws — so none are carried for it (the
+        # website's doorbell model consumes none; a later carry can add them);
+        # every part figure has none either
         self.assertNotIn("knobs", self.dims["figures"]["device.canary-vision-doorbell"])
+        vision = json.loads((DEVICES / "canary-vision" / "device.json").read_text(encoding="utf-8"))
+        self.assertEqual(vision["cad"]["also"], ["docs/hardware/enclosure/canary_vision_doorbell.scad"])
         for fid, e in self.dims["figures"].items():
             if e["role"] == "part":
                 self.assertNotIn("knobs", e, fid)
@@ -229,14 +236,26 @@ class LedgerShape(unittest.TestCase):
         # shared case file reaches two figures by slug: the devkit's knobs are
         # the devkit figure's, the XIAO manifests' the Vision figure's)
         figure_of = {slug: m["figure"] for slug, m in manifests().items() if m.get("figure")}
-        seen = 0
+        seen, uncarried = 0, set()
         for scad_rel, keys in owned.items():
             for name, o in keys.items():
                 for slug in o.slugs:
-                    fig = figure_of[slug]
+                    fig = figure_of.get(slug)
+                    if fig is None:
+                        uncarried.add(slug)
+                        continue
                     self.assertEqual(figs[fig]["knobs"][name], o.value, f"{fig}.{name}")
                     seen += 1
         self.assertGreaterEqual(seen, 54)
+        # owned, not carried: the Nightstand C6 owns its ws147 trio but draws no
+        # figure (its board is unmapped, no STL is committed), so the ledger has
+        # no home for its knobs — and it is the only such manifest
+        self.assertEqual(uncarried, {"canary-display-nightstand-c6"})
+        self.assertFalse(any("c6" in fid for fid in figs))
+        # the Touch 1.69's split line reaches the ledger as two more knobs
+        t169 = figs["device.canary-display-touch169"]["knobs"]
+        self.assertEqual((t169["aa_dx"], t169["aa_dy"]), (0.0, 0.0))
+        self.assertEqual(list(t169), sorted(t169))
 
     def test_board_registry_rides_along_with_its_evidence(self):
         reg = self.dims["board_registry"]
@@ -276,8 +295,12 @@ class ScratchTree(unittest.TestCase):
                            encoding="utf-8")
             written, errors = gcp.write(root / "devices", root)
             self.assertEqual(errors, [])
-            self.assertEqual(sorted(c.name for _, c in written),
-                             ["board_l", "xiao_l", "xiao_l"])     # WAP, Sense, Vision
+            # WAP, Sense, and the Vision's TWO cases (the doorbell through cad.also)
+            self.assertEqual(sorted((p.name, c.name) for p, c in written),
+                             [("canary_sense_enclosure.scad", "xiao_l"),
+                              ("canary_vision_doorbell.scad", "xiao_l"),
+                              ("canary_vision_enclosure.scad", "xiao_l"),
+                              ("canary_wap_enclosure.scad", "board_l")])
             dims = distill(root)
             self.assertEqual(dims["board_registry"]["xiao"]["l"], 21.4)
             figs = dims["figures"]
