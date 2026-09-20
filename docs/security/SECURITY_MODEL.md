@@ -86,30 +86,68 @@ The device does not and cannot collect:
 
 ### No Phone-Home
 
-The device makes **zero outbound network connections**. It does not
-contact any server — not ERRERlabs, not any cloud service, not any
-analytics provider. It runs its own WiFi Access Point and acts as a
-server. It never speaks first.
+No Canary contacts ERRERlabs, a cloud service, an analytics provider or a
+crash reporter — the code to do so does not exist. A Canary WAP used as its
+own WiFi Access Point makes no outbound connection at all: it is a server,
+and it never speaks first. The products that join your home network open
+exactly the paths disclosed in the next section and nothing else: the MQTT
+broker you point them at (plain by default; CA-verified or SHA-256-pinned
+TLS once you provision it, refusing to connect rather than downgrading), a
+daily jittered check of a small signed update manifest on the products with
+pull-OTA, and on the display line SNTP and the opt-in standalone forecast.
+None of those carries an identifier, and each is pinned by a test so it
+cannot quietly grow one.
 
 This means:
-- No one can detect the device exists by monitoring network traffic
-- No server can be compelled to reveal device data
-- The device works identically with or without internet nearby
+- A WAP on its own access point is invisible to anyone watching your
+  network; a networked Canary is visible exactly as its disclosed paths
+  are, and no more
+- No ERRERlabs server exists to be compelled: the only servers a Canary
+  talks to are the broker and hub you run and the update host, which sees
+  an anonymous manifest fetch
+- Every product keeps witnessing without internet; only the disclosed
+  paths go quiet
 
-#### The display line's disclosed exceptions
+#### The networked products' disclosed outbound paths
 
-The Canary displays (Dash / Nightstand / Watch Station) join the home
-WiFi to render the fleet, and carry exactly four disclosed outbound
-paths — all anonymous queries, none carrying identifiers, and none
-required for the device to function:
+Every product that joins a home network — the displays (Dash / Nightstand /
+Watch Station) to render the fleet, the sense and vision Canaries and the
+`firmware/canary` flagship to publish, a WAP once you join it to your WiFi —
+carries only the outbound paths listed here. None carries an identifier and
+none is required for the device to witness. A new outbound path is a change
+to this list and to `THREAT_MODEL.md` Principle 2, with a host test pinning
+its request shape the way `tests_host/test_wx_core.cpp` pins the forecast.
 
-1. **Time (SNTP)** — always on when networked: UTC from two public time
+1. **The MQTT broker you chose** — sense, vision, the flagship and the
+   WAP's bridge publish to it; the displays subscribe. The socket is plain
+   by default and TLS once you provision it — verified against a CA you
+   supply on every product, pinned to the broker certificate's SHA-256
+   fingerprint on the display line (not the plain-only nightstand-c6),
+   sense, vision and the flagship; an incomplete setup refuses to connect
+   rather than falling back ([`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)).
+   Compile-tested by CI, decision host-tested, not bench-tested against a
+   TLS broker.
+2. **Signed update checks** — on every product with pull-OTA (the
+   flagship, WAP, vision, sense and the display line): a daily, jittered
+   HTTPS GET of a small signed JSON manifest from the release host
+   (`docs/firmware_ota.md`; the desktop Flasher can also ask the glass to
+   run one over the LAN). No identifiers ride on it, and nothing is
+   installed until the manifest verifies against the pinned Ed25519
+   release key and you press Install — or turn on the per-device Auto
+   Update switch, which is off by default. No setting turns the check on
+   or off from the network, and it carries no location. Disclosed on the
+   glass's own network page (`docs/hardware/display_settings.md`).
+
+The display line adds three of its own:
+
+3. **Time (SNTP)** — always on when networked: UTC from two public time
    sources (`pool.ntp.org`, `time.nist.gov`). This is what keeps a
-   bedside clock honest.
-2. **Timezone lookup** — compile-time opt-in only (`CD_TZ_WEB_LOOKUP` in
+   bedside clock honest. (A witness's clock comes from GPS; the displays
+   have none.)
+4. **Timezone lookup** — compile-time opt-in only (`CD_TZ_WEB_LOOKUP` in
    `secrets.h`); off in every shipped image. Without it the zone comes
    from configuration or the app.
-3. **Standalone weather** — the one *opt-in* path: runtime opt-in, off
+5. **Standalone weather** — the one *opt-in* path: runtime opt-in, off
    by default, and gated three ways (`firmware/.../net/wx_direct.h`): the
    owner must switch it on **on the glass itself**, a coarse location must
    be stored, and **no hub may ever have been configured**. A home with a
@@ -144,21 +182,24 @@ required for the device to function:
    point stored by an earlier build keeps working, *Forget Location* and a
    settings reset both clear it. Compile-tested by CI on the two 7" builds,
    wheel helpers host-tested, not yet bench-tested.
-4. **Signed update checks** — a daily, jittered HTTPS GET of a small
-   signed JSON manifest from the release host (`docs/firmware_ota.md`;
-   the desktop Flasher can also ask the glass to run one over the LAN).
-   No identifiers ride on it, and nothing is installed until the manifest
-   verifies against the pinned Ed25519 release key. No setting turns this
-   on or off from the network, and it carries no location. Disclosed on
-   the glass's own network page (`docs/hardware/display_settings.md`).
 
 ### No Tracking Identifiers
 
 - The WiFi network name ("Canary-XXXX") reveals no manufacturer identity,
   serial number, or information linking back to ERRERlabs or the owner
-- Bluetooth is disabled at compile time (the code to enable it does not
-  exist in standard firmware)
-- No service discovery broadcasts beyond the device's own WiFi network
+- BLE (NimBLE) is compiled into the shipped Canary WAP build
+  (`BUILD_PROFILE_FULL`) for owner pairing and provisioning, the GATT
+  status service, signed BLE firmware updates and the Scout scanner that
+  attributes rooms to the owner's own paired beacons by hashed MAC; the
+  MINIMAL profile compiles it out and DEV keeps only the pairing channel
+  and status service. The `firmware/canary` flagship's `release` and
+  `release_ha` images build it out; its `full` env turns the GATT status
+  service on. It advertises the device's own name, never a manufacturer identity, and
+  never classes or tracks other people's devices; Classic Bluetooth does
+  not exist on these chips
+- Service discovery (mDNS `_securacv._tcp`) is advertised only on the
+  network the device is on — its own access point, or the home network you
+  joined it to — never beyond it
 - MAC addresses from nearby devices are cryptographically hashed — the
   device counts nearby devices without knowing or storing who they are
 
@@ -194,14 +235,44 @@ and doesn't let an attacker do, under
 
 ## Who Can Access Your Data
 
-Only someone with **all three** of the following:
+Whoever can reach the device's network port. That boundary is the thing to
+understand, product by product, because there is no second factor behind
+it: no button press releases the dashboard, and the device cannot tell one
+host on its network from another.
 
-1. **Physical proximity** to the device (WiFi range, approximately 30 meters)
-2. **The device's WiFi password** (unique per device, set during provisioning)
-3. **The API access code** (if enabled — displayed only via physical button press)
+**On the device's own access point** — the Canary WAP, the `firmware/canary`
+flagship, the headless products' setup portals — the boundary is the AP
+password, unique per device. Anyone holding it is inside.
 
-All communication between your phone/computer and the device is
-encrypted with TLS (the same encryption used by banks and secure websites).
+**On your home network, the boundary is your network.** The flagship serves
+its dashboard and API as plain HTTP on port 80 on every interface, access
+point and home network alike, and the page itself carries the API token to
+whoever can load `GET /` or `/setup`. That token is a defense against
+drive-by *web pages* — a page from another origin cannot read it — not
+against a *host* on the same network, which can load the page and read the
+token in one request. The
+WAP's sensing dashboard has the same shape with a different mechanism: its
+landing page mints a one-tap pairing link for whoever loads it, and the tap
+becomes a 24-hour session cookie; the WAP's bearer token itself is handed
+out only in the provisioning receipt (its gate opens for thirty seconds
+after a short BOOT tap) or on the serial console. The displays treat the
+LAN as their trust boundary by design — no bearer credential at all, a
+per-boot CSRF token that keeps cross-site pages away from writes, and the
+on-glass-only settings above that no network caller can flip.
+
+**Encryption in transit is an opt-in, not the default.** The Canary WAP
+serves HTTPS on port 443 with a certificate minted on the device once setup
+has completed and the certificate loads; during first-boot setup, and when
+the HTTPS server fails to start, it serves plain HTTP and says so on the
+serial log. The flagship's dashboard, the displays' LAN page and the headless
+products' setup portals are plain HTTP on your own network. The hub's API has
+the same shape: plain on loopback by default, TLS through the kernel's
+`api-tls` build feature. The iPhone app pins the WAP certificate fingerprint
+carried in the pairing receipt and QR (`tls_cert_fp`), refuses an https
+Canary it cannot check, and offers a plain-http credential push only when
+nothing encrypted reaches the device and only behind a disclosure you switch
+on. Compile-tested by CI; whether a given unit is serving HTTPS is on its
+serial log and in its pairing receipt.
 
 **One link is yours to encrypt: the MQTT broker.** A Canary that publishes
 to a broker opens that socket in plain text by default, so the broker
@@ -211,7 +282,9 @@ SHA-256 fingerprint (which products support which is in
 [`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
 incomplete TLS setup refuses to connect rather than quietly downgrading, and
 the unverified "lab" mode exists only as a mode chosen by name that warns on
-every connect. This is compile-tested, not yet bench-tested.
+every connect. On the flagship, provisioning the broker password over
+`POST /api/mqtt/config` crosses the LAN in the clear like the rest of the
+device API. This is compile-tested, host-tested, not yet bench-tested.
 
 **One read on the hub is open on purpose: the fleet roll-call**
 (`GET /api/fleet`). It answers anyone who can reach the kernel's port with
@@ -232,10 +305,10 @@ liveness proof against someone who can publish on your MQTT broker
 | Who | Why Not |
 |-----|---------|
 | **ERRERlabs** (the manufacturer) | We have no remote access capability. No backdoor exists. |
-| **Law enforcement** (without the physical device) | The device makes no network connections. There is no server to subpoena. |
-| **Network observers** | The device creates no outbound traffic to intercept. |
+| **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
+| **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and, on the display line, SNTP. No path carries an identifier beyond what your own broker login already is. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | No internet connection, no exposed services, TLS on the device's own API; the MQTT broker link is TLS only once you provision it (plain by default). |
+| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -249,8 +322,8 @@ The device uses well-vetted, standard cryptographic primitives:
 | Device identity & record signing | Ed25519 | Arduino Crypto (Rhys Weatherley) |
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
-| Transport encryption | TLS 1.2+ (RSA-2048) | mbedTLS (ESP-IDF) |
-| Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification (all four); SHA-256 certificate pin (display / sense / vision only) | mbedTLS via WiFiClientSecure (display/sense/vision) and esp-tls (canary-wap) |
+| Transport encryption (opt-in: the WAP's HTTPS after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP) | mbedTLS (ESP-IDF); rustls (kernel) |
+| Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification on all five products; SHA-256 certificate pin and a named unverified lab mode on canary-display (not the plain-only nightstand-c6), canary-sense, canary-vision and the `firmware/canary` flagship; canary-wap is CA-only (esp_mqtt has no pin hook). Compile-tested, host-tested, not bench-tested | mbedTLS via WiFiClientSecure (display / sense / vision / flagship) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 
 No custom cryptographic implementations are used. All primitives come
@@ -308,13 +381,17 @@ We believe transparency about limitations is as important as describing
 capabilities. The following are known constraints:
 
 ### Hardware Trust Boundary
-The device is built on the Espressif ESP32-S3 microcontroller.
+The Canaries are built on Espressif ESP32-family microcontrollers (S3,
+C3, C6 and the classic ESP32 — `firmware/boards/boards.json`).
 Espressif is a Chinese semiconductor company. The WiFi firmware contains
 proprietary binary blobs from Espressif. A sufficiently resourced
 state-level adversary could theoretically compromise these blobs.
-The mitigation that always applies is architectural: the device makes
-**no outbound network connections**, so a compromised blob has nowhere
-to send anything. Secure boot and flash encryption are additional
+The mitigation that always applies is architectural: the firmware opens
+no undisclosed outbound path — the few it has are named above and pinned
+by tests — so a compromised blob would have to originate traffic of its
+own, on a network whose expected traffic is short and known, and a WAP on
+its own access point gives it no route out at all. Secure boot and flash
+encryption are additional
 mitigations, but they are **off unless you turn them on** — see
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
@@ -350,7 +427,7 @@ This is a deliberate default, not an oversight, and the trade is worth
 understanding because it is the one place where "keys never leave the
 device" needs an asterisk.
 
-The ESP32-S3 supports Secure Boot and flash encryption, which together
+ESP32-family chips support Secure Boot and flash encryption, which together
 make the flash contents unreadable and stop unsigned firmware running.
 They are also **irreversible**: they are burned into one-time fuses. A
 device with them enabled and a lost key is a brick, permanently, with no
