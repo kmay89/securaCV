@@ -697,6 +697,83 @@ def reads_broker(project: str) -> bool:
                 return True
     return False
 
+
+def project_source_text(project: str) -> str:
+    """Every C/C++/Arduino source under the project, concatenated — the
+    corpus the capability derivations grep (build products excluded)."""
+    project_dir = REPO / project
+    return "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in sorted(project_dir.rglob("*"))
+        if path.is_file()
+        and not {".pio", "build", "dist"}.intersection(path.relative_to(project_dir).parts)
+        and path.suffix.lower() in {".c", ".cc", ".cpp", ".h", ".hpp", ".ino"}
+    )
+
+
+def compiles_broker_tls_transport(project: str) -> bool:
+    """Whether the firmware's own sources pull in the shared broker TLS
+    transport (firmware/common/network/mqtt_transport.h — the
+    WiFiClientSecure half of the CA / fingerprint / lab decision). Source
+    evidence, like reads_broker(): the include line is the fact."""
+    return bool(re.search(r'^\s*#\s*include\s+"network/mqtt_transport\.h"',
+                          project_source_text(project), re.M))
+
+
+def macro_test_form(project: str, macro: str) -> str | None:
+    """How the firmware's own preprocessor tests `macro`: "defined" when
+    every test asks whether it is defined (#ifdef / #ifndef / defined(MACRO)),
+    "value" when any test reads its value (#if MACRO — where `=0` means the
+    opposite of `=1`), None when no source line tests it at all (a flag no
+    line reads changes nothing about the build)."""
+    name = re.escape(macro)
+    tests = [
+        line for line in project_source_text(project).splitlines()
+        if re.match(r"\s*#\s*(?:if|elif|ifdef|ifndef)\b", line) and re.search(rf"{name}(?![A-Za-z0-9_])", line)
+    ]
+    if not tests:
+        return None
+    for line in tests:
+        rest = re.sub(rf"defined\s*\(?\s*{name}(?![A-Za-z0-9_])\s*\)?|#\s*ifn?def\s+{name}(?![A-Za-z0-9_])", " ", line)
+        if re.search(rf"{name}(?![A-Za-z0-9_])", rest):
+            return "value"
+    return "defined"
+
+
+def honors_broker_tls(project: str, env: str) -> bool:
+    """Whether a provisioned `mqtt_tls` mode is HONORED by this build — the
+    catalog's `broker_tls`, which both flashers gate their TLS controls on.
+
+    True when the firmware reads its broker out of NVS (reads_broker), its
+    sources compile the shared TLS transport, and this env does not build it
+    out again with -DCANARY_MQTT_PLAIN_ONLY (the nightstand-c6: its OTA slot
+    could not fit the transport, so mqtt_mgr.cpp REFUSES a non-zero mode at
+    boot with the reason on its log — never a plain socket in its place).
+    Offering a TLS mode for that board would seed one that cannot connect,
+    so the flag is derived from the env's own build flags rather than kept
+    by hand: a flavor that gains or loses the flag moves the catalog on the
+    next generator run, and the drift gate names it.
+
+    env_defines answers DEFINED-ness (the firmware asks `#if defined(...)`,
+    so `=0` is plain-only too) and refuses a spelling it cannot parse. Were
+    the firmware ever to test the macro's VALUE instead, that answer would
+    be the wrong question, so this refuses then as well rather than guess.
+    """
+    if not reads_broker(project) or not compiles_broker_tls_transport(project):
+        return False
+    if not env_defines(project, env, "CANARY_MQTT_PLAIN_ONLY"):
+        return True
+    form = macro_test_form(project, "CANARY_MQTT_PLAIN_ONLY")
+    if form == "value":
+        raise SystemExit(
+            f"gen_flash.py: {project} tests CANARY_MQTT_PLAIN_ONLY by VALUE (#if MACRO) but env {env} "
+            f"defines it and this derivation only answers whether it is defined — teach env_defines the "
+            f"value semantics (and the mirror in tests/desktop_parity.test.js) before deriving broker_tls.")
+    # "defined": the source builds the transport out — a TLS mode is refused
+    # at boot. None: the env sets a flag no source line reads, so the
+    # transport is still compiled and honored.
+    return form is None
+
 # Post-flash "hatching" copy. This lives in the generated catalog instead of
 # desktop/web UI branches so every flasher surface can share the same first-use
 # promise, and CI's catalog drift gate catches missing metadata for new products.
@@ -1914,6 +1991,173 @@ def figure_block(p: dict, project: str, manifest: dict) -> dict | None:
     }
 
 
+def pio_sections(project: str) -> dict[str, str]:
+    """Every `[section]` body across the project's platformio.ini and the
+    inis it pulls in through extra_configs, name → body, so callers can
+    follow PlatformIO `extends =` inheritance (e.g. a -wellbeing env that
+    inherits its board from -default) and `${section.key}` interpolation."""
+    proj_dir = REPO / project
+    inis = [proj_dir / "platformio.ini"]
+    base_ini = read(inis[0])
+    # extra_configs / extends is a PlatformIO multiline list: the `key =` line
+    # is followed by indented continuation lines, one path each. Gather both
+    # the inline value and every indented line that follows.
+    lines = base_ini.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s*(?:extra_configs|extends)\s*=\s*(.*)$", line)
+        if not m:
+            continue
+        vals = [m.group(1).strip()]
+        for cont in lines[i + 1:]:
+            if cont.strip() and (cont[0] in " \t"):
+                vals.append(cont.strip())
+            elif not cont.strip():
+                continue
+            else:
+                break
+        for frag in vals:
+            frag = frag.strip()
+            if frag.endswith(".ini"):
+                inis.append((proj_dir / frag).resolve())
+
+    sections: dict[str, str] = {}
+    for ini in inis:
+        if not ini.exists():
+            continue
+        text = ini.read_text(encoding="utf-8")
+        for chunk in re.split(r"^\[", text, flags=re.M)[1:]:
+            name, _, body = chunk.partition("]")
+            sections.setdefault(name.strip(), body)
+    return sections
+
+
+def pio_value(body: str, key: str) -> str | None:
+    """One PlatformIO key's whole value out of a section body: the `key =`
+    line plus its continuation lines (configparser keeps a multi-line value
+    going across blank and comment lines; a line at column 0 that is not a
+    comment ends it), with `;` / `#` comment lines dropped. None when the
+    section does not set the key at all — distinct from an empty value,
+    because an unset key is what makes `extends` inheritance apply."""
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(rf"^\s*{re.escape(key)}\s*=\s*(.*)$", line)
+        if not m:
+            continue
+        vals = [m.group(1).strip()]
+        for cont in lines[i + 1:]:
+            stripped = cont.strip()
+            if not stripped or stripped.startswith((";", "#")):
+                continue
+            if cont[0] in " \t":
+                vals.append(stripped)
+            else:
+                break
+        return "\n".join(v for v in vals if v and not v.startswith((";", "#")))
+    return None
+
+
+def pio_build_flags(sections: dict[str, str], name: str, seen: set[str] | None = None) -> str:
+    """The build flags a section resolves to: its own `build_flags` with
+    every `${other.build_flags}` interpolation expanded, or — when it sets
+    none — the flags of the section it `extends`. Cycle-safe."""
+    seen = set() if seen is None else seen
+    if name in seen or name not in sections:
+        return ""
+    seen.add(name)
+    body = sections[name]
+    flags = pio_value(body, "build_flags")
+    if flags is None:
+        m = re.search(r"^\s*extends\s*=\s*(\S+)", body, re.M)
+        return pio_build_flags(sections, m.group(1).strip(), seen) if m else ""
+    parts = [flags]
+    for ref in re.findall(r"\$\{([A-Za-z0-9_.:-]+)\.build_flags\}", flags):
+        parts.append(pio_build_flags(sections, ref, seen))
+    return "\n".join(parts)
+
+
+def pio_items(body: str) -> list[tuple[str, str]]:
+    """Every `key = value` of a section body — the value with its indented
+    continuation lines joined, comment lines dropped — i.e. the section's
+    whole non-comment text, keyed. A reader that must refuse what it does
+    not parse walks THIS, not only the one key it evaluates. A non-indented
+    line that is not a `key =` line is kept under an empty key."""
+    items: list[list[str]] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith((";", "#")):
+            continue
+        m = re.match(r"^([A-Za-z0-9_.:-]+)\s*=\s*(.*)$", line) if line[0] not in " \t" else None
+        if m:
+            items.append([m.group(1), m.group(2).strip()])
+        elif items and line[0] in " \t":
+            items[-1][1] = (items[-1][1] + "\n" + stripped).strip()
+        else:
+            items.append(["", stripped])
+    return [(k, v) for k, v in items]
+
+
+def pio_section_chain(sections: dict[str, str], name: str) -> set[str]:
+    """Every section `name` resolves through: itself, what it `extends`
+    (recursively) and every `${other.key}` it interpolates — the input set
+    of any answer about `name`. Cycle-safe; a name no ini defines stays in
+    the set with an empty body."""
+    chain: set[str] = set()
+    todo = [name]
+    while todo:
+        cur = todo.pop()
+        if cur in chain:
+            continue
+        chain.add(cur)
+        body = sections.get(cur, "")
+        todo.extend(s for s in re.split(r"[,\s]+", pio_value(body, "extends") or "") if s)
+        todo.extend(re.findall(r"\$\{([A-Za-z0-9_.:-]+)\.[A-Za-z0-9_]+\}", body))
+    return chain
+
+
+def env_defines(project: str, env: str, macro: str) -> bool:
+    """Whether a build env DEFINES `macro`: one bare, unquoted `-DMACRO` or
+    `-DMACRO=<digits>` token in its resolved build_flags. The answer is
+    defined-ness — the question `#if defined(MACRO)` asks — so `=0` defines
+    it like `=1` does. Arduino profile / FQBN envs carry no build_flags of
+    their own (their sketch.yaml sets none), so they define nothing here.
+
+    REFUSES instead of answering when the macro is named, in any non-comment
+    line of any section this env resolves through (or of the base [env],
+    which PlatformIO applies to every env), in a spelling or under a key
+    this reader does not evaluate: quoted (`'-DMACRO=1'`, as the same env
+    already spells its string defines), split (`-D MACRO`), a non-numeric
+    value, `build_unflags`, `build_src_flags`, a bare line. A strict match
+    that silently misses one of those is a plain-only build the catalog
+    calls TLS-capable with every gate green — the exact board the flag
+    exists for — and a generator that cannot spell a value must refuse, not
+    pass (CLAUDE.md).
+    """
+    if env.startswith(("profile:", "arduino:")):
+        return False
+    sections = pio_sections(project)
+    own = f"env:{env}"
+    name = re.escape(macro)
+    strict = re.compile(rf"(?:^|\s)-D{name}(?:=\d+)?(?=\s|$)")
+    # Any token that ENDS in the macro name: `-DMACRO`, `'-DMACRO=1'`,
+    # `-D MACRO`, a bare mention (no leading \b — the D of -D sits flush
+    # against the name, so a word boundary there would miss every spelling
+    # this exists to catch, the accepted one included). MACRO_GUARD is not it.
+    named = re.compile(rf"{name}(?![A-Za-z0-9_])")
+    for sec in sorted(pio_section_chain(sections, own) | pio_section_chain(sections, "env")):
+        for key, value in pio_items(sections.get(sec, "")):
+            if not named.search(value):
+                continue
+            leftover = strict.sub(" ", value) if key == "build_flags" else value
+            if named.search(leftover):
+                raise SystemExit(
+                    f"gen_flash.py: [{sec}] {key or '(bare line)'} names {macro} in a spelling or under a key "
+                    f"this derivation does not parse, so {project} env {env}'s broker_tls cannot be derived. "
+                    f"Accepted: one unquoted -D{macro} or -D{macro}=<digits> token in build_flags. Refused "
+                    f"rather than guessed: the miss would be a plain-only build the catalog calls TLS-capable.")
+    flags = pio_build_flags(sections, own) or pio_build_flags(sections, "env")  # base [env]: the canary pattern
+    return bool(strict.search(flags))
+
+
 def board_for_env(project: str, env: str) -> str:
     """Re-derive a build env's PlatformIO board from the firmware tree.
 
@@ -1960,41 +2204,7 @@ def board_for_env(project: str, env: str) -> str:
     # PlatformIO envs: scan the project's platformio.ini plus any files it
     # pulls in through extra_configs for the [env:<env>] board, or fall back
     # to the base [env] board (the canary project sets board once there).
-    proj_dir = REPO / project
-    inis = [proj_dir / "platformio.ini"]
-    base_ini = read(inis[0])
-    # extra_configs / extends is a PlatformIO multiline list: the `key =` line
-    # is followed by indented continuation lines, one path each. Gather both
-    # the inline value and every indented line that follows.
-    lines = base_ini.splitlines()
-    for i, line in enumerate(lines):
-        m = re.match(r"^\s*(?:extra_configs|extends)\s*=\s*(.*)$", line)
-        if not m:
-            continue
-        vals = [m.group(1).strip()]
-        for cont in lines[i + 1:]:
-            if cont.strip() and (cont[0] in " \t"):
-                vals.append(cont.strip())
-            elif not cont.strip():
-                continue
-            else:
-                break
-        for frag in vals:
-            frag = frag.strip()
-            if frag.endswith(".ini"):
-                inis.append((proj_dir / frag).resolve())
-
-    # Parse every [section] across the project's inis into a name→body map,
-    # so we can follow PlatformIO `extends =` inheritance (e.g. a -wellbeing
-    # env that inherits its board from -default).
-    sections: dict[str, str] = {}
-    for ini in inis:
-        if not ini.exists():
-            continue
-        text = ini.read_text(encoding="utf-8")
-        for chunk in re.split(r"^\[", text, flags=re.M)[1:]:
-            name, _, body = chunk.partition("]")
-            sections.setdefault(name.strip(), body)
+    sections = pio_sections(project)
 
     def board_of(body: str) -> str | None:
         mm = re.search(r"^\s*board\s*=\s*(\S+)", body, re.M)
@@ -2030,14 +2240,7 @@ def supports_serial_receipt(project: str) -> bool:
     the command in firmware changes flash.json on the next generator run, and
     the existing catalog drift check makes that change visible in CI.
     """
-    project_dir = REPO / project
-    source = "\n".join(
-        path.read_text(encoding="utf-8", errors="replace")
-        for path in sorted(project_dir.rglob("*"))
-        if path.is_file()
-        and not {".pio", "build", "dist"}.intersection(path.relative_to(project_dir).parts)
-        and path.suffix.lower() in {".c", ".cc", ".cpp", ".h", ".hpp", ".ino"}
-    )
+    source = project_source_text(project)
     has_builder = 'attest/self_manifest.h' in source and "emit_self_manifest" in source
     has_command = bool(re.search(
         r"case\s+'j'|\{\s*'j'\s*,\s*\"self_manifest\"",
@@ -2119,6 +2322,11 @@ def main() -> None:
             "provisioning_note": PROVISIONING[p["provisioning"]],
             "wifi_nvs": wifi_scheme(project),
             "broker_nvs": reads_broker(project),
+            # Whether a provisioned TLS mode is honored (the shared transport
+            # is compiled in and the env does not build it out): both
+            # flashers offer the CA / fingerprint / lab modes only where this
+            # is true, and say why where it is not (nightstand-c6).
+            "broker_tls": honors_broker_tls(project, p["env"]),
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(project),
             "role": role,

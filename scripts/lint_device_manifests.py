@@ -58,14 +58,17 @@ What is PROVED (each a hard error, exit 1):
                that flavor; every dist display flavor is claimed exactly once.
   build_matrix every product has a manifest (by id, else by flavor + env);
                its board, mcu and env(s) agree with that manifest.
-  cad          scad exists; enclosure sets exist in enclosures.json; scad is
-               the source of at least one listed set.
+  cad          scad and every cad.also file exist; enclosure sets exist in
+               enclosures.json; scad, and each also-file, is the source of
+               at least one listed set (cad.also: the further case files
+               one manifest's cad.params own — the Vision's doorbell form).
   cad.params   every owned knob is a literal Customizer knob of that scad
                (never a selector, a computed value or a two-knob line),
                manifests sharing one case agree on every shared key, and the
-               .scad's literal equals the manifest — gen_cad_params.check(),
-               the same code its own --check runs. The generator WRITES the
-               literal, so a mismatch means "run it", not "retype it".
+               .scad's literal equals the manifest — in cad.scad and in every
+               cad.also file — gen_cad_params.check(), the same code its own
+               --check runs. The generator WRITES the literal, so a mismatch
+               means "run it", not "retype it".
   site         shape only — those paths live in the website repository.
 
 Output: one table row per device (slug · mcu · envs · emulator · confidence ·
@@ -452,21 +455,24 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
                 err(f"{slug}: build.sh compiles boards/{emu_board}/pins for flavor '{fl_name}', "
                     f"manifest board_id is {board_id}")
 
-        # cad: real files, real sets, and the scad is one of theirs
+        # cad: real files, real sets, and every case file — cad.scad and each
+        # cad.also entry — is the source of one of the listed sets
         cad = m.get("cad")
         if cad:
-            scad = repo / cad["scad"]
-            if not scad.exists():
-                err(f"{slug}: cad.scad {cad['scad']} does not exist")
             sets = cad.get("enclosure_sets", [])
             for s in sets:
                 if s not in set_by_id:
                     err(f"{slug}: enclosure set '{s}' is not in "
                         f"canary-local/devices/enclosures.json")
             known = [s for s in sets if s in set_by_id]
-            if known and not any(set_by_id[s].get("scad") == scad.name for s in known):
-                err(f"{slug}: cad.scad {scad.name} is not the source of any listed enclosure set "
-                    f"({', '.join(set_by_id[s].get('scad', '?') for s in known)})")
+            for key, rel_path in [("cad.scad", cad["scad"]),
+                                  *(("cad.also", a) for a in cad.get("also", []))]:
+                scad = repo / rel_path
+                if not scad.exists():
+                    err(f"{slug}: {key} {rel_path} does not exist")
+                if known and not any(set_by_id[s].get("scad") == scad.name for s in known):
+                    err(f"{slug}: {key} {scad.name} is not the source of any listed enclosure "
+                        f"set ({', '.join(set_by_id[s].get('scad', '?') for s in known)})")
 
         rows.append({"slug": slug, "mcu": board["mcu"], "envs": len(board["envs"]),
                      "emulator": emu_col, "confidence": confidence, "flasher": flasher_col})

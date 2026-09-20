@@ -126,12 +126,24 @@ required for the device to function:
    a 0.1° grid point (~11 km); the exact request shape is pinned by a host
    test (`tests_host/test_wx_core.cpp`) so it cannot quietly grow an
    identifier. The device never serves or republishes the stored grid
-   point. Honest status: closing the network path also closed the only
-   way a location was ever stored (the phone app posted `wx_loc`), and
-   this firmware has no on-glass location entry yet — so on a fresh
-   device the second gate stays unsatisfied and the fetcher stays idle
-   until one lands. A grid point stored by an earlier build keeps working;
-   a settings reset clears it. Compile-tested, not yet bench-tested.
+   point. The location is entered **on the glass itself**: the two 7"
+   flavors that carry the standalone forecast (`dash7`, `nightstand7`)
+   have a Location page under settings → weather — hemisphere, degrees
+   and tenths wheels per axis, committed by one explicit *Use This
+   Location* — whose helpers can only produce a point on the 0.1° grid
+   inside the range the loader accepts (host-tested,
+   `tests_host/test_display_settings.cpp`). There is no place-name lookup:
+   entering a location makes no network request at all. **The stored cell
+   is displayed on the glass** — on the Weather page's Location row and as
+   the page's live caption — and that is a deliberate in-room disclosure:
+   anyone who can stand at the glass and open its settings can read the
+   ~11 km cell, exactly as they could read the forecast it produces. The
+   disclosure stops at the glass: the LAN page and `GET /api/settings`
+   still never carry the grid point, only whether one is stored. Closing
+   the network path closed the phone app's `wx_loc` post for good; a grid
+   point stored by an earlier build keeps working, *Forget Location* and a
+   settings reset both clear it. Compile-tested by CI on the two 7" builds,
+   wheel helpers host-tested, not yet bench-tested.
 4. **Signed update checks** — a daily, jittered HTTPS GET of a small
    signed JSON manifest from the release host (`docs/firmware_ota.md`;
    the desktop Flasher can also ask the glass to run one over the LAN).

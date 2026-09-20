@@ -6,13 +6,26 @@ set -euo pipefail
 # - frigate: Subscribe to Frigate MQTT events for detection
 #
 # Both modes can optionally publish events to MQTT with HA Discovery for
-# automatic entity creation in Home Assistant.
+# automatic entity creation in Home Assistant. The same publisher keeps the
+# fleet roll-call the kernel's GET /api/fleet serves (see FLEET_PEERS_FILE).
 
 
 CONFIG_FILE="/config/witness_config.json"
 DB_PATH="/config/witness.db"
 VAULT_PATH="/share/witness_vault"
 TOKEN_FILE="/config/api_token"
+# The fleet roll-call summary: event_mqtt_bridge writes it and the kernel's
+# GET /api/fleet reads it (schema securacv/fleet_peers/v1), which is how an
+# add-on install lists its Canaries for the Witness Wall. It lives in
+# /config beside the database and the token because that directory exists
+# before the first process starts (the bridge's atomic write never creates
+# a parent directory), it is rw-mapped, and HA backups capture it — on
+# purpose: the file holds the public key pinned on first sight for every
+# Canary this install has heard, so a restore keeps that trust instead of
+# re-pinning every device. It also carries per-room wellbeing words, which
+# is why the bridge writes it 0600. Both kernel config blocks below and the
+# bridge's argv read this one variable, so they can never name two files.
+FLEET_PEERS_FILE="/config/fleet_peers.json"
 DEVICE_KEY_FILE="/config/.securacv/device_key"
 INGRESS_PORT="${INGRESS_PORT:-8788}"
 
@@ -90,6 +103,15 @@ if [ -z "$MQTT_PUBLISH_ENABLED" ] || [ "$MQTT_PUBLISH_ENABLED" = "null" ]; then
     fi
 fi
 
+# The kernel is pointed at the roll-call file only while a bridge keeps it.
+# With publishing off, both api blocks omit fleet_peers_path, so GET
+# /api/fleet lists this kernel alone; rows a past bridge pinned are neither
+# served nor deleted (their first-sight keys wait for publishing to return).
+FLEET_PEERS_API=""
+if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
+    FLEET_PEERS_API=", \"fleet_peers_path\": \"$FLEET_PEERS_FILE\""
+fi
+
 # ============================================================================
 # Supervisor MQTT service discovery (requires `services: mqtt:want` in
 # config.yaml). Explicit option values always win; discovery fills the gaps
@@ -126,6 +148,11 @@ bashio::log.info "Mode: $MODE"
 bashio::log.info "Database: $DB_PATH"
 bashio::log.info "Retention: $RETENTION_DAYS days"
 bashio::log.info "Time bucket: $TIME_BUCKET_MIN minutes"
+if [ "$MQTT_PUBLISH_ENABLED" = "true" ]; then
+    bashio::log.info "Fleet peers: $FLEET_PEERS_FILE (the MQTT publisher writes it; GET /api/fleet lists the Canaries it hears)"
+else
+    bashio::log.info "Fleet peers: MQTT publishing is disabled, so no bridge listens for Canaries; GET /api/fleet lists this kernel only (a roll-call file from an earlier run is kept for its pins, not served)."
+fi
 
 # ============================================================================
 # Event API exposure. The API binds all interfaces inside the container so
@@ -195,7 +222,7 @@ write_frigate_api_config() {
   "ruleset_id": "ruleset:frigate_v1",
   "api": {
     "addr": "$API_BIND_ADDR",
-    "token_path": "$TOKEN_FILE"
+    "token_path": "$TOKEN_FILE"$FLEET_PEERS_API
   },
   "retention": {
     "seconds": $RETENTION_SECS
@@ -278,7 +305,11 @@ start_mqtt_publisher() {
         VERIFY_INTERVAL_HOURS=$(bashio::config 'verify_interval_hours')
     fi
 
-    # Build command using array for safe argument handling
+    # Build command using array for safe argument handling. The fleet-peers
+    # element is the roll-call: with it the bridge subscribes to each
+    # Canary's availability/status/health/chain/state/meta topics (never
+    # events or sensing) and keeps the summary the kernel's GET /api/fleet
+    # reads. Both kernel config blocks name the same file — one variable.
     local MQTT_CMD_ARRAY
     MQTT_CMD_ARRAY=(
         "/usr/local/bin/event_mqtt_bridge"
@@ -289,6 +320,7 @@ start_mqtt_publisher() {
         --ha-discovery-prefix "$DISCOVERY_PREFIX"
         --ha-device-id "$DEVICE_ID"
         --api-token-path "$TOKEN_FILE"
+        --fleet-peers-path "$FLEET_PEERS_FILE"
         --poll-interval 30
         --verify-interval-secs "$((VERIFY_INTERVAL_HOURS * 3600))"
     )
@@ -312,6 +344,7 @@ start_mqtt_publisher() {
     bashio::log.info "  Topic prefix: $PUBLISH_PREFIX"
     bashio::log.info "  Discovery prefix: $DISCOVERY_PREFIX"
     bashio::log.info "  Device ID: $DEVICE_ID"
+    bashio::log.info "  Fleet peers file: $FLEET_PEERS_FILE"
 
     # Start in background
     env "${PUB_ENV[@]}" "${MQTT_CMD_ARRAY[@]}" &
@@ -526,7 +559,7 @@ else
   "ruleset_id": "ruleset:homeassistant_v1",
   "api": {
     "addr": "$API_BIND_ADDR",
-    "token_path": "$TOKEN_FILE"
+    "token_path": "$TOKEN_FILE"$FLEET_PEERS_API
   },
   "rtsp": {
     "url": "$CAMERA_URL",

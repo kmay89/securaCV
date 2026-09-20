@@ -16,6 +16,12 @@
       "enable": "sh provision.sh --with display   (or host_provision.sh --with display)",
       "recommended": false,
       "off_by_default_because": "Most hubs are headless \u2014 a closet box needs no browser running on it, and the add-on can't start without a screen anyway. Choosing it is what says 'this hub has eyes on it.' The plan without it is complete."
+    },
+    "broker_tls": {
+      "what": "An encrypted MQTT listener on the broker (TLS, port 8883) for the Canaries on your LAN, configured from a certificate and key you place in Home Assistant's ssl folder (/ssl to the add-on). The plan mints no certificate and picks no trust anchor: it checks the two files are there \u2014 refusing by name if not \u2014 points the Mosquitto add-on at them and restarts it. The plain 1883 listener stays for the hub's own internal traffic.",
+      "enable": "sh provision.sh --with broker_tls   (or host_provision.sh --with broker_tls)",
+      "recommended": false,
+      "off_by_default_because": "A plain broker link on a LAN you own is what the rest of the setup assumes, and TLS needs a certificate only you can supply \u2014 the step refuses until it is there, so on by default would be a run that fails by default. The plan without it is complete."
     }
   },
   "repositories": [
@@ -195,6 +201,29 @@
       "start": false,
       "user_must_finish": "One thing only you can do: give the screen its own login. Make a dedicated user for it first \u2014 Settings \u2192 People \u2192 Users \u2192 Add User, name it something like `screen`, leave Administrator off \u2014 because the add-on keeps that username and password in its configuration, and a screen only needs to view dashboards, never to administer your home. Then open Settings \u2192 Apps \u2192 HAOS Kiosk Display \u2192 Configuration, enter that login, and press Start: the screen lights up with your dashboard. (Same reasoning as the broker's `canary` account \u2014 a screen is not a person, so it doesn't sign in as one.) No screen attached? The add-on simply won't start \u2014 nothing else on the hub cares. The same Configuration tab also has zoom, rotation and screen-timeout settings for your particular panel.",
       "reversible": true
+    },
+    {
+      "id": "broker-tls",
+      "title": "Encrypt the broker's LAN door (optional: TLS on port 8883)",
+      "what": "Check that your certificate and key are in `/ssl`, point the `core_mosquitto` add-on's `certfile` / `keyfile` at them, and restart it so its TLS listener on port 8883 opens.",
+      "why": "Home Assistant, Frigate and the witness kernel all reach the broker over the hub's internal container network, which never leaves the box \u2014 so the plain 1883 listener is fine for them, and it stays. A Canary is different: it is an ordinary client on your LAN, and on a plain link its broker login and every event it publishes cross your house readable by anything else on the network. The Mosquitto add-on can also listen with TLS on port 8883, and all it needs is two files in Home Assistant's ssl folder: the broker's certificate (with its chain) and its private key. That is what this step arranges \u2014 nothing more. The plan mints no certificate and chooses no trust anchor: a certificate says who your hub is, and the authority a Canary trusts says whom it believes; both are yours to decide, not ours to decide on your hub. So the step refuses, naming the file, until they are there. Then it writes the two file names into the add-on's options (they are also its defaults, so on an untouched hub that is already set) and restarts it, because the add-on looks for the files when it starts and opens the encrypted port only if it finds both. It runs last so a missing certificate never stops the rest of the plan, and every run that asks for it restarts the broker once \u2014 which is also how a renewed certificate is picked up. It cannot see the listener come up: if the port stays closed, the add-on's own log says why.",
+      "for_what": "A TLS listener on port 8883 for the Canaries on your LAN \u2014 the broker login and the events stop crossing your house in the clear.",
+      "feature": "broker_tls",
+      "addon": "core_mosquitto",
+      "supervisor_slug": "core_mosquitto",
+      "install": false,
+      "requires_files": [
+        "/ssl/fullchain.pem",
+        "/ssl/privkey.pem"
+      ],
+      "requires_files_note": "the broker's certificate chain and private key, placed in Home Assistant's ssl folder under those two names (the Let's Encrypt add-on writes exactly them; a certificate from your own CA is copied in under them). This plan never mints one.",
+      "options": {
+        "certfile": "fullchain.pem",
+        "keyfile": "privkey.pem"
+      },
+      "restart": true,
+      "user_must_finish": "Before this step: put the broker's certificate chain and private key in Home Assistant's ssl folder under the two names the step checks for (the Let's Encrypt add-on writes exactly those; a certificate from your own CA is copied in under them). After it: provision each Canary with port 8883 and the CA that signed the broker certificate \u2014 the *Broker encryption* select in either flasher (CA mode), or the /mqtt page on canary-wap \u2014 and point it at the broker by the exact name on that certificate, because a Canary checks the name as well as the signer (a Let's Encrypt certificate names your DuckDNS host, not `homeassistant.local`). A Canary never falls back to plain on its own. If port 8883 stays closed, open Settings \u2192 Apps \u2192 Mosquitto broker \u2192 Log: it says 'Certificates found: SSL is available' or 'SSL is not enabled', and Mosquitto's own complaint about an unreadable or mismatched key appears there too. This step cannot read that log for you.",
+      "reversible": true
     }
   ],
   "user_supplied": [
@@ -202,6 +231,12 @@
       "id": "camera",
       "what": "Your camera's RTSP URL, and `enabled: true` on that camera.",
       "why": "Camera addresses and credentials are yours; we can't guess them, and we won't scan your network to find out. This is the one step that is genuinely manual."
+    },
+    {
+      "id": "broker-certificate",
+      "feature": "broker_tls",
+      "what": "With `--with broker_tls` only: the broker's certificate chain and private key, in Home Assistant's ssl folder under the names the `broker-tls` step checks for.",
+      "why": "A certificate says who your hub is, and the authority your Canaries trust says whom they believe. Neither is ours to decide on your hub, so the plan never mints one \u2014 it checks the files are there and refuses, by name, if not."
     }
   ],
   "meta": {

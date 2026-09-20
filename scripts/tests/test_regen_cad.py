@@ -26,7 +26,9 @@ are replaced for every test, and a recorder keeps what WOULD have run):
     continues when they did not;
   • the render log is judged by enclosure.yml's grep, verbatim;
   • the preview plan covers every value of a case's `part` enum with the
-    selector sets render.sh uses, both views, through the README's command;
+    selector sets render.sh uses (the WAP's presets, the Vision's host x
+    preset, the doorbell's wedge, the C6's two header builds), both views,
+    through the README's command;
     under --from (step 1 skipped) the previews render FIRST, from the same
     git status, and the run says so — never silently not at all.
 
@@ -487,6 +489,38 @@ class PreviewsCoverEveryPartWithRenderShsSelectors(unittest.TestCase):
         self.assertEqual(len(doorbell), 12)
         self.assertEqual({(j.label, j.defines.get("plate_wedge")) for j in doorbell if j.part == "plate"},
                          {("", None), ("wedge15", 15)})
+
+    def test_c6_plan_is_render_shs_two_header_builds_and_the_touch169_needs_none(self):
+        # render.sh cuts the C6 twice — dev_c6_147_* (headers="none", the
+        # stripped board) and dev_c6_147_hdr_* (headers="male", as shipped) —
+        # so every part owes BOTH builds: with the defaults alone, half the
+        # affected parts would have no preview and the rule would be broken
+        # silently (12 PNGs, not 6)
+        self.assertEqual(rc.part_enum(rc.ENC / "canary_c6_display.scad"), ["bezel", "back", "all"])
+        jobs = rc.preview_plan("canary_c6_display.scad")
+        self.assertEqual(len(jobs), 12)
+        by_part = {}
+        for j in jobs:
+            by_part.setdefault(j.part, set()).add((j.label, j.defines.get("headers"), j.view))
+        for part in ("bezel", "back", "all"):
+            self.assertEqual(by_part[part],
+                             {("headers_none", "none", "top"), ("headers_none", "none", "under"),
+                              ("headers_male", "male", "top"), ("headers_male", "male", "under")},
+                             part)
+        # render.sh passes model="1.47" on every C6 line; so does the plan
+        self.assertTrue(all(j.defines.get("model") == "1.47" for j in jobs))
+        self.assertEqual(len({j.out for j in jobs}), 12)
+        self.assertIn("preview_canary_c6_display_headers_male_back_under.png", {j.out for j in jobs})
+        male = [j for j in jobs if j.label == "headers_male" and j.part == "bezel"][0]
+        argv = rc.preview_argv(male, Path("/tmp/previews"), xvfb=False)
+        self.assertIn('headers="male"', argv)
+        self.assertIn('model="1.47"', argv)
+        self.assertIn('part="bezel"', argv)
+        # the Touch 1.69 has no selector sets: bezel / back / stand / all x two views
+        t169 = rc.preview_plan("canary_s3_touch169.scad")
+        self.assertEqual(len(t169), 8)
+        self.assertTrue(all(j.defines == {} for j in t169))
+        self.assertEqual({j.part for j in t169}, {"bezel", "back", "stand", "all"})
 
     def test_argv_is_the_readmes_recipe(self):
         job = rc.preview_plan("canary_wap_enclosure.scad")[0]

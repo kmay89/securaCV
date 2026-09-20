@@ -266,6 +266,29 @@
                 <label class="broker-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883"></label>
                 <label class="broker-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
                 <label class="broker-only">MQTT password<span class="pw-row"><input id="mqtt-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="mqtt-pass" aria-label="Show the password">Show</button></span></label>
+                <!-- Broker TLS: the mode byte plus the CA / SHA-256 pin the
+                     firmware's shared decision reads (mqtt_transport_logic.h),
+                     sealed as mqtt_tls / mqtt_ca / mqtt_fp by provisioning.rs.
+                     Plain stays the default; the CA box shows for the CA mode
+                     only and the pin for the fingerprint mode only
+                     (tlsRowsRefresh), and the lab option says what it is and
+                     is never preselected. Same options, same copy, in the
+                     browser flasher (renderWifiFields) — pinned equal by
+                     canary-local/tests/desktop_parity.test.js. -->
+                <label class="broker-only">Broker encryption<select id="mqtt-tls">
+                  <option value="0" selected>Plain MQTT (default — what every Canary shipped with)</option>
+                  <option value="1">TLS, CA-verified — paste the broker's CA below</option>
+                  <option value="2">TLS, SHA-256 fingerprint pin</option>
+                  <option value="3">TLS, lab only: encrypted but NOT verified — warns on every connect</option>
+                </select></label>
+                <p class="muted broker-only span-2" id="mqtt-tls-note"></p>
+                <label class="span-2 hidden" id="mqtt-ca-row">Broker CA certificate (PEM)<textarea id="mqtt-ca" rows="5" maxlength="3070" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- (PEM: the CA that signed the broker's certificate)"></textarea></label>
+                <label class="hidden" id="mqtt-fp-row">Broker certificate SHA-256 fingerprint<input id="mqtt-fp" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="AA:BB:CC:… (paste just the 64 hex after “Fingerprint=” from: openssl x509 -in broker.crt -noout -fingerprint -sha256)" pattern="[: ]*(?:[0-9a-fA-F]{2}[: ]*){32}" title="SHA-256 fingerprint: 64 hex digits, ':' or spaces between pairs optional"></label>
+                <!-- A TLS mode with the port still at the plain default earns a
+                     SUGGESTION of 8883 — a button, never a rewrite: the port is
+                     the owner's, and "the broker did not speak TLS on this
+                     port" is the failure the firmware names when it is wrong. -->
+                <p class="muted span-2 prov-nudge hidden" id="mqtt-port-nudge"><span>TLS brokers usually listen on 8883 and this port is still 1883 — a plain listener on a TLS mode fails as “the broker did not speak TLS on this port”. The port stays yours:</span><button type="button" id="mqtt-port-8883" class="btn btn-ghost btn-small">Use 8883</button></p>
               </div>
               <!-- The setup profile: type it once, every later flash fills
                    itself in. Passwords go to the OS secret store when there is

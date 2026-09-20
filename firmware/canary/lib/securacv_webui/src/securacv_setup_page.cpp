@@ -57,8 +57,10 @@ h1{margin:0 0 6px;font-size:21px;font-weight:650;letter-spacing:-.02em}
 .scanning{color:var(--muted);font-size:14px;padding:12px 0}
 .linkish{background:none;border:none;color:var(--accent);font:inherit;font-size:14px;padding:8px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
-input.txt{width:100%;padding:13px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--fg);font-size:16px}
-input.txt:focus{outline:none;border-color:var(--accent)}
+input.txt,select.txt,textarea.txt{width:100%;padding:13px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--fg);font:inherit;font-size:16px}
+input.txt:focus,select.txt:focus,textarea.txt:focus{outline:none;border-color:var(--accent)}
+textarea.txt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:120px;resize:vertical}
+.hint .linkish{padding:0 0 0 4px}
 .pw-wrap{position:relative}
 .pw-masked{-webkit-text-security:disc;text-security:disc}
 .pw-show{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);font-size:13px;padding:8px;cursor:pointer}
@@ -137,6 +139,26 @@ input.txt:focus{outline:none;border-color:var(--accent)}
 <input class="txt pw-masked" id="mpass" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Optional">
 <button class="pw-show" id="showmpw" type="button">Show</button>
 </div>
+<label for="mtls">Encryption</label>
+<select class="txt" id="mtls">
+<option value="0" selected>Plain MQTT (default — what every Canary shipped with)</option>
+<option value="1">TLS, CA-verified — paste the broker's CA below</option>
+<option value="2">TLS, SHA-256 fingerprint pin</option>
+<option value="3">TLS, lab only: encrypted but NOT verified — warns on every connect</option>
+</select>
+<p class="hint">A TLS mode encrypts the hub link so the username and password above never cross your Wi-Fi in the clear; TLS brokers usually listen on 8883. The Canary never falls back to plain or unverified by itself — an incomplete setup refuses to connect and names the reason on its serial log and its status page.</p>
+<p class="hint" id="mportnudge" style="display:none">TLS brokers usually listen on 8883 and this port is still 1883 — a plain listener on a TLS mode fails as “the broker did not speak TLS on this port”. The port stays yours:<button class="linkish" id="use8883" type="button">Use 8883</button></p>
+<div id="mcabox" style="display:none">
+<label for="mca">Broker CA certificate (PEM)</label>
+<textarea class="txt" id="mca" rows="5" spellcheck="false" autocapitalize="none" autocorrect="off" placeholder="-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- (PEM: the CA that signed the broker's certificate)"></textarea>
+<p class="hint">Sent to the Canary on its own, first. It stays on the device and is never shown back.</p>
+<p class="hint" id="mcakept" style="display:none">This Canary already holds a CA. Leave the box empty to keep it, or paste a new one to replace it.</p>
+</div>
+<div id="mfpbox" style="display:none">
+<label for="mfp">Broker certificate SHA-256 fingerprint</label>
+<input class="txt" id="mfp" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="AA:BB:CC:… (paste just the 64 hex after “Fingerprint=” from: openssl x509 -in broker.crt -noout -fingerprint -sha256)">
+<p class="hint" id="mfpkept" style="display:none">This Canary already holds a pin. Leave the field empty to keep it, or paste a new one to replace it.</p>
+</div>
 <button class="btn" id="mqttsave" type="button">Save hub settings</button>
 <p class="hint" id="mqttmsg" style="display:none"></p>
 <button class="btn" id="rebootnow" type="button" style="display:none;background:var(--gold)">Restart the Canary now</button>
@@ -200,6 +222,7 @@ function showDone(ip){
   $('done').style.display='block';
   $('donelead').textContent=chosen?'It joined “'+chosen+'” and is settling onto its perch.':'It joined your network and is settling onto its perch.';
   if(ip)$('ipalt').innerHTML=' (or <span class="addr"></span>)',$('ipalt').querySelector('.addr').textContent=ip;
+  loadHub();
 }
 function poll(){
   fetch('/api/wifi/status',{headers:hdrs()}).then(function(r){return r.json()}).then(function(d){
@@ -237,19 +260,87 @@ $('showmpw').addEventListener('click',function(){
   else{p.classList.add('pw-masked');this.textContent='Show'}
 });
 function mqttMsg(t){$('mqttmsg').textContent=t;$('mqttmsg').style.display='block'}
+// Broker encryption: the four modes are the firmware's own (0 plain, 1 CA,
+// 2 fingerprint, 3 lab — mqtt_transport_logic.h, "do not renumber"), the
+// same controls both flashers carry. Only the field the chosen mode uses is
+// shown and sent; a TLS mode with the port still at 1883 gets an 8883
+// SUGGESTION with a button, never a rewrite.
+//
+// This page is reachable at canary.local/setup for the life of the device,
+// so a re-save (a new hub password, say) must not quietly flip a TLS unit
+// back to plain: the select is pre-set from what the Canary holds
+// (/api/mqtt/status) once the finish line shows, and `tls` travels in the
+// body ONLY when the person changed the select — an absent field leaves the
+// stored mode alone (the API's contract). A stored CA or pin likewise
+// stands in for an empty box.
+var hub={loaded:false,tls:0,ca_set:false,fp_set:false},hubAsked=false,mtlsTouched=false;
+function tlsMode(){return parseInt($('mtls').value,10)||0}
+function refreshTls(){
+  var m=tlsMode();
+  $('mcabox').style.display=m===1?'block':'none';
+  $('mfpbox').style.display=m===2?'block':'none';
+  $('mcakept').style.display=(m===1&&hub.ca_set)?'block':'none';
+  $('mfpkept').style.display=(m===2&&hub.fp_set)?'block':'none';
+  var port=parseInt($('mport').value,10)||1883;
+  $('mportnudge').style.display=(m!==0&&port===1883)?'block':'none';
+}
+function loadHub(){
+  if(hubAsked)return;hubAsked=true;
+  fetch('/api/mqtt/status',{headers:hdrs()}).then(function(r){return r.json()}).then(function(d){
+    if(!d||!d.ok)return;
+    hub.loaded=true;
+    if(d.host){$('mhost').value=d.host}
+    if(d.port){$('mport').value=String(d.port)}
+    var m=parseInt(d.tls_mode,10);
+    if(m>=0&&m<=3){hub.tls=m;$('mtls').value=String(m)}
+    hub.ca_set=!!d.ca_set;hub.fp_set=!!d.fp_set;
+    if(d.tls_reason){mqttMsg('The hub link is currently refused: '+d.tls_reason)}
+    refreshTls();
+  }).catch(function(){});
+}
+$('mtls').addEventListener('change',function(){mtlsTouched=true;refreshTls()});
+$('mport').addEventListener('input',refreshTls);
+$('use8883').addEventListener('click',function(){$('mport').value='8883';refreshTls()});
 $('mqttsave').addEventListener('click',function(){
   var host=$('mhost').value.trim();
   if(!host){mqttMsg('Type the hub address first (homeassistant.local is the usual one).');return}
+  var m=tlsMode();
   var body={host:host,port:parseInt($('mport').value,10)||1883,enabled:true};
+  if(mtlsTouched)body.tls=m;
   if($('muser').value.trim())body.username=$('muser').value.trim();
   if($('mpass').value)body.password=$('mpass').value;
+  var ca=$('mca').value.trim();
+  if(m===1&&!ca&&!hub.ca_set){mqttMsg('Paste the broker’s CA certificate first — the PEM that signed its certificate.');return}
+  if(m===2){var fp=$('mfp').value.trim();if(fp){body.fp=fp}else if(!hub.fp_set){mqttMsg('Paste the broker certificate’s SHA-256 fingerprint first.');return}}
   $('mqttsave').disabled=true;
-  fetch('/api/mqtt/config',{method:'POST',headers:hdrs(true),body:JSON.stringify(body)})
-    .then(function(r){return r.json()}).then(function(d){
-      $('mqttsave').disabled=false;
-      if(d&&d.ok){mqttMsg('Saved — it takes effect after the Canary restarts.');$('rebootnow').style.display='block'}
-      else{mqttMsg('Couldn’t save'+((d&&d.error)?(' ('+d.error+')'):'')+' — you can set this any time from canary.local.')}
-    }).catch(function(){$('mqttsave').disabled=false;mqttMsg('This Canary doesn’t have the hub bridge turned on — set it up later from canary.local.')});
+  var refused=function(d,fallback){var e=new Error((d&&(d.reason||d.error))||fallback);e.cvRefused=true;return e};
+  var step=Promise.resolve();
+  if(m===1&&ca){
+    // The CA travels on its own route, first: /api/mqtt/config refuses the
+    // CA-verified mode until the Canary holds a CA to verify against. A CA
+    // it already holds needs no second trip.
+    step=fetch('/api/mqtt/ca',{method:'POST',headers:hdrs(),body:ca}).then(function(r){return r.json()}).then(function(d){
+      if(!d||!d.ok)throw refused(d,'the CA was not accepted');
+    });
+  }
+  step.then(function(){
+    return fetch('/api/mqtt/config',{method:'POST',headers:hdrs(true),body:JSON.stringify(body)}).then(function(r){return r.json()});
+  }).then(function(d){
+    $('mqttsave').disabled=false;
+    if(d&&d.ok){
+      var how=(d.transport&&d.transport!=='plain')?(' over '+d.transport):'';
+      mqttMsg('Saved — the Canary connects to the hub with these settings'+how+' right away; the hub link needs no restart. Restart only when you are done here: it drops the setup network for a minute.'+(d.warning?(' '+d.warning):''));
+      $('rebootnow').style.display='block';
+      if(m===1&&ca)hub.ca_set=true;
+      if(m===2&&body.fp)hub.fp_set=true;
+      if(mtlsTouched){hub.tls=m}
+      refreshTls();
+    }else{throw refused(d,'that didn’t save')}
+  }).catch(function(e){
+    $('mqttsave').disabled=false;
+    if(e&&e.cvRefused){mqttMsg('Couldn’t save: '+e.message+' — you can set this any time from canary.local.')}
+    else{mqttMsg('This Canary doesn’t have the hub bridge turned on — set it up later from canary.local.')}
+  });
 });
 $('rebootnow').addEventListener('click',function(){
   this.disabled=true;

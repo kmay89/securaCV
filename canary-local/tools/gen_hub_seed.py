@@ -83,6 +83,41 @@ PIHOLE_SLUG = "pihole"
 KIOSK_REPO = "https://github.com/puterboy/HAOS-kiosk"
 KIOSK_SLUG = "haoskiosk"
 
+# Optional feature: an encrypted (TLS) listener on the broker. The default hub
+# speaks plain MQTT on 1883 to everything — Home Assistant, Frigate and the
+# kernel reach core-mosquitto over the internal container network, which never
+# touches the LAN, but a Canary is an ordinary LAN client and its login crosses
+# the house in the clear. The Mosquitto add-on can also listen with TLS, and
+# the facts this step rests on are the add-on's own (home-assistant/addons:
+# mosquitto/DOCS.md, config.yaml and rootfs/etc/cont-init.d/mosquitto.sh,
+# add-on version 7.1.1, read 2026-09-19):
+#   * the options `certfile` / `keyfile` name files in Home Assistant's `ssl`
+#     folder (mounted into the add-on as /ssl) and DEFAULT to `fullchain.pem`
+#     / `privkey.pem` — the names the Let's Encrypt add-on writes; the
+#     encrypted port defaults to 8883 and `require_certificate` to false
+#     (clients authenticate with their login, no client certificate);
+#   * at start the add-on tests that BOTH files exist and only then enables
+#     SSL ("Certificates found: SSL is available" / "SSL is not enabled" in
+#     its log); the plain 1883 listener stays either way.
+# Two consequences shape the step. Because the option values are already the
+# defaults, an unmodified hub answers a set_options with "already set" —
+# writing the options is not the work. The work is that the two files EXIST
+# and the add-on RESTARTS so it re-tests for them: three generic executor
+# actions, require_files → set_options (idempotent; pins the names on a hub
+# whose options were edited) → restart_addon. The plan mints no certificate
+# and chooses no trust anchor — a certificate says who the hub is and the
+# authority a Canary trusts says whom it believes, and both are the
+# operator's (user_supplied below). Honest status: the executor is
+# host-tested; the step has not opened a listener on a real hub and cannot
+# verify that one came up. The option names and the file names are spelled
+# here, and so in the plan's `what` / `options`, and nowhere else in prose —
+# the docs point at this step by its flag, and test_hub_seed_apply.py's
+# BrokerTls gate holds them to it. The port reaches the docs only as the
+# setting a reader types into a Canary.
+BROKER_TLS_PORT = 8883
+BROKER_TLS_SSL_DIR = "/ssl"
+BROKER_TLS_OPTIONS = {"certfile": "fullchain.pem", "keyfile": "privkey.pem"}
+
 
 def repo_hash(url: str) -> str:
     """Supervisor's 8-char repository hash: sha1(lowercased URL, no trailing '/')[:8].
@@ -488,6 +523,77 @@ def main() -> None:
             ),
             "reversible": True,
         },
+        {
+            "id": "broker-tls",
+            "title": f"Encrypt the broker's LAN door (optional: TLS on port {BROKER_TLS_PORT})",
+            "what": (
+                f"Check that your certificate and key are in `{BROKER_TLS_SSL_DIR}`, point the "
+                f"`{mosquitto['slug']}` add-on's `certfile` / `keyfile` at them, and restart it "
+                f"so its TLS listener on port {BROKER_TLS_PORT} opens."
+            ),
+            "why": (
+                "Home Assistant, Frigate and the witness kernel all reach the broker over the "
+                "hub's internal container network, which never leaves the box — so the plain "
+                "1883 listener is fine for them, and it stays. A Canary is different: it is an "
+                "ordinary client on your LAN, and on a plain link its broker login and every "
+                "event it publishes cross your house readable by anything else on the network. "
+                f"The Mosquitto add-on can also listen with TLS on port {BROKER_TLS_PORT}, and "
+                "all it needs is two files in Home Assistant's ssl folder: the broker's "
+                "certificate (with its chain) and its private key. That is what this step "
+                "arranges — nothing more. The plan mints no certificate and chooses no trust "
+                "anchor: a certificate says who your hub is, and the authority a Canary trusts "
+                "says whom it believes; both are yours to decide, not ours to decide on your "
+                "hub. So the step refuses, naming the file, until they are there. Then it writes "
+                "the two file names into the add-on's options (they are also its defaults, so "
+                "on an untouched hub that is already set) and restarts it, because the add-on "
+                "looks for the files when it starts and opens the encrypted port only if it "
+                "finds both. It runs last so a missing certificate never stops the rest of the "
+                "plan, and every run that asks for it restarts the broker once — which is also "
+                "how a renewed certificate is picked up. It cannot see the listener come up: "
+                "if the port stays closed, the add-on's own log says why."
+            ),
+            "for_what": (
+                f"A TLS listener on port {BROKER_TLS_PORT} for the Canaries on your LAN — the "
+                "broker login and the events stop crossing your house in the clear."
+            ),
+            "feature": "broker_tls",
+            "addon": mosquitto["slug"],
+            "supervisor_slug": mosquitto_sup,
+            # The broker was installed by install-broker; this step only
+            # configures it. Without this the executor would plan a second
+            # install from the fresh-hub snapshot and fail the run at its end.
+            "install": False,
+            # Read, never written: the executor refuses by name when either is
+            # missing, and with a different message when it cannot see the
+            # folder at all (a runner without the mount is not a missing
+            # certificate).
+            "requires_files": [
+                f"{BROKER_TLS_SSL_DIR}/{name}" for name in BROKER_TLS_OPTIONS.values()
+            ],
+            "requires_files_note": (
+                "the broker's certificate chain and private key, placed in Home Assistant's ssl "
+                "folder under those two names (the Let's Encrypt add-on writes exactly them; a "
+                "certificate from your own CA is copied in under them). This plan never mints one."
+            ),
+            "options": dict(BROKER_TLS_OPTIONS),
+            "restart": True,
+            "user_must_finish": (
+                "Before this step: put the broker's certificate chain and private key in Home "
+                "Assistant's ssl folder under the two names the step checks for (the Let's "
+                "Encrypt add-on writes exactly those; a certificate from your own CA is copied "
+                f"in under them). After it: provision each Canary with port {BROKER_TLS_PORT} "
+                "and the CA that signed the broker certificate — the *Broker encryption* select "
+                "in either flasher (CA mode), or the /mqtt page on canary-wap — and point it at "
+                "the broker by the exact name on that certificate, because a Canary checks the "
+                "name as well as the signer (a Let's Encrypt certificate names your DuckDNS "
+                "host, not `homeassistant.local`). A Canary never falls back to plain on its "
+                f"own. If port {BROKER_TLS_PORT} stays closed, open Settings → Apps → Mosquitto "
+                "broker → Log: it says 'Certificates found: SSL is available' or 'SSL is not "
+                "enabled', and Mosquitto's own complaint about an unreadable or mismatched key "
+                "appears there too. This step cannot read that log for you."
+            ),
+            "reversible": True,
+        },
     ]
 
     out = {
@@ -546,6 +652,27 @@ def main() -> None:
                     "'this hub has eyes on it.' The plan without it is complete."
                 ),
             },
+            "broker_tls": {
+                "what": (
+                    f"An encrypted MQTT listener on the broker (TLS, port {BROKER_TLS_PORT}) for "
+                    "the Canaries on your LAN, configured from a certificate and key you place "
+                    f"in Home Assistant's ssl folder ({BROKER_TLS_SSL_DIR} to the add-on). The "
+                    "plan mints no certificate and picks no trust anchor: it checks the two "
+                    "files are there — refusing by name if not — points the Mosquitto add-on "
+                    "at them and restarts it. The plain 1883 listener stays for the hub's own "
+                    "internal traffic."
+                ),
+                "enable": (
+                    "sh provision.sh --with broker_tls   (or host_provision.sh --with broker_tls)"
+                ),
+                "recommended": False,
+                "off_by_default_because": (
+                    "A plain broker link on a LAN you own is what the rest of the setup assumes, "
+                    "and TLS needs a certificate only you can supply — the step refuses until it "
+                    "is there, so on by default would be a run that fails by default. The plan "
+                    "without it is complete."
+                ),
+            },
         },
         "repositories": repositories,
         "steps": steps,
@@ -557,7 +684,21 @@ def main() -> None:
                     "Camera addresses and credentials are yours; we can't guess them, and we won't "
                     "scan your network to find out. This is the one step that is genuinely manual."
                 ),
-            }
+            },
+            {
+                "id": "broker-certificate",
+                "feature": "broker_tls",
+                "what": (
+                    "With `--with broker_tls` only: the broker's certificate chain and private "
+                    "key, in Home Assistant's ssl folder under the names the `broker-tls` step "
+                    "checks for."
+                ),
+                "why": (
+                    "A certificate says who your hub is, and the authority your Canaries trust "
+                    "says whom they believe. Neither is ours to decide on your hub, so the plan "
+                    "never mints one — it checks the files are there and refuses, by name, if not."
+                ),
+            },
         ],
         "meta": {
             "design": "docs/design/raspberry_pi_hub_flashing.md",

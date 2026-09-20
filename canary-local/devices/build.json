@@ -1,7 +1,7 @@
 {
  "generated_by": "canary-local/tools/gen_enclosures.py",
  "sbom": {
-  "note": "Software Bill of Materials: CycloneDX 1.5 JSON, generated in CI on every main push (sbom.yml) — Rust kernel, Node tools, and the ESP32 firmware stack (esp-idf, FreeRTOS, mbedtls, lwip, cJSON…). Download from the SBOM Generation workflow's artifacts.",
+  "note": "Software Bill of Materials: CycloneDX 1.5 JSON. The firmware SBOM (the ESP32 stack: Arduino cores, PlatformIO platforms, first-party and pinned libraries) is committed at sbom/sbom-firmware.cdx.json, regenerated and schema-validated on every PR (lint.yml); sbom.yml generates the Rust kernel's and the Node tools' SBOMs and a timestamped firmware copy on every main push — download those from its artifacts.",
   "source": "sbom/README.md",
   "link": "https://github.com/kmay89/securaCV/actions/workflows/sbom.yml"
  },

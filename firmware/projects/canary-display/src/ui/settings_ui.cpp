@@ -195,6 +195,11 @@ enum class Page {
   NetForget,     // confirm-gated: forget WiFi, reboot into the join wizard
   ModesList,     // the non-fleet gears this build carries
   ModeConfirm,   // confirm-gated: latch the chosen gear + reboot into it
+  WxLoc,         // dash7 / nightstand7: the coarse weather location wheels.
+                 // APPENDED: this enum sits outside every #ifdef and is
+                 // compiled into every emulator flavor, so a new page goes
+                 // at the END — inserting one would move every value below
+                 // it and rebuild the committed dist for nothing.
 };
 
 // Control ids, carried as each object's event user_data.
@@ -211,6 +216,13 @@ enum : int {
   ID_MIC_ON, ID_MIC_SENS, ID_MIC_WAKE,
   ID_GO, ID_YES, ID_NO,
   ID_MODE_BENCH, ID_MODE_DEMO, ID_MODE_DEBUG, ID_MODE_ARCADE,
+  // The Location page (dash7 / nightstand7). Appended for the same reason
+  // Page::WxLoc is; the six wheel ids stay consecutive in this order (the
+  // page indexes its draft by `id - ID_WX_LAT_HEMI`).
+  ID_ROW_WX_LOC,
+  ID_WX_LAT_HEMI, ID_WX_LAT_DEG, ID_WX_LAT_TENTH,
+  ID_WX_LON_HEMI, ID_WX_LON_DEG, ID_WX_LON_TENTH,
+  ID_WX_LOC_CLEAR,
   ID_OPT_BASE = 100,             // + i: the i-th option of the open picker
 };
 
@@ -253,6 +265,18 @@ int  s_cal_blinks = 0;
 int  s_cal_retries = 0;
 bool s_cal_lit = false;
 bool s_cal_persisted = true;     // false = floor kept for tonight only
+#endif
+
+#ifdef CD_SET_WX
+// The Location page's DRAFT: the six wheel positions, in control-id order
+// (lat hemi · deg · tenth, lon hemi · deg · tenth). A wheel settling edits
+// only this; the store is written by "Use This Location" alone, because the
+// fetcher runs whenever its timer is due and a half-turned wheel must never
+// become the next forecast query. The caption is the screen-as-preview:
+// relabeled on every settle, never rebuilt under a finger.
+struct WxDraft { uint8_t w[6]; };
+WxDraft s_wx_draft = {};
+lv_obj_t* s_wx_cap = nullptr;
 #endif
 
 void build(Page pg);
@@ -308,6 +332,9 @@ void clear_host() {
     s_cal_timer = nullptr;
   }
   s_cal_clock = nullptr;
+#ifdef CD_SET_WX
+  s_wx_cap = nullptr;  // dies with the page's objects, below
+#endif
   lv_obj_clean(s_host);
   s_nav = s_list = s_group = s_prev_row = nullptr;
   s_list_first = true;
@@ -1125,7 +1152,8 @@ void build_display() {
 // location comes from.
 void build_weather() {
   page_begin("Weather", "Settings");
-  const bool on = settings().wx_direct != 0;
+  const Settings& gs = settings();
+  const bool on = gs.wx_direct != 0;
   group_begin(nullptr);
   row_switch("Fetch Weather Itself", nullptr, on, ID_WX_ON);
   const char* st = nullptr;
@@ -1133,7 +1161,7 @@ void build_weather() {
   char age[24];
   switch (canary::net::wx_direct_status()) {
     case 2: st = "Your hub provides weather"; break;
-    case 1: st = "Set a location from the app"; break;
+    case 1: st = "Needs a location - tap Location below"; break;
     case 3: {
       const uint16_t m = canary::net::wx_direct_age_min(millis());
       if (m == 0xFFFF) st = "Waiting for the first fetch";
@@ -1147,9 +1175,174 @@ void build_weather() {
   st = on ? "On" : "Off";
 #endif
   row_info("Status", st);
+  // The stored cell, shown on the glass on purpose: the screen is the
+  // preview, and a wrong sky should be visible to the hand that set it.
+  // An in-room disclosure only — the LAN page and the API never carry the
+  // grid point (docs/security/SECURITY_MODEL.md).
+  char cell[32];
+  row_nav("Location",
+          gs.wx_loc_set ? wx_cell_text(cell, sizeof(cell), gs.wx_lat10, gs.wx_lon10)
+                        : "Not set",
+          ID_ROW_WX_LOC);
   group_end("Hub-less homes only: with a hub, the hub stays the one thing "
             "that talks to the internet. Sends a ~11 km coarse location to "
             "a public forecast service. No account, no identifiers.");
+}
+
+// ── The Location page: the one place a coarse location enters this firmware
+// (the LAN API refuses one from every caller). Three wheels per axis —
+// hemisphere · degrees · tenths — on the Quiet Hours wheel pattern, editing
+// the page-local draft above; "Use This Location" is the one write, "Forget
+// Location" the one erase. Every position the wheels can take is on the
+// 0.1° grid inside the sanitizer's range by construction (glass_settings.h),
+// and no wheel exceeds the 8-bit dispatch value (181 options at most).
+// Only roller / label / flex calls that exist in both majors (row-wrap and
+// pad_column are the two the Hours page does not use): the file builds on
+// LVGL 9 here and on LVGL 8 in the emulator.
+
+static_assert(ID_WX_LAT_DEG == ID_WX_LAT_HEMI + 1 && ID_WX_LAT_TENTH == ID_WX_LAT_HEMI + 2 &&
+              ID_WX_LON_HEMI == ID_WX_LAT_HEMI + 3 && ID_WX_LON_DEG == ID_WX_LAT_HEMI + 4 &&
+              ID_WX_LON_TENTH == ID_WX_LAT_HEMI + 5,
+              "the six wheel ids index the draft; keep them consecutive");
+
+int16_t wx_draft_lat10() {
+  return wx_wheel_to_tenths(s_wx_draft.w[0], s_wx_draft.w[1], s_wx_draft.w[2], WX_LAT_MAX_DEG);
+}
+int16_t wx_draft_lon10() {
+  return wx_wheel_to_tenths(s_wx_draft.w[3], s_wx_draft.w[4], s_wx_draft.w[5], WX_LON_MAX_DEG);
+}
+
+// The cell the button would store, under the wheels — relabeled, never rebuilt.
+void wx_relabel_cell() {
+  if (!s_wx_cap) return;
+  char cell[32], text[48];
+  wx_cell_text(cell, sizeof(cell), wx_draft_lat10(), wx_draft_lon10());
+  snprintf(text, sizeof(text), "~11 km cell: %s", cell);
+  lv_label_set_text(s_wx_cap, text);
+}
+
+// "0\n1\n...\nmax" for a degrees wheel. Two static buffers (~1 KB, on the
+// two 7" builds only); lv_roller_set_options copies the text.
+const char* wx_deg_opts(int max_deg) {
+  static char s_lat[(WX_LAT_MAX_DEG + 1) * 3 + 1];
+  static char s_lon[(WX_LON_MAX_DEG + 1) * 4 + 1];
+  char* buf = max_deg == WX_LAT_MAX_DEG ? s_lat : s_lon;
+  const size_t cap = max_deg == WX_LAT_MAX_DEG ? sizeof(s_lat) : sizeof(s_lon);
+  if (!buf[0]) {
+    size_t n = 0;
+    for (int d = 0; d <= max_deg && n + 1 < cap; d++)
+      n += (size_t)snprintf(buf + n, cap - n, "%d%s", d, d < max_deg ? "\n" : "");
+  }
+  return buf;
+}
+
+// mk_hour_roller's styling, restated: that helper is compiled into every
+// emulator flavor and must not change shape for a page they never build.
+// Plus one line the hour wheel never needed: this glass runs without a
+// theme (LV_USE_THEME_DEFAULT 0), so a roller's text_align is AUTO, which
+// both majors resolve to LEFT — the roller places its option label by that
+// inherited property (refr_position in lv_roller.c). Every "%02d:00" is the
+// same width, so the hour wheel never showed it; the degrees wheel is the
+// first here with unequal options ("0" beside "180"), and without this its
+// digits sit flush-left in a box the widest option sized while the selected
+// tier's highlight spans the full width. Centering is what the default theme
+// adds to every roller, and all three wheels of a trio get it.
+lv_obj_t* mk_wx_roller(lv_obj_t* parent, const char* opts, bool infinite,
+                       int width, int sel, int id) {
+  lv_obj_t* r = lv_roller_create(parent);
+  lv_roller_set_options(r, opts, infinite ? LV_ROLLER_MODE_INFINITE
+                                          : LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(r, 3);
+  lv_obj_set_width(r, width);
+  lv_obj_set_style_text_align(r, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_text_font(r, font_body(), LV_PART_MAIN);
+  lv_obj_set_style_text_color(r, col_muted(), LV_PART_MAIN);
+  lv_obj_set_style_text_line_space(r, M.compact ? 10 : 16, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(r, LV_OPA_0, LV_PART_MAIN);
+  lv_obj_set_style_border_width(r, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(r, 4, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(r, col_edge(), LV_PART_SELECTED);
+  lv_obj_set_style_bg_opa(r, LV_OPA_COVER, LV_PART_SELECTED);
+  lv_obj_set_style_radius(r, 8, LV_PART_SELECTED);
+  lv_obj_set_style_text_color(r, col_text(), LV_PART_SELECTED);
+  lv_roller_set_selected(r, (uint16_t)sel, LV_ANIM_OFF);
+  lv_obj_add_event_cb(r, on_roller, LV_EVENT_VALUE_CHANGED, id_arg(id));
+  return r;
+}
+
+void build_wx_loc() {
+  page_begin("Location", "Weather");
+  const Settings& gs = settings();
+  // The draft opens at the stored cell (0.0 N, 0.0 E on a fresh glass).
+  s_wx_draft = WxDraft{};
+  if (gs.wx_loc_set) {
+    wx_tenths_to_wheel(gs.wx_lat10, WX_LAT_MAX_DEG,
+                       &s_wx_draft.w[0], &s_wx_draft.w[1], &s_wx_draft.w[2]);
+    wx_tenths_to_wheel(gs.wx_lon10, WX_LON_MAX_DEG,
+                       &s_wx_draft.w[3], &s_wx_draft.w[4], &s_wx_draft.w[5]);
+  }
+  spacer(M.compact ? 4 : 10);
+  // Both axes on one line where the canvas allows it (the 620 px landscape
+  // sheet), the second wrapping under the first in the 480 px portrait
+  // column: flex wrap decides from the live canvas, as every row does.
+  lv_obj_t* wheels = mk_box(s_list);
+  lv_obj_set_width(wheels, LV_PCT(100));
+  lv_obj_set_height(wheels, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(wheels, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(wheels, LV_FLEX_ALIGN_SPACE_EVENLY,
+                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(wheels, M.gap, 0);
+  // One letter, up to three digits, ".0" to ".9": sized off the hour wheel
+  // so the trio reads as one instrument at every Regular metric.
+  const int w_hemi = (M.roller_w * 2) / 5;
+  const int w_deg = (M.roller_w * 3) / 5;
+  const int w_tenth = M.roller_w / 2;
+  const int w_gap = 8;
+  struct Axis { const char* name; const char* hemis; int max_deg; int w0; int id0; };
+  const Axis axes[2] = {
+      {"Latitude", "N\nS", WX_LAT_MAX_DEG, 0, ID_WX_LAT_HEMI},
+      {"Longitude", "E\nW", WX_LON_MAX_DEG, 3, ID_WX_LON_HEMI},
+  };
+  for (const Axis& a : axes) {
+    lv_obj_t* col = mk_box(wheels);
+    lv_obj_set_width(col, w_hemi + w_deg + w_tenth + 2 * w_gap);
+    lv_obj_set_height(col, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(col, 6, 0);
+    char up[12];
+    str_upper(up, sizeof(up), a.name);
+    lv_obj_t* h = mk_label(col, font_caption(), col_muted());
+    lv_label_set_text(h, up);
+    lv_obj_set_style_text_letter_space(h, 1, 0);
+    lv_obj_t* trio = mk_box(col);
+    lv_obj_set_width(trio, LV_PCT(100));
+    lv_obj_set_height(trio, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(trio, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(trio, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(trio, w_gap, 0);
+    mk_wx_roller(trio, a.hemis, false, w_hemi, s_wx_draft.w[a.w0], a.id0);
+    mk_wx_roller(trio, wx_deg_opts(a.max_deg), false, w_deg,
+                 s_wx_draft.w[a.w0 + 1], a.id0 + 1);
+    mk_wx_roller(trio, ".0\n.1\n.2\n.3\n.4\n.5\n.6\n.7\n.8\n.9", true, w_tenth,
+                 s_wx_draft.w[a.w0 + 2], a.id0 + 2);
+  }
+  s_wx_cap = mk_label(s_list, font_caption(), col_muted());
+  lv_label_set_long_mode(s_wx_cap, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_wx_cap, LV_PCT(100));
+  lv_obj_set_style_text_align(s_wx_cap, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_pad_top(s_wx_cap, M.compact ? 8 : 14, 0);
+  lv_obj_set_style_pad_bottom(s_wx_cap, M.compact ? 8 : 14, 0);
+  wx_relabel_cell();
+  mk_button("Use This Location", ID_GO, Button::Primary);
+  group_begin(nullptr);
+  row_action("Forget Location", ID_WX_LOC_CLEAR,
+             gs.wx_loc_set ? Verb::Destructive : Verb::Disabled);
+  group_end("Kept on this glass as a ~11 km grid point, a tenth of a degree. "
+            "It leaves only inside the forecast query, and only while Fetch "
+            "Weather Itself is on - never served on your network.");
 }
 #endif  // CD_SET_WX
 #endif  // CD_FLAVOR_DASH
@@ -1560,6 +1753,7 @@ void build(Page pg) {
     case Page::Display:      build_display(); break;
 #ifdef CD_SET_WX
     case Page::Weather:      build_weather(); break;
+    case Page::WxLoc:        build_wx_loc(); break;
 #endif
 #endif
     case Page::Network:      build_network(); break;
@@ -1791,12 +1985,45 @@ void dispatch(int raw) {
 #ifdef CD_SET_WX
     case Page::Weather:
       if (id == ID_NAV) { build(Page::Root); return; }
+      if (id == ID_ROW_WX_LOC) { go(Page::WxLoc); return; }
       if (id == ID_WX_ON) {
         // Persist the opt-in; the fetcher's own three gates (opt-in,
         // location, hub-less) decide whether anything runs.
         gs.wx_direct = on ? 1 : 0;
         settings_mark_dirty();
         build(Page::Weather);
+      }
+      return;
+
+    case Page::WxLoc:
+      if (id == ID_NAV) { build(Page::Weather); return; }
+      if (id >= ID_WX_LAT_HEMI && id <= ID_WX_LON_TENTH) {
+        // A wheel settled: edit the draft and relabel the cell caption —
+        // never the store, never a rebuild under the finger.
+        s_wx_draft.w[id - ID_WX_LAT_HEMI] = (uint8_t)val;
+        wx_relabel_cell();
+        return;
+      }
+      if (id == ID_GO) {
+        // "Use This Location": the one write. Both axes land with the flag
+        // in one mutation, so the store never holds half a coordinate and
+        // the fetcher's next due tick sees a whole cell or none.
+        gs.wx_lat10 = wx_draft_lat10();
+        gs.wx_lon10 = wx_draft_lon10();
+        gs.wx_loc_set = 1;
+        settings_mark_dirty();
+        build(Page::Weather);
+        return;
+      }
+      if (id == ID_WX_LOC_CLEAR) {
+        // "Forget Location": back to unset — the fetcher's second gate
+        // closes and the Weather page says so.
+        gs.wx_loc_set = 0;
+        gs.wx_lat10 = 0;
+        gs.wx_lon10 = 0;
+        settings_mark_dirty();
+        build(Page::Weather);
+        return;
       }
       return;
 #endif

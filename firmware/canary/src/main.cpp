@@ -2898,11 +2898,21 @@ static void handle_serial_commands() {
 
 #if FEATURE_HA_MQTT
     case 'm':
-    case 'M':
+    case 'M': {
       Serial.println("\n=== MQTT ===");
       Serial.printf("  Connected: %s\n", mqtt_connected() ? "Yes" : "No");
+      // Broker transport as decided from NVS (mqtt_tls / mqtt_ca / mqtt_fp):
+      // constant, secret-free text — the mode name, what the socket does
+      // with it, and the refusal when there is one. Never the CA or the pin.
+      MqttTransportStatus tls;
+      mqtt_transport_status(&tls);
+      Serial.printf("  Transport: %s (provisioned mode: %s%s)\n", tls.transport, tls.mode,
+                    tls.loaded ? "" : ", not read yet");
+      if (!tls.allowed) Serial.printf("  Refused: %s\n", tls.reason);
+      if (tls.warn_insecure) Serial.println("  WARNING: lab mode - encrypted but the broker is NOT verified");
       Serial.println();
       break;
+    }
 #endif
 
 #if FEATURE_DATA_MGMT

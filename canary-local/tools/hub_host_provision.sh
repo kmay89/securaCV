@@ -7,7 +7,9 @@
 # exist on the hub, inside the stack itself, so this wrapper borrows them: it
 # reads the Core container's Supervisor token, and runs the bundled executor
 # with the Core image's own python3 on the Supervisor's internal network, with
-# the add-on config tree mounted where the plan's one file-write expects it.
+# the add-on config tree mounted where the plan's one file-write expects it
+# (and, only when `--with broker_tls` is asked for, the hub's ssl folder
+# mounted read-only where that step's file check looks).
 # Nothing is downloaded and nothing new is installed to make that possible.
 #
 #   preview (changes nothing):  sh host_provision.sh --dry-run
@@ -48,8 +50,35 @@ if [ -z "$supervisor_ip" ]; then
   exit 1
 fi
 
+# The opt-in broker_tls step checks /ssl for the operator's certificate and
+# key (it never writes there). The Supervisor keeps that tree on the host in
+# its data directory beside addon_configs — INFERRED from that mount's
+# convention, not yet proven on a hub, hence one overridable string — so it is
+# mounted read-only, and ONLY when the feature is asked for: an unconditional
+# bind of a missing host path would make docker create it, empty and
+# root-owned. If it isn't there, say so, name the override, and let the
+# executor's own "cannot see /ssl" refusal stand rather than reporting a
+# missing certificate.
+ssl_src="${SECURACV_HOST_SSL_DIR:-/mnt/data/supervisor/ssl}"
+ssl_mount=""
+prev=""
+for arg in "$@"; do
+  if { [ "$prev" = "--with" ] && [ "$arg" = "broker_tls" ]; } || [ "$arg" = "--with=broker_tls" ]; then
+    if [ -d "$ssl_src" ]; then
+      ssl_mount="$ssl_src:/ssl:ro"
+    else
+      echo "host_provision.sh: $ssl_src is not here, so the broker_tls step will not see /ssl" >&2
+      echo "  (if the hub keeps it elsewhere: SECURACV_HOST_SSL_DIR=<path> sh host_provision.sh --with broker_tls)." >&2
+    fi
+  fi
+  prev="$arg"
+done
+
+# ${ssl_mount:+-v "$ssl_mount"} expands to the two words `-v <src>:/ssl:ro`
+# when set and to nothing at all when empty — POSIX sh has no arrays.
 exec docker run --rm --network hassio \
   -v /mnt/data/supervisor/addon_configs:/addon_configs \
+  ${ssl_mount:+-v "$ssl_mount"} \
   -v "$here":/securacv:ro \
   -e SUPERVISOR_TOKEN="$token" \
   -e "SUPERVISOR_URL=http://$supervisor_ip" \

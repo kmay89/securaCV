@@ -10,7 +10,10 @@ What is pinned and why:
     product on a different chip than the board, and a hand-typed ladder
     verdict (`status`) — a guard that reads as covered while catching nothing
     is worse than no guard;
-  • the stdlib schema validator rejects what a full validator would.
+  • the stdlib schema validator rejects what a full validator would;
+  • a manifest may own a second case file (`cad.also`, the Vision's doorbell):
+    the file must exist and source a listed enclosure set, the schema spells
+    it like cad.scad, and no standalone doorbell manifest exists.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -224,6 +227,67 @@ class LintCatchesRealMistakes(unittest.TestCase):
         self.assertEqual(len(hits), 1, errors)
         self.assertIn('BRD_REGISTRY has no row "mr60x"', hits[0])
         self.assertIn("devices/canary-sense", hits[0])
+
+
+class AManifestMayOwnASecondCaseFile(unittest.TestCase):
+    """cad.also — the further case files one manifest's cad.params own (the
+    Vision's doorbell form). Each must exist and be the source of one of the
+    manifest's listed enclosure sets, exactly as cad.scad must."""
+
+    def test_the_doorbell_is_owned_by_the_vision_manifest_not_a_manifest_of_its_own(self):
+        m = json.loads((DEVICES / "canary-vision" / "device.json").read_text(encoding="utf-8"))
+        self.assertEqual(m["cad"]["also"], ["docs/hardware/enclosure/canary_vision_doorbell.scad"])
+        self.assertIn("vision-doorbell", m["cad"]["enclosure_sets"])
+        enclosures = json.loads((REPO / "canary-local/devices/enclosures.json")
+                                .read_text(encoding="utf-8"))
+        set_by_id = {s["id"]: s for s in enclosures["sets"]}
+        self.assertEqual(set_by_id["vision-doorbell"]["scad"], "canary_vision_doorbell.scad")
+        # no devices/canary-vision-doorbell: its env is claimed by canary-vision,
+        # board.envs has a floor of one, and the hardware->figure map draws
+        # xiao-esp32c3 as device.canary-vision — the joins reject a second manifest
+        self.assertFalse((DEVICES / "canary-vision-doorbell").exists())
+        with redirect_stdout(io.StringIO()):
+            rows, errors = ldm.lint()
+        self.assertEqual(errors, [])
+
+    def test_an_also_file_must_exist_and_source_a_listed_set(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision", lambda d: d["cad"].__setitem__(
+                "also", ["docs/hardware/enclosure/canary_sense_enclosure.scad"]))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "canary-vision: cad.also canary_sense_enclosure.scad" in e
+                and "is not the source of any listed enclosure set" in e]
+        self.assertEqual(len(hits), 1, errors)
+        self.assertIn("canary_vision_doorbell.scad", hits[0])        # the sets' own sources are named
+        with _Mutated() as devices:
+            edit(devices, "canary-vision", lambda d: d["cad"].__setitem__(
+                "also", ["docs/hardware/enclosure/canary_nope.scad"]))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("canary-vision: cad.also docs/hardware/enclosure/canary_nope.scad "
+                            "does not exist" in e for e in errors), errors)
+        # the primary's own checks are untouched by the second file
+        self.assertFalse(any(e.startswith("canary-vision: cad.scad") for e in errors), errors)
+
+    def test_the_schema_spells_also_like_scad_and_refuses_a_repeat(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision", lambda d: d["cad"].__setitem__(
+                "also", ["scad/x.scad", "docs/hardware/enclosure/canary_vision_doorbell.scad",
+                         "docs/hardware/enclosure/canary_vision_doorbell.scad"]))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any(".cad.also[0]" in e and "does not match" in e for e in errors), errors)
+        self.assertTrue(any(".cad.also[2]" in e and "duplicate" in e for e in errors), errors)
+        with _Mutated() as devices:
+            edit(devices, "canary-vision", lambda d: d["cad"].__setitem__("also", []))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any(".cad.also" in e and "minItems" in e for e in errors), errors)
+        # a manifest naming its own case again is the generator's refusal,
+        # reached through this gate
+        with _Mutated() as devices:
+            edit(devices, "canary-vision", lambda d: d["cad"].__setitem__(
+                "also", ["docs/hardware/enclosure/canary_vision_enclosure.scad"]))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("devices/canary-vision: cad.also names its own cad.scad again" in e
+                            for e in errors), errors)
 
 
 class SchemaValidatorSubset(unittest.TestCase):

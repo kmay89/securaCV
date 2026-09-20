@@ -20,7 +20,7 @@
       "source": "canary-local/devices/hub_seed.json",
       "bundle_path": "hub_seed.json",
       "card_path": "CONFIG/securacv/hub_seed.json",
-      "sha256": "0bb90da369433751b4db453b7b4be171d887f20d9d644c6abf60c19cbfe66931"
+      "sha256": "1bbfc7187d7f46c666569bd6d1017bd14d3719dbe93a87dca4781df4df9f202c"
     },
     {
       "role": "frigate-config",
@@ -34,14 +34,14 @@
       "source": "canary-local/tools/hub_seed_apply.py",
       "bundle_path": "hub_seed_apply.py",
       "card_path": "CONFIG/securacv/hub_seed_apply.py",
-      "sha256": "6081fe8ae1ce15f34f953dac47b7dbae602feb6580e1c605373db42665e454e6"
+      "sha256": "3db4001cf4dfcad7e39e5c48e1610736b2a182c09465820d86312e274ef0065a"
     },
     {
       "role": "host-runner",
       "source": "canary-local/tools/hub_host_provision.sh",
       "bundle_path": "host_provision.sh",
       "card_path": "CONFIG/securacv/host_provision.sh",
-      "sha256": "d529b5b6bbd58a10e65c5fa823b22b3fc274dd6483ff5a98733ea5c100567b7a"
+      "sha256": "a2e532ed424c151083cfc16613a98c08d33b51c6427040ec62d4dbdc17f01549"
     },
     {
       "role": "runner",

@@ -57,6 +57,14 @@ jobs:
             docker/sidecar/ci_e2e.sh \
             docker/sidecar/verify_published_image.sh
 
+      # The sidecar writes the kernel's config from a heredoc that the kernel
+      # parses with deny_unknown_fields; this renders and parses it (and
+      # checks the fleet-peers wiring between witness_api and the bridge)
+      # without building the image. The test lives with the add-on, which
+      # has the same two seams, and covers both scripts in one run.
+      - name: Render and parse the sidecar's kernel config
+        run: bash privacy_witness_kernel/tests/test_config_render.sh
+
       - name: Validate compose files
         env:
           # Required-variable placeholder: the integrations compose marks the

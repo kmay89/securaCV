@@ -32,9 +32,32 @@ This script derives the document from the files the build actually reads:
   .github/workflows/*.yml                  the esp32:esp32 core versions the
                                            Arduino-CLI build path pins through
                                            .github/actions/setup-arduino-esp32
+                                           (each row's library pins and the
+                                           sketch it compiles come along)
+  firmware/projects/*/arduino/*/sketch.yaml
+                                           the other Arduino axis: the core
+                                           and library pins of every sketch
+                                           profile, parsed from YAML
   firmware/canary/include/canary_config.h  FIRMWARE_VERSION — the one train
                                            (scripts/lint_fw_version_sync.sh
                                            holds the other five copies to it)
+
+The two Arduino axes must agree, and the agreement is asserted here instead
+of in firmware.yml's "keep the two in lockstep" comment (check_core_pin_
+agreement below; a finding fails generation naming the row, the profile and
+the remedy):
+  (a) every exact core-version a workflow row pins is pinned by some sketch
+      profile;
+  (b) every core a sketch profile pins is a workflow pin, or the Arduino core
+      inside that product's PlatformIO platform (PLATFORM_FACTS) — the WAP
+      sketch's 3.3.8 tracks the pioarduino platform while its Arduino-CLI
+      rows build on the action's "latest", a recorded release decision
+      (firmware/PLATFORMS.md), not a drift;
+  (c) every library a workflow row pins on its core line (GFX / lvgl / NimBLE
+      split their majors along the core boundary) is pinned to the same
+      version by every profile, of a product that row builds, on that core.
+A row on "latest" has nothing to agree with, and a sketch may pin more
+libraries than its row does; neither is a finding.
 
 What is STILL declared by hand — and where, so it is reviewable:
   PLATFORM_FACTS below maps each platform literal to the Arduino core and
@@ -55,13 +78,28 @@ which sbom.yml does for the uploaded artifact and the committed copy never
 carries. `--check` regenerates in memory and byte-compares against
 sbom/sbom-firmware.cdx.json (lint.yml runs it on every PR).
 
+`--validate` holds the rendered document to the CycloneDX 1.5 JSON schema in
+strict mode (cyclonedx-python-lib's JsonStrictValidator, schema bundled, no
+network) — read-only, like `--check`, and run before it compares; a `--out`
+or `--timestamp` beside it without `--check` is refused, not dropped — or,
+given a FILE, holds that file's bytes to it (sbom.yml's timestamped
+artifact). The file's `specVersion` must be 1.5 as well: the schema types it
+as a free string, so a document claiming 1.6 would otherwise pass as "a
+strict 1.5 document". The schema does not check graph closure; the unit
+tests and sbom.yml's jq step do.
+
 Usage:
     python3 scripts/gen_firmware_sbom.py              # rewrite the committed file
     python3 scripts/gen_firmware_sbom.py --check      # byte gate
+    python3 scripts/gen_firmware_sbom.py --check --validate   # what lint.yml runs
+    python3 scripts/gen_firmware_sbom.py --validate FILE      # an artifact's bytes
     python3 scripts/gen_firmware_sbom.py --out X --timestamp now
     python3 scripts/gen_firmware_sbom.py --verify-with-pio   # needs `pio`
 
-stdlib only, plus PyYAML for the Arduino-CLI core pins in the workflows.
+stdlib only, plus PyYAML for the two Arduino axes (workflow YAML, sketch.yaml)
+and, for --validate only, cyclonedx-python-lib with its json-validation extra
+(VALIDATOR_PIP below — pinned exactly: the extra brings the format checkers
+that refuse an IRI with a space, and a library bump can tighten them).
 """
 
 from __future__ import annotations
@@ -85,12 +123,21 @@ COMMON_DIR = REPO / "firmware" / "common"
 CANARY_LIB_DIR = REPO / "firmware" / "canary" / "lib"
 WORKFLOWS = REPO / ".github" / "workflows"
 ARDUINO_ACTION = "./.github/actions/setup-arduino-esp32"
+PROJECTS = REPO / "firmware" / "projects"
+SKETCH_GLOB = "*/arduino/*/sketch.yaml"
 VERSION_HEADER = REPO / "firmware" / "canary" / "include" / "canary_config.h"
 OUT = REPO / "sbom" / "sbom-firmware.cdx.json"
 
 SPEC_VERSION = "1.5"
-GENERATOR_VERSION = "1.0.0"
+# 1.1.0: the sketch.yaml profiles became build paths of their core, and the
+# `securacv:check` property names the schema gate.
+GENERATOR_VERSION = "1.1.0"
 ROOT_REF = "securacv-firmware"
+# The exact spec lint.yml and sbom.yml install for --validate. The extra is
+# load-bearing (jsonschema[format-nongpl]: the iri-reference checker), and
+# the schema files ship inside the wheel, so a bump is a reviewed change to
+# what "valid" means — never a float.
+VALIDATOR_PIP = "cyclonedx-python-lib[json-validation]==11.12.0"
 # UUIDv5 namespace for the serialNumber: content-addressed, so the same tree
 # always yields the same document and a different tree a different one.
 SERIAL_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL,
@@ -376,41 +423,227 @@ def first_party_libs(base: Path, prefix: str) -> list[dict]:
 
 
 _MATRIX_EXPR = re.compile(r"^\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\s*\}\}$")
+_MATRIX_ANY = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\s*\}\}")
+# The sketch a workflow row goes on to compile: an explicit `.ino` under a
+# product's arduino/ dir, or a `cd` into the sketch dir before a relative
+# compile — the two shapes the Arduino jobs use. A `.py` or header path
+# under the same dir (a regen check run from the display job) is neither.
+_INO_TARGET_RE = re.compile(
+    r"firmware/projects/([A-Za-z0-9_.-]+)/arduino/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.ino\b")
+_CD_SKETCH_RE = re.compile(r"\bcd\s+firmware/projects/([A-Za-z0-9_.-]+)/arduino/[A-Za-z0-9_.-]+\b")
+
+
+def _yaml():
+    try:
+        import yaml  # noqa: WPS433 — optional dependency, only for these passes
+    except ImportError as exc:  # pragma: no cover — exercised by hand
+        raise SystemExit("gen_firmware_sbom.py: PyYAML is needed to read the Arduino "
+                         "core pins out of .github/workflows and the sketch.yaml "
+                         "profiles (pip install pyyaml)") from exc
+    return yaml
+
+
+def _resolve_matrix(text: str, axis: str, entry: dict) -> str:
+    """`${{ matrix.<axis>.<key> }}` → entry[key]; other expressions stay."""
+    return _MATRIX_ANY.sub(
+        lambda m: str(entry[m.group(2)]) if m.group(1) == axis and m.group(2) in entry
+        else m.group(0), text)
+
+
+def _library_pins(lines: list[str], where: str) -> dict[str, str | None]:
+    """The composite action's `libraries` input (`Name` / `Name@1.2.3`, one
+    per line) → {name: version|None}. An unresolved expression is refused,
+    not read as a name."""
+    pins: dict[str, str | None] = {}
+    for line in lines:
+        if "${{" in line:
+            raise SystemExit(f"gen_firmware_sbom.py: {where} pins a library with an "
+                             f"expression this script cannot resolve: {line}")
+        name, _, version = line.partition("@")
+        pins[name.strip()] = version.strip() or None
+    return pins
+
+
+def _products_built(steps: list[dict]) -> list[str]:
+    """The products whose sketch these steps' run: blocks compile."""
+    found: set[str] = set()
+    for step in steps:
+        for line in str(step.get("run") or "").splitlines():
+            if line.strip().startswith("#"):
+                continue
+            for rx in (_INO_TARGET_RE, _CD_SKETCH_RE):
+                found.update(rx.findall(line))
+    return sorted(found)
 
 
 def arduino_core_pins() -> list[dict]:
-    """[{version|None, where}] for every setup-arduino-esp32 call in the
-    workflows. A literal `core-version` is a pin; `${{ matrix.a.b }}` resolves
-    through the job's strategy.matrix; empty means the action's "latest"."""
-    try:
-        import yaml  # noqa: WPS433 — optional dependency, only for this pass
-    except ImportError as exc:  # pragma: no cover — exercised by hand
-        raise SystemExit("gen_firmware_sbom.py: PyYAML is needed to read the Arduino "
-                         "core pins out of .github/workflows (pip install pyyaml)") from exc
+    """[{version|None, where, libraries, products}] for every
+    setup-arduino-esp32 call in the workflows. A literal `core-version` is a
+    pin; `${{ matrix.a.b }}` resolves through the job's strategy.matrix, and
+    the row's library pins through the same matrix entry; empty means the
+    action's "latest". `products` are the sketches the row goes on to
+    compile — read off the run: blocks up to the job's next core install,
+    because the release jobs install the WAP's core and both display cores
+    in one job. A row that names no sketch is refused: the SBOM could not
+    say which product's sketch.yaml it must agree with."""
+    yaml = _yaml()
     pins: list[dict] = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
         wf = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         for job, spec in (wf.get("jobs") or {}).items():
             spec = spec or {}
-            for step in spec.get("steps") or []:
-                step = step or {}
+            steps = [s or {} for s in spec.get("steps") or []]
+            for i, step in enumerate(steps):
                 if step.get("uses") != ARDUINO_ACTION:
                     continue
                 where = f"{path.name}:{job}"
-                raw = str((step.get("with") or {}).get("core-version") or "").strip()
+                following: list[dict] = []
+                for later in steps[i + 1:]:
+                    if later.get("uses") == ARDUINO_ACTION:
+                        break
+                    following.append(later)
+                products = _products_built(following)
+                if not products:
+                    raise SystemExit(
+                        f"gen_firmware_sbom.py: {where} installs an esp32:esp32 core but no "
+                        f"later step in the job names the sketch it compiles (a "
+                        f"firmware/projects/<product>/arduino/<sketch>/*.ino path or a `cd` "
+                        f"into the sketch dir) — the SBOM cannot tell which product's "
+                        f"sketch.yaml this row must agree with")
+                with_ = step.get("with") or {}
+                raw = str(with_.get("core-version") or "").strip()
+                lib_lines = _lines(str(with_.get("libraries") or ""))
                 m = _MATRIX_EXPR.match(raw)
                 if m:
                     axis, key = m.groups()
                     entries = ((spec.get("strategy") or {}).get("matrix") or {}).get(axis) or []
                     for entry in entries:
                         if isinstance(entry, dict) and key in entry:
-                            pins.append({"version": str(entry[key]), "where": where})
+                            resolved = [_resolve_matrix(ln, axis, entry) for ln in lib_lines]
+                            pins.append({"version": str(entry[key]), "where": where,
+                                         "libraries": _library_pins(resolved, where),
+                                         "products": products})
                     continue
                 if "${{" in raw:
                     raise SystemExit(f"gen_firmware_sbom.py: {where} passes core-version "
                                      f"as an expression this script cannot resolve: {raw}")
-                pins.append({"version": raw or None, "where": where})
+                pins.append({"version": raw or None, "where": where,
+                             "libraries": _library_pins(lib_lines, where),
+                             "products": products})
     return pins
+
+
+_SKETCH_PLATFORM_RE = re.compile(r"^esp32:esp32 \((\d+\.\d+\.\d+)\)$")
+_SKETCH_LIB_RE = re.compile(r"^(.*?)\s*\(([^()\s]+)\)$")
+
+
+def sketch_core_pins(flavors: list[dict]) -> list[dict]:
+    """[{version, product, sketch, profile, where, libraries}] for every
+    profile of every firmware/projects/*/arduino/*/sketch.yaml.
+
+    The pin is the profile's `platform: esp32:esp32 (X.Y.Z)` line, parsed
+    from YAML and never grepped — the files' comments quote core numbers
+    too. `libraries` is {name: version|None} from `Name (1.2.3)` / `Name`.
+    The product is the flavors.json entry whose dir holds the sketch. A
+    file or profile this reader cannot spell (no product, no profiles, not
+    exactly one platform, a platform not written that way) is refused, not
+    skipped: a --check that read past it would be green on a pin it never
+    saw.
+    """
+    yaml = _yaml()
+    by_dir = {REPO / p["dir"]: p["name"] for p in flavors}
+    pins: list[dict] = []
+    for path in sorted(PROJECTS.glob(SKETCH_GLOB)):
+        rel = path.relative_to(REPO)
+        product = next((name for d, name in by_dir.items() if path.is_relative_to(d)), None)
+        if product is None:
+            raise SystemExit(f"gen_firmware_sbom.py: {rel} is under no product's dir in "
+                             f"firmware/flavors.json")
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        profiles = doc.get("profiles") or {}
+        if not profiles:
+            raise SystemExit(f"gen_firmware_sbom.py: {rel} declares no profiles — every "
+                             f"sketch.yaml under a product dir pins its core in a profile, "
+                             f"and a profile-less file would shrink the axis the workflow "
+                             f"pins are checked against to nothing; add the profile, or "
+                             f"extend sketch_core_pins() if such a file is now legal")
+        for profile, body in profiles.items():
+            body = body or {}
+            where = f"{rel} ({profile})"
+            platforms = [p or {} for p in body.get("platforms") or []]
+            if len(platforms) != 1:
+                raise SystemExit(f"gen_firmware_sbom.py: {where} lists {len(platforms)} "
+                                 f"platforms; one `esp32:esp32 (X.Y.Z)` line is what this "
+                                 f"reader spells — extend sketch_core_pins() before adding "
+                                 f"a second")
+            m = _SKETCH_PLATFORM_RE.match(str(platforms[0].get("platform") or "").strip())
+            if not m:
+                raise SystemExit(f"gen_firmware_sbom.py: {where}: platform is not written "
+                                 f"`esp32:esp32 (X.Y.Z)`: {platforms[0].get('platform')!r}")
+            libraries: dict[str, str | None] = {}
+            for entry in body.get("libraries") or []:
+                lm = _SKETCH_LIB_RE.match(str(entry).strip())
+                libraries[lm.group(1) if lm else str(entry).strip()] = lm.group(2) if lm else None
+            pins.append({"version": m.group(1), "product": product, "sketch": path.parent.name,
+                         "profile": str(profile), "where": where, "libraries": libraries})
+    return pins
+
+
+def check_core_pin_agreement(workflow_pins: list[dict], sketch_pins: list[dict],
+                             product_cores: dict[str, set[str]]) -> list[str]:
+    """The agreement between the two Arduino axes, as findings (empty: holds).
+
+    (a) every exact core a workflow row pins is pinned by a sketch profile of
+        a product that row builds;
+    (b) every core a sketch profile pins is a pin of a workflow row that builds
+        that product, or an Arduino core inside that product's PlatformIO
+        platform(s) — `product_cores`, from PLATFORM_FACTS — so a sketch may
+        track either build path;
+    (c) every library a workflow row pins on its core line is pinned to the
+        same version by every profile, of a product that row builds, on that
+        core (firmware.yml's "keep the two in lockstep", made structural).
+    Not asserted, on purpose: a row on the action's "latest" has no version
+    to agree with, and a sketch may pin libraries its row leaves floating.
+    """
+    findings: list[str] = []
+    # Both directions are scoped to the product a row builds: a WAP row's pin
+    # is answered only by a WAP profile, and a WAP profile only by a WAP row
+    # (or the WAP's own PlatformIO core). A repository-wide set let one
+    # product's profile answer for another's row — the review round on #1686
+    # showed a WAP row moved to 3.3.10 staying green on the display's 3.3.10
+    # profile — which is exactly the drift this gate exists to catch.
+    for wp in workflow_pins:
+        if not wp["version"]:
+            continue
+        of = {sp["version"] for sp in sketch_pins if sp["product"] in wp["products"]}
+        if wp["version"] not in of:
+            findings.append(f"{wp['where']} pins esp32:esp32 {wp['version']} for "
+                            f"{', '.join(wp['products'])}, which no sketch.yaml profile of "
+                            f"that product pins (its profiles pin: "
+                            f"{', '.join(sorted(of)) or 'nothing'})")
+    for sp in sketch_pins:
+        rows = {wp["version"] for wp in workflow_pins
+                if wp["version"] and sp["product"] in wp["products"]}
+        cores = product_cores.get(sp["product"], set())
+        if sp["version"] not in rows | cores:
+            findings.append(f"{sp['where']} pins esp32:esp32 {sp['version']}, which is neither "
+                            f"a core-version pin of a workflow row that builds {sp['product']} "
+                            f"({', '.join(sorted(rows)) or 'none'}) nor the Arduino core of "
+                            f"its PlatformIO platform ({', '.join(sorted(cores)) or 'none'})")
+    for wp in workflow_pins:
+        if not wp["version"]:
+            continue
+        pinned = {name: ver for name, ver in wp["libraries"].items() if ver}
+        for sp in sketch_pins:
+            if sp["version"] != wp["version"] or sp["product"] not in wp["products"]:
+                continue
+            for name, ver in sorted(pinned.items()):
+                got = sp["libraries"].get(name)
+                if got != ver:
+                    findings.append(f"{sp['where']} rides esp32:esp32 {sp['version']} with "
+                                    f"{name} {got or 'unpinned'}, but {wp['where']} pins "
+                                    f"{name}@{ver} on that core line")
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +673,7 @@ def build_document(timestamp: str | None = None) -> dict:
         depends.setdefault(a, set()).add(b)
 
     platform_envs: dict[str, list[str]] = {}
+    product_cores: dict[str, set[str]] = {}   # product → Arduino cores of its platforms
     lib_envs: dict[str, list[str]] = {}
     lib_meta: dict[str, dict] = {}
     common = first_party_libs(COMMON_DIR, "common")
@@ -484,6 +718,7 @@ def build_document(timestamp: str | None = None) -> dict:
                     f"add the Arduino core / ESP-IDF release it packages "
                     f"(firmware/PLATFORMS.md) before regenerating the SBOM")
             platform_envs.setdefault(section, []).append(f"{name}:{env}")
+            product_cores.setdefault(name, set()).add(PLATFORM_FACTS[literal]["arduino_core"])
             dep(pref, f"platform:{section}")
             boards.add(facts["board"])
             reaches_common = reaches_common or facts["reaches_common"]
@@ -607,27 +842,48 @@ def build_document(timestamp: str | None = None) -> dict:
             }]
         add(ref, comp)
 
-    for pin in arduino_core_pins():
-        ver = pin["version"]
+    def core_path(ver: str | None, path: str) -> str:
+        """Record `path` as a build path of the esp32:esp32 core `ver` (None:
+        the action's "latest"), creating the Boards-Manager component when
+        no PlatformIO platform already brought that core; returns its ref."""
         ref = f"framework:arduino-esp32@{ver or 'latest'}"
-        path = f"arduino-cli ({pin['where']})"
         if ref in components:
             components[ref]["_paths"] = sorted(set(components[ref]["_paths"]) | {path})
-        else:
-            comp = {
-                "type": "framework",
-                "group": "espressif",
-                "name": "arduino-esp32",
-                "description": "Arduino core for the ESP32 (esp32:esp32 Boards Manager "
-                               "package, Arduino-CLI build path)",
-                "licenses": [{"license": {"id": LICENSES["arduino-esp32"]}}],
-                "_paths": [path],
-            }
-            if ver:
-                comp["version"] = ver
-                comp["purl"] = f"pkg:github/espressif/arduino-esp32@{ver}"
-            add(ref, comp)
-        dep(ROOT_REF, ref)
+            return ref
+        comp = {
+            "type": "framework",
+            "group": "espressif",
+            "name": "arduino-esp32",
+            "description": "Arduino core for the ESP32 (esp32:esp32 Boards Manager "
+                           "package, Arduino-CLI build path)",
+            "licenses": [{"license": {"id": LICENSES["arduino-esp32"]}}],
+            "_paths": [path],
+        }
+        if ver:
+            comp["version"] = ver
+            comp["purl"] = f"pkg:github/espressif/arduino-esp32@{ver}"
+        add(ref, comp)
+        return ref
+
+    workflow_pins = arduino_core_pins()
+    for pin in workflow_pins:
+        dep(ROOT_REF, core_path(pin["version"], f"arduino-cli ({pin['where']})"))
+
+    # The other Arduino axis. Asserted before it is folded in: a document
+    # that listed a profile on a core no build path agrees with would be a
+    # record of the drift, not a refusal of it.
+    sketch_pins = sketch_core_pins(flavors)
+    findings = check_core_pin_agreement(workflow_pins, sketch_pins, product_cores)
+    if findings:
+        raise SystemExit(
+            "gen_firmware_sbom.py: the Arduino core pins disagree between sketch.yaml and "
+            "the workflows:\n  - " + "\n  - ".join(findings) + "\n"
+            "Move the pin that is wrong — the sketch.yaml profile, or the workflow row's "
+            "core-version / library pins (through .github/actions/setup-arduino-esp32) — "
+            "and regenerate; firmware/PLATFORMS.md records which axis leads and why the "
+            "WAP's Arduino-CLI rows float on the action's latest.")
+    for pin in sketch_pins:
+        core_path(pin["version"], f"sketch.yaml ({pin['sketch']}/{pin['profile']})")
 
     for ref, comp in components.items():
         if "_paths" in comp:
@@ -657,8 +913,9 @@ def build_document(timestamp: str | None = None) -> dict:
             "version": GENERATOR_VERSION,
             "description": "scripts/gen_firmware_sbom.py — derives this document from "
                            "flavors.json, the resolved PlatformIO configs, platforms.ini, "
-                           "the first-party library manifests and the workflows' Arduino "
-                           "core pins",
+                           "the first-party library manifests, the workflows' Arduino "
+                           "core pins and the sketch.yaml profiles (the two Arduino axes "
+                           "are asserted to agree)",
         }]},
         "component": {
             "type": "firmware",
@@ -675,7 +932,7 @@ def build_document(timestamp: str | None = None) -> dict:
         },
         "properties": props({
             "securacv:generator": "scripts/gen_firmware_sbom.py",
-            "securacv:check": "python3 scripts/gen_firmware_sbom.py --check",
+            "securacv:check": "python3 scripts/gen_firmware_sbom.py --check --validate",
             "securacv:declared_by_hand": "PLATFORM_FACTS (Arduino core / ESP-IDF release per "
                                          "platform literal); everything else is derived",
         }),
@@ -734,6 +991,63 @@ def verify_with_pio(pio: str = "pio") -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# --validate: the document against the CycloneDX schema, strictly.
+
+def validate_document(text: str) -> str | None:
+    """None when `text` is a strict CycloneDX SPEC_VERSION document; else the
+    first violation as `<json path>: <reason>`.
+
+    cyclonedx-python-lib's JsonStrictValidator with the schema it bundles
+    ($refs resolve from a local registry — no network) and format checking
+    on. The `json-validation` extra is what brings the iri-reference
+    checker; without it a URL with a space passes, so the import is guarded
+    with the exact pip spec, the way the PyYAML guard names its remedy.
+
+    Two things the schema run cannot say come first: that `text` is JSON at
+    all (the validator would raise a traceback, not report), and that the
+    document claims SPEC_VERSION — the 1.5 schema types `specVersion` as a
+    free string with an example, no enum, so a file declaring 1.6 satisfies
+    it, and the OK line names 1.5.
+    """
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return f"$: not JSON — {exc.msg} at line {exc.lineno} column {exc.colno}"
+    if isinstance(doc, dict) and doc.get("specVersion") != SPEC_VERSION:
+        return (f"$.specVersion: expected {SPEC_VERSION!r}, got {doc.get('specVersion')!r} "
+                f"(the schema types it as a free string; the generator promises "
+                f"{SPEC_VERSION})")
+    remedy = (f"gen_firmware_sbom.py: cyclonedx-python-lib with its json-validation extra "
+              f"is needed for --validate (pip install '{VALIDATOR_PIP}')")
+    try:
+        from cyclonedx.exception import MissingOptionalDependencyException
+        from cyclonedx.schema import SchemaVersion
+        from cyclonedx.validation.json import JsonStrictValidator
+    except ImportError as exc:  # pragma: no cover — exercised by hand
+        raise SystemExit(remedy) from exc
+    try:
+        error = JsonStrictValidator(SchemaVersion.from_version(SPEC_VERSION)).validate_str(text)
+    except MissingOptionalDependencyException as exc:  # pragma: no cover — the bare lib
+        raise SystemExit(remedy) from exc
+    if error is None:
+        return None
+    detail = getattr(error, "data", None)   # the jsonschema error underneath
+    if detail is not None and hasattr(detail, "json_path"):
+        return f"{detail.json_path}: {detail.message}"
+    return str(error).splitlines()[0]
+
+
+def _report_validation(label: str, text: str) -> int:
+    problem = validate_document(text)
+    if problem:
+        print(f"::error::{label} is not a strict CycloneDX {SPEC_VERSION} document — {problem}")
+        return 1
+    print(f"gen_firmware_sbom.py --validate: OK — {label} is a strict CycloneDX "
+          f"{SPEC_VERSION} document (schema bundled with cyclonedx-python-lib; no network).")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -747,7 +1061,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--verify-with-pio", action="store_true",
                     help="cross-check the ini resolver against `pio project config` "
                          "for every build env (needs PlatformIO on PATH)")
+    ap.add_argument("--validate", nargs="?", const="", default=None, metavar="FILE",
+                    help=f"hold the document to the CycloneDX {SPEC_VERSION} JSON schema, "
+                         f"strictly (cyclonedx-python-lib's JsonStrictValidator): the "
+                         f"rendered document (read-only, like --check, and before it "
+                         f"compares; --out/--timestamp beside it need --check); or, with "
+                         f"FILE, that file's bytes (sbom.yml's timestamped artifact), whose "
+                         f"specVersion must be {SPEC_VERSION}. "
+                         f"Needs: pip install '{VALIDATOR_PIP}'")
     args = ap.parse_args(argv)
+    custom_out = args.out.resolve() != OUT.resolve()
+
+    if args.validate:   # a FILE: validate those bytes and nothing else
+        if args.check or args.verify_with_pio or args.timestamp or custom_out:
+            ap.error("--validate FILE validates that file only and takes no --check, "
+                     "--verify-with-pio, --timestamp or --out; bare --validate holds the "
+                     "rendered document, alone or with --check")
+        target = Path(args.validate)
+        try:
+            text = target.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"::error::{target}: cannot read it — {exc.strerror or exc}")
+            return 1
+        return _report_validation(str(target), text)
+
+    if args.validate is not None and not args.check and (args.timestamp or custom_out):
+        # Read-only means read-only: a write flag beside bare --validate
+        # used to be dropped for a green exit and no file.
+        ap.error("bare --validate is read-only (the rendered document, like --check) and "
+                 "writes nothing, so --out/--timestamp need --check beside it; to validate "
+                 "an artifact, write it first and run --validate FILE on the file")
 
     if args.verify_with_pio:
         problems = verify_with_pio()
@@ -758,13 +1101,21 @@ def main(argv: list[str] | None = None) -> int:
         print("gen_firmware_sbom.py --verify-with-pio: OK — the resolver agrees with "
               "PlatformIO on platform / framework / board / lib_deps / lib_extra_dirs "
               "for every build env.")
-        if not args.check:
+        if not args.check and args.validate is None:
             return 0
 
     stamp = args.timestamp
     if stamp == "now":
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     text = render(build_document(stamp))
+
+    if args.validate is not None:
+        # Read-only, like --check, and before the byte compare: a document
+        # the schema refuses is the emitter's defect, not the file's.
+        rc = _report_validation("the derived document (fix the generator, not the file)",
+                                text)
+        if rc or not args.check:
+            return rc
 
     if args.check:
         current = args.out.read_text(encoding="utf-8") if args.out.exists() else ""
@@ -778,7 +1129,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(line)
             print(f"::error::{args.out.relative_to(REPO) if args.out.is_relative_to(REPO) else args.out} "
                   f"is stale — a build input moved (a platform pin, a lib_deps line, a "
-                  f"library manifest, an Arduino core pin, the firmware version). "
+                  f"library manifest, an Arduino core pin in a workflow or a sketch.yaml "
+                  f"profile, the firmware version). "
                   f"Regenerate: python3 scripts/gen_firmware_sbom.py")
             return 1
         doc = json.loads(text)
