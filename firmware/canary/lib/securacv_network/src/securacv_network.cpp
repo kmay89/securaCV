@@ -117,6 +117,7 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
   httpd_resp_set_status(req, status_code == 400 ? "400 Bad Request" :
                               status_code == 404 ? "404 Not Found" :
                               status_code == 409 ? "409 Conflict" :
+                              status_code == 413 ? "413 Payload Too Large" :
                               status_code == 503 ? "503 Service Unavailable" :
                               status_code == 500 ? "500 Internal Server Error" : "400 Bad Request");
   char response[128];
@@ -856,6 +857,7 @@ static esp_err_t handle_peers(httpd_req_t* req);
 #if FEATURE_HA_MQTT
 static esp_err_t handle_mqtt_status(httpd_req_t* req);
 static esp_err_t handle_mqtt_config(httpd_req_t* req);
+static esp_err_t handle_mqtt_ca(httpd_req_t* req);  // POST stores the broker CA (PEM), DELETE forgets it
 #endif
 
 #if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
@@ -927,19 +929,36 @@ static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req);
 static esp_err_t handle_mesh_pair_cancel(httpd_req_t* req);
 #endif
 
+// esp_http_server drops a registration past max_uri_handlers and returns an
+// error the old call sites ignored — a full table 404s whole route families
+// in silence (the wildcard fallback, registered last, goes first). Every
+// route goes through here so a full table is on the serial log, by name.
+static void register_route(httpd_handle_t server, const httpd_uri_t* uri) {
+  const esp_err_t err = httpd_register_uri_handler(server, uri);
+  if (err != ESP_OK) {
+    Serial.printf("[HTTP] route NOT registered: %s (method %d): %s - raise max_uri_handlers\n",
+                  uri->uri, (int)uri->method, esp_err_to_name(err));
+  }
+}
+
 bool ScvNetworkManager::startHttpServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
-  // 42 base (incl. /api/witness + /api/thermal) + 8 captive-portal routes
-  // (6 OS connectivity probes + /setup + the wildcard fallback) + 6 mesh
-  // endpoints (PR-8) when the mesh feature is compiled in. Each registered
-  // httpd_uri_t needs a slot.
+  // Worst case with every feature on: 14 unconditional + 4 MQTT (/api/mqtt/ca
+  // twice — POST and DELETE are separate registrations) + 1 dev-only POST
+  // /api/ota (FEATURE_OTA_UPDATE && !SECURACV_BUILD_RELEASE; a release build
+  // leaves that slot spare, which is cheaper than a dropped route) + 4
+  // OTA-pull + 9 peek + 1 sensing + 4 vision + 4 audio + 2 diagnostics + 1
+  // power + 1 thermal = 45 base, + 8 captive-portal routes (6 OS connectivity
+  // probes + /setup + the wildcard fallback) + 6 mesh endpoints (PR-8) when
+  // the mesh feature is compiled in. Each registered httpd_uri_t needs a
+  // slot; register_route() names any that does not get one.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 56;
+  config.max_uri_handlers = 59;
   #else
-  config.max_uri_handlers = 50;
+  config.max_uri_handlers = 53;
   #endif
   config.recv_wait_timeout = 30;
   config.send_wait_timeout = 30;
@@ -965,14 +984,14 @@ void ScvNetworkManager::stopHttpServer() {
 void ScvNetworkManager::registerHttpHandlers() {
   // UI
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };
-  httpd_register_uri_handler(m_http_server, &ui);
+  register_route(m_http_server, &ui);
 
   // First-boot setup wizard + the OS captive-portal connectivity probes.
   // Registered with a trailing '*' because probe URLs sometimes carry a
   // cache-busting query and the wildcard matcher compares the FULL uri;
   // handle_captive_probe re-checks the exact path component itself.
   httpd_uri_t setup_page = { .uri = "/setup", .method = HTTP_GET, .handler = handle_setup_page };
-  httpd_register_uri_handler(m_http_server, &setup_page);
+  register_route(m_http_server, &setup_page);
   static const char* kProbePaths[] = {
     "/hotspot-detect.html*",        // Apple CNA
     "/library/test/success.html*",  // Apple (older probe)
@@ -983,189 +1002,197 @@ void ScvNetworkManager::registerHttpHandlers() {
   };
   for (const char* p : kProbePaths) {
     httpd_uri_t probe = { .uri = p, .method = HTTP_GET, .handler = handle_captive_probe };
-    httpd_register_uri_handler(m_http_server, &probe);
+    register_route(m_http_server, &probe);
   }
 
   // API endpoints
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status };
-  httpd_register_uri_handler(m_http_server, &status);
+  register_route(m_http_server, &status);
 
   httpd_uri_t chain = { .uri = "/api/chain", .method = HTTP_GET, .handler = handle_chain };
-  httpd_register_uri_handler(m_http_server, &chain);
+  register_route(m_http_server, &chain);
 
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness };
-  httpd_register_uri_handler(m_http_server, &witness);
+  register_route(m_http_server, &witness);
 
   httpd_uri_t logs = { .uri = "/api/logs", .method = HTTP_GET, .handler = handle_logs };
-  httpd_register_uri_handler(m_http_server, &logs);
+  register_route(m_http_server, &logs);
 
   httpd_uri_t log_ack = { .uri = "/api/logs/*/ack", .method = HTTP_POST, .handler = handle_log_ack };
-  httpd_register_uri_handler(m_http_server, &log_ack);
+  register_route(m_http_server, &log_ack);
 
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all };
-  httpd_register_uri_handler(m_http_server, &ack_all);
+  register_route(m_http_server, &ack_all);
 
   httpd_uri_t reboot = { .uri = "/api/reboot", .method = HTTP_POST, .handler = handle_reboot };
-  httpd_register_uri_handler(m_http_server, &reboot);
+  register_route(m_http_server, &reboot);
 
   httpd_uri_t export_ep = { .uri = "/api/export", .method = HTTP_POST, .handler = handle_export };
-  httpd_register_uri_handler(m_http_server, &export_ep);
+  register_route(m_http_server, &export_ep);
 
   // WiFi management endpoints
   httpd_uri_t wifi_status = { .uri = "/api/wifi/status", .method = HTTP_GET, .handler = handle_wifi_status };
-  httpd_register_uri_handler(m_http_server, &wifi_status);
+  register_route(m_http_server, &wifi_status);
 
   httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
-  httpd_register_uri_handler(m_http_server, &wifi_scan);
+  register_route(m_http_server, &wifi_scan);
 
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
-  httpd_register_uri_handler(m_http_server, &wifi_connect);
+  register_route(m_http_server, &wifi_connect);
 
   httpd_uri_t wifi_disconnect = { .uri = "/api/wifi/disconnect", .method = HTTP_POST, .handler = handle_wifi_disconnect };
-  httpd_register_uri_handler(m_http_server, &wifi_disconnect);
+  register_route(m_http_server, &wifi_disconnect);
 
   // Peer list (mDNS browse cache). Path matches canary-vision/docs/discovery.md
   // and the SPA's CanaryAPI.request(... '/api/v1/peers').
   httpd_uri_t peers_ep = { .uri = "/api/v1/peers", .method = HTTP_GET, .handler = handle_peers };
-  httpd_register_uri_handler(m_http_server, &peers_ep);
+  register_route(m_http_server, &peers_ep);
 
   #if FEATURE_HA_MQTT
   httpd_uri_t mqtt_stat = { .uri = "/api/mqtt/status", .method = HTTP_GET, .handler = handle_mqtt_status };
-  httpd_register_uri_handler(m_http_server, &mqtt_stat);
+  register_route(m_http_server, &mqtt_stat);
 
   httpd_uri_t mqtt_cfg = { .uri = "/api/mqtt/config", .method = HTTP_POST, .handler = handle_mqtt_config };
-  httpd_register_uri_handler(m_http_server, &mqtt_cfg);
+  register_route(m_http_server, &mqtt_cfg);
+
+  // The broker CA (PEM, up to kCaPemMax) has its own route: the config body
+  // is 512 bytes and a certificate is not. POST stores, DELETE forgets —
+  // an explicit verb, so a body that arrives empty can never mean "clear".
+  httpd_uri_t mqtt_ca_post = { .uri = "/api/mqtt/ca", .method = HTTP_POST, .handler = handle_mqtt_ca };
+  register_route(m_http_server, &mqtt_ca_post);
+  httpd_uri_t mqtt_ca_del = { .uri = "/api/mqtt/ca", .method = HTTP_DELETE, .handler = handle_mqtt_ca };
+  register_route(m_http_server, &mqtt_ca_del);
   #endif
 
   #if FEATURE_OTA_UPDATE && !defined(SECURACV_BUILD_RELEASE)
   httpd_uri_t ota = { .uri = "/api/ota", .method = HTTP_POST, .handler = handle_ota };
-  httpd_register_uri_handler(m_http_server, &ota);
+  register_route(m_http_server, &ota);
   #endif
 
   #if FEATURE_OTA_PULL
   httpd_uri_t ota_status = { .uri = "/api/ota/status", .method = HTTP_GET, .handler = handle_ota_status };
-  httpd_register_uri_handler(m_http_server, &ota_status);
+  register_route(m_http_server, &ota_status);
 
   httpd_uri_t ota_check = { .uri = "/api/ota/check", .method = HTTP_POST, .handler = handle_ota_check };
-  httpd_register_uri_handler(m_http_server, &ota_check);
+  register_route(m_http_server, &ota_check);
 
   httpd_uri_t ota_install = { .uri = "/api/ota/install", .method = HTTP_POST, .handler = handle_ota_install };
-  httpd_register_uri_handler(m_http_server, &ota_install);
+  register_route(m_http_server, &ota_install);
 
   httpd_uri_t ota_cfg = { .uri = "/api/ota/config", .method = HTTP_POST, .handler = handle_ota_config };
-  httpd_register_uri_handler(m_http_server, &ota_cfg);
+  register_route(m_http_server, &ota_cfg);
   #endif
 
   #if FEATURE_CAMERA_PEEK
   httpd_uri_t peek_start = { .uri = "/api/peek/start", .method = HTTP_POST, .handler = handle_peek_start };
-  httpd_register_uri_handler(m_http_server, &peek_start);
+  register_route(m_http_server, &peek_start);
 
   httpd_uri_t peek_stream = { .uri = "/api/peek/stream", .method = HTTP_GET, .handler = handle_peek_stream };
-  httpd_register_uri_handler(m_http_server, &peek_stream);
+  register_route(m_http_server, &peek_stream);
 
   httpd_uri_t peek_stop = { .uri = "/api/peek/stop", .method = HTTP_POST, .handler = handle_peek_stop };
-  httpd_register_uri_handler(m_http_server, &peek_stop);
+  register_route(m_http_server, &peek_stop);
 
   httpd_uri_t peek_status = { .uri = "/api/peek/status", .method = HTTP_GET, .handler = handle_peek_status };
-  httpd_register_uri_handler(m_http_server, &peek_status);
+  register_route(m_http_server, &peek_status);
 
   httpd_uri_t peek_init = { .uri = "/api/peek/init", .method = HTTP_POST, .handler = handle_peek_init };
-  httpd_register_uri_handler(m_http_server, &peek_init);
+  register_route(m_http_server, &peek_init);
 
   httpd_uri_t peek_res = { .uri = "/api/peek/resolution", .method = HTTP_POST, .handler = handle_peek_resolution };
-  httpd_register_uri_handler(m_http_server, &peek_res);
+  register_route(m_http_server, &peek_res);
 
   httpd_uri_t peek_sensor_g = { .uri = "/api/peek/sensor", .method = HTTP_GET, .handler = handle_peek_sensor_get };
-  httpd_register_uri_handler(m_http_server, &peek_sensor_g);
+  register_route(m_http_server, &peek_sensor_g);
 
   httpd_uri_t peek_sensor_s = { .uri = "/api/peek/sensor", .method = HTTP_POST, .handler = handle_peek_sensor_set };
-  httpd_register_uri_handler(m_http_server, &peek_sensor_s);
+  register_route(m_http_server, &peek_sensor_s);
 
   httpd_uri_t peek_snap = { .uri = "/api/peek/snapshot", .method = HTTP_GET, .handler = handle_peek_snapshot };
-  httpd_register_uri_handler(m_http_server, &peek_snap);
+  register_route(m_http_server, &peek_snap);
   #endif
 
   #if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
   httpd_uri_t sensing_ep = { .uri = "/api/sensing", .method = HTTP_GET, .handler = handle_sensing };
-  httpd_register_uri_handler(m_http_server, &sensing_ep);
+  register_route(m_http_server, &sensing_ep);
   #endif
 
   #if FEATURE_VISION_DETECT
   httpd_uri_t vision_cfg_g = { .uri = "/api/vision/config", .method = HTTP_GET, .handler = handle_vision_config_get };
-  httpd_register_uri_handler(m_http_server, &vision_cfg_g);
+  register_route(m_http_server, &vision_cfg_g);
 
   httpd_uri_t vision_cfg_s = { .uri = "/api/vision/config", .method = HTTP_POST, .handler = handle_vision_config_set };
-  httpd_register_uri_handler(m_http_server, &vision_cfg_s);
+  register_route(m_http_server, &vision_cfg_s);
 
   httpd_uri_t vision_cfg_save = { .uri = "/api/vision/config/save", .method = HTTP_POST, .handler = handle_vision_config_save };
-  httpd_register_uri_handler(m_http_server, &vision_cfg_save);
+  register_route(m_http_server, &vision_cfg_save);
 
   httpd_uri_t vision_thumb = { .uri = "/api/vision/thumbnail", .method = HTTP_GET, .handler = handle_vision_thumbnail };
-  httpd_register_uri_handler(m_http_server, &vision_thumb);
+  register_route(m_http_server, &vision_thumb);
   #endif
 
   #if FEATURE_ACOUSTIC_EVENTS
   // Live RMS for the UI level meter — same number the hysteresis uses,
   // not a second audio path. Returns 0 when muted.
   httpd_uri_t audio_level = { .uri = "/api/audio/level", .method = HTTP_GET, .handler = handle_audio_level };
-  httpd_register_uri_handler(m_http_server, &audio_level);
+  register_route(m_http_server, &audio_level);
 
   // Hard mute (physically uninstalls the I2S driver) — persisted in NVS.
   httpd_uri_t audio_mute_ep = { .uri = "/api/audio/mute", .method = HTTP_POST, .handler = handle_audio_mute };
-  httpd_register_uri_handler(m_http_server, &audio_mute_ep);
+  register_route(m_http_server, &audio_mute_ep);
 
   // Alarm-pattern self-test (relaxed thresholds, normal event callback
   // suppressed so a TEST-button press does NOT flow into HA automations).
   httpd_uri_t audio_test_start = { .uri = "/api/audio/test/start", .method = HTTP_POST, .handler = handle_audio_test_start };
-  httpd_register_uri_handler(m_http_server, &audio_test_start);
+  register_route(m_http_server, &audio_test_start);
   httpd_uri_t audio_test_status = { .uri = "/api/audio/test/status", .method = HTTP_GET, .handler = handle_audio_test_status };
-  httpd_register_uri_handler(m_http_server, &audio_test_status);
+  register_route(m_http_server, &audio_test_status);
   #endif
 
   #if FEATURE_DIAGNOSTICS
   httpd_uri_t diag_ep = { .uri = "/api/diagnostics", .method = HTTP_GET, .handler = handle_diagnostics };
-  httpd_register_uri_handler(m_http_server, &diag_ep);
+  register_route(m_http_server, &diag_ep);
 
   httpd_uri_t selftest_ep = { .uri = "/api/selftest", .method = HTTP_GET, .handler = handle_selftest };
-  httpd_register_uri_handler(m_http_server, &selftest_ep);
+  register_route(m_http_server, &selftest_ep);
   #endif
 
   #if FEATURE_POWER_MONITOR
   httpd_uri_t batt_hist_ep = { .uri = "/api/battery/history", .method = HTTP_GET, .handler = handle_battery_history };
-  httpd_register_uri_handler(m_http_server, &batt_hist_ep);
+  register_route(m_http_server, &batt_hist_ep);
   #endif
 
   #if FEATURE_THERMAL_WATCHDOG
   httpd_uri_t thermal_ep = { .uri = "/api/thermal", .method = HTTP_GET, .handler = handle_thermal };
-  httpd_register_uri_handler(m_http_server, &thermal_ep);
+  register_route(m_http_server, &thermal_ep);
   #endif
 
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
   // Mesh / opera REST API (PR-8). 6 endpoints — see spec §8.
   httpd_uri_t mesh_status_ep = { .uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status };
-  httpd_register_uri_handler(m_http_server, &mesh_status_ep);
+  register_route(m_http_server, &mesh_status_ep);
 
   httpd_uri_t mesh_peers_ep = { .uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers };
-  httpd_register_uri_handler(m_http_server, &mesh_peers_ep);
+  register_route(m_http_server, &mesh_peers_ep);
 
   httpd_uri_t mesh_pair_start_ep = { .uri = "/api/mesh/pair/start", .method = HTTP_POST, .handler = handle_mesh_pair_start };
-  httpd_register_uri_handler(m_http_server, &mesh_pair_start_ep);
+  register_route(m_http_server, &mesh_pair_start_ep);
 
   httpd_uri_t mesh_pair_join_ep = { .uri = "/api/mesh/pair/join", .method = HTTP_POST, .handler = handle_mesh_pair_join };
-  httpd_register_uri_handler(m_http_server, &mesh_pair_join_ep);
+  register_route(m_http_server, &mesh_pair_join_ep);
 
   httpd_uri_t mesh_pair_confirm_ep = { .uri = "/api/mesh/pair/confirm", .method = HTTP_POST, .handler = handle_mesh_pair_confirm };
-  httpd_register_uri_handler(m_http_server, &mesh_pair_confirm_ep);
+  register_route(m_http_server, &mesh_pair_confirm_ep);
 
   httpd_uri_t mesh_pair_cancel_ep = { .uri = "/api/mesh/pair/cancel", .method = HTTP_POST, .handler = handle_mesh_pair_cancel };
-  httpd_register_uri_handler(m_http_server, &mesh_pair_cancel_ep);
+  register_route(m_http_server, &mesh_pair_cancel_ep);
   #endif
 
   // Wildcard fallback — MUST stay the last registration, so every exact
   // route above wins first. During setup it funnels stray hijacked-DNS
   // requests to the wizard; otherwise it 404s like before.
   httpd_uri_t catchall = { .uri = "/*", .method = HTTP_GET, .handler = handle_captive_catchall };
-  httpd_register_uri_handler(m_http_server, &catchall);
+  register_route(m_http_server, &catchall);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2407,6 +2434,25 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req) {
 
 #if FEATURE_HA_MQTT
 #include "securacv_mqtt.h"
+#include "mqtt_tls_fields.h"  // save-time judgment of tls / fp / the CA — the shared decision, host-tested
+
+// A refusal from the TLS field judgment: the API's error code plus the
+// shared header's constant reason, so the response says exactly what the
+// serial log would have said at connect. Never the pin, the PEM or a
+// credential (the header cannot format them).
+static esp_err_t send_tls_refusal(httpd_req_t* req, canary::net::mqtt_tls_fields::Verdict v,
+                                  const canary::net::mqtt_tls::Decision& d) {
+  JsonDocument doc;
+  doc["ok"] = false;
+  doc["error"] = canary::net::mqtt_tls_fields::error_code(v);
+  doc["reason"] = canary::net::mqtt_tls_fields::reason(v, d);
+  String response;
+  serializeJson(doc, response);
+  httpd_resp_set_status(req, v == canary::net::mqtt_tls_fields::Verdict::CaTooLarge
+                                 ? "413 Payload Too Large" : "400 Bad Request");
+  witness_get_health().http_errors++;
+  return http_send_json(req, response.c_str());
+}
 
 static esp_err_t handle_mqtt_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
@@ -2428,22 +2474,67 @@ static esp_err_t handle_mqtt_status(httpd_req_t* req) {
     doc["configured"] = false;
   }
 
+  // Broker transport: the provisioned mode, what the socket does with it,
+  // and — when refused — the reason (a constant from the shared header).
+  // Presence flags only for the CA and the pin: never their values.
+  MqttTransportStatus tls;
+  mqtt_transport_status(&tls);
+  doc["tls_loaded"] = tls.loaded;
+  doc["tls"] = tls.mode;
+  doc["tls_mode"] = tls.mode_byte;
+  doc["transport"] = tls.transport;
+  if (!tls.allowed) doc["tls_reason"] = tls.reason;
+  if (tls.warn_insecure) doc["tls_warning"] = canary::net::mqtt_tls::insecure_warning();
+  MqttTlsCurrent cur;
+  if (mqtt_tls_read_current(&cur)) {
+    doc["ca_set"] = cur.ca_set;
+    doc["fp_set"] = cur.fp_set;
+  }
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
 }
 
+// POST /api/mqtt/config — host / port / username / password / enabled as
+// before, plus two optional broker-TLS fields:
+//   tls  0 plain, 1 CA-verified, 2 SHA-256 fingerprint pin, 3 lab (unverified, warns)
+//   fp   the broker certificate's SHA-256 pin, any spelling the firmware
+//        accepts ("AA:BB:...", "aabb...", spaces); "" forgets the stored pin
+// A field the body does not name leaves its NVS key alone. The CA is not a
+// field here — it has its own route (POST /api/mqtt/ca) because it does not
+// fit this body. The pair is judged by mqtt_tls_fields::plan against what
+// NVS already holds, with the shared decision, BEFORE anything is written:
+// a body the firmware would refuse at connect (mode 1 with no CA uploaded,
+// mode 2 with no pin here or stored, a malformed pin, an unknown mode) is a
+// 400 with the header's own reason text, and NVS is untouched.
 static esp_err_t handle_mqtt_config(httpd_req_t* req) {
+  namespace tf = canary::net::mqtt_tls_fields;
   if (!rate_limit_check(req, true)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
+  // Body budget: the longest well-formed body is host 63 + username 31 +
+  // password 63 (the MqttCredentials field widths) + port 5 + enabled +
+  // tls 1 + fp 95 (the canonical pin) and the JSON framing around them —
+  // about 340 bytes, so 512 holds it with room for escapes in the password.
+  // Anything longer is not this API's body and is refused as such rather
+  // than truncated into an "invalid_json".
   char body[512];
-  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (recv <= 0) {
+  if (req->content_len >= sizeof(body)) {
+    return http_send_error(req, 413, "payload_too_large");
+  }
+  int total = 0;
+  while (total < (int)sizeof(body) - 1) {
+    int r = httpd_req_recv(req, body + total, sizeof(body) - 1 - total);
+    if (r <= 0) break;
+    total += r;
+    if (total >= (int)req->content_len) break;
+  }
+  if (total <= 0) {
     return http_send_error(req, 400, "empty_body");
   }
-  body[recv] = '\0';
+  body[total] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, body) != DeserializationError::Ok) {
@@ -2470,14 +2561,141 @@ static esp_err_t handle_mqtt_config(httpd_req_t* req) {
   creds.enabled = input["enabled"] | true;
   creds.configured = true;
 
-  if (!mqtt_save_credentials(&creds)) {
+  // The optional TLS pair, typed strictly: a `tls` that is not an integer or
+  // an `fp` that is not a string is the same refusal a bad value gets.
+  tf::Request tls_req;
+  if (!input["tls"].isNull()) {
+    if (!input["tls"].is<int>()) return http_send_error(req, 400, "tls_mode_invalid");
+    tls_req.has_mode = true;
+    tls_req.mode = input["tls"].as<long>();
+  }
+  if (!input["fp"].isNull()) {
+    if (!input["fp"].is<const char*>()) return http_send_error(req, 400, "fp_malformed");
+    tls_req.fp = input["fp"].as<const char*>();
+  }
+
+  MqttTlsCurrent stored;
+  if (!mqtt_tls_read_current(&stored)) {
+    return http_send_error(req, 500, "nvs_read_failed");
+  }
+  tf::Current cur;
+  cur.mode_byte = stored.mode_byte;
+  cur.fp = stored.fp_set ? stored.fp : nullptr;
+  cur.ca_set = stored.ca_set;
+
+  tf::Plan tls_plan;
+  const tf::Verdict verdict = tf::plan(cur, tls_req, tls_plan);
+  if (verdict != tf::Verdict::Ok) {
+    return send_tls_refusal(req, verdict, tls_plan.decision);
+  }
+
+  // One NVS session for the whole request — the TLS keys first, the
+  // credentials last, one reload after the session closes (mqtt_save_config
+  // walks mqtt_tls_fields::write_order, host-tested). Two sessions with the
+  // credentials first would let the main task reconnect with the NEW
+  // password on the OLD, plain socket in the gap between them, and close the
+  // shared NVS handle under the second write.
+  const MqttTlsWrite tls_write = {tls_plan.set_mode, tls_plan.mode, tls_plan.set_fp, tls_plan.fp,
+                                  tls_plan.clear_fp};
+  const bool any_tls = tls_plan.set_mode || tls_plan.set_fp || tls_plan.clear_fp;
+  if (!mqtt_save_config(&creds, any_tls ? &tls_write : nullptr)) {
     return http_send_error(req, 500, "save_failed");
   }
 
   JsonDocument doc;
   doc["ok"] = true;
-  doc["message"] = "MQTT configuration saved. Reboot to apply.";
+  doc["message"] = "MQTT configuration saved. The Canary reconnects with these settings.";
+  // What the socket will do with the saved settings — the same words the
+  // serial log uses — so a caller sees "tls-ca" / "tls-fingerprint" / "plain"
+  // come back, and the lab opt-in's warning with it.
+  doc["transport"] = canary::net::mqtt_tls::transport_name(tls_plan.decision.transport);
+  if (tls_plan.decision.warn_insecure()) doc["warning"] = canary::net::mqtt_tls::insecure_warning();
 
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// POST /api/mqtt/ca — the broker's CA certificate, PEM, as the RAW body
+// (text/plain, not JSON: a 3 KB certificate is not escaped into a 6 KB
+// string, and the 512-byte config body never has to hold it). Bounded to
+// the firmware's kCaPemMax (3071), judged by the shared ca_pem_looks_valid()
+// before it can reach NVS, stored as the NVS string BrokerTransport::load
+// reads back (with the trailing newline the flashers write), never echoed.
+// DELETE /api/mqtt/ca forgets the stored CA. Same auth gate and rate limit
+// as every other mutating handler; the socket is re-decided on the main
+// loop's next pass. Storing a CA does not switch the mode: POST
+// /api/mqtt/config with tls=1 does, and is refused until this has landed.
+static esp_err_t handle_mqtt_ca(httpd_req_t* req) {
+  namespace tf = canary::net::mqtt_tls_fields;
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  if (req->method == HTTP_DELETE) {
+    if (!mqtt_tls_clear_ca()) return http_send_error(req, 500, "save_failed");
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["ca_set"] = false;
+    doc["message"] = "Broker CA forgotten. A CA-verified mode now refuses to connect until a CA is uploaded again.";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  // One static receive buffer: the PEM, the '\n' appended below if the
+  // upload lacks one, the NUL. The HTTP server runs its handlers on a
+  // single task, so a static is safe here and keeps 3 KB off that task's
+  // stack. Wiped after use either way.
+  static char s_ca_body[canary::net::mqtt_tls::kCaBufBytes + 1];
+  const canary::net::mqtt_tls::Decision none;
+  if (req->content_len > canary::net::mqtt_tls::kCaPemMax) {
+    return send_tls_refusal(req, tf::Verdict::CaTooLarge, none);
+  }
+  if (req->content_len == 0) {
+    return http_send_error(req, 400, "empty_body");
+  }
+  size_t total = 0;
+  while (total < req->content_len) {
+    int r = httpd_req_recv(req, s_ca_body + total, req->content_len - total);
+    if (r <= 0) break;
+    total += (size_t)r;
+  }
+  if (total != req->content_len) {
+    memset(s_ca_body, 0, sizeof(s_ca_body));
+    return http_send_error(req, 400, "short_body");
+  }
+  // One trailing newline, exactly: strip what came, add ours, so the stored
+  // bytes match what the flashers write and the cap counts the newline.
+  while (total > 0 && (s_ca_body[total - 1] == '\n' || s_ca_body[total - 1] == '\r' ||
+                       s_ca_body[total - 1] == ' ' || s_ca_body[total - 1] == '\t')) {
+    total--;
+  }
+  if (total + 1 > canary::net::mqtt_tls::kCaPemMax) {
+    memset(s_ca_body, 0, sizeof(s_ca_body));
+    return send_tls_refusal(req, tf::Verdict::CaTooLarge, none);
+  }
+  s_ca_body[total++] = '\n';
+  s_ca_body[total] = '\0';
+
+  const tf::Verdict verdict = tf::check_ca(s_ca_body, total);
+  if (verdict != tf::Verdict::Ok) {
+    memset(s_ca_body, 0, sizeof(s_ca_body));
+    return send_tls_refusal(req, verdict, none);
+  }
+
+  const bool saved = mqtt_tls_save_ca(s_ca_body);
+  const size_t stored_bytes = total;
+  memset(s_ca_body, 0, sizeof(s_ca_body));
+  if (!saved) {
+    return http_send_error(req, 500, "save_failed");
+  }
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["ca_set"] = true;
+  doc["bytes"] = (uint32_t)stored_bytes;
+  doc["message"] = "Broker CA saved. Set tls=1 on /api/mqtt/config and the Canary verifies the broker against it.";
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
