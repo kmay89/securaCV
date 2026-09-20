@@ -57,6 +57,7 @@ on:
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/src/broker_receipt.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
       # the two flashers in step (CLAUDE.md "two flashers, two frontends")
@@ -138,6 +139,7 @@ on:
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/src/broker_receipt.rs"
       - "desktop/src-tauri/build.rs"
       # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
       # the two flashers in step (CLAUDE.md "two flashers, two frontends")

@@ -144,6 +144,11 @@ jobs:
   #                        slot precisely because only the S3 watch bin
   #                        was guarded. Each entry runs right after the
   #                        env whose .pio/build/<env>/ dir it names.
+  #                        flavor_envs.py refuses a guard whose env is not
+  #                        in build_envs, sharded or not (a guard on an env
+  #                        PR CI never compiles would fire first on the
+  #                        release artifact), in the `flavors` job below
+  #                        and in lint.yml.
   # ──────────────────────────────────────────────────────────────────
   flavors:
     name: Load flavor manifest
