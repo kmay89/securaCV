@@ -144,10 +144,12 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   cross-grade them), so they are two manifests sharing a `board_id`, a figure
   and a case.
 - **`board.envs` = what CI builds for this hardware plus what ships.** The
-  `flavors.json` `build_envs` the device claims, plus an env
-  `build_matrix.json` / `flash.json` name as the published image
-  (`release_ha` on the flagship). Debug-only envs (`*-debug`, `minimal`,
-  `standalone`) that CI does not build are not listed.
+  `flavors.json` `build_envs` the device claims, plus any env
+  `build_matrix.json` / `flash.json` name as the published image that PR CI
+  does not build (none today: the flagship's `release_ha` is in
+  `build_envs`, so the shipped image and its OTA-slot guard run on every
+  PR). Debug-only envs (`*-debug`, `minimal`, `standalone`) that CI does not
+  build are not listed.
 - **`peripherals` come from the registry's pins header**, even for the
   `canary` and `canary-wap` trees, whose builds carry their pins in build
   flags and the sketch rather than compiling `boards/<id>/pins/pins.h`. The
