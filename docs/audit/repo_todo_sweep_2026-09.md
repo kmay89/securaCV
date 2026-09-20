@@ -110,8 +110,8 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
 - [ ] **F6 [code] Camera init/deinit vs peek-task race.** Roadmap item 7 —
   not yet source-checked either way; confirm first, then fix or close.
 
-(Roadmap items 1 and 2 were confirmed **fixed** — if you open the roadmap doc,
-update its rows to say so. That is item D2 below.)
+(Roadmap items 1 and 2 were confirmed **fixed**, and the roadmap doc now says
+so — see D2 below.)
 
 ### Timeline & time
 
@@ -356,18 +356,27 @@ major, by theme") — work its themes, then tick here.
 
 ## 6. Documentation hygiene (small, do alongside other work)
 
-- [ ] **D1 [code] `docs/hardware/enclosure/AUDIT_2026_09.md` "Open — blocking"
-  section retracts itself** ("Nothing in this section is open") — restructure
-  so fixed items read as fixed.
-- [ ] **D2 [code] `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` items 1 and 2 are
-  fixed in source but still listed open** — update the rows (confirmed by
-  source inspection: XGA
-  ceiling raised in `securacv_vision.cpp`; deep-sleep guard real in
-  `firmware/canary/src/main.cpp`).
-- [ ] **D3 [code] `docs/review/01-flag-report.md` F-12 is resolved** — sweep
-  confirmed the README marker is gone; annotate the report.
-- [ ] **D4 [code] `canary-local/devices/assembly.json` notes steps "authored
-  here, not yet in the catalog README"** — carry them over.
+- [x] **D1 [code] `docs/hardware/enclosure/AUDIT_2026_09.md` "Open — blocking"
+  section retracts itself** — done: retitled "Blocking — found by this audit,
+  all four since fixed", with the fix dates in the intro and the entries kept
+  as the proof record.
+- [x] **D2 [code] `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` items 1 and 2 are
+  fixed in source but were still listed open** — done: §2 items 1–2 and their
+  §6 table rows now read (fixed); the remaining follow-up (a sensor-side small
+  capture for frames above XGA) stays named in item 1.
+- [x] **D3 [code] `docs/review/01-flag-report.md` F-12** — no change needed:
+  the report's minors status block already carries "F-12 ✅ Resolved
+  (#673/#706)".
+- [ ] **D4 [code+decision] Carry the Watch Station and Dash assembly steps
+  into the catalog README.** `canary-local/devices/assembly.json` authors
+  their steps with every `readmeStep: null` ("not yet in the catalog
+  README"). Carrying them is a three-part join: author the `## Assembly`
+  steps in the two devices' `docs/hardware/enclosure/README.md` sections,
+  carry them into `build.json`'s readme-step list, and point each
+  `steps[].readmeStep` at its row (`canary-local/tests/assembly.test.js`
+  gates the join). Both designs are in-development and not print-validated,
+  so decide first whether the README steps land now with a dev caveat or
+  wait for print validation (C7).
 
 ---
 
