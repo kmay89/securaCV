@@ -129,9 +129,17 @@ Two candidates were considered honestly:
   SVM or decision tree — local, tiny, inspectable. If that feature is built
   and genuinely outgrows an SVM, the thing to evaluate is the **open-weight,
   on-device** lineage (NanoJev / von / `jevlike-esp32`-style frozen encoder
-  plus small scorer), run inside the existing seccomp sandbox, gated by the
-  Backend Audit Checklist, emitting only the physical classes the free-signals
-  vocabulary already names. Never the hosted API.
+  plus small scorer), emitting only the physical classes the free-signals
+  vocabulary already names. Never the hosted API. Containment follows the
+  deployment, because the two candidate homes have different mechanisms: the
+  coarse-class design runs its classifier **on the Sense host MCU**, where
+  there is no seccomp sandbox to inherit — isolation there is structural
+  (the existing privacy chokepoint that reads one window and drops it,
+  single-window-then-forget, the adapter allowlist, and free-signals
+  Invariant B's ban on the signal path initiating network connections). The
+  seccomp sandbox and the Backend Audit Checklist govern the *host-side*
+  variant only — if such a scorer ever lands as a `witnessd`
+  `DetectorBackend` instead.
 - **CI** is the one place we already pay for a cloud LLM, and Jev's
   guardrails pitch nominally fits. But the advisory reviewer's entire value
   is prose judgment — surfacing what a regex can't, with an explanation a
@@ -144,7 +152,7 @@ Two candidates were considered honestly:
 |---|---|
 | Adopt Jev (the hosted API) anywhere? | **No, permanently** — four structural barriers (§2), and it's the wrong shape even where it fits (§3) |
 | Adopt an open-weight System One model today? | No — nothing needs it; the only candidate feature isn't built and is scoped to an SVM |
-| Revisit trigger | The coarse-class feature ships its rule-based/SVM form and demonstrably outgrows it — then evaluate a small open-weight local scorer under the Backend Audit Checklist, physical classes only |
+| Revisit trigger | The coarse-class feature ships its rule-based/SVM form and demonstrably outgrows it — then evaluate a small open-weight local scorer, physical classes only, under the deployment's own containment: the Sense chokepoint rules on-MCU, or the seccomp sandbox plus Backend Audit Checklist if host-side (§4) |
 | What to watch, passively | The open-weight replicas (NanoJev, von, `jevlike-esp32`) maturing an evaluation record; independent tests of the calibration claims |
 
 ## Sources (external, read 2026-09-20)
