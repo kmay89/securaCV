@@ -89,8 +89,17 @@ Behavior worth knowing before you flip a mode on:
   `/mqtt` and in `POST /api/mqtt/test`. Every text is a constant; the CA, the
   pin and the credentials are never formatted into a log line.
 - **The Hub's Mosquitto add-on** (installed by the one-command hub plan)
-  listens on plain `1883` by default; TLS on the broker side is an add-on
-  configuration the plan does not perform. See
+  listens on plain `1883` by default; the broker-side TLS listener is
+  performed on request by the plan (`--with broker_tls`): the `broker-tls`
+  step requires the certificate and key you placed in Home Assistant's
+  `ssl` folder (refusing, by name, when either is missing — and with a
+  different message when the run cannot see the folder at all), sets the
+  add-on's two file options and restarts it. It mints no certificate,
+  chooses no trust anchor and cannot verify that the listener came up; the
+  hub's internal `1883` stays for Home Assistant, Frigate and the kernel.
+  Host-tested (planner, executor, and the host runner against a stand-in
+  docker); not yet run on a hub, and the host runner's read-only `ssl`
+  mount path is inferred from the Supervisor's layout, not proven. See
   [Home Assistant setup](homeassistant_setup.md).
 
 Gaps still open after this pass:

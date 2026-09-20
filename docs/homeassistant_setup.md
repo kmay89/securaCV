@@ -57,7 +57,8 @@ Two things stay yours, and the installer says so when it finishes:
    Step 3 of the manual walkthrough covers the device side. That link is
    plain MQTT: the installer leaves Mosquitto on its default `1883`
    listener, so the `canary` password crosses your LAN unencrypted unless
-   you add a TLS listener to the add-on and provision the Canaries for it
+   you ask the plan for the broker's TLS listener (`--with broker_tls`,
+   from a certificate you supply) and provision the Canaries for it
    (Step 3 says how).
 
 ### Prefer clicking?
@@ -169,9 +170,20 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
      **Settings → Apps → Mosquitto broker → Configuration → Logins**)
    - **Encryption (optional, off by default)**: the broker link is plain
      MQTT unless you say otherwise, and the username/password above then
-     cross your LAN in the clear. To encrypt it, give the Mosquitto add-on a
-     TLS listener (its `certfile` / `keyfile` options, port `8883`), then
-     provision each Canary with port `8883` and a TLS mode: **CA** (the PEM
+     cross your LAN in the clear. To encrypt it, run the hub plan with
+     `--with broker_tls` (`sh provision.sh --with broker_tls` from the
+     Terminal & SSH add-on, or `host_provision.sh --with broker_tls` from
+     the developer console): it checks Home Assistant's `ssl` folder for the
+     broker certificate and key you placed there (the two files the Let's
+     Encrypt add-on writes by default — `hub_seed_apply.py --dry-run --with
+     broker_tls` names them and the run refuses by name if either is
+     missing), sets the Mosquitto add-on's two file options and restarts
+     it; the plan step is the one place the file and option names are
+     spelled. It mints no certificate, chooses no trust anchor, does not
+     verify that the listener came up (the add-on's Log tab says why if the
+     port stays closed), and leaves Home Assistant's own MQTT entry on the
+     internal `1883`. Then provision each Canary with port `8883` and a TLS
+     mode: **CA** (the PEM
      certificate that signed the broker's certificate — the one that always
      works) or, on canary-display / -sense / -vision, a **SHA-256
      fingerprint pin** of the broker certificate. On canary-wap this is the

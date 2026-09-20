@@ -328,3 +328,29 @@ attached? The add-on simply won't start, and nothing else cares. By hand
 instead: add `https://github.com/puterboy/HAOS-kiosk` as an app repository
 and install **HAOS Kiosk Display** from it — same result. Like Frigate and
 Pi-hole above, it's a community add-on tracking its own upstream releases.
+
+**An encrypted broker door (optional):** the broker your Canaries talk to
+listens on plain `1883`, which is fine for the hub's own internal traffic
+(Home Assistant, Frigate and the kernel never leave the box) but means a
+Canary's broker login crosses your LAN in the clear. If you have a
+certificate for the hub — the Let's Encrypt add-on with DuckDNS is the usual
+source; your own CA works too — self-setup can open the Mosquitto add-on's
+TLS listener from it: `--with broker_tls` (no Flasher tick for this
+one; it is a console flag — `sh provision.sh --with broker_tls` from the
+Terminal & SSH add-on, or `host_provision.sh --with broker_tls` from the
+developer console). The step checks Home Assistant's `ssl` folder for the
+certificate chain and key (the two files the Let's Encrypt add-on writes by
+default; `--dry-run --with broker_tls` names them, and the run refuses by
+name if either is missing), points the add-on's two file options at them
+and restarts it. It runs last, so a missing certificate never stops the
+rest of the setup, and the plain `1883` stays. Said plainly: it mints no
+certificate and chooses no trust anchor (both are yours), it cannot see
+whether the listener came up (Settings → Apps → Mosquitto broker → Log says
+"Certificates found: SSL is available" or "SSL is not enabled"), and Home
+Assistant's own MQTT entry stays on the internal `1883`. Then provision each
+Canary with port `8883`, the CA that signed the certificate, and the broker's
+exact certificate name (step 5). Honest status: host-tested; not yet run on a
+hub, and the developer-console path mounts the hub's `ssl` folder from a
+location inferred from the Supervisor's layout rather than proven
+(`SECURACV_HOST_SSL_DIR=` overrides it; the add-on terminal path needs no
+mount).
