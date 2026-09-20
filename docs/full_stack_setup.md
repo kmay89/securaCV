@@ -335,14 +335,14 @@ listens on plain `1883`, which is fine for the hub's own internal traffic
 Canary's broker login crosses your LAN in the clear. If you have a
 certificate for the hub — the Let's Encrypt add-on with DuckDNS is the usual
 source; your own CA works too — self-setup can open the Mosquitto add-on's
-TLS listener on `8883` from it: `--with broker_tls` (no Flasher tick for this
+TLS listener from it: `--with broker_tls` (no Flasher tick for this
 one; it is a console flag — `sh provision.sh --with broker_tls` from the
 Terminal & SSH add-on, or `host_provision.sh --with broker_tls` from the
 developer console). The step checks Home Assistant's `ssl` folder for the
 certificate chain and key (the two files the Let's Encrypt add-on writes by
 default; `--dry-run --with broker_tls` names them, and the run refuses by
-name if either is missing), points the add-on's `certfile` / `keyfile` at
-them and restarts it. It runs last, so a missing certificate never stops the
+name if either is missing), points the add-on's two file options at them
+and restarts it. It runs last, so a missing certificate never stops the
 rest of the setup, and the plain `1883` stays. Said plainly: it mints no
 certificate and chooses no trust anchor (both are yours), it cannot see
 whether the listener came up (Settings → Apps → Mosquitto broker → Log says

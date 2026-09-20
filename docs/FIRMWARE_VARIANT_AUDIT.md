@@ -94,7 +94,7 @@ Behavior worth knowing before you flip a mode on:
   step requires the certificate and key you placed in Home Assistant's
   `ssl` folder (refusing, by name, when either is missing — and with a
   different message when the run cannot see the folder at all), sets the
-  add-on's `certfile` / `keyfile` and restarts it. It mints no certificate,
+  add-on's two file options and restarts it. It mints no certificate,
   chooses no trust anchor and cannot verify that the listener came up; the
   hub's internal `1883` stays for Home Assistant, Frigate and the kernel.
   Host-tested (planner, executor, and the host runner against a stand-in

@@ -155,12 +155,16 @@ them land. Check each on the session's hub:
   tick): place a certificate chain and key in Home Assistant's `ssl` folder
   first (the Let's Encrypt add-on's two default files). From the developer
   console, `host_provision.sh --with broker_tls --dry-run` must narrate the
-  file check, the `certfile` / `keyfile` options and the restart; the real
+  file check, the add-on's two file options and the restart; the real
   run must restart the Mosquitto add-on, whose Log must then say
   "Certificates found: SSL is available". Confirm the host runner's mount
   guess: `/mnt/data/supervisor/ssl` is where HAOS keeps that folder (if not,
-  the run says "cannot see /ssl" — find the real path, re-run with
-  `SECURACV_HOST_SSL_DIR=<path>`, and fold it into `hub_host_provision.sh`).
+  the runner says so and names the override — find the real path, re-run
+  with `SECURACV_HOST_SSL_DIR=<path>`, and fold it into
+  `hub_host_provision.sh`). Then run it once with
+  `SECURACV_HOST_SSL_DIR=/nonexistent`: the executor must refuse with
+  "cannot see /ssl", not "not found" — that split assumes the Core image
+  ships no `/ssl` of its own, which nothing has checked yet.
   Then a Canary provisioned for port `8883` in CA mode connects, and one left
   on `1883` still connects (the plain listener stays). Run it once more with
   the key removed: the step must refuse by name, and the core plan must

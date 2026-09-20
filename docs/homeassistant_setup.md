@@ -177,8 +177,8 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
      broker certificate and key you placed there (the two files the Let's
      Encrypt add-on writes by default — `hub_seed_apply.py --dry-run --with
      broker_tls` names them and the run refuses by name if either is
-     missing), sets the Mosquitto add-on's `certfile` / `keyfile` and
-     restarts it; the plan step is the one place the file names are
+     missing), sets the Mosquitto add-on's two file options and restarts
+     it; the plan step is the one place the file and option names are
      spelled. It mints no certificate, chooses no trust anchor, does not
      verify that the listener came up (the add-on's Log tab says why if the
      port stays closed), and leaves Home Assistant's own MQTT entry on the

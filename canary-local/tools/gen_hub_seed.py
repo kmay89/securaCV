@@ -109,8 +109,11 @@ KIOSK_SLUG = "haoskiosk"
 # authority a Canary trusts says whom it believes, and both are the
 # operator's (user_supplied below). Honest status: the executor is
 # host-tested; the step has not opened a listener on a real hub and cannot
-# verify that one came up. The port and the option names are spelled here
-# and nowhere else in prose — the docs point at this step.
+# verify that one came up. The option names and the file names are spelled
+# here, and so in the plan's `what` / `options`, and nowhere else in prose —
+# the docs point at this step by its flag, and test_hub_seed_apply.py's
+# BrokerTls gate holds them to it. The port reaches the docs only as the
+# setting a reader types into a Canary.
 BROKER_TLS_PORT = 8883
 BROKER_TLS_SSL_DIR = "/ssl"
 BROKER_TLS_OPTIONS = {"certfile": "fullchain.pem", "keyfile": "privkey.pem"}
