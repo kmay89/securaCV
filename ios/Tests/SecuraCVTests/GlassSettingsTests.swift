@@ -76,9 +76,14 @@ final class GlassSettingsTests: XCTestCase {
 
     func testTheAppOnlyOffersKnobsTheGlassValidates() {
         // The firmware's handle_settings_set accepts exactly this set (see
-        // glass_web.cpp). A knob the app renders but the device rejects is a
-        // control that silently does nothing — so the two lists are pinned to
-        // each other here rather than discovered on somebody's nightstand.
+        // glass_web.cpp): it is test_settings_policy.cpp's kOrdinary minus
+        // `tz`, which the app writes through /api/tz, never /api/set. A knob
+        // the app renders but the device rejects is a control that silently
+        // does nothing — so the two lists are pinned to each other here
+        // rather than discovered on somebody's nightstand. The two keys the
+        // glass REFUSES from the network (wx_direct and wx_loc, 403
+        // on_glass_only — settings_policy.h) are deliberately not here:
+        // they are rendered as facts, never offered (the tests below).
         let accepted: Set<String> = [
             "day_pct", "night_screen", "red_shift", "peek_s",
             "night_start_hh", "night_end_hh", "night_step",
@@ -88,15 +93,6 @@ final class GlassSettingsTests: XCTestCase {
             // the CD_FLAVOR_DASH block in handle_settings_set — which is
             // also the glass that serves the look ring and the clock ring.
             "bright_pct", "character", "clock_style",
-            // The hub-less standalone-weather pair: the opt-in toggle, and
-            // the coarse location as ONE combined integer (atomic store).
-            // Since the display's on-glass-only key class landed, the firmware
-            // REFUSES both from the LAN (403 on_glass_only) and reports them
-            // read-only under `on_glass`; they stay in this list only until the
-            // weather sheet is reworked to read that block (roadmap item 17
-            // follow-up), and against current firmware the sheet never shows
-            // them because the top-level `wx_direct` key is no longer served.
-            "wx_direct", "wx_loc",
         ]
         var s = GlassSettings()
         s.hasLamp = true
@@ -105,12 +101,16 @@ final class GlassSettingsTests: XCTestCase {
                           "the app offers “\(knob.key)”, which the glass's settings engine would reject")
         }
         // And the same for the other kind of glass, whose brightness knob is
-        // a different key entirely — and which carries the look ring.
+        // a different key entirely — and which carries the look ring and, on
+        // the 7" builds, the read-only on_glass block with its refuse-list.
         var scrim = GlassSettings()
         scrim.hasRenderedDim = true
         scrim.hasLook = true
         scrim.characterNames = ["Quiet Glass"]
         scrim.clockStyleNames = ["Segment"]
+        scrim.hasDirectWeather = true
+        scrim.wxDirect = true
+        scrim.onGlassKeys = ["wx_direct", "wx_loc"]
         for knob in GlassAPI.knobs(for: scrim) {
             XCTAssertTrue(accepted.contains(knob.key),
                           "the app offers “\(knob.key)”, which the glass's settings engine would reject")
@@ -150,27 +150,216 @@ final class GlassSettingsTests: XCTestCase {
         XCTAssertEqual(byKey["orientation"]?.value, 1)
     }
 
-    /// The standalone-weather switch appears only when the device serves it,
-    /// and its story changes honestly when a hub owns weather.
-    func testDirectWeatherKnobFollowsTheDevicesAnswer() {
+    // MARK: - the standalone-weather block: shown, never offered
+
+    /// GET /api/settings from a 7" glass (dash7 / nightstand7,
+    /// FEATURE_STANDALONE_WEATHER) on a same-site request, in the shape and
+    /// key order glass_web.cpp handle_settings_get writes it: the ordinary
+    /// knobs, the zone and the per-boot token (32 lowercase hex — the value
+    /// is random per boot, so the fixture's is representative, the rest
+    /// are a real glass's), the scrim block, the look ring, then `on_glass`.
+    /// `keys` is the policy table itself (settings_policy.h); `wx_direct`
+    /// goes to every caller; `wx_loc_set` and `wx_status` only to a caller
+    /// that is not cross-site, which a URLSession GET from the app is not.
+    static let dash7SameSiteBody = #"""
+    {"day_pct":60,"night_screen":0,"red_shift":1,"peek_s":5,"night_start_hh":20,"night_end_hh":7,"night_step":2,"night_steps":10,"tz":"CST6CDT,M3.2.0,M11.1.0","csrf":"3fa9c0de1b2c4d5e6f708192a3b4c5d6","bright_pct":80,"bright_min_pct":50,"orientation":0,"character":0,"clock_style":0,"characters":["Quiet Glass"],"clock_styles":["Segment"],"on_glass":{"keys":["wx_direct","wx_loc"],"wx_direct":1,"wx_loc_set":0,"wx_status":1}}
+    """#
+
+    /// The same route on a nightlight (glass_web.cpp, CD_NIGHTLIGHT), in its
+    /// key order: the lamp block and the scene catalog by display name
+    /// (look_engine.cpp kScenes[].name, all eleven) — and no `on_glass`
+    /// block, because a lamp never carries the standalone forecast.
+    static let nightlightBody = #"""
+    {"day_pct":60,"night_screen":0,"red_shift":1,"peek_s":5,"night_start_hh":20,"night_end_hh":7,"night_step":2,"night_steps":10,"tz":"UTC0","csrf":"3fa9c0de1b2c4d5e6f708192a3b4c5d6","lamp_scene":1,"lamp_auto":1,"lamp_pct":72,"lamp_max_duty_pct":50,"clock_12h":1,"orientation":0,"auto_rotate":1,"lamp_hue":-1,"lamp_minutes":15,"scenes":["Canary Dawn","Ember","Aurora","Deep Calm","Forest","Tropical","Lantern","Nocturne","Signal","Rainbow","Moonbeam"]}
+    """#
+
+    /// The keys the display refuses from the network for every caller —
+    /// settings_policy.h's kOnGlassOnlyKeys, pinned to exactly these two by
+    /// test_settings_policy.cpp. The Swift side of the same contract.
+    static let refusedByTheGlass: Set<String> = ["wx_direct", "wx_loc"]
+
+    /// The `on_glass` block is the tell, and everything in it is a fact the
+    /// sheet shows — never a control. The handler answers 403 on_glass_only
+    /// to these keys before it looks at anything else (glass_web.cpp
+    /// handle_settings_set), so a knob keyed by one could only ever fail.
+    func testTheOnGlassBlockIsTheTellAndIsReadOnly() throws {
+        let s = try GlassSettings.decode(Data(Self.dash7SameSiteBody.utf8))
+        XCTAssertTrue(s.hasDirectWeather, "the on_glass block is the tell")
+        XCTAssertTrue(s.wxDirect)
+        XCTAssertEqual(s.wxStatus, 1, "the verdict rides on a same-site request")
+        XCTAssertEqual(s.wxLocSet, false, "and so does whether a grid point is stored")
+        XCTAssertEqual(s.onGlassKeys, ["wx_direct", "wx_loc"],
+                       "keys is the policy table itself (settings_policy.h)")
+
+        let offered = Set(GlassAPI.knobs(for: s).map(\.key))
+        XCTAssertTrue(offered.isDisjoint(with: Set(s.onGlassKeys)),
+                      "the app drew a control the glass refuses: \(offered.intersection(s.onGlassKeys))")
+        XCTAssertEqual(GlassAPI.weatherStatusText(s), "Needs a location")
+        XCTAssertEqual(GlassAPI.weatherLocationText(s), "Not set")
+
+        // The rest of the body still lands where it belongs.
+        XCTAssertTrue(s.hasRenderedDim)
+        XCTAssertEqual(s.brightPct, 80)
+        XCTAssertEqual(s.brightMinPct, 50)
+        XCTAssertTrue(s.hasLook)
+        XCTAssertEqual(s.characterNames, ["Quiet Glass"])
+        XCTAssertEqual(s.clockStyleNames, ["Segment"])
+        XCTAssertTrue(offered.contains("bright_pct"))
+        XCTAssertTrue(offered.contains("character"))
+    }
+
+    /// No firmware in this checkout's history (the commits back to b4a9083)
+    /// ever served wx_direct at the top level — the only served shape is the
+    /// nested block above. A top-level key is exactly what a client renders
+    /// as a control, so the shape that was never served must not conjure
+    /// the block: it would draw a switch the glass refuses.
+    func testATopLevelWxDirectIsNotTheTell() throws {
+        let json = #"{"day_pct":60,"wx_direct":1,"wx_loc_set":1}"#
+        let s = try GlassSettings.decode(Data(json.utf8))
+        XCTAssertFalse(s.hasDirectWeather, "a shape no firmware served is not a tell")
+        XCTAssertFalse(s.wxDirect)
+        XCTAssertNil(s.wxLocSet)
+        XCTAssertTrue(s.onGlassKeys.isEmpty)
+        XCTAssertFalse(GlassAPI.knobs(for: s).contains { $0.key == "wx_direct" })
+        XCTAssertEqual(s.dayPct, 60, "the ordinary key beside it is still read")
+    }
+
+    /// A cross-site or foreign-host request gets the block without the two
+    /// location-derived facts (glass_web.cpp — the same rule /api/fleet
+    /// applies to presence). The sheet then says nothing about a location
+    /// rather than guessing, and falls back to the on/off it was given —
+    /// the mirror page's rule (mirror_html.h).
+    func testTheCrossSiteShapeLeavesLocationUnknown() throws {
+        let offJSON = #"{"on_glass":{"keys":["wx_direct","wx_loc"],"wx_direct":0}}"#
+        let off = try GlassSettings.decode(Data(offJSON.utf8))
+        XCTAssertTrue(off.hasDirectWeather)
+        XCTAssertFalse(off.wxDirect)
+        XCTAssertNil(off.wxStatus)
+        XCTAssertNil(off.wxLocSet)
+        XCTAssertEqual(GlassAPI.weatherLocationText(off), "—")
+        XCTAssertEqual(GlassAPI.weatherStatusText(off), "Off")
+
+        let onJSON = #"{"on_glass":{"keys":["wx_direct","wx_loc"],"wx_direct":1}}"#
+        let on = try GlassSettings.decode(Data(onJSON.utf8))
+        XCTAssertTrue(on.wxDirect)
+        XCTAssertEqual(GlassAPI.weatherStatusText(on), "On")
+        XCTAssertEqual(GlassAPI.weatherLocationText(on), "—")
+    }
+
+    /// wx_direct.h's verdict, rendered in the words the panel's own Weather
+    /// page uses (settings_ui.cpp build_weather) — so the phone and the
+    /// glass never disagree about what state the forecast is in.
+    func testWeatherStatusWordsAreTheGlasssOwn() {
         var s = GlassSettings()
         s.hasDirectWeather = true
-        s.wxDirect = false
-        s.wxHub = false
-        let knob = GlassAPI.knobs(for: s).first { $0.key == "wx_direct" }
-        XCTAssertNotNil(knob, "a glass that serves wx_direct gets the switch")
-        XCTAssertEqual(knob?.value, 0, "off by default — the opt-in is real")
+        let expected: [Int: String] = [
+            0: "Off",
+            1: "Needs a location",
+            2: "Your hub provides weather",
+            3: "On",
+            4: "On — last fetch failed, retrying",
+        ]
+        for (status, words) in expected {
+            s.wxStatus = status
+            XCTAssertEqual(GlassAPI.weatherStatusText(s), words, "wx_status \(status)")
+        }
+        s.wxStatus = 2
+        XCTAssertTrue(GlassAPI.weatherStatusText(s).contains("hub"),
+                      "with a hub, the sheet says why the fetcher stands down")
 
-        var hub = GlassSettings()
-        hub.hasDirectWeather = true
-        hub.wxHub = true
-        let hubKnob = GlassAPI.knobs(for: hub).first { $0.key == "wx_direct" }
-        XCTAssertEqual(hubKnob?.blurb.contains("hub") , true,
-                       "with a hub, the blurb says why the fetcher stands down")
+        // A stored location is said to be stored — never where. The API
+        // does not carry the grid point, so the sheet has nothing to show.
+        s.wxLocSet = true
+        XCTAssertEqual(GlassAPI.weatherLocationText(s), "Stored — a ~11 km grid point")
+        s.wxLocSet = false
+        XCTAssertEqual(GlassAPI.weatherLocationText(s), "Not set")
+    }
 
-        let none = GlassAPI.knobs(for: GlassSettings())
-        XCTAssertFalse(none.contains { $0.key == "wx_direct" },
-                       "a glass that never mentioned wx_direct gets no switch")
+    /// The Swift mirror of test_settings_policy.cpp: whatever shape the glass
+    /// has, no offered knob is in the refused class. The filter in
+    /// GlassAPI.knobs uses the device's own list, so this holds for a key
+    /// the glass moves into the class tomorrow, without the app learning
+    /// its name.
+    func testNoOfferedKnobIsOneTheGlassRefuses() {
+        var lamp = GlassSettings()
+        lamp.hasLamp = true
+        lamp.hasDirectWeather = true
+        lamp.onGlassKeys = ["wx_direct", "wx_loc"]
+        XCTAssertTrue(Set(GlassAPI.knobs(for: lamp).map(\.key))
+                        .isDisjoint(with: Self.refusedByTheGlass))
+
+        var dash7 = GlassSettings()
+        dash7.hasRenderedDim = true
+        dash7.hasLook = true
+        dash7.characterNames = ["Quiet Glass"]
+        dash7.clockStyleNames = ["Segment"]
+        dash7.hasDirectWeather = true
+        dash7.wxDirect = true
+        dash7.onGlassKeys = ["wx_direct", "wx_loc"]
+        XCTAssertTrue(Set(GlassAPI.knobs(for: dash7).map(\.key))
+                        .isDisjoint(with: Self.refusedByTheGlass))
+
+        // The list is the device's, not the app's.
+        var future = dash7
+        future.onGlassKeys = ["wx_direct", "wx_loc", "clock_12h"]
+        let keys = GlassAPI.knobs(for: future).map(\.key)
+        XCTAssertFalse(keys.contains("clock_12h"),
+                       "a key the glass moves into the class leaves the sheet the same day")
+        XCTAssertTrue(keys.contains("bright_pct"), "and the ordinary knobs stay")
+
+        // The lamp's knobs leave through the OTHER return site (the one
+        // after the lamp block), and nothing above reaches it with a key
+        // it actually builds — so the same probe, on the lamp path. Drop
+        // that one filter and this is the line that goes red.
+        var lampFuture = lamp
+        lampFuture.onGlassKeys = ["wx_direct", "wx_loc", "lamp_auto"]
+        let lampKeys = GlassAPI.knobs(for: lampFuture).map(\.key)
+        XCTAssertFalse(lampKeys.contains("lamp_auto"),
+                       "the lamp path's knobs leave through the same filter")
+        XCTAssertTrue(lampKeys.contains("lamp_pct"), "and the rest of the lamp stays")
+
+        // And a glass that serves no block at all offers no weather control
+        // either — there is nothing to filter and nothing to draw.
+        XCTAssertTrue(Set(GlassAPI.knobs(for: GlassSettings()).map(\.key))
+                        .isDisjoint(with: Self.refusedByTheGlass))
+    }
+
+    /// "Tolerant by hand" (the header of GlassSettings.swift), now that the
+    /// decoder is reachable: a key this build never heard of is ignored and
+    /// everything keeps its default — including the weather block, which is
+    /// absent, not guessed from a look-alike.
+    func testDecodeIgnoresUnknownAndKeepsDefaults() throws {
+        let json = #"{"future_key":1,"on_glass_soon":{"keys":["wx_direct"],"wx_direct":1}}"#
+        let s = try GlassSettings.decode(Data(json.utf8))
+        XCTAssertEqual(s, GlassSettings())
+        XCTAssertFalse(s.hasDirectWeather)
+        XCTAssertEqual(GlassAPI.knobs(for: s).map(\.key),
+                       GlassAPI.knobs(for: GlassSettings()).map(\.key))
+    }
+
+    /// The nightlight's own bytes through the same decoder: the lamp block
+    /// lands, the scene catalog is the device's, and there is no weather
+    /// block to show — the location row would read "—" if anything asked.
+    func testDecodeReadsTheNightlightsOwnBytes() throws {
+        let s = try GlassSettings.decode(Data(Self.nightlightBody.utf8))
+        XCTAssertTrue(s.hasLamp)
+        XCTAssertEqual(s.lampScene, 1)
+        XCTAssertEqual(s.lampPct, 72)
+        XCTAssertEqual(s.lampMaxDutyPct, 50)
+        XCTAssertEqual(s.lampMinutes, 15)
+        XCTAssertEqual(s.lampHue, -1)
+        XCTAssertFalse(s.usesCustomHue)
+        XCTAssertEqual(s.scenes.count, 11, "the look engine's catalog, by display name")
+        XCTAssertEqual(s.scenes.first, "Canary Dawn")
+        XCTAssertEqual(s.scenes.last, "Moonbeam")
+        XCTAssertTrue(s.clock12h)
+        XCTAssertTrue(s.autoRotate)
+        XCTAssertFalse(s.hasRenderedDim)
+        XCTAssertFalse(s.hasLook)
+        XCTAssertFalse(s.hasDirectWeather)
+        XCTAssertTrue(s.onGlassKeys.isEmpty)
+        XCTAssertNil(s.wxStatus)
+        XCTAssertEqual(GlassAPI.weatherLocationText(s), "—")
     }
 
     func testGlassWithoutALookRingOffersNoLookKnobs() {
