@@ -88,12 +88,13 @@ struct Config {
    * on air. So a single peer at rate_hz=20 costs ~1.3 % of the 2.4 GHz
    * channel, and the 200 Hz ceiling below — reached only when ten or
    * more peers all draw their full 20 Hz — would cost ~13 %. That is
-   * well over airtime_governor's 2 % routine cap (#442), and probe sends
-   * are NOT yet routed through airtime_governor::try_reserve_routine();
-   * the governor only reports utilization (csi_integration.cpp reads
-   * airtime_pct_x100 to throttle the HAL). Until the mesh layer wires
-   * that reservation in, keep fleets small or lower this cap; 30 Hz is
-   * the value that fits the 2 % budget at 1 Mbps. */
+   * well over airtime_governor's 2 % routine cap (#442), which is why
+   * every send also asks `airtime_gate` below (the integration layer
+   * wires it to airtime_governor::try_reserve_routine — see
+   * csi_integration.cpp's probe_pump). This cap remains the scheduler's
+   * own ceiling: in a build that leaves the gate null (standalone
+   * sketches, host tests), it is the only limit, and 30 Hz is the value
+   * that fits the 2 % budget at 1 Mbps. */
   uint16_t aggregate_cap_hz;
 
   /* If true, when no peers are registered the probe falls back to ESP-NOW
@@ -112,13 +113,26 @@ struct Config {
    * the WiFi MAC schedules sends is amortized over a larger MPDU). */
   uint8_t  payload_len;
 
+  /* Airtime reservation gate. When non-null, every probe send — unicast
+   * and idle broadcast alike — asks this hook to reserve its cost first,
+   * passing the caller's clock and the ESP-NOW payload length (the hook
+   * owns adding MAC/action-frame framing before charging a budget — see
+   * the honest airtime math above). Return false to deny: the send is
+   * skipped, counted in Stats::sends_denied_airtime, and the slot's
+   * cadence is kept so it retries one period later. The integration
+   * layer wires this to airtime_governor::try_reserve_routine (probe
+   * frames are routine traffic — never urgent); null means ungated,
+   * bounded only by aggregate_cap_hz. */
+  bool (*airtime_gate)(uint32_t now_ms, size_t payload_bytes);
+
   static Config defaults() {
     return Config{
       /* rate_hz */                 20,
       /* aggregate_cap_hz */        200,
       /* broadcast_when_no_peers */ true,
       /* idle_rate_hz */            2,
-      /* payload_len */             sizeof(csi_probe_pkt_t)
+      /* payload_len */             sizeof(csi_probe_pkt_t),
+      /* airtime_gate */            nullptr
     };
   }
 };
@@ -135,6 +149,7 @@ struct Stats {
   uint32_t ticks_skipped_rate;    /* process() called but rate gate not met */
   uint32_t ticks_skipped_idle;    /* no peers + broadcast disabled */
   uint32_t peers_registered;      /* current peer count (snapshot) */
+  uint32_t sends_denied_airtime;  /* sends refused by Config::airtime_gate */
 };
 
 /* ──────────────────────────────────────────────────────────────────────────

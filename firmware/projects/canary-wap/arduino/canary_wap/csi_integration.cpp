@@ -68,6 +68,7 @@
 #include <wifi_channel_activity.h>
 #include <ble_events_module.h>
 #include "acoustic_events_module.h"
+#include "airtime_governor.h"      // probe sends reserve routine airtime
 
 #include "build_config.h"
 /* Unconditional, matching its unconditional registration below: every
@@ -2123,8 +2124,15 @@ constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
  * cannot receive its own transmissions; a solo Canary still needs the
  * home AP's beacons — the dashboard's signal-supply chip says so.)
  *
- * Airtime: 10 Hz × ~40 B ESP-NOW broadcast ≈ 0.03 % of the channel —
- * far below the airtime governor's mesh thresholds.
+ * Airtime: at ESP-NOW's 1 Mbps long-preamble fallback rate one probe
+ * frame is ~0.66 ms on air (csi_probe.h's honest airtime math), so the
+ * 10 Hz idle broadcast costs ~0.66 % of the channel — real, not
+ * negligible, and unicast fan-out to a filled peer table would cost
+ * far more. Every send therefore reserves against the airtime
+ * governor's 2 % routine cap first (Config::airtime_gate below): the
+ * probe shares one budget with mesh heartbeats/gossip and chirp
+ * presence, and a saturated window skips probe slots instead of
+ * degrading the user's WiFi.
  *
  * The probe shares ESP-NOW with the mesh when FEATURE_MESH_NETWORK is on
  * (csi_probe::init is idempotent against a prior esp_now_init) and brings
@@ -2146,6 +2154,17 @@ void probe_pump() {
     csi_probe::Config pc = csi_probe::Config::defaults();
     pc.broadcast_when_no_peers = true;
     pc.idle_rate_hz            = CSI_PROBE_BROADCAST_HZ;
+    /* Probe frames are routine traffic — they reserve against the same
+     * 2 % cap as mesh heartbeats and chirp presence, never force. The
+     * hook receives the ESP-NOW payload length; add the MAC/action-frame
+     * framing (~59 B — csi_probe.h's honest airtime math) so the tiny
+     * probe payloads aren't undercounted the way pure-payload accounting
+     * would. */
+    pc.airtime_gate = [](uint32_t now, size_t payload_bytes) {
+      constexpr size_t ESPNOW_FRAME_OVERHEAD_BYTES = 59;
+      return airtime_governor::try_reserve_routine(
+          now, payload_bytes + ESPNOW_FRAME_OVERHEAD_BYTES);
+    };
     if (!csi_probe::init(pc)) return;   /* ESP-NOW not ready — retry */
     csi_probe::start();
     /* Transmitter filter: frames from registered peer Canaries are the

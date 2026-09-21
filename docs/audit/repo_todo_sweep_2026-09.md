@@ -117,19 +117,38 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   `common/storage/sd_mount_policy.h`. Host/compile-tested; the physical
   remove/reinsert pass is U1 bench work. Roadmap item 5 updated
   (#1694).
-- [ ] **F3 [code] Camera never deinits on battery.** No `esp_camera_deinit()`
-  on the battery path; the roadmap's estimate of the continuous drain
-  (~40–60 mA) is unmeasured — the bench number is U1 work. Roadmap item 4.
-- [ ] **F4 [code] CSI probes bypass the airtime governor.**
-  `firmware/common/csi/src/csi_probe.h` says probe sends are not routed
-  through `airtime_governor::try_reserve_routine()`; ~13% channel use vs the
-  2% budget in larger fleets. Roadmap item 6.
+- [x] **F3 [code] Camera never deinits on battery** — done: `loop()` acts on
+  `policy_features.camera_peek` right after `policy_process()` — battery
+  modes stop any peek stream and deinit the camera (retried each pass;
+  `end()` fails soft while a held frame owns the F6 lifecycle lock), and the
+  policy re-allowing it re-inits eagerly so vision resumes. The roadmap's
+  drain estimate (~40–60 mA) stays unmeasured — the bench number is U1 work.
+  Roadmap item 4 updated (#1696).
+- [x] **F4 [code] CSI probes bypass the airtime governor** — done:
+  `csi_probe::Config` gained an injectable `airtime_gate` hook (the module
+  stays standalone and host-testable); every probe send — unicast fan-out
+  and idle broadcast — reserves through it before the driver sees the
+  frame, denials are counted (`Stats::sends_denied_airtime`) and keep the
+  slot cadence so a saturated window doesn't burst when it clears. The WAP
+  integration wires the hook to `airtime_governor::try_reserve_routine()`
+  with the ~59 B ESP-NOW framing added so tiny probe payloads aren't
+  undercounted. Three new host tests cover deny/resume/ungated. The rest
+  of roadmap item 6 (modem-sleep vs CSI power-save gating; wiring the
+  probe into the canary PIO build at all) stays open under that item.
+  (#1696)
 - [ ] **F5 [code+decision] Ed25519 private key in NVS without enforced flash
   encryption.** `firmware/canary/lib/securacv_mesh/src/mesh_state.h` ("audit-O2
   deferred work"). Decide the enforcement posture, then implement. Roadmap
   item 8.
-- [ ] **F6 [code] Camera init/deinit vs peek-task race.** Roadmap item 7 —
-  not yet source-checked either way; confirm first, then fix or close.
+- [x] **F6 [code] Camera init/deinit vs peek-task race** — confirmed real by
+  source inspection (the stream task's freeze recovery cleared `peek_active`
+  then deinit+begin behind flag guards only, while the loop-task vision
+  capture and two httpd handlers could call into the driver), then fixed:
+  one lifecycle mutex in `CameraManager`. `captureFrame()` holds it until
+  `returnFrame()` (the frame buffer is driver memory); lifecycle ops take it
+  with a 2 s timeout and fail soft instead of blocking toward the 8 s task
+  watchdog. Compile-tested; a live freeze repro is U1 bench work. Roadmap
+  item 7 updated (#1696).
 
 (Roadmap items 1 and 2 were confirmed **fixed**, and the roadmap doc now says
 so — see D2 below.)
@@ -144,10 +163,15 @@ so — see D2 below.)
   Auto-refresh pauses while the reader is paging so it can't collapse the
   list, and the renderer's type lookup gained the `type_name` key the ring
   records actually carry. Depth beyond the ring is F26 (#1694).
-- [ ] **F8 [code] `time_bucket` is session-relative, not wall-clock.**
-  `firmware/common/csi/src/csi_event.cpp` — wire
-  `csi_event_set_clock_offset_minutes()` at first time sync (tracked there as
-  the Phase-4 follow-up).
+- [x] **F8 [code] `time_bucket` is session-relative, not wall-clock** — done:
+  both trees' GPS clock sync (the one wall-clock source either has) now
+  calls `csi_event_set_clock_offset_minutes()` — on the first
+  `settimeofday()` and re-derived on every pass with a set clock, so the
+  offset stays drift-corrected and survives `millis()` rollover. Buckets
+  and quiet-hours minute-of-day are UTC-aligned; there is no timezone
+  setting, so bucket 0 is UTC midnight, not the household's — that gap is
+  F28. Until the first fix the old session-relative behavior remains, as
+  the csi_event.cpp comment now states. (#1696)
 - [ ] **F9 [code] MQTT offline queue.** Events are dropped while the broker is
   down; roadmap item 17 (P1), anchor `securacv_mqtt.cpp`. Also: HA entities
   stay "unknown" after a broker restart until the next toggle
@@ -230,6 +254,15 @@ so — see D2 below.)
   be configured on a canary build; only the unpaired consumers (fleet
   roster) exercise the scan. Decide the surface (an `/api` pair endpoint on
   the canary web UI, or WAP-only by design), then wire it.
+- [ ] **F28 [code+decision] No timezone setting — day-aligned features run on
+  UTC.** F8 aligned `time_bucket` and the quiet-hours minute-of-day to the
+  wall clock, but the only clock either tree has is GPS UTC, so "midnight"
+  and a user's "22:00–07:00" quiet window are UTC, not household local
+  time. Decide where the timezone lives (a settings field + NVS on each
+  host, or derived from the paired app's locale at pairing time), then
+  thread it into the offset both `updateCsiClockOffset` /
+  `update_csi_clock_offset` helpers compute. The WAP's NFPA-72
+  waking-hours check reads the same clock and has the same skew.
 
 ---
 
