@@ -231,6 +231,7 @@ so — see D2 below.)
   describe the single copy. This is only the include flip the sync script's
   header promised — the display's full migration to the shared portal
   remains Phase-4-last per `docs/design/onboarding_shared_module.md`.
+  (#1698)
 - [x] **F18 [code] `DEVICE_CHIP_ID="placeholder"` fallback** — done, with the
   real defect being the neighboring `"unknown"` fallbacks on the live path:
   the fleet manifest is keyed by MAC, and an unreadable device used to be
@@ -240,7 +241,7 @@ so — see D2 below.)
   The chip-ID fallback is honest instead of fabricated: ESP32-S3
   legitimately reports no chip ID, so it prints "none (… the MAC is the
   identity)". The `"placeholder"` literal survives only inside the labeled
-  `--dry-run` branch, which writes nothing.
+  `--dry-run` branch, which writes nothing. (#1698)
 - [ ] **F19 [code] `FEATURE_TAMPER_GPIO` is defined but never consumed** by
   canary-wap firmware (status "planned" in `boards/boards.config.json` and the
   canary-local device JSON).
