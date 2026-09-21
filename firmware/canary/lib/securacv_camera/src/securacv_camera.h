@@ -17,6 +17,8 @@
 #if FEATURE_CAMERA_PEEK
 
 #include "esp_camera.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // STREAM METRICS
@@ -54,11 +56,30 @@ enum ThermalState : uint8_t {
 // CAMERA MANAGER
 // ════════════════════════════════════════════════════════════════════════════
 
+/* Three tasks touch the esp_camera_* driver: the loop task (vision capture,
+ * power-policy deinit), the dedicated peek-stream task (capture + freeze
+ * recovery), and the httpd workers (re-init endpoint, snapshot capture).
+ * The flag guards (`isPeekActive`, `isInitialized`) order the common cases
+ * but cannot close the window between a check and the driver call, so every
+ * lifecycle transition and every capture goes through one lifecycle mutex:
+ *
+ *   - captureFrame() takes the lock (short timeout → nullptr on miss) and
+ *     HOLDS it until returnFrame() gives it back — the frame buffer points
+ *     into driver memory, so deinit must be excluded for the frame's whole
+ *     lifetime, including the socket send. Capture and return are always
+ *     called from the same task (FreeRTOS mutexes require owner-give).
+ *   - begin()/end()/reinit()/setResolution() and checkFreeze()'s recovery
+ *     take the lock with a longer timeout and SKIP (fail soft, caller
+ *     retries) when it's busy — never block a task toward the 8 s task
+ *     watchdog.
+ */
 class CameraManager {
 public:
   CameraManager();
 
-  // Initialize / deinitialize camera
+  // Initialize / deinitialize camera. Serialized by the lifecycle lock;
+  // fail soft (begin() false, end() a no-op) if the lock is busy — check
+  // isInitialized() and retry.
   bool begin();
   void end();
   bool reinit();
@@ -75,7 +96,10 @@ public:
   framesize_t getResolution() const { return m_framesize; }
   const char* getResolutionName() const;
 
-  // Capture single frame
+  // Capture single frame. A non-null frame comes back with the lifecycle
+  // lock HELD — the same task must call returnFrame() to release both the
+  // buffer and the lock. nullptr means not initialized, lock busy, or
+  // driver failure; no lock is held in that case.
   camera_fb_t* captureFrame();
   void returnFrame(camera_fb_t* fb);
 
@@ -114,6 +138,15 @@ private:
   void loadOrientationFromNvs();
   void saveOrientationToNvs();
 
+  // Lifecycle lock plumbing. beginLocked()/endLocked() are the raw
+  // transitions for callers that already own the lock (reinit, freeze
+  // recovery) — public begin()/end() are take-lock wrappers around them.
+  bool lockTake(uint32_t timeout_ms);
+  void lockGive();
+  bool beginLocked();
+  void endLocked();
+
+  SemaphoreHandle_t m_lock;
   bool m_initialized;
   volatile bool m_peek_active;
   framesize_t m_framesize;

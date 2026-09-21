@@ -204,13 +204,18 @@ unsafe behavior, verified during the audit.
    `onScanEnd`, tick-cadence `nimble_scan_recover()` — in the Scout TUs and `ble_presence`.
    Compile-tested by CI's `[env:full]` leg; a live scan against a paired beacon is bench work.
 
-4. **The camera burns battery it doesn't need to.** `camera_init()` runs unconditionally at boot
-   ([`main.cpp:871`](canary/src/main.cpp)); every battery power mode sets
-   `policy_features.camera_peek=false`, but that flag is **only read for a status print**
-   ([`main.cpp:2659`](canary/src/main.cpp)) — `esp_camera_deinit()` / `CameraManager::end()` is
-   never called. The OV3660/OV2640 stays clocked at 20 MHz XCLK, **~40–60 mA continuously on
-   battery.** Fix: act on `camera_peek=false` → deinit (and re-init on demand); `end()`/`reinit()`
-   already exist ([`securacv_camera.cpp:207`](canary/lib/securacv_camera/src/securacv_camera.cpp)).
+4. **(fixed)** **The camera burns battery it doesn't need to.** `camera_init()` ran unconditionally
+   at boot; every battery power mode sets `policy_features.camera_peek=false`, but that flag was
+   **only read for a status print** — `esp_camera_deinit()` / `CameraManager::end()` was never
+   called, so the OV3660/OV2640 stayed clocked at 20 MHz XCLK on battery (the audit's unmeasured
+   estimate: ~40–60 mA continuously).
+   *Fixed:* `loop()` acts on the signal right after `policy_process()`
+   ([`main.cpp`](canary/src/main.cpp)): while the policy disallows the camera it stops any active
+   peek stream and deinits (retried each pass — `end()` fails soft while a held frame owns the
+   lifecycle lock from item 7), and when the policy re-allows it re-inits eagerly so vision
+   resumes without a user request. A failed re-init is attempted once per edge, not every pass;
+   `/api/peek/init` stays the manual recovery path, as it is for a boot init failure. The mA
+   figure above remains the audit's estimate — the saving is not bench-measured.
 
 5. **(fixed)** **SD card glitch permanently disabled logging.** Storage mounted once at boot with
    no re-init path, so a single transient card failure disabled witness persistence until
@@ -244,11 +249,20 @@ unsafe behavior, verified during the audit.
    no associated STA and `AP_MAX_CONNECTIONS=1` sees almost no frames. Fix: gate power-save on
    `csi_hal::is_running()` (force `WIFI_PS_NONE` when CSI is live) **and** start the existing probe.
 
-7. **Camera init/deinit races the peek-stream task.** Vision guards with `if (isPeekActive())
-   return`, but the stream task's freeze-recovery sets `peek_active=false` *before*
-   `deinit()`+`begin()` ([`securacv_camera.cpp:643`](canary/lib/securacv_camera/src/securacv_camera.cpp)),
-   so a main-loop `esp_camera_fb_get()` can hit a half-initialized driver → crash/UB. Fix: a single
-   owning task or a mutex around all `esp_camera_*` lifecycle vs capture (subsumed by §1.2).
+7. **(fixed)** **Camera init/deinit races the peek-stream task.** Vision guarded with
+   `if (isPeekActive()) return`, but the stream task's freeze-recovery set `peek_active=false`
+   *before* `deinit()`+`begin()`, so a main-loop `esp_camera_fb_get()` could hit a
+   half-initialized driver → crash/UB. The httpd workers (re-init endpoint, snapshot capture)
+   widened the same window to a third task.
+   *Fixed:* one lifecycle mutex in `CameraManager`
+   ([`securacv_camera.cpp`](canary/lib/securacv_camera/src/securacv_camera.cpp)):
+   `captureFrame()` takes it (short timeout → dropped frame on a miss) and **holds it until
+   `returnFrame()`** — the frame buffer points into driver memory, so teardown must be excluded
+   for the frame's whole lifetime, including the socket send — while `begin()`/`end()`/
+   `reinit()`/`setResolution()` and the freeze recovery take it with a longer timeout and fail
+   soft (skip, caller retries) rather than block a task toward the 8 s watchdog. The flag guards
+   remain as fast paths; the lock closes the check-to-driver-call windows. Compile-tested; a
+   live freeze-during-vision repro is bench work.
 
 8. **Stale/false in-code claims to correct while touching these.** The auth header says "wiring
    happens in Phase 2" but auth **is** wired (`auth_gate` on ~91 of 98 handlers,
@@ -508,10 +522,10 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 1 | (fixed) Vision ran only Layer 1 at XGA — decode ceiling raised to XGA | **P0** | Vision | `securacv_vision.cpp:139` | Motion/tamper/person detection restored at default resolution |
 | 2 | (fixed) "Never sleeps" build still deep-slept — real `FEATURE_DEEP_SLEEP` guard added | **P0** | Power | `main.cpp:1729` | Correctness/safety on marginal cells |
 | 3 | (fixed) BLE Scout never scanned in PIO build — latch flipped in setup() after the stack owner | **P0** | BLE | `src/main.cpp` | Room attribution + fleet roster actually work |
-| 4 | Camera never deinits on battery | **P0** | Camera/Power | `main.cpp:2659` | ~40–60 mA saved on battery |
+| 4 | (fixed) Camera never deinited on battery — loop() now acts on the policy signal | **P0** | Camera/Power | `canary/src/main.cpp` | ~40–60 mA (unmeasured est.) saved on battery |
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
-| 7 | Camera init/deinit races peek task | **P0** | Camera | `securacv_camera.cpp:643` | Removes a crash vector |
+| 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
 | 8 | Plaintext private key in NVS | **P0→P1** | Crypto | `securacv_crypto.cpp:306` | NVS-enc now; flash-enc+secure-boot next |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |

@@ -1768,6 +1768,36 @@ void loop() {
 #if FEATURE_POWER_POLICY
   policy_process();
 
+#if FEATURE_CAMERA_PEEK
+  /* Act on the policy's camera signal instead of only printing it: every
+   * battery mode sets camera_peek=false, but an initialized camera keeps
+   * the sensor clocked at 20 MHz XCLK whether or not anything captures.
+   * Deinit while the policy disallows it (retried each pass — end() fails
+   * soft when a held frame owns the lifecycle lock), and eagerly re-init
+   * on the rising edge so vision resumes without a user request. A failed
+   * re-init is attempted once per edge, not every pass (begin() burns up
+   * to ~1 s probing configs on a dead sensor) — between edges the re-init
+   * endpoint stays the recovery path, as it is for a boot failure. */
+  {
+    static bool s_cam_policy_allowed = true;  /* camera_init() ran at boot */
+    CameraManager& cam = camera_get_instance();
+    const bool cam_allowed = policy_get_features()->camera_peek;
+    if (!cam_allowed && cam.isInitialized()) {
+      if (s_cam_policy_allowed) {
+        Serial.println("[POLICY] Battery mode — releasing camera");
+      }
+      cam.setPeekActive(false);  /* stream task exits on the flag */
+      cam.end();
+    } else if (cam_allowed && !s_cam_policy_allowed && !cam.isInitialized()) {
+      Serial.println("[POLICY] External power — re-initializing camera");
+      if (!cam.begin()) {
+        Serial.println("[POLICY] Camera re-init failed — use /api/peek/init");
+      }
+    }
+    s_cam_policy_allowed = cam_allowed;
+  }
+#endif
+
 #if FEATURE_DEEP_SLEEP
   if (policy_should_deep_sleep() && !power_is_charging()) {
     uint32_t sleep_sec = policy_get_sleep_duration_sec();
