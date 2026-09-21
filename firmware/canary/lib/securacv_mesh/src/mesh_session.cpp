@@ -74,6 +74,13 @@ struct TrustedPeer {
   uint8_t  pubkey    [mesh_crypto::PUBKEY_LEN];
   uint64_t last_counter;
   bool     in_use;
+  /* MAC↔fingerprint join (PR-8 follow-up): the MAC this peer last spoke
+   * from, recorded only after a frame fully verifies (signature +
+   * opera_id + replay), so the binding is as trustworthy as the frame.
+   * Lets /api/mesh/peers join the durable membership set against the
+   * live transport table's liveness/RSSI. */
+  uint8_t  mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+  bool     mac_known;
 };
 static TrustedPeer s_trusted_peers[MAX_TRUSTED_PEERS];
 
@@ -255,7 +262,8 @@ static void dispatch_verified(const TrustedPeer&         peer,
  *
  * Steps 1-7 ALL drop silently on failure — there's no error feedback
  * to the (possibly malicious) sender. */
-static void on_opera_frame(const uint8_t* data, size_t len) {
+static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
+                           const uint8_t* data, size_t len) {
   /* data[0] is the session msg-type byte; the envelope starts at +1. */
   const uint8_t* env       = data + MSGTYPE_HEADER_LEN;
   const size_t   env_len   = len   - MSGTYPE_HEADER_LEN;
@@ -295,6 +303,13 @@ static void on_opera_frame(const uint8_t* data, size_t len) {
   if (hdr.counter <= peer->last_counter) return;
   peer->last_counter = hdr.counter;
 
+  /* Every check passed: at this instant the source MAC provably spoke
+   * for this fingerprint. Record it for the /api/mesh/peers liveness
+   * join; refreshed on every verified frame so an address change heals
+   * on the peer's next transmission. */
+  memcpy(peer->mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
+  peer->mac_known = true;
+
   /* Step 7: dispatch by envelope msg_type. */
   dispatch_verified(*peer, hdr, payload, payload_len);
 }
@@ -329,7 +344,7 @@ static void on_transport_recv(const uint8_t mac[6],
 
   /* >=16 — opera-authenticated traffic. PR 5c-4 routes it here; the
    * peer table + signature verify + replay check happen inside. */
-  on_opera_frame(data, len);
+  on_opera_frame(mac, data, len);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -605,6 +620,10 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
       memcpy(s_trusted_peers[i].pubkey,    pubkey, mesh_crypto::PUBKEY_LEN);
       memcpy(s_trusted_peers[i].sender_fp, fp,     sizeof(fp));
       s_trusted_peers[i].last_counter = 0;
+      /* No verified frame yet this registration — the liveness join
+       * reports the peer OFFLINE until one arrives. */
+      memset(s_trusted_peers[i].mac, 0, sizeof(s_trusted_peers[i].mac));
+      s_trusted_peers[i].mac_known    = false;
       s_trusted_peers[i].in_use       = true;
       return true;
     }
@@ -633,6 +652,19 @@ size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
     if (!s_trusted_peers[i].in_use) continue;
     memcpy(out_fps[n], s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
     out_counters[n] = s_trusted_peers[i].last_counter;
+    ++n;
+  }
+  return n;
+}
+
+size_t get_peer_links(PeerLink* out, size_t cap) {
+  if (out == nullptr) return 0;
+  size_t n = 0;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS && n < cap; ++i) {
+    if (!s_trusted_peers[i].in_use) continue;
+    memcpy(out[n].fp,  s_trusted_peers[i].sender_fp, mesh_crypto::FINGERPRINT_LEN);
+    memcpy(out[n].mac, s_trusted_peers[i].mac,       mesh_transport::MESH_TRANSPORT_MAC_LEN);
+    out[n].mac_known = s_trusted_peers[i].mac_known;
     ++n;
   }
   return n;

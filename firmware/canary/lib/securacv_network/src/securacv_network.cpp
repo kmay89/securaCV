@@ -3641,11 +3641,15 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 // mesh_api builders so the response shape stays under host-test coverage
 // even though CI compiles FEATURE_MESH_NETWORK out (dev/release envs).
 //
-// MAC↔fingerprint join limitation: the persisted trusted-peer set keys
-// on Ed25519 pubkey (→ fingerprint), while the live transport peer table
-// keys on MAC. There is no stored mapping between the two, so per-peer
-// state / last_seen / rssi are best-effort placeholders here (state
-// "OFFLINE", rssi 0). Documented in spec/canary_mesh_network_v0.md §8.
+// MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
+// pubkey (→ fingerprint), while the live transport peer table keys on
+// MAC. mesh_session bridges them — it records the source MAC of every
+// FULLY VERIFIED opera-authenticated frame against the sender's
+// fingerprint (get_peer_links), so per-peer state / last_seen / rssi
+// below are the transport table's real numbers once a peer has spoken
+// this boot. A peer that has not yet sent a verified frame reports
+// OFFLINE/never — best-effort by design, documented in
+// spec/canary_mesh_network_v0.md §8.
 // ════════════════════════════════════════════════════════════════════════════
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
@@ -3703,16 +3707,26 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  // Trusted peers are the durable membership set (pubkeys). The live
-  // transport table is keyed on MAC, with no stored MAC↔pubkey mapping,
-  // so per-peer liveness is a best-effort placeholder (see section
-  // header + spec §8).
+  // Trusted peers are the durable membership set (pubkeys); liveness
+  // comes from joining each fingerprint's verified-frame MAC
+  // (mesh_session::get_peer_links) against the live transport table
+  // (see section header + spec §8).
   uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
   size_t  count = 0;
   if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &count)) {
     return http_send_error(req, 500, "load_failed");
   }
   if (count > mesh_state::MAX_TRUSTED_PEERS) count = mesh_state::MAX_TRUSTED_PEERS;
+
+  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
+  const size_t n_links = mesh_session::get_peer_links(
+      links, sizeof(links) / sizeof(links[0]));
+
+  mesh_transport::Peer live[16];
+  const size_t n_live = mesh_transport::list_peers(
+      live, sizeof(live) / sizeof(live[0]));
+
+  const uint32_t now_ms = millis();
 
   mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];
   for (size_t i = 0; i < count; ++i) {
@@ -3725,9 +3739,34 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
     }
     views[i].fingerprint[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
     views[i].name[0]      = '\0';          // best-effort: name unknown
-    views[i].state        = "OFFLINE";     // no MAC↔fingerprint join
+    views[i].state        = "OFFLINE";     // until a verified frame joins it
     views[i].last_seen_sec = 0xFFFFFFFFu;  // "never" (UI shows 'never')
     views[i].rssi          = 0;
+
+    // fp → last verified MAC → live transport entry. A peer that has
+    // not sent a verified frame this boot, or whose MAC has left the
+    // transport table, keeps the OFFLINE/never defaults above.
+    for (size_t l = 0; l < n_links; ++l) {
+      if (!links[l].mac_known ||
+          memcmp(links[l].fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) {
+        continue;
+      }
+      for (size_t t = 0; t < n_live; ++t) {
+        if (!live[t].in_use ||
+            memcmp(live[t].mac, links[l].mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
+          continue;
+        }
+        switch (live[t].state) {
+          case mesh_transport::PeerState::ACTIVE: views[i].state = "CONNECTED"; break;
+          case mesh_transport::PeerState::STALE:  views[i].state = "STALE";     break;
+          default:                                views[i].state = "OFFLINE";   break;
+        }
+        views[i].last_seen_sec = (now_ms - live[t].last_seen_ms) / 1000u;
+        views[i].rssi          = live[t].rssi_dbm;
+        break;
+      }
+      break;
+    }
   }
 
   char body[1024];

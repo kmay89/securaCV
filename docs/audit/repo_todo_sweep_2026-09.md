@@ -197,10 +197,29 @@ so — see D2 below.)
 - [ ] **F10 [code] Five of eleven specced mesh REST endpoints are deferred**
   (remove/leave/name/enable/alerts-DELETE) —
   `firmware/canary/lib/securacv_network/src/securacv_network.cpp`, per
-  `spec/canary_mesh_network_v0.md` §8.
-- [ ] **F11 [code] Fleet peer liveness is fabricated.** `/api/mesh/peers`
-  reports state "OFFLINE"/rssi 0 best-effort placeholders (no MAC↔fingerprint
-  join), and `alerts_received` is a hardcoded 0. Same file, ~:3617 and ~:3657.
+  `spec/canary_mesh_network_v0.md` §8. Scoped 2026-09-21: `remove` is
+  gated on porting the WAP's atomic `opera_secret` rekey transaction
+  (`MSG_OPERA_REKEY` + ACK state machine, mesh_network.cpp:163+) into the
+  PIO mesh layer, whose envelope has no rekey message type at all —
+  shipping remove-without-rekey is the security misrepresentation §8.3
+  explicitly refuses. That port is a design-review-sized change (new wire
+  type, per-peer ACK tracking, commit/rollback, NVS re-persist,
+  trusted-peer re-registration) — treat it as its own PR with maintainer
+  eyes on the crypto, not a sweep item. `alerts` needs an alert message
+  type dispatched first (TAMPER_ALERT is reserved but unimplemented in
+  the PIO envelope). `leave` (local forget + best-effort notify) is
+  implementable without rekey — the leaver discards its own secret.
+- [x] **F11 [code] Fleet peer liveness is fabricated** — the liveness half is
+  done: `mesh_session` now records the source MAC of every fully verified
+  opera-authenticated frame against the sender's fingerprint (signature +
+  opera_id + replay all passed, so the binding is as trustworthy as the
+  frame; an unverified or replayed frame cannot rebind it — host-tested),
+  and `/api/mesh/peers` joins that MAC into the live transport table for
+  real `state`/`last_seen_sec`/`rssi`. A peer that hasn't spoken this boot
+  honestly reads OFFLINE/never. `alerts_received` stays 0 and stays honest:
+  the PIO envelope reserves TAMPER_ALERT/POWER_ALERT but nothing sends or
+  dispatches them yet — counting attribution lands with the alert channel
+  (F10's alerts endpoint). Spec §8.3 peer-fields note updated.
 - [ ] **F12 [code] `ble_mesh.cpp` (canary-wap) is a stub module** — every
   publish returns `false` with a "transport not wired" log. Decide whether to
   build the transport or delete the seam.

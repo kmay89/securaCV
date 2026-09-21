@@ -459,10 +459,17 @@ visual-match step.
 **Peer fields:** `fingerprint` is derived from the persisted trusted-peer
 public keys (`mesh_crypto::fingerprint`). `name` is best-effort and may be
 empty (the UI falls back to "Unknown Device"); per-peer `name` and
-`alerts_received` attribution are placeholders pending a peer-metadata store.
-`state`/`last_seen_sec`/`rssi` are best-effort joins against the ESP-NOW
-transport peer table (keyed by MAC), so a trusted peer with no current
-transport entry may report default liveness values.
+`alerts_received` attribution remain placeholders pending a peer-metadata
+store and an implemented alert message type. `state`/`last_seen_sec`/`rssi`
+are real joins against the ESP-NOW transport peer table:
+`mesh_session` records the source MAC of every **fully verified**
+opera-authenticated frame against the sender's fingerprint (signature,
+opera_id and replay checks all passed, so the MAC provably spoke for the
+fingerprint at that instant), and the handler joins that MAC into the
+transport table's liveness. A trusted peer that has not sent a verified
+frame this boot — or whose MAC has aged out of the transport table —
+reports the OFFLINE/never defaults; the binding refreshes on the peer's
+next verified frame, so an address change heals itself.
 
 **Add-on → device bridge:** the Home Assistant "Add another Canary" wizard
 (`privacy_witness_kernel/serve_wizard.py` + `wizard/index.html`) forwards
