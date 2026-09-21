@@ -102,7 +102,8 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   consecutive-write-failure threshold, live `sd_healthy`, and an MSC gate on
   every teardown/remount. Decisions are the pure, host-tested
   `common/storage/sd_mount_policy.h`. Host/compile-tested; the physical
-  remove/reinsert pass is U1 bench work. Roadmap item 5 updated.
+  remove/reinsert pass is U1 bench work. Roadmap item 5 updated
+  (#1694).
 - [ ] **F3 [code] Camera never deinits on battery.** No `esp_camera_deinit()`
   on the battery path; the roadmap's estimate of the continuous drain
   (~40–60 mA) is unmeasured — the bench number is U1 work. Roadmap item 4.
