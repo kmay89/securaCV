@@ -117,9 +117,13 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   `common/storage/sd_mount_policy.h`. Host/compile-tested; the physical
   remove/reinsert pass is U1 bench work. Roadmap item 5 updated
   (#1694).
-- [ ] **F3 [code] Camera never deinits on battery.** No `esp_camera_deinit()`
-  on the battery path; the roadmap's estimate of the continuous drain
-  (~40–60 mA) is unmeasured — the bench number is U1 work. Roadmap item 4.
+- [x] **F3 [code] Camera never deinits on battery** — done: `loop()` acts on
+  `policy_features.camera_peek` right after `policy_process()` — battery
+  modes stop any peek stream and deinit the camera (retried each pass;
+  `end()` fails soft while a held frame owns the F6 lifecycle lock), and the
+  policy re-allowing it re-inits eagerly so vision resumes. The roadmap's
+  drain estimate (~40–60 mA) stays unmeasured — the bench number is U1 work.
+  Roadmap item 4 updated (#1696).
 - [ ] **F4 [code] CSI probes bypass the airtime governor.**
   `firmware/common/csi/src/csi_probe.h` says probe sends are not routed
   through `airtime_governor::try_reserve_routine()`; ~13% channel use vs the
@@ -128,8 +132,15 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   encryption.** `firmware/canary/lib/securacv_mesh/src/mesh_state.h` ("audit-O2
   deferred work"). Decide the enforcement posture, then implement. Roadmap
   item 8.
-- [ ] **F6 [code] Camera init/deinit vs peek-task race.** Roadmap item 7 —
-  not yet source-checked either way; confirm first, then fix or close.
+- [x] **F6 [code] Camera init/deinit vs peek-task race** — confirmed real by
+  source inspection (the stream task's freeze recovery cleared `peek_active`
+  then deinit+begin behind flag guards only, while the loop-task vision
+  capture and two httpd handlers could call into the driver), then fixed:
+  one lifecycle mutex in `CameraManager`. `captureFrame()` holds it until
+  `returnFrame()` (the frame buffer is driver memory); lifecycle ops take it
+  with a 2 s timeout and fail soft instead of blocking toward the 8 s task
+  watchdog. Compile-tested; a live freeze repro is U1 bench work. Roadmap
+  item 7 updated (#1696).
 
 (Roadmap items 1 and 2 were confirmed **fixed**, and the roadmap doc now says
 so — see D2 below.)
