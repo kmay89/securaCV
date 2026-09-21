@@ -124,10 +124,18 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   policy re-allowing it re-inits eagerly so vision resumes. The roadmap's
   drain estimate (~40–60 mA) stays unmeasured — the bench number is U1 work.
   Roadmap item 4 updated (#1696).
-- [ ] **F4 [code] CSI probes bypass the airtime governor.**
-  `firmware/common/csi/src/csi_probe.h` says probe sends are not routed
-  through `airtime_governor::try_reserve_routine()`; ~13% channel use vs the
-  2% budget in larger fleets. Roadmap item 6.
+- [x] **F4 [code] CSI probes bypass the airtime governor** — done:
+  `csi_probe::Config` gained an injectable `airtime_gate` hook (the module
+  stays standalone and host-testable); every probe send — unicast fan-out
+  and idle broadcast — reserves through it before the driver sees the
+  frame, denials are counted (`Stats::sends_denied_airtime`) and keep the
+  slot cadence so a saturated window doesn't burst when it clears. The WAP
+  integration wires the hook to `airtime_governor::try_reserve_routine()`
+  with the ~59 B ESP-NOW framing added so tiny probe payloads aren't
+  undercounted. Three new host tests cover deny/resume/ungated. The rest
+  of roadmap item 6 (modem-sleep vs CSI power-save gating; wiring the
+  probe into the canary PIO build at all) stays open under that item.
+  (#1696)
 - [ ] **F5 [code+decision] Ed25519 private key in NVS without enforced flash
   encryption.** `firmware/canary/lib/securacv_mesh/src/mesh_state.h` ("audit-O2
   deferred work"). Decide the enforcement posture, then implement. Roadmap

@@ -378,6 +378,95 @@ void test_stop_halts_sends() {
               before, g_sends.size());
 }
 
+/* ── Airtime gate ──────────────────────────────────────────────────────── */
+
+uint32_t g_gate_calls = 0;
+bool     g_gate_allow = true;
+size_t   g_gate_last_bytes = 0;
+
+bool counting_gate(uint32_t /*now_ms*/, size_t payload_bytes) {
+  ++g_gate_calls;
+  g_gate_last_bytes = payload_bytes;
+  return g_gate_allow;
+}
+
+void test_airtime_gate_denies_broadcasts() {
+  csi_probe::Config c = csi_probe::Config::defaults();
+  c.broadcast_when_no_peers = true;
+  c.idle_rate_hz = 10;
+  c.airtime_gate = counting_gate;
+  g_gate_calls = 0;
+  g_gate_allow = false;
+  reset_world(c);
+
+  /* Every due broadcast slot must ask the gate and, denied, send nothing
+   * — while keeping the idle cadence (one ask per 100 ms slot, not one
+   * per process() tick). */
+  advance(5, 1000);
+  assert(g_sends.empty());
+  assert(g_gate_calls >= 9 && g_gate_calls <= 11);
+  assert(g_gate_last_bytes == c.payload_len);
+
+  csi_probe::Stats st{};
+  assert(csi_probe::get_stats(&st));
+  assert(st.sends_denied_airtime == g_gate_calls);
+  assert(st.broadcasts_sent == 0);
+
+  /* Budget frees up: sends resume at the same cadence. */
+  g_gate_allow = true;
+  advance(5, 1000);
+  assert(g_sends.size() >= 9 && g_sends.size() <= 11);
+  std::printf("PASS test_airtime_gate_denies_broadcasts  (denied=%u, resumed=%zu)\n",
+              (unsigned)st.sends_denied_airtime, g_sends.size());
+}
+
+void test_airtime_gate_denies_unicasts_and_keeps_cadence() {
+  csi_probe::Config c = csi_probe::Config::defaults();
+  c.rate_hz = 20;                 /* period 50 ms */
+  c.aggregate_cap_hz = 200;
+  c.airtime_gate = counting_gate;
+  g_gate_calls = 0;
+  g_gate_allow = false;
+  reset_world(c);
+
+  const uint8_t peer[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+  assert(csi_probe::add_peer(peer));
+
+  /* One second at 20 Hz = ~20 due slots, all denied, none sent, and the
+   * per-peer schedule advances one period per denial instead of retrying
+   * every tick. */
+  advance(5, 1000);
+  assert(g_sends.empty());
+  assert(g_gate_calls >= 19 && g_gate_calls <= 21);
+
+  csi_probe::Stats st{};
+  assert(csi_probe::get_stats(&st));
+  assert(st.sends_denied_airtime == g_gate_calls);
+  assert(st.unicasts_sent == 0);
+  assert(st.unicasts_failed == 0);  /* a denial is not a driver failure */
+
+  g_gate_allow = true;
+  advance(5, 1000);
+  assert(g_sends.size() >= 19 && g_sends.size() <= 21);
+  std::printf("PASS test_airtime_gate_denies_unicasts_and_keeps_cadence  (denied=%u, resumed=%zu)\n",
+              (unsigned)st.sends_denied_airtime, g_sends.size());
+}
+
+void test_null_airtime_gate_is_ungated() {
+  csi_probe::Config c = csi_probe::Config::defaults();
+  c.broadcast_when_no_peers = true;
+  c.idle_rate_hz = 10;
+  assert(c.airtime_gate == nullptr);  /* defaults() leaves the gate off */
+  reset_world(c);
+
+  advance(5, 1000);
+  assert(g_sends.size() >= 9);
+  csi_probe::Stats st{};
+  assert(csi_probe::get_stats(&st));
+  assert(st.sends_denied_airtime == 0);
+  std::printf("PASS test_null_airtime_gate_is_ungated  (sends=%zu)\n", g_sends.size());
+}
+
 }  /* namespace */
 
 int main() {
@@ -393,6 +482,9 @@ int main() {
   test_add_peer_rolls_back_on_driver_failure();
   test_initial_sends_staggered();
   test_stop_halts_sends();
+  test_airtime_gate_denies_broadcasts();
+  test_airtime_gate_denies_unicasts_and_keeps_cadence();
+  test_null_airtime_gate_is_ungated();
   std::printf("\nALL CSI_PROBE TESTS PASSED\n");
   return 0;
 }
