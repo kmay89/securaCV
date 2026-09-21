@@ -7,12 +7,11 @@
 //   and a background begin() under an associated phone reads as "the setup
 //   network kicked me off".
 //
-//   common/network/provision_core.h — the canonical copy of the onboarding
-//   byte-math (A-only captive DNS, per-OS probe classification, JSON escaping
-//   for hostile SSIDs, the unbiased password alphabet). The display carries a
-//   byte-identical copy until it migrates to the shared portal
-//   (firmware/scripts/check_provision_core_sync.sh pins the pair); these
-//   tests pin the BEHAVIOR of the common copy the sense/vision portal links.
+//   common/network/provision_core.h — the canonical onboarding byte-math
+//   (A-only captive DNS, per-OS probe classification, JSON escaping for
+//   hostile SSIDs, the unbiased password alphabet). Every consumer — the
+//   sense/vision portal and the display alike — now includes this one file
+//   from common/, so these tests pin the behavior every portal ships.
 
 #include "../common/network/provision_core.h"
 #include "../common/network/setup_portal_logic.h"

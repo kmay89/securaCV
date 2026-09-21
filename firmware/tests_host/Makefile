@@ -136,8 +136,8 @@ SETUPPAGE_JS = test_canary_setup_page.test.js
 # (AP linger, quiet background retry, stuck-phone hint) plus the canonical
 # provision_core byte-math (A-only captive DNS, probe classification, JSON
 # escaping, the unambiguous password alphabet) that the sense/vision portal
-# links. The display's byte-identical provision_core copy is pinned separately
-# by firmware/scripts/check_provision_core_sync.sh.
+# links and the display now includes directly from common/ (its former
+# byte-identical copy, and the sync gate that pinned it, are gone).
 PORTAL_HDRS = ../common/network/setup_portal_logic.h \
               ../common/network/provision_core.h
 PORTAL_BIN  = $(BUILD_DIR)/test_setup_portal_logic

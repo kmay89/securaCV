@@ -133,6 +133,11 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    # The onboarding pure helpers (QR/JSON escaping, unbiased password
+    # alphabet). Canonical here since the display's include flipped to the
+    # common path; the old byte-identical display copy (and the
+    # check_provision_core_sync.sh gate that pinned it) are gone.
+    "${FIRMWARE_ROOT}/common/network/provision_core.h"
     # The broker socket decision + its WiFiClientSecure half (mqtt_mgr.cpp
     # includes the transport, which includes the logic bare, same directory).
     "${FIRMWARE_ROOT}/common/network/mqtt_transport_logic.h"

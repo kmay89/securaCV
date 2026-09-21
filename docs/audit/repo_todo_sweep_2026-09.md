@@ -219,11 +219,28 @@ so — see D2 below.)
   gap `firmware/PARITY_PLAN.md` marks ❌ in *both* trees.
 - [ ] **F16 [code] WPA3/PMF + per-device AP password** on the WAP join path —
   roadmap item 21; `pre_build.py` already warns on the hardcoded AP password.
-- [ ] **F17 [code] `provision_core.h` exists in two byte-identical copies**
-  held together by `check_provision_core_sync.sh`. Do the migration the
-  script's header promises.
-- [ ] **F18 [code] `DEVICE_CHIP_ID="placeholder"` fallback** in
-  `firmware/provisioning/provision_canary.sh` — make it refuse instead.
+- [x] **F17 [code] `provision_core.h` exists in two byte-identical copies** —
+  done, the include flipped: the display's `provision.cpp` / `onboard_ui.cpp`
+  now include `network/provision_core.h` straight from `common/` (the
+  `-I ../../common` every display env already carries), the display copy is
+  deleted, and `check_provision_core_sync.sh` plus its CI step are retired.
+  The Arduino sketch stays self-contained — `setup.sh regen` stages the
+  canonical header flat next to the sketch (same committed-copy pattern as
+  `wifi_join_policy.h`), covered by the existing sketch-sync CI gate. The
+  design doc and the four comments that described the pinned pair now
+  describe the single copy. This is only the include flip the sync script's
+  header promised — the display's full migration to the shared portal
+  remains Phase-4-last per `docs/design/onboarding_shared_module.md`.
+- [x] **F18 [code] `DEVICE_CHIP_ID="placeholder"` fallback** — done, with the
+  real defect being the neighboring `"unknown"` fallbacks on the live path:
+  the fleet manifest is keyed by MAC, and an unreadable device used to be
+  written as MAC `unknown` — a row no fleet tool can match to hardware, and
+  a second such device collides with the first. `get_device_info` now
+  refuses (exit 1, esptool's output echoed) when the MAC cannot be read.
+  The chip-ID fallback is honest instead of fabricated: ESP32-S3
+  legitimately reports no chip ID, so it prints "none (… the MAC is the
+  identity)". The `"placeholder"` literal survives only inside the labeled
+  `--dry-run` branch, which writes nothing.
 - [ ] **F19 [code] `FEATURE_TAMPER_GPIO` is defined but never consumed** by
   canary-wap firmware (status "planned" in `boards/boards.config.json` and the
   canary-local device JSON).

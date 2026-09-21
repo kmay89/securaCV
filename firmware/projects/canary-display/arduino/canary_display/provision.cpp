@@ -34,7 +34,7 @@
 #endif
 
 #include "provision.h"
-#include "provision_core.h"
+#include "provision_core.h"  // shared onboarding pure helpers (common/)
 #include "tz_auto.h"  // the zone the portal collects, applied on join
 #include "runtime_config.h"
 #include "wifi_join_policy.h"  // shared join-failure vocabulary (common/)
