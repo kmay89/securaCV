@@ -133,6 +133,9 @@ static_assert(sizeof(csi_features_t) == 36,
 
 #if FEATURE_BLE_STATUS
 #include "securacv_ble_status.h"
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "ble_scout.h"  /* ble_scout_allow_radio — the scan latch (see setup()) */
+#endif
 #endif
 
 #if FEATURE_USB_ONBOARD
@@ -1105,6 +1108,21 @@ void setup() {
   if (!ble_status_stack_begin()) {
     Serial.println("[--] NimBLE stack init failed — BLE status/scout unavailable");
   }
+#endif
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  // Permit the Scout's NimBLE scan BEFORE securacv_csi_modules_init() below
+  // runs ble_scout_init(): the scan bring-up is latch-gated
+  // (ble_scout_allow_radio), because on the canary-wap host csi_integration
+  // inits inside the provisioning join window and an early NimBLE start
+  // bypassed the bluetooth_channel heap guard. This tree has neither the
+  // window nor the guard, and the name-ordering concern is already settled —
+  // the stack owner (ble_status_stack_begin, above, on FEATURE_BLE_STATUS
+  // builds) brings NimBLE up under the device's own GAP name, so the Scout
+  // only attaches. Without this call the [env:full] build compiled the
+  // registry/tracker/roster but nothing ever scanned — room attribution and
+  // the fleet roster were inert (optimization-roadmap P0 item 3).
+  ble_scout::ble_scout_allow_radio();
 #endif
 
   // Initialize CSI sensing (motion / breathing / micro-activity)

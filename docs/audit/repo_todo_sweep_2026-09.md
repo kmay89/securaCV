@@ -89,10 +89,13 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
 
 ### P0 — confirmed still open by source inspection
 
-- [ ] **F1 [code] BLE Scout never scans in the PlatformIO build.**
-  `ble_scout_allow_radio()` has no caller under `firmware/canary/src` (its only
-  caller is `canary_wap.ino`). Room attribution and the fleet roster are inert
-  in the PIO build. Roadmap item 3.
+- [x] **F1 [code] BLE Scout never scanned in the PlatformIO build** — done:
+  `setup()` now flips `ble_scout_allow_radio()` after the NimBLE stack owner
+  (`ble_status_stack_begin()`, which keeps the device's own GAP name) and
+  before `securacv_csi_modules_init()`'s `ble_scout_init()` completes the
+  deferred scan phase. The WAP's join-window deferral guarded its
+  bluetooth_channel heap guard, which this tree does not have. Roadmap item 3
+  updated; a live scan against a paired beacon is U1 bench work.
 - [x] **F2 [code] SD glitch disabled logging until reboot** — done: the
   declared-nowhere `sd_storage_remount()` turned out to live in an unbuilt
   scaffold header nothing included (deleted, like the six the 2026-09 audit
