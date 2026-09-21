@@ -123,11 +123,15 @@ public:
   bool checkFreeze(uint32_t now_ms);
   uint16_t getFreezeCount() const { return m_freeze_count; }
 
-  // Sensor info
+  // Sensor info. Serialized by the lifecycle lock — esp_camera_sensor_get()
+  // hands back driver-owned state that deinit frees, so every dereference
+  // must exclude teardown. A busy lock reads as PID 0 / "Unknown".
   uint16_t getSensorPID() const;
   const char* getSensorModelName() const;
 
-  // Sensor parameter read/write — single source of truth for validation
+  // Sensor parameter read/write — single source of truth for validation.
+  // Same lifecycle-lock rule as above; false on a busy lock or torn-down
+  // camera (callers already treat false as "camera unavailable").
   bool getSensorParams(JsonDocument& doc);
   bool applySensorParams(const JsonObject& obj);
   void resetSensorDefaults();
@@ -141,8 +145,10 @@ private:
   // Lifecycle lock plumbing. beginLocked()/endLocked() are the raw
   // transitions for callers that already own the lock (reinit, freeze
   // recovery) — public begin()/end() are take-lock wrappers around them.
-  bool lockTake(uint32_t timeout_ms);
-  void lockGive();
+  // const: taking/giving the semaphore mutates the semaphore, not this
+  // object, so const readers (getSensorPID) can serialize too.
+  bool lockTake(uint32_t timeout_ms) const;
+  void lockGive() const;
   bool beginLocked();
   void endLocked();
 

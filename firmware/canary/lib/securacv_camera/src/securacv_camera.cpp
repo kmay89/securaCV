@@ -153,7 +153,7 @@ void CameraManager::applyDefaultSensorTuning() {
   }
 }
 
-bool CameraManager::lockTake(uint32_t timeout_ms) {
+bool CameraManager::lockTake(uint32_t timeout_ms) const {
   /* Constructor-created; creation can only fail under heap exhaustion at
    * static-init time. If it somehow did, fall back to the pre-lock
    * behavior (proceed unlocked) rather than bricking the camera. */
@@ -161,7 +161,7 @@ bool CameraManager::lockTake(uint32_t timeout_ms) {
   return xSemaphoreTake(m_lock, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
-void CameraManager::lockGive() {
+void CameraManager::lockGive() const {
   if (m_lock) xSemaphoreGive(m_lock);
 }
 
@@ -373,8 +373,17 @@ uint32_t CameraManager::getFrameDelay() const {
 // ════════════════════════════════════════════════════════════════════════════
 
 uint16_t CameraManager::getSensorPID() const {
-  sensor_t* s = esp_camera_sensor_get();
-  return s ? s->id.PID : 0;
+  /* Status polling calls this at ~1 Hz; a lock busy with a teardown or a
+   * held frame just reads as PID 0 ("Unknown") for that poll. */
+  if (!m_initialized) return 0;
+  if (!lockTake(CAM_LOCK_CAPTURE_TIMEOUT_MS)) return 0;
+  uint16_t pid = 0;
+  if (m_initialized) {
+    sensor_t* s = esp_camera_sensor_get();
+    if (s) pid = s->id.PID;
+  }
+  lockGive();
+  return pid;
 }
 
 const char* CameraManager::getSensorModelName() const {
@@ -386,8 +395,17 @@ const char* CameraManager::getSensorModelName() const {
 // ════════════════════════════════════════════════════════════════════════════
 
 bool CameraManager::getSensorParams(JsonDocument& doc) {
+  if (!m_initialized) return false;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {  // torn down between the flag check and the take
+    lockGive();
+    return false;
+  }
   sensor_t* s = esp_camera_sensor_get();
-  if (!s) return false;
+  if (!s) {
+    lockGive();
+    return false;
+  }
 
   doc["ok"]              = true;
   doc["sensor_pid"]      = s->id.PID;
@@ -420,12 +438,22 @@ bool CameraManager::getSensorParams(JsonDocument& doc) {
   doc["colorbar"]        = s->status.colorbar;
   doc["frame_delay_ms"]  = m_frame_delay_ms;
 
+  lockGive();
   return true;
 }
 
 bool CameraManager::applySensorParams(const JsonObject& obj) {
+  if (!m_initialized) return false;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {
+    lockGive();
+    return false;
+  }
   sensor_t* s = esp_camera_sensor_get();
-  if (!s) return false;
+  if (!s) {
+    lockGive();
+    return false;
+  }
 
   // JPEG quality — also read back from sensor
   if (obj["quality"].is<int>() && s->set_quality) {
@@ -489,18 +517,34 @@ bool CameraManager::applySensorParams(const JsonObject& obj) {
     m_frame_delay_ms = 40;
   }
 
+  lockGive();
   return true;
 }
 
 void CameraManager::resetSensorDefaults() {
-  applyDefaultSensorTuning();
-  loadOrientationFromNvs();
-  m_frame_delay_ms = 40;
+  if (!m_initialized) return;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return;
+  if (m_initialized) {
+    applyDefaultSensorTuning();
+    loadOrientationFromNvs();
+    m_frame_delay_ms = 40;
+  }
+  lockGive();
 }
 
 bool CameraManager::applyPreset(const char* name) {
+  if (!name) return false;
+  if (!m_initialized) return false;
+  if (!lockTake(CAM_LOCK_LIFECYCLE_TIMEOUT_MS)) return false;
+  if (!m_initialized) {
+    lockGive();
+    return false;
+  }
   sensor_t* s = esp_camera_sensor_get();
-  if (!s || !name) return false;
+  if (!s) {
+    lockGive();
+    return false;
+  }
 
   #define SAFE_SET(f, val) do { if (s->f) s->f(s, val); } while (0)
 
@@ -583,11 +627,13 @@ bool CameraManager::applyPreset(const char* name) {
     m_frame_delay_ms = 40;
   } else {
     #undef SAFE_SET
+    lockGive();
     return false;
   }
   #undef SAFE_SET
 
   loadOrientationFromNvs();
+  lockGive();
   return true;
 }
 
