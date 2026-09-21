@@ -271,7 +271,7 @@ so — see D2 below.)
   canonical for reed/hall enclosure tamper (a new GPIO consumer module
   feeding the tamper event path, or retiring the flag in favor of the
   touch mode); the pin maps are also U1 bench-unvalidated, so the wiring
-  half is bench-gated either way.
+  half is bench-gated either way. (Re-scope recorded in #1699.)
 
 ### Parity & sub-projects
 
@@ -297,7 +297,7 @@ so — see D2 below.)
   the canary loop, the MQTT update entity in `securacv_mqtt`). The
   `YOUR_WIFI_SSID` sdkconfig placeholders are a demo user's labeled
   edit-me fields, not shipped credentials — stated in the README rather
-  than "fixed".
+  than "fixed". (#1699)
 - [ ] **F24 [code] Emulator wave 2: first-boot captive-portal theater.**
   `canary-local/emulator/src/emu_net.cpp` hardcodes `provision_needed() =
   false`; the most important first-run UX is unemulated. Roadmapped in
