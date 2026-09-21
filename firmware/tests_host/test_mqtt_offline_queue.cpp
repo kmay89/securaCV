@@ -117,12 +117,28 @@ int main() {
   }
   CHECK(q.empty());
 
+  // ── clear() discards contents, keeps capacity, counts the flush ──
+  CHECK(q.push(mqtt_offline_queue::KIND_TAMPER, true, "old-broker-1"));
+  CHECK(q.push(mqtt_offline_queue::KIND_EVENT, false, "old-broker-2"));
+  CHECK(q.clear() == 2);
+  CHECK(q.empty());
+  CHECK(q.capacity() == 4);
+  CHECK(q.stats().dropped_flushed == 2);
+  CHECK(q.clear() == 0);  // idempotent on empty
+  CHECK(q.stats().dropped_flushed == 2);
+  // The queue still works after a flush (new broker's records).
+  CHECK(q.push(mqtt_offline_queue::KIND_EVENT, false, "new-broker"));
+  CHECK(q.front(nullptr, nullptr, &p));
+  CHECK(std::strcmp(p, "new-broker") == 0);
+  q.pop_front();
+
   // ── re-init resets contents and counters ──
   CHECK(q.push(mqtt_offline_queue::KIND_EVENT, false, "stale"));
   CHECK(q.init(storage, sizeof(storage), kPayload));
   CHECK(q.empty());
   CHECK(q.stats().queued == 0 && q.stats().replayed == 0 &&
-        q.stats().dropped_overflow == 0 && q.stats().dropped_oversize == 0);
+        q.stats().dropped_overflow == 0 && q.stats().dropped_oversize == 0 &&
+        q.stats().dropped_flushed == 0);
 
   std::printf("OK test_mqtt_offline_queue (%d checks)\n", g_checks);
   return 0;

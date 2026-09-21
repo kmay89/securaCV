@@ -229,7 +229,12 @@ static void offline_queue_ensure() {
   s_offline_q_alloc_tried = true;
   const size_t bytes =
       MQTT_OFFLINE_SLOTS * mqtt_offline_queue::slot_stride(MQTT_OFFLINE_SLOT_BYTES);
-  void* storage = psramFound() ? ps_malloc(bytes) : malloc(bytes);
+  void* storage = nullptr;
+  if (psramFound()) storage = ps_malloc(bytes);
+  // DRAM fallback even on a PSRAM board: fragmented/exhausted PSRAM must
+  // not latch the queue inert for the rest of the boot while 6 KB of
+  // ordinary heap sits free.
+  if (!storage) storage = malloc(bytes);
   if (!storage || !s_offline_q.init(storage, bytes, MQTT_OFFLINE_SLOT_BYTES)) {
     free(storage);
     log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
@@ -664,6 +669,13 @@ bool mqtt_init(const char* device_id, const char* firmware_version) {
 // from NVS, and try again at once. No reboot.
 static void apply_pending_reload() {
   s_reload_pending = false;
+  // Capture the broker identity the queue's records were accepted for,
+  // before the re-read replaces it.
+  char prev_host[sizeof(s_creds.host)];
+  char prev_user[sizeof(s_creds.username)];
+  memcpy(prev_host, s_creds.host, sizeof(prev_host));
+  memcpy(prev_user, s_creds.username, sizeof(prev_user));
+  const uint16_t prev_port = s_creds.port;
   if (s_mqtt.connected()) {
     s_mqtt.publish(s_topic_avail, "offline", true);
     s_mqtt.disconnect();
@@ -671,6 +683,20 @@ static void apply_pending_reload() {
   }
   mqtt_load_credentials(&s_creds);
   transport_reload("reprovisioned");
+  // Records queued during an outage were destined for the broker identity
+  // that accepted them. If the endpoint or the account changed — or the
+  // broker was removed — flush rather than drain stale security signals
+  // to the wrong endpoint. A password rotation or TLS reprovision of the
+  // SAME host/port/user keeps the queue: destination unchanged.
+  if (!s_offline_q.empty() &&
+      (!s_creds.configured || !s_creds.enabled ||
+       strcmp(prev_host, s_creds.host) != 0 || prev_port != s_creds.port ||
+       strcmp(prev_user, s_creds.username) != 0)) {
+    char detail[64];
+    snprintf(detail, sizeof(detail), "broker changed; %u records discarded",
+             (unsigned)s_offline_q.clear());
+    log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "MQTT offline queue flushed", detail);
+  }
   s_reconnect_delay_ms = MQTT_RECONNECT_MIN_MS;
   s_last_reconnect_attempt = 0;
   s_discovery_sent = false;

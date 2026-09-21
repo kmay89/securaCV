@@ -48,6 +48,7 @@ struct Stats {
   uint32_t replayed;          /* records drained by pop after a publish */
   uint32_t dropped_overflow;  /* oldest records dropped to admit newer */
   uint32_t dropped_oversize;  /* pushes refused: payload over slot capacity */
+  uint32_t dropped_flushed;   /* records discarded by clear() (broker changed) */
 };
 
 /* Per-slot overhead: the header the class stores ahead of each payload,
@@ -134,6 +135,20 @@ class Queue {
     m_head = (m_head + 1) % m_slot_count;
     m_size--;
     m_stats.replayed++;
+  }
+
+  /* Discard everything queued, keeping storage, capacity and lifetime
+   * counters. For when the records' destination is gone: a queue filled
+   * during an outage against broker A must not drain to a reprovisioned
+   * broker B — stale security signals are not the new endpoint's to see.
+   * Returns how many records were discarded (also counted in
+   * stats().dropped_flushed). */
+  size_t clear() {
+    const size_t discarded = m_size;
+    m_head = 0;
+    m_size = 0;
+    m_stats.dropped_flushed += static_cast<uint32_t>(discarded);
+    return discarded;
   }
 
   const Stats& stats() const { return m_stats; }
