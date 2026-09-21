@@ -1,16 +1,25 @@
 # SecuraCV Canary OTA Update System
 
-> **Note (2026-06):** the engine pioneered here has been promoted to the
-> shared library at **`firmware/common/ota/`** and extended with Ed25519
+> **This is a teaching sample, not the production OTA path.** The engine
+> pioneered here was promoted to the shared library at
+> **`firmware/common/ota/`** (2026-06) and extended there with Ed25519
 > release-signature verification, certificate-bundle TLS, a URL transport
-> policy, NVS-persisted settings, and install/pre-reboot hooks. The ACTIVE
-> canary (PIO) and canary-wap (Arduino) variants consume that shared engine;
-> see **`docs/firmware_ota.md`** for the end-to-end release + update flow.
-> This project remains as the standalone ESP-IDF test/demo harness, and its
-> `tools/mock_ota_server.py` is the reference local update server (it now
-> signs manifests via `firmware/scripts/ota_release.py`).
+> policy, an NVS anti-rollback version floor, NVS-persisted settings, and
+> install/pre-reboot hooks. The ACTIVE canary (PIO) and canary-wap
+> (Arduino) variants consume that shared engine; see
+> **`docs/firmware_ota.md`** for the end-to-end release + update flow.
+>
+> What stays useful here: a minimal, standalone ESP-IDF harness for
+> studying the A/B + rollback mechanics in isolation, and
+> `tools/mock_ota_server.py`, the reference local update server (it signs
+> manifests via `firmware/scripts/ota_release.py`). What this harness
+> deliberately does **not** do: verify release signatures — it checks
+> SHA256 only, so it must never be pointed at untrusted update sources or
+> used to ship devices. The Wi-Fi credentials in `sdkconfig.defaults` are
+> the labeled `YOUR_WIFI_SSID` placeholders a demo user edits; nothing
+> ships them.
 
-Phase 1 implementation of the Over-The-Air (OTA) firmware update system for the SecuraCV Canary privacy witness device.
+Phase 1 implementation of the Over-The-Air (OTA) firmware update system for the SecuraCV Canary privacy witness device — kept as the standalone study/demo harness described in the note above.
 
 ## Overview
 
@@ -196,16 +205,21 @@ pio run -e production
 
 ## Security Considerations
 
-### Phase 1 (Current)
+### What this harness does
 - HTTPS with TLS certificate verification
 - SHA256 hash verification of firmware
 - Automatic rollback on self-test failure
 
-### Phase 3 (Future)
-- Ed25519 signature verification of firmware
-- Certificate pinning
-- Anti-rollback with eFuse version tracking
-- NVS encryption for Ed25519 private key
+### What it deliberately does not do (and where that lives instead)
+This harness stops at SHA256 — a checksum proves integrity, not origin.
+The production posture lives in the shared engine and the release
+tooling, not here:
+- Ed25519 release-signature verification against the pinned release key —
+  `firmware/common/ota/` (`ota_release_key.h`)
+- Anti-rollback version floor persisted in NVS — `firmware/common/ota/`
+- Certificate-bundle TLS + URL transport policy — `firmware/common/ota/`
+- Key-at-rest protection is tracked as roadmap work in
+  `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` (item 8), not in this demo
 
 ## Troubleshooting
 
@@ -237,14 +251,22 @@ cd tools
 python mock_ota_server.py generate ../.pio/build/dev/firmware.bin 1.1.0
 ```
 
-## Next Steps (Phase 2+)
+## Where the "next steps" landed
 
-- [ ] 24-hour automatic update check timer
-- [ ] MQTT Update entity for Home Assistant
-- [ ] Web portal with update status page
-- [ ] OTA progress via MQTT
-- [ ] Ed25519 firmware signatures
-- [ ] Anti-rollback versioning
+This list used to be an open checklist; every item shipped in the main
+trees, not in this harness — it is closed here so the boxes cannot read
+as pending work:
+
+- 24-hour automatic update check timer — the canary tree's pull-OTA loop
+  (`firmware/canary/src/main.cpp`, jittered schedule)
+- MQTT Update entity for Home Assistant + OTA progress via MQTT —
+  `firmware/canary/lib/securacv_mqtt/` (`FEATURE_OTA_PULL`: update state,
+  Install button, auto-update switch, republished on reconnect)
+- Web update surface — the display tree's `ota_web` and the canary web UI
+- Ed25519 firmware signatures — `firmware/common/ota/`
+- Anti-rollback versioning — `firmware/common/ota/` (NVS version floor)
+
+This harness itself is frozen at Phase 1 by design.
 
 ## License
 

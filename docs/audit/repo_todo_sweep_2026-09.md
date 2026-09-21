@@ -261,9 +261,17 @@ so — see D2 below.)
   legitimately reports no chip ID, so it prints "none (… the MAC is the
   identity)". The `"placeholder"` literal survives only inside the labeled
   `--dry-run` branch, which writes nothing. (#1698)
-- [ ] **F19 [code] `FEATURE_TAMPER_GPIO` is defined but never consumed** by
-  canary-wap firmware (status "planned" in `boards/boards.config.json` and the
-  canary-local device JSON).
+- [ ] **F19 [code+decision] `FEATURE_TAMPER_GPIO` is defined but never
+  consumed** by canary-wap firmware (status "planned" in
+  `boards/boards.config.json` and the canary-local device JSON). Re-scoped
+  2026-09-21 as [code+decision]: the device catalog itself frames it as a
+  choice — "needs firmware support, OR use securacv_touch enclosure-tamper
+  mode" (`canary-local/devices/build.json`), and the default tamper pin
+  (GPIO4) is shared with the touch default. Decide which mechanism is
+  canonical for reed/hall enclosure tamper (a new GPIO consumer module
+  feeding the tamper event path, or retiring the flag in favor of the
+  touch mode); the pin maps are also U1 bench-unvalidated, so the wiring
+  half is bench-gated either way. (Re-scope recorded in #1699.)
 
 ### Parity & sub-projects
 
@@ -277,10 +285,19 @@ so — see D2 below.)
   boxes incl. three unmet acceptance criteria. §1 (security/privacy) is done.
 - [ ] **F22 [code+human] canary-sentinel is Phase 0** — Phase 1 wiring plus 7
   bench boxes (`firmware/projects/canary-sentinel/README.md`). Bench half is U1.
-- [ ] **F23 [code] canary-ota reference project lags the main trees** — no
-  signature verification ("Phase 3"), 6 unchecked boxes, placeholder Wi-Fi
-  creds in sdkconfig. Either lift it to parity with `common/ota/` or label it
-  a teaching sample at the top of its README.
+- [x] **F23 [code] canary-ota reference project lags the main trees** — done
+  via the label option (its README already declared the engine promoted to
+  `common/ota/`; lifting a frozen demo to parity would duplicate the
+  production engine it points at). The README now opens with "teaching
+  sample, not the production OTA path", states plainly that the harness
+  verifies SHA256 only and must never ship devices or face untrusted
+  update sources, and the stale "Phase 3 (Future)" / "Next Steps" open
+  checklists are rewritten to say where every item actually landed
+  (signatures + anti-rollback in `common/ota/`, the 24 h check timer in
+  the canary loop, the MQTT update entity in `securacv_mqtt`). The
+  `YOUR_WIFI_SSID` sdkconfig placeholders are a demo user's labeled
+  edit-me fields, not shipped credentials — stated in the README rather
+  than "fixed". (#1699)
 - [ ] **F24 [code] Emulator wave 2: first-boot captive-portal theater.**
   `canary-local/emulator/src/emu_net.cpp` hardcodes `provision_needed() =
   false`; the most important first-run UX is unemulated. Roadmapped in
