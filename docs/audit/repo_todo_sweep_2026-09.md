@@ -190,7 +190,7 @@ so — see D2 below.)
   all — event egress to HA exists only on the WAP (`csi_mqtt`, with SD
   backfill). Wiring canary event egress is F29; the queue gives that
   transport its loss bound the day it gets callers. Roadmap item 17
-  updated.
+  updated (#1697).
 
 ### Mesh / fleet / beacon
 
