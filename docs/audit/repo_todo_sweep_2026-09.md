@@ -93,9 +93,16 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   `ble_scout_allow_radio()` has no caller under `firmware/canary/src` (its only
   caller is `canary_wap.ino`). Room attribution and the fleet roster are inert
   in the PIO build. Roadmap item 3.
-- [ ] **F2 [code] `sd_storage_remount()` is declared and defined nowhere.**
-  Declared in `firmware/common/storage/storage.h`; an SD glitch disables
-  logging until reboot. Roadmap item 5.
+- [x] **F2 [code] SD glitch disabled logging until reboot** — done: the
+  declared-nowhere `sd_storage_remount()` turned out to live in an unbuilt
+  scaffold header nothing included (deleted, like the six the 2026-09 audit
+  removed); the real fix landed in `securacv_storage` — an idle-priority
+  mount worker (the canary-wap watchdog lesson), `storage_periodic_check()`
+  in `loop()` (verify / background remount, 30 s cadence), a
+  consecutive-write-failure threshold, live `sd_healthy`, and an MSC gate on
+  every teardown/remount. Decisions are the pure, host-tested
+  `common/storage/sd_mount_policy.h`. Host/compile-tested; the physical
+  remove/reinsert pass is U1 bench work. Roadmap item 5 updated.
 - [ ] **F3 [code] Camera never deinits on battery.** No `esp_camera_deinit()`
   on the battery path; the roadmap's estimate of the continuous drain
   (~40–60 mA) is unmeasured — the bench number is U1 work. Roadmap item 4.
@@ -184,6 +191,13 @@ so — see D2 below.)
   `canary-local/emulator/src/emu_net.cpp` hardcodes `provision_needed() =
   false`; the most important first-run UX is unemulated. Roadmapped in
   `canary-local/README.md` §6, with the chirp-fallback and live-pins waves.
+- [ ] **F25 [decision] Adopt SD tamper narration on the canary tree.** F2
+  gave the canary tree a real SD hot-swap machine, but the integrity
+  watcher still feeds pinned ABSENT (the `src/main.cpp` tamper-narration
+  comment points here). Wiring the live state in would add the
+  `sd_error`/`sd_remove` event kinds to this host's vocabulary — a
+  dictionary decision (AGENTS.md rule 5), not a data feed; canary-wap
+  remains the only host narrating SD stories until it is made.
 
 ---
 
@@ -279,8 +293,12 @@ so — see D2 below.)
 - [ ] **W1 [code, gated by U5] Wire buy links for the two FCC-clear SKUs**
   (`wap-parts`, `vision-parts` in `store.json`) once Stripe exists. Everything
   else stays waitlist-only until U4.
-- [ ] **W2 [code] Refresh the stale `docs/roadmap.md`** — it still TODOs the
-  `/fleet` page and disclaims `/witness`; both shipped. Quick win.
+- [x] **W2 [code] Refresh the stale `docs/roadmap.md`** — done in website
+  PR #200: the `/fleet` TODO section became a Shipped entry (route,
+  `fleet[]` off the `j` manifest, shared `js/serial.js`,
+  `tests/fleet-facts.test.mjs`), and the witness note now records that the
+  `/witness` route is the One Witness explainer, so the unbuilt burst-signal
+  idea needs its own route.
 - [ ] **W3 [code] Showroom AR button is hardcoded to the Doorbell**
   (`showroom.html`, `data-ar-model`). Make it follow the selected product —
   the plan is already written at `docs/render-roadmap.md` "view what's on

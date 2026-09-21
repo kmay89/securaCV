@@ -314,15 +314,30 @@ static bool sd_append_record(const WitnessRecord* rec) {
       rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
   if (n == 0) return sd_append_fail("line build failed");
 
-  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
+  // Card-op failures below also feed the storage manager's consecutive-error
+  // counter: past its policy threshold the card is marked lost and the loop's
+  // storage_periodic_check() tears down and remounts it (F2 — an SD glitch
+  // used to disable persistence until reboot). The "no card" and
+  // "line build failed" returns above deliberately do not count: neither is
+  // evidence about the card.
+  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS")) {
+    storage_note_write_failure();
     return sd_append_fail("mkdir /WITNESS failed");
+  }
 
   File f = SD.open("/WITNESS/records.jsonl", FILE_APPEND);
-  if (!f) return sd_append_fail("open failed");
+  if (!f) {
+    storage_note_write_failure();
+    return sd_append_fail("open failed");
+  }
   const size_t wrote = f.write((const uint8_t*)line, n);
   f.close();
-  if (wrote != n) return sd_append_fail("short write (card full?)");
+  if (wrote != n) {
+    storage_note_write_failure();
+    return sd_append_fail("short write (card full?)");
+  }
 
+  storage_note_write_success();
   g_health.sd_writes++;
 #if FEATURE_DIAGNOSTICS
   diag_record_sd_write_bytes(n, true);

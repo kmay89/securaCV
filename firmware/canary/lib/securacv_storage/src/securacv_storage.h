@@ -1,7 +1,18 @@
 /*
  * SecuraCV Canary — SD Storage Manager
  *
- * Manages append-only storage for witness records and health logs.
+ * Manages append-only storage for witness records and health logs, with
+ * bounded mount recovery: the blocking SD.begin() runs on a dedicated
+ * idle-priority worker task (never on the watchdog-subscribed loop task),
+ * and a periodic loop-side check re-probes a lost or late-inserted card.
+ * Every branchy decision around that machinery is the pure, host-tested
+ * table in common/storage/sd_mount_policy.h.
+ *
+ * Threading contract: everything in this class except the worker's own
+ * SD.begin() runs on the Arduino loopTask (the single writer of all SD
+ * state — witness appends included). USB MSC raw-sector reads come from
+ * the TinyUSB task, which is why teardown is policy-gated on MSC holding
+ * the card.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -45,13 +56,31 @@ class StorageManager {
 public:
   StorageManager();
 
-  // Initialize SD card
+  // Initialize SD card (boot path). Starts the mount worker, requests a
+  // mount, and waits a bounded budget for it — feeding the task watchdog in
+  // slices — so a wedged or absent card can never crash-loop the boot. On
+  // budget expiry it returns false and keeps booting; the eventual worker
+  // result is adopted by a later periodicCheck() pass.
   bool begin(SPIClass* spi = nullptr);
   void end();
 
   // Status
   bool isMounted() const { return m_mounted; }
+  bool mountInFlight() const;
   SDStatus getStatus();
+
+  // Loop-task periodic mount health check (adopt-first, then the
+  // sd_mount_policy decision: verify a mounted card, request a background
+  // remount for an absent one). `msc_holds_card` gates every teardown and
+  // remount: USB MSC reads raw sectors from the TinyUSB task, so driver
+  // state must never be freed or rebuilt under it.
+  void periodicCheck(bool msc_holds_card);
+
+  // Write-outcome notes from the SD producers (witness appends — loop task
+  // only). A run of consecutive failures past the policy threshold marks
+  // the card lost so periodicCheck() can tear down and remount it.
+  void noteWriteFailure();
+  void noteWriteSuccess();
 
   // Directory management
   bool ensureDirectories();
@@ -65,8 +94,14 @@ public:
   uint32_t countFilesInDir(const char* dir_path);
 
 private:
+  bool requestMount();
+  bool tryAdoptMount();
+
   SPIClass* m_spi;
   bool m_mounted;
+  bool m_needs_teardown;        // card marked lost; SD.end() still owed
+  uint32_t m_consecutive_errors;
+  uint32_t m_last_check_ms;
   uint32_t m_write_errors;
   uint32_t m_read_errors;
   uint32_t m_last_write_ms;
@@ -81,6 +116,9 @@ StorageManager& storage_get_instance();
 // Convenience functions
 bool storage_init(SPIClass* spi = nullptr);
 bool storage_is_mounted();
+void storage_periodic_check(bool msc_holds_card);
+void storage_note_write_failure();
+void storage_note_write_success();
 
 #endif // FEATURE_SD_STORAGE
 

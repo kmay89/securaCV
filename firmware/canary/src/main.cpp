@@ -754,7 +754,7 @@ void setup() {
                     (unsigned)witness_get_device().seq);
     }
   } else {
-    Serial.println("[WARN] SD card not available - records will not persist");
+    Serial.println("[WARN] SD card not available - records not persisting; will keep retrying (insert a card any time)");
     witness_get_health().sd_healthy = false;
   }
 #endif
@@ -1511,6 +1511,22 @@ void loop() {
   usb_onboard::poll();
 #endif
 
+#if FEATURE_SD_STORAGE
+  // Periodic SD mount health (30 s cadence inside): verify a mounted card,
+  // background-remount an absent or glitched one, adopt late boot-mount
+  // results. Loop task only — the same single writer as every SD producer.
+  // MSC gate: while USB MSC exposes the card to a host, teardown/remount
+  // are refused (raw-sector reads come from the TinyUSB task; see
+  // common/storage/sd_mount_policy.h).
+  {
+    bool msc_holds_card = false;
+#if FEATURE_USB_ONBOARD
+    msc_holds_card = usb_onboard::msc_exposed();
+#endif
+    storage_periodic_check(msc_holds_card);
+  }
+#endif
+
   // Handle boot button (info print, factory reset)
   handle_boot_button();
 
@@ -1610,12 +1626,14 @@ void loop() {
   // saver. On builds where the CSI pipeline never initializes, the
   // module's bounded retry gives up quietly.
   //
-  // sd_state: this lane has no SD state machine — storage mounts once at
-  // boot (storage_init) and never re-probes, unmounts, or errors out at
-  // runtime — so we feed the module's pinned ABSENT (0) constant rather
-  // than inventing a detector: the watcher adopts it on the first call and
-  // never emits an SD kind. The sd_error/sd_remove stories stay exclusive
-  // to hosts with a real hot-swap state machine (canary-wap).
+  // sd_state: we feed the module's pinned ABSENT (0) constant, so the
+  // watcher adopts it on the first call and never emits an SD kind on this
+  // host. The storage lane DOES have a hot-swap machine now (F2:
+  // storage_periodic_check + the sd_mount_policy remount path), but wiring
+  // its state into tamper narration would add sd_error/sd_remove event
+  // kinds to this host's vocabulary — a dictionary decision, not a data
+  // feed (backlog F25). Until that call is made, canary-wap remains the
+  // only host narrating SD stories.
   {
     static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
     // Same crash set as canary-wap's hardware_state.h reset_is_crash():
