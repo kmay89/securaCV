@@ -123,10 +123,14 @@ so — see D2 below.)
 
 ### Timeline & time
 
-- [ ] **F7 [code] Device timeline is one block deep.**
-  `loadMoreTimeline()` in `firmware/canary/lib/securacv_webui/src/securacv_webui.cpp`
-  is an empty handler and `/api/chain` returns only the latest block. Needs a
-  paged endpoint plus the JS to consume it.
+- [x] **F7 [code] Device timeline was one block deep** — done: the timeline
+  now reads the 32-record witness ring the network layer already served for
+  it (`/api/witness`), newest first, and `loadMoreTimeline()` really pages —
+  a new `?before=<seq>` exclusive bound on the endpoint walks backward
+  through the ring (still RAM-only; each slot copied under the ring lock).
+  Auto-refresh pauses while the reader is paging so it can't collapse the
+  list, and the renderer's type lookup gained the `type_name` key the ring
+  records actually carry. Depth beyond the ring is F26 (#1694).
 - [ ] **F8 [code] `time_bucket` is session-relative, not wall-clock.**
   `firmware/common/csi/src/csi_event.cpp` — wire
   `csi_event_set_clock_offset_minutes()` at first time sync (tracked there as
@@ -199,6 +203,13 @@ so — see D2 below.)
   `sd_error`/`sd_remove` event kinds to this host's vocabulary — a
   dictionary decision (AGENTS.md rule 5), not a data feed; canary-wap
   remains the only host narrating SD stories until it is made.
+- [ ] **F26 [code+decision] Timeline history deeper than the witness ring.**
+  F7 pages the 32-record RAM ring; the full history sits in
+  `/WITNESS/records.jsonl` on the SD card, and the HTTP task never touches
+  SD (the `handle_witness` contract). Serving older pages means a loop-task
+  SD read bridge (request queue + bounded chunked reads of the JSONL tail,
+  parsing via `witness_store`) — design the bridge before writing it. Until
+  then deep history remains the export/unseal tools' job.
 
 ---
 
