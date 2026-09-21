@@ -52,7 +52,7 @@
     && !defined(CSI_TEST_HOST_BUILD) \
     && __has_include(<NimBLEDevice.h>)
   #define BLE_SCOUT_HAS_NIMBLE 1
-  namespace ble_scout { bool nimble_scan_init(); bool nimble_scan_start(); }
+  namespace ble_scout { bool nimble_scan_init(); bool nimble_scan_start(); void nimble_scan_recover(); }
 #else
   #define BLE_SCOUT_HAS_NIMBLE 0
 #endif
@@ -166,6 +166,12 @@ void module_tick(const csi_features_t* /*f*/) {
   if (!s_inited) return;
   const uint32_t now = now_ms_impl();
   ble_scout_tick(now);
+#if BLE_SCOUT_HAS_NIMBLE
+  /* Scan-end recovery: onScanEnd restarts a dead scan inline; when the radio
+   * refused right then, this re-arms it at the ~1 Hz tick. A deliberate
+   * nimble_scan_stop() stays stopped (it clears the pending flag). */
+  nimble_scan_recover();
+#endif
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
   /* Same ~1 Hz cadence ages stale peers out of the fleet roster the scan
    * callback feeds (fleet_roster_feed) — the roster's own 120 s window does

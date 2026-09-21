@@ -48,6 +48,7 @@ namespace {
 
 NimBLEScan* s_scanner   = nullptr;
 bool        s_running   = false;
+bool        s_restart_pending = false;  /* unexpected scan end; recover() re-arms */
 
 /* Scout-tuned duty cycle: 200 ms interval, 100 ms window. Listens
  * 50 % of the time — gives 1–2 adverts per second per beacon at the
@@ -82,8 +83,20 @@ class ScoutScanCallbacks : public NimBLEScanCallbacks {
           reinterpret_cast<const uint8_t*>(m.data()), m.size(), rssi, now);
     }
   }
-  void onScanEnd(const NimBLEScanResults& /*results*/, int /*reason*/) override {
-    /* Continuous mode: NimBLE will auto-restart. */
+  void onScanEnd(const NimBLEScanResults& /*results*/, int reason) override {
+    /* An "infinite" (duration=0) scan still ends — host reset, controller
+     * preemption, a connection procedure. NimBLE does NOT auto-restart it
+     * (start()'s restart parameter only applies to a scan that is still in
+     * progress), so a silent end here used to leave the Scout dark forever
+     * while s_running kept reading true. Restart only an UNEXPECTED end:
+     * nimble_scan_stop() clears s_running before canceling, so a deliberate
+     * stop lands here with s_running already false. If the radio refuses
+     * the restart, record the stop so the ~1 Hz module tick can re-arm. */
+    if (!s_running) return;
+    if (s_scanner && s_scanner->start(0, false)) return;
+    s_running = false;
+    s_restart_pending = true;
+    Serial.printf("[SCOUT] scan ended (reason %d); restart deferred to tick\n", reason);
   }
 };
 
@@ -133,6 +146,15 @@ bool nimble_scan_init() {
   s_scanner = NimBLEDevice::getScan();
   if (!s_scanner) return false;
   s_scanner->setActiveScan(false);
+  /* Report EVERY advert, not just the first per device. The controller's
+   * duplicate filter defaults ON (NimBLEScan's ble_gap_disc_params ends
+   * {..., passive=1, filter_duplicates=1}), and on an indefinite
+   * (duration=0) scan it suppresses repeat adverts from an address for the
+   * LIFETIME of the scan — a fixed-MAC beacon would be reported exactly
+   * once, the presence tracker would time it out, and it could never come
+   * back. Presence hold, departed detection and RSSI tracking all need the
+   * repeats. */
+  s_scanner->setDuplicateFilter(false);
   s_scanner->setInterval(SCAN_INTERVAL_UNITS);
   s_scanner->setWindow(SCAN_WINDOW_UNITS);
   s_scanner->setScanCallbacks(&s_callbacks);
@@ -142,16 +164,28 @@ bool nimble_scan_init() {
 bool nimble_scan_start() {
   if (!s_scanner) return false;
   if (s_running)  return true;
-  /* duration=0 → continuous scan; second arg unused in continuous mode. */
+  /* duration=0 → continuous scan; isContinue=false clears prior results. */
   if (!s_scanner->start(0, false)) return false;
   s_running = true;
+  s_restart_pending = false;
   return true;
 }
 
+/* Tick-cadence recovery for a scan whose inline restart in onScanEnd was
+ * refused by the radio. A deliberate nimble_scan_stop() clears the pending
+ * flag, so a released radio (e.g. for OTA) stays released. */
+void nimble_scan_recover() {
+  if (s_restart_pending) nimble_scan_start();
+}
+
 void nimble_scan_stop() {
+  s_restart_pending = false;
   if (!s_scanner || !s_running) return;
-  s_scanner->stop();
+  /* Clear the intent flag BEFORE canceling: if the host delivers a
+   * DISC_COMPLETE for the cancel, onScanEnd must see this stop as
+   * deliberate and not restart the scan out from under us. */
   s_running = false;
+  s_scanner->stop();
 }
 
 bool nimble_scan_running() {

@@ -96,6 +96,16 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   deferred scan phase. The WAP's join-window deferral guarded its
   bluetooth_channel heap guard, which this tree does not have. Roadmap item 3
   updated; a live scan against a paired beacon is U1 bench work (#1695).
+  A second-look audit of the whole BLE path (same PR) found the latch was
+  necessary but not sufficient, in BOTH trees: the controller's duplicate
+  filter defaulted ON (an indefinite scan reported each fixed-MAC device
+  once, ever — RPA phones once per ~15 min rotation), and the "NimBLE will
+  auto-restart" comments were false (nothing restarted an ended scan;
+  `s_running` read true forever). Fixed: `setDuplicateFilter(false)` in the
+  Scout TUs and `ble_presence`, intent-tracked restart in `onScanEnd`
+  (deliberate stops clear `s_running` first and stay stopped), a ~1 Hz
+  tick-cadence `nimble_scan_recover()`, and the heap guard added to
+  `ble_status_stack_begin()` (its own rule required it at every init site).
 - [x] **F2 [code] SD glitch disabled logging until reboot** — done: the
   declared-nowhere `sd_storage_remount()` turned out to live in an unbuilt
   scaffold header nothing included (deleted, like the six the 2026-09 audit
@@ -213,6 +223,13 @@ so — see D2 below.)
   SD read bridge (request queue + bounded chunked reads of the JSONL tail,
   parsing via `witness_store`) — design the bridge before writing it. Until
   then deep history remains the export/unseal tools' job.
+- [ ] **F27 [code+decision] The canary tree has no Scout pairing surface.**
+  `ble_scout_pair()` has zero callers in the PIO tree — the WAP's setup UI
+  (PR 5c) is the only pair-time MAC producer anywhere — so even with the
+  scan fixed (F1 + the #1695 audit), paired-beacon room attribution cannot
+  be configured on a canary build; only the unpaired consumers (fleet
+  roster) exercise the scan. Decide the surface (an `/api` pair endpoint on
+  the canary web UI, or WAP-only by design), then wire it.
 
 ---
 

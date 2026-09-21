@@ -14,6 +14,7 @@
 #if FEATURE_BLE_STATUS
 
 #include <NimBLEDevice.h>
+#include "ble_heap_guard.h"  /* every NimBLEDevice::init() site checks it first */
 #include <fleet_beacon.h>
 #include "securacv_witness.h"
 #include "securacv_diagnostics.h"
@@ -197,6 +198,17 @@ bool ble_status_stack_begin(void) {
   if (NimBLEDevice::isInitialized()) return true;
 
   const char* ble_name = resolve_ble_name();
+
+  /* Heap guard first — ble_heap_guard.h's rule is that EVERY
+   * NimBLEDevice::init() call site consults it: the controller's ~30 KB
+   * contiguous internal allocation ASSERTS on failure instead of returning
+   * an error, panicking a low-heap build into a boot loop that safe mode
+   * can't escape. Degrade to no-BLE instead. */
+  if (!ble_heap_guard::can_init(nullptr)) {
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_BLUETOOTH,
+               "NimBLE init skipped: insufficient internal heap", nullptr);
+    return false;
+  }
 
   /* NimBLE 2.x init() returns false when the controller/host stack can't come
    * up (BT compiled out, radio unavailable, coexistence/heap failure). Honor

@@ -196,8 +196,13 @@ unsafe behavior, verified during the audit.
    `securacv_csi_modules_init()`'s `ble_scout_init()` completes Phase 2. The WAP's
    deferred-past-the-join-window ordering was about its bluetooth_channel heap guard, which
    this tree does not have; the name-ordering concern the latch also protected is settled by
-   the stack owner running first. Compile-tested by CI's `[env:full]` leg; a live scan against
-   a paired beacon is bench work.
+   the stack owner running first. A second-look audit against the NimBLE-Arduino 2.3.8 source
+   found the latch necessary but not sufficient, in both trees: the controller's duplicate
+   filter defaulted ON (an indefinite scan reports each fixed-MAC device once, ever) and the
+   "NimBLE will auto-restart" comments were false (an ended scan stayed dead with `s_running`
+   reading true). Both fixed — `setDuplicateFilter(false)`, intent-tracked restart in
+   `onScanEnd`, tick-cadence `nimble_scan_recover()` — in the Scout TUs and `ble_presence`.
+   Compile-tested by CI's `[env:full]` leg; a live scan against a paired beacon is bench work.
 
 4. **The camera burns battery it doesn't need to.** `camera_init()` runs unconditionally at boot
    ([`main.cpp:871`](canary/src/main.cpp)); every battery power mode sets
