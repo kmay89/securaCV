@@ -49,9 +49,12 @@ The WAP includes flip to the common path; behavior change: none.
 still in place, still on the list):
 
 - `provision_core.h` — the pure onboarding helpers (QR/JSON escaping,
-  unbiased password alphabet). The common copy is canonical; the display's
-  byte-identical copy is pinned by
-  `firmware/scripts/check_provision_core_sync.sh` until its include flips.
+  unbiased password alphabet). The common copy is canonical, and since the
+  2026-09 repo sweep it is the only copy: the display's include flipped to
+  the common path, its byte-identical copy and the
+  `check_provision_core_sync.sh` gate that pinned it are gone (the display's
+  Arduino sketch stages it flat from common/ via `setup.sh regen`, covered
+  by the sketch-sync CI gate).
 - `setup_portal_logic.h` — the portal's pure decision half (background-retry
   cadence, teardown grace, join-state policy), host-tested by
   `firmware/tests_host/test_setup_portal_logic.cpp`.

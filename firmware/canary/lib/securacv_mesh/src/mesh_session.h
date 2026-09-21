@@ -246,6 +246,28 @@ bool send_beacon_event(mesh_beacon::BeaconState state,
                        const char*              label,
                        uint32_t                 now_ms);
 
+/* Live-link view of the trusted peers: the MAC each peer last spoke
+ * from. The binding is learned ONLY from a fully verified
+ * opera-authenticated frame — signature, opera_id and replay checks all
+ * passed — so at that instant the MAC provably spoke for the
+ * fingerprint (forging it needs the peer's private key; replaying an
+ * old frame from a new MAC fails the counter check). It goes stale the
+ * moment the peer reboots onto a new address and refreshes on its next
+ * verified frame, which is exactly the best-effort quality the
+ * /api/mesh/peers join wants. mac_known is false until the first
+ * verified frame this boot.
+ *
+ * Returns the number of in-use entries written (≤ cap). Threading: the
+ * table is mutated on the main loop; the REST handlers read it from the
+ * httpd task, same as trusted_peer_count() — a torn 6-byte MAC read can
+ * at worst garble one row of a status view for one poll. */
+struct PeerLink {
+  uint8_t fp [mesh_crypto::FINGERPRINT_LEN];
+  uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+  bool    mac_known;
+};
+size_t get_peer_links(PeerLink* out, size_t cap);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * RECEIVE-SIDE DISPATCH (PR 5c-4)
  *

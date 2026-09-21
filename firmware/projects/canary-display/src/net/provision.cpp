@@ -34,7 +34,7 @@
 #endif
 
 #include "canary/net/provision.h"
-#include "canary/net/provision_core.h"
+#include "network/provision_core.h"  // shared onboarding pure helpers (common/)
 #include "canary/net/tz_auto.h"  // the zone the portal collects, applied on join
 #include "canary/runtime_config.h"
 #include "network/wifi_join_policy.h"  // shared join-failure vocabulary (common/)

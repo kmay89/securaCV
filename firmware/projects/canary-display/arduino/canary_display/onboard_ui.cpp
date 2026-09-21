@@ -20,7 +20,7 @@
 #include "round_frame.h"
 #include "theme.h"
 #include "canary_mark.h"
-#include "provision_core.h"
+#include "provision_core.h"  // shared onboarding pure helpers (common/)
 
 namespace canary::ui {
 

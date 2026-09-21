@@ -677,6 +677,96 @@ void test_beacon_event_forged_signature_dropped() {
   std::printf("PASS test_beacon_event_forged_signature_dropped\n");
 }
 
+void test_peer_link_mac_binding() {
+  /* get_peer_links: the MAC↔fingerprint binding is learned ONLY from a
+   * fully verified frame — never from an unverified one — and refreshes
+   * when the peer speaks from a new address. */
+  reset_world();
+  mesh_session::deinit();
+
+  uint8_t rx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t rx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(rx_pub, rx_priv));
+  assert(mesh_session::init(rx_pub, rx_priv));
+  assert(mesh_session::start());
+
+  uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN];
+  for (size_t i = 0; i < sizeof(opera_secret); ++i) opera_secret[i] = (uint8_t)(0xA0 + i);
+  assert(mesh_session::set_opera_secret(opera_secret));
+
+  uint8_t tx_pub[mesh_crypto::PUBKEY_LEN];
+  uint8_t tx_priv[mesh_crypto::PRIVKEY_LEN];
+  assert(mesh_crypto::ed25519_generate_keypair(tx_pub, tx_priv));
+  assert(mesh_session::register_trusted_peer(tx_pub));
+
+  uint8_t expected_fp[mesh_crypto::FINGERPRINT_LEN];
+  mesh_crypto::compute_fingerprint(tx_pub, expected_fp);
+
+  /* Before any frame: the entry is listed but its MAC is unknown. */
+  mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(std::memcmp(links[0].fp, expected_fp, sizeof(expected_fp)) == 0);
+  assert(!links[0].mac_known);
+
+  /* A frame whose signature does NOT verify must not bind a MAC —
+   * otherwise anyone on the channel could relabel a peer's liveness. */
+  uint8_t frame[1 + mesh_envelope::MAX_FRAME_LEN];
+  size_t flen = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/1,
+      mesh_beacon::BeaconState::ARRIVED, "forged",
+      frame, sizeof(frame));
+  assert(flen > 0);
+  frame[mesh_session::MSGTYPE_HEADER_LEN + mesh_envelope::OFFSET_PAYLOAD] ^= 0x01;
+  uint8_t mac_forged[6] = {0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD};
+  assert(mesh_transport::add_peer(mac_forged));
+  mesh_transport::test::inject_recv(mac_forged, frame, flen, -55);
+  mesh_transport::process();
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(!links[0].mac_known);
+
+  /* A verified frame binds its source MAC. */
+  uint8_t mac_a[6] = {0x02, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E};
+  flen = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/2,
+      mesh_beacon::BeaconState::ARRIVED, "kitchen",
+      frame, sizeof(frame));
+  assert(flen > 0);
+  assert(mesh_transport::add_peer(mac_a));
+  mesh_transport::test::inject_recv(mac_a, frame, flen, -55);
+  mesh_transport::process();
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(links[0].mac_known);
+  assert(std::memcmp(links[0].mac, mac_a, sizeof(mac_a)) == 0);
+
+  /* A REPLAYED frame from a different MAC must not rebind — the
+   * counter check drops it before the MAC is recorded. */
+  mesh_transport::test::inject_recv(mac_forged, frame, flen, -55);
+  mesh_transport::process();
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(std::memcmp(links[0].mac, mac_a, sizeof(mac_a)) == 0);
+
+  /* The peer reboots onto a new address: the next verified frame
+   * refreshes the binding. */
+  uint8_t mac_b[6] = {0x02, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E};
+  flen = build_beacon_frame(
+      tx_pub, tx_priv, opera_secret, /*counter=*/3,
+      mesh_beacon::BeaconState::DEPARTED, "kitchen",
+      frame, sizeof(frame));
+  assert(flen > 0);
+  assert(mesh_transport::add_peer(mac_b));
+  mesh_transport::test::inject_recv(mac_b, frame, flen, -55);
+  mesh_transport::process();
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 1);
+  assert(links[0].mac_known);
+  assert(std::memcmp(links[0].mac, mac_b, sizeof(mac_b)) == 0);
+
+  /* clear_trusted_peers wipes the binding with the table. */
+  mesh_session::clear_trusted_peers();
+  assert(mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS) == 0);
+
+  std::printf("PASS test_peer_link_mac_binding\n");
+}
+
 void test_deinit_clears_opera_auth_state() {
   /* Regression for the codex P1 missed at PR #472 merge time: deinit()
    * did not clear the opera-auth bookkeeping, so a deinit()/init()
@@ -963,6 +1053,7 @@ int main() {
   test_beacon_event_replay_dropped();
   test_beacon_event_unknown_sender_dropped();
   test_beacon_event_forged_signature_dropped();
+  test_peer_link_mac_binding();
   /* PR-8 — status accessors + REST API JSON builders. */
   test_get_opera_id_matches_compute();
   test_set_get_opera_name_ram_only();

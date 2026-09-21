@@ -354,8 +354,26 @@ get_device_info() {
 
     # Get MAC address
     CHIP_INFO=$(python3 -m esptool --port "${PORT}" chip_id 2>&1)
-    DEVICE_MAC=$(echo "${CHIP_INFO}" | grep -i "MAC" | head -n1 | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' || echo "unknown")
-    DEVICE_CHIP_ID=$(echo "${CHIP_INFO}" | grep -i "Chip ID" | grep -oE '0x[0-9a-fA-F]+' || echo "unknown")
+    DEVICE_MAC=$(echo "${CHIP_INFO}" | grep -i "MAC" | head -n1 | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' || true)
+    DEVICE_CHIP_ID=$(echo "${CHIP_INFO}" | grep -i "Chip ID" | grep -oE '0x[0-9a-fA-F]+' || true)
+
+    # The fleet manifest is keyed by MAC. A device whose identity cannot be
+    # read gets REFUSED, not written as "unknown" — one such row is a
+    # manifest entry no fleet tool can ever match to hardware, and a second
+    # one collides with the first.
+    if [[ -z "${DEVICE_MAC}" ]]; then
+        print_error "Could not read the device MAC over ${PORT}"
+        echo "  Refusing to continue rather than write an unidentifiable row"
+        echo "  into the fleet manifest. esptool said:"
+        echo "${CHIP_INFO}" | sed 's/^/    /'
+        exit 1
+    fi
+    # ESP32-S3 legitimately reports no chip ID (esptool reads the MAC
+    # instead) — say so rather than print a made-up value; the MAC above is
+    # the identity everything downstream uses.
+    if [[ -z "${DEVICE_CHIP_ID}" ]]; then
+        DEVICE_CHIP_ID="none (ESP32-S3 reports no chip ID; the MAC is the identity)"
+    fi
 
     echo "  MAC:     ${DEVICE_MAC}"
     echo "  Chip ID: ${DEVICE_CHIP_ID}"
