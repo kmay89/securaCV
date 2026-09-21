@@ -116,6 +116,13 @@ MQTTTLS_BIN = $(BUILD_DIR)/test_mqtt_transport_logic
 MQTTFIELDS_HDR = ../canary/lib/securacv_mqtt/src/mqtt_tls_fields.h
 MQTTFIELDS_BIN = $(BUILD_DIR)/test_mqtt_tls_fields
 
+# The bounded FIFO that holds discrete MQTT publishes (tamper alerts,
+# events) across a broker outage (common/mqtt/mqtt_offline_queue.h):
+# drop-oldest overflow, refuse-never-truncate oversize, peek-then-pop
+# drain so a failed replay keeps the record. Pure header.
+MQTTQUEUE_HDR = ../common/mqtt/mqtt_offline_queue.h
+MQTTQUEUE_BIN = $(BUILD_DIR)/test_mqtt_offline_queue
+
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
 # is lifted out of the C++ raw string and driven against a stub DOM and a
@@ -365,6 +372,9 @@ $(MQTTTLS_BIN): test_mqtt_transport_logic.cpp $(MQTTTLS_HDR) Makefile | $(BUILD_
 $(MQTTFIELDS_BIN): test_mqtt_tls_fields.cpp $(MQTTFIELDS_HDR) $(MQTTTLS_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common -I ../canary/lib/securacv_mqtt/src test_mqtt_tls_fields.cpp -o $@
 
+$(MQTTQUEUE_BIN): test_mqtt_offline_queue.cpp $(MQTTQUEUE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_mqtt_offline_queue.cpp -o $@
+
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
 
@@ -430,7 +440,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -443,6 +453,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WIFIJOIN_BIN)
 	./$(MQTTTLS_BIN)
 	./$(MQTTFIELDS_BIN)
+	./$(MQTTQUEUE_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)

@@ -341,10 +341,17 @@ Untapped / issues:
   `WiFi.config()` + `WiFi.begin(…,channel,bssid)` for **sub-300 ms** reconnect and no sweep. **[P1]**
 - **`network_set_tx_power()` exists but is never called at boot** — Seeed's weak-antenna
   recommendation goes unused; set it at init. **[P1]**
-- **MQTT is plaintext, QoS 0, blocking, with no offline queue** — witness/tamper events emitted
-  during a broker/WiFi blip are **dropped, not replayed**
-  ([`securacv_mqtt.cpp`](canary/lib/securacv_mqtt/src/securacv_mqtt.cpp)). Add `setSocketTimeout`,
-  a bounded offline queue for security-critical events, and optional `WiFiClientSecure`+CA. **[P1]**
+- **(fixed, in three installments)** ~~MQTT is plaintext, QoS 0, blocking, with no offline queue~~ —
+  each ask landed separately: `setSocketTimeout` + bounded connect stages came with the
+  watchdog-budget work, TLS (CA-verified / SHA-256-pinned / lab modes, refused-not-downgraded)
+  with the broker-transport work, and the **bounded offline queue** now buffers tamper alerts and
+  events across a broker outage and replays them in order on reconnect
+  ([`common/mqtt/mqtt_offline_queue.h`](common/mqtt/mqtt_offline_queue.h), pure + host-tested;
+  drop-oldest overflow, oversize refused rather than truncated). QoS stays 0 — PubSubClient
+  publishes nothing higher, so "replayed once the link is back" is the delivery bound, not
+  broker-acked delivery. Note the tree-level caveat: the canary build currently has no caller
+  of `mqtt_publish_event()` (event egress to HA exists only on the WAP's `csi_mqtt`, which has
+  its own SD backfill) — repo sweep F29 tracks wiring canary event egress at all. **[P1]**
 - **ESP-NOW uses the default rate and unauthenticated broadcast pairing.**
   `esp_wifi_config_espnow_rate()` (pin a robust low/LR rate) improves mesh range/reliability;
   app-layer AEAD already covers confidentiality. **[P2]**
@@ -535,7 +542,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 14 | Off-loop SD writes + flush + atomic backup | **P1** | Storage | `securacv_witness.cpp:266` | No loop stalls; power-loss safety |
 | 15 | Pin WiFi PHY (protocol/BW/country) + TX power | **P1** | WiFi/CSI | `securacv_network.cpp` | Stable CSI vector, correct regulatory/range |
 | 16 | Fast reconnect (cached BSSID/channel/IP) | **P1** | WiFi | `securacv_network.cpp:405` | <300 ms reconnect, no CSI-disrupting sweep |
-| 17 | MQTT: socket timeout + offline queue + TLS | **P1** | MQTT | `securacv_mqtt.cpp` | No dropped events; encrypted transport |
+| 17 | (fixed) MQTT: socket timeout + offline queue + TLS all landed | **P1** | MQTT | `common/mqtt/mqtt_offline_queue.h` | Outages delay events instead of dropping them; encrypted transport |
 | 18 | HW key protection (HMAC/DS peripheral) + entropy seed + atomic chain head | **P1** | Crypto | `securacv_crypto.cpp:136` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |

@@ -172,10 +172,25 @@ so — see D2 below.)
   setting, so bucket 0 is UTC midnight, not the household's — that gap is
   F28. Until the first fix the old session-relative behavior remains, as
   the csi_event.cpp comment now states. (#1696)
-- [ ] **F9 [code] MQTT offline queue.** Events are dropped while the broker is
-  down; roadmap item 17 (P1), anchor `securacv_mqtt.cpp`. Also: HA entities
-  stay "unknown" after a broker restart until the next toggle
-  (`securacv_mqtt.cpp`, three call-sites note it).
+- [x] **F9 [code] MQTT offline queue** — done: a bounded FIFO
+  (`firmware/common/mqtt/mqtt_offline_queue.h`, pure, host-tested by
+  `tests_host/test_mqtt_offline_queue.cpp`) buffers tamper alerts and
+  events across a broker outage and replays them in order on reconnect —
+  drop-oldest on overflow, oversize refused rather than truncated, fresh
+  publishes join the back of a still-draining queue so order holds.
+  `main.cpp`'s tamper drains gate on the new `mqtt_accepting()` instead of
+  `mqtt_connected()`, so an outage no longer collapses every tamper in the
+  window into the one-deep pending slot's newest value. Periodic snapshots
+  (status/health/sensing) are deliberately not queued — their next tick is
+  fresher truth. Two corrections to this item's own claims: the HA
+  "unknown after broker restart" half was already fixed before the sweep
+  (mic/update/auto states are stashed and republished on every reconnect —
+  the three code comments describe that fix, not a gap), and the canary
+  PIO tree turns out to have **no caller** of `mqtt_publish_event()` at
+  all — event egress to HA exists only on the WAP (`csi_mqtt`, with SD
+  backfill). Wiring canary event egress is F29; the queue gives that
+  transport its loss bound the day it gets callers. Roadmap item 17
+  updated.
 
 ### Mesh / fleet / beacon
 
@@ -263,6 +278,15 @@ so — see D2 below.)
   thread it into the offset both `updateCsiClockOffset` /
   `update_csi_clock_offset` helpers compute. The WAP's NFPA-72
   waking-hours check reads the same clock and has the same skew.
+- [ ] **F29 [code+decision] The canary PIO tree publishes no events topic.**
+  The HA integration's event entities consume `securacv/{id}/events` (two
+  dialects: the WAP's `csi_mqtt` and canary-sense's radar witness), but
+  the canary tree's `mqtt_publish_event()` has zero callers — a PIO canary
+  shows no event stream in HA even though it compiles the same csi_event
+  chokepoint the WAP feeds from. Decide whether the canary adopts
+  csi_mqtt-style event egress and with what persistence (the WAP pairs it
+  with SD-backed backfill and a watermark), then wire it. The F9 offline
+  queue already bounds transport loss the day callers exist.
 
 ---
 
