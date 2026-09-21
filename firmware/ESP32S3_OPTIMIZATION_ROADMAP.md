@@ -163,21 +163,27 @@ plaintext key is a P0-severity exposure that the roadmap must not leave implicit
 These are not enhancements. Each is a feature the firmware *claims* but does not deliver, or an
 unsafe behavior, verified during the audit.
 
-1. **Vision Layers 2 & 3 never run at the default resolution.** `begin()` selects **XGA
+1. **(fixed)** **Vision Layers 2 & 3 never run at the default resolution.** `begin()` selects **XGA
    (1024×768)** ([`securacv_camera.cpp:148`](canary/lib/securacv_camera/src/securacv_camera.cpp)),
-   but `decode_and_downsample` hard-fails when `width×height > 640×480`
+   but `decode_and_downsample` hard-failed when `width×height > 640×480`
    ([`securacv_vision.cpp:139`](canary/lib/securacv_vision/src/securacv_vision.cpp)). So block-motion,
-   scene-tamper, object-removal, **and the TFLite person detector all silently no-op** — only the
-   Layer-1 JPEG-size heuristic ever executes. Fix: give the vision path its own small
-   GRAYSCALE/RGB565 capture, or drop the running framesize to ≤VGA when `VISION_DETECT` is on.
-   *This is the single biggest "advertised but dead" defect.*
+   scene-tamper, object-removal, **and the TFLite person detector all silently no-oped** — only the
+   Layer-1 JPEG-size heuristic ever executed.
+   *Fixed:* the decode ceiling is raised to XGA (the `BUGFIX` block in `securacv_vision.cpp` —
+   the gray buffer is lazy-allocated in PSRAM only in `FEATURE_VISION_DETECT` builds), so Layers
+   2 and 3 run at the default resolution. Frames **above** XGA (a user-bumped UXGA peek) still
+   skip the software decode; the sensor-side small GRAYSCALE/RGB565 capture for the vision path
+   remains the follow-up, tracked in the file.
 
-2. **A "never sleeps" build still deep-sleeps.** The deep-sleep block is gated by
-   `#if FEATURE_POWER_POLICY` ([`main.cpp:1574`](canary/src/main.cpp)), **not** by
+2. **(fixed)** **A "never sleeps" build still deep-sleeps.** The deep-sleep block was gated by
+   `#if FEATURE_POWER_POLICY` alone, **not** by
    `FEATURE_DEEP_SLEEP` — despite the comment at `main.cpp:197` and the `lowpower.h` docs claiming
    the latter gates it. With the default `FEATURE_POWER_POLICY=1` + `FEATURE_DEEP_SLEEP=0`, a
-   `CRITICAL_BATTERY` event ([`main.cpp:571`](canary/src/main.cpp)) or `PMODE_SHUTDOWN` **will
-   deep-sleep the device.** Fix: add the real `#if FEATURE_DEEP_SLEEP` guard around the sleep entry.
+   `CRITICAL_BATTERY` event or `PMODE_SHUTDOWN` **would
+   deep-sleep the device.**
+   *Fixed:* the sleep entry now sits inside a real `#if FEATURE_DEEP_SLEEP` guard
+   ([`main.cpp:1729`](canary/src/main.cpp)), with the default-build behavior
+   ("compiled in but never sleeps") stated beside the `#endif`.
 
 3. **BLE Scout ships as a no-op in the PlatformIO build.** `ble_scout_allow_radio()` is only ever
    called from the `canary-wap` `.ino` — **never from `canary/src`** — so `s_radio_allowed` stays
@@ -470,8 +476,8 @@ confirmed against a real CI build log before anyone acts loudly on them:
 
 | # | Item | Tag | Subsystem | Anchor | Expected win |
 |---|------|-----|-----------|--------|--------------|
-| 1 | Vision runs only Layer 1 at XGA (2/3 dead) | **P0** | Vision | `securacv_vision.cpp:139` | Restores motion/tamper/person detection |
-| 2 | "Never sleeps" build still deep-sleeps | **P0** | Power | `main.cpp:1574` | Correctness/safety on marginal cells |
+| 1 | (fixed) Vision ran only Layer 1 at XGA — decode ceiling raised to XGA | **P0** | Vision | `securacv_vision.cpp:139` | Motion/tamper/person detection restored at default resolution |
+| 2 | (fixed) "Never sleeps" build still deep-slept — real `FEATURE_DEEP_SLEEP` guard added | **P0** | Power | `main.cpp:1729` | Correctness/safety on marginal cells |
 | 3 | BLE Scout never scans in PIO build | **P0** | BLE | `ble_scout.cpp:231` | Room attribution + fleet roster actually work |
 | 4 | Camera never deinits on battery | **P0** | Camera/Power | `main.cpp:2659` | ~40–60 mA saved on battery |
 | 5 | SD glitch disables logging until reboot | **P0** | Storage | `storage.h:190` | Durable logging survives transient faults |
