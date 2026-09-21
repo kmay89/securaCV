@@ -12,6 +12,36 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-21 — A new native crate is a release-workflow edit, not just a Cargo.toml line
+
+- **Symptom (caught before it was paid for):** adding `serialport` to the
+  Lab (`desktop-lab/src-tauri`, the A4 port-enumeration seam) compiled
+  locally on macOS-style setups but would have failed the next **Linux**
+  release build: the crate pulls `libudev-sys`, whose build script needs the
+  `libudev-dev` system package, and the Lab's release workflow
+  (`desktop-release.yml`) did not install it. Nothing on a PR would have
+  said so — `desktop-lab/src-tauri` has no PR-triggered CI; the first red
+  signal would have been the release run itself.
+- **Cause:** each app's release workflow carries its own hand-listed
+  Linux `apt-get install` block, and a crate's system-library needs live in
+  the crate, not the workflow — so adding a dependency silently outgrows
+  the dependency list of every workflow that builds it. The Flasher's
+  workflows already installed `libudev-dev`
+  (`desktop-flasher-release.yml`, `desktop-hub-core.yml`) because the
+  Flasher adopted `serialport` first; the Lab's list was a snapshot of a
+  serialport-less past.
+- **Fix:** `libudev-dev` added to `desktop-release.yml`'s Linux build deps.
+  **The general rule:** when a Rust dependency lands in ANY app crate,
+  diff the crate's new `-sys` transitive deps against the Linux `apt-get`
+  block of every workflow that builds that crate — and check the other
+  app targets for the same crate while there (macOS and Windows bundle
+  their equivalents; Linux is the one that installs at build time).
+- **Applies to:** the Lab (`desktop-release.yml` — fixed), the Flasher
+  (already carried it), hub-core checks (already carried it), and any
+  future `*-release.yml` that builds a Tauri crate: copy the dependency
+  block from a workflow that already builds the same crates, not from the
+  template that predates them.
+
 ## 2026-09-08 — A new CloudKit field is a release step, not just a Swift edit
 
 - **Symptom (not yet paid for — the gate exists so it never is):** the iOS

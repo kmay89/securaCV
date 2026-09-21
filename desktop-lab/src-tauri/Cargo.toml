@@ -30,13 +30,6 @@ serde_json = "1"
 # Local-first still means local-first: this client only ever GETs /api/fleet
 # on LAN addresses the frontend hands it, never anything on the internet.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-# Native serial port enumeration — the same crate and major the Flasher uses
-# (desktop/src-tauri/Cargo.toml): the OS lists its own devices, no Web Serial
-# permission prompt, no Chromium. Listing only for now; the flash engine
-# (the Flasher's espflash sidecar) is the follow-up that flips the `serial`
-# capability to true.
-serialport = "4"
-
 # Self-update, the same shape as the Flasher (desktop/): the updater plugin
 # polls the rolling `lab-latest` release pointer, the dialog plugin asks the
 # user (with the release's own notes) before anything installs, and the
@@ -49,6 +42,15 @@ tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 # Only for the recheck timer (tauri's async runtime is tokio already).
 tokio = { version = "1", features = ["time"] }
+# Native serial port enumeration — the same crate and major the Flasher uses
+# (desktop/src-tauri/Cargo.toml): the OS lists its own devices, no Web Serial
+# permission prompt, no Chromium. Desktop only — MOBILE.md's contract is that
+# generic USB serial does not exist on iOS/iPadOS, and Android's
+# available_ports() reports enumeration unsupported, so mobile builds carry
+# neither the crate nor the command. Listing only for now; the flash engine
+# (the Flasher's espflash sidecar) is the follow-up that flips the `serial`
+# capability to true.
+serialport = "4"
 
 [profile.release]
 panic = "abort"

@@ -53,7 +53,12 @@ fn native_capabilities() -> serde_json::Value {
     serde_json::json!({
         "shell": "tauri",
         "serial": false,      // native FLASHING: waits on the espflash sidecar
-        "serial_list": true,  // native port enumeration (list_serial_ports)
+        // Native port enumeration (list_serial_ports). Desktop only:
+        // MOBILE.md's contract is that generic USB serial does not exist on
+        // iOS/iPadOS, so a mobile build neither registers the command nor
+        // advertises it — a capability must never light a path that can
+        // only fail.
+        "serial_list": cfg!(desktop),
         // LAN fleet discovery is live: witness_discover polls /api/fleet on
         // the LAN (the DISCOVERY.md contract). mDNS browse + BLE stay future.
         "discovery": true,
@@ -67,7 +72,8 @@ fn native_capabilities() -> serde_json::Value {
 /// One serial port as the OS reports it. Field-for-field the Flasher's
 /// `PortDto` (`desktop/src-tauri/src/lib.rs`) — one wire shape, two crates,
 /// so a frontend port picker written against either app reads the other's
-/// answer unchanged.
+/// answer unchanged. Desktop only, like the crate behind it (Cargo.toml).
+#[cfg(desktop)]
 #[derive(serde::Serialize)]
 struct PortDto {
     /// OS port path, e.g. `/dev/tty.usbmodem1101` or `/dev/ttyACM0`.
@@ -84,6 +90,7 @@ struct PortDto {
 /// no Chromium — just the platform enumerating its own devices. Lockstep twin
 /// of the Flasher's `list_ports`; kept under the name this seam always
 /// promised (`list_serial_ports`).
+#[cfg(desktop)]
 #[tauri::command]
 fn list_serial_ports() -> Result<Vec<PortDto>, String> {
     let ports =
@@ -253,7 +260,6 @@ pub fn run() {
         app_version,
         app_info,
         native_capabilities,
-        list_serial_ports,
         witness_discover
     ]);
 
