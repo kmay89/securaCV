@@ -128,6 +128,7 @@
 #include "health_log.h"
 #include "sd_storage.h"
 #include "gnss_time.h"  // NMEA UTC date/time -> validated Unix epoch (GPS-derived system clock)
+#include "csi_event.h"  // csi_event_set_clock_offset_minutes — wall-clock bucket alignment
 #include "nvs_store.h"
 #include "api_auth.h"
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
@@ -1136,6 +1137,23 @@ static const uint32_t GPS_CLOCK_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1
 // is the caller and sits above them.
 static bool note_wall_clock(uint32_t unix_s);
 
+// Align csi_event's time_bucket / quiet-hours minute-of-day derivation to
+// the wall clock. The chokepoint coarsens timestamps into 10-minute day
+// buckets from monotonic uptime plus this offset; without it the "day"
+// started at boot, not midnight, so buckets and quiet hours were
+// session-relative. Derived from UTC — the device has no timezone setting
+// (repo sweep F28), so bucket 0 is UTC midnight, not the household's.
+// Recomputed on every pass with a set clock: cheap, keeps the offset
+// drift-corrected alongside the clock itself, and stays aligned across
+// millis() rollover because the offset and csi_event's own millis()-based
+// consumer wrap together. Loop task only — the offset is loop-owned
+// (csi_event.h).
+static void update_csi_clock_offset(time_t wall_now) {
+  const int32_t wall_min = (int32_t)((wall_now % 86400) / 60);
+  const int32_t mono_min = (int32_t)(millis() / 60000UL);
+  csi_event_set_clock_offset_minutes(wall_min - mono_min);
+}
+
 static void sync_clock_from_gps() {
   static uint32_t s_last_sync_attempt_ms = 0;
   uint32_t now_ms = millis();
@@ -1147,7 +1165,10 @@ static void sync_clock_from_gps() {
   // had to know its own birthday — the key was generated long before any clock
   // existed. Offered here rather than in the loop because this is the one
   // function that knows the clock is real.
-  if (clock_set) note_wall_clock((uint32_t)sys_now);
+  if (clock_set) {
+    note_wall_clock((uint32_t)sys_now);
+    update_csi_clock_offset(sys_now);
+  }
 
   if (clock_set && (now_ms - s_last_sync_attempt_ms) < GPS_CLOCK_RESYNC_INTERVAL_MS) {
     return;  // already trustworthy and not due for a drift-correction check
@@ -1167,6 +1188,11 @@ static void sync_clock_from_gps() {
   settimeofday(&tv, nullptr);
   Serial.printf("[CLOCK] system clock %s from GPS (epoch=%lld)\n",
                 clock_set ? "corrected" : "set", (long long)gps_epoch);
+
+  // The clock only just became real on the "set" path — align the bucket
+  // offset now rather than waiting for the next loop pass, so events
+  // emitted in between already carry wall-aligned buckets.
+  update_csi_clock_offset(gps_epoch);
 }
 
 static float knots_to_mps(float knots) {

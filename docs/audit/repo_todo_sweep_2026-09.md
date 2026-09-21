@@ -163,10 +163,15 @@ so — see D2 below.)
   Auto-refresh pauses while the reader is paging so it can't collapse the
   list, and the renderer's type lookup gained the `type_name` key the ring
   records actually carry. Depth beyond the ring is F26 (#1694).
-- [ ] **F8 [code] `time_bucket` is session-relative, not wall-clock.**
-  `firmware/common/csi/src/csi_event.cpp` — wire
-  `csi_event_set_clock_offset_minutes()` at first time sync (tracked there as
-  the Phase-4 follow-up).
+- [x] **F8 [code] `time_bucket` is session-relative, not wall-clock** — done:
+  both trees' GPS clock sync (the one wall-clock source either has) now
+  calls `csi_event_set_clock_offset_minutes()` — on the first
+  `settimeofday()` and re-derived on every pass with a set clock, so the
+  offset stays drift-corrected and survives `millis()` rollover. Buckets
+  and quiet-hours minute-of-day are UTC-aligned; there is no timezone
+  setting, so bucket 0 is UTC midnight, not the household's — that gap is
+  F28. Until the first fix the old session-relative behavior remains, as
+  the csi_event.cpp comment now states. (#1696)
 - [ ] **F9 [code] MQTT offline queue.** Events are dropped while the broker is
   down; roadmap item 17 (P1), anchor `securacv_mqtt.cpp`. Also: HA entities
   stay "unknown" after a broker restart until the next toggle
@@ -249,6 +254,15 @@ so — see D2 below.)
   be configured on a canary build; only the unpaired consumers (fleet
   roster) exercise the scan. Decide the surface (an `/api` pair endpoint on
   the canary web UI, or WAP-only by design), then wire it.
+- [ ] **F28 [code+decision] No timezone setting — day-aligned features run on
+  UTC.** F8 aligned `time_bucket` and the quiet-hours minute-of-day to the
+  wall clock, but the only clock either tree has is GPS UTC, so "midnight"
+  and a user's "22:00–07:00" quiet window are UTC, not household local
+  time. Decide where the timezone lives (a settings field + NVS on each
+  host, or derived from the paired app's locale at pairing time), then
+  thread it into the offset both `updateCsiClockOffset` /
+  `update_csi_clock_offset` helpers compute. The WAP's NFPA-72
+  waking-hours check reads the same clock and has the same skew.
 
 ---
 

@@ -56,6 +56,7 @@
 #if FEATURE_CSI
 #include "securacv_csi.h"
 #include "csi_modules_integration.h"
+#include "csi_event.h"  /* csi_event_set_clock_offset_minutes — wall-clock bucket alignment */
 
 /* csi_features_t is the canonical csi_types.h struct (securacv_csi.h
  * includes it rather than declaring a twin — roadmap 22), so the module
@@ -246,6 +247,23 @@ static const time_t WALL_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, 
 static const uint32_t CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;  // drift correction
 static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 
+// Align csi_event's time_bucket / quiet-hours minute-of-day derivation to
+// the wall clock. The chokepoint coarsens timestamps into 10-minute day
+// buckets from monotonic uptime plus this offset; without it the "day"
+// started at boot, not midnight, so buckets and quiet hours were
+// session-relative. Derived from UTC — the device has no timezone setting
+// (repo sweep F28), so bucket 0 is UTC midnight, not the household's.
+// Recomputed on every pass with a set clock: cheap, keeps the offset
+// drift-corrected alongside the clock itself, and stays aligned across
+// millis() rollover because the offset and csi_event's own millis()-based
+// consumer wrap together. Loop task only — the offset is loop-owned
+// (csi_event.h).
+static void updateCsiClockOffset(time_t wall_now) {
+  const int32_t wall_min = (int32_t)((wall_now % 86400) / 60);
+  const int32_t mono_min = (int32_t)(millis() / 60000UL);
+  csi_event_set_clock_offset_minutes(wall_min - mono_min);
+}
+
 static void syncClockFromGps() {
   static uint32_t s_last_sync_attempt_ms = 0;
   uint32_t now_ms = millis();
@@ -258,7 +276,10 @@ static void syncClockFromGps() {
   // existed. Offered here rather than in the loop because this is the one
   // function that knows the clock is real; the recorder stamps once for the
   // life of the key and costs a comparison on every call after that.
-  if (clock_set) witness_note_wall_clock((uint32_t)sys_now);
+  if (clock_set) {
+    witness_note_wall_clock((uint32_t)sys_now);
+    updateCsiClockOffset(sys_now);
+  }
 
   if (clock_set && (now_ms - s_last_sync_attempt_ms) < CLOCK_RESYNC_INTERVAL_MS) {
     return;  // already trustworthy and not due for a drift-correction check
@@ -286,8 +307,11 @@ static void syncClockFromGps() {
 
   // The clock only just became real on the "set" path — offer it now rather
   // than waiting for the next call, so a device that gets one fix and then
-  // loses the sky still records the day it was dated.
+  // loses the sky still records the day it was dated. Same urgency for the
+  // bucket offset: events emitted between now and the next loop pass should
+  // already carry wall-aligned buckets.
   witness_note_wall_clock((uint32_t)gps_epoch);
+  updateCsiClockOffset(gps_epoch);
 }
 
 #if FEATURE_HA_MQTT
