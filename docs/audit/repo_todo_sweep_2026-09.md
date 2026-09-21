@@ -219,7 +219,7 @@ so — see D2 below.)
   honestly reads OFFLINE/never. `alerts_received` stays 0 and stays honest:
   the PIO envelope reserves TAMPER_ALERT/POWER_ALERT but nothing sends or
   dispatches them yet — counting attribution lands with the alert channel
-  (F10's alerts endpoint). Spec §8.3 peer-fields note updated.
+  (F10's alerts endpoint). Spec §8.3 peer-fields note updated. (#1698)
 - [ ] **F12 [code] `ble_mesh.cpp` (canary-wap) is a stub module** — every
   publish returns `false` with a "transport not wired" log. Decide whether to
   build the transport or delete the seam.
