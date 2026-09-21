@@ -133,9 +133,15 @@ static_assert(sizeof(csi_features_t) == 36,
 
 #if FEATURE_BLE_STATUS
 #include "securacv_ble_status.h"
+#endif
+
+/* Deliberately OUTSIDE the FEATURE_BLE_STATUS block: a Scout-only image
+ * (FEATURE_BLE_SCAN=1, FEATURE_BLE_STATUS=0) is a supported combination —
+ * ble_scout_nimble.cpp initializes the stack itself when the status service
+ * is absent — and setup()'s ble_scout_allow_radio() call gates only on
+ * FEATURE_BLE_SCAN. */
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
 #include "ble_scout.h"  /* ble_scout_allow_radio — the scan latch (see setup()) */
-#endif
 #endif
 
 #if FEATURE_USB_ONBOARD
