@@ -1457,7 +1457,12 @@ static esp_err_t handle_witness(httpd_req_t* req) {
   const size_t head  = witness_get_record_head();
 
   // Optional ?last=N — clamp to [1, total]; default to all available records.
+  // Optional ?before=SEQ — exclusive upper bound: only records with
+  // seq < SEQ count toward the window. This is how the timeline's "Load
+  // More" pages backward through the ring (still RAM-only — paging deeper
+  // than the ring means SD, which this task never touches).
   size_t want = total;
+  uint32_t before_seq = 0;  // 0 = no bound
   size_t qlen = httpd_req_get_url_query_len(req);
   if (qlen > 0 && qlen < 128) {
     char query[128];
@@ -1467,7 +1472,28 @@ static esp_err_t handle_witness(httpd_req_t* req) {
         int n = atoi(val);
         if (n > 0 && (size_t)n < want) want = (size_t)n;
       }
+      if (httpd_query_key_value(query, "before", val, sizeof(val)) == ESP_OK) {
+        long b = atol(val);
+        if (b > 0) before_seq = (uint32_t)b;
+      }
     }
+  }
+
+  // With a bound, shrink the window to the records older than it. Ring seqs
+  // are contiguous ascending, so count the newest entries at or past the
+  // bound and drop them from the tail of the chronological window.
+  size_t bounded_total = total;
+  if (before_seq > 0) {
+    size_t at_or_past = 0;
+    for (size_t j = total; j > 0; j--) {
+      const size_t idx = (head + ring_size - total + (j - 1)) % ring_size;
+      WitnessRecord rec;
+      if (!witness_copy_record_at(idx, &rec)) break;
+      if (rec.seq < before_seq) break;  // older half reached — done
+      at_or_past++;
+    }
+    bounded_total = total - at_or_past;
+    if (want > bounded_total) want = bounded_total;
   }
 
   JsonDocument doc;
@@ -1476,12 +1502,13 @@ static esp_err_t handle_witness(httpd_req_t* req) {
 
   JsonArray records = doc["records"].to<JsonArray>();
 
-  // Emit chronological (oldest→newest) for the most recent `want` records so the UI's
-  // slice(-50).reverse() shows newest first. Each slot is copied under the ring lock so a
-  // concurrent record write can't be observed torn. Oldest of the window sits at this index:
+  // Emit chronological (oldest→newest) for the most recent `want` records of
+  // the (possibly ?before-bounded) window so the UI's reverse shows newest
+  // first. Each slot is copied under the ring lock so a concurrent record
+  // write can't be observed torn. Oldest of the window sits at this index:
   char hash[65];
-  const size_t start = total - want;
-  for (size_t j = start; j < total; j++) {
+  const size_t start = bounded_total - want;
+  for (size_t j = start; j < bounded_total; j++) {
     const size_t idx = (head + ring_size - total + j) % ring_size;
     WitnessRecord rec;
     if (!witness_copy_record_at(idx, &rec)) continue;

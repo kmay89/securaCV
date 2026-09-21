@@ -299,6 +299,43 @@ static bool sd_append_fail(const char* why) {
   return false;
 }
 
+// Fork guard for mounts that land AFTER boot recovery already ran (a card
+// inserted late, or a boot whose mount outlived its wait budget).
+// witness_recover_from_sd() reconciles the SD tail with the NVS head only
+// "BEFORE the first record of the boot is created" — a mount adopted after
+// that point skipped it, and if the card's tail seq is at or past the seq
+// we are about to append, appending would fork the append-only history
+// (two different records claiming one seq). Checked once per mount
+// generation: reads the tail line and compares seqs. On a fork the card is
+// left untouched (records keep chaining in RAM/NVS; the verifier reports
+// the gap honestly) until a reboot reconciles — and a foreign card whose
+// history is ahead of ours is refused for the same reason, instead of
+// having our chain interleaved into someone else's file.
+static bool sd_tail_forks_chain(uint32_t next_seq) {
+  File f = SD.open("/WITNESS/records.jsonl", FILE_READ);
+  if (!f) return false;  // no history — nothing to fork
+  const size_t size = f.size();
+  if (size == 0) {
+    f.close();
+    return false;
+  }
+  char tail[witness_store::TAIL_READ + 1];
+  const size_t want =
+      (size < witness_store::TAIL_READ) ? size : witness_store::TAIL_READ;
+  if (!f.seek(size - want)) {
+    f.close();
+    return false;
+  }
+  const size_t got = f.read((uint8_t*)tail, want);
+  f.close();
+  if (got == 0) return false;
+  tail[got] = '\0';
+
+  witness_store::TailRecord rec;
+  if (!witness_store::tail_parse(tail, &rec)) return false;  // torn tail — tolerated
+  return rec.seq >= next_seq;
+}
+
 // Append one signed record to the durable log. Loop-task only (every
 // record producer — setup, loop, the *_process() event callbacks, and
 // power_graceful_shutdown — runs on the Arduino loopTask; the HTTP task
@@ -308,21 +345,48 @@ static bool sd_append_fail(const char* why) {
 static bool sd_append_record(const WitnessRecord* rec) {
   if (!storage_is_mounted()) return sd_append_fail("no card");
 
+  // Re-run the fork guard once per successful (re)mount: boot recovery only
+  // covers a card that was mounted before the first record of the boot.
+  static uint32_t s_fork_checked_gen = 0;
+  static bool s_fork_blocked = false;
+  const uint32_t gen = storage_mount_generation();
+  if (gen != s_fork_checked_gen) {
+    s_fork_checked_gen = gen;
+    s_fork_blocked = sd_tail_forks_chain(rec->seq);
+  }
+  if (s_fork_blocked)
+    return sd_append_fail("SD history ahead of this chain - reboot to reconcile");
+
   char line[witness_store::RECORD_LINE_MAX];
   const size_t n = witness_store::line_build(
       line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
       rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
   if (n == 0) return sd_append_fail("line build failed");
 
-  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
+  // Card-op failures below also feed the storage manager's consecutive-error
+  // counter: past its policy threshold the card is marked lost and the loop's
+  // storage_periodic_check() tears down and remounts it (F2 — an SD glitch
+  // used to disable persistence until reboot). The "no card" and
+  // "line build failed" returns above deliberately do not count: neither is
+  // evidence about the card.
+  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS")) {
+    storage_note_write_failure();
     return sd_append_fail("mkdir /WITNESS failed");
+  }
 
   File f = SD.open("/WITNESS/records.jsonl", FILE_APPEND);
-  if (!f) return sd_append_fail("open failed");
+  if (!f) {
+    storage_note_write_failure();
+    return sd_append_fail("open failed");
+  }
   const size_t wrote = f.write((const uint8_t*)line, n);
   f.close();
-  if (wrote != n) return sd_append_fail("short write (card full?)");
+  if (wrote != n) {
+    storage_note_write_failure();
+    return sd_append_fail("short write (card full?)");
+  }
 
+  storage_note_write_success();
   g_health.sd_writes++;
 #if FEATURE_DIAGNOSTICS
   diag_record_sd_write_bytes(n, true);

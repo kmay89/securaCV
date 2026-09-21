@@ -201,10 +201,28 @@ unsafe behavior, verified during the audit.
    battery.** Fix: act on `camera_peek=false` → deinit (and re-init on demand); `end()`/`reinit()`
    already exist ([`securacv_camera.cpp:207`](canary/lib/securacv_camera/src/securacv_camera.cpp)).
 
-5. **SD card glitch permanently disables logging.** `sd_storage_remount()` is *declared* but
-   **unimplemented** ([`common/storage/storage.h:190`](common/storage/storage.h)); a single
-   transient card failure disables witness persistence until reboot, with no re-init path. Fix:
-   implement remount + a periodic mount-health poll.
+5. **(fixed)** **SD card glitch permanently disabled logging.** Storage mounted once at boot with
+   no re-init path, so a single transient card failure disabled witness persistence until
+   reboot. (The `sd_storage_remount()` this item used to point at was *declared* in an unbuilt
+   scaffold header, `common/storage/storage.h`, that nothing included — the seventh of its kind
+   after the six the 2026-09 audit removed; it is deleted, and the policy header below took its
+   directory.)
+   *Fixed:* `securacv_storage` runs the blocking `SD.begin()` on a dedicated idle-priority
+   mount worker (the canary-wap watchdog lesson — a wedged card on the loop task blew the 8 s
+   task watchdog), `storage_periodic_check()` in `loop()` verifies a mounted card and
+   background-remounts an absent or glitched one on a 30 s cadence, witness append failures
+   feed a consecutive-error threshold that marks the card lost, `sd_healthy` tracks the live
+   mount state through every transition, and teardown/remount are refused while USB MSC holds
+   the card (raw-sector reads ride the TinyUSB task). The decisions are the pure table in
+   [`common/storage/sd_mount_policy.h`](common/storage/sd_mount_policy.h), host-tested by
+   `tests_host/test_sd_mount_policy.cpp`. Two review-hardening pieces ride the same change:
+   every direct SD consumer outside the manager (the diagnostics probes) gates on
+   `storage_mount_in_flight()` so nothing touches the SD object while the worker may be inside
+   `SD.begin()`, and a per-mount-generation fork guard in the witness append path refuses to
+   write into a card whose tail seq is at or past the next record (a mount adopted after boot
+   recovery already ran — or a foreign card — would otherwise fork the append-only history;
+   blocked cards keep chaining in RAM/NVS until a reboot reconciles). Host- and compile-tested
+   only — a physical remove/reinsert pass is bench work.
 
 6. **CSI collapses on battery and on lone devices.** `battery_normal` keeps `csi=true` while
    forcing `WIFI_PS_MIN_MODEM` ([`securacv_power_policy.cpp:73`](canary/lib/securacv_power_policy/src/securacv_power_policy.cpp)),
@@ -480,7 +498,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 2 | (fixed) "Never sleeps" build still deep-slept — real `FEATURE_DEEP_SLEEP` guard added | **P0** | Power | `main.cpp:1729` | Correctness/safety on marginal cells |
 | 3 | BLE Scout never scans in PIO build | **P0** | BLE | `ble_scout.cpp:231` | Room attribution + fleet roster actually work |
 | 4 | Camera never deinits on battery | **P0** | Camera/Power | `main.cpp:2659` | ~40–60 mA saved on battery |
-| 5 | SD glitch disables logging until reboot | **P0** | Storage | `storage.h:190` | Durable logging survives transient faults |
+| 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
 | 7 | Camera init/deinit races peek task | **P0** | Camera | `securacv_camera.cpp:643` | Removes a crash vector |
 | 8 | Plaintext private key in NVS | **P0→P1** | Crypto | `securacv_crypto.cpp:306` | NVS-enc now; flash-enc+secure-boot next |

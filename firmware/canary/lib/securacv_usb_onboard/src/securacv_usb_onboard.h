@@ -75,6 +75,14 @@ LaunchMethod method();
 // Notify of a USB detach (cable removed) so state re-locks.
 void on_unplug();
 
+// Is the SD card exposed to a USB host over MSC? While true, the storage
+// layer must never SD.end() or remount: msc_read_cb reads raw sectors from
+// the TinyUSB task, so freeing or rebuilding driver state under it is a
+// use-after-free handed to whatever the host is reading (the
+// sd_mount_policy teardown/remount gate consumes this). Always false on a
+// non-OTG build or when begin() ran without expose_msc.
+bool msc_exposed();
+
 // Current consent state + a one-line human status for the console banner.
 State state();
 void print_status();

@@ -4583,12 +4583,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const list = document.getElementById('timelineList');
       list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-      const [chainData, statusData] = await Promise.all([
+      const [witData, chainData, statusData] = await Promise.all([
+        api('/api/witness?last=' + TIMELINE_PAGE_SIZE),
         api('/api/chain'),
         api('/api/status')
       ]);
 
-      if (!chainData || !chainData.ok) {
+      if (!witData || !witData.ok) {
         list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏱</div><p>No timeline data available</p></div>';
         document.getElementById('timelineIntegrity').style.display = 'none';
         clearInterval(timelineRefreshTimer);
@@ -4603,7 +4604,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const intIcon = document.getElementById('timelineIntegrityIcon');
       const intText = document.getElementById('timelineIntegrityText');
 
-      const seq = chainData.sequence != null ? chainData.sequence : (statusData.ok ? statusData.chain_seq : 0);
+      const seq = (chainData && chainData.ok && chainData.sequence != null) ? chainData.sequence : (statusData.ok ? statusData.chain_seq : 0);
       const count = statusData.ok && statusData.witness_count != null ? statusData.witness_count : seq;
 
       if (statusData.ok && statusData.crypto_healthy) {
@@ -4617,24 +4618,32 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
       integrity.style.display = 'flex';
 
-      // Build timeline from blocks
-      const blocks = chainData.blocks || [];
-      timelineRecords = blocks;
+      // Build the timeline from the witness-record ring, newest first (the
+      // endpoint emits oldest→newest).
+      const recs = (witData.records || []).slice().reverse();
+      timelineRecords = recs;
 
+      const ringTotal = witData.total != null ? witData.total : recs.length;
       document.getElementById('timelineSubtitle').textContent =
-        blocks.length + ' record' + (blocks.length !== 1 ? 's' : '') +
-        ' · Chain head: ' + truncHash(chainData.chain_head || '', 12);
+        recs.length + ' of ' + ringTotal + ' recent record' + (ringTotal !== 1 ? 's' : '') +
+        ' · Chain head: ' + truncHash((chainData && chainData.chain_head) || '', 12);
 
-      renderTimeline(blocks);
+      renderTimeline(recs);
 
       document.getElementById('timelineLoadMore').style.display =
-        blocks.length >= TIMELINE_PAGE_SIZE ? 'block' : 'none';
+        (recs.length >= TIMELINE_PAGE_SIZE && recs.length < ringTotal) ? 'block' : 'none';
 
-      // Start auto-refresh while timeline panel is active
+      // Start auto-refresh while timeline panel is active. Paused once the
+      // reader pages into history (timelinePage > 0) so a refresh doesn't
+      // collapse the list they are reading; leaving and re-entering the
+      // panel resumes it.
       clearInterval(timelineRefreshTimer);
       timelineRefreshTimer = setInterval(() => {
-        if (currentPanel === 'timeline') loadTimeline();
-        else clearInterval(timelineRefreshTimer);
+        if (currentPanel === 'timeline') {
+          if (timelinePage === 0) loadTimeline();
+        } else {
+          clearInterval(timelineRefreshTimer);
+        }
       }, 5000);
     }
 
@@ -4673,7 +4682,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       let html = '';
       for (let i = 0; i < records.length; i++) {
         const r = records[i];
-        const typeInfo = RECORD_TYPES[r.type_id] || RECORD_TYPES[r.type] || RECORD_TYPES[1];
+        const typeInfo = RECORD_TYPES[r.type_id] || RECORD_TYPES[r.type] || RECORD_TYPES[r.type_name] || RECORD_TYPES[1];
         const isLast = i === records.length - 1;
         const timeSrc = r.time_source === 'gps' ? '🛰 GPS' : '⏱ Device';
         const hash = r.hash || r.chain_hash || '';
@@ -4695,11 +4704,20 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function loadMoreTimeline() {
-      // Pagination placeholder — /api/chain currently returns only the
-      // latest block.  A future /api/chain?page=N endpoint will populate
-      // additional records here.
+      // Page backward through the witness-record ring: ?before= is an
+      // exclusive seq bound, so each click fetches the window just older
+      // than what is on screen. The ring is bounded RAM (deeper history
+      // lives on the SD card; the HTTP task never touches SD), so the
+      // button retires once the ring runs dry.
+      if (!timelineRecords.length) return;
+      const oldest = timelineRecords[timelineRecords.length - 1].seq;
+      const data = await api('/api/witness?last=' + TIMELINE_PAGE_SIZE + '&before=' + oldest);
+      const more = (data && data.ok) ? (data.records || []).slice().reverse() : [];
       timelinePage++;
-      document.getElementById('timelineLoadMore').style.display = 'none';
+      timelineRecords = timelineRecords.concat(more);
+      renderTimeline(timelineRecords);
+      document.getElementById('timelineLoadMore').style.display =
+        more.length < TIMELINE_PAGE_SIZE ? 'none' : 'block';
     }
 
     // Acknowledgment

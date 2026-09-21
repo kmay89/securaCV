@@ -23,6 +23,7 @@
 
 #if FEATURE_SD_STORAGE
 #include <SD.h>
+#include "securacv_storage.h"  /* storage_mount_in_flight — the SD-object owner gate */
 #endif
 
 #if FEATURE_WIFI_AP
@@ -120,6 +121,11 @@ static void check_degradation() {
 
 static void update_sd() {
 #if FEATURE_SD_STORAGE
+  // Never touch the SD object while a background mount attempt owns it —
+  // the worker may be inside a blocking SD.begin(), and even SD.cardType()
+  // reads driver state that is mid-initialization. Keep the previous
+  // snapshot; the next pass after the attempt concludes refreshes it.
+  if (storage_mount_in_flight()) return;
   s_sd.mounted = SD.cardType() != CARD_NONE;
   if (s_sd.mounted) {
     // SD.totalBytes()/usedBytes() trigger slow FATFS volume scans;
@@ -242,6 +248,11 @@ static bool test_crypto() {
 
 static bool test_sd() {
 #if FEATURE_SD_STORAGE
+  // A mount attempt still in flight owns the SD object (blocking SD.begin
+  // on the worker); probing it here would race partially initialized
+  // driver state. Report the card not-yet-available — honest, and the
+  // periodic mount check adopts the result when it lands.
+  if (storage_mount_in_flight()) return false;
   return SD.cardType() != CARD_NONE;
 #else
   return true;

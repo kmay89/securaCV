@@ -302,6 +302,8 @@ void on_unplug() {
 
 State state() { return s_state; }
 
+bool msc_exposed() { return s_msc_up; }
+
 void print_status() {
   Serial.println("\n=== USB Onboarding ===");
   Serial.printf("  State : %s\n", state_name(s_state));
