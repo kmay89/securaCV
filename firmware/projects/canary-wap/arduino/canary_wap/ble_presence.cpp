@@ -65,9 +65,21 @@ class PresenceScanCallbacks : public NimBLEScanCallbacks {
     if (rr.matched) s_adverts_resolved++;
   }
 
-  void onScanEnd(const NimBLEScanResults& /*results*/, int /*reason*/) override {
-    // Continuous mode: NimBLE will auto-restart with the same parameters
-    // because we passed `restart=true` to start() below. Nothing to do.
+  void onScanEnd(const NimBLEScanResults& /*results*/, int reason) override {
+    // An "infinite" (duration=0) scan still ends — host reset, controller
+    // preemption, a connection procedure. NimBLE does NOT auto-restart it:
+    // the old comment here claimed `restart=true` was passed to start(),
+    // but it never was, and that parameter only applies to a scan that is
+    // still in progress anyway. Nothing re-arms this scanner periodically
+    // (bluetooth_channel starts it exactly once at bring-up), so restart
+    // inline. stop()/pause_for_user_scan() clear s_running BEFORE canceling,
+    // so a deliberate stop lands here with s_running already false and stays
+    // stopped; resume_continuous_scan() owns the post-user-scan re-arm.
+    if (!s_running || s_paused_for_user) return;
+    if (s_scanner && s_scanner->start(0, false)) return;
+    s_running = false;
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "ble_presence: scan ended and restart failed", nullptr);
   }
 };
 
@@ -93,10 +105,17 @@ static bool start_scanner_locked() {
   // Passive scan (no scan-request packets emitted) — we only listen, never
   // send. This is the privacy-preserving mode and saves radio time.
   s_scanner->setActiveScan(false);
+  // Report EVERY advert, not just the first per device. The controller's
+  // duplicate filter defaults ON, and on an indefinite (duration=0) scan it
+  // suppresses repeat adverts from a given address for the LIFETIME of the
+  // scan — a fixed-MAC device would be reported exactly once, and an
+  // RPA-rotating phone only once per ~15-minute address rotation. Presence
+  // hold, last-seen refresh and RSSI tracking all need the repeats.
+  s_scanner->setDuplicateFilter(false);
   apply_duty_cycle();
   s_scanner->setScanCallbacks(&s_callbacks);
-  // duration=0 => scan continuously; second arg unused for continuous mode
-  // (NimBLE 2.x signature: start(duration_ms, blocking)).
+  // duration=0 => scan continuously; isContinue=false clears prior results
+  // (NimBLE 2.x signature: start(duration, isContinue, restart)).
   return s_scanner->start(0, false);
 }
 
@@ -141,19 +160,25 @@ bool start() {
 
 void stop() {
   if (!s_initialized || !s_running) return;
-  if (s_scanner) s_scanner->stop();
+  // Clear the intent flag BEFORE canceling: if the host delivers a
+  // DISC_COMPLETE for the cancel, onScanEnd must see this stop as
+  // deliberate and not restart the scan out from under us.
   s_running = false;
+  if (s_scanner) s_scanner->stop();
 }
 
 bool is_running() { return s_running; }
 
 void pause_for_user_scan() {
   if (!s_initialized) return;
-  if (s_running) {
-    if (s_scanner) s_scanner->stop();
-    s_running = false;
-  }
+  // Flags first, cancel second — same DISC_COMPLETE-for-the-cancel reason
+  // as stop(): onScanEnd must never restart a scan the user scan is about
+  // to own.
   s_paused_for_user = true;
+  if (s_running) {
+    s_running = false;
+    if (s_scanner) s_scanner->stop();
+  }
   s_pause_count++;
 }
 

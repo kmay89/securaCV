@@ -185,13 +185,24 @@ unsafe behavior, verified during the audit.
    ([`main.cpp:1729`](canary/src/main.cpp)), with the default-build behavior
    ("compiled in but never sleeps") stated beside the `#endif`.
 
-3. **BLE Scout ships as a no-op in the PlatformIO build.** `ble_scout_allow_radio()` is only ever
-   called from the `canary-wap` `.ino` — **never from `canary/src`** — so `s_radio_allowed` stays
-   false and the passive scanner never starts
-   ([`ble_scout.cpp:231`](canary/lib/securacv_ble_scan/src/ble_scout.cpp)). In `[env:full]`,
-   `FEATURE_BLE_SCAN=1` builds the registry/tracker/roster but **nothing scans**, so room
-   attribution and the fleet roster are inert. Fix: call `ble_scout_allow_radio()` +
-   re-init after the provisioning join window, mirroring the WAP.
+3. **(fixed)** **BLE Scout shipped as a no-op in the PlatformIO build.** `ble_scout_allow_radio()`
+   was only ever called from the `canary-wap` `.ino` — never from `canary/src` — so
+   `s_radio_allowed` stayed false and the passive scanner never started
+   ([`ble_scout.cpp`](canary/lib/securacv_ble_scan/src/ble_scout.cpp)). In `[env:full]`,
+   `FEATURE_BLE_SCAN=1` built the registry/tracker/roster but nothing scanned, so room
+   attribution and the fleet roster were inert.
+   *Fixed:* `setup()` flips the latch right after the stack owner
+   (`ble_status_stack_begin()` — NimBLE up under the device's own GAP name) and before
+   `securacv_csi_modules_init()`'s `ble_scout_init()` completes Phase 2. The WAP's
+   deferred-past-the-join-window ordering was about its bluetooth_channel heap guard, which
+   this tree does not have; the name-ordering concern the latch also protected is settled by
+   the stack owner running first. A second-look audit against the NimBLE-Arduino 2.3.8 source
+   found the latch necessary but not sufficient, in both trees: the controller's duplicate
+   filter defaulted ON (an indefinite scan reports each fixed-MAC device once, ever) and the
+   "NimBLE will auto-restart" comments were false (an ended scan stayed dead with `s_running`
+   reading true). Both fixed — `setDuplicateFilter(false)`, intent-tracked restart in
+   `onScanEnd`, tick-cadence `nimble_scan_recover()` — in the Scout TUs and `ble_presence`.
+   Compile-tested by CI's `[env:full]` leg; a live scan against a paired beacon is bench work.
 
 4. **The camera burns battery it doesn't need to.** `camera_init()` runs unconditionally at boot
    ([`main.cpp:871`](canary/src/main.cpp)); every battery power mode sets
@@ -496,7 +507,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 |---|------|-----|-----------|--------|--------------|
 | 1 | (fixed) Vision ran only Layer 1 at XGA — decode ceiling raised to XGA | **P0** | Vision | `securacv_vision.cpp:139` | Motion/tamper/person detection restored at default resolution |
 | 2 | (fixed) "Never sleeps" build still deep-slept — real `FEATURE_DEEP_SLEEP` guard added | **P0** | Power | `main.cpp:1729` | Correctness/safety on marginal cells |
-| 3 | BLE Scout never scans in PIO build | **P0** | BLE | `ble_scout.cpp:231` | Room attribution + fleet roster actually work |
+| 3 | (fixed) BLE Scout never scanned in PIO build — latch flipped in setup() after the stack owner | **P0** | BLE | `src/main.cpp` | Room attribution + fleet roster actually work |
 | 4 | Camera never deinits on battery | **P0** | Camera/Power | `main.cpp:2659` | ~40–60 mA saved on battery |
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
