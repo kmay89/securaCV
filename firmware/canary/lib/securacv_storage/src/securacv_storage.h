@@ -67,6 +67,7 @@ public:
   // Status
   bool isMounted() const { return m_mounted; }
   bool mountInFlight() const;
+  uint32_t mountGeneration() const { return m_mount_generation; }
   SDStatus getStatus();
 
   // Loop-task periodic mount health check (adopt-first, then the
@@ -100,6 +101,7 @@ private:
   SPIClass* m_spi;
   bool m_mounted;
   bool m_needs_teardown;        // card marked lost; SD.end() still owed
+  uint32_t m_mount_generation;  // successful mounts this boot
   uint32_t m_consecutive_errors;
   uint32_t m_last_check_ms;
   uint32_t m_write_errors;
@@ -119,6 +121,17 @@ bool storage_is_mounted();
 void storage_periodic_check(bool msc_holds_card);
 void storage_note_write_failure();
 void storage_note_write_success();
+
+// Is a background mount attempt running right now? While true, the worker
+// owns the global SD object (it may be inside a blocking SD.begin()), so no
+// other code may touch SD.* — not even cheap probes like SD.cardType().
+// Every direct SD consumer outside this manager gates on it.
+bool storage_mount_in_flight();
+
+// Monotonic count of successful mounts this boot (0 = never mounted).
+// Consumers that must re-run a per-card check after any (re)mount — the
+// witness fork guard — compare against their cached value.
+uint32_t storage_mount_generation();
 
 #endif // FEATURE_SD_STORAGE
 

@@ -91,8 +91,8 @@ StorageManager& storage_get_instance() {
 
 StorageManager::StorageManager()
   : m_spi(nullptr), m_mounted(false), m_needs_teardown(false),
-    m_consecutive_errors(0), m_last_check_ms(0), m_write_errors(0),
-    m_read_errors(0), m_last_write_ms(0) {}
+    m_mount_generation(0), m_consecutive_errors(0), m_last_check_ms(0),
+    m_write_errors(0), m_read_errors(0), m_last_write_ms(0) {}
 
 bool StorageManager::mountInFlight() const {
   const uint8_t st = mount_state();
@@ -126,6 +126,7 @@ bool StorageManager::tryAdoptMount() {
   if (ok) {
     m_mounted = true;
     m_needs_teardown = false;
+    m_mount_generation++;
     m_consecutive_errors = 0;
     ensureDirectories();
     Serial.println("[SD] Card mounted");
@@ -340,6 +341,14 @@ void storage_note_write_failure() {
 
 void storage_note_write_success() {
   storage_get_instance().noteWriteSuccess();
+}
+
+bool storage_mount_in_flight() {
+  return storage_get_instance().mountInFlight();
+}
+
+uint32_t storage_mount_generation() {
+  return storage_get_instance().mountGeneration();
 }
 
 #endif // FEATURE_SD_STORAGE

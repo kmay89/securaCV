@@ -215,8 +215,14 @@ unsafe behavior, verified during the audit.
    mount state through every transition, and teardown/remount are refused while USB MSC holds
    the card (raw-sector reads ride the TinyUSB task). The decisions are the pure table in
    [`common/storage/sd_mount_policy.h`](common/storage/sd_mount_policy.h), host-tested by
-   `tests_host/test_sd_mount_policy.cpp`. Host- and compile-tested only — a physical
-   remove/reinsert pass is bench work.
+   `tests_host/test_sd_mount_policy.cpp`. Two review-hardening pieces ride the same change:
+   every direct SD consumer outside the manager (the diagnostics probes) gates on
+   `storage_mount_in_flight()` so nothing touches the SD object while the worker may be inside
+   `SD.begin()`, and a per-mount-generation fork guard in the witness append path refuses to
+   write into a card whose tail seq is at or past the next record (a mount adopted after boot
+   recovery already ran — or a foreign card — would otherwise fork the append-only history;
+   blocked cards keep chaining in RAM/NVS until a reboot reconciles). Host- and compile-tested
+   only — a physical remove/reinsert pass is bench work.
 
 6. **CSI collapses on battery and on lone devices.** `battery_normal` keeps `csi=true` while
    forcing `WIFI_PS_MIN_MODEM` ([`securacv_power_policy.cpp:73`](canary/lib/securacv_power_policy/src/securacv_power_policy.cpp)),
