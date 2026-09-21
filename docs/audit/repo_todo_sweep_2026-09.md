@@ -366,7 +366,7 @@ so — see D2 below.)
   — it means "native flash path present", and that path (the Flasher's
   espflash sidecar) is A14 below — while the new `serial_list: true`
   advertises what does exist. `notifications:false` is untouched (its own
-  feature, not this seam).
+  feature, not this seam). (#1700)
 - [ ] **A5 [code] Lab mDNS + BLE discovery** (HTTP-poll only today) and the
   menubar companion with the signed timeline — `desktop-lab/README.md`
   Roadmap items 2–3.
