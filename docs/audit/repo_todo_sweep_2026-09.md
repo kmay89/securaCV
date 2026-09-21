@@ -95,7 +95,7 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   before `securacv_csi_modules_init()`'s `ble_scout_init()` completes the
   deferred scan phase. The WAP's join-window deferral guarded its
   bluetooth_channel heap guard, which this tree does not have. Roadmap item 3
-  updated; a live scan against a paired beacon is U1 bench work.
+  updated; a live scan against a paired beacon is U1 bench work (#1695).
 - [x] **F2 [code] SD glitch disabled logging until reboot** — done: the
   declared-nowhere `sd_storage_remount()` turned out to live in an unbuilt
   scaffold header nothing included (deleted, like the six the 2026-09 audit
