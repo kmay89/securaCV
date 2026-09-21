@@ -150,14 +150,26 @@ struct MqttTransportStatus {
 };
 void mqtt_transport_status(MqttTransportStatus* out);
 
+// True once init() ran with a configured, enabled broker — the gate for
+// callers deciding whether to build a payload at all. Unlike
+// mqtt_connected() it stays true through an outage: events and tamper
+// alerts are accepted (buffered) while the link is down.
+bool mqtt_accepting();
+
 // ── Publishing functions ────────────────────────────────────────────────
-// All publish functions return true if message was sent (or buffered).
-// They are no-ops if MQTT is not connected (device continues without MQTT).
+// Two publish classes. DISCRETE messages (events, tamper) return true when
+// sent OR buffered: a broker outage queues them in a bounded FIFO
+// (oldest-out on overflow) and the reconnected link replays them in order,
+// so false means the message is truly not going anywhere (MQTT
+// unconfigured, or the queue refused it) and the caller keeps its own
+// re-arm. PERIODIC snapshots (status, health, sensing, chain, transport)
+// are never queued — the next tick republishes fresher truth — and simply
+// return false while disconnected (device continues without MQTT).
 
 // Status: device state, GPS, chain sequence (QoS 0, every 30s)
 bool mqtt_publish_status(const char* json_payload);
 
-// Events: witness record created (QoS 0, debounced to max 1/sec)
+// Events: discrete event record (QoS 0, buffered across broker outages)
 bool mqtt_publish_event(const char* json_payload);
 
 // Health: system metrics (QoS 0, every 60s)
@@ -166,7 +178,9 @@ bool mqtt_publish_health(const char* json_payload);
 // Chain: hash chain state (QoS 0, on demand)
 bool mqtt_publish_chain(const char* json_payload);
 
-// Tamper: tamper events (QoS 0, retained, immediate)
+// Tamper: tamper events (QoS 0, retained, immediate; buffered across
+// broker outages so every alert in the window reaches HA, not just the
+// newest)
 bool mqtt_publish_tamper(const char* json_payload, bool retained = true);
 
 // Transport: transport status (QoS 0, on change)

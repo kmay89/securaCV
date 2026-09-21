@@ -1927,7 +1927,12 @@ void loop() {
   // matches the host mqtt_sensor adapter contract ({state, confidence,
   // kind}); the adapter routes it into the sealed log as TamperDetected.
   // Confidence is rescaled 0..100 -> 0..1 for the kernel's bounds check.
-  if (g_tamper_publish_pending && mqtt_connected()) {
+  // Gated on mqtt_accepting(), not mqtt_connected(): during a broker
+  // outage the publish buffers in the MQTT layer's offline queue, so each
+  // alert leaves this one-deep pending slot within a loop pass instead of
+  // camping in it for the whole outage — where a second tamper used to
+  // overwrite the first.
+  if (g_tamper_publish_pending && mqtt_accepting()) {
     g_tamper_publish_pending = false;
     /* Copy BOTH volatile fields back-to-back before formatting: a tamper
      * callback firing mid-publish may overwrite them, and a torn read
@@ -1943,7 +1948,8 @@ void loop() {
              "{\"state\":\"on\",\"confidence\":%.2f,\"kind\":\"%s\"}",
              (double)confidence / 100.0, kind_str);
     if (!mqtt_publish_tamper(payload)) {
-      // Re-arm so the alert survives a transient broker drop; the
+      // False now means the offline queue itself refused (inert after a
+      // failed allocation) — re-arm so the alert still survives; the
       // device-side chain already holds the signed record either way.
       g_tamper_publish_pending = true;
     }
@@ -1958,7 +1964,7 @@ void loop() {
   // the sensing tamper drain above.
   {
     static bool s_pe_tamper_pending = true;
-    if (s_pe_tamper_pending && mqtt_connected()) {
+    if (s_pe_tamper_pending && mqtt_accepting()) {
       s_pe_tamper_pending = false;
       char pe_payload[224];
       if (canary_pe::ha_tamper_payload(pe_payload, sizeof(pe_payload)) &&
