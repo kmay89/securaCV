@@ -692,10 +692,20 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
                 **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
-        except TypeError:
+        except TypeError as err:
             # Unexpected value types inside an otherwise well-shaped dict
-            # (e.g. "sd_errors" as a string) — skip this publish.
-            pass
+            # (e.g. "sd_errors" as a string) — skip this publish, state
+            # untouched. Debug, not warning: a malformed publish from an
+            # untrusted local broker must not be able to spam the log (the
+            # same reason parse_mqtt_json returns None silently), but a
+            # firmware field-type regression has to be visible with the
+            # securacv logger at debug.
+            _LOGGER.debug(
+                "Ignoring health publish for %s: unexpected field type in tamper fields (%s)",
+                self._device_id,
+                err,
+                exc_info=True,
+            )
 
 
 class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
@@ -988,10 +998,18 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
                 **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
             }
             self.async_write_ha_state()
-        except TypeError:
+        except TypeError as err:
             # Unexpected value types inside an otherwise well-shaped dict
-            # (e.g. "peers" as a number) — skip this publish.
-            pass
+            # (e.g. "peers" as a number) — skip this publish, state
+            # untouched. Debug for the same reason as the tamper handler:
+            # never let an untrusted broker spam the log, never hide a
+            # firmware regression from someone who turned debug on.
+            _LOGGER.debug(
+                "Ignoring mesh publish for %s: unexpected field type in mesh payload (%s)",
+                self._device_id,
+                err,
+                exc_info=True,
+            )
 
 
 class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
