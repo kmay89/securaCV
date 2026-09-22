@@ -465,6 +465,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Serve + auto-load the Lovelace timeline card (best-effort, non-fatal).
     await _async_register_frontend(hass)
 
+    # Restore persisted watches BEFORE anything can feed them: the first
+    # MQTT event after a restart must reach a restored watch, not a bucket
+    # that is still empty. Once per HA instance (the loader is idempotent);
+    # never fatal — watches are optional, setup is not.
+    try:
+        from .watch_runtime import async_load_watches
+
+        await async_load_watches(hass)
+    except Exception:  # noqa: BLE001 - watches are optional, setup is not
+        _LOGGER.debug("watches not restored", exc_info=True)
+
     setup_mode = entry.data.get(CONF_SETUP_MODE, SETUP_MODE_KERNEL)
     has_kernel = setup_mode in (SETUP_MODE_KERNEL, SETUP_MODE_BOTH)
     enable_mqtt = entry.data.get(CONF_ENABLE_MQTT, False)

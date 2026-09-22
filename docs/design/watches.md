@@ -1,15 +1,17 @@
 # Watches — attention that expires on purpose
 
-> **Status: built for event-kind watches · numeric subjects and
-> persistence are next.** The decision core
+> **Status: built for event-kind watches, persisted across restarts ·
+> numeric subjects are next.** The decision core
 > (`custom_components/securacv/watches.py`) is pure and covered by
 > `tests/test_watches.py`, and `watch_runtime.py` wires it live: witness
 > events feed observations, a five-minute tick evaluates and delivers,
-> and expiry announces itself as a persistent notification. **Not yet
-> real:** numeric subjects (a soil-moisture sensor is accepted but
-> nothing feeds it), and watches do not survive a hub restart. A watch
-> whose subject nothing reports says so when you start it rather than
-> pretending.
+> expiry announces itself as a persistent notification, and the roster is
+> mirrored to Home Assistant's `Store` (`.storage/securacv_watches`) so a
+> hub restart keeps every watch, its baseline and its history — a watch
+> that ended while the hub was down is announced by the first tick rather
+> than silently gone. **Not yet real:** numeric subjects (a soil-moisture
+> sensor is accepted but nothing feeds it). A watch whose subject nothing
+> reports says so when you start it rather than pretending.
 
 ## The problem, stated properly
 
@@ -207,8 +209,8 @@ reasons to build them well:
 | Duration parsing ("two weeks", "until October") | same | **built, host-tested** |
 | Voice: start a watch, list watches | `intent.py` + sentences | **built** |
 | Feeding event-kind watches + tick + delivery | `watch_runtime.py` | **built** |
+| Persistence across restarts | `watch_runtime.py` → HA `Store`, `.storage/securacv_watches` (coalesced saves; restored on setup, expired ones announced by the first tick) | **built** |
 | Numeric subjects (an HA sensor like soil moisture) | integration glue | next |
-| Persistence across restarts | HA `Store` | next |
 | Recipes in the UI, end-of-watch summary card | Lovelace | after that |
 
 ## Related

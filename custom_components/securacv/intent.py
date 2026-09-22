@@ -35,7 +35,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
 from homeassistant.util import dt as dt_util
 
-from . import voice, watches
+from . import voice, watch_runtime, watches
 from .const import DOMAIN
 
 INTENT_FLEET_STATUS = "SecuracvFleetStatus"
@@ -305,15 +305,10 @@ class HelpIntentHandler(intent.IntentHandler):
 # voice cannot mute an Alert. The rule underneath: voice may make you
 # better informed, never less.
 #
-# Storage note: watches live in hass.data for now, so they do not yet
-# survive a Home Assistant restart. Persistence is the next step in the
-# design doc's status table, and is deliberately not claimed here.
-
-
-# Every collection is bounded. Expired watches are evicted rather than
-# merely filtered out of speech, and a cap keeps repeated (or false-wake)
-# start commands from growing the list without limit.
-MAX_WATCHES = 20
+# Storage: the bucket is hass.data[DOMAIN]["watches"], mirrored to HA's
+# Store by watch_runtime (coalesced saves, restored on setup), so a watch
+# survives a Home Assistant restart. Every change made here schedules a
+# save; the cap (watches.MAX_WATCHES) bounds the roster and the restore.
 
 
 def _watch_bucket(hass: HomeAssistant, now: float | None = None) -> list[dict[str, Any]]:
@@ -327,6 +322,7 @@ def _watch_bucket(hass: HomeAssistant, now: float | None = None) -> list[dict[st
         alive = [w for w in bucket if now < w.get("ends_at", 0.0)]
         if len(alive) != len(bucket):
             bucket[:] = alive
+            watch_runtime.async_schedule_save(hass)
     return bucket
 
 
@@ -364,7 +360,7 @@ class StartWatchIntentHandler(intent.IntentHandler):
 
         now = time.time()
         bucket = _watch_bucket(hass, now)
-        if len(bucket) >= MAX_WATCHES:
+        if len(bucket) >= watches.MAX_WATCHES:
             response.async_set_speech(
                 f"I'm already running {len(bucket)} watches, which is as many "
                 "as I'll keep. End one on the dashboard and ask me again."
@@ -399,6 +395,7 @@ class StartWatchIntentHandler(intent.IntentHandler):
             days=days, concern=concern,
         )
         bucket.append(watch)
+        watch_runtime.async_schedule_save(hass)
 
         speech = watches.speak_started(watch)
         if not device_id:
