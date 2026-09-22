@@ -61,14 +61,16 @@ use tauri_plugin_updater::UpdaterExt;
 // this embed can never drift from the website/firmware source of truth.
 pub(crate) const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
 
-/// The chip lookup table, derived ONCE from the embedded catalog's `chips`
-/// keys instead of a hardcoded copy of them (the desktop-parity test used to
-/// diff the copy against the catalog; deriving removes the copy). Each
-/// canonical spelling ("ESP32-S3") yields its folded needle ("esp32s3");
-/// longest needle first so variant chips match before bare "esp32". Fails
-/// closed: a catalog without a chips table yields an empty table, and
-/// canonical_chip() answers None for everything — the same posture
-/// manifest_url_allowed() takes on a corrupt catalog.
+/// The catalog's chip spellings, derived ONCE from the embedded catalog's
+/// `chips` keys instead of a hardcoded copy of them (the desktop-parity test
+/// used to diff the copy against the catalog; deriving removes the copy).
+/// Each canonical spelling ("ESP32-S3") yields its folded token ("esp32s3");
+/// canonical_chip() looks tokens up here by exact match, so the catalog's
+/// exact spelling wins for chips it ships, and falls back to spelling the
+/// token itself for ESP32-family chips it doesn't. A corrupt catalog yields
+/// an empty table; detection still names chips (rescue is
+/// catalog-independent), while every catalog flash path stays behind its own
+/// catalog parse.
 fn chip_table() -> &'static [(String, String)] {
     static TABLE: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
@@ -88,7 +90,7 @@ fn chip_table() -> &'static [(String, String)] {
                     .collect()
             })
             .unwrap_or_default();
-        table.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+        table.sort(); // deterministic order; lookup is by exact token
         table
     })
 }
@@ -431,20 +433,49 @@ fn list_ports() -> Result<Vec<PortDto>, String> {
     Ok(out)
 }
 
-/// Normalize whatever `espflash board-info` calls the chip into the catalog's
-/// canonical spelling ("ESP32-S3", "ESP32-C3", …). The table is derived from
-/// the embedded catalog (chip_table — longest needle first, so variant chips
-/// match before bare "esp32"). A chip the catalog doesn't ship answers None,
-/// and every consumer already treats None as "not a board we flash": the
-/// probe reports it couldn't recognize the chip, and the guards refuse the
-/// mismatch — the same refusal the old hardcoded table produced, minus the
-/// copy that could drift.
-fn canonical_chip(raw: &str) -> Option<&'static str> {
+/// Normalize whatever `espflash board-info` calls the chip into a canonical
+/// spelling ("ESP32-S3", "ESP32-C3", …). The chip token is extracted from the
+/// output ("esp32" plus an optional variant suffix — one letter, then digits:
+/// s3, c6, p4 — preferring an occurrence that names a variant, so a bare
+/// "esp32" elsewhere in the output can't hide one). A token the catalog ships
+/// gets the catalog's spelling (chip_table); an ESP32-family variant the
+/// catalog does NOT ship still gets its real name (ESP32-S2, ESP32-H2), never
+/// bare "ESP32" and never None — the catalog is a product list, not a
+/// detection whitelist: espflash already talked to the chip, and the
+/// catalog-independent rescue/local-file operations need it identified, while
+/// the catalog flash paths refuse the (now truthful) chip mismatch. Only
+/// output naming no ESP32-family chip at all answers None.
+fn canonical_chip(raw: &str) -> Option<String> {
     let s = raw.to_lowercase().replace(['-', ' ', '_'], "");
-    chip_table()
-        .iter()
-        .find(|(needle, _)| s.contains(needle.as_str()))
-        .map(|(_, canon)| canon.as_str())
+    let mut token: Option<&str> = None;
+    let mut at = 0;
+    while let Some(i) = s[at..].find("esp32") {
+        let start = at + i;
+        let rest = s[start + 5..].as_bytes();
+        let mut suffix_len = 0;
+        if rest.first().is_some_and(u8::is_ascii_lowercase) {
+            let digits = rest[1..].iter().take_while(|b| b.is_ascii_digit()).count();
+            if digits > 0 {
+                suffix_len = 1 + digits;
+            }
+        }
+        if suffix_len > 0 {
+            token = Some(&s[start..start + 5 + suffix_len]);
+            break;
+        }
+        token.get_or_insert("esp32");
+        at = start + 5;
+    }
+    let token = token?;
+    if let Some((_, canon)) = chip_table().iter().find(|(needle, _)| needle == token) {
+        return Some(canon.clone());
+    }
+    let suffix = &token[5..];
+    Some(if suffix.is_empty() {
+        "ESP32".to_string()
+    } else {
+        format!("ESP32-{}", suffix.to_uppercase())
+    })
 }
 
 /// Run the sidecar to completion, collecting stdout+stderr. Used for the short
@@ -524,7 +555,7 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
                 json!({ "level": f.level, "label": f.label, "detail": f.detail })
             });
             Ok(ChipInfo {
-                chip: chip.to_string(),
+                chip,
                 flash_bytes: rescue::parse_flash_size(&out),
                 mac,
                 mac_check,
@@ -2361,18 +2392,27 @@ mod catalog_derivation_tests {
         // Every catalog chip canonicalizes to itself, from espflash-ish
         // spellings too.
         for canon in chips.keys() {
-            assert_eq!(canonical_chip(canon), Some(canon.as_str()));
+            assert_eq!(canonical_chip(canon).as_deref(), Some(canon.as_str()));
             let sloppy = canon.to_lowercase().replace('-', "_");
-            assert_eq!(canonical_chip(&format!("Chip type: {sloppy} (rev 0)")),
+            assert_eq!(canonical_chip(&format!("Chip type: {sloppy} (rev 0)")).as_deref(),
                        Some(canon.as_str()), "espflash-style spelling of {canon}");
         }
-        // Longest-first ordering: a variant string must never fold to bare
-        // ESP32 (the table is sorted, but pin the behavior, not the sort).
-        assert_eq!(canonical_chip("esp32-s3"), Some("ESP32-S3"));
+        // A variant token must never fold to bare ESP32.
+        assert_eq!(canonical_chip("esp32-s3").as_deref(), Some("ESP32-S3"));
         // The table carries exactly the catalog's chips — no leftovers of
         // the old hardcoded list.
         assert_eq!(chip_table().len(), chips.len());
-        // A chip the catalog doesn't ship answers None (fail closed).
+        // An ESP32-family variant the catalog does NOT ship still gets its
+        // real name — never bare "ESP32" (that would defeat the flash chip
+        // guard), never None (rescue/local-file operations are
+        // catalog-independent and need the chip identified).
+        assert_eq!(canonical_chip("Chip type: esp32s2 (revision v0.0)").as_deref(),
+                   Some("ESP32-S2"));
+        assert_eq!(canonical_chip("esp32-h2").as_deref(), Some("ESP32-H2"));
+        assert_eq!(canonical_chip("esp32c2").as_deref(), Some("ESP32-C2"));
+        // A variant named anywhere wins over a bare esp32 mention earlier on.
+        assert_eq!(canonical_chip("esp32 family: esp32s2").as_deref(), Some("ESP32-S2"));
+        // Output naming no ESP32-family chip at all answers None.
         assert_eq!(canonical_chip("rp2040"), None);
     }
 

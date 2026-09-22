@@ -63,16 +63,17 @@ test("chip guard: native derives its chip table from the catalog, not a copy", (
     "a hardcoded (\"esp32…\",\"ESP32-…\") chip pair is back in lib.rs — " +
     "the table derives from the catalog now; delete the retyped copy");
 
-  // Native fails closed on an empty/malformed chips table (canonical_chip()
-  // answers None and detect_chip rejects every board), so the catalog side
-  // must stay non-empty and canonically spelled for the derivation to work.
+  // The catalog's spelling wins for chips it ships (an ESP32-family chip the
+  // catalog doesn't ship is still named, algorithmically, so rescue stays
+  // catalog-independent), so the keys native folds into lookup tokens must
+  // stay canonically spelled or the flash chip-guard compares wrong names.
   const chips = Object.keys(catalog.chips || {});
-  assert.ok(chips.length >= 3, "catalog `chips` table is empty/tiny — native's " +
-    "derived chip guard would reject every board");
+  assert.ok(chips.length >= 3, "catalog `chips` table is empty/tiny — the " +
+    "browser's picker and native's catalog spellings both derive from it");
   for (const chip of chips) {
     assert.match(chip, /^ESP32/,
       `catalog chip key "${chip}" isn't a canonical ESP32-… spelling — ` +
-      "native folds these keys into its detection needles");
+      "native folds these keys into its lookup tokens");
   }
 });
 
