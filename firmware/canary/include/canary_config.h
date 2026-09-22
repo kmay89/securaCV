@@ -424,6 +424,14 @@
 #ifndef SECURACV_REQUIRE_FLASH_ENCRYPTION
   #define SECURACV_REQUIRE_FLASH_ENCRYPTION 0
 #endif
+// Chain state. NVS_KEY_CHAINST is the live entry: {seq, chain head} as ONE
+// 39-byte blob (common/witness/chain_state.h) so a power cut cannot tear the
+// pair — NVS commits a blob atomically. NVS_KEY_SEQ / NVS_KEY_CHAIN are the
+// legacy two-entry layout: still READ as the fallback when no blob exists (so
+// an image upgrade keeps its chain) and never written again by this image (so
+// a downgrade still boots — from a pair that goes stale after the first blob
+// persist; the SD-wins reconciliation covers that when a card is present).
+#define NVS_KEY_CHAINST   "chain_st"
 #define NVS_KEY_SEQ       "seq"
 #define NVS_KEY_BOOTS     "boots"
 #define NVS_KEY_CHAIN     "chain"

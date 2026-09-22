@@ -22,7 +22,9 @@ common/
 │   ├── hal_wifi.h  # WiFi interface
 │   └── hal_ble.h   # BLE interface
 ├── witness/        # Witness chain management
-│   └── witness_chain.h
+│   ├── witness_chain.h
+│   ├── witness_store.h  # /WITNESS/records.jsonl line format + SD-wins reconciliation (host-tested)
+│   └── chain_state.h    # {seq, head} as ONE atomic NVS blob + the boot-time source order (host-tested)
 ├── identity/       # The device's own identity: what it is, when it was born, where its key sleeps
 │   ├── device_signature.{h,cpp}  # canonical signed-message builders (HA verifies the same bytes)
 │   ├── device_pseudonym.h

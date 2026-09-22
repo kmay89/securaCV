@@ -12,6 +12,9 @@
 // The birth-day decision itself — board-agnostic, host-tested
 // (firmware/tests_host/test_birth_day.cpp). This file owns only the NVS.
 #include "identity/birth_day.h"
+// The chain-state blob codec + boot-time source decision — pure, host-tested
+// (firmware/tests_host/test_chain_state.cpp). Same split: this file owns NVS.
+#include "witness/chain_state.h"
 
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
@@ -143,6 +146,18 @@ void format_uptime(char* out, size_t cap, uint32_t secs) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CHAIN-STATE PERSISTENCE (one atomic NVS blob)
+// ════════════════════════════════════════════════════════════════════════════
+
+// {seq, chain_head} as the single 39-byte entry chain_state.h defines. The
+// only writer of NVS_KEY_CHAINST; nothing writes NVS_KEY_SEQ / NVS_KEY_CHAIN.
+static bool persist_chain_blob() {
+  uint8_t blob[chain_state::BLOB_LEN];
+  if (!chain_state::encode(g_device.seq, g_device.chain_head, blob)) return false;
+  return nvs_store_bytes(NVS_KEY_CHAINST, blob, sizeof(blob));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // DEVICE PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -202,19 +217,44 @@ bool witness_provision_device() {
   generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid),
                    g_device.pubkey_fp);
 
-  // Load chain state
-  g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+  // Load chain state: the atomic {seq, head} blob first, then the legacy
+  // seq/chain pair (read-only — never rewritten or deleted, so an older image
+  // still boots after a downgrade), then genesis. The order is decided by
+  // chain_state::choose() and pinned on the host; the SD-wins reconciliation
+  // (witness_recover_chain_from_sd) is unchanged and still runs after this.
+  {
+    uint8_t blob[chain_state::BLOB_LEN];
+    uint32_t blob_seq = 0;
+    uint8_t blob_head[chain_state::HEAD_LEN];
+    const bool blob_ok =
+        nvs_load_bytes(NVS_KEY_CHAINST, blob, sizeof(blob)) &&
+        chain_state::decode(blob, sizeof(blob), &blob_seq, blob_head);
+    uint8_t legacy_head[chain_state::HEAD_LEN];
+    const bool legacy_present = nvs_load_bytes(NVS_KEY_CHAIN, legacy_head, 32);
+
+    switch (chain_state::choose(blob_ok, legacy_present)) {
+      case chain_state::Source::Blob:
+        g_device.seq = blob_seq;
+        memcpy(g_device.chain_head, blob_head, 32);
+        break;
+      case chain_state::Source::Legacy:
+        g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+        memcpy(g_device.chain_head, legacy_head, 32);
+        break;
+      case chain_state::Source::Genesis:
+        // Initialize genesis chain hash. The seq stays whatever the legacy
+        // entry says (0 on a fresh device), exactly as before the blob.
+        g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+        sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
+                      strlen(g_device.device_id), g_device.chain_head);
+        persist_chain_blob();
+        break;
+    }
+  }
   g_device.seq_persisted = g_device.seq;
   g_device.boot_count = nvs_load_u32(NVS_KEY_BOOTS, 0) + 1;
   nvs_store_u32(NVS_KEY_BOOTS, g_device.boot_count);
   g_device.log_seq = nvs_load_u32(NVS_KEY_LOGSEQ, 0);
-
-  if (!nvs_load_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32)) {
-    // Initialize genesis chain hash
-    sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
-                  strlen(g_device.device_id), g_device.chain_head);
-    nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
-  }
 
   // Provision the transport-layer bearer credential. Owned entirely by
   // securacv_auth — we just trigger derivation here so it happens during
@@ -282,8 +322,11 @@ bool witness_note_wall_clock(uint32_t unix_s) {
 }
 
 void witness_persist_chain_state() {
-  nvs_store_u32(NVS_KEY_SEQ, g_device.seq);
-  nvs_store_bytes(NVS_KEY_CHAIN, g_device.chain_head, 32);
+  // One NVS entry for {seq, chain_head} — committed atomically by NVS, so a
+  // power cut can no longer leave a seq that belongs to a different head (the
+  // two-write window the legacy seq/chain pair had; roadmap item 18). The
+  // legacy keys are deliberately never written again.
+  persist_chain_blob();
   g_device.seq_persisted = g_device.seq;
   g_health.chain_persists++;
 

@@ -132,6 +132,23 @@ host tests assert they do, on real radio.
     (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
   - Artifact: `docs/audit/repro/K1/`.
 
+- [ ] **K2 — chain head survives a power cut between record and persist**
+  - Setup: one board on the PIO `canary` image, NO SD card (so SD-wins cannot
+    mask the result); a bench supply you can cut.
+  - Repro: note `chain_seq` + `chain_head` from `/api/status`; trigger a
+    witness record; cut power inside the persist window (repeat ~20 times —
+    the window is one NVS blob write, so most cuts land before or after it).
+  - Expected: on every next boot `/api/status` reports EITHER the previous
+    {`chain_seq`, `chain_head`} pair OR the new one — never the new seq with
+    the old head or vice versa; the boot log carries no `[CHAIN]` mismatch
+    and the `t` self-test chain verify passes. A board upgraded from a
+    pre-blob image boots with its old seq/head (legacy fallback), and the
+    first persist moves it to the blob; `chain_st` appears in NVS, `seq` /
+    `chain` are left as they were.
+  - Codec + source order under test: `firmware/common/witness/chain_state.h`
+    (host-tested by `firmware/tests_host/test_chain_state.cpp`).
+  - Artifact: `docs/audit/repro/K2/`.
+
 - [ ] **O3 — transactional rekey on peer removal**
   - Setup: three Opera-member boards (A, B, C); A is the initiator.
   - Repro: from A, call `remove_peer(B.fingerprint)` via REST.

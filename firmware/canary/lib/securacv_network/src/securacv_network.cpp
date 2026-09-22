@@ -1629,9 +1629,9 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
 
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_USER, "Reboot requested", nullptr);
 
-  DeviceIdentity& device = witness_get_device();
-  nvs_store_u32(NVS_KEY_SEQ, device.seq);
-  nvs_store_bytes(NVS_KEY_CHAIN, device.chain_head, 32);
+  // The witness lib owns chain persistence (one atomic blob — never the
+  // legacy seq/chain pair from here, which was the second torn-write site).
+  witness_persist_chain_state();
 
   JsonDocument doc;
   doc["ok"] = true;

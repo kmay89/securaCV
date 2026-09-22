@@ -456,10 +456,17 @@ Beyond §1.5:
   `mesh_transport::start()` brings the radio up, so they are RF-seeded and deliberately stay
   bare: `bootloader_random_enable()` must never run while RF is up. No entropy self-check
   (still open under item 18). **[P1 → done]**
-- **Chain-head persistence is non-atomic** — `seq` then `chain_head` as two separate NVS writes
-  ([`securacv_witness.cpp:227`](canary/lib/securacv_witness/src/securacv_witness.cpp)); a power cut
-  between them leaves them inconsistent (recoverable via SD-wins **only if a card is present**).
-  Persist as one blob in one commit (or double-buffer with a generation counter). **[P1]**
+- **(fixed) Chain-head persistence is non-atomic** — `seq` then `chain_head` were two separate
+  NVS writes; a power cut between them left them inconsistent (recoverable via SD-wins **only if a
+  card is present**). Now one 39-byte `{version, seq, head, CRC-16}` blob under `chain_st`
+  ([`common/witness/chain_state.h`](common/witness/chain_state.h), host-tested;
+  [`securacv_witness.cpp:324`](canary/lib/securacv_witness/src/securacv_witness.cpp) is the single
+  writer — the `/api/reboot` handler's own copy of the two-write pair is gone too), which NVS
+  commits atomically. Boot reads blob → legacy pair (read-only, never deleted, so a downgrade still
+  boots) → genesis. The legacy pair goes stale after the first blob write, so an older image after
+  a downgrade sees an old head — SD-wins covers that when a card is present. Not carried to the
+  canary-wap sketch (its three write sites and the staged-copy sync gate are a follow-up).
+  **[P1 → done in the PIO canary tree]**
 - **No device-side rollback detection** — without secure boot / an eFuse or RTC monotonic anchor,
   an attacker who rewrites NVS can rewind `seq`/`chain_head`; the device re-signs the fork with its
   own key and only an external verifier holding an earlier copy notices. Anchor a monotonic counter
@@ -571,7 +578,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 15 | Pin WiFi PHY (protocol/BW/country) + TX power | **P1** | WiFi/CSI | `securacv_network.cpp` | Stable CSI vector, correct regulatory/range |
 | 16 | Fast reconnect (cached BSSID/channel/IP) | **P1** | WiFi | `securacv_network.cpp:405` | <300 ms reconnect, no CSI-disrupting sweep |
 | 17 | (fixed) MQTT: socket timeout + offline queue + TLS all landed | **P1** | MQTT | `common/mqtt/mqtt_offline_queue.h` | Outages delay events instead of dropping them; encrypted transport |
-| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head | **P1** | Crypto | `securacv_crypto.cpp:167` | Real at-rest + anti-forgery guarantees |
+| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head (fixed, PIO canary tree) — OPEN: (c) DS/HMAC-bound key and (d) an eFuse/RTC rollback anchor; both need the IDF-component toolchain (item 9) plus a bench, the DS route is RSA-only and reserved per `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` already reserves the `hw-bound` label for it | **P1** | Crypto | `securacv_crypto.cpp:167` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
 | 21 | WPA3/PMF + per-device AP password | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |
