@@ -73,7 +73,7 @@
 // ============================================================================
 
 #define CONFIG_RECORD_INTERVAL_MS       1000    // Record emission rate
-#define CONFIG_TIME_BUCKET_MS           5000    // Time coarsening (privacy)
+#define CONFIG_TIME_BUCKET_MS           600000  // Time coarsening (privacy) — the ten-minute grid, Invariant III
 #define CONFIG_FIX_LOST_TIMEOUT_MS      3000    // GPS fix timeout
 #define CONFIG_VERIFY_INTERVAL_SEC      60      // Self-verify interval
 #define CONFIG_WATCHDOG_TIMEOUT_SEC     8       // Watchdog timeout

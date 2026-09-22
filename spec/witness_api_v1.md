@@ -84,27 +84,28 @@ Unknown record fields are ignored (the reference server also sends
 ## 3. Time on this wire — Invariant III
 
 `spec/invariants.md` Invariant III: a Canary never publishes a precise
-timestamp. On this wire that is two floors, and a reader must know both:
+timestamp. On this wire that is one floor, the ten-minute grid, met on both
+clocks:
 
 * **Wall-clock time is never finer than a ten-minute bucket.** `timestamp`,
   when present, is a bucket start (§3.1), and a reader presents every record
   as a bucket.
-* **The chain binds an *uptime* bucket at its native width.** canary-wap's
+* **The chain binds an *uptime* bucket on the same grid.** canary-wap's
   chain hash covers `time_bucket = millis() / time_bucket_ms` (§4.2), where
   `time_bucket_ms` is a runtime setting clamped to the firmware's floor
-  (`TIME_BUCKET_MS`, 5 000 ms as shipped; `/api/config` reports it as
+  (`TIME_BUCKET_MS`, 600 000 ms — ten minutes — as shipped since 2026-09-22,
+  when both firmwares widened it from 5 000 ms; `/api/config` reports it as
   `time_bucket_floor_ms`). The page carries `time_bucket` and
-  `time_bucket_ms` because the hash cannot be recomputed without them. This
-  is not new exposure: the same value already rides the SD witness line,
-  `GET /api/witness`, `POST /api/export` and the MQTT `chain` publish, and
-  `uptime_s` is `/api/status`'s `uptime_sec` — every one of them behind the
-  same Bearer token. It does mean an authenticated reader can place a record
-  to the bucket's width *relative to boot*, and, with any anchor, in wall
-  time. A reader MUST still present it coarsened (§3.1, §3.2); widening the
-  chain's floor to the ten-minute grid is a firmware decision recorded as
-  open in `docs/IMPROVEMENT_ROADMAP.md` (it touches both products' witness
-  chains, their config floors and the operator copy that names 5 s), not
-  something this contract can do on its own.
+  `time_bucket_ms` because the hash cannot be recomputed without them and
+  the width is a per-record fact, so a record made at any width verifies
+  with the width it carries. This is not new exposure: the same value
+  already rides the SD witness line, `GET /api/witness`, `POST /api/export`
+  and the MQTT `chain` publish, and `uptime_s` is `/api/status`'s
+  `uptime_sec` — every one of them behind the same Bearer token. It does
+  mean an authenticated reader can place a record to the bucket's width
+  *relative to boot*, and, with any anchor, in wall time — which on this
+  grid is the same ten-minute bucket Invariant III already allows. A reader
+  MUST still present it coarsened (§3.1, §3.2).
 
 ### 3.1 `timestamp` is a bucket start
 

@@ -24,17 +24,20 @@ static int g_failures = 0;
   } while (0)
 
 static void test_time_bucket() {
-  const uint32_t FLOOR = 5000;  // compile-time coarsening floor
+  const uint32_t FLOOR = 600000;  // compile-time coarsening floor: the ten-minute grid
   // The privacy invariant: never finer than the floor. A request below it is
   // raised to the floor, so coarsening can only increase.
   CHECK(clamp_time_bucket_ms(1000, FLOOR) == FLOOR);
   CHECK(clamp_time_bucket_ms(0, FLOOR) == FLOOR);
   CHECK(clamp_time_bucket_ms(FLOOR, FLOOR) == FLOOR);
+  // A value persisted under the old 5 s floor is raised at boot (widen-only).
+  CHECK(clamp_time_bucket_ms(5000, FLOOR) == FLOOR);
+  CHECK(clamp_time_bucket_ms(30000, FLOOR) == FLOOR);
   // At or above the floor, the request is honored (coarser is allowed).
-  CHECK(clamp_time_bucket_ms(5001, FLOOR) == 5001);
-  CHECK(clamp_time_bucket_ms(30000, FLOOR) == 30000);
+  CHECK(clamp_time_bucket_ms(600001, FLOOR) == 600001);
+  CHECK(clamp_time_bucket_ms(3600000, FLOOR) == 3600000);
   // The result is NEVER below the floor for any input.
-  for (uint32_t v = 0; v < 6000; v += 137) {
+  for (uint32_t v = 0; v < 700000; v += 137) {
     CHECK(clamp_time_bucket_ms(v, FLOOR) >= FLOOR);
   }
 }

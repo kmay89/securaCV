@@ -21,6 +21,9 @@ namespace config_logic {
 // Event-time coarsening bucket (Invariant III). The user may only widen it
 // (more coarsening = more privacy); a request below the compile-time floor is
 // raised to the floor. Privacy can therefore only increase, never decrease.
+// The floor is the ten-minute grid (TIME_BUCKET_MS = 600 000 ms as shipped);
+// a persisted value from before the floor widened is raised at boot by the
+// same clamp — widen-only, so an in-place upgrade cannot lower it.
 inline uint32_t clamp_time_bucket_ms(uint32_t requested_ms, uint32_t floor_ms) {
   return requested_ms < floor_ms ? floor_ms : requested_ms;
 }

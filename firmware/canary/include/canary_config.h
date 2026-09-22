@@ -345,7 +345,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define RECORD_INTERVAL_MS       1000    // Record emission rate
-#define TIME_BUCKET_MS           5000    // Time coarsening bucket
+#define TIME_BUCKET_MS           600000  // Time coarsening bucket — the ten-minute grid (Invariant III); main.cpp derives BUCKET_10MIN_MS from it
 #define FIX_LOST_TIMEOUT_MS      3000    // GPS fix timeout
 #define VERIFY_INTERVAL_SEC      60      // Self-verify every N seconds
 #define WATCHDOG_TIMEOUT_SEC     8       // Hardware watchdog

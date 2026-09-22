@@ -44,7 +44,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 4 (2026-09-08) | 7 in full (items 2, 5, 6, 13, 22, 42, 51 — 2 and 22 host-tested, 5/6/13 written without a Swift toolchain and then compiled and tested by the PR's iOS CI) |
 | Landed in wave 5 (2026-09-11, PR #1682, website #197) | row 21's Parametrize wave, in part — the device manifests own their cases' board knobs and a generator writes them into the CAD, the regeneration order is one command, the CAD ledger the website pins to carries the knobs; zero `.scad` bytes moved |
 | Landed in wave 6 (2026-09-19, PR #1686) | the open clauses of three landed rows — 1 (the add-on and sidecar wire the fleet roll-call file), 12's flasher half (the broker TLS controls in both flashers) and 35 (the SBOM schema gate and the sketch-pin assertion), then 12's other two halves (the canary client rides the shared broker transport with its own provisioning path; an opt-in `--with broker_tls` hub step), 17 (the coarse weather location entered on the glass), 21's leftovers (the C6 and the Touch 1.69 own their knobs; `cad.also` gives the doorbell an owner; the 7" frame stays open with its reason written) and the canary `release_ha` image joining PR CI |
-| Still open | 0 in full, 1 in part (21's Parametrize leftovers — see §4; 30's version spread was decided on 2026-09-22, its row below), plus one decision surfaced in wave 4's review: whether the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, 5 s in both firmwares) should widen to the ten-minute grid Invariant III names for wall-clock time; and two surfaced in wave 5 (§4): whether the optional render-plan package is wanted, and what to do about `canary-local/devices/registry.json`'s hand-typed `body_mm` |
+| Still open | 0 in full, 1 in part (21's Parametrize leftovers — see §4; 30's version spread was decided on 2026-09-22, its row below), plus two decisions surfaced in wave 5 (§4) — the one wave 4's review surfaced, whether the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`) should widen to the ten-minute grid Invariant III names for wall-clock time, was taken on 2026-09-22 (§1): whether the optional render-plan package is wanted, and what to do about `canary-local/devices/registry.json`'s hand-typed `body_mm` |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -169,19 +169,28 @@ Parametrize wave (row 21), plus the bench confirmations in §5 that no
 worktree can run; row 30's version-spread decision was taken on 2026-09-22
 (its row below, `firmware/PLATFORMS.md` for the record).
 
-One decision surfaced by the wave-4 review and deliberately not taken
-here: the witness chain binds `time_bucket = millis() / time_bucket_ms`
-with a 5 s floor (`TIME_BUCKET_MS` in canary-wap, `CONFIG_TIME_BUCKET_MS`
-and the canary product's `securacv_witness.cpp`), documented in six places
-as the privacy floor, while Invariant III names ten-minute buckets for
-wall-clock time. The bucket rides every witness surface because the hash
-binds it, so `/api/v1/witness` adds no exposure — but an authenticated
-reader can place records 5 s apart relative to boot. Widening the floor to
-600 000 ms is mechanical (the two constants, `configs/canary-wap/*/config.h`,
-`web_ui.h`'s "Minimum 5000 ms" copy, the two READMEs, `LESSONS_LEARNED`
-line "5-second buckets (minimum)", `test_config_logic.cpp`'s `FLOOR`) and
-changes nothing about verification, but it is a product decision about
-both firmwares' chains, not a review fix (`spec/witness_api_v1.md` §3).
+One decision surfaced by the wave-4 review was deliberately left open
+then and taken on 2026-09-22 (option B of three — keep 5 s and call it
+deliberate; floor = default = 600 000 ms; a 300 000 ms floor with a
+600 000 ms default — maintainer to confirm): the witness chain binds
+`time_bucket = millis() / time_bucket_ms`, and its floor was 5 s
+(`TIME_BUCKET_MS` in canary-wap, `CONFIG_TIME_BUCKET_MS` and the canary
+product's `securacv_witness.cpp`), documented in six places as the privacy
+floor, while Invariant III names ten-minute buckets for wall-clock time.
+The bucket rides every witness surface because the hash binds it, so
+`/api/v1/witness` added no exposure — but an authenticated reader could
+place records 5 s apart relative to boot. The floor is now 600 000 ms in
+both firmwares (the two constants; the canary tree's `BUCKET_10MIN_MS`
+derives from it under a `static_assert`, so the chain and every payload
+share one grid; `configs/canary-wap/*/config.h`; `web_ui.h`'s copy and
+its generated gzip; the two READMEs; `LESSONS_LEARNED`;
+`test_config_logic.cpp`'s `FLOOR`; the shared witness-page fixture and its
+C++ and Swift mirrors; `spec/witness_api_v1.md` §3 names one floor).
+Verification is unchanged — the width rides with each record — and the
+widen-only clamp raises a persisted NVS value at first boot; SD lines carry
+no width, so pre-upgrade lines read at 5 s relative to their boot. The
+Swift mirror was edited without a Swift toolchain and is compiled by the
+PR's iOS CI; on-device behavior is a bench item.
 
 ### Landed in wave 5
 

@@ -217,7 +217,7 @@ curl http://192.168.4.1/api/status
 - **Unique Device Identity:** Hardware RNG generates unique Ed25519 keypair
 - **Monotonic Sequences:** Sequence numbers persist across reboots
 - **Hash Chain:** Each record references the previous (tamper-evident)
-- **Time Coarsening:** 5-second buckets prevent precise tracking
+- **Time Coarsening:** ten-minute buckets prevent precise tracking
 - **Crypto Self-Test:** Signature verification at boot and periodically
 - **Domain Separation:** Hash chains use domain-separated hashing
 
