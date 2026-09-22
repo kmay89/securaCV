@@ -167,7 +167,11 @@ pub fn read_update_journal(app: AppHandle) -> Result<Vec<String>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("could not read the update journal: {e}")),
     };
-    let mut lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect();
+    let mut lines: Vec<String> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
     lines.reverse();
     lines.truncate(MAX_LINES);
     Ok(lines)
@@ -186,7 +190,10 @@ pub fn update_journal_path(app: AppHandle) -> Result<String, String> {
 /// The declined-version marker: `<version> <epoch-secs>`, in the app data
 /// dir next to the journal, so a "Later" survives a relaunch.
 fn declined_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("update-declined"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("update-declined"))
 }
 
 fn read_declined(app: &AppHandle) -> Option<(String, u64)> {
@@ -365,9 +372,7 @@ pub async fn routine_check(app: AppHandle) {
         // The user already said "later" to exactly this version, recently —
         // honor that across launches instead of nagging. A newer version, or
         // the snooze running out, asks again.
-        if declined == version
-            && epoch_secs().saturating_sub(at) < DECLINE_SNOOZE.as_secs()
-        {
+        if declined == version && epoch_secs().saturating_sub(at) < DECLINE_SNOOZE.as_secs() {
             return done(&app);
         }
     }

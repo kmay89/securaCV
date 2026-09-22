@@ -20,8 +20,11 @@ any platform.
   release build: the crate pulls `libudev-sys`, whose build script needs the
   `libudev-dev` system package, and the Lab's release workflow
   (`desktop-release.yml`) did not install it. Nothing on a PR would have
-  said so — `desktop-lab/src-tauri` has no PR-triggered CI; the first red
-  signal would have been the release run itself.
+  said so — `desktop-lab/src-tauri` had no PR-triggered CI; the first red
+  signal would have been the release run itself. (Closed 2026-09-22:
+  `desktop-lab-check.yml` now compiles, lints and tests the crate on every
+  PR that touches it or what it bundles, with the release workflow's own
+  apt block, so a crate that outgrows that block fails on the PR.)
 - **Cause:** each app's release workflow carries its own hand-listed
   Linux `apt-get install` block, and a crate's system-library needs live in
   the crate, not the workflow — so adding a dependency silently outgrows

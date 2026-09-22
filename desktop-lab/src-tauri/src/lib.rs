@@ -343,15 +343,31 @@ mod tests {
     #[test]
     fn local_hosts_pass_and_public_hosts_are_refused() {
         for h in [
-            "canary.local", "homeassistant.local", "hub.lan", "pi.home.arpa",
-            "canary-3f2a", "192.168.1.40", "10.0.0.5", "172.16.9.9",
-            "127.0.0.1", "169.254.10.10", "::1", "fe80::1", "fd00::abcd",
+            "canary.local",
+            "homeassistant.local",
+            "hub.lan",
+            "pi.home.arpa",
+            "canary-3f2a",
+            "192.168.1.40",
+            "10.0.0.5",
+            "172.16.9.9",
+            "127.0.0.1",
+            "169.254.10.10",
+            "::1",
+            "fe80::1",
+            "fd00::abcd",
         ] {
             assert!(host_is_local(h), "{h} should be local");
         }
         for h in [
-            "example.com", "github.com", "evil.local.example.com",
-            "8.8.8.8", "172.32.0.1", "2001:4860:4860::8888", "", ".local",
+            "example.com",
+            "github.com",
+            "evil.local.example.com",
+            "8.8.8.8",
+            "172.32.0.1",
+            "2001:4860:4860::8888",
+            "",
+            ".local",
         ] {
             assert!(!host_is_local(h), "{h} must be refused");
         }

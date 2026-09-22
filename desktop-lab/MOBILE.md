@@ -104,7 +104,11 @@ hides/redirects the pieces iOS won't allow.
 
 ## CI
 
-There is no CI workflow for this shell any more. `desktop-mobile-release.yml`
+There is no iOS CI build of this shell any more. (The crate itself is
+compiled on every PR since 2026-09-22 — `.github/workflows/desktop-lab-check.yml`
+runs `cargo check`/`clippy`/`test` on `desktop-lab/src-tauri` on a Linux
+runner, the desktop configuration; that proves the Rust, not an iOS bundle.)
+`desktop-mobile-release.yml`
 ("Mobile (iOS) build") ran `npm run ios:init && npm run ios:build` on a macOS
 runner behind the `ENABLE_IOS_BUILD` gate; it was dispatched once (2026-07-24,
 gated to a no-op) and never built anything, so it was retired on 2026-09-08
