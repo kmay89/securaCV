@@ -195,11 +195,18 @@
                 <button type="button" id="coldstart-hot" class="btn btn-ghost btn-small">It's already plugged in</button>
               </div>
               <p class="fineprint" id="coldstart-note"></p>
-              <p class="fineprint" id="coldstart-efuse">The browser flasher can also read
-                this chip's security fuses to tell you whether a previous owner locked
-                it. The <code>espflash</code> tool this app drives has no fuse-read
-                command, so that one check is browser-only for now — it isn't being
-                run and reported as clean here.</p>
+              <!-- Same check as the browser flasher's "customs" pass: eFuse
+                   block 0, read-only (the two ROM commands used cannot write
+                   anything). espflash has no fuse-read command, so the app
+                   speaks that sliver of the ROM protocol itself (efuse.rs).
+                   A probe that fails says "not checked" — never "clean". -->
+              <p class="fineprint" id="coldstart-efuse">This app can also read the
+                chip's security fuses — the one thing a previous owner can have
+                changed that no erase can undo (secure boot, flash encryption, a
+                disabled recovery path).
+                <button type="button" id="efuse-read" class="btn btn-ghost btn-small">Read its security fuses</button>
+              </p>
+              <div class="fineprint" id="efuse-result"></div>
             </details>
             <!-- Deliberately OUTSIDE the folded brief above: this checkbox is a
                  destructive choice (a full-chip wipe, re-armed for every board

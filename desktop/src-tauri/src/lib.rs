@@ -20,6 +20,7 @@
 //! output, relayed verbatim over the `flash:log` event.
 
 mod changemap;
+mod efuse;
 mod fleet;
 mod health;
 mod hub;
@@ -2275,6 +2276,7 @@ pub fn run() {
             saved_wifi_password,
             list_ports,
             detect_chip,
+            efuse::read_security_efuses,
             fetch_manifest,
             witness_discover,
             flash,

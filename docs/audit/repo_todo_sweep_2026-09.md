@@ -405,11 +405,27 @@ so — see D2 below.)
   since native fails closed silently on a malformed field. `MODEL_ADDR` and
   `DEV_FLASH_MANIFEST_URL` stay deliberate constants, still diffed by the
   test.
-- [ ] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
+- [x] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
   browser flasher has (espflash has no fuse-read; the parity test currently
   forces a "browser-only" disclosure). Needs an espflash upstream check or a
   raw-command implementation — investigate, then either implement or record
   why not beside the disclosure.
+  *Done — implemented natively.* Upstream check first: espflash v3.3.0 (the
+  pinned sidecar) and v4.3.0 (latest) were both downloaded and their command
+  lists enumerated — neither has a fuse-read or read-reg command. So
+  `desktop/src-tauri/src/efuse.rs` speaks the read-only sliver of the ROM
+  serial protocol itself (SLIP + SYNC + READ_REG, over the `serialport`
+  crate the WE2 flasher already uses — the flash engine stays
+  espflash-the-CLI): reset into the ROM (classic and USB-Serial/JTAG
+  sequences, verbatim from the vendored esptool-js), read the six block-0
+  words, hard-reset back. The decode is a port of `intake.js` — same fields,
+  bits, widths, three-state clean/touched/active, same user-facing copy —
+  and the desktop-parity test now pins the two tables against each other
+  (mutation-tested: a one-bit drift fails), plus the native `EFUSE_BASE`
+  pins against the vendored esptool-js bundle. A probe that can't reach the
+  ROM reports "not checked", never "clean". NOT bench-verified on hardware
+  (U1): the protocol and reset sequences are host-tested against the
+  vendored implementation, not proven on a board.
 - [ ] **A13 [human-gated by U3/certs] macOS signing/notarization** — both Mac
   apps ship unsigned until `ENABLE_MACOS_SIGNING` + certs exist
   (`desktop-lab/README.md`, `desktop/INSTALL.md`).

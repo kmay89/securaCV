@@ -763,6 +763,8 @@ async function boot() {
   $("diag-report-btn").addEventListener("click", () => copyDiagnosticReport());
   // The cold-start question (parity: the browser's cold-start card asks it too).
   wireColdStartAnswer();
+  // The security-fuse read (parity: the browser's customs pass reads eFuses too).
+  wireEfuseRead();
   // Per-setting help dots from the embedded catalog's settings_help registry
   // (parity: the browser's teaching layer). Attached where a desktop control
   // matches a registry topic; a catalog without the registry degrades to none.
@@ -2422,6 +2424,57 @@ function wireColdStartAnswer() {
   };
   held.addEventListener("click", () => mark(true));
   hot.addEventListener("click", () => mark(false));
+}
+
+// The security-fuse read — the same "customs" eFuse check the browser flasher
+// runs, natively (efuse.rs: read-only ROM protocol, SYNC + READ_REG and
+// nothing else). Every failure renders as "not checked": a check that didn't
+// run must never read as a check that passed.
+function wireEfuseRead() {
+  const btn = $("efuse-read");
+  const out = $("efuse-result");
+  if (!btn || !out) return;
+  btn.addEventListener("click", async () => {
+    if (!state.port || !state.chip || state.portKind !== "esp32") {
+      out.textContent = "Fuses not checked — connect an ESP32-family board first.";
+      return;
+    }
+    if (state.busy) {
+      out.textContent = "Fuses not checked — another operation owns the port right now.";
+      return;
+    }
+    btn.disabled = true;
+    out.textContent = "Reading eFuse block 0… (read-only — nothing is ever burned)";
+    try {
+      const scan = await invoke("read_security_efuses", { port: state.port, chip: state.chip });
+      renderEfuseScan(out, scan);
+    } catch (e) {
+      // Honest failure: the probe resets the board to talk to its ROM, so a
+      // flaky cable or a port squatter shows up here, not as a clean bill.
+      out.textContent = `Fuses NOT checked — ${e}`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function renderEfuseScan(out, scan) {
+  if (!scan || !scan.supported) {
+    out.textContent = `No verified fuse table for ${scan && scan.chip ? scan.chip : "this chip"} — ` +
+      "not checked. (Same answer the browser flasher gives: it refuses to guess bit offsets.)";
+    return;
+  }
+  if (scan.virgin) {
+    out.textContent = "Clean — every security fuse still reads factory-zero. " +
+      "No previous owner burned secure boot, flash encryption, or the recovery path.";
+    return;
+  }
+  const rows = (scan.burned || []).map((f) => {
+    const badge = f.severity === "stop" ? "⛔" : "⚠️";
+    return `<div>${badge} <strong>${esc(f.label)}</strong>` +
+      `${f.state === "touched" ? " (burned and undone)" : ""} — ${esc(f.meaning || "")}</div>`;
+  });
+  out.innerHTML = rows.join("");
 }
 
 // ── read the passport, then say who this board is ────────────────────────────
