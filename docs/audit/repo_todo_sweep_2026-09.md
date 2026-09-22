@@ -405,7 +405,7 @@ so — see D2 below.)
   since native fails closed silently on a malformed field. `MODEL_ADDR` and
   `DEV_FLASH_MANIFEST_URL` stay deliberate constants, still diffed by the
   test.
-- [x] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
+- [x] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** (#1702) the
   browser flasher has (espflash has no fuse-read; the parity test currently
   forces a "browser-only" disclosure). Needs an espflash upstream check or a
   raw-command implementation — investigate, then either implement or record
