@@ -227,7 +227,7 @@ def test_tamper_type_health_handler_survives_boolean_tamper_field() -> None:
     AttributeError this handler (bool has no .get)."""
     inst = _entity(
         bs_platform.SecuraCVCanaryTamperTypeSensor,
-        TAMPER_MOTION, "Unexpected Motion", "mdi:motion-sensor",
+        TAMPER_MOTION, "mdi:motion-sensor",
     )
     inst._handle_health_message(_msg('{"tamper": true}'))
     assert inst._attr_is_on is False  # a bare boolean names no specific type
@@ -242,7 +242,7 @@ def test_tamper_type_health_handler_survives_boolean_tamper_field() -> None:
 def test_tamper_type_health_handler_still_reads_flat_fields() -> None:
     inst = _entity(
         bs_platform.SecuraCVCanaryTamperTypeSensor,
-        TAMPER_SD_REMOVE, "SD Removed", "mdi:sd-off",
+        TAMPER_SD_REMOVE, "mdi:sd-off",
     )
     inst._handle_health_message(_msg('{"sd_mounted": false}'))
     assert inst._attr_is_on is True
@@ -263,7 +263,7 @@ def test_general_tamper_handlers_survive_non_objects() -> None:
 def test_transport_handler_survives_non_objects() -> None:
     inst = _entity(
         bs_platform.SecuraCVCanaryTransportSensor,
-        "wifi_sta", "WiFi Station", "mdi:wifi",
+        "wifi_sta", "mdi:wifi",
     )
     for payload in NON_OBJECT_JSON + JUNK + [OVERSIZE]:
         inst._handle_message(_msg(payload))

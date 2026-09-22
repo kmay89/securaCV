@@ -422,7 +422,11 @@ async def _setup_mqtt_sensors(
 class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
     """Sensor for latest event from the Privacy Witness Kernel (HTTP API)."""
 
-    _attr_name = "SecuraCV Last Event"
+    # Entity names are looked up in translations/<lang>.json by translation
+    # key (strings.json is the source copy); no entity here sets _attr_name,
+    # which would bypass the translation. tests/test_entity_translations.py
+    # holds every key to a strings.json entry and pins the rendered names.
+    _attr_translation_key = "kernel_last_event"
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
@@ -492,11 +496,12 @@ class SecuraCVKernelStorageSensorBase(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator, entry: ConfigEntry, name: str, key: str) -> None:
-        """Initialize the sensor."""
+    def __init__(self, coordinator, entry: ConfigEntry, key: str) -> None:
+        """Initialize the sensor; `key` is both the unique_id suffix and the
+        translation key (strings.json entity.sensor.<key>.name)."""
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_name = name
+        self._attr_translation_key = key
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{key}"
 
     @property
@@ -527,7 +532,7 @@ class SecuraCVKernelStorageHealthSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Health", "storage_health")
+        super().__init__(coordinator, entry, "storage_health")
 
     @property
     def native_value(self) -> str | None:
@@ -556,7 +561,7 @@ class SecuraCVKernelStorageFreeSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Free", "storage_free_pct")
+        super().__init__(coordinator, entry, "storage_free_pct")
 
     @property
     def native_value(self) -> float | None:
@@ -580,7 +585,7 @@ class SecuraCVKernelStorageWearSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Wear Estimate", "storage_wear_pct")
+        super().__init__(coordinator, entry, "storage_wear_pct")
 
     @property
     def native_value(self) -> float | None:
@@ -613,7 +618,7 @@ class SecuraCVKernelStorageWriteRateSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "Storage Write Rate", "storage_write_rate")
+        super().__init__(coordinator, entry, "storage_write_rate")
 
     @property
     def native_value(self) -> float | None:
@@ -633,7 +638,7 @@ class SecuraCVKernelTemperatureSensor(SecuraCVKernelStorageSensorBase):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "SoC Temperature", "soc_temperature")
+        super().__init__(coordinator, entry, "soc_temperature")
 
     @property
     def native_value(self) -> float | None:
@@ -665,7 +670,7 @@ class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
     (and totals) is exposed as attributes. Operational counts only — no event content.
     """
 
-    _attr_name = "SecuraCV Adapter Host"
+    _attr_translation_key = "adapter_stats"
     _attr_icon = "mdi:hub"
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -738,15 +743,15 @@ class SecuraCVCanarySensorBase(SensorEntity):
         prefix: str,
         device_id: str,
         entry: ConfigEntry,
-        name_suffix: str,
         key: str,
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the sensor; `key` is both the unique_id suffix and the
+        translation key (strings.json entity.sensor.<key>.name)."""
         self._prefix = prefix
         self._device_id = device_id
         self._entry = entry
         self._attr_unique_id = f"{DOMAIN}_canary_{device_id}_{key}"
-        self._attr_name = name_suffix
+        self._attr_translation_key = key
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -768,7 +773,7 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Witness Count", "witness_count")
+        super().__init__(prefix, device_id, entry, "witness_count")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -810,7 +815,7 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Chain Length", "chain_length")
+        super().__init__(prefix, device_id, entry, "chain_length")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -855,7 +860,7 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Last Event", "last_event")
+        super().__init__(prefix, device_id, entry, "last_event")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -953,7 +958,7 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Health", "health_status")
+        super().__init__(prefix, device_id, entry, "health_status")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -1040,7 +1045,7 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "SD Wear Estimate", "sd_wear")
+        super().__init__(prefix, device_id, entry, "sd_wear")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -1085,7 +1090,7 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "GPS Fix", "gps_fix")
+        super().__init__(prefix, device_id, entry, "gps_fix")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -1160,7 +1165,7 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(prefix, device_id, entry, "Radar Link", "radar_link")
+        super().__init__(prefix, device_id, entry, "radar_link")
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""

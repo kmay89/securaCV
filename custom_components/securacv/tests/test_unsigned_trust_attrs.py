@@ -102,7 +102,7 @@ def test_general_tamper_sensor_stamps_both_handlers_and_keeps_detail() -> None:
 def test_per_type_tamper_sensor_stamps_both_handlers() -> None:
     power = _entity(
         bs_platform.SecuraCVCanaryTamperTypeSensor,
-        TAMPER_POWER_LOSS, "Power Loss", "mdi:power-plug-off",
+        TAMPER_POWER_LOSS, "mdi:power-plug-off",
         hass=_store_hass(pinned=False),
     )
     power._handle_tamper_message(_msg('{"type": "power_loss", "severity": "tamper"}'))
@@ -112,7 +112,7 @@ def test_per_type_tamper_sensor_stamps_both_handlers() -> None:
 
     sd = _entity(
         bs_platform.SecuraCVCanaryTamperTypeSensor,
-        TAMPER_SD_REMOVE, "SD Removed", "mdi:sd-off",
+        TAMPER_SD_REMOVE, "mdi:sd-off",
         hass=_store_hass(pinned=True),
     )
     sd._handle_health_message(_msg('{"sd_mounted": false}'))
@@ -124,7 +124,7 @@ def test_per_type_tamper_sensor_stamps_both_handlers() -> None:
 def test_transport_sensor_stamps_dict_and_bool_shapes() -> None:
     inst = _entity(
         bs_platform.SecuraCVCanaryTransportSensor,
-        TRANSPORT_WIFI_STA, "WiFi Station", "mdi:wifi",
+        TRANSPORT_WIFI_STA, "mdi:wifi",
         hass=_store_hass(pinned=True),
     )
     inst._handle_message(_msg('{"wifi_sta": {"connected": true, "rssi": -60}}'))
