@@ -245,11 +245,14 @@ one-header change instead of a per-board copy-paste.
     the Wall reaches it once the owner enables that port and types
     `http://<home-assistant-host>:8799` — with the port, because the Wall
     adds only `http://` to a bare host (`FleetAddress.normalize`) and would
-    otherwise poll port 80. The sidecar, not yet: its API binds
-    `127.0.0.1:8799` inside the container and there is no setting for it,
-    so no published port mapping reaches it (`docs/frigate_integration.md`
-    says so; a Wall-reachable sidecar is a bind and port decision not yet
-    made).
+    otherwise poll port 80. The sidecar ships loopback and opts in the same
+    way: `SECURACV_API_BIND=all` binds `0.0.0.0:8799` inside the container
+    (and exports the kernel's cleartext acknowledgment with it — the two
+    flip together, or the kernel refuses to start), the owner adds the
+    `ports: - "8799:8799"` mapping the image deliberately does not `EXPOSE`,
+    and types `http://<docker-host-ip>:8799` — with the port, for the same
+    reason. Both compose quickstarts carry the two lines as comments and
+    `docs/frigate_integration.md` walks through them.
   - `name` is the owner's name from the retained `meta` topic, else the
     device id (exactly what a Canary calls itself in its own self-report);
     `product` is the announced `device_type`. No firmware in this repo

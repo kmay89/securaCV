@@ -137,11 +137,36 @@ one file, `/data/fleet_peers.json`, so `GET /api/fleet` lists the Canaries
 the bridge hears on the same broker (only while `SECURACV_PUBLISH` is
 `true`, the default; the file holds each Canary's first-seen public key and
 per-room wellbeing words, is written `0600`, and rides in the `/data` volume
-you already back up). That API binds loopback inside the container and the
-image exposes no port, so today the roll-call is reachable from the
-container itself (`docker compose exec securacv curl -s
-http://127.0.0.1:8799/api/fleet`), not from an Apple TV; a Wall-reachable
-sidecar is a bind and port decision that has not been made here.
+you already back up). That API binds loopback inside the container by
+default and the image exposes no port, so out of the box the roll-call is
+reachable from the container itself (`docker compose exec securacv curl -s
+http://127.0.0.1:8799/api/fleet`), not from an Apple TV.
+
+To put the Witness Wall on it, opt in to the LAN bind — two lines, both
+already in the quickstart compose files as comments:
+
+```yaml
+    environment:
+      SECURACV_API_BIND: "all"    # the API binds 0.0.0.0:8799 inside the container
+    ports:
+      - "8799:8799"               # and you publish it; the image EXPOSEs nothing
+```
+
+Then `docker compose up -d --force-recreate` and type
+`http://<docker-host-ip>:8799` into the Wall — with the port, because the
+Wall adds only `http://` to a bare host and its own search looks at
+`canary.local`, not at a Docker host. `docker compose run --rm securacv
+doctor` prints the bind mode and that address. What `all` changes, and
+what it does not: the entrypoint flips the bind and the kernel's cleartext
+acknowledgment (`WITNESS_API_ALLOW_INSECURE=1`) together, since the kernel
+refuses a non-loopback bind without it, and logs one notice at startup.
+`GET /api/fleet` (names, online state, coarse per-room wellbeing words; no
+keys, no events) then reads without a token to anything on your LAN that
+can reach the published port — the same trade the Home Assistant add-on
+makes when its host port is enabled. Every other endpoint still demands
+the rotating capability token, exactly as on loopback. Any value other
+than `loopback` or `all` refuses to start, so a typo never silently means
+loopback.
 
 Verify the sealed log from the host at any time:
 

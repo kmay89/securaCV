@@ -86,6 +86,34 @@ heredoc_body() {
     ' "$1"
 }
 
+# shell_function FILE NAME — the source of the top-level `NAME() {` ... `}`
+# function in FILE, so a test can run the script's own mapping instead of
+# re-deriving it (the heredoc test above proves the render; this proves
+# what feeds it).
+shell_function() {
+    awk -v name="$2" '
+        $0 == name "() {" { grab = 1 }
+        grab { print }
+        grab && /^}$/ { grab = 0; done = 1 }
+        END { if (!done) exit 1 }
+    ' "$1"
+}
+
+# run_function FUNC_FILE NAME VAR=VALUE... — call a lifted function in an
+# emptied environment (as `render` does) with a `die` stub that exits 1,
+# and print the bind variables it set: "<API_ADDR> <WITNESS_API_ALLOW_INSECURE|unset>".
+run_function() {
+    local func="$1" name="$2"
+    shift 2
+    {
+        printf 'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+        cat "$func"
+        printf '%s\n' "$name"
+        printf 'printf "%%s %%s\\n" "$API_ADDR" "${WITNESS_API_ALLOW_INSECURE:-unset}"\n'
+    } > "$TMP/run_function.sh"
+    env -i PATH="$PATH" "$@" bash -u "$TMP/run_function.sh"
+}
+
 # render BODY_FILE OUT_FILE VAR=VALUE... — expand a lifted heredoc the way
 # bash does inside the script. The environment is emptied first so only the
 # variables named here exist, and `set -u` turns any other reference in the
@@ -261,13 +289,65 @@ assert_eq 0 "$(count_needle "$ENTRYPOINT_SH" '"fleet_peers_path"')" \
 assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" '--fleet-peers-path "$FLEET_PEERS_FILE"')" \
     "entrypoint.sh: pub_args names the flag once, from the same variable"
 
+# ---- the bind switch: SECURACV_API_BIND → API_ADDR + the cleartext opt-in --
+# The kernel refuses a non-loopback bind without WITNESS_API_ALLOW_INSECURE=1
+# (src/api/mod.rs), so the entrypoint must flip the address and the export
+# together, in one function, and export nothing in loopback mode. The
+# function is lifted from the script and run under each mode; the heredoc
+# below is then rendered with the address each mode produced.
+SIDECAR_ADDR_LOOPBACK=""
+SIDECAR_ADDR_ALL=""
+if shell_function "$ENTRYPOINT_SH" configure_api_bind > "$TMP/configure_api_bind.sh"; then
+    ok "entrypoint.sh: configure_api_bind is a top-level function (liftable, so this test runs the real mapping)"
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" 'export WITNESS_API_ALLOW_INSECURE=1')" \
+        "entrypoint.sh: the cleartext acknowledgment is exported in exactly one place"
+    assert_eq 1 "$(count_needle "$TMP/configure_api_bind.sh" 'export WITNESS_API_ALLOW_INSECURE=1')" \
+        "entrypoint.sh: that place is inside configure_api_bind, beside the address it acknowledges"
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" '"addr": "$API_ADDR"')" \
+        "entrypoint.sh: the kernel config block reads the address from API_ADDR"
+    assert_eq 0 "$(count_needle "$ENTRYPOINT_SH" '"addr": "127.0.0.1:8799"')" \
+        "entrypoint.sh: no block hard-codes the loopback address any more"
+
+    # unset → loopback, nothing exported (the default posture, unchanged)
+    if out=$(run_function "$TMP/configure_api_bind.sh" configure_api_bind); then
+        assert_eq "127.0.0.1:8799 unset" "$out" \
+            "entrypoint.sh: SECURACV_API_BIND unset → 127.0.0.1:8799, WITNESS_API_ALLOW_INSECURE not exported"
+        SIDECAR_ADDR_LOOPBACK="${out%% *}"
+    else
+        fail "entrypoint.sh: configure_api_bind failed with SECURACV_API_BIND unset"
+    fi
+    # loopback spelled out → the same
+    if out=$(run_function "$TMP/configure_api_bind.sh" configure_api_bind SECURACV_API_BIND=loopback); then
+        assert_eq "127.0.0.1:8799 unset" "$out" \
+            "entrypoint.sh: SECURACV_API_BIND=loopback → 127.0.0.1:8799, nothing exported"
+    else
+        fail "entrypoint.sh: configure_api_bind failed with SECURACV_API_BIND=loopback"
+    fi
+    # all → every interface AND the acknowledgment, together
+    if out=$(run_function "$TMP/configure_api_bind.sh" configure_api_bind SECURACV_API_BIND=all); then
+        assert_eq "0.0.0.0:8799 1" "$out" \
+            "entrypoint.sh: SECURACV_API_BIND=all → 0.0.0.0:8799 AND WITNESS_API_ALLOW_INSECURE=1 exported"
+        SIDECAR_ADDR_ALL="${out%% *}"
+    else
+        fail "entrypoint.sh: configure_api_bind failed with SECURACV_API_BIND=all"
+    fi
+    # anything else → refused, so a typo never silently means loopback
+    if run_function "$TMP/configure_api_bind.sh" configure_api_bind SECURACV_API_BIND=0.0.0.0 > "$TMP/bogus.out" 2>&1; then
+        fail "entrypoint.sh: SECURACV_API_BIND=0.0.0.0 (not a mode) was accepted: $(cat "$TMP/bogus.out")"
+    else
+        ok "entrypoint.sh: SECURACV_API_BIND=0.0.0.0 (an address, not a mode) is refused"
+    fi
+else
+    fail "entrypoint.sh: could not lift configure_api_bind (the bind switch must be a top-level function)"
+fi
+
 if heredoc_body "$ENTRYPOINT_SH" 1 > "$TMP/sidecar.body"; then
     render "$TMP/sidecar.body" "$TMP/sidecar_off.json" \
-        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token \
+        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_LOOPBACK:-127.0.0.1:8799}" \
         fleet_peers_api= retention_secs=604800
     assert_off_block "$TMP/sidecar_off.json" "entrypoint.sh block" "${WITNESS_API_TOP_KEYS[@]}"
     render "$TMP/sidecar.body" "$TMP/sidecar.json" \
-        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token \
+        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_LOOPBACK:-127.0.0.1:8799}" \
         fleet_peers_api=", \"fleet_peers_path\": \"/data/fleet_peers.json\"" retention_secs=604800
     if jq -e . "$TMP/sidecar.json" > /dev/null 2>&1; then
         ok "entrypoint.sh block: renders as JSON"
@@ -278,9 +358,23 @@ if heredoc_body "$ENTRYPOINT_SH" 1 > "$TMP/sidecar.body"; then
         assert_eq "/data/fleet_peers.json" "$(jq -r '.api.fleet_peers_path' "$TMP/sidecar.json")" \
             "entrypoint.sh block: api.fleet_peers_path renders under /data"
         assert_eq "127.0.0.1:8799" "$(jq -r '.api.addr' "$TMP/sidecar.json")" \
-            "entrypoint.sh block: the API still binds loopback (a Wall-reachable sidecar is a separate decision)"
+            "entrypoint.sh block (SECURACV_API_BIND unset): the API binds loopback — the default is unchanged"
     else
         fail "entrypoint.sh block: rendered text is not JSON: $(cat "$TMP/sidecar.json")"
+    fi
+    # The same block in `all` mode: only the address moves.
+    render "$TMP/sidecar.body" "$TMP/sidecar_all.json" \
+        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_ALL:-0.0.0.0:8799}" \
+        fleet_peers_api=", \"fleet_peers_path\": \"/data/fleet_peers.json\"" retention_secs=604800
+    if jq -e . "$TMP/sidecar_all.json" > /dev/null 2>&1; then
+        assert_keys_accepted "$TMP/sidecar_all.json" '.api' \
+            'entrypoint.sh block (SECURACV_API_BIND=all, ApiConfigFile)' "${API_KEYS[@]}"
+        assert_eq "0.0.0.0:8799" "$(jq -r '.api.addr' "$TMP/sidecar_all.json")" \
+            "entrypoint.sh block (SECURACV_API_BIND=all): the API binds every interface on the same port"
+        assert_eq "true" "$(jq -rs '(.[0] | del(.api.addr)) == (.[1] | del(.api.addr))' "$TMP/sidecar.json" "$TMP/sidecar_all.json")" \
+            "entrypoint.sh block (SECURACV_API_BIND=all): nothing but api.addr differs from loopback mode"
+    else
+        fail "entrypoint.sh block (SECURACV_API_BIND=all): rendered text is not JSON: $(cat "$TMP/sidecar_all.json")"
     fi
 else
     fail "entrypoint.sh: could not find the kernel config heredoc"

@@ -11,7 +11,12 @@
 #   5. GET /api/fleet answers with the kernel's own row: the config named
 #      api.fleet_peers_path and the kernel accepted it (deny_unknown_fields),
 #      and a summary the bridge has not written yet is an empty peer list,
-#      never an error.
+#      never an error;
+#   6. SECURACV_API_BIND=all reaches the LAN: a second sidecar in that mode
+#      with 8799 published on the runner's loopback serves /api/fleet to a
+#      curl OUTSIDE the container (the Witness Wall's path), and /events
+#      without a token still answers 401 there (the bind never relaxed
+#      authentication).
 #
 # Usage (repo root): docker/sidecar/ci_e2e.sh [image-tag]
 set -euo pipefail
@@ -20,9 +25,14 @@ IMG="${1:-securacv-sidecar:ci}"
 NET="securacv-ci-$$"
 BROKER="securacv-ci-mosquitto-$$"
 SIDECAR="securacv-ci-sidecar-$$"
+SIDECAR_LAN="securacv-ci-sidecar-lan-$$"
+# The runner-side port for the LAN-mode container: loopback-only so the
+# check never opens a runner port to its network, and off 8799 so nothing
+# else on the runner can collide with it.
+LAN_PORT=18799
 
 cleanup() {
-    docker rm -f "$SIDECAR" "$BROKER" >/dev/null 2>&1 || true
+    docker rm -f "$SIDECAR_LAN" "$SIDECAR" "$BROKER" >/dev/null 2>&1 || true
     docker network rm "$NET" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -118,6 +128,64 @@ case "$fleet_doc" in
         exit 1 ;;
 esac
 
+echo "==> Starting a second sidecar with SECURACV_API_BIND=all (8799 published on the runner's loopback)"
+# Its own /data (a fresh anonymous volume): the LAN-mode container must not
+# share the first one's database, key or token file. Publishing disabled so
+# it does not race the first container's HA Discovery topics on the broker.
+docker run -d --name "$SIDECAR_LAN" --network "$NET" \
+    -e FRIGATE_MQTT_HOST="$BROKER" -e SECURACV_API_BIND=all -e SECURACV_PUBLISH=false \
+    -p "127.0.0.1:${LAN_PORT}:8799" "$IMG" >/dev/null
+
+echo "==> Waiting for the LAN-mode API to answer from OUTSIDE the container"
+lan_up=0
+for _ in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${LAN_PORT}/health" >/dev/null 2>&1; then
+        lan_up=1
+        break
+    fi
+    if ! docker ps -q --no-trunc | grep -q "$(docker inspect -f '{{.Id}}' "$SIDECAR_LAN")"; then
+        break
+    fi
+    sleep 1
+done
+if [ "$lan_up" -ne 1 ]; then
+    echo "❌ SECURACV_API_BIND=all sidecar never answered /health on the published port" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+if docker logs "$SIDECAR_LAN" 2>&1 | grep -q "SECURACV_API_BIND=all: witness_api binds 0.0.0.0:8799"; then
+    echo "✓ the entrypoint announced the LAN bind once, with the exposure notice"
+else
+    echo "❌ no SECURACV_API_BIND=all startup notice in the LAN-mode sidecar's log" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+
+echo "==> Checking GET /api/fleet is readable from the runner (the Witness Wall's path)"
+lan_fleet=$(curl -fsS "http://127.0.0.1:${LAN_PORT}/api/fleet" || true)
+case "$lan_fleet" in
+    *'"witness-kernel"'*)
+        echo "✓ /api/fleet serves the kernel's row across the published port" ;;
+    *)
+        echo "❌ /api/fleet did not answer across the published port: ${lan_fleet:-<no response>}" >&2
+        docker logs "$SIDECAR_LAN" >&2 || true
+        exit 1 ;;
+esac
+
+echo "==> Checking /events without a token is still refused across the published port"
+# The bind widened, the authentication did not: every data endpoint keeps
+# demanding the rotating capability token. 401 is the kernel's answer to a
+# missing bearer; anything else means `all` mode relaxed more than the bind.
+lan_events_status=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${LAN_PORT}/events" || true)
+if [ "$lan_events_status" = "401" ]; then
+    echo "✓ /events answers 401 without a token in SECURACV_API_BIND=all mode"
+else
+    echo "❌ /events answered HTTP ${lan_events_status:-<none>} without a token (expected 401)" >&2
+    docker logs "$SIDECAR_LAN" >&2 || true
+    exit 1
+fi
+docker rm -f "$SIDECAR_LAN" >/dev/null 2>&1 || true
+
 echo "==> Checking the HA Discovery config topic is retained"
 # Generous window: the publisher polls the event API every 30s.
 if docker run --rm --network "$NET" eclipse-mosquitto:2 \
@@ -145,4 +213,4 @@ else
     exit 1
 fi
 
-echo "✅ sidecar e2e passed: zero-config start, ingest, verify, fleet roll-call, discovery, button"
+echo "✅ sidecar e2e passed: zero-config start, ingest, verify, fleet roll-call, LAN bind opt-in, discovery, button"
