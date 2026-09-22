@@ -59,7 +59,60 @@ use tauri_plugin_updater::UpdaterExt;
 // Canary and enforce the chip guard with zero network. build.rs copies the ONE
 // canonical `canary-local/devices/flash.json` into OUT_DIR on every build, so
 // this embed can never drift from the website/firmware source of truth.
-const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
+pub(crate) const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
+
+/// The catalog's chip spellings, derived ONCE from the embedded catalog's
+/// `chips` keys instead of a hardcoded copy of them (the desktop-parity test
+/// used to diff the copy against the catalog; deriving removes the copy).
+/// Each canonical spelling ("ESP32-S3") yields its folded token ("esp32s3");
+/// canonical_chip() looks tokens up here by exact match, so the catalog's
+/// exact spelling wins for chips it ships, and falls back to spelling the
+/// token itself for ESP32-family chips it doesn't. A corrupt catalog yields
+/// an empty table; detection still names chips (rescue is
+/// catalog-independent), while every catalog flash path stays behind its own
+/// catalog parse.
+fn chip_table() -> &'static [(String, String)] {
+    static TABLE: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let Ok(catalog) = serde_json::from_str::<Value>(EMBEDDED_CATALOG) else {
+            return Vec::new();
+        };
+        let mut table: Vec<(String, String)> = catalog
+            .get("chips")
+            .and_then(Value::as_object)
+            .map(|chips| {
+                chips
+                    .keys()
+                    .map(|canon| {
+                        let needle = canon.to_lowercase().replace(['-', ' ', '_'], "");
+                        (needle, canon.clone())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        table.sort(); // deterministic order; lookup is by exact token
+        table
+    })
+}
+
+/// The one origin this app downloads release assets from, derived from the
+/// catalog's own pinned manifest_url (everything up to and including
+/// `/releases/download/`) — a repo move edits flash.json and every guard
+/// follows, instead of a literal in each flash path. None (fail closed:
+/// nothing downloads) if the catalog is corrupt or its manifest_url is not
+/// a releases/download URL — states the browser Lab cannot reach either.
+fn release_origin() -> Option<&'static str> {
+    static ORIGIN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ORIGIN
+        .get_or_init(|| {
+            let catalog = serde_json::from_str::<Value>(EMBEDDED_CATALOG).ok()?;
+            let url = catalog.get("manifest_url")?.as_str()?;
+            let marker = "/releases/download/";
+            let end = url.find(marker)? + marker.len();
+            Some(url[..end].to_string())
+        })
+        .as_deref()
+}
 
 // The Hatchery naming spec — the same canary-local/devices/hatch.json the
 // website ships — embedded so the flasher's birth certificate names a Canary
@@ -380,25 +433,49 @@ fn list_ports() -> Result<Vec<PortDto>, String> {
     Ok(out)
 }
 
-/// Normalize whatever `espflash board-info` calls the chip into the catalog's
-/// canonical spelling ("ESP32-S3", "ESP32-C3", …). Order matters: the variant
-/// chips must be matched before bare "esp32".
-fn canonical_chip(raw: &str) -> Option<&'static str> {
+/// Normalize whatever `espflash board-info` calls the chip into a canonical
+/// spelling ("ESP32-S3", "ESP32-C3", …). The chip token is extracted from the
+/// output ("esp32" plus an optional variant suffix — one letter, then digits:
+/// s3, c6, p4 — preferring an occurrence that names a variant, so a bare
+/// "esp32" elsewhere in the output can't hide one). A token the catalog ships
+/// gets the catalog's spelling (chip_table); an ESP32-family variant the
+/// catalog does NOT ship still gets its real name (ESP32-S2, ESP32-H2), never
+/// bare "ESP32" and never None — the catalog is a product list, not a
+/// detection whitelist: espflash already talked to the chip, and the
+/// catalog-independent rescue/local-file operations need it identified, while
+/// the catalog flash paths refuse the (now truthful) chip mismatch. Only
+/// output naming no ESP32-family chip at all answers None.
+fn canonical_chip(raw: &str) -> Option<String> {
     let s = raw.to_lowercase().replace(['-', ' ', '_'], "");
-    for (needle, canon) in [
-        ("esp32s3", "ESP32-S3"),
-        ("esp32c3", "ESP32-C3"),
-        ("esp32c6", "ESP32-C6"),
-        ("esp32c2", "ESP32-C2"),
-        ("esp32s2", "ESP32-S2"),
-        ("esp32h2", "ESP32-H2"),
-        ("esp32", "ESP32"),
-    ] {
-        if s.contains(needle) {
-            return Some(canon);
+    let mut token: Option<&str> = None;
+    let mut at = 0;
+    while let Some(i) = s[at..].find("esp32") {
+        let start = at + i;
+        let rest = s[start + 5..].as_bytes();
+        let mut suffix_len = 0;
+        if rest.first().is_some_and(u8::is_ascii_lowercase) {
+            let digits = rest[1..].iter().take_while(|b| b.is_ascii_digit()).count();
+            if digits > 0 {
+                suffix_len = 1 + digits;
+            }
         }
+        if suffix_len > 0 {
+            token = Some(&s[start..start + 5 + suffix_len]);
+            break;
+        }
+        token.get_or_insert("esp32");
+        at = start + 5;
     }
-    None
+    let token = token?;
+    if let Some((_, canon)) = chip_table().iter().find(|(needle, _)| needle == token) {
+        return Some(canon.clone());
+    }
+    let suffix = &token[5..];
+    Some(if suffix.is_empty() {
+        "ESP32".to_string()
+    } else {
+        format!("ESP32-{}", suffix.to_uppercase())
+    })
 }
 
 /// Run the sidecar to completion, collecting stdout+stderr. Used for the short
@@ -478,7 +555,7 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
                 json!({ "level": f.level, "label": f.label, "detail": f.detail })
             });
             Ok(ChipInfo {
-                chip: chip.to_string(),
+                chip,
                 flash_bytes: rescue::parse_flash_size(&out),
                 mac,
                 mac_check,
@@ -692,7 +769,7 @@ async fn flash(
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{product_id} has no factory image in the release"))?
         .to_string();
-    if !factory_url.starts_with("https://github.com/kmay89/securaCV/releases/download/") {
+    if !release_origin().is_some_and(|origin| factory_url.starts_with(origin)) {
         return Err(
             "release image URL is outside the bundled SecuraCV GitHub release origin".into(),
         );
@@ -1273,7 +1350,7 @@ async fn flash_vision_module(
         .get("url")
         .and_then(Value::as_str)
         .ok_or_else(|| "Vision model manifest has no download URL".to_string())?;
-    if !model_url.starts_with("https://github.com/kmay89/securaCV/releases/download/") {
+    if !release_origin().is_some_and(|origin| model_url.starts_with(origin)) {
         return Err(
             "Vision model URL is outside the bundled SecuraCV GitHub release origin".into(),
         );
@@ -2295,6 +2372,73 @@ mod local_image_tests {
         factory[PARTITION_TABLE_OFFSET] = 0xAA;
         factory[PARTITION_TABLE_OFFSET + 1] = 0x50;
         assert!(check_local_image(&factory).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod catalog_derivation_tests {
+    use super::{canonical_chip, chip_table, release_origin, EMBEDDED_CATALOG};
+    use serde_json::Value;
+
+    // These used to be hardcoded copies of catalog facts, diffed against the
+    // catalog by canary-local/tests/desktop_parity.test.js. Now they derive;
+    // the tests pin the derivation against the embedded catalog itself, so a
+    // regression back to a literal (or a broken parse) fails here first.
+
+    #[test]
+    fn chips_derive_from_the_catalog_and_variants_win() {
+        let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
+        let chips = catalog["chips"].as_object().expect("catalog has chips");
+        // Every catalog chip canonicalizes to itself, from espflash-ish
+        // spellings too.
+        for canon in chips.keys() {
+            assert_eq!(canonical_chip(canon).as_deref(), Some(canon.as_str()));
+            let sloppy = canon.to_lowercase().replace('-', "_");
+            assert_eq!(canonical_chip(&format!("Chip type: {sloppy} (rev 0)")).as_deref(),
+                       Some(canon.as_str()), "espflash-style spelling of {canon}");
+        }
+        // A variant token must never fold to bare ESP32.
+        assert_eq!(canonical_chip("esp32-s3").as_deref(), Some("ESP32-S3"));
+        // The table carries exactly the catalog's chips — no leftovers of
+        // the old hardcoded list.
+        assert_eq!(chip_table().len(), chips.len());
+        // An ESP32-family variant the catalog does NOT ship still gets its
+        // real name — never bare "ESP32" (that would defeat the flash chip
+        // guard), never None (rescue/local-file operations are
+        // catalog-independent and need the chip identified).
+        assert_eq!(canonical_chip("Chip type: esp32s2 (revision v0.0)").as_deref(),
+                   Some("ESP32-S2"));
+        assert_eq!(canonical_chip("esp32-h2").as_deref(), Some("ESP32-H2"));
+        assert_eq!(canonical_chip("esp32c2").as_deref(), Some("ESP32-C2"));
+        // A variant named anywhere wins over a bare esp32 mention earlier on.
+        assert_eq!(canonical_chip("esp32 family: esp32s2").as_deref(), Some("ESP32-S2"));
+        // Output naming no ESP32-family chip at all answers None.
+        assert_eq!(canonical_chip("rp2040"), None);
+    }
+
+    #[test]
+    fn release_origin_derives_from_the_catalog_manifest() {
+        let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
+        let manifest_url = catalog["manifest_url"].as_str().unwrap();
+        let origin = release_origin().expect("catalog carries a releases/download manifest_url");
+        assert!(origin.ends_with("/releases/download/"));
+        assert!(manifest_url.starts_with(origin));
+        // The guard the flash paths apply: catalog-origin assets pass, a
+        // foreign host does not.
+        assert!(!("https://example.com/releases/download/x.bin").starts_with(origin));
+    }
+
+    #[test]
+    fn we2_usb_identity_derives_from_the_catalog() {
+        let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG).unwrap();
+        let module = &catalog["we2_module"];
+        let vid = u16::from_str_radix(
+            module["usb_vid"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+        let pid = u16::from_str_radix(
+            module["usb_pid"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+        assert!(crate::we2::is_module_usb(Some(vid), Some(pid)));
+        assert!(!crate::we2::is_module_usb(Some(vid), Some(pid ^ 1)));
+        assert!(!crate::we2::is_module_usb(None, None));
     }
 }
 

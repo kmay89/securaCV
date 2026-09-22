@@ -11,8 +11,6 @@ use serialport::{ClearBuffer, SerialPort};
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
-pub const USB_VID: u16 = 0x1a86;
-pub const USB_PID: u16 = 0x55d3;
 pub const BAUD: u32 = 921_600;
 pub const MODEL_ADDR: u32 = 0x0040_0000;
 
@@ -33,8 +31,26 @@ const PROMPT_LINE: &str = "Do you want to end file transmission and reboot syste
 const INVOKE_REMEDY: &str = "Power-cycle it once. If it keeps refusing: the module may be \
                              running non-SSCMA firmware; see the device guide §4.";
 
+/// The module's CH343 USB identity, read from the embedded catalog's
+/// `we2_module` entry — the same numbers the browser Lab reads live from
+/// flash.json, so the two flashers cannot disagree about which port is the
+/// module (they used to be retyped consts here, diffed by the desktop-parity
+/// test). Fails closed: a catalog missing or mis-typing the entry yields no
+/// IDs and is_module_usb() matches nothing.
+fn usb_ids() -> Option<(u16, u16)> {
+    static IDS: std::sync::OnceLock<Option<(u16, u16)>> = std::sync::OnceLock::new();
+    *IDS.get_or_init(|| {
+        let catalog = serde_json::from_str::<Value>(crate::EMBEDDED_CATALOG).ok()?;
+        let module = catalog.get("we2_module")?;
+        let hex_u16 = |key: &str| {
+            u16::from_str_radix(module.get(key)?.as_str()?.trim_start_matches("0x"), 16).ok()
+        };
+        Some((hex_u16("usb_vid")?, hex_u16("usb_pid")?))
+    })
+}
+
 pub fn is_module_usb(vid: Option<u16>, pid: Option<u16>) -> bool {
-    vid == Some(USB_VID) && pid == Some(USB_PID)
+    usb_ids().is_some_and(|(v, p)| vid == Some(v) && pid == Some(p))
 }
 
 pub fn crc16_xmodem(bytes: &[u8]) -> u16 {

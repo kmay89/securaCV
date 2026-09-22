@@ -387,10 +387,24 @@ so — see D2 below.)
   passwords and bearer tokens land in a plaintext prefs file
   (`desktop/src-tauri/src/secret_store.rs`). The frontend discloses it; fix it
   anyway (libsecret/keyring).
-- [ ] **A11 [code] Native Flasher hardcodes what the browser derives.**
+- [x] **A11 [code] Native Flasher hardcodes what the browser derives.** (#1701)
   `canary-local/tests/desktop_parity.test.js` header: chip tables, USB IDs and
   the release host are literals in the native app, kept in sync only by CI.
   Make native read the embedded catalog; delete the matching assertions.
+  *Done:* `chip_table()`/`canonical_chip()`, `release_origin()` (lib.rs) and
+  `usb_ids()` (we2.rs) now derive from `EMBEDDED_CATALOG`; origin and USB ids
+  fail closed like `manifest_url_allowed`, while chip naming stays broader
+  than the catalog (the chip token is extracted from espflash's own output,
+  catalog spellings win by exact match, non-catalog ESP32 variants keep
+  their real names) so the catalog-independent rescue/local-file operations
+  keep working — a Codex review caught that a catalog-only table misnamed
+  ESP32-S2/C2/H2 as bare ESP32, which would have defeated the flash chip
+  guard. The three parity assertions were rewritten rather
+  than deleted — they now guard that the derivation stays (no retyped copy
+  creeps back) and that the catalog fields native parses stay well-formed,
+  since native fails closed silently on a malformed field. `MODEL_ADDR` and
+  `DEV_FLASH_MANIFEST_URL` stay deliberate constants, still diffed by the
+  test.
 - [ ] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
   browser flasher has (espflash has no fuse-read; the parity test currently
   forces a "browser-only" disclosure). Needs an espflash upstream check or a
