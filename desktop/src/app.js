@@ -97,6 +97,7 @@ const state = {
   detecting: false,  // a detect_chip call is in flight
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
   busy: false,       // a flash is running — pause the watcher
+  efuseScan: null,   // { port, chip, scan } from the security-fuse read — per board, never inherited
   monitoring: false,
   devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
   localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
@@ -2443,19 +2444,44 @@ function wireEfuseRead() {
       out.textContent = "Fuses not checked — another operation owns the port right now.";
       return;
     }
+    // Snapshot the target: the verdict below belongs to THIS board, and a
+    // late answer must never render (or persist) against whatever board is
+    // plugged in by the time it lands.
+    const port = state.port;
+    const chip = state.chip;
     btn.disabled = true;
     out.textContent = "Reading eFuse block 0… (read-only — nothing is ever burned)";
+    // The probe resets the board into its ROM and back, which on a
+    // native-USB board re-enumerates the port — own the port like the flash
+    // path does, so the watcher can't misread that blink as an unplug and no
+    // competing serial operation can start mid-probe.
+    state.busy = true;
     try {
-      const scan = await invoke("read_security_efuses", { port: state.port, chip: state.chip });
+      const scan = await invoke("read_security_efuses", { port, chip });
+      if (state.port !== port || state.chip !== chip) return; // board changed mid-read
+      state.efuseScan = { port, chip, scan };
       renderEfuseScan(out, scan);
     } catch (e) {
-      // Honest failure: the probe resets the board to talk to its ROM, so a
-      // flaky cable or a port squatter shows up here, not as a clean bill.
-      out.textContent = `Fuses NOT checked — ${e}`;
+      // Honest failure: a flaky cable or a port squatter shows up here, not
+      // as a clean bill.
+      if (state.port === port) out.textContent = `Fuses NOT checked — ${e}`;
     } finally {
+      state.busy = false;
       btn.disabled = false;
     }
   });
+}
+
+// The stop-level fuse findings that apply to the board plugged in RIGHT NOW —
+// empty when no scan ran, the board changed since, or nothing dangerous is
+// burned. Every "stop" is a one-way eFuse a previous owner burned; the browser
+// refuses to flash past its verdict (flash.js, the blocked confirm card) and
+// the desktop must refuse the same way, or the diagnostic is theater.
+function efuseStopFindings() {
+  const rec = state.efuseScan;
+  if (!rec || rec.port !== state.port || rec.chip !== state.chip) return [];
+  if (!rec.scan || !rec.scan.supported) return [];
+  return (rec.scan.burned || []).filter((f) => f.severity === "stop");
 }
 
 function renderEfuseScan(out, scan) {
@@ -2680,6 +2706,11 @@ function resetSteps() {
   // never performed on it — the one claim in customs we have no evidence for
   // beyond the user's word, so it must never be inherited.
   state.heldBoot = undefined;
+  // And for the fuse verdict: it was read off ONE chip. Board B wearing board
+  // A's "clean" would be the worst possible inheritance — A's clean bill on a
+  // B whose one-way security fuses are burned.
+  state.efuseScan = null;
+  if ($("efuse-result")) $("efuse-result").textContent = "";
   // A new board gets a fresh recommendation, not the previous board's
   // "show everything" — which would hide the very card the silicon just picked.
   state.showAllProducts = false;
@@ -3188,6 +3219,19 @@ async function onFlash() {
     const fit = flashFitVerdict(product, state.flashBytes);
     if (!fit.fits) {
       setStatus("flash-result", `✗ ${fit.why}`, "err");
+      return;
+    }
+  }
+  // Customs said stop → dead end, not a warning to click past (parity: the
+  // browser's blocked confirm card). Only enforceable when the user ran the
+  // fuse read — it's on-demand here — but a known stop verdict must block.
+  {
+    const stops = efuseStopFindings();
+    if (stops.length) {
+      setStatus("flash-result",
+        `✗ This board can't take firmware — ${stops.map((f) => f.label).join("; ")}. ` +
+        "eFuses burn one way only, and nothing this app does reaches that. " +
+        "If this board was sold to you as new, it wasn't.", "err");
       return;
     }
   }
@@ -4443,6 +4487,18 @@ async function onPickLocalFile() {
 async function onFlashLocalFile() {
   const file = state.localFile;
   if (!file || !state.chip || state.portKind !== "esp32") return;
+  // The same fuse stop-verdict gate as the catalog path: a personal image is
+  // still a write, and a burned secure-boot/encryption/download fuse defeats
+  // it identically.
+  {
+    const stops = efuseStopFindings();
+    if (stops.length) {
+      setStatus("local-result",
+        `✗ This board can't take firmware — ${stops.map((f) => f.label).join("; ")}. ` +
+        "eFuses burn one way only, and nothing this app does reaches that.", "err");
+      return;
+    }
+  }
   // The explicit confirm every other write in this app requires: a named
   // payload, a named target, and a yes that means yes.
   let ok = false;
