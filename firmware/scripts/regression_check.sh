@@ -563,6 +563,41 @@ fi
 
 echo ""
 
+# ── Check: first-boot identity keygen seeds the RNG before RF is up ─────
+# Every tree generates its Ed25519 identity key during provisioning, BEFORE
+# WiFi/BT start — so esp_fill_random() has no RF entropy source yet and a bare
+# draw risks a predictable key on a fresh unit (roadmap §3.7 "Weak first-boot
+# entropy"; issue #921 / PR #994 fixed the three project trees, this guard
+# asserts the PIO canary tree stayed fixed too). The documented ESP-IDF pattern
+# is bootloader_random_enable() / esp_fill_random() / bootloader_random_disable()
+# around that one draw. This greps each keygen file for the enable CALL as a
+# statement on its own line (a comment that merely names the function does not
+# count); it cannot prove the call ORDER (enable must precede the draw, and must
+# never run while RF is up) — that is code review plus the U1 bench.
+echo "── Security: first-boot keygen is entropy-seeded ──"
+
+KEYGEN_FILES=(
+  "$CANARY_DIR/lib/securacv_crypto/src/securacv_crypto.cpp"
+  "$PROJECTS_DIR/canary-sense/src/witness.cpp"
+  "$PROJECTS_DIR/canary-vision/src/witness.cpp"
+  "$PROJECTS_DIR/canary-wap/arduino/canary_wap/canary_wap.ino"
+)
+
+for kf in "${KEYGEN_FILES[@]}"; do
+  rel=${kf#"$FIRMWARE_DIR/"}
+  if [ ! -f "$kf" ]; then
+    check_warn "Keygen file not found (moved?): $rel"
+    continue
+  fi
+  if grep -Eq '^[[:space:]]*bootloader_random_enable[[:space:]]*\([[:space:]]*\)[[:space:]]*;' "$kf"; then
+    check_pass "First-boot keygen seeds entropy: $rel"
+  else
+    check_fail "Keygen file '$rel' has no bootloader_random_enable() around its first-boot esp_fill_random() — predictable-key risk on fresh units (#921)"
+  fi
+done
+
+echo ""
+
 # ── Check: on-glass text stays inside the display font's alphabet ──
 echo "── Display: font glyph range ──"
 

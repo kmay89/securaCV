@@ -145,7 +145,7 @@ reconnect. This is a far better default than the current deep-sleep-and-cold-rec
 ### 1.5 Protect the key at rest and in hardware (the "crypto signing everything" lever)
 
 The product's spine is Ed25519-signed, hash-chained records. The **device identity key sits in
-plaintext NVS** ([`securacv_crypto.cpp:342`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
+plaintext NVS** ([`securacv_crypto.cpp:354`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
 with **no flash encryption and no secure boot** in the default build. Physical read of the flash →
 key extraction → the attacker can forge records *forward* from that point (not rewrite anchored
 history — [`SECURITY_MODEL.md`](../docs/security/SECURITY_MODEL.md)). "Keys never leave the
@@ -446,11 +446,16 @@ OTA with PENDING_VERIFY self-test + rollback, HTTPS+cert-bundle manifest pull, s
 anti-rollback floor.
 
 Beyond §1.5:
-- **Weak first-boot entropy.** `esp_fill_random` is called during provisioning early in `setup()`
-  before RF is up, with no `bootloader_random_enable()` and no entropy self-check
-  ([`securacv_crypto.cpp:136`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)) — risk of
-  predictable keys on fresh units. Seed hardware entropy before keygen, gate provisioning on a
-  check. **[P1]**
+- **(fixed) Weak first-boot entropy.** `esp_fill_random` is called during provisioning early in
+  `setup()` before RF is up; the identity draw is now wrapped in `bootloader_random_enable()` /
+  `bootloader_random_disable()` ([`securacv_crypto.cpp:167`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)),
+  the same pattern PR #994 gave canary-sense, canary-vision and canary-wap, and
+  `regression_check.sh` ("first-boot keygen is entropy-seeded") fails any tree that loses it.
+  The two later draws — the BLE scout key (`ble_scout_key_init`, from `ble_scout_init` inside
+  `securacv_csi_modules_init()`) and the mesh pairing ephemeral key (`mesh_pairing`) — run after
+  `mesh_transport::start()` brings the radio up, so they are RF-seeded and deliberately stay
+  bare: `bootloader_random_enable()` must never run while RF is up. No entropy self-check
+  (still open under item 18). **[P1 → done]**
 - **Chain-head persistence is non-atomic** — `seq` then `chain_head` as two separate NVS writes
   ([`securacv_witness.cpp:227`](canary/lib/securacv_witness/src/securacv_witness.cpp)); a power cut
   between them leaves them inconsistent (recoverable via SD-wins **only if a card is present**).
@@ -556,7 +561,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
 | 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
-| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images; posture self-reported (`key_at_rest`) | **P0→P1** | Crypto | `securacv_crypto.cpp:342` | Posture stated, not assumed; FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
+| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images; posture self-reported (`key_at_rest`) | **P0→P1** | Crypto | `securacv_crypto.cpp:354` | Posture stated, not assumed; FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |
 | 11 | One 8 MB partition table + `witness_log` | **P1** | Flash | `partitions_ota.csv` | Ends the table matrix; card-independent durability |
@@ -566,7 +571,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 15 | Pin WiFi PHY (protocol/BW/country) + TX power | **P1** | WiFi/CSI | `securacv_network.cpp` | Stable CSI vector, correct regulatory/range |
 | 16 | Fast reconnect (cached BSSID/channel/IP) | **P1** | WiFi | `securacv_network.cpp:405` | <300 ms reconnect, no CSI-disrupting sweep |
 | 17 | (fixed) MQTT: socket timeout + offline queue + TLS all landed | **P1** | MQTT | `common/mqtt/mqtt_offline_queue.h` | Outages delay events instead of dropping them; encrypted transport |
-| 18 | HW key protection (HMAC/DS peripheral) + entropy seed + atomic chain head | **P1** | Crypto | `securacv_crypto.cpp:136` | Real at-rest + anti-forgery guarantees |
+| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head | **P1** | Crypto | `securacv_crypto.cpp:167` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
 | 21 | WPA3/PMF + per-device AP password | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |

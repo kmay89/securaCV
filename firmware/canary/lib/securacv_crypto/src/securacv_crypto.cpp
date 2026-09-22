@@ -11,6 +11,7 @@
 #include <Crypto.h>
 #include <Ed25519.h>
 #include "esp_random.h"
+#include <bootloader_random.h>  // early-entropy source for the first-boot identity keygen
 #include "esp_mac.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
@@ -164,7 +165,18 @@ void sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t ou
 // ════════════════════════════════════════════════════════════════════════════
 
 bool crypto_generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
+  // 32 bytes from the hardware RNG. This runs from witness_provision_device()
+  // early in setup(), before WiFi/BT start (the AP SSID / device id derive
+  // from the key fingerprint, so the keypair must exist first), so the RNG has
+  // no RF entropy source yet — gate the one-time identity draw with
+  // bootloader_random_enable()/_disable() to seed it properly (ESP-IDF's
+  // documented early-entropy pattern; the same wrap canary-sense, canary-vision
+  // and canary-wap carry). bootloader_random_enable() must NEVER be called
+  // while RF is up; the later draws (scout key, mesh pairing keys) run after
+  // the radio starts and are seeded by it, so they stay bare on purpose.
+  bootloader_random_enable();
   esp_fill_random(priv, 32);
+  bootloader_random_disable();
   Ed25519::derivePublicKey(pub, priv);
   return true;
 }
