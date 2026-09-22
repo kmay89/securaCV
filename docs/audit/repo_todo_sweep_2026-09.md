@@ -387,7 +387,7 @@ so — see D2 below.)
   passwords and bearer tokens land in a plaintext prefs file
   (`desktop/src-tauri/src/secret_store.rs`). The frontend discloses it; fix it
   anyway (libsecret/keyring).
-- [x] **A11 [code] Native Flasher hardcodes what the browser derives.**
+- [x] **A11 [code] Native Flasher hardcodes what the browser derives.** (#1701)
   `canary-local/tests/desktop_parity.test.js` header: chip tables, USB IDs and
   the release host are literals in the native app, kept in sync only by CI.
   Make native read the embedded catalog; delete the matching assertions.
