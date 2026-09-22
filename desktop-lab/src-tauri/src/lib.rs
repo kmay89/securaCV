@@ -39,24 +39,26 @@ fn app_info() -> AppInfo {
     }
 }
 
-// --- roadmap seam (Phase 2): native device capabilities -----------------
+// --- native device capabilities -----------------------------------------
 // Reliable serial flashing and LAN discovery are why a native app earns its
-// keep. When we add the `serialport` crate, this becomes the real thing:
-//
-//   #[tauri::command]
-//   fn list_serial_ports() -> Vec<String> {
-//       serialport::available_ports()
-//           .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
-//           .unwrap_or_default()
-//   }
-//
-// For now we expose a stub so the frontend can feature-detect the native
-// shell and light up the "Flash over USB (native)" path when it's present.
+// keep. Port ENUMERATION is live below (list_serial_ports); the flash
+// engine itself — the Flasher's espflash sidecar
+// (desktop/src-tauri/src/lib.rs) — is the remaining piece, and `serial`
+// stays false until it lands so the frontend never lights a "Flash over
+// USB (native)" path that isn't there. `serial_list` advertises what does
+// exist, so the flash page can at least show which ports the native shell
+// sees while the browser path explains itself.
 #[tauri::command]
 fn native_capabilities() -> serde_json::Value {
     serde_json::json!({
         "shell": "tauri",
-        "serial": false,     // Phase 2: serialport
+        "serial": false,      // native FLASHING: waits on the espflash sidecar
+        // Native port enumeration (list_serial_ports). Desktop only:
+        // MOBILE.md's contract is that generic USB serial does not exist on
+        // iOS/iPadOS, so a mobile build neither registers the command nor
+        // advertises it — a capability must never light a path that can
+        // only fail.
+        "serial_list": cfg!(desktop),
         // LAN fleet discovery is live: witness_discover polls /api/fleet on
         // the LAN (the DISCOVERY.md contract). mDNS browse + BLE stay future.
         "discovery": true,
@@ -65,6 +67,59 @@ fn native_capabilities() -> serde_json::Value {
         // builds only — the App Store owns updates on iOS/iPadOS).
         "self_update": cfg!(desktop)
     })
+}
+
+/// One serial port as the OS reports it. Field-for-field the Flasher's
+/// `PortDto` (`desktop/src-tauri/src/lib.rs`) — one wire shape, two crates,
+/// so a frontend port picker written against either app reads the other's
+/// answer unchanged. Desktop only, like the crate behind it (Cargo.toml).
+#[cfg(desktop)]
+#[derive(serde::Serialize)]
+struct PortDto {
+    /// OS port path, e.g. `/dev/tty.usbmodem1101` or `/dev/ttyACM0`.
+    name: String,
+    /// "usb" | "bluetooth" | "pci" | "unknown" — USB is what a Canary is.
+    kind: String,
+    vid: Option<u16>,
+    pid: Option<u16>,
+    product: Option<String>,
+    manufacturer: Option<String>,
+}
+
+/// Serial ports the OS can see this instant. No Web Serial permission prompt,
+/// no Chromium — just the platform enumerating its own devices. Lockstep twin
+/// of the Flasher's `list_ports`; kept under the name this seam always
+/// promised (`list_serial_ports`).
+#[cfg(desktop)]
+#[tauri::command]
+fn list_serial_ports() -> Result<Vec<PortDto>, String> {
+    let ports =
+        serialport::available_ports().map_err(|e| format!("could not list serial ports: {e}"))?;
+    let mut out = Vec::new();
+    for p in ports {
+        use serialport::SerialPortType::*;
+        let (kind, vid, pid, product, manufacturer) = match &p.port_type {
+            UsbPort(info) => (
+                "usb",
+                Some(info.vid),
+                Some(info.pid),
+                info.product.clone(),
+                info.manufacturer.clone(),
+            ),
+            BluetoothPort => ("bluetooth", None, None, None, None),
+            PciPort => ("pci", None, None, None, None),
+            Unknown => ("unknown", None, None, None, None),
+        };
+        out.push(PortDto {
+            name: p.port_name,
+            kind: kind.to_string(),
+            vid,
+            pid,
+            product,
+            manufacturer,
+        });
+    }
+    Ok(out)
 }
 
 /// Only ever talk to a host that can be on this network: `.local`-style
@@ -193,6 +248,7 @@ pub fn run() {
             app_version,
             app_info,
             native_capabilities,
+            list_serial_ports,
             witness_discover,
             self_update::check_update,
             self_update::install_update,

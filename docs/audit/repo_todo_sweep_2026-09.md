@@ -356,10 +356,17 @@ so — see D2 below.)
 - [ ] **A3 [decision] Wall-reachable sidecar bind/port** —
   `tvos/discovery/DISCOVERY.md` "a bind and port decision not yet made";
   Docker-sidecar users cannot reach the Wall at all.
-- [ ] **A4 [code] Lab native serial is a Phase-2 stub.** The real
-  `list_serial_ports()` sits in a comment above the stub in
-  `desktop-lab/src-tauri/src/lib.rs`; `serial:false`, `notifications:false`.
-  This is the stated reason the native Lab exists.
+- [x] **A4 [code] Lab native serial is a Phase-2 stub** — the seam's named
+  content is done: `list_serial_ports()` is real (the `serialport` crate,
+  field-for-field the Flasher's `PortDto` so a port picker written against
+  either app reads the other's answer unchanged; registered on desktop and
+  mobile handlers; `cargo check`/`clippy`/tests green; `libudev-dev` added
+  to the Lab's Linux release deps, which would otherwise have broken the
+  next release build). The capability stays honest: `serial` remains false
+  — it means "native flash path present", and that path (the Flasher's
+  espflash sidecar) is A14 below — while the new `serial_list: true`
+  advertises what does exist. `notifications:false` is untouched (its own
+  feature, not this seam). (#1700)
 - [ ] **A5 [code] Lab mDNS + BLE discovery** (HTTP-poll only today) and the
   menubar companion with the signed timeline — `desktop-lab/README.md`
   Roadmap items 2–3.
@@ -392,6 +399,16 @@ so — see D2 below.)
 - [ ] **A13 [human-gated by U3/certs] macOS signing/notarization** — both Mac
   apps ship unsigned until `ENABLE_MACOS_SIGNING` + certs exist
   (`desktop-lab/README.md`, `desktop/INSTALL.md`).
+- [ ] **A14 [code] Port the Flasher's native flash engine to the Lab.** The
+  A4 seam now lists ports; actually flashing needs the Flasher's `espflash`
+  sidecar pipeline brought into `desktop-lab` (bundle the sidecar per
+  target triple in tauri.conf + release workflow — read
+  `.github/RELEASE_LESSONS.md` first, this is app-bundling work — port the
+  flash/monitor commands from `desktop/src-tauri`, then give the Lab's
+  flash page the native path behind `native_capabilities().serial`, which
+  flips true only then). The Lab wraps the browser flasher's pages, and
+  Tauri's webview has no Web Serial — this is "the stated reason the
+  native Lab exists" from A4, sized as its own PR.
 
 ---
 
