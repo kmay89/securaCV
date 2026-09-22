@@ -1360,6 +1360,9 @@ static esp_err_t handle_status(httpd_req_t* req) {
   doc["uptime_sec"] = uptime_seconds();
   doc["boot_count"] = device.boot_count;
   doc["chain_seq"] = device.seq;
+  // Where the identity key sleeps, read live from the eFuses (a wire label,
+  // never key material — common/identity/key_at_rest.h).
+  doc["key_at_rest"] = crypto_key_at_rest_label();
   doc["witness_count"] = health.records_created;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["min_heap"] = health.min_heap;
@@ -2298,6 +2301,7 @@ static esp_err_t handle_export(httpd_req_t* req) {
   doc["ruleset"] = RULESET_ID;
   doc["export_time_ms"] = millis();
   doc["chain_seq"] = device.seq;
+  doc["key_at_rest"] = crypto_key_at_rest_label();
   doc["records_total"] = health.records_created;
 
   char pubkey_hex[65];

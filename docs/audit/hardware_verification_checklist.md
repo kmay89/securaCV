@@ -110,6 +110,28 @@ host tests assert they do, on real radio.
     (audit O2)`. NVS does not contain an opera_secret entry.
   - Artifact: `docs/audit/repro/O2/`.
 
+- [ ] **K1 — identity-key posture is reported, and only the opt-in image refuses**
+  - Setup: one ESP32-S3 board with flash encryption NOT enabled, one with
+    it enabled (dev mode); the default `canary` image and the provisioning
+    kit's `[env:secure]` image (`SECURACV_REQUIRE_FLASH_ENCRYPTION=1`).
+  - Repro: boot each combination; press `f` on the console; `GET /api/status`.
+  - Expected:
+    - default image, FE-off board: boot log carries
+      `[WARN] Key at rest : plaintext-nvs`, the `f` card shows
+      `KeyAtRest : plaintext-nvs`, `/api/status` and the `j` manifest carry
+      `"key_at_rest":"plaintext-nvs"`; provisioning succeeds.
+    - default image, FE-on board: the same three surfaces read
+      `flash-encrypted` (or `flash-encrypted+secure-boot`), the boot line is
+      `[INFO]`.
+    - `[env:secure]` image, FE-off board: provisioning HALTS with
+      `[!!] identity key not stored: flash encryption required by this
+      build but not active` (or `not loaded`, when a default image had
+      already written one) followed by `Device provisioning failed`; NVS
+      never gains a new `privkey` entry.
+  - Policy under test: `firmware/common/identity/key_at_rest.h`
+    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
+  - Artifact: `docs/audit/repro/K1/`.
+
 - [ ] **O3 — transactional rekey on peer removal**
   - Setup: three Opera-member boards (A, B, C); A is the initiator.
   - Repro: from A, call `remove_peer(B.fingerprint)` via REST.

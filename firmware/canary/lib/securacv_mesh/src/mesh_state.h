@@ -11,8 +11,15 @@
  *                     means subsequent boots resume the role without
  *                     re-pairing every time.
  *
- *   • (PR follow-up) trusted-peer pubkeys + per-peer last_counter —
- *                     replay defense across reboots. Not in this PR.
+ *   • trusted_peers — trusted-peer pubkeys (save_/load_trusted_peers,
+ *                     below), so a reboot does not forget who is household.
+ *
+ *   • replay_ctrs   — per-peer last_counter, the replay defense across
+ *                     reboots (audit O1: the counter is the freshness
+ *                     mechanism).
+ *
+ *   • elected_hub   — the last hub election result, so the fleet resumes
+ *                     its role split without a fresh election.
  *
  * NVS layout (mirrors the existing canary "securacv" namespace used by
  * ble_scout_key, device_id, mic_muted, etc.):
@@ -20,6 +27,9 @@
  *     namespace = "securacv"
  *     keys:
  *       opera_secret   — 32-byte blob
+ *       trusted_peers  — blob (peer table)
+ *       replay_ctrs    — blob (per-peer counters)
+ *       elected_hub    — blob (election result)
  *
  * Host build (CSI_TEST_HOST_BUILD): all functions compile as
  * deterministic stubs. load_opera_secret() always returns false (no
@@ -33,11 +43,20 @@
  * layer is the only legitimate caller.
  *
  * Privacy: the opera_secret is the household's single most sensitive
- * mesh-layer key. Production deployments should be paired with the
- * flash-encryption fuse blown so the NVS partition is encrypted on
- * disk (audit-O2 deferred work, same gate ble_scout_key sits behind).
- * This module does NOT enforce flash-encryption — it just trusts
- * NVS to be backed by encrypted storage when the gate is set.
+ * mesh-layer key — it exposes OTHER devices, not just this one. This
+ * module therefore ENFORCES the flash-encryption gate (audit O2): every
+ * save_*/load_* below returns false when esp_flash_encryption_enabled()
+ * is false, so nothing household-shared ever lands in plaintext NVS, and
+ * firmware/scripts/regression_check.sh ("Mesh secret persistence is
+ * FE-gated") asserts the check stays in this file and mesh_network.cpp.
+ *
+ * The device's OWN identity key is deliberately NOT gated this way at the
+ * default tier: Tier 0 of docs/design/hardware_root_of_trust.md (§5.1,
+ * decisions §8 #1/#3/#4) keeps it in NVS on un-fused silicon, reports the
+ * posture as `key_at_rest`, and refuses only in images built with
+ * SECURACV_REQUIRE_FLASH_ENCRYPTION=1 — the decision is written down once
+ * in common/identity/key_at_rest.h. (ble_scout_key's per-device scout key
+ * and the API token are Tier-0 by the same reasoning and carry no gate.)
  */
 
 #ifndef SECURACV_MESH_STATE_H
@@ -55,8 +74,8 @@ namespace mesh_state {
  *
  * Returns false on:
  *   • null pointer
- *   • flash encryption disabled on this device (AGENTS.md project
- *     invariant — refuse to persist secrets on FE-off hardware)
+ *   • flash encryption disabled on this device (audit O2 — refuse to
+ *     persist household secrets on FE-off hardware; file comment above)
  *   • NVS write failure (corrupt partition / hardware fault)
  *
  * On the host build, always returns true (no-op success — tests use

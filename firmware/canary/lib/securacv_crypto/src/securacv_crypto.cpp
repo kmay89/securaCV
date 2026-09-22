@@ -15,6 +15,21 @@
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
 
+// Where the identity key sleeps: the tier / wire label / allow-refuse decision
+// is the host-tested policy in common/identity/key_at_rest.h; this file only
+// reads the eFuse facts and owns the NVS. Same __has_include pattern as
+// main.cpp's 'f' card so a toolchain without a header still builds — an absent
+// fact reads as "off", which is the safe direction for every rule.
+#include "identity/key_at_rest.h"
+#if __has_include(<esp_flash_encrypt.h>)
+#include <esp_flash_encrypt.h>
+#define CRYPTO_HAVE_FLASH_ENCRYPT 1
+#endif
+#if __has_include(<esp_secure_boot.h>)
+#include <esp_secure_boot.h>
+#define CRYPTO_HAVE_SECURE_BOOT 1
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // NVS MANAGER IMPLEMENTATION
 // ════════════════════════════════════════════════════════════════════════════
@@ -308,7 +323,30 @@ void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
 // NVS PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 
+static key_at_rest::Facts key_at_rest_facts() {
+  key_at_rest::Facts f;
+#if CRYPTO_HAVE_FLASH_ENCRYPT
+  f.flash_encryption = esp_flash_encryption_enabled();
+#endif
+#if CRYPTO_HAVE_SECURE_BOOT
+  f.secure_boot = esp_secure_boot_enabled();
+#endif
+  f.require_fe = (SECURACV_REQUIRE_FLASH_ENCRYPTION != 0);
+  return f;
+}
+
+const char* crypto_key_at_rest_label() {
+  return key_at_rest::wire_label(key_at_rest::classify(key_at_rest_facts()));
+}
+
 bool nvs_load_key(uint8_t priv[32]) {
+  // Rule 2 of key_at_rest.h: an image that requires flash encryption refuses
+  // to USE a stored key on hardware without it, symmetrically with the store.
+  const key_at_rest::Decision d = key_at_rest::decide(key_at_rest_facts());
+  if (!d.allow_load) {
+    Serial.printf("[!!] identity key not loaded: %s\n", d.reason);
+    return false;
+  }
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadOnly()) return false;
   size_t n = nvs.getBytesLength(NVS_KEY_PRIV);
@@ -319,6 +357,11 @@ bool nvs_load_key(uint8_t priv[32]) {
 }
 
 bool nvs_store_key(const uint8_t priv[32]) {
+  const key_at_rest::Decision d = key_at_rest::decide(key_at_rest_facts());
+  if (!d.allow_persist) {
+    Serial.printf("[!!] identity key not stored: %s\n", d.reason);
+    return false;
+  }
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;
   nvs.putBytes(NVS_KEY_PRIV, priv, 32);

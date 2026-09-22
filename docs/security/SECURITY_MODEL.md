@@ -361,6 +361,10 @@ device people are supposed to be able to keep, repair, and re-flash. So
 reversible protections in the default path and leaves the irreversible
 lockdown as an explicit, key-backup-enforced opt-in. The settings are
 staged and commented in `firmware/provisioning/sdkconfig.defaults.secure`.
+The device does not leave you to assume which case yours is: it reads the
+fuses at boot and reports the answer as `key_at_rest` (`plaintext-nvs`,
+`flash-encrypted` or `flash-encrypted+secure-boot`) in `/api/status`, the
+health export, the `f` console card and the `j` self-manifest.
 
 **What key recovery gets an attacker.** They can sign new records as that
 device. From that point on, a chain they produce is cryptographically

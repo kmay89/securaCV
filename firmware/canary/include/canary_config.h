@@ -414,6 +414,16 @@
 
 #define NVS_MAIN_NS       "securacv"
 #define NVS_KEY_PRIV      "privkey"
+// Where that key may sleep. 0 (every canary env): the accepted Tier-0 default —
+// the key is stored and loaded on any silicon and the posture is reported as
+// `key_at_rest`. 1 (provisioning/platformio_secure.ini [env:secure], a Tier 3/4
+// image): refuse to store AND to load the identity key when flash encryption is
+// not active, so the image fails closed at provisioning instead of quietly
+// running with a plaintext key. Decided in common/identity/key_at_rest.h
+// (host-tested); deliberately not a FEATURE_* flag — it changes no feature set.
+#ifndef SECURACV_REQUIRE_FLASH_ENCRYPTION
+  #define SECURACV_REQUIRE_FLASH_ENCRYPTION 0
+#endif
 #define NVS_KEY_SEQ       "seq"
 #define NVS_KEY_BOOTS     "boots"
 #define NVS_KEY_CHAIN     "chain"

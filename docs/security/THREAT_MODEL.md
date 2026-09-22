@@ -536,6 +536,15 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
   and log loudly (v0.2 audit O2).
+- The device's **own identity key** is deliberately not gated the same way:
+  it exposes only this device, and Tier 0 of the
+  [root-of-trust ladder](../design/hardware_root_of_trust.md) keeps it in
+  NVS on un-fused silicon by decision (§8 #1/#3/#4). The device reports the
+  posture live as `key_at_rest` (`plaintext-nvs` / `flash-encrypted` /
+  `flash-encrypted+secure-boot`) in `/api/status` and the self-manifest;
+  only images built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (Tier 3+)
+  refuse to store or load it on FE-off hardware. The decision is written
+  once in `firmware/common/identity/key_at_rest.h`.
 - Peer removal auto-rotates `opera_secret` and invalidates existing sessions
   (v0.2 audit O3).
 

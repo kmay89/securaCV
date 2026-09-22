@@ -161,7 +161,11 @@ bool witness_provision_device() {
       return false;
     }
     if (!nvs_store_key(g_device.privkey)) {
-      Serial.println("[!!] Failed to store keypair");
+      // nvs_store_key already printed WHY: either NVS failed, or this image
+      // requires flash encryption and the silicon has none (key_at_rest rule 2)
+      // — in which case halting here, before any identity exists, is the point.
+      Serial.println("[!!] Failed to store keypair — provisioning cannot continue "
+                     "(see the identity key line above)");
       return false;
     }
     Serial.println("[OK] New keypair generated and stored");
@@ -169,6 +173,17 @@ bool witness_provision_device() {
     // say how old it is when a clock finally arrives.
     g_device.key_is_new = true;
     g_device.key_born_ms = millis();
+  }
+
+  // Where that key sleeps, said once per boot. Tier 0 (plaintext NVS) is the
+  // accepted default — docs/design/hardware_root_of_trust.md §8 — so this is a
+  // statement of posture, not an error; the same label is carried live as
+  // `key_at_rest` in /api/status, the health export and the self-manifest.
+  {
+    const char* at_rest = crypto_key_at_rest_label();
+    const bool plaintext = (strcmp(at_rest, "plaintext-nvs") == 0);
+    Serial.printf("[%s] Key at rest : %s%s\n", plaintext ? "WARN" : "INFO", at_rest,
+                  plaintext ? " (Tier 0 default; opt-in flash encryption protects it)" : "");
   }
 
   // What we already know about when this key was born. Loaded before anything

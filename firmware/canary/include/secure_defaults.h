@@ -26,6 +26,13 @@
 // No configuration needed — enforced by the absence of any export API.
 // The Ed25519 private key is stored in NVS and has no read interface.
 // This comment exists to document that the omission is intentional.
+//
+// That is the SOFTWARE boundary. At-rest confidentiality against a bench
+// read of the flash is a separate, opt-in tier (flash encryption, Tier 3+
+// of docs/design/hardware_root_of_trust.md): the default is stated in
+// docs/security/SECURITY_MODEL.md ("Physical extraction and the
+// flash-encryption default") and reported live by the device as
+// `key_at_rest` (common/identity/key_at_rest.h) — never assumed.
 
 // ════════════════════════════════════════════════════════════════════
 // PRINCIPLE 2: ZERO PHONE-HOME

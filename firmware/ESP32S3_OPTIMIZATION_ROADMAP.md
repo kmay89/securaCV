@@ -144,17 +144,40 @@ reconnect. This is a far better default than the current deep-sleep-and-cold-rec
 
 ### 1.5 Protect the key at rest and in hardware (the "crypto signing everything" lever)
 
-The product's spine is Ed25519-signed, hash-chained records. But the **device private key sits in
-plaintext NVS** ([`securacv_crypto.cpp:306`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
-with **no flash encryption, no NVS encryption, and no secure boot** in the default build
-([`canary/sdkconfig.defaults`](canary/sdkconfig.defaults)). Physical read of the flash → key
-extraction → the attacker can forge the entire chain. "Keys never leave the device"
-([`secure_defaults.h`](canary/include/secure_defaults.h) Principle 1) is enforced only against the
-*software* export path, not against at-rest confidentiality. The ESP32-S3 has the exact hardware
-to fix this and **none of it is used** (grep: zero `esp_ds_*` / `esp_hmac_*` / `esp_efuse_*` in
-`canary/`). See §3.7 for the staged plan (NVS encryption now → flash encryption + secure boot v2
-→ HMAC/DS-peripheral key wrapping). This is a P0/P1 split: NVS encryption is a quick P1 win; the
-plaintext key is a P0-severity exposure that the roadmap must not leave implicit.
+The product's spine is Ed25519-signed, hash-chained records. The **device identity key sits in
+plaintext NVS** ([`securacv_crypto.cpp:342`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
+with **no flash encryption and no secure boot** in the default build. Physical read of the flash →
+key extraction → the attacker can forge records *forward* from that point (not rewrite anchored
+history — [`SECURITY_MODEL.md`](../docs/security/SECURITY_MODEL.md)). "Keys never leave the
+device" ([`secure_defaults.h`](canary/include/secure_defaults.h) Principle 1) is enforced only
+against the *software* export path, not against at-rest confidentiality.
+
+**(decided)** This is the accepted **Tier-0 default**, not an open exposure:
+[`hardware_root_of_trust.md`](../docs/design/hardware_root_of_trust.md) §5.1 defines Tier 0 as
+"Ed25519 identity in NVS" and decisions §8 #1/#3/#4 keep the default Canary at Tiers 0–2 (no eFuse
+ever burned, un-brickable), with flash encryption opt-in at Tier 3 (dev mode) / Tier 4 (release).
+What landed instead of a default-build gate:
+
+- the policy is written down once, host-tested, in
+  [`common/identity/key_at_rest.h`](common/identity/key_at_rest.h): the default never refuses;
+  an image built with `SECURACV_REQUIRE_FLASH_ENCRYPTION=1` (the provisioning kit's `[env:secure]`,
+  i.e. a Tier-3+ image) refuses to store **and** to load the key on flash-encryption-off silicon,
+  so it fails closed at provisioning — the same O2 posture `mesh_state` applies to the household
+  secret;
+- the posture is **self-reported** live from the eFuses as `key_at_rest`
+  (`plaintext-nvs` | `flash-encrypted` | `flash-encrypted+secure-boot`) in `/api/status`, the
+  health export, the `f` console card and the `j` self-manifest, with one `[WARN] Key at rest`
+  boot line on a Tier-0 board;
+- the "NVS encryption now" quick win this section used to promise is **not achievable in the PIO
+  canary tree**: `framework = arduino` ships a precompiled core + bootloader, so
+  `CONFIG_NVS_ENCRYPTION` / `CONFIG_SECURE_FLASH_ENC_ENABLED` in any `sdkconfig.defaults` are inert
+  here (only the ESP-IDF project `canary-ota` has NVS encryption on), and NVS encryption is only
+  meaningful under flash encryption anyway (the `nvs_keys` partition must itself be encrypted).
+  It needs the arduino-as-IDF-component migration (item 9) and is then a Tier-3 concern.
+
+The ESP32-S3's DS/HMAC peripherals remain unused by design (§8 #4: Ed25519 under FE/NVS
+encryption is the default; a DS-bound RSA key only where non-extractability is required) — see
+§3.7 and item 18.
 
 ---
 
@@ -533,7 +556,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
 | 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
-| 8 | Plaintext private key in NVS | **P0→P1** | Crypto | `securacv_crypto.cpp:306` | NVS-enc now; flash-enc+secure-boot next |
+| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images; posture self-reported (`key_at_rest`) | **P0→P1** | Crypto | `securacv_crypto.cpp:342` | Posture stated, not assumed; FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |
 | 11 | One 8 MB partition table + `witness_log` | **P1** | Flash | `partitions_ota.csv` | Ends the table matrix; card-independent durability |

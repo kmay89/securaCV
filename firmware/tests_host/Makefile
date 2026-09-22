@@ -192,6 +192,14 @@ MANIFEST_BIN = $(BUILD_DIR)/test_self_manifest
 BIRTHDAY_HDR = ../common/identity/birth_day.h
 BIRTHDAY_BIN = $(BUILD_DIR)/test_birth_day
 
+# Key-at-rest policy (common/identity/key_at_rest.h): the tier / wire label /
+# allow-refuse decision for the identity key's NVS home from {flash
+# encryption, secure boot, SECURACV_REQUIRE_FLASH_ENCRYPTION}. Pins that the
+# Tier-0 default never refuses, that the opt-in image refuses load AND persist
+# symmetrically, and that the labels are wire-safe. Pure header, no Arduino.
+KEYREST_HDR = ../common/identity/key_at_rest.h
+KEYREST_BIN = $(BUILD_DIR)/test_key_at_rest
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -396,6 +404,9 @@ $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 $(BIRTHDAY_BIN): test_birth_day.cpp $(BIRTHDAY_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_birth_day.cpp -o $@
 
+$(KEYREST_BIN): test_key_at_rest.cpp $(KEYREST_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_key_at_rest.cpp -o $@
+
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
@@ -440,7 +451,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -461,6 +472,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FLEETSR_BIN)
 	./$(MANIFEST_BIN)
 	./$(BIRTHDAY_BIN)
+	./$(KEYREST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISPROF_BIN)
