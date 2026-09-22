@@ -46,6 +46,7 @@ from .const import (
     MODEL_KERNEL,
     MODEL_CANARY,
     # Tamper types
+    ALL_TAMPER_TYPES,
     TAMPER_POWER_LOSS,
     TAMPER_SD_REMOVE,
     TAMPER_SD_ERROR,
@@ -57,6 +58,7 @@ from .const import (
     TAMPER_REBOOT,
     TAMPER_MEMORY,
     # Transport types
+    ALL_TRANSPORTS,
     TRANSPORT_WIFI_AP,
     TRANSPORT_WIFI_STA,
     TRANSPORT_MQTT,
@@ -84,6 +86,35 @@ from .health_metrics import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Per-type entity tables, keyed by the ADVERTISED lists in const.py
+# (ALL_TAMPER_TYPES / ALL_TRANSPORTS): the discovery callback below iterates
+# those lists and looks each type up here, so a type that is advertised but
+# has no row fails loudly (KeyError) instead of silently creating nothing,
+# and a row for a FUTURE_* type is dead weight the feature-flag test rejects
+# (tests/test_feature_flags.py; scripts/lint_feature_flags.sh check B is the
+# shell-side second opinion). Entity creation order is list order.
+TAMPER_TYPE_SENSORS: dict[str, tuple[str, str]] = {
+    TAMPER_POWER_LOSS: ("Power Loss", "mdi:power-plug-off"),
+    TAMPER_SD_REMOVE: ("SD Removed", "mdi:sd-off"),
+    TAMPER_SD_ERROR: ("SD Error", "mdi:alert-circle"),
+    TAMPER_GPS_JAMMING: ("GPS Jamming", "mdi:crosshairs-off"),
+    TAMPER_MOTION: ("Unexpected Motion", "mdi:motion-sensor"),
+    TAMPER_ENCLOSURE: ("Enclosure Open", "mdi:package-variant-closed-remove"),
+    TAMPER_GPIO: ("GPIO Tamper", "mdi:alert-circle"),
+    TAMPER_WATCHDOG: ("Watchdog Timeout", "mdi:timer-alert"),
+    TAMPER_REBOOT: ("Unexpected Reboot", "mdi:restart-alert"),
+    TAMPER_MEMORY: ("Memory Critical", "mdi:memory"),
+}
+
+TRANSPORT_SENSORS: dict[str, tuple[str, str]] = {
+    TRANSPORT_WIFI_AP: ("WiFi AP", "mdi:access-point"),
+    TRANSPORT_WIFI_STA: ("WiFi Station", "mdi:wifi"),
+    TRANSPORT_MQTT: ("MQTT", "mdi:message-arrow-right"),
+    TRANSPORT_BLE: ("Bluetooth", "mdi:bluetooth"),
+    TRANSPORT_MESH: ("Mesh Network", "mdi:lan"),
+    TRANSPORT_CHIRP: ("Chirp Network", "mdi:bird"),
+}
 
 
 def _read_trust_view(
@@ -199,30 +230,24 @@ async def _setup_mqtt_binary_sensors(
         # never create the sensors that the periodic health flags feed.
         if topic_type in (TOPIC_TAMPER, TOPIC_HEALTH) and "tamper_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("tamper_sensors")
-            new_entities.extend([
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_POWER_LOSS, "Power Loss", "mdi:power-plug-off"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_SD_REMOVE, "SD Removed", "mdi:sd-off"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_SD_ERROR, "SD Error", "mdi:alert-circle"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_GPS_JAMMING, "GPS Jamming", "mdi:crosshairs-off"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_MOTION, "Unexpected Motion", "mdi:motion-sensor"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_ENCLOSURE, "Enclosure Open", "mdi:package-variant-closed-remove"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_GPIO, "GPIO Tamper", "mdi:alert-circle"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_WATCHDOG, "Watchdog Timeout", "mdi:timer-alert"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_REBOOT, "Unexpected Reboot", "mdi:restart-alert"),
-                SecuraCVCanaryTamperTypeSensor(prefix, device_id, entry, TAMPER_MEMORY, "Memory Critical", "mdi:memory"),
-            ])
+            # Iterate the ADVERTISED list, not the table: an advertised type
+            # without a row raises here, by design.
+            new_entities.extend(
+                SecuraCVCanaryTamperTypeSensor(
+                    prefix, device_id, entry, tamper_type, *TAMPER_TYPE_SENSORS[tamper_type]
+                )
+                for tamper_type in ALL_TAMPER_TYPES
+            )
 
         # Transport health sensors (created on first transport message)
         if topic_type == TOPIC_TRANSPORT and "transport_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("transport_sensors")
-            new_entities.extend([
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_WIFI_AP, "WiFi AP", "mdi:access-point"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_WIFI_STA, "WiFi Station", "mdi:wifi"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_MQTT, "MQTT", "mdi:message-arrow-right"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_BLE, "Bluetooth", "mdi:bluetooth"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_MESH, "Mesh Network", "mdi:lan"),
-                SecuraCVCanaryTransportSensor(prefix, device_id, entry, TRANSPORT_CHIRP, "Chirp Network", "mdi:bird"),
-            ])
+            new_entities.extend(
+                SecuraCVCanaryTransportSensor(
+                    prefix, device_id, entry, transport, *TRANSPORT_SENSORS[transport]
+                )
+                for transport in ALL_TRANSPORTS
+            )
 
         # Motion + occupancy. These exist so the HomeKit Bridge (and any
         # other consumer) sees the standard device classes rather than a
