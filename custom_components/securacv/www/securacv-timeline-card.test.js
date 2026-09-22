@@ -24,6 +24,7 @@ const {
   normalizeHistoryEntry,
   historyToTimelineItems,
   discoverEntities,
+  timelineStatus,
 } = require("./securacv-timeline-card.js");
 
 test("normalizeEventType accepts snake_case and CamelCase enum forms", () => {
@@ -267,4 +268,40 @@ test("discoverEntities matches SecuraCV attribute signatures without false posit
   assert.equal(found.chainLengthEntity, "sensor.securacv_canary_abc_chain_length");
   assert.equal(found.chainValidEntity, "binary_sensor.securacv_canary_abc_chain_valid");
   assert.equal(found.tamperEntity, "binary_sensor.securacv_canary_abc_tamper");
+});
+
+test("timelineStatus: history read → no notice, honest window in the empty line", () => {
+  const status = timelineStatus({ source: "history", hours: 24, count: 0 });
+  assert.equal(status.notice, null);
+  assert.match(status.empty, /last 24h/);
+});
+
+test("timelineStatus: nothing fetched yet → no notice", () => {
+  const status = timelineStatus({ source: null, hours: 6, count: 0 });
+  assert.equal(status.notice, null);
+  assert.match(status.empty, /last 6h/);
+});
+
+test("timelineStatus: current-state fallback says so and claims no time window", () => {
+  const status = timelineStatus({ source: "current-state", hours: 12, count: 0 });
+  assert.ok(status.notice, "a fallback must be announced");
+  assert.match(status.notice, /history/i);
+  assert.match(status.notice, /current/);
+  assert.match(status.notice, /12h/);
+  assert.match(status.notice, /unavailable/);
+  // The empty line must not pretend a window was read.
+  assert.doesNotMatch(status.empty, /last \d+h/);
+  assert.match(status.empty, /unavailable/i);
+});
+
+test("timelineStatus: current-state rows are still flagged when rows exist", () => {
+  const status = timelineStatus({ source: "current-state", hours: 24, count: 3 });
+  assert.ok(status.notice);
+  assert.match(status.notice, /24h/);
+});
+
+test("timelineStatus: a missing or junk hours value falls back to the card default", () => {
+  assert.match(timelineStatus({ source: "history" }).empty, /last 24h/);
+  assert.match(timelineStatus({ source: "history", hours: "junk" }).empty, /last 24h/);
+  assert.match(timelineStatus({ source: "current-state", hours: -1 }).notice, /24h/);
 });

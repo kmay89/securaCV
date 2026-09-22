@@ -21,7 +21,10 @@ timestamp and never surfaces identity data.
   chain length + short head hash (`sensor … Chain Length`), and tamper status
   (`binary_sensor … Tamper`).
 - **Event timeline** — newest-first list of recent witness events from the
-  recorder history of your last-event sensor(s). Each row shows the event icon +
+  recorder history of your last-event sensor(s). When that history cannot be
+  read (the recorder is off, or the history query fails), the card says so in
+  a notice above the list and shows only each sensor's *current* event — it
+  never presents that snapshot as "the last N hours". Each row shows the event icon +
   friendly label, a **sensing-modality chip** (when known), zone, coarse
   time-bucket window, confidence, a verification badge, and — for Track B
   claims — an **attestation chip**.
