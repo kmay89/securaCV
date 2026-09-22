@@ -1,9 +1,14 @@
 // Drift-gate: keep the NATIVE Mac app (desktop/) in lock-step with the canonical
 // product catalog the BROWSER Lab derives from, so the two flashers can't silently
-// disagree. Both consume one catalog (devices/flash.json); the browser reads these
-// values live, while the native app still HARDCODES a few. Where it does, this test
-// fails the instant the hardcode drifts from the catalog — turning a silent runtime
-// mismatch (a board the browser flashes but native rejects; a moved release host)
+// disagree. Both consume one catalog (devices/flash.json). The chip table, the
+// release-origin guard and the WE2 USB identity now DERIVE from the embedded
+// catalog on the native side too, so for those this test guards the derivation
+// itself (the reader still reads the catalog; no retyped copy crept back in) and
+// that the catalog fields it reads stay well-formed — native fails closed on a
+// malformed field, so a catalog typo would otherwise break it silently. The
+// values native still HARDCODES (MODEL_ADDR, the dev-channel URL) are diffed
+// against the catalog/browser as before — turning a silent runtime mismatch
+// (a board the browser flashes but native rejects; a moved release host)
 // into a loud CI failure that names the exact file to fix.
 //
 // This runs under the "page logic tests" check — canary-local.yml enumerates each
@@ -46,35 +51,53 @@ const nativeFnBody = (src, name) => {
   return next >= 0 ? after.slice(0, next) : after;
 };
 
-test("chip guard: native recognizes every ESP32 chip the catalog guards", () => {
-  // native canonical_chip() maps espflash's raw string → canonical via a hardcoded
-  // ("esp32s3","ESP32-S3")-style table. Pull the canonical spellings out of it.
-  const recognized = new Set(
-    [...libRs.matchAll(/\(\s*"esp32[a-z0-9]*"\s*,\s*"(ESP32[^"]*)"\s*\)/g)].map((m) => normChip(m[1]))
-  );
-  assert.ok(recognized.size >= 3,
-    "couldn't parse native canonical_chip() table from desktop/src-tauri/src/lib.rs");
+test("chip guard: native derives its chip table from the catalog, not a copy", () => {
+  // native chip_table() builds canonical_chip()'s lookup from the embedded
+  // catalog's `chips` keys — the drift risk this test used to diff away is
+  // gone as long as the derivation stays and no hardcoded table creeps back.
+  assert.match(nativeFnBody(libRs, "chip_table"), /get\("chips"\)/,
+    "lib.rs chip_table() no longer reads the catalog's `chips` keys — " +
+    "if the table went back to being hardcoded, restore the old diff here");
+  assert.strictEqual(
+    [...libRs.matchAll(/\(\s*"esp32[a-z0-9]*"\s*,\s*"(ESP32[^"]*)"\s*\)/g)].length, 0,
+    "a hardcoded (\"esp32…\",\"ESP32-…\") chip pair is back in lib.rs — " +
+    "the table derives from the catalog now; delete the retyped copy");
 
-  // Every chip the catalog guards (the browser derives its picker from `chips`)
-  // must be recognized, or native's detect_chip rejects a board the browser flashes.
-  for (const chip of Object.keys(catalog.chips || {})) {
-    assert.ok(
-      recognized.has(normChip(chip)),
-      `native can't recognize catalog chip "${chip}" — add it to ` +
-      `desktop/src-tauri/src/lib.rs:canonical_chip so the Mac app flashes it too`
-    );
+  // Native fails closed on an empty/malformed chips table (canonical_chip()
+  // answers None and detect_chip rejects every board), so the catalog side
+  // must stay non-empty and canonically spelled for the derivation to work.
+  const chips = Object.keys(catalog.chips || {});
+  assert.ok(chips.length >= 3, "catalog `chips` table is empty/tiny — native's " +
+    "derived chip guard would reject every board");
+  for (const chip of chips) {
+    assert.match(chip, /^ESP32/,
+      `catalog chip key "${chip}" isn't a canonical ESP32-… spelling — ` +
+      "native folds these keys into its detection needles");
   }
 });
 
-test("WE2 module USB id: native consts match the catalog's we2_module", () => {
+test("WE2 module USB id: native derives it from the catalog's we2_module", () => {
+  // native usb_ids() reads we2_module.usb_vid/usb_pid out of the embedded
+  // catalog — assert the derivation stays and the retyped consts stay gone.
+  const usbIdsBody = nativeFnBody(we2Rs, "usb_ids");
+  for (const key of ["we2_module", "usb_vid", "usb_pid"]) {
+    assert.ok(usbIdsBody.includes(`"${key}"`),
+      `we2.rs usb_ids() no longer reads catalog key "${key}" — ` +
+      "if the IDs went back to consts, restore the old diff here");
+  }
+  assert.ok(!/USB_[VP]ID:\s*u16\s*=/.test(we2Rs),
+    "a hardcoded USB_VID/USB_PID const is back in we2.rs — the IDs derive " +
+    "from the catalog now; delete the retyped copy");
+
+  // Native fails closed on a malformed entry (is_module_usb matches nothing),
+  // so the catalog fields it parses must stay well-formed hex.
   const we2 = catalog.we2_module || {};
-  const vid = we2Rs.match(/USB_VID:\s*u16\s*=\s*(0x[0-9a-fA-F]+)/);
-  const pid = we2Rs.match(/USB_PID:\s*u16\s*=\s*(0x[0-9a-fA-F]+)/);
-  assert.ok(vid && pid, "couldn't parse USB_VID/USB_PID from desktop/src-tauri/src/we2.rs");
-  assert.strictEqual(parseInt(vid[1], 16), parseInt(we2.usb_vid, 16),
-    `we2.rs USB_VID (${vid[1]}) != catalog we2_module.usb_vid (${we2.usb_vid})`);
-  assert.strictEqual(parseInt(pid[1], 16), parseInt(we2.usb_pid, 16),
-    `we2.rs USB_PID (${pid[1]}) != catalog we2_module.usb_pid (${we2.usb_pid})`);
+  for (const key of ["usb_vid", "usb_pid"]) {
+    const parsed = parseInt(String(we2[key]).replace(/^0x/i, ""), 16);
+    assert.ok(Number.isFinite(parsed) && parsed > 0 && parsed <= 0xffff,
+      `catalog we2_module.${key} (${we2[key]}) isn't a u16 hex string — ` +
+      "native's derived port matcher would silently match no ports");
+  }
 });
 
 test("WE2 model slot: catalog, native, and browser all agree on the flash address", () => {
@@ -115,19 +138,26 @@ test("dev channel: browser, native backend, and native frontend pin the same fw-
   }
 });
 
-test("release origin: native's download-host guard matches the catalog's manifest host", () => {
-  // Native guards every download with a literal origin prefix; the browser derives
-  // its host from the catalog's manifest_url. They must name the same release host,
-  // else native refuses assets the browser fetches (or vice versa) after a move.
-  const guards = [...libRs.matchAll(/"(https:\/\/[^"]+\/releases\/download\/)"/g)].map((m) => m[1]);
-  assert.ok(guards.length >= 1,
-    "couldn't find native's release-origin guard in desktop/src-tauri/src/lib.rs");
-  const catalogHost = String(catalog.manifest_url).match(/^(https:\/\/.+\/releases\/download\/)/);
-  assert.ok(catalogHost, "catalog manifest_url isn't a …/releases/download/ URL");
-  for (const g of guards) {
-    assert.ok(catalogHost[1].startsWith(g),
-      `native release-origin guard "${g}" doesn't match catalog manifest host "${catalogHost[1]}"`);
-  }
+test("release origin: native derives its download-host guard from the catalog", () => {
+  // native release_origin() cuts the origin prefix out of the catalog's own
+  // manifest_url (everything through /releases/download/), the same value the
+  // browser derives live — assert the derivation stays and no literal origin
+  // guard crept back (the dev-channel URL is a full manifest URL, not an
+  // origin prefix, so it never matched this pattern).
+  const originBody = nativeFnBody(libRs, "release_origin");
+  assert.ok(originBody.includes('"manifest_url"') && originBody.includes("/releases/download/"),
+    "lib.rs release_origin() no longer derives from the catalog's manifest_url — " +
+    "if the guard went back to a literal, restore the old diff here");
+  assert.strictEqual(
+    [...libRs.matchAll(/"(https:\/\/[^"]+\/releases\/download\/)"/g)].length, 0,
+    "a literal release-origin prefix is back in lib.rs — the guard derives " +
+    "from the catalog now; delete the retyped copy");
+
+  // Native fails closed on a manifest_url without the marker (nothing
+  // downloads), so the catalog's URL shape is what keeps flashing alive.
+  assert.match(String(catalog.manifest_url), /^https:\/\/.+\/releases\/download\/.+/,
+    "catalog manifest_url isn't a …/releases/download/… URL — native's derived " +
+    "origin guard would refuse every download");
 });
 
 test("provisioning NVS: the browser writes the same key-set as native build_nvs", async () => {
