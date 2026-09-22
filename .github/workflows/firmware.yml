@@ -96,11 +96,14 @@ jobs:
   #                        checks every env name those workflows type against
   #                        it (firmware/scripts/flavor_envs.py); a product
   #                        without it releases from its own dedicated steps.
-  #   pip_extras         — extra pip packages (e.g. canary needs
-  #                        intelhex: esptool 4.11.0 bundled by the
-  #                        official espressif32 7.x platform imports it
-  #                        without declaring it, so bootloader.bin
-  #                        generation dies on a clean runner without it)
+  #   pip_extras         — extra pip packages (e.g. canary carries
+  #                        intelhex: a leftover from when its [env] floated
+  #                        on espressif32 ^7.x, whose bundled esptool 4.11.0
+  #                        imports it without declaring it and so killed
+  #                        bootloader.bin generation on a clean runner.
+  #                        Since 2026-09-22 canary pins 6.9.0 exactly
+  #                        (firmware/PLATFORMS.md); the extra is harmless
+  #                        and stays until a green run shows it unneeded)
   #   core_dir_groups    — map of env → group label; every env with the same
   #                        label shares ONE PLATFORMIO_CORE_DIR
   #                        (.pio-core-<label>), separate from the default.

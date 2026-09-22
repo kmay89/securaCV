@@ -99,8 +99,10 @@ where a reviewer can see them:
   fails generation with "no PLATFORM_FACTS for …" instead of carrying the old
   numbers forward. Whether a literal is an exact pin or a floating spec is in
   the `platform` component's `securacv:exact_pin` property; a floating spec
-  (`espressif32 @ ^7.0.0`) has no `version`, only `securacv:version_spec`, and
-  its core is what that line ships today, not a promise.
+  has no `version`, only `securacv:version_spec`, and its core is what that
+  line ships today, not a promise. Since 2026-09-22 every section pins
+  exactly (canary's `espressif32 @ ^7.0.0` was the last float —
+  `firmware/PLATFORMS.md`), so the document carries no such component today.
 - **The two framework licenses** (LGPL-2.1-or-later for arduino-esp32,
   Apache-2.0 for ESP-IDF).
 
