@@ -7,7 +7,7 @@
 // (no glass) get their decoder cards — LED grammar, chirp meanings,
 // setup path. Everything works offline; nothing phones anywhere.
 
-import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { DeviceScene, builderFor } from "./scene3d.js";
 import { buildFinishPicker, startFinishShowcase, hasUserChoice } from "./finishes.js";
 import { fmtLen, UNIT_MODES } from "./assembly-rules.js";
 import { deviceFigure, standTilt, bodyText } from "./body-dims.js";
@@ -117,7 +117,8 @@ function renderCards() {
     grid.append(card);
 
     const scene = new DeviceScene(cv, null);
-    (BUILDERS[dev.id] || BUILDERS["canary-wap"])(scene);
+    // the device's own body, or its fleet figure — never another device's
+    builderFor(dev.id)(scene);
     upgradeRealShape(scene, dev.id);
     scene.start();
     state.cards.set(dev.id, { scene, dev });
@@ -165,7 +166,7 @@ async function openSheet(dev) {
     dispose: [],
   };
   state.sheet = ctx;
-  (BUILDERS[dev.id] || BUILDERS["canary-wap"])(ctx.scene);
+  builderFor(dev.id)(ctx.scene);
   upgradeRealShape(ctx.scene, dev.id);
   ctx.scene.start();
 

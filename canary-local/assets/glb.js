@@ -12,9 +12,13 @@
 // in the generator (tools/gen_boards.py); the browser only reads the small
 // committed .glb, exactly as it only reads committed .stl for enclosures.
 //
-// Returns { parts:[{pos,nrm,uv,idx,color:[r,g,b]}], bbox:{min,max,size,center},
+// Returns { parts:[{pos,nrm,uv,idx,color:[r,g,b],name}], bbox:{min,max,size,center},
 //           triangles } — parts grouped by material color, then split so no
-// part exceeds 65535 vertices (DeviceScene indexes with Uint16).
+// part exceeds 65535 vertices (DeviceScene indexes with Uint16). `name` is
+// the material name of the first primitive in that color group (or null) —
+// the fleet-figure GLBs name their materials by role ("printed shell",
+// "lit screen"), which is how scene3d.js knows which part takes the finish
+// and which one is the live glass.
 
 const CT = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array,
              5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
@@ -122,7 +126,8 @@ export function parseGLB(bufferOrView, { scale = 1000 } = {}) {
     const col = matColor(prim.material);
     const k = key(col);
     let bkt = buckets.get(k);
-    if (!bkt) buckets.set(k, (bkt = { color: col, pos: [], nrm: [] }));
+    const name = (prim.material != null && g.materials?.[prim.material]?.name) || null;
+    if (!bkt) buckets.set(k, (bkt = { color: col, name, pos: [], nrm: [] }));
     for (let t = 0; t < idx.length; t += 3) {
       for (let e = 0; e < 3; e++) {
         const vi = idx[t + e];
@@ -166,6 +171,7 @@ export function parseGLB(bufferOrView, { scale = 1000 } = {}) {
         uv: new Array(n * 2).fill(0),
         idx,
         color: b.color,
+        name: b.name,
       });
       tris += n / 3;
     }
