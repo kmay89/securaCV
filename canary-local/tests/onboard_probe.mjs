@@ -66,7 +66,7 @@ async function allow(dirRel) {
 }
 for (const d of ["canary-local", "canary-local/assets", "canary-local/devices", "canary-local/boards",
   "canary-local/enclosures/preview", "canary-local/emulator/web", "canary-local/emulator/dist",
-  "docs/hardware/enclosure"]) await allow(d);
+  "canary-local/models", "docs/hardware/enclosure"]) await allow(d);
 
 const server = createServer(async (req, res) => {
   const key = decodeURIComponent(req.url.split("?")[0].split("#")[0]);
