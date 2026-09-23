@@ -18,8 +18,8 @@ Choose your project and board:
 | **Canary WAP** | XIAO ESP32-S3 Sense | GPS tracking, SD storage, mesh network | [Get Started →](projects/canary-wap/) |
 | **Canary Vision** | ESP32-C3 + Grove Vision AI | Person detection, Home Assistant | [Get Started →](projects/canary-vision/) |
 | **Canary Sense** | XIAO ESP32-C6 + MR60BHA2 | Presence + breathing radar, Home Assistant | [Get Started →](projects/canary-sense/) |
-| **Canary Display** | XIAO ESP32-S3 + Round Display (watch) / Waveshare 4.3" (dash) / 1.47" sticks (nightstand, nightlight) / 7" panels | Fleet status glass: MQTT subscribe, on-device Ed25519 chain verify, glance UI | [Get Started →](projects/canary-display/) |
-| **Canary Sentinel** | XIAO ESP32-C3 / C6+MR60 (+S3 hub) | Multi-sensor fusion people detection (PIR + radar + WiFi/BLE + light), Lite/Standard/Heavy | [Get Started →](projects/canary-sentinel/) |
+| **Canary Display** | ESP32-S3 / C6 / C3 glass: round watch, 4.3" dash, 7" dash7 / nightstand7, 1.47" sticks, Touch 1.69, AMOLED 2.41 (one manifest per product under [`devices/`](../devices/)) | Fleet status glass: MQTT subscribe, on-device Ed25519 chain verify, glance UI | [Get Started →](projects/canary-display/) |
+| **Canary Sentinel** | XIAO ESP32-C3 / C6+MR60 (+S3 hub) | Multi-sensor fusion people detection (PIR + radar + WiFi/BLE + light), Lite/Standard/Heavy — **Phase 1a: compile-gated in CI, not released** (no flasher product, no published OTA channel) | [Get Started →](projects/canary-sentinel/) |
 
 ### Canary WAP (Recommended First Project)
 
@@ -89,29 +89,17 @@ The firmware uses a **modular, multi-board architecture** where common code is s
 
 ```
 firmware/
-├── boards/                 # Hardware pin definitions
-│   ├── xiao-esp32s3-sense/   # XIAO ESP32-S3 (WAP)
-│   └── esp32-c3/             # ESP32-C3 (Vision)
-├── common/                 # Shared modules (board-agnostic)
-│   ├── core/                 # Types, logging, ring buffers
-│   ├── hal/                  # Hardware abstraction layer
-│   ├── witness/              # Witness chain (Ed25519)
-│   ├── gnss/                 # GPS parsing
-│   ├── storage/              # NVS + SD storage
-│   ├── network/              # Mesh networking
-│   ├── bluetooth/            # BLE management
-│   ├── rf_presence/          # RF detection
-│   ├── web/                  # HTTP server + Web UI
-│   ├── camera/               # Camera management
-│   └── encoding/             # CBOR encoding
-├── configs/                # Product configurations
-│   ├── canary-wap/           # WAP configs (default, mobile)
-│   └── canary-vision/        # Vision configs
-├── envs/                   # Build environments
-│   └── platformio/           # PlatformIO .ini files
-└── projects/               # Product entry points
-    ├── canary-wap/           # WAP project (PlatformIO + Arduino)
-    └── canary-vision/        # Vision project
+├── boards/         # one directory per board: pins/pins.h + README (registry: boards/boards.json)
+├── common/         # board-agnostic modules; the module map is common/README.md
+├── configs/        # per-product composition (feature flags, build profiles)
+├── envs/           # PlatformIO .ini per product (envs/platformio/)
+├── canary/         # the ACTIVE flagship tree (its own platformio.ini + lib/)
+├── projects/       # product entry points; each one's lifecycle is VARIANT_POLICY.md
+├── provisioning/   # production key + eFuse tooling (and the compile-only secure envs)
+├── scripts/        # CI checks, release and OTA tooling
+├── tests_host/     # host-side unit tests for the pure cores
+├── examples/       # standalone samples (CSI, a module stub)
+└── flavors.json    # every PlatformIO env CI builds (ARCHITECTURE.md, "CI Flavor Manifest")
 ```
 
 **Key rule:** Composition happens only in `envs/` and `projects/`. Common modules never import board or config files.
@@ -210,7 +198,9 @@ pio device monitor   # Monitor
 
 ### Arduino IDE
 
-Supported for Canary WAP. Run setup wizard:
+Supported for Canary WAP and, through its generated parity sketch, Canary
+Display (see [its README](projects/canary-display/README.md#arduino-ide-generated-parity-sketch)).
+For the WAP, run the setup wizard:
 
 ```bash
 cd firmware/projects/canary-wap
@@ -222,8 +212,10 @@ Then open `arduino/canary_wap/canary_wap.ino` in Arduino IDE.
 ### Make Targets
 
 The sensor firmware projects — `canary-wap`, `canary-vision`, and
-`canary-sense` — support these standard targets (`canary-display` and
-`canary-ota` are PlatformIO-only for now: use `pio run` there):
+`canary-sense` — support these standard targets (`canary-display`,
+`canary-sentinel` and `canary-ota` have no Makefile: use `pio run` there.
+canary-display also builds in the Arduino IDE from its generated parity
+sketch.):
 
 ```bash
 make build       # Build firmware
@@ -239,7 +231,7 @@ make help        # Show all targets
 
 ## Build Targets & Feature Parity
 
-See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIANT_POLICY.md](VARIANT_POLICY.md) for each variant's lifecycle status. For **which partition table to flash for which deployment** (flash size × OTA × build profile — and why FULL + OTA needs a 16 MB board), see [PARTITIONS.md](PARTITIONS.md).
+See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIANT_POLICY.md](VARIANT_POLICY.md) for each variant's lifecycle status. For **which partition table to flash for which deployment** (flash size × OTA × build profile: FULL + OTA fits the 8 MB `default_8MB` table, and a 16 MB board is for FULL plus a dedicated `witness_log` partition), see [PARTITIONS.md](PARTITIONS.md).
 
 | Build Target | Location | Lifecycle | Notes |
 |-------------|----------|-----------|-------|
@@ -248,28 +240,44 @@ See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIAN
 | **PlatformIO (canary-wap/)** | `projects/canary-wap/` | COMPATIBILITY | Uses common headers |
 | **canary-vision** | `projects/canary-vision/` | SPECIALIZED | ESP32-C3 + Grove Vision AI + MQTT/HA |
 | **canary-sense** | `projects/canary-sense/` | SPECIALIZED | XIAO ESP32-C6 + MR60BHA2 radar + MQTT/HA |
-| **canary-display** | `projects/canary-display/` | SPECIALIZED | Fleet status displays: watch puck (round) + 4.3" dash |
-| **canary-ota** | `projects/canary-ota/` | SPECIALIZED | OTA A/B subsystem |
+| **canary-display** | `projects/canary-display/` | SPECIALIZED | Fleet status glass across the display line: round watch, 4.3" dash (+ its feature envs and the 4.3B playground), 7" dash7 / nightstand7, 1.47" sticks (S3, C6, C3), Touch 1.69, AMOLED 2.41. Envs in `flavors.json`, one manifest per product in `devices/` |
+| **canary-ota** | `projects/canary-ota/` | SPECIALIZED | Standalone ESP-IDF OTA teaching harness; the engine is `common/ota/`. Built by no CI workflow |
+| **canary-sentinel** | `projects/canary-sentinel/` | SPECIALIZED | Doorway/window multi-sensor fusion. **Phase 1a: compile-gated in CI (`door`, `lite`), unreleased**; bench pending |
+| **canary-tincan** | `projects/canary-tincan/` | SPECIALIZED | Kids' wrist Canary. Phase 0: pure cores host-tested in CI, no build env (its bench bring-up sketch is not compiled by CI) |
+| **canary-companion** | `projects/canary-companion/` | SPECIALIZED | Night Watch + Pocket Canary. Phase 0: pure cores host-tested in CI, no build env |
+| **canary-fence-guard** | `projects/canary-fence-guard/` | CONCEPT | Perimeter witness over LoRa. Research only; its stub `#error`s on purpose |
 | **WAP Snapshot** | _(removed)_ | REMOVED | Frozen 2026-02-20, deleted 2026-05-29; history in git |
+
+Lifecycle labels are [VARIANT_POLICY.md](VARIANT_POLICY.md)'s; where the two tables disagree, that one wins.
 
 ### PlatformIO Build Environments (canary/)
 
-| Environment | Features | Use Case |
-|-------------|----------|----------|
-| `dev` | SD, WiFi, HTTP, Camera, OTA | Development iteration |
-| `release` | Same as dev, optimized | Production |
-| `full` | + Mesh, BLE, RF Presence, Chirp | Full WAP parity |
-| `dev_ha` | dev + MQTT + HA Discovery | Home Assistant integration |
-| `release_ha` | release + MQTT + HA Discovery | Production HA deployment |
-| `standalone` | release - MQTT | Standalone WAP mode |
-| `minimal` | Crypto + GPS only | Testing crypto/chain logic |
+| Environment | Features | Use Case | PR CI |
+|-------------|----------|----------|-------|
+| `dev` | SD, WiFi, HTTP + self-signed HTTPS on 443 (port 80 redirects), Camera, OTA | Development iteration | built |
+| `release` | as dev, size-optimized; HTTPS stays off until the size guard shows it fits the OTA slot | Production | built + OTA-slot guard |
+| `full` | + Mesh, BLE, RF Presence, Chirp (pioarduino core 3, `default_8MB` table) | Full WAP parity | built |
+| `dev_ha` | dev + MQTT (broker TLS: plain / CA / pin / lab, fail-closed) + HA Discovery | Home Assistant development | — |
+| `release_ha` | release + the same MQTT + HA Discovery | The published, OTA-signed canary image | built + OTA-slot guard |
+| `standalone` | release with MQTT forced off | Standalone WAP mode | — |
+| `minimal` | Crypto + GPS only | Testing crypto/chain logic | — |
+| `usb-onboard` | dev + USB-OTG HID help-launch + read-only SD drive | Opt-in; on-device (Phase 2) validation pending | — |
+| `esp32cam` | classic-ESP32 reach port: camera peek, CSI, SPI SD, pull-OTA | AI-Thinker ESP32-CAM | built (compile-tested; USB install only, no OTA manifest) |
+| `esp32-wroom` | classic ESP32: CSI presence witness, chain, pull-OTA | Generic WROOM-32 DevKit | built (same) |
+| `freenove-s3` | S3 camera kit, SD off (1-bit SDMMC only) | Freenove FNK0085 | built (same) |
+| `secure` / `secure_ha` | the provisioning kit's Tier 3/4 image, flash encryption required (`provisioning/platformio_secure.ini`) | The production eFuse path; nothing publishes it | compile-only |
+
+"PR CI" is `firmware/flavors.json` `build_envs` (with the size guards its
+`size_guards` name) plus `firmware.yml`'s two compile-only steps: `dev`
+rebuilt with the tamper contact on, and the secure pair. A `—` env is not
+compiled by any workflow.
 
 ## Fleet Management
 
-Fleet management lives in the **Canary Vision** companion app
-([`canary-vision/`](../canary-vision/)) — the single supported multi-device
-dashboard. For **Canary WAP** devices it pairs with the zero-typing BOOT-tap
-flow, shows fleet health (online/offline, events, uptime, signal), groups
+Fleet management for **Canary WAP** devices lives in the Canary Vision
+fleet app ([`canary-vision/`](../canary-vision/)), an SPA over an Express
+reference server that mirrors the device API. It pairs with the zero-typing
+BOOT-tap flow, shows fleet health (online/offline, events, uptime, signal), groups
 devices by room, and offers per-device **Identify** (blink LED + chirp),
 rename, logs, and witness-chain views. On desktop widths the dashboard lays
 device cards out in a multi-column grid.
@@ -279,7 +287,7 @@ device cards out in a multi-column grid.
 are MQTT-only, advertise-only devices — they appear on the network via their
 `_securacv._tcp` mDNS adverts and integrate through **Home Assistant** MQTT
 auto-discovery, where each exposes its own **Identify** button (blinks the
-device LED for 10 s). Full companion-app pairing for these MQTT-only devices
+device LED for 10 s). Full fleet-app pairing for these MQTT-only devices
 is on the roadmap — see
 [`docs/onboarding_unified_wizard.md`](../docs/onboarding_unified_wizard.md).
 
@@ -294,6 +302,11 @@ standalone `fleet-manager.html` has been retired in favor of the app.
 For the end-to-end multi-device wizard (naming devices, `canary.local`
 catch-all behavior, Identify), see
 [`docs/onboarding_multiple_canaries.md`](../docs/onboarding_multiple_canaries.md).
+
+The other fleet views (the Hub, the companion app on iPhone / iPad / Apple
+Watch, the Witness Wall) are defined in
+[`docs/GLOSSARY.md`](../docs/GLOSSARY.md#surfaces-the-things-a-person-actually-touches);
+the Canary displays show the fleet on their own glass.
 
 ---
 
@@ -349,6 +362,14 @@ Edit `secrets/secrets.h` with your credentials. The `.gitignore` prevents commit
 - Hash-chained records for tamper evidence
 - Monotonic sequence numbers
 - Crypto self-test at boot
+- MQTT broker link: plain by default; CA-verified or SHA-256-pinned TLS
+  once provisioned, plus an opt-in unverified lab mode that warns on every
+  connect (the WAP offers CA only; the nightstand-c6 image is plain-only).
+  A TLS mode missing its CA or pin refuses to connect rather than falling
+  back. Per product in
+  [`docs/FIRMWARE_VARIANT_AUDIT.md`](../docs/FIRMWARE_VARIANT_AUDIT.md).
+  Compile-tested by CI and host-tested; not yet bench-tested against a TLS
+  broker.
 
 **Privacy Guarantees:**
 - No raw video storage
