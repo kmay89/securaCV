@@ -25,10 +25,12 @@ Native earns its keep for the things a browser can't do well:
   Canary board on the network (desktop, live today — the Flasher's
   `fleet_scan`, ported), beside the `/api/fleet` poll that finds a kernel.
   Bluetooth LE discovery *(Phase 2.)*
-- **An always-on menubar companion** — live fleet status in the menu bar /
+- **A menubar companion** — live fleet status in the menu bar /
   system tray and native notifications when the fleet reports a device
   going offline, coming back, losing its hub or a chain problem (desktop,
   live today — coarse words only, see [`INSTALL.md`](INSTALL.md#the-menu-bar-companion)).
+  On macOS it keeps running in the menu bar after you close the window; on
+  Linux it runs while the Lab is open (a desktop may have no tray to keep it).
   Notifications on *signed* events and the tamper-evident timeline wait on
   pairing: "verified" means a chain walked against a key pinned at pairing,
   and the Lab holds no such key yet. *(Phase 2.)*

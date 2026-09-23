@@ -7,15 +7,19 @@
 //! A LOCKSTEP TWIN of the Flasher's browse (`desktop/src-tauri/src/fleet.rs`):
 //! the same command name, the same `FleetSighting` DTO and the same service
 //! constant, with `fleet_scan`/`scan_blocking` copied verbatim (their comments
-//! included) — canary-local/tests/desktop_parity.test.js holds the two files
-//! equal, so a frontend written against either app reads the other's answer
-//! unchanged. Only the browse is ported: the Flasher's device calls
-//! (`fleet_device_call`, `device_whoami`) carry bearer tokens from its secret
-//! drawer, and the Lab has no secret drawer.
+//! included) — canary-local/tests/desktop_parity.test.js holds those items
+//! equal (`SERVICE_TYPE`, `FleetSighting` with its derive/serde attributes,
+//! `fleet_scan`, `scan_blocking`; whitespace-normalized), so a frontend
+//! written against either app reads the other's answer unchanged. The rest
+//! of each file is not compared. Only the browse is ported: the Flasher's
+//! device calls (`fleet_device_call`, `device_whoami`) carry bearer tokens
+//! from its secret drawer, and the Lab has no secret drawer.
 //!
 //! The browse finds BOARDS. The kernel / Home Assistant add-on advertises no
-//! `_securacv._tcp`, so `witness_discover` (lib.rs) keeps polling a typed
-//! kernel base beside it — the two coexist. Desktop only: an iOS browse needs
+//! `_securacv._tcp`, so `witness_discover` (lib.rs) keeps polling the kernel
+//! addresses beside it — the two coexist, and the wall tries the kernel
+//! addresses before any browsed board (a board answers `/api/fleet` with a
+//! one-board self-report). Desktop only: an iOS browse needs
 //! the multicast entitlement and `NSBonjourServices`, and the mobile shell is
 //! scaffold-only (desktop-lab/MOBILE.md).
 
