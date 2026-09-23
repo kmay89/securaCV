@@ -2,6 +2,7 @@
 
 Status: **Stage 1 built (the pure walker, host-tested). Stage 2 designed,
 NOT built** (the bridge, the endpoint, the UI).
+Decision: **F26: option B (staged) — maintainer to confirm.**
 Scope: the canary PlatformIO tree (`firmware/canary`). Repo sweep item F26.
 Last Updated: 2026-09-23
 
@@ -88,9 +89,15 @@ SemaphoreHandle_t done;   // binary: the loop finished request `gen`
 - `witness_history_service()` — **loop task**, called from `loop()` right
   after `storage_periodic_check()`, and only when `storage_is_mounted()` and
   `!storage_mount_in_flight()`. Open `/WITNESS/records.jsonl` once per
-  request, seek to the hint (if it passes a one-line re-parse) or the file
-  size, and read **at most 4 × 1 KiB per pass**, feeding the walker; on a
-  terminal status, copy the rows into the response and give `done`. The
+  request and pick the walker's start **before the first read**: a hint
+  larger than the current file size is refused outright (the walker cannot
+  see the size, and the test leaves this to the caller), and the request
+  falls back to a scan from the file end, exactly as on `HINT_MISMATCH`;
+  a hint of `0` is the start of the file, so the walker answers `AT_START`
+  with no rows and no read; any other hint is handed to the walker, which
+  re-checks it on the bytes before it. Then read **at most 4 × 1 KiB per
+  pass**, feeding the walker; on a terminal status, copy the rows into the
+  response and give `done`. The
   per-pass cap keeps the task watchdog and the sensing cadence untouched: a
   deep page takes a few passes, never one long stall.
 - The storage contract's paragraph in `securacv_storage.h` gains one line:
