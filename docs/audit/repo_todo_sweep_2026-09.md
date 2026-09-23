@@ -434,7 +434,8 @@ so — see D2 below.)
 ### Network surface & provisioning
 
 - [ ] **F15 [code] No TLS on the canary.local HTTP/peek surface.** The one
-  gap `firmware/PARITY_PLAN.md` marks ❌ in *both* trees. Landed for the
+  gap `firmware/PARITY_PLAN.md` lists as shared by *both* trees (❌ / ❌ at
+  the sweep; the dashboard reads ⚠️ / ⚠️ since #1691). Landed for the
   canary tree's dev builds in #1704 (option (b) — maintainer to confirm):
   self-signed ECDSA P-256 HTTPS on 443 serving the whole route table, the
   certificate generated on the device once and kept under the WAP's NVS
@@ -448,15 +449,19 @@ so — see D2 below.)
   capability builds HTTP-only and says why). `FEATURE_HTTPS=1` is on in
   `[env:dev]` (inherited by dev_ha, usb-onboard and full, and restated in
   full) and off in release and the board envs; the compile is CI's (the
-  dev, dev_ha and full legs), and FEATURES.md reads ⚠️ for canary (PIO).
+  dev and full legs; `dev_ha` inherits the flag but no workflow builds it,
+  `firmware/flavors.json` `build_envs`), and FEATURES.md reads ⚠️ for
+  canary (PIO).
   Still open: turning it on in release/release_ha, the maintainer's call
   once the size-guard delta is read (option (c), flasher-provisioned
   certificates, is the fallback if the 2.0.17 core lacks x509write);
-  canary-wap's default builds, which still read ❌ (its 443 path stays gated
-  on `SECURACV_HAS_HTTPS_SERVER` + a provisioned cert — PARITY_PLAN's shared
-  TLS line); the canary's mDNS TXT record, which does not yet advertise
-  TLS, so a discovery client cannot tell HTTPS is on; and the bench, U1
-  runbook Track D, D1–D5.
+  canary-wap, whose dashboard cell reads ⚠️ since #1691: a runtime opt-in,
+  not the build's posture — compile-gated on `esp_https_server.h`, served
+  after setup once the on-device certificate loads, and plain HTTP during
+  setup and on a start failure, logged (`firmware/FEATURES.md`, the
+  canary-wap HTTPS note; PARITY_PLAN's shared TLS line); the canary's mDNS
+  TXT record, which does not yet advertise TLS, so a discovery client cannot
+  tell HTTPS is on; and the bench, U1 runbook Track D, D1–D5.
 - [x] **F16 [code] WPA3/PMF + per-device AP password** on the WAP join path —
   done (option (b) — maintainer to confirm): both trees now ask for WPA2/WPA3
   transition on the SoftAP with PMF capable and never required, and for PMF
@@ -1745,6 +1750,22 @@ so — see D2 below.)
   opened on the holder's own device, not the Vault and no quorum.
   `glossary.html`, `llms-full.txt` and `llms.txt` are regenerated, and the
   tests hold the split.
+- [x] **W20 [code] The website's Walls read a silent `online` as present, and
+  its pages carried stale status copy.** Found by the wave-7 site docs-drift
+  scout. `tv/app.js`'s `parseFleet` defaulted a missing `online` to true,
+  and `js/tv-emulator.js` did the same at three sites. That is against the
+  fleet contract the Apple TV and the Rust core follow
+  (`tvos/discovery/DISCOVERY.md`: a silent row is not claimed present).
+  *Done (website #199):* both read `online === true`. `tests/tv-wall.test.mjs`
+  replays a verbatim copy of `fleet_contract_vectors.json` through
+  `parseFleet` and pins the copy's sha256. `witness-wall.html` and
+  `tv/README.md` say the real Wall is presence-only against every shipping
+  source. The download page offers the Flasher, on its own `flasher-v` train
+  with the broker-encryption select and the fuse-read difference, and says
+  Windows is not built. Stale status copy is corrected on `docs/LAYOUT.md`,
+  `witness.html`, `docs/roadmap.md`, `lab.html`, `linux.html`,
+  `engine.html`, `compare.html` and `apple-tv.html`. The glossary defines
+  the companion app. Left: A24 and W21.
 
 ---
 
