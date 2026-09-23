@@ -429,7 +429,7 @@ the backfill.
   - Repro: stop the broker, commit several events, power-cycle the canary,
     commit a few more, restart the broker.
   - Expected: the pre-reboot backlog arrives in id order with no `replay`
-    verdict on any backfilled body (at most nine of its rows may be missing
+    verdict on any backfilled body (at most ten of its rows may be missing
     — the NVS ceiling's stride). Post-reboot rows from the bundler restart
     below the pre-reboot ids, so HA refuses them live and the backfill does
     not send them — the id-space problem above, recorded as an open item.

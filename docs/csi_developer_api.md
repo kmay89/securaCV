@@ -174,7 +174,7 @@ those bodies `"replay":true`. On the canary base
   highest one already handed to the broker, because Home Assistant's replay
   gate refuses an `event_id` below the last one it verified. That watermark
   survives a reboot through an NVS ceiling written with the event-id floor's
-  policy, so a reboot inside an outage skips at most nine undelivered rows
+  policy, so a reboot inside an outage skips at most ten undelivered rows
   and republishes none. (Rows that pass through the bundler — presence,
   `system.integrity` — take ids from its own space, 0x80000000 upward,
   which restarts every boot and commits in bundle-close order; the gate

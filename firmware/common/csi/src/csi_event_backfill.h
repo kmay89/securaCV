@@ -27,10 +27,12 @@
  * Across a reboot the watermark comes back from a CEILING in NVS, written
  * with csi_event_id_floor.h's policy (F29's shared event-id floor) before an
  * id is handed over: the ceiling is always above every id handed over, so a
- * reboot never republishes one, and skips at most kStride - 1 undelivered
- * ones. ceiling_for() also keeps the ceiling at or below the id allocator's
- * persisted floor when it can, so the ids a new boot hands out (they start
- * at that floor) are never mistaken for delivered ones.
+ * reboot never republishes one, and skips at most kStride undelivered ones
+ * (the ceiling is written before a send that can fail, so every id it
+ * covers can still be undelivered when the power goes). ceiling_for() also
+ * keeps the ceiling at or below the id allocator's persisted floor when it
+ * can, so the ids a new boot hands out (they start at that floor) are never
+ * mistaken for delivered ones.
  *
  * The commit path (commit()), in order of preference for a row that must
  * reach the broker:

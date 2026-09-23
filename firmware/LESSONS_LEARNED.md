@@ -2131,8 +2131,14 @@
   its RAM watermark is unchanged and recorded as a follow-up.
 - **Regression check:** `firmware/tests_host/test_csi_event_backfill.cpp`
   replays outages, reboots and card faults against a model of HA's replay
-  gate and fails on any refused backfill; mutating the watermark skip, the
-  ceiling cap or the first-boot record turns it red.
+  gate and fails on any refused or repeated row. On every hand-over and
+  every loop pass it also checks that NVS already holds a ceiling above the
+  id and the watermark, and no higher than the allocator's floor. Mutating
+  any of these turns it red: the watermark skip or its boundary (`<=`; HA
+  accepts an EQUAL id, so `<` resends the last row after a remount),
+  persisting before the send on any route or the floor cap on any route,
+  the cursor staying put when a send is refused (a queue longer than one
+  drain, a failed send), the ceiling cap itself, or the first-boot record.
   `test_csi_event_log_line.cpp` pins the format's bytes and refuses torn
   and glued lines, and `check_csi_sync.sh` fails if a second builder of the
   line appears. A watermark the receiver enforces belongs in storage that
