@@ -787,10 +787,6 @@ void test_alerts_do_not_exhaust_the_drill_bucket() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Finding 7 — template must be in the life-safety set
-// ───────────────────────────────────────────────────────────────────────────
-
-// ───────────────────────────────────────────────────────────────────────────
 // CAP gateway trust confers no privilege (spec/beacon_cap_gateway_v0.md §2.3:
 // "The gateway gets no special privilege without producing the upstream
 // attestation" — and the attestation path is deferred by decision, so a
@@ -906,6 +902,10 @@ void test_source_grants_gateway_trust_nothing() {
   }
   EXPECT(trust_lines >= 5, "the receive, cosign and revoke paths all check trust_level");
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Finding 7 — template must be in the life-safety set
+// ───────────────────────────────────────────────────────────────────────────
 
 void test_template_outside_life_safety_set_rejected() {
   std::vector<SetEntry> set = { mk(0xAA), mk(0xBB) };
