@@ -171,6 +171,9 @@ export class CanaryEmulator {
     this._hb = null;
     this.linkState = { wifi: true, broker: true };
     this.booted = false;
+    this.lan = demoLan();
+    this._http = new Map(); // request id → resolve
+    this._udp = new Map();  // phone source port → resolve
   }
 
   async start({ provisioned = true, firstMeeting = false, seed = null,
@@ -196,6 +199,12 @@ export class CanaryEmulator {
       onNetEvent: (kind, detail) => shell.opts.onNetEvent?.(kind, detail),
       onNvsWrite: (ns, key, hexVal) => shell.opts.onNvsWrite?.(ns, key, hexVal),
       onReboot: () => shell.opts.onReboot?.(),
+      // The first-boot portal's sockets (emu_webserver.cpp, emu_radio.cpp):
+      // the firmware's answers to requests the page's phone made.
+      onHttpResponse: (id, status, ctype, body, headers) =>
+        shell._httpAnswer(id, status, ctype, body, headers),
+      onUdpSend: (srcPort, dstIp, dstPort, hexBytes) =>
+        shell._udpAnswer(srcPort, dstIp, dstPort, hexBytes),
     });
 
     const M = this.module;
@@ -235,15 +244,35 @@ export class CanaryEmulator {
       chName: M.cwrap("emu_character_name", "number", ["number"]),
       chCaption: M.cwrap("emu_character_caption", "number", ["number"]),
       chColor: M.cwrap("emu_character_color", "number", ["number", "number"]),
+      // The radio and the portal's sockets (the first-boot walk). All sync:
+      // each only queues or reads — the firmware answers from its own loop.
+      setLan: M.cwrap("emu_set_lan", null, ["string"]),
+      softapInfo: M.cwrap("emu_softap_info", "number", []),
+      phoneJoin: M.cwrap("emu_phone_join", "number", ["string", "string"]),
+      phoneLeave: M.cwrap("emu_phone_leave", null, []),
+      httpRequest: M.cwrap("emu_http_request", "number", [
+        "number", "string", "string", "string", "string",
+      ]),
+      udpSend: M.cwrap("emu_udp_send_hex", "number", ["number", "string"]),
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
     this.c.setTz(browserPosixTz());
 
-    // Stage the device's memory before power-on.
+    // The neighborhood the radio hears (the first-boot portal's scan and
+    // join resolve against it; the home router follows the Wi-Fi switch).
+    this.setLan(this.lan);
+
+    // Stage the device's memory before power-on. A first meeting is a
+    // factory-fresh unit: it has never been told a Wi-Fi network, so the
+    // firmware's own provision_needed() is true and it raises its setup
+    // portal. The broker stays preseeded either way — this household's hub
+    // is part of the scenery, not something the portal asks about.
+    if (provisioned && !firstMeeting) {
+      this._nvsPut("securacv", "wifi_ssid", HOME_LAN.ssid);
+      this._nvsPut("securacv", "wifi_pass", HOME_LAN.pass);
+    }
     if (provisioned) {
-      this._nvsPut("securacv", "wifi_ssid", "HomeNet");
-      this._nvsPut("securacv", "wifi_pass", "correct-horse");
       this._nvsPut("securacv", "mqtt_host", "hub.local");
       this._nvsPut("securacv", "mqtt_user", "fleet");
       this._nvsPut("securacv", "mqtt_pass", "fleet");
@@ -353,6 +382,88 @@ export class CanaryEmulator {
   }
   stepTime(ms) {
     this.c.timeStep(ms);
+  }
+
+  // ── Public: the first-boot walk (net/provision.cpp, verbatim) ─────────
+  // The page plays the phone and the neighborhood; the firmware plays itself.
+  // Every answer below is produced by the firmware's own code in wasm — the
+  // shell only carries bytes to and from its sockets.
+
+  /** Stage the networks the radio hears: [{ssid, rssi, secure, pass, home}].
+   *  `home` marks the page's router (it goes off the air with Wi-Fi down). */
+  setLan(nets) {
+    this.lan = nets.map((n) => ({ ...n }));
+    this.c?.setLan(lanSpec(this.lan));
+  }
+
+  /** The SoftAP the firmware raised, read back from the radio it configured —
+   *  what the join QR on its glass carries. null until one is on the air. */
+  softAp() {
+    // A retired instance (powered off, or replaced by a reboot) has no radio.
+    if (!this.c || this.dead) return null;
+    const ptr = this.c.softapInfo();
+    if (!ptr) return null;
+    const j = JSON.parse(this.module.UTF8ToString(ptr));
+    if (!j.up) return null;
+    return {
+      ssid: hexDecode(j.ssid_hex), pass: hexDecode(j.pass_hex),
+      channel: j.channel, maxStations: j.max, stations: j.stations,
+    };
+  }
+
+  /** The phone asks the AP to associate: 1 joined · 0 no such network ·
+   *  -1 wrong key · -2 AP full (the radio's answer, not the page's). */
+  phoneJoin(ssid, pass) {
+    return this.c && !this.dead ? this.c.phoneJoin(ssid, pass) : 0;
+  }
+  phoneLeave() {
+    this.c?.phoneLeave();
+  }
+
+  /** One HTTP request to the device's WebServer on `port` (the portal's :80).
+   *  Resolves {status, contentType, body, headers}; status 0 = nothing
+   *  answered (refused, closed, or no reply within timeoutMs). */
+  http(method, target, { body = "", contentType = "", port = 80, timeoutMs = 10000 } = {}) {
+    if (!this.c || this.dead) return Promise.resolve(noAnswer("no device"));
+    const id = this.c.httpRequest(port, method, target, contentType, body);
+    if (!id) return Promise.resolve(noAnswer("connection refused"));
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this._http.delete(id);
+        resolve(noAnswer("no reply"));
+      }, timeoutMs);
+      this._http.set(id, (r) => { clearTimeout(timer); resolve(r); });
+    });
+  }
+
+  /** One DNS question to the device's captive resolver (UDP :53). Resolves
+   *  the firmware's reply bytes (Uint8Array), or null when nothing answered. */
+  dnsQuery(name, qtype = 1, { port = 53, timeoutMs = 5000 } = {}) {
+    if (!this.c || this.dead) return Promise.resolve(null);
+    const query = dnsQueryBytes(name, qtype, (Math.random() * 0xffff) >>> 0);
+    const src = this.c.udpSend(port, hexEncode(query));
+    if (!src) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this._udp.delete(src);
+        resolve(null);
+      }, timeoutMs);
+      this._udp.set(src, (bytes) => { clearTimeout(timer); resolve(bytes); });
+    });
+  }
+
+  _httpAnswer(id, status, contentType, body, headers) {
+    const done = this._http.get(id);
+    if (!done) return;
+    this._http.delete(id);
+    done({ status, contentType, body, headers: parseHeaders(headers) });
+  }
+
+  _udpAnswer(_srcPort, _dstIp, dstPort, hexBytes) {
+    const done = this._udp.get(dstPort);
+    if (!done) return;
+    this._udp.delete(dstPort);
+    done(hexDecodeBytes(hexBytes));
   }
 
   // ── Public: the Character ring, straight from the firmware table ──────
@@ -561,4 +672,111 @@ export function demoFleet() {
       rssi: -72,
     }),
   ];
+}
+
+// ── The first-boot walk's plumbing (DOM-free; tests/onboard.test.js) ────
+
+// The household network the provisioned boot already knows, and the one the
+// portal's scan lists first. Same SSID/key the preseed writes, so a visitor
+// who joins it in the portal lands the display exactly where every other tour
+// starts.
+export const HOME_LAN = Object.freeze({ ssid: "HomeNet", pass: "correct-horse" });
+
+// The neighborhood: the home router (follows the page's Wi-Fi switch) and two
+// neighbors on the same 2.4 GHz band. RSSI in dBm, as a scan reports it.
+export function demoLan() {
+  return [
+    { ssid: HOME_LAN.ssid, rssi: -52, secure: true, pass: HOME_LAN.pass, home: true },
+    { ssid: "Lindgren 2.4G", rssi: -71, secure: true, pass: "not-yours-to-know", home: false },
+    { ssid: "Corner Cafe Guest", rssi: -83, secure: false, pass: "", home: false },
+  ];
+}
+
+// emu_set_lan's line format: <hex ssid> <rssi> <secure> <home> <hex key|->.
+export function lanSpec(nets) {
+  return nets.map((n) => [
+    hexEncode(te.encode(n.ssid)),
+    Math.round(n.rssi),
+    n.secure ? 1 : 0,
+    n.home ? 1 : 0,
+    n.pass ? hexEncode(te.encode(n.pass)) : "-",
+  ].join(" ")).join("\n");
+}
+
+export function hexDecodeBytes(h) {
+  const s = String(h || "");
+  const out = new Uint8Array(s.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i * 2, 2), 16);
+  return out;
+}
+export function hexDecode(h) {
+  return new TextDecoder().decode(hexDecodeBytes(h));
+}
+
+function noAnswer(error) {
+  return { status: 0, contentType: "", body: "", headers: {}, error };
+}
+
+// "Name: value\n" lines (emu_webserver.cpp) → { lowercased name: value }.
+export function parseHeaders(text) {
+  const out = {};
+  for (const line of String(text || "").split("\n")) {
+    const i = line.indexOf(":");
+    if (i > 0) out[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+  }
+  return out;
+}
+
+// A standard DNS question (RFC 1035 §4.1): header with RD set, one QNAME,
+// QTYPE, QCLASS IN. What any phone's resolver sends first.
+export function dnsQueryBytes(name, qtype, id = 0) {
+  const labels = String(name).split(".").filter(Boolean).map((l) => te.encode(l));
+  const len = 12 + labels.reduce((a, l) => a + 1 + l.length, 0) + 1 + 4;
+  const b = new Uint8Array(len);
+  b[0] = (id >> 8) & 0xff; b[1] = id & 0xff;
+  b[2] = 0x01;             // RD
+  b[5] = 1;                // QDCOUNT
+  let o = 12;
+  for (const l of labels) { b[o++] = l.length; b.set(l, o); o += l.length; }
+  b[o++] = 0;
+  b[o++] = (qtype >> 8) & 0xff; b[o++] = qtype & 0xff;
+  b[o++] = 0; b[o++] = 1;  // IN
+  return b;
+}
+
+// Read a reply: flags, counts, and the first A record's address (the answer
+// name is a compression pointer in the firmware's replies; any name form is
+// skipped the same way).
+export function parseDnsReply(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  if (b.length < 12) return null;
+  const out = {
+    id: (b[0] << 8) | b[1],
+    response: !!(b[2] & 0x80),
+    authoritative: !!(b[2] & 0x04),
+    rcode: b[3] & 0x0f,
+    qdcount: (b[4] << 8) | b[5],
+    ancount: (b[6] << 8) | b[7],
+    a: null,
+  };
+  const skipName = (o) => {
+    while (o < b.length) {
+      const n = b[o];
+      if (n === 0) return o + 1;
+      if ((n & 0xc0) === 0xc0) return o + 2;
+      o += 1 + n;
+    }
+    return o;
+  };
+  let o = 12;
+  for (let q = 0; q < out.qdcount; q++) o = skipName(o) + 4;
+  for (let a = 0; a < out.ancount && o < b.length; a++) {
+    o = skipName(o);
+    const type = (b[o] << 8) | b[o + 1];
+    const rdlen = (b[o + 8] << 8) | b[o + 9];
+    o += 10;
+    if (type === 1 && rdlen === 4 && out.a === null) out.a = [...b.slice(o, o + 4)].join(".");
+    o += rdlen;
+  }
+  return out;
 }

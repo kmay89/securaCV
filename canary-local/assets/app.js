@@ -19,6 +19,7 @@ import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
 import { BenchPower, romBanner } from "../emulator/web/bench.js";
 import { DEMO, beatsBetween } from "./mode-sim.js";
+import { buildOnboardPhone } from "./onboard-phone.js";
 import {
   DISPLAY_TOUR,
   DISPLAY_FIXES,
@@ -27,6 +28,14 @@ import {
   CHIRP_GRAMMAR,
   ledSequence,
 } from "./guides.js";
+
+// What a "meet the bird again" reboot forgets: the remembered hello, and the
+// Wi-Fi network (the two keys runtime_config.cpp reads and the portal's
+// set_wifi_credentials() writes). Everything else in flash — trust days,
+// pins, the unit's setup-network key — survives, as it would on the glass.
+const firstMeetingForgets = (nsKey) =>
+  nsKey.startsWith("scv-hello/") ||
+  nsKey === "securacv/wifi_ssid" || nsKey === "securacv/wifi_pass";
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -491,11 +500,13 @@ async function buildDisplaySheet(ctx, side, stage) {
     // power-on, so setup() always reads the surviving flash — never a
     // race against the firmware's resume. A "meet again" reboot must not
     // restore the remembered hello — that memory is exactly what the
-    // button un-remembers.
+    // button un-remembers — nor a Wi-Fi network a previous setup walk
+    // stored: a first meeting is a factory-fresh unit, so the firmware's own
+    // provision_needed() opens its setup portal (the phone in "Try it").
     const img = !opts.preserve
       ? null
       : opts.firstMeeting
-        ? new Map([...ctx.nvsImage].filter(([k]) => !k.startsWith("scv-hello/")))
+        ? new Map([...ctx.nvsImage].filter(([k]) => !firstMeetingForgets(k)))
         : ctx.nvsImage;
     await ctx.emu.start({
       provisioned: true,
@@ -588,7 +599,7 @@ async function buildDisplaySheet(ctx, side, stage) {
         note("no power on the bench — restore power first (Bench tab)");
         return;
       }
-      note("rebooting for a first meeting — the bird will introduce itself");
+      note("rebooting for a first meeting — the bird will introduce itself, then raise its setup network (the phone in Try it walks it)");
       serialAppend("\n\n※ ── power cycle (first meeting) ── ※\n\n" + romBanner("poweron"));
       ctx.emu.retire();
       await boot({ preserve: true, firstMeeting: true });
@@ -749,6 +760,20 @@ function tryView(ctx, noteLine) {
   styleWrap.append(mk("meet the bird again (first boot)",
     () => ctx.meetAgain?.(), "primary"));
 
+  // ── First boot: the display's own setup portal, walked from a phone ──
+  // A first meeting is a factory-fresh unit (no Wi-Fi stored), so the real
+  // net/provision.cpp raises its SoftAP + captive portal in the wasm; this
+  // phone joins it and every answer it shows is the firmware's.
+  const setupWrap = el("div", "style-rail");
+  setupWrap.append(
+    el("h4", null, "First boot — the setup portal"),
+    el("p", "muted",
+      "The same wizard a new display runs on your desk: it raises its own setup " +
+      "network, shows the key as a QR on its glass, and serves a sign-in page " +
+      "to your phone. Wrong password, a network that isn't there, a router that's " +
+      "unplugged — the reason you get back is the firmware's."),
+    buildOnboardPhone(ctx, { note: (t) => { noteLine.textContent = t; } }));
+
   // ── The storyline (display_modes.md §demo): the mode system's scripted
   // household, played through THIS page's staged witnesses into the real
   // firmware — the same beats, seconds and severities the on-device demo
@@ -828,6 +853,7 @@ function tryView(ctx, noteLine) {
       "Then break the household on purpose — the glass must never lie about it."),
     styleWrap,
     grid,
+    setupWrap,
     noteLine
   );
   return wrap;

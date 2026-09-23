@@ -260,12 +260,8 @@ void configTzTime(const char* tz, const char*, const char*, const char*) {
   }
 }
 
-// ── WiFi globals ────────────────────────────────────────────────────────
-wl_status_t WiFiClass::status() {
-  return emu_bus_wifi_up() ? WL_CONNECTED : WL_DISCONNECTED;
-}
-int32_t WiFiClass::RSSI() { return emu_bus_wifi_rssi(); }
-WiFiClass WiFi;
+// The WiFi object (STA link, scan, SoftAP) lives with the rest of the radio
+// in emu_radio.cpp.
 LittleFSClass LittleFS;
 
 // ── NVS (Preferences) ───────────────────────────────────────────────────
