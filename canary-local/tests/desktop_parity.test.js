@@ -2322,6 +2322,137 @@ test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {
     "the two apps lock different mdns-sd versions — the twin is no longer the same browse");
 });
 
+// ── Native flashing: the Lab runs the Flasher's commands on the same engine ──
+//
+// A14: the Lab's native flash path is NOT a port of the Flasher's flash code —
+// both apps call desktop/flash-engine, and each keeps only a thin Tauri
+// wrapper per command. The wrappers are the one place the two can still drift
+// (a renamed argument silently becomes `undefined` in one app's invoke), so
+// they are held equal by text here, and the DTOs and event names are held to
+// the engine.
+const FLASH_COMMANDS = [
+  // [command, the Flasher file that defines it]
+  ["list_ports", "desktop/src-tauri/src/lib.rs"],
+  ["detect_chip", "desktop/src-tauri/src/lib.rs"],
+  ["fetch_manifest", "desktop/src-tauri/src/lib.rs"],
+  ["flash", "desktop/src-tauri/src/lib.rs"],
+  ["start_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
+  ["serial_monitor_send", "desktop/src-tauri/src/serial_monitor.rs"],
+  ["stop_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
+];
+
+// One Rust fn — its attributes, signature and balanced body — whitespace
+// folded and `pub` dropped (the Lab's live in a module, the Flasher's at the
+// crate root). Comments stay: the argument comments are part of the contract.
+const rustFnText = (src, name, where) => {
+  const m = new RegExp(`\\n((?:#\\[[^\\n]*\\]\\s*\\n)*)(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`).exec(src);
+  assert.ok(m, `couldn't find fn ${name} in ${where}`);
+  let depth = 0;
+  let i = src.indexOf("{", m.index + m[0].length);
+  for (; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) break;
+  }
+  return src.slice(m.index + 1, i + 1).replace(/\bpub\s+/g, "").replace(/\s+/g, " ").trim();
+};
+
+test("native flashing: the Lab's flash commands are the Flasher's, on the same engine", () => {
+  const labFlash = read(join(ROOT, "desktop-lab/src-tauri/src/flash.rs"));
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+  const flasherHost = read(join(ROOT, "desktop/src-tauri/src/host.rs"));
+
+  // 1. Same command names, same arguments, same body — by text.
+  for (const [cmd, file] of FLASH_COMMANDS) {
+    const flasher = rustFnText(read(join(ROOT, file)), cmd, file);
+    const lab = rustFnText(labFlash, cmd, "desktop-lab/src-tauri/src/flash.rs");
+    assert.strictEqual(lab, flasher,
+      `the Lab's ${cmd} drifted from the Flasher's (${file}) — the two apps' wrappers ` +
+      "must stay identical so either frontend's invoke works against either app");
+    assert.match(flasher, /#\[tauri::command\]/, `${cmd} is not a tauri command in ${file}`);
+  }
+  // Every delegating wrapper calls the engine, never a local copy of the logic.
+  for (const [cmd, engineFn] of [["detect_chip", "flash_engine::flash::detect_chip"],
+    ["fetch_manifest", "flash_engine::flash::fetch_manifest"], ["flash", "flash_engine::flash::flash"],
+    ["list_ports", "flash_engine::ports::list_ports"]]) {
+    assert.ok(rustFnText(labFlash, cmd, "desktop-lab flash.rs").includes(`${engineFn}(`),
+      `the Lab's ${cmd} must delegate to ${engineFn}`);
+  }
+
+  // 2. Registered where they can work, and only there: the Lab's desktop
+  //    handler, never the mobile one (no USB serial on iOS/iPadOS — MOBILE.md).
+  const handlers = [...labRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler in desktop-lab lib.rs");
+  const flasherHandler = /invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/.exec(libRs)[1];
+  for (const [cmd] of FLASH_COMMANDS) {
+    assert.match(handlers[0], new RegExp(`\\bflash::${cmd}\\b`), `the Lab's desktop handler must register flash::${cmd}`);
+    assert.doesNotMatch(handlers[1], new RegExp(`\\b${cmd}\\b`), `the Lab's mobile handler must not register ${cmd}`);
+    assert.match(flasherHandler, new RegExp(`\\b${cmd}\\b`), `the Flasher no longer registers ${cmd}`);
+  }
+  assert.match(labRs, /#\[cfg\(desktop\)\]\s*mod flash;/, "desktop-lab lib.rs must gate mod flash on desktop");
+  assert.match(labRs, /\.manage\(flash_engine::monitor::SerialMonitorState::default\(\)\)/,
+    "the Lab must manage the engine's SerialMonitorState, or every serial command panics");
+  assert.match(labRs, /\.plugin\(tauri_plugin_shell::init\(\)\)/,
+    "the Lab must init the shell plugin — Rust-side shell().sidecar() needs its state");
+
+  // 3. The DTOs are the engine's, in both apps — never a retyped twin.
+  for (const [label, src] of [["desktop lib.rs", libRs], ["desktop-lab lib.rs", labRs], ["desktop-lab flash.rs", labFlash]]) {
+    assert.doesNotMatch(src, /struct\s+(?:FlashReceipt|ChipInfo|PortDto|FlashRequest)\b/,
+      `${label} defines its own flash DTO — use flash_engine's, or the two apps' answers drift`);
+  }
+
+  // 4. One host shape per app: the same name, Tauri's emitter, the bundled
+  //    espflash by its runtime name, each app's User-Agent, and a spawn that
+  //    never leaves espflash behind — the Flasher's launch guard, the Lab's
+  //    Sidecars registry killed on exit (the launch guard is not ported).
+  for (const [label, src, ua] of [["desktop host.rs", flasherHost, "SecuraCV-Flasher"],
+    ["desktop-lab flash.rs", labFlash, "SecuraCV-Lab"]]) {
+    assert.match(src, /impl FlashHost for TauriHost \{/, `${label} must implement the engine's FlashHost as TauriHost`);
+    assert.match(src, /\.sidecar\(ESPFLASH\)/, `${label} must spawn the bundled espflash by its runtime name`);
+    assert.match(src, new RegExp(`const USER_AGENT: &'static str = "${ua}";`), `${label} lost its User-Agent`);
+  }
+  assert.match(flasherHost, /launch_guard::spawn_tracked\(/, "the Flasher's espflash spawn must stay launch-guard tracked");
+  assert.match(labFlash, /running\.insert\(pid, child\)/, "the Lab must record each running espflash");
+  assert.match(labRs, /RunEvent::Exit = &_event \{\s*flash::Sidecars::kill_all\(_app\);/,
+    "a quitting Lab must kill the espflash it is still running");
+
+  // 5. The events the engine speaks are the events the Flasher's frontend
+  //    listens for (the Lab's flash page joins this list when it gains the
+  //    native path).
+  const events = new Set([...engineAllRs.matchAll(/\.emit\(\s*"((?:flash|serial):[a-z]+)"/g)].map((m) => m[1]));
+  for (const e of ["flash:log", "flash:progress", "flash:changemap", "serial:log", "serial:status", "serial:receipt"]) {
+    assert.ok(events.has(e), `the flash engine no longer emits ${e}`);
+  }
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  for (const e of events) {
+    if (e === "serial:vision") continue; // a Vision-module detail, read from the receipt instead
+    assert.ok(appJs.includes(`"${e}"`), `the engine emits ${e} but the Flasher's frontend never listens for it`);
+  }
+
+  // 6. Both apps embed the one catalog for the Rust-side guards, and both
+  //    depend on the engine by path (the Lab's only on desktop).
+  const labBuild = read(join(ROOT, "desktop-lab/src-tauri/build.rs"));
+  assert.match(labBuild, /canary-local\/devices\/flash\.json/, "the Lab's build.rs must embed the canonical flash.json");
+  assert.match(labFlash, /include_str!\(concat!\(env!\("OUT_DIR"\), "\/flash\.json"\)\)/,
+    "the Lab's chip guard must read the catalog build.rs embedded");
+  assert.match(read(join(ROOT, "desktop/src-tauri/Cargo.toml")), /^flash-engine = \{ path = "\.\.\/flash-engine" \}/m,
+    "the Flasher must depend on desktop/flash-engine");
+  const labToml = read(join(ROOT, "desktop-lab/src-tauri/Cargo.toml"));
+  const desktopBlock = labToml.split("[target.'cfg(not(any(target_os = \"android\", target_os = \"ios\")))'.dependencies]")[1] || "";
+  assert.match(desktopBlock.split(/^\[/m)[0], /^flash-engine = \{ path = "\.\.\/\.\.\/desktop\/flash-engine" \}/m,
+    "the Lab must depend on desktop/flash-engine in its desktop-only block");
+
+  // 7. No shell grant for either webview: every sidecar spawn is Rust-side.
+  for (const dir of ["desktop/src-tauri/capabilities", "desktop-lab/src-tauri/capabilities"]) {
+    for (const f of readdirSync(join(ROOT, dir)).filter((n) => n.endsWith(".json"))) {
+      const perms = JSON.parse(read(join(ROOT, dir, f))).permissions || [];
+      for (const p of perms) {
+        const id = typeof p === "string" ? p : p.identifier;
+        assert.doesNotMatch(String(id), /^shell:/, `${dir}/${f} grants ${id} — espflash is spawned from Rust, never the webview`);
+      }
+    }
+  }
+});
+
 // ── The derived birth certificate: one bird, one name, three surfaces ─────
 //
 // The Mac app can't import canary-local, so it inlines the derivation. That is

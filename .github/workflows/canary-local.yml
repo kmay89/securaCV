@@ -58,6 +58,14 @@ on:
       # the flash engine both desktop apps share: desktop_parity reads its
       # catalog guards, provisioning, health, change map, intake and pipeline
       - "desktop/flash-engine/src/**"
+      # …and holds the two apps' flash-command wrappers, hosts, catalog embed,
+      # engine dependency and (absent) shell grants to each other
+      - "desktop/src-tauri/src/host.rs"
+      - "desktop/src-tauri/src/serial_monitor.rs"
+      - "desktop/src-tauri/Cargo.toml"
+      - "desktop/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/src/flash.rs"
+      - "desktop-lab/src-tauri/build.rs"
       # the secret drawer's backend names (desktop_parity pins app.js where())
       - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
@@ -153,6 +161,14 @@ on:
       # the flash engine both desktop apps share: desktop_parity reads its
       # catalog guards, provisioning, health, change map, intake and pipeline
       - "desktop/flash-engine/src/**"
+      # …and holds the two apps' flash-command wrappers, hosts, catalog embed,
+      # engine dependency and (absent) shell grants to each other
+      - "desktop/src-tauri/src/host.rs"
+      - "desktop/src-tauri/src/serial_monitor.rs"
+      - "desktop/src-tauri/Cargo.toml"
+      - "desktop/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/src/flash.rs"
+      - "desktop-lab/src-tauri/build.rs"
       # the secret drawer's backend names (desktop_parity pins app.js where())
       - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
