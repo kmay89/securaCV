@@ -305,3 +305,88 @@ test("timelineStatus: a missing or junk hours value falls back to the card defau
   assert.match(timelineStatus({ source: "history", hours: "junk" }).empty, /last 24h/);
   assert.match(timelineStatus({ source: "current-state", hours: -1 }).notice, /24h/);
 });
+
+// --- The custom element itself, in a minimal fake DOM ------------------------
+// The helpers above carry the logic; these drive the real element's lifecycle
+// (setConfig / hass / the history fetch) for state that lives on the element.
+
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+// Evaluate the real card file with just enough DOM for it to register its
+// element, and return the element class. A fresh sandbox per call, so no
+// state leaks between tests and the Node-side helper import above is untouched.
+function loadCardElement() {
+  const src = fs.readFileSync(path.join(__dirname, "securacv-timeline-card.js"), "utf8");
+  let registered = null;
+  class FakeHTMLElement {
+    attachShadow() {
+      this.shadowRoot = { innerHTML: "" };
+      return this.shadowRoot;
+    }
+  }
+  const sandbox = {
+    HTMLElement: FakeHTMLElement,
+    customElements: { define: (_name, cls) => { registered = cls; } },
+    console: { debug() {}, log() {}, warn() {}, error() {} },
+  };
+  sandbox.window = sandbox;
+  vm.runInNewContext(src, sandbox, { filename: "securacv-timeline-card.js" });
+  assert.ok(registered, "the card file registered its custom element");
+  return registered;
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+const EVENT_ID = "sensor.securacv_last_event";
+const eventStates = () => ({
+  [EVENT_ID]: {
+    state: "contact_state_change",
+    attributes: { friendly_event: "Contact state change", zone_id: "zone:a", confidence: 0.8 },
+    last_changed: "2026-09-23T10:00:00Z",
+    last_updated: "2026-09-23T10:00:00Z",
+  },
+});
+const NOTICE = /class="notice"/;
+
+test("card: a failed history read's notice does not outlive the entities it was about", async () => {
+  const Card = loadCardElement();
+  const card = new Card();
+  card.setConfig({}); // auto-discovery, so the entity set can change without setConfig
+
+  card.hass = { states: eventStates(), callWS: () => Promise.reject(new Error("recorder off")) };
+  await settle();
+  assert.match(card.shadowRoot.innerHTML, NOTICE, "a failed read is announced");
+
+  // The event sensor goes away: no history read is attempted for an empty
+  // entity set, so nothing may still say history is unavailable.
+  let calls = 0;
+  const counting = () => { calls += 1; return Promise.resolve({}); };
+  card.hass = { states: {}, callWS: counting };
+  await settle();
+  assert.equal(calls, 0);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, NOTICE);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /unavailable/);
+
+  // It comes back with the very same state: that is a fresh read, not a
+  // reuse of the key the failed read left behind.
+  card.hass = { states: eventStates(), callWS: counting };
+  await settle();
+  assert.equal(calls, 1, "the returning entity set re-reads history");
+  assert.doesNotMatch(card.shadowRoot.innerHTML, NOTICE);
+});
+
+test("card: reconfiguring clears the previous config's history notice", async () => {
+  const Card = loadCardElement();
+  const card = new Card();
+  card.setConfig({ event_entities: [EVENT_ID] });
+  card.hass = { states: eventStates(), callWS: () => Promise.reject(new Error("recorder off")) };
+  await settle();
+  assert.match(card.shadowRoot.innerHTML, NOTICE);
+
+  // New config, read still in flight (never settles here): the synchronous
+  // render must not carry the old config's notice.
+  card.setConfig({ event_entities: [EVENT_ID], hours: 6 });
+  card.hass = { states: eventStates(), callWS: () => new Promise(() => {}) };
+  assert.doesNotMatch(card.shadowRoot.innerHTML, NOTICE);
+});

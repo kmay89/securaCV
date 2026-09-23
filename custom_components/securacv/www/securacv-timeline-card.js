@@ -465,6 +465,9 @@
         config || {}
       );
       this._historyKey = null; // force a refresh on reconfigure
+      // A new config has not read history yet: a notice left over from the
+      // old one would describe a fetch this config never made.
+      this._historySource = null;
     }
 
     getCardSize() {
@@ -497,7 +500,11 @@
       const entities = this._resolveEntities();
       const ids = entities.eventEntities;
       if (!ids.length) {
+        // No event entities → no history read attempted, so no notice about
+        // one (an earlier failed read must not keep speaking for this state).
         this._items = [];
+        this._historySource = null;
+        this._historyKey = null; // entities coming back must re-read, not reuse
         return;
       }
       // Re-fetch only when an event entity changes. The key folds in
