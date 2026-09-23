@@ -3553,12 +3553,12 @@
      "note": "Seeed MR60BHA2 kit carrier + stacked XIAO ESP32-C6. MEASURE YOURS",
      "params": [
       {
-       "name": "vm_l",
+       "name": "radar_l",
        "default": "44.0",
        "comment": "carrier length (Y; XIAO/USB edge down) — brd_l(\"mr60\"), canary_board_lib"
       },
       {
-       "name": "vm_w",
+       "name": "radar_w",
        "default": "36.0",
        "comment": "carrier width (X) — brd_w(\"mr60\")"
       },
@@ -3583,7 +3583,7 @@
        "comment": "air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's"
       },
       {
-       "name": "vm_front_h",
+       "name": "radar_front_h",
        "default": "3.5",
        "comment": "carrier front-side TALLEST part (connectors etc.) — MEASURE"
       },
@@ -3719,7 +3719,7 @@
       {
        "name": "mag_dy",
        "default": "-14.0",
-       "comment": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE. (13, 14)"
+       "comment": "(mag_dx, mag_dy) must stay >= 1 mm below radar_front_h — MEASURE. (13, 14)"
       }
      ]
     },
@@ -4167,7 +4167,7 @@
        "default": "clip_clear + clip_t"
       },
       {
-       "name": "vm_standoff",
+       "name": "radar_standoff",
        "default": "stack_sock_h + xiao_below"
       },
       {
@@ -4180,20 +4180,20 @@
       },
       {
        "name": "inner_x",
-       "default": "vm_w + 2*(clip_stack + board_clear) + 0.5 + 2*post_corner"
+       "default": "radar_w + 2*(clip_stack + board_clear) + 0.5 + 2*post_corner"
       },
       {
        "name": "inner_y",
-       "default": "bot_margin + vm_l + 0.6 + 2 + 6",
+       "default": "bot_margin + radar_l + 0.6 + 2 + 6",
        "comment": "board at the USB wall + end stops + wire room + top margin"
       },
       {
        "name": "cav_d_min",
-       "default": "vm_standoff + pcb_t + vm_front_h + cav_extra"
+       "default": "radar_standoff + pcb_t + radar_front_h + cav_extra"
       },
       {
        "name": "usb_axis",
-       "default": "vm_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z"
+       "default": "radar_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z"
       },
       {
        "name": "usb_zc",
@@ -4205,7 +4205,7 @@
       },
       {
        "name": "rad_gap",
-       "default": "(vm_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - radome_t)"
+       "default": "(radar_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - radome_t)"
       },
       {
        "name": "out_x",
@@ -4220,25 +4220,25 @@
        "default": "floor_t + cav_d"
       },
       {
-       "name": "vm_cx",
+       "name": "radar_cx",
        "default": "0"
       },
       {
-       "name": "vm_cy",
-       "default": "-inner_y/2 + bot_margin + vm_l/2"
+       "name": "radar_cy",
+       "default": "-inner_y/2 + bot_margin + radar_l/2"
       },
       {
        "name": "rad_cx",
-       "default": "vm_cx + rad_dx",
+       "default": "radar_cx + rad_dx",
        "comment": "radome window center"
       },
       {
        "name": "rad_cy",
-       "default": "vm_cy + rad_dy"
+       "default": "radar_cy + rad_dy"
       },
       {
        "name": "usb_cx",
-       "default": "vm_cx + usb_dx"
+       "default": "radar_cx + usb_dx"
       },
       {
        "name": "mount_extra",
@@ -4338,13 +4338,14 @@
        "comment": "XIAO USB direction, degrees (0 = +X; 270 = -Y = chin/front in the stand)"
       },
       {
-       "name": "usb_w",
+       "name": "usb_slot_w",
        "default": "11.0",
        "comment": "side-slot width (USB-C plug shells run ~10.5)"
       },
       {
-       "name": "usb_h",
-       "default": "7.0"
+       "name": "usb_slot_h",
+       "default": "7.0",
+       "comment": "side-slot height"
       }
      ]
     },
@@ -4380,7 +4381,7 @@
       {
        "name": "wall_t",
        "default": "2.3",
-       "comment": "deviates: the bezel's snap fingers seat through this drum wall — tuned as a set with snap_depth/skirt_t"
+       "comment": "deviates: the bezel's snap fingers seat through this drum wall — tuned as a set with snap_depth/finger_t"
       },
       {
        "name": "back_t",
@@ -4470,7 +4471,7 @@
        "comment": "bezel skirt reach into the bore (capped: the skirt must float over the PCB rim)"
       },
       {
-       "name": "skirt_t",
+       "name": "finger_t",
        "default": "1.0",
        "comment": "finger thickness — the skirt is relieved to this behind the nubs so the"
       },
@@ -4900,12 +4901,12 @@
      "note": "MR60BHA2 carrier + stacked XIAO ESP32-C6. MEASURE",
      "params": [
       {
-       "name": "vm_l",
+       "name": "radar_l",
        "default": "44.0",
        "comment": "brd_l(\"mr60\") — canary_board_lib"
       },
       {
-       "name": "vm_w",
+       "name": "radar_w",
        "default": "36.0",
        "comment": "brd_w(\"mr60\") — canary_board_lib"
       },
@@ -4915,7 +4916,7 @@
        "comment": "brd_stack_sock_unmeasured() — the doorbell bench measured 6.5 (canary_board_lib)"
       },
       {
-       "name": "vm_front_h",
+       "name": "radar_front_h",
        "default": "3.5",
        "comment": "carrier front-side TALLEST part (connectors etc.) — MEASURE"
       },
@@ -5049,13 +5050,13 @@
      "note": "",
      "params": [
       {
-       "name": "vm_standoff",
+       "name": "radar_standoff",
        "default": "4.5",
-       "comment": "rails hold the carrier's front parts (vm_front_h) clear of the"
+       "comment": "rails hold the carrier's front parts (radar_front_h) clear of the"
       },
       {
        "name": "rail_h",
-       "default": "vm_standoff",
+       "default": "radar_standoff",
        "comment": "solid plate back; the XIAO hangs deeper into the box"
       }
      ]
@@ -7602,12 +7603,12 @@
      "note": "the standard, plus what the board does with it",
      "params": [
       {
-       "name": "usb_w",
+       "name": "usb_shell_w",
        "default": "12.00",
        "comment": "shell width — port_usba_shell_w(), canary_port_lib"
       },
       {
-       "name": "usb_h",
+       "name": "usb_shell_h",
        "default": "4.50",
        "comment": "shell height — port_usba_shell_h(), canary_port_lib"
       },
@@ -8079,11 +8080,11 @@
       },
       {
        "name": "usb_top",
-       "default": "z_usb + usb_h/2 + usb_clear + usb_relief"
+       "default": "z_usb + usb_shell_h/2 + usb_clear + usb_relief"
       },
       {
        "name": "usb_bot",
-       "default": "z_usb - usb_h/2 - usb_clear - usb_relief"
+       "default": "z_usb - usb_shell_h/2 - usb_clear - usb_relief"
       },
       {
        "name": "snap_strain",
@@ -8327,12 +8328,12 @@
        "comment": "width of that relieved band, from the window edge out"
       },
       {
-       "name": "usb_w",
+       "name": "usb_shell_w",
        "default": "9.15",
        "comment": "stadium opening width — shell + 0.2 (fit-tested: 9.4 showed a gap)"
       },
       {
-       "name": "usb_h",
+       "name": "usb_shell_h",
        "default": "3.45",
        "comment": "stadium opening height — shell + 0.2"
       },
@@ -8576,7 +8577,7 @@
       },
       {
        "name": "usb_slide",
-       "default": "usb_w + 0.35",
+       "default": "usb_shell_w + 0.35",
        "comment": "insertion-notch width — a hair looser than the"
       },
       {
@@ -8596,7 +8597,7 @@
       },
       {
        "name": "chin_w",
-       "default": "usb_w + 4",
+       "default": "usb_shell_w + 4",
        "comment": "chin bulge width along the wall"
       },
       {
@@ -8823,12 +8824,12 @@
        "comment": "width of that relieved band, from the window edge out"
       },
       {
-       "name": "usb_w",
+       "name": "usb_shell_w",
        "default": "9.05",
        "comment": "stadium opening width — shell + 0.11 total"
       },
       {
-       "name": "usb_h",
+       "name": "usb_shell_h",
        "default": "3.35",
        "comment": "stadium opening height — shell + 0.09 total"
       },
@@ -9308,12 +9309,12 @@
       },
       {
        "name": "usb_ow",
-       "default": "is_a ? usb_a_w + 2*usb_a_clear : usb_w",
+       "default": "is_a ? usb_a_w + 2*usb_a_clear : usb_shell_w",
        "comment": "opening width"
       },
       {
        "name": "usb_oh",
-       "default": "is_a ? usb_a_h + 2*usb_a_clear : usb_h",
+       "default": "is_a ? usb_a_h + 2*usb_a_clear : usb_shell_h",
        "comment": "opening height"
       },
       {
@@ -11988,9 +11989,9 @@
      "note": "",
      "params": [
       {
-       "name": "clip_w",
+       "name": "leaf_w",
        "default": "45.0",
-       "comment": "width (extrusion length)"
+       "comment": "belt-clip width (extrusion length) — the plate and the leaf are one profile"
       },
       {
        "name": "plate_l",

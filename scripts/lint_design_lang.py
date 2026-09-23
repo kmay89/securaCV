@@ -33,6 +33,20 @@ few lines the sweep deliberately left are listed in HELP_LINE_DEBT, which can
 only shrink: a new shared-help line fails, and so does a listed one that is
 gone (the entry must go with it).
 
+Fourth rule: a knob name keeps ONE meaning across the catalog. People (and
+agents) learn `usb_w` in one case and read it the same way in the next, so a
+name that means two things transfers a wrong skill silently: `usb_w` was the
+boot-clearance wall opening in the case files and the connector shell in the
+display cases, `vm_*` a Grove Vision module in four files and a radar carrier
+in two, `skirt_t` a rain skirt in four and a snap finger in one, `clip_w` a
+6 mm board-clip tab in twelve and a 45 mm belt clip in one (audit 2026-09,
+C2). The minority meanings were renamed (usb_shell_*, usb_slot_*, radar_*,
+finger_t, leaf_w), and KNOB_MEANINGS holds every one of those names to its
+meaning through its help: a listed knob whose help does not say its meaning
+word — or says the other meaning's — fails, naming the name to use instead.
+A listed knob with no help passes: there is no meaning on it to transfer yet
+(writing that help is the parametric-UX backlog's next wave).
+
 Run from the repo root:  python3 scripts/lint_design_lang.py
 """
 
@@ -159,6 +173,60 @@ HELP_LINE_DEBT = {
 }
 
 
+# The fourth rule's table (DESIGN_RULES.md §10 states it for people). name ->
+# (its meaning, a regex its help must match, a regex its help must NOT match or
+# None, what to call the other meaning). Words, not values: a value is a design
+# decision each case makes; a meaning is what the next reader assumes.
+KNOB_MEANINGS = {
+    "usb_w":         ("the wall opening a USB cable's plug and boot pass through",
+                      r"\bboots?\b", None,
+                      "usb_shell_w for a connector-shell size, usb_slot_w for a side slot"),
+    "usb_h":         ("the wall opening a USB cable's plug and boot pass through",
+                      r"\bboots?\b", None,
+                      "usb_shell_h for a connector-shell size, usb_slot_h for a side slot"),
+    "usb_shell_w":   ("the USB connector shell, or an opening sized to it", r"\bshell", None, None),
+    "usb_shell_h":   ("the USB connector shell, or an opening sized to it", r"\bshell", None, None),
+    "usb_slot_w":    ("a side slot a USB plug enters through", r"\bslot", None, None),
+    "usb_slot_h":    ("a side slot a USB plug enters through", r"\bslot", None, None),
+    "vm_l":          ("the Grove Vision AI V2 module", r"grove|vision|\bmodule\b",
+                      r"radar|mr60|carrier", "radar_l for the MR60 radar carrier"),
+    "vm_w":          ("the Grove Vision AI V2 module", r"grove|vision|\bmodule\b",
+                      r"radar|mr60|carrier", "radar_w for the MR60 radar carrier"),
+    "vm_front_h":    ("the Grove Vision AI V2 module", r"grove|vision|\bmodule\b",
+                      r"radar|mr60|carrier", "radar_front_h for the MR60 radar carrier"),
+    "radar_l":       ("the MR60 radar carrier", r"radar|mr60|carrier", r"grove|vision", None),
+    "radar_w":       ("the MR60 radar carrier", r"radar|mr60|carrier", r"grove|vision", None),
+    "radar_front_h": ("the MR60 radar carrier", r"radar|mr60|carrier", r"grove|vision", None),
+    "skirt_t":       ("the rain (drip-edge) skirt's wall", r"skirt", r"finger",
+                      "finger_t for a snap finger"),
+    "finger_t":      ("a snap finger's thickness", r"finger", None, None),
+    "clip_w":        ("the snap board-clip's tab width", r"\btab\b", r"belt|leaf|extrusion",
+                      "leaf_w for a belt clip's width"),
+    "leaf_w":        ("a belt clip's leaf (extrusion) width", r"leaf|belt", None, None),
+}
+
+
+def lint_meanings(path):
+    """Fourth rule: a listed knob's help says its meaning, and not another one."""
+    problems = []
+    for group in gen_builder_manifest.parse_scad(path, with_lines=True):
+        for param in group["params"]:
+            rule = KNOB_MEANINGS.get(param["name"])
+            desc = param.get("desc", "")
+            if not rule or not desc:
+                continue
+            meaning, must, must_not, instead = rule
+            if re.search(must, desc, re.I) and not (must_not and re.search(must_not, desc, re.I)):
+                continue
+            problems.append(
+                f"{path.name}:{param['line']}: `{param['name']}` means {meaning} across the "
+                f"catalog, but its help reads \"{desc}\". If it means that, say so in the "
+                "help; if it means something else, give it its own name"
+                + (f" — {instead}" if instead else "")
+                + " (KNOB_MEANINGS; DESIGN_RULES.md §10)")
+    return problems
+
+
 def knob_lines(path):
     """{line number: [knob names]} as gen_builder_manifest.parse_scad sees them."""
     by_line = {}
@@ -203,6 +271,7 @@ def main():
         problems += lint_file(path)
         found, seen = lint_help_lines(path, HELP_LINE_DEBT)
         problems += found
+        problems += lint_meanings(path)
         debt_seen |= seen
     for name, knob in sorted(HELP_LINE_DEBT - debt_seen):
         problems.append(f"{name}: HELP_LINE_DEBT lists the shared-help line starting "
@@ -216,7 +285,7 @@ def main():
         print(f"\ndesign language: {len(problems)} problem(s)")
         return 1
     print("design language OK — every canonical default conforms or explains itself, "
-          "and every knob's help is on its own line")
+          "every knob's help is on its own line, and every shared name keeps its meaning")
     return 0
 
 

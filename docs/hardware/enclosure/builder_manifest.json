@@ -3125,7 +3125,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "3e7aa2c185b59bd4d60c0e821407c4ad7a9fc9f592ed24870a8d655ca35e7d34",
+      "sha256": "4fb891b9914d7a609fb241582696bcf94440deca8d024c55fcde882646921620",
       "groups": [
         {
           "name": "What to render",
@@ -3243,13 +3243,13 @@
           "name": "Boards",
           "params": [
             {
-              "name": "vm_l",
+              "name": "radar_l",
               "type": "number",
               "default": 44.0,
               "desc": "carrier length (Y; XIAO/USB edge down) — brd_l(\"mr60\"), canary_board_lib"
             },
             {
-              "name": "vm_w",
+              "name": "radar_w",
               "type": "number",
               "default": 36.0,
               "desc": "carrier width (X) — brd_w(\"mr60\")"
@@ -3279,7 +3279,7 @@
               "desc": "air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's"
             },
             {
-              "name": "vm_front_h",
+              "name": "radar_front_h",
               "type": "number",
               "default": 3.5,
               "desc": "carrier front-side TALLEST part (connectors etc.) — MEASURE"
@@ -3444,7 +3444,7 @@
               "name": "mag_dy",
               "type": "number",
               "default": -14.0,
-              "desc": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE. (13, 14)"
+              "desc": "(mag_dx, mag_dy) must stay >= 1 mm below radar_front_h — MEASURE. (13, 14)"
             }
           ]
         },

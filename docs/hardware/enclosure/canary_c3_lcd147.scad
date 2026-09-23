@@ -296,8 +296,8 @@ glass_relief_w = 0.5;   // width of that relieved band, from the window edge out
    opening is a stadium hugging the receptacle shell (nominal 8.94 × 3.26).
    Print 2 (kmay89) confirmed the position dead-on, so the opening now runs
    TIGHT: shell + ~0.05 per side. */
-usb_w  = 9.05;     // stadium opening width — shell + 0.11 total
-usb_h  = 3.35;     // stadium opening height — shell + 0.09 total
+usb_shell_w = 9.05;  // stadium opening width — shell + 0.11 total
+usb_shell_h = 3.35;  // stadium opening height — shell + 0.09 total
 usb_dx = 0.0;      // sideways offset of the connector center — MEASURE
 usb_dz = 0.0;      // depth offset from shell-on-back-face nominal — MEASURE
 usb_proud  = 1.9;  // shell overhang past the PCB edge — MEASURE
@@ -922,12 +922,12 @@ z_pcb_back  = z_pcb_front + pcb_t;
 // C build's geometry to an A board, which is the exact class of quiet wrong
 // answer the pinned defines in gen_3mf.py exist to prevent.
 is_a = (port == "usb_a");
-usb_ow = is_a ? usb_a_w + 2*usb_a_clear : usb_w;   // opening width
-usb_oh = is_a ? usb_a_h + 2*usb_a_clear : usb_h;   // opening height
+usb_ow = is_a ? usb_a_w + 2*usb_a_clear : usb_shell_w;  // opening width
+usb_oh = is_a ? usb_a_h + 2*usb_a_clear : usb_shell_h;  // opening height
 // The opening centers on the SHELL, and WHERE the shell is differs by board:
 //   usb_c — a receptacle resting ON the PCB back face, so the shell's center
 //           sits half its nominal 3.26 height behind that face. Tightening
-//           usb_h never shifts it off the port.
+//           usb_shell_h never shifts it off the port.
 //   usb_a — a plug the PCB tongue runs down the MIDDLE of. It straddles the
 //           board, so the center is the PCB's own mid-plane. Getting this
 //           wrong stacks the opening 2.4 mm too high and breaks the case out
@@ -1147,13 +1147,13 @@ assert(land_w_x >= 0.4 && land_w_y >= 0.4,
            "carry the panel. Shrink glass_relief_w; the relief must never eat ",
            "the land that locates the glass."));
 assert(lcm_l <= yc && lcm_w <= xc, "LCD module larger than the board cavity — check dims");
-assert(z_usb - usb_h/2 >= face_t - 0.01, "USB opening cuts into the bezel face — check usb_h/usb_dz");
-assert(z_usb + usb_h/2 <= bez_h - 0.8,
+assert(z_usb - usb_shell_h/2 >= face_t - 0.01, "USB opening cuts into the bezel face — check usb_shell_h/usb_dz");
+assert(z_usb + usb_shell_h/2 <= bez_h - 0.8,
        "no printable bridge left between the USB opening and the rear rim — raise back_stack/hdr_drop or lower usb_dz");
-assert(z_usb + usb_h/2 + usb_cham <= bez_h - 0.5,
-       str("the USB rim chamfer (top at ", z_usb + usb_h/2 + usb_cham,
+assert(z_usb + usb_shell_h/2 + usb_cham <= bez_h - 0.5,
+       str("the USB rim chamfer (top at ", z_usb + usb_shell_h/2 + usb_cham,
            ") breaks out through the rim (", bez_h, ") — trim usb_cham"));
-assert(z_usb - usb_h/2 - usb_cham >= face_t - 0.01,
+assert(z_usb - usb_shell_h/2 - usb_cham >= face_t - 0.01,
        "the USB rim chamfer undercuts the bezel face — trim usb_cham");
 assert(usb_cham <= ear_skin - 0.6,
        str("usb_cham ", usb_cham, " leaves under 0.6 mm of skin at the chamfer's ",
@@ -1303,10 +1303,10 @@ assert(!light_seam || !band_ring || !opt_btn ||
            "band_ring = false and take the U."));
 // usb_c: the ring and the opening must never meet — there is room, so use it.
 assert(is_a || !light_seam || !band_ring ||
-       seam_z0 + seam_h_eff <= z_usb - usb_h/2 - usb_cham - 0.2,
+       seam_z0 + seam_h_eff <= z_usb - usb_shell_h/2 - usb_cham - 0.2,
        str("the ring's far face reaches z=", seam_z0 + seam_h_eff,
            " and the USB stadium's chamfer starts at ",
-           z_usb - usb_h/2 - usb_cham, " — the band would break into the ",
+           z_usb - usb_shell_h/2 - usb_cham, " — the band would break into the ",
            "connector opening on the wall it just started crossing."));
 // usb_a: they DO meet, by design, and the ring dives under. What has to hold
 // is that something survives down there — a notch that ate the whole run
@@ -1791,9 +1791,9 @@ module bezel() {
                                usb_a_r + usb_a_relief);
         else hull() {
             translate([usb_dx, -(yo/2 + chin_bump) + 0.005, z_usb]) rotate([90, 0, 0])
-                linear_extrude(0.01) stadium2d(usb_w + 2*usb_cham, usb_h + 2*usb_cham);
+                linear_extrude(0.01) stadium2d(usb_shell_w + 2*usb_cham, usb_shell_h + 2*usb_cham);
             translate([usb_dx, -(yo/2 + chin_bump) + usb_cham + 0.005, z_usb]) rotate([90, 0, 0])
-                linear_extrude(0.01) stadium2d(usb_w, usb_h);
+                linear_extrude(0.01) stadium2d(usb_shell_w, usb_shell_h);
         }
         // the lid-release scallop in the +Y rim. Centered ON z = bez_h so its
         // upper half is air and only the lower half bites: the rim loses
@@ -1883,7 +1883,7 @@ module lid() {
                     rrect2d(skirt_x, skirt_y, r_in);
                     rrect2d(skirt_x - 2*skirt_wall, skirt_y - 2*skirt_wall, max(0.4, r_in - skirt_wall));
                     // USB relief — ONE end only (lid +Y = case −Y): the key.
-                    // usb_w + 4, not + 2: the extra millimeter per side makes
+                    // usb_shell_w + 4, not + 2: the extra millimeter per side makes
                     // this cut MEET the pillar notches beside it. At + 2 a
                     // 0.05 mm whisker of skirt survived between the relief's
                     // edge and the notch circle's reach — one triangle wide,

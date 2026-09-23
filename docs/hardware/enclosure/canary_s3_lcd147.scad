@@ -154,8 +154,8 @@ hdr_pin_w = 1.2;   // width the solder fillet + pin occupies across the row
 // USB-A series-A plug shell, per the USB 2.0 mechanical drawing. These are
 // NOT guesses and should not be "adjusted to fit" — if the plug does not pass
 // the opening, the opening is wrong, not the standard.
-usb_w = 12.00;     // shell width — port_usba_shell_w(), canary_port_lib
-usb_h = 4.50;      // shell height — port_usba_shell_h(), canary_port_lib
+usb_shell_w = 12.00; // shell width — port_usba_shell_w(), canary_port_lib
+usb_shell_h = 4.50;  // shell height — port_usba_shell_h(), canary_port_lib
 usb_insert = 12.0; // shell length that must enter a receptacle
 // How far the shell overhangs the PCB's plug-end edge. MEASURE THIS FIRST —
 // it is the number the whole plug end is built on, and the assert below is
@@ -474,8 +474,8 @@ port_assert_insertion(usb_free, "the hallway case's series-A plug");
 // wall. If it does not, the case is open along an edge — and because the
 // relief is what makes the opening look intentional, the failure is easy to
 // introduce by tuning `usb_relief` alone.
-usb_top = z_usb + usb_h/2 + usb_clear + usb_relief;
-usb_bot = z_usb - usb_h/2 - usb_clear - usb_relief;
+usb_top = z_usb + usb_shell_h/2 + usb_clear + usb_relief;
+usb_bot = z_usb - usb_shell_h/2 - usb_clear - usb_relief;
 assert(usb_top <= bez_h - 0.6,
        str("The plug opening (top at ", usb_top, ") breaks out through the ",
            "rim (", bez_h, "). Check usb_dz and back_stack, or trim ",
@@ -666,14 +666,14 @@ module bezel_usb() {
     // The through opening, sized shell + clearance, as a stadium.
     translate([usb_dx, yc/2 + wall/2, z_usb]) rotate([90, 0, 0])
         linear_extrude(wall*3, center = true)
-            usb_a_2d(usb_w + 2*usb_clear, usb_h + 2*usb_clear);
+            usb_a_2d(usb_shell_w + 2*usb_clear, usb_shell_h + 2*usb_clear);
 
     // Relief on the OUTER face: a receptacle recessed in a wall-wart housing
     // meets air here instead of meeting the case.
     translate([usb_dx, yo/2 + 0.01, z_usb]) rotate([90, 0, 0])
         linear_extrude(usb_relief, scale = 1.0)
-            usb_a_2d(usb_w + 2*usb_clear + 2*usb_relief,
-                     usb_h + 2*usb_clear + 2*usb_relief, usb_r + usb_relief);
+            usb_a_2d(usb_shell_w + 2*usb_clear + 2*usb_relief,
+                     usb_shell_h + 2*usb_clear + 2*usb_relief, usb_r + usb_relief);
 }
 
 module bezel_collar() {
@@ -696,9 +696,9 @@ module bezel_collar() {
         translate([usb_dx, yc/2 + 0.01, z_usb]) rotate([90, 0, 0])
             linear_extrude(collar_l)
                 difference() {
-                    usb_a_2d(usb_w + 2*collar_gap + 2*collar_t,
-                             usb_h + 2*collar_gap + 2*collar_t, usb_r + collar_t);
-                    usb_a_2d(usb_w + 2*collar_gap, usb_h + 2*collar_gap);
+                    usb_a_2d(usb_shell_w + 2*collar_gap + 2*collar_t,
+                             usb_shell_h + 2*collar_gap + 2*collar_t, usb_r + collar_t);
+                    usb_a_2d(usb_shell_w + 2*collar_gap, usb_shell_h + 2*collar_gap);
                 }
         // above the board, inside the shell, and 0.2 UNDER the plate's
         // underside (the plate used to sit on the collar's crown)
@@ -706,8 +706,8 @@ module bezel_collar() {
             rrect2d(xc, yc, r_in);
     }
 }
-assert(plate_z0 - 0.2 - (z_usb + usb_h/2 + collar_gap) >= 1.0,
-       str("the drop collar keeps only ", plate_z0 - 0.2 - (z_usb + usb_h/2 + collar_gap),
+assert(plate_z0 - 0.2 - (z_usb + usb_shell_h/2 + collar_gap) >= 1.0,
+       str("the drop collar keeps only ", plate_z0 - 0.2 - (z_usb + usb_shell_h/2 + collar_gap),
            " mm of ring over the shell crown under the plate — thin back_t or deepen back_stack"));
 
 // Button access, through the ear skin.

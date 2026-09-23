@@ -33,7 +33,7 @@ stud_head_t = 0.8;   // head disc thickness — mount_stud_cap()
 stud_stem_h = 1.4;   // stem height — mount_stud_stem()
 
 /* [Belt clip] */
-clip_w    = 45.0;    // width (extrusion length)
+leaf_w    = 45.0;    // belt-clip width (extrusion length) — the plate and the leaf are one profile
 plate_l   = 58.0;    // plate height along the belt direction
 plate_t   = 3.0;
 leaf_l    = 48.0;
@@ -97,7 +97,7 @@ module clip() {
         [bridge_r, plate_l - 6],
         [bridge_r, plate_l - 2], [bridge_r - 2, plate_l], [2, plate_l], [0, plate_l - 2],
     ];
-    rotate([90, 0, 0]) translate([0, 0, -clip_w/2]) linear_extrude(clip_w) polygon(pts);
+    rotate([90, 0, 0]) translate([0, 0, -leaf_w/2]) linear_extrude(leaf_w) polygon(pts);
     // studs on the plate outer face, pointing -X (sideways in print)
     for (s = [1, -1])
         translate([0.02, 0, plate_l/2 + s*stud_gap/2]) rotate([0, -90, 0]) tstud();

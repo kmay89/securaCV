@@ -88,8 +88,8 @@ m_style = mount_style;
 radar = "bha2";       // ["bha2","fda2"]
 
 /* [Boards] — Seeed MR60BHA2 kit carrier + stacked XIAO ESP32-C6. MEASURE YOURS */
-vm_l     = 44.0;   // carrier length (Y; XIAO/USB edge down) — brd_l("mr60"), canary_board_lib
-vm_w     = 36.0;   // carrier width (X) — brd_w("mr60")
+radar_l  = 44.0;   // carrier length (Y; XIAO/USB edge down) — brd_l("mr60"), canary_board_lib
+radar_w  = 36.0;   // carrier width (X) — brd_w("mr60")
 xiao_l   = 21.0;   // brd_l("xiao")
 xiao_w   = 17.5;   // brd_w("xiao") spec; clips absorb the measured 17.8 (brd_xiao_w_measured)
 stack_sock_h = 6.5;  // carrier underside -> XIAO underside when seated: the registry's
@@ -98,7 +98,7 @@ stack_sock_h = 6.5;  // carrier underside -> XIAO underside when seated: the reg
                      // put the port in the floor — MEASURE yours
 xiao_below   = 5.5;  // air under the XIAO's outward (USB) face: the shell (3.3) plus half a plug's
                      // overmold below the shell axis plus clearance
-vm_front_h   = 3.5;  // carrier front-side TALLEST part (connectors etc.) — MEASURE
+radar_front_h = 3.5; // carrier front-side TALLEST part (connectors etc.) — MEASURE
 ant_h        = 1.2;  // antenna (AiP package) top above the PCB — MEASURE; sets the radome air gap
 pcb_t    = 1.0;
 board_clear = 0.6;
@@ -133,7 +133,7 @@ vent_dy        = -17.0;
 mag_d  = 6.0;
 mag_h  = 2.2;        // pocket depth — a 6 x 2 mm disc is standard; the pocket ring descends
 mag_dx = 18.0;       // mag_h below the front's inner face, so parts on the carrier under
-mag_dy = -14.0;      // (mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE. (13, 14)
+mag_dy = -14.0;      // (mag_dx, mag_dy) must stay >= 1 mm below radar_front_h — MEASURE. (13, 14)
                      // put a NdFeB disc 2 mm INSIDE the radome window; every face feature is
                      // now asserted >= 1 mm clear of it
 
@@ -258,22 +258,22 @@ ins_h   = (screw_size == "m2") ? insert_h : scr_insert_h(screw_size);
 pd = max(screw_insert ? max(post_d, ins_od + 3.0) : post_d, scr_post_min(screw_size));
 head_pad = (screw_head == "pan") ? max(0, head_h + 1.0 - lid_t) : 0;
 clip_stack  = clip_clear + clip_t;
-vm_standoff = stack_sock_h + xiao_below;
+radar_standoff = stack_sock_h + xiao_below;
 post_corner = pd + 1.5;
 // bottom margin: the front's lip (tol_slide + lip_t inside the wall) must not land on the carrier's edge
 bot_margin  = max(board_clear, tol_slide + lip_t + 0.2);
 
-inner_x = vm_w + 2*(clip_stack + board_clear) + 0.5 + 2*post_corner;
-inner_y = bot_margin + vm_l + 0.6 + 2 + 6;   // board at the USB wall + end stops + wire room + top margin
-cav_d_min = vm_standoff + pcb_t + vm_front_h + cav_extra;
+inner_x = radar_w + 2*(clip_stack + board_clear) + 0.5 + 2*post_corner;
+inner_y = bot_margin + radar_l + 0.6 + 2 + 6; // board at the USB wall + end stops + wire room + top margin
+cav_d_min = radar_standoff + pcb_t + radar_front_h + cav_extra;
 // the XIAO's USB-C hangs off its outward face (stack_sock_h below the carrier);
 // its axis is half a shell below that face
-usb_axis = vm_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z;
+usb_axis = radar_standoff - stack_sock_h - port_usbc_shell_h()/2 + xiao_usb_z;
 usb_zc  = floor_t + usb_axis;
 cav_d   = e_seal ? max(cav_d_min, usb_axis + usb_h/2 + 1.5 + gasket_groove + (usb_cover ? usb_cov_pad : 0)) : cav_d_min;
 // actual antenna-to-radome air gap: from the AiP top to the thinned window's
 // inner face (cavity headroom above the tallest part + the window recess)
-rad_gap = (vm_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - radome_t);
+rad_gap = (radar_front_h - ant_h) + (cav_d - cav_d_min + cav_extra) + (lid_t - radome_t);
 
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
@@ -295,11 +295,11 @@ module sense_fitcheck(lift = 0.1, turned = false) {
     intersection() { translate([0, 0, base_d + lift]) rotate([0, 0, turned ? 180 : 0]) front(); back(); }
 }
 
-vm_cx  = 0;
-vm_cy  = -inner_y/2 + bot_margin + vm_l/2;
-rad_cx = vm_cx + rad_dx;                    // radome window center
-rad_cy = vm_cy + rad_dy;
-usb_cx = vm_cx + usb_dx;
+radar_cx  = 0;
+radar_cy  = -inner_y/2 + bot_margin + radar_l/2;
+rad_cx = radar_cx + rad_dx;                 // radome window center
+rad_cy = radar_cy + rad_dy;
+usb_cx = radar_cx + usb_dx;
 
 mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
 kh_y  = inner_y/2 - kh_inset;
@@ -323,7 +323,7 @@ function post_xy() = concat([
 // every face feature stays >= 1 mm outside the radome window (metal or a hole in
 // the beam corrupts the µm-scale phase the radar reads)
 function _win_clear(dx, dy, d) =
-    max(abs(vm_cx + dx - rad_cx) - rad_win_x/2, abs(vm_cy + dy - rad_cy) - rad_win_y/2) >= d/2 + 1.0;
+    max(abs(radar_cx + dx - rad_cx) - rad_win_x/2, abs(radar_cy + dy - rad_cy) - rad_win_y/2) >= d/2 + 1.0;
 assert(!opt_led || _win_clear(lp_dx, lp_dy, lp_d + 2*tol_press), "the LED light pipe sits inside the radome window");
 assert(!opt_lux || _win_clear(lux_dx, lux_dy, max(lux_d, lux_disc_d)), "the lux aperture sits inside the radome window");
 assert(lux_disc_d == 0 || lux_disc_d > lux_d + 1.5, "lux_disc_d must overlap the aperture by >= 0.75 a side");
@@ -344,7 +344,7 @@ assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the struct
 key_x = inner_x/2 - post_corner - 2.5;   // lid key: on the +Y wall, inboard of the +X corner post
 assert(2*fin_r <= base_d + mount_extra + 0.01, "fin_r too large — prongs must not exceed the shell depth");
 assert(rad_gap >= 3.0, "antenna-to-radome gap < 3 mm — raise cav_extra");
-assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y + 2*abs(rad_dy) <= vm_l,
+assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y + 2*abs(rad_dy) <= radar_l,
        "radome window exceeds the face — shrink rad_win/rad_dx/rad_dy or grow the board zone");
 assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
 assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
@@ -549,21 +549,21 @@ module back() {
         // (hooked only on its ±X edges) cannot slide up and take the antenna array
         // out from under its window — it had 8 mm of travel
         for (s = [1, -1])
-            translate([vm_cx + s*(vm_w/2 - 4) - 1.5, vm_cy + vm_l/2 + board_clear, floor_t])
-                cube([3, 2.0, vm_standoff + pcb_t + 1.0]);
+            translate([radar_cx + s*(radar_w/2 - 4) - 1.5, radar_cy + radar_l/2 + board_clear, floor_t])
+                cube([3, 2.0, radar_standoff + pcb_t + 1.0]);
         // carrier rails (notched at the clips); the stacked XIAO hangs beneath.
         // TWO clips per edge, at the quarter points: one hook at mid-span let
         // the carrier's ends rock 4 mm about the hook line in a drop
         for (s = [1, -1]) {
             difference() {
-                translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
-                    cube([3, vm_l - 1, vm_standoff]);
-                for (dy = [-vm_l/4, vm_l/4])
-                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy + dy, floor_t + vm_standoff/2])
-                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
+                translate([radar_cx + s*(radar_w/2 - 1.5) - 1.5, radar_cy - (radar_l - 1)/2, floor_t])
+                    cube([3, radar_l - 1, radar_standoff]);
+                for (dy = [-radar_l/4, radar_l/4])
+                    translate([radar_cx + s*(radar_w/2 - 1.5), radar_cy + dy, floor_t + radar_standoff/2])
+                        cube([5, clip_w + 2, radar_standoff + 1], center = true);
             }
-            for (dy = [-vm_l/4, vm_l/4])
-                edgeclip(vm_cx + s*vm_w/2, vm_cy + dy, s > 0 ? 0 : 180, vm_standoff);
+            for (dy = [-radar_l/4, radar_l/4])
+                edgeclip(radar_cx + s*radar_w/2, radar_cy + dy, s > 0 ? 0 : 180, radar_standoff);
         }
     }
 }
@@ -598,14 +598,14 @@ module front() {
             translate([rad_cx, rad_cy, -1])
                 linear_extrude(lid_t - radome_t + 1)
                     rrect2d(rad_win_x, rad_win_y, 3);
-            if (opt_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
+            if (opt_led) core_lightpipe_bore(radar_cx + lp_dx, radar_cy + lp_dy, lid_t, lp_d, tol_press);
             if (opt_lux) {
-                translate([vm_cx + lux_dx, vm_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
+                translate([radar_cx + lux_dx, radar_cy + lux_dy, -1]) cylinder(d = lux_d, h = lid_t + 2);
                 if (lux_disc_d > 0)   // recessed seat on the outer face for a glued clear disc
-                    translate([vm_cx + lux_dx, vm_cy + lux_dy, lid_t - 1.2])
+                    translate([radar_cx + lux_dx, radar_cy + lux_dy, lid_t - 1.2])
                         cylinder(d = lux_disc_d + 2*tol_slide, h = 1.3);
             }
-            if (opt_vent) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
+            if (opt_vent) core_vent_cluster(radar_cx + vent_dx, radar_cy + vent_dy, lid_t,
                                               vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
             // screw seats by the head in the bag (canary_core_lib): flat floor for
             // PAN heads (on the pad — a 2.0 seat in a 2.0 plate was a through-hole),
@@ -648,17 +648,17 @@ module front() {
                 translate([rad_cx, rad_cy, -lid_rib_h - 0.1])
                     linear_extrude(lid_rib_h + 0.2) rrect2d(rad_win_x + 3, rad_win_y + 3, 3);
                 // ...and over the whole carrier outline: the ring's -Y bar sat on the
-                // vm_front_h plane over the board's bottom 3.7 mm — any part there
+                // radar_front_h plane over the board's bottom 3.7 mm — any part there
                 // taller than the headroom met it
-                translate([vm_cx, vm_cy, -lid_rib_h - 0.1])
-                    linear_extrude(lid_rib_h + 0.2) rrect2d(vm_w + 2.0, vm_l + 2.0, 1.0);
-                if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -lid_rib_h - 0.1])
+                translate([radar_cx, radar_cy, -lid_rib_h - 0.1])
+                    linear_extrude(lid_rib_h + 0.2) rrect2d(radar_w + 2.0, radar_l + 2.0, 1.0);
+                if (opt_led) translate([radar_cx + lp_dx, radar_cy + lp_dy, -lid_rib_h - 0.1])
                     cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);
-                if (opt_lux) translate([vm_cx + lux_dx, vm_cy + lux_dy, -lid_rib_h - 0.1])
+                if (opt_lux) translate([radar_cx + lux_dx, radar_cy + lux_dy, -lid_rib_h - 0.1])
                     cylinder(d = lux_d + 3, h = lid_rib_h + 0.2);
-                if (opt_vent) translate([vm_cx + vent_dx, vm_cy + vent_dy, -lid_rib_h - 0.1])
+                if (opt_vent) translate([radar_cx + vent_dx, radar_cy + vent_dy, -lid_rib_h - 0.1])
                     cylinder(d = vent_pad_d + 3, h = lid_rib_h + 0.2);
-                if (opt_tamper) translate([vm_cx + mag_dx, vm_cy + mag_dy, -lid_rib_h - 0.1])
+                if (opt_tamper) translate([radar_cx + mag_dx, radar_cy + mag_dy, -lid_rib_h - 0.1])
                     cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
                 translate([usb_cx, -inner_y/2, 0]) cube([usb_w + 4, 14, 3*lid_rib_h], center = true);
             }
@@ -685,7 +685,7 @@ module front() {
                     cube([usb_w + 6, skirt_t*3, skirt_h + 0.4], center = true);
             }
         if (opt_tamper)
-            translate([vm_cx + mag_dx, vm_cy + mag_dy, -mag_h]) difference() {
+            translate([radar_cx + mag_dx, radar_cy + mag_dy, -mag_h]) difference() {
                 cylinder(d = mag_d + 2*tol_press + 2.4, h = mag_h + 0.1);
                 translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
             }

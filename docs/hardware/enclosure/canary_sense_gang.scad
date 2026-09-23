@@ -37,10 +37,10 @@ back_rim = 1.5;      // rim on the back, inboard of the edge (rib_lib loop): the
                      // 0 = flat back  // [0:0.5:3]
 
 /* [Boards] — MR60BHA2 carrier + stacked XIAO ESP32-C6. MEASURE */
-vm_l     = 44.0;      // brd_l("mr60") — canary_board_lib
-vm_w     = 36.0;      // brd_w("mr60") — canary_board_lib
+radar_l  = 44.0;      // brd_l("mr60") — canary_board_lib
+radar_w  = 36.0;      // brd_w("mr60") — canary_board_lib
 stack_sock_h = 11.5;  // brd_stack_sock_unmeasured() — the doorbell bench measured 6.5 (canary_board_lib)
-vm_front_h   = 3.5;   // carrier front-side TALLEST part (connectors etc.) — MEASURE
+radar_front_h = 3.5;  // carrier front-side TALLEST part (connectors etc.) — MEASURE
 pcb_t    = 1.0;
 board_clear = 0.6;
 
@@ -75,11 +75,11 @@ tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-vm_standoff = 4.5;                    // rails hold the carrier's front parts (vm_front_h) clear of the
-rail_h  = vm_standoff;                // solid plate back; the XIAO hangs deeper into the box
-assert(vm_standoff > vm_front_h, "vm_standoff must clear the carrier's front-side parts (vm_front_h)");
+radar_standoff = 4.5;                 // rails hold the carrier's front parts (radar_front_h) clear of the
+rail_h  = radar_standoff;             // solid plate back; the XIAO hangs deeper into the box
+assert(radar_standoff > radar_front_h, "radar_standoff must clear the carrier's front-side parts (radar_front_h)");
 assert(radome_t >= 0.6 && radome_t < plate_t, "radome_t must be printable and thinner than plate_t");
-assert(vm_w + 2*(clip_clear + clip_t) + 2 < plate_w, "carrier too wide for the plate");
+assert(radar_w + 2*(clip_clear + clip_t) + 2 < plate_w, "carrier too wide for the plate");
 assert(back_rim == 0 || plate_h/2 - 1.0 - 1.6 > screw_gap/2 + dev_screw_d/2 + 1.0,
        "the back rim runs over the device-screw holes — shrink screw_gap or drop back_rim");
 echo(str("Canary Sense single-gang plate v0.1-dev — ", plate_w, " x ", plate_h,
@@ -119,9 +119,9 @@ module plate() {
         // the carrier + XIAO recess into the box; rails only need to clear the clips)
         for (s = [1, -1]) {
             difference() {
-                translate([s*(vm_w/2 - 1.5) - 1.5, -(vm_l - 1)/2, -rail_h])
-                    cube([3, vm_l - 1, rail_h + 0.01]);
-                translate([s*(vm_w/2 - 1.5), 0, -rail_h/2])
+                translate([s*(radar_w/2 - 1.5) - 1.5, -(radar_l - 1)/2, -rail_h])
+                    cube([3, radar_l - 1, rail_h + 0.01]);
+                translate([s*(radar_w/2 - 1.5), 0, -rail_h/2])
                     cube([5, clip_w + 2, rail_h + 1], center = true);
             }
             // the clip is canary_snap_lib's WAP cantilever, strain-gated on
@@ -129,7 +129,7 @@ module plate() {
             // left/right edges (90° turns are exact in OpenSCAD's degree
             // trig, so the mesh cannot move), then mirrored into the box
             mirror([0, 0, 1]) rotate([0, 0, -s*90])
-                snap_boardclip(0, vm_w/2, 1, 0, rail_h + pcb_t,
+                snap_boardclip(0, radar_w/2, 1, 0, rail_h + pcb_t,
                                w = clip_w, t = clip_t, hook = clip_hook,
                                hook_h = clip_hook_h, clear = clip_clear);
         }
