@@ -981,14 +981,15 @@ so — see D2 below.)
   F4 (#1696) on the host. `airtime_governor.cpp`'s 256-slot ring holds
   sends, not time, so a caller reserving faster than 256 per 10 s window
   overwrites in-window airtime and the 2 % cap silently stops holding
-  (200 Hz × 16 B: allowed in full, read 0.82 %, true 6.41 %). F4's probe
+  (200 Hz × 16 B: allowed in full, read 0.8 %, true 6.4 %). F4's probe
   gate holds only because its framed 75 B frame (792 µs) clears the
-  781 µs-per-slot line by 1.4 %; a 3 % cap does not (12.7 % true, 2.0 %
-  read). A probe asking for more than the cap takes every microsecond the
-  window frees: the 30 s heartbeat and 60 s chirp presence were refused 9
-  of 9 times in 180 s at 160 frames/s. And on a build without the mesh
-  nothing calls `airtime_governor::init()`, so the ring is never allocated
-  and the probe's gate fails open. — in progress (2026-09-23)
+  781 µs-per-slot line by 1.4 %; a 3 % cap does not (at 160 frames/s,
+  12.7 % true, 2.0 % read). A probe asking for more than the cap takes
+  every microsecond the window frees: the 30 s heartbeat and 60 s chirp
+  presence were refused 9 of 9 times in 180 s at 160 frames/s. And on a
+  build without the mesh nothing calls `airtime_governor::init()`, so the
+  ring is never allocated and the probe's gate fails open.
+  — in progress (2026-09-23)
 - [ ] **F54 [code] The airtime governor charges the mesh, chirp and beacon
   callers for their payload only.** Found reconciling F4 and F51. The
   probe's gate adds the ~59 B of ESP-NOW MAC and action-frame framing

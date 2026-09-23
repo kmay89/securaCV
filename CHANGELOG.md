@@ -13,11 +13,12 @@
   write with `400 password_required_for_new_host` (`mqtt_tls_fields.h`,
   `credential_carry`); the same endpoint keeps what the body omits, as
   before. Every gated route refuses a `Host` that does not name the device
-  (`403 {"error":"host"}`, and the page carries no token), so a
-  DNS-rebinding page cannot read the token; a request over the Canary's own
-  setup AP is exempt by interface, never by name. The check is the
-  display's `host_guard.h`, moved to `firmware/common/network/`. A stored CA
-  the transport reads back empty is `409 ca_unreadable`, not Ok.
+  (`403 {"error":"host"}`), and the dashboard and setup pages served under
+  one carry no token, so a DNS-rebinding page can no longer read the token
+  out of them; a request over the Canary's own setup AP is exempt by
+  interface, never by name. The check is the display's `host_guard.h`,
+  moved to `firmware/common/network/`. A stored CA the transport reads back
+  empty is `409 ca_unreadable`, not Ok.
   Host-tested (the decisions); compile-tested by CI (the glue, PR CI's
   `release_ha` leg); not bench-tested. The setup-AP exemption on an
   iPhone's first boot is the first thing a bench should check.
@@ -27,9 +28,10 @@
   connections, TLS on all device traffic, Bluetooth compiled out and an
   access code shown by a button press that does not exist. It now lists the
   networked products' disclosed outbound paths (the broker socket, the
-  daily signed-manifest check, SNTP and the opt-in forecast on the display
-  line), states Bluetooth per profile and the radios' factory addresses,
-  and names HTTPS as an opt-in. `THREAT_MODEL.md` gains an MQTT broker link
+  daily signed-manifest check, and on the display line SNTP, a
+  compile-time timezone lookup and the opt-in forecast), states Bluetooth
+  per profile and the radios' factory addresses, and names HTTPS as an
+  opt-in. `THREAT_MODEL.md` gains an MQTT broker link
   row, and `firmware/FEATURES.md` rates the flagship's broker TLS ✅ and
   canary-wap's HTTPS ⚠️. `scripts/tests/test_docs_claims.py` refuses each
   retired sentence verbatim, in lint.yml's unfiltered run. No behavior
@@ -47,10 +49,12 @@
   shows the standalone-weather state and whether a location is stored, in
   the glass's own words, and filters every control it offers against the
   glass's refuse-list; the toggle, the post and `CoreLocation` are gone,
-  and the footer points at Settings › Weather on the glass. The #1635 entry
-  below said "no client draws a switch that would fail": that held for the
-  mirror page, while the iPhone sheet carried such a switch, unreachable
-  only by accident, until this change. Compile-tested by CI (the iOS
+  and the footer points at Settings › Weather on the glass. The entry
+  below headed "Display: the LAN write API can no longer switch on the
+  glass's one opt-in outbound path" (#1635) said "no client draws a switch
+  that would fail": that held for the mirror page, while the iPhone sheet
+  carried such a switch, unreachable only by accident, until this
+  change. Compile-tested by CI (the iOS
   self-heal job, which runs the XCTests); not bench-tested.
 - **Both flashers' receipts name the broker TLS mode they sealed (roadmap
   row 12).** One line from a four-row table keyed by the sealed mode byte:
