@@ -395,7 +395,7 @@ a script.
 
 | Action | Takes | Returns |
 |---|---|---|
-| `securacv.start_watch` | `subject` (required, in words: "the gate canary"), `duration` ("two weeks"; 14 days if left out, never more than a year), `concern` (`stopped`, `unusual`, `more`, `less` or `every`; read off the subject's wording if left out) | the watch, including the `id` that `end_watch` takes |
+| `securacv.start_watch` | `subject` (required, in words: "the gate canary"), `duration` ("two weeks", in days, weeks, months, seasons or years; 14 days if left out, never more than a year, and refused rather than guessed when it names no unit, such as "48 hours"), `concern` (`stopped`, `unusual`, `more`, `less` or `every`; read off the subject's wording if left out) | the watch, including the `id` that `end_watch` takes |
 | `securacv.end_watch` | `watch`: its id, or its label ("the gate canary") | the watch as it ended |
 | `securacv.list_watches` | nothing (response only) | `watches`: each running watch with its `state`, `subject` and `days_left` |
 

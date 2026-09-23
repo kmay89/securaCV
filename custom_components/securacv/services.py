@@ -26,6 +26,7 @@ docs/device_trust.md, "Why pin, rotate and unpin are not actions").
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any
 
@@ -95,17 +96,39 @@ def _require_restored(hass: HomeAssistant) -> None:
         )
 
 
+def _duration_or_refuse(value: Any) -> str | None:
+    """The duration text, or a refusal when it names no unit.
+
+    Voice is forgiving on purpose: an unparseable phrase becomes the
+    default rather than a question back. An automation is typed, and a
+    silent 14 days for "48 hours" or "until Sunday" would be a watch
+    nobody asked for, so the action refuses what the parser cannot read.
+    Left out or blank still means the default.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if math.isnan(watches.parse_duration_days(text, default=math.nan)):
+        raise ServiceValidationError(
+            f"Can't tell how long {text!r} is. Give it in days, weeks, months, "
+            'seasons or years ("two weeks", "10 days"), or leave it out for '
+            f"{watches.DEFAULT_DAYS} days."
+        )
+    return text
+
+
 def _async_start_watch(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     _require_restored(hass)
     subject = str(call.data.get(ATTR_SUBJECT) or "").strip()
     if not subject:
         raise ServiceValidationError("Say what to keep an eye on: subject is empty.")
+    duration = _duration_or_refuse(call.data.get(ATTR_DURATION))
     now = time.time()
     try:
         watch, device_id = watch_runtime.async_start_watch(
             hass,
             subject,
-            call.data.get(ATTR_DURATION),
+            duration,
             now,
             concern=call.data.get(ATTR_CONCERN),
         )

@@ -25,8 +25,10 @@ start_watch:
     duration:
       name: Duration
       description: >-
-        How long, in words: "two weeks", "10 days", "a month". 14 days if
-        left out; never longer than a year.
+        How long, in days, weeks, months, seasons or years: "two weeks",
+        "10 days", "a month". A duration with none of those units ("48
+        hours") is refused, not guessed. 14 days if left out; never longer
+        than a year.
       required: false
       example: "two weeks"
       selector:

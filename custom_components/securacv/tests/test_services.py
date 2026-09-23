@@ -291,6 +291,31 @@ def test_start_watch_refuses_an_empty_subject() -> None:
     assert _bucket(hass) == []
 
 
+@pytest.mark.parametrize("duration", ["48 hours", "until Sunday", "14", "forever"])
+def test_a_duration_the_parser_cannot_read_is_refused_not_defaulted(duration) -> None:
+    """An automation is typed: a silent 14 days for "48 hours" would be a
+    watch nobody asked for. Voice keeps its forgiving default."""
+    hass = _hass()
+    with pytest.raises(ServiceValidationError, match="days, weeks, months"):
+        _call(hass, "start_watch", {"subject": "the gate canary", "duration": duration})
+    assert _bucket(hass) == []
+
+    _start(hass, "the gate canary", duration)
+    (spoken,) = _bucket(hass)
+    assert spoken["ends_at"] - spoken["started_at"] == watches.DEFAULT_DAYS * DAY
+
+
+@pytest.mark.parametrize(
+    ("duration", "days"),
+    [("", watches.DEFAULT_DAYS), ("   ", watches.DEFAULT_DAYS), ("a fortnight", 14),
+     ("3 nights", 3), ("two-weeks", 14), ("a year", 365), ("500 days", 365)],
+)
+def test_a_readable_duration_is_taken_and_a_blank_one_is_the_default(duration, days) -> None:
+    hass = _hass()
+    row = _call(hass, "start_watch", {"subject": "the gate canary", "duration": duration})
+    assert row["ends_at"] - row["started_at"] == days * DAY
+
+
 def test_the_cap_is_honored_and_both_surfaces_name_end_watch() -> None:
     hass = _hass()
     for i in range(watches.MAX_WATCHES):
