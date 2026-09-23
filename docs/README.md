@@ -188,7 +188,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <details>
 <summary><strong>Radio, mesh & sensing internals</strong> — how Canaries feel and talk</summary>
 
-- [BLE protocol](ble_protocol.md) · [BLE mesh + chirp tandem](BLE_MESH_OPERA_TANDEM.md)
+- [BLE protocol](ble_protocol.md) · [BLE mesh + Opera tandem (design only)](BLE_MESH_OPERA_TANDEM.md)
 - [ESP-NOW mesh evaluation](mesh_esp_now_evaluation.md) · [ESP32 mesh sensing design](esp32_mesh_sensing_design.md)
 - [Meshtastic integration](meshtastic_integration.md) — witnesses on the property line
 - [Network coexistence](network_coexistence.md) — being a good neighbor on 2.4 GHz

@@ -414,3 +414,25 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 
 clean:
 	rm -f $(WITNESS_PAGE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN)
+
+# F14: canary-wap Opera pairing framing (mesh_pair_frame.h). Pairing frames
+# are [MessageType 8..12][exact Pair*Payload] and must be classified before
+# handle_received_message()'s 102-byte signed-header minimum, which used to
+# drop all of them. Pins exact-size accept, off-by-one reject, and that a
+# signed Opera (version 0), Chirp (0xC4) or Beacon (0xB1) frame is never
+# taken for a pairing frame. Pure header, no Arduino glue. Hooked into
+# `run` and `clean` by prerequisite so it adds no hunk to their lists.
+PAIR_FRAME_BIN = test_mesh_pair_frame
+PAIR_FRAME_SRC = test_mesh_pair_frame.cpp
+
+$(PAIR_FRAME_BIN): $(PAIR_FRAME_SRC) $(SRC_DIR)/mesh_pair_frame.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(PAIR_FRAME_SRC)
+
+.PHONY: run-pair-frame clean-pair-frame
+run-pair-frame: $(PAIR_FRAME_BIN)
+	./$(PAIR_FRAME_BIN)
+clean-pair-frame:
+	rm -f $(PAIR_FRAME_BIN)
+
+run: run-pair-frame
+clean: clean-pair-frame

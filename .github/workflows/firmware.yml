@@ -1099,12 +1099,22 @@ jobs:
             grep -q "ALL .* PASSED" "/tmp/host_tests/test_$name.log"
           }
 
-          # securacv_mesh suites — 7 of them now (mesh_state added with
-          # opera_secret NVS persistence). Each test links against
-          # every mesh src TU so internal symbols resolve.
-          for t in mesh_crypto mesh_envelope mesh_pairing mesh_session \
-                   mesh_transport mesh_beacon mesh_state mesh_channel_hop \
-                   mesh_hub_election; do
+          # securacv_mesh suites. Each test links against every mesh src
+          # TU so internal symbols resolve. The list is checked against
+          # the directory below, so a new test_mesh_*.cpp that is not
+          # added here fails the job instead of silently never running
+          # (the old "7 of them now" comment had drifted to 9).
+          MESH_TESTS="mesh_crypto mesh_envelope mesh_pairing mesh_session
+                      mesh_transport mesh_beacon mesh_state mesh_channel_hop
+                      mesh_hub_election mesh_alert mesh_rekey"
+          for f in firmware/canary/lib/securacv_mesh/test_mesh_*.cpp; do
+            n=$(basename "$f" .cpp); n=${n#test_}
+            case " $(echo $MESH_TESTS) " in
+              *" $n "*) ;;
+              *) echo "::error file=$f::$f is not in MESH_TESTS — add it so CI runs it"; exit 1 ;;
+            esac
+          done
+          for t in $MESH_TESTS; do
             run_test $t \
               firmware/canary/lib/securacv_mesh/test_${t}.cpp \
               $MESH_SRC/*.cpp \

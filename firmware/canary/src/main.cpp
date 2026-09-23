@@ -389,10 +389,14 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
  * pairing kicks off). */
 static void persist_replay_counters() {
 #if FEATURE_MESH_NETWORK
-  uint8_t fps[mesh_session::MAX_TRUSTED_PEERS][mesh_crypto::FINGERPRINT_LEN];
-  uint64_t ctrs[mesh_session::MAX_TRUSTED_PEERS];
+  /* Live counters AND the replay tombstones of dropped peers, so a reboot
+   * does not re-open a left/removed device's window either. */
+  static_assert(mesh_state::MAX_REPLAY_ENTRIES >= mesh_session::MAX_REPLAY_COUNTERS,
+                "replay_ctrs must hold every live counter and tombstone");
+  uint8_t fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
   const size_t n = mesh_session::get_replay_counters(fps, ctrs,
-                                                     mesh_session::MAX_TRUSTED_PEERS);
+                                                     mesh_session::MAX_REPLAY_COUNTERS);
   if (n == 0) return;
   const size_t save_count = (n > mesh_state::MAX_REPLAY_ENTRIES)
                           ? mesh_state::MAX_REPLAY_ENTRIES : n;
@@ -405,10 +409,122 @@ static void persist_replay_counters() {
 #endif
 }
 
+#if FEATURE_SENSING_WITNESS
+/* Pending opera TAMPER_ALERT (F10). One-deep slot, same shape and rule as
+ * g_tamper_publish_pending: the sensing witness callback (which must stay
+ * non-blocking) fills it, and loop() drains it right after
+ * mesh_session::process() — send_tamper_alert() must run on the main-loop
+ * task (mesh_session.h threading contract). Newest wins. */
+static volatile bool     g_mesh_alert_pending  = false;
+static volatile uint8_t  g_mesh_alert_kind     = 0;   /* mesh_alert::Kind */
+static volatile uint8_t  g_mesh_alert_severity = 0;   /* LogLevel 0..7 */
+static volatile uint32_t g_mesh_alert_seq      = 0;   /* witness seq, 0 = none */
+#endif
+
+static void mesh_fp_hex(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                        char out[mesh_crypto::FINGERPRINT_LEN * 2 + 1]) {
+  static const char kHex[] = "0123456789abcdef";
+  for (size_t i = 0; i < mesh_crypto::FINGERPRINT_LEN; ++i) {
+    out[2 * i]     = kHex[fp[i] >> 4];
+    out[2 * i + 1] = kHex[fp[i] & 0xF];
+  }
+  out[mesh_crypto::FINGERPRINT_LEN * 2] = '\0';
+}
+
+/* A trusted peer's verified LEAVE_OPERA arrived (F10). mesh_session has
+ * already dropped it from the live table; drop the persisted copy too so
+ * a reboot does not resurrect it. Runs on the main loop. */
+static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                              const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  mesh_fp_hex(fp, hex);
+  const bool persisted = mesh_state::remove_trusted_peer(pubkey);
+  /* Its last counter is now a tombstone; persist it now rather than at the
+   * next 5-minute save, so a reboot in between cannot re-open its window. */
+  persist_replay_counters();
+  Serial.printf("[MESH] Peer %s left the opera (%s)\n", hex,
+                persisted ? "removed from NVS" : "NVS removal refused/failed");
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera peer left", hex);
+}
+
+/* A verified TAMPER_ALERT from a trusted peer (F10). The session has
+ * counted it and stored it in its history ring (GET /api/mesh/alerts);
+ * the health log carries the receipt with the sender's fingerprint
+ * (spec §6.3). No witness event kind is added — a peer's tamper is the
+ * PEER's record, not ours. */
+static void on_mesh_tamper_alert(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
+                                 mesh_alert::Kind kind, uint8_t severity,
+                                 uint32_t witness_seq) {
+  char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
+  mesh_fp_hex(fp, hex);
+  char detail[64];
+  snprintf(detail, sizeof(detail), "fp=%s kind=%s sev=%u seq=%lu", hex,
+           mesh_alert::kind_name(kind), (unsigned)severity,
+           (unsigned long)witness_seq);
+  log_health(LOG_LEVEL_ALERT, LOG_CAT_NETWORK, "Opera tamper alert", detail);
+}
+
+/* This device switched to a rotated opera_secret (F10-rekey — as the
+ * initiator of a POST /api/mesh/remove, or as a survivor of someone
+ * else's). Re-persist the new secret through the flash-encryption gate
+ * and drop every peer the session just forgot from NVS. On a refused save
+ * mesh_state clears the rotated-away secret rather than leave it for the
+ * next boot; the live session keeps the new one in RAM either way.
+ * CRYPTO: maintainer review required; bench-gated (U1 Track C3). */
+static void on_mesh_rekey_commit(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                                 const uint8_t (*forgotten)[mesh_crypto::PUBKEY_LEN],
+                                 size_t n_forgotten) {
+  const bool persisted = mesh_state::persist_rotation(new_secret, forgotten, n_forgotten);
+  /* Every peer the rotation dropped keeps its counter as a tombstone. */
+  persist_replay_counters();
+  char detail[48];
+  snprintf(detail, sizeof(detail), "forgot %u peer(s)%s", (unsigned)n_forgotten,
+           persisted ? "" : "; NOT persisted");
+  log_health(persisted ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
+             "Opera secret rotated", detail);
+}
+
+/* Persist + register the just-paired peer's pubkey. Both roles need it:
+ * the joiner to accept the initiator's frames, the initiator to accept the
+ * joiner's. Same "save first, set unconditionally" posture as the
+ * opera_secret: a save failure (typically FE off) degrades reboot
+ * survivability, not the active session. */
+static void register_paired_peer() {
+  uint8_t peer_pub[mesh_crypto::PUBKEY_LEN];
+  if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
+    const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
+    const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
+    if (peer_save_ok && peer_set_ok) {
+      Serial.println("[OK] Peer pubkey persisted + registered for RX");
+    } else if (peer_set_ok && !peer_save_ok) {
+      Serial.println("[WARN] Peer registered for this boot but NVS persist "
+                     "failed — receive will need to re-pair after reboot");
+    } else if (!peer_set_ok && peer_save_ok) {
+      /* register_trusted_peer returns false in two distinct cases:
+       *   • table full (MAX_TRUSTED_PEERS=8 reached with a new pubkey)
+       *   • duplicate registration (pubkey already in the in-memory
+       *     table — typical on the post-first-paired-callback path
+       *     because save_trusted_peer + the boot-time
+       *     load_trusted_peers chain may already have registered it). */
+      Serial.println("[WARN] Peer pubkey persisted but mesh_session register "
+                     "failed (table full or already registered)");
+    } else {
+      Serial.println("[ERR] Failed to persist OR register peer pubkey");
+    }
+  } else {
+    Serial.println("[WARN] Paired but mesh_session has no peer pubkey "
+                   "available — receive from this peer won't work");
+  }
+}
+
 static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   if (secret == nullptr) {
     Serial.printf("[OK] Paired as initiator (code=%06u) — opera_secret "
                   "already persisted before start_pairing\n", code);
+    /* The initiator must trust the joiner too — before F10 this path
+     * returned without registering it, so the initiator dropped every
+     * frame the joiner sent (unknown sender) until... never. */
+    register_paired_peer();
     return;
   }
   /* Joiner side: persist FIRST so a power cut between save and set
@@ -437,37 +553,21 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
     Serial.println("[ERR] Paired but mesh_session rejected opera_secret");
   }
 
-  /* Register the just-paired peer's pubkey so this boot's receive
-   * path accepts their BEACON_EVENT frames, AND persist it so a
-   * future reboot also accepts them. The same "save first, set
-   * unconditionally" posture as opera_secret: a save failure
-   * (typically FE off) degrades reboot survivability, not the
-   * active session. */
-  uint8_t peer_pub[mesh_crypto::PUBKEY_LEN];
-  if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
-    const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
-    const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
-    if (peer_save_ok && peer_set_ok) {
-      Serial.println("[OK] Peer pubkey persisted + registered for RX");
-    } else if (peer_set_ok && !peer_save_ok) {
-      Serial.println("[WARN] Peer registered for this boot but NVS persist "
-                     "failed — receive will need to re-pair after reboot");
-    } else if (!peer_set_ok && peer_save_ok) {
-      /* register_trusted_peer returns false in two distinct cases:
-       *   • table full (MAX_TRUSTED_PEERS=8 reached with a new pubkey)
-       *   • duplicate registration (pubkey already in the in-memory
-       *     table — typical on the post-first-paired-callback path
-       *     because save_trusted_peer + the boot-time
-       *     load_trusted_peers chain may already have registered it). */
-      Serial.println("[WARN] Peer pubkey persisted but mesh_session register "
-                     "failed (table full or already registered)");
-    } else {
-      Serial.println("[ERR] Failed to persist OR register peer pubkey");
+  /* The opera name the joiner learned from the OFFER (mesh_session cached
+   * it on NOTIFY_PAIRED). Best effort, FE-gated: on an FE-off board the
+   * name lasts until reboot. */
+  {
+    char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+    mesh_session::get_opera_name(name, sizeof(name));
+    if (name[0] != '\0' && !mesh_state::save_opera_name(name)) {
+      Serial.println("[WARN] Opera name not persisted (flash encryption off?)");
     }
-  } else {
-    Serial.println("[WARN] Paired but mesh_session has no peer pubkey "
-                   "available — receive from this peer won't work");
   }
+
+  /* Register the just-paired peer's pubkey so this boot's receive
+   * path accepts their frames, AND persist it so a future reboot also
+   * accepts them. */
+  register_paired_peer();
 }
 #endif
 
@@ -954,6 +1054,17 @@ void setup() {
       mesh_session::start()) {
     Serial.println("[OK] Mesh layer active (mesh_transport + mesh_session)");
 
+    /* POST /api/mesh/enable persists the user's on/off choice (F10).
+     * Absent key → enabled. Disabled stops the session but keeps the
+     * membership, so the loads below still run. */
+    {
+      bool mesh_on = true;
+      if (mesh_state::load_mesh_enabled(&mesh_on) && !mesh_on) {
+        mesh_session::set_enabled(false);
+        Serial.println("[--] Mesh disabled by user setting (POST /api/mesh/enable)");
+      }
+    }
+
     /* Load the persisted opera_secret (if any) and feed it to
      * mesh_session so this boot can immediately send/receive
      * BEACON_EVENT frames without re-pairing. The local buffer is
@@ -967,6 +1078,11 @@ void setup() {
     if (mesh_state::load_opera_secret(opera_secret_buf)) {
       if (mesh_session::set_opera_secret(opera_secret_buf)) {
         Serial.println("[OK] Opera secret loaded — mesh broadcast enabled");
+        /* The opera's display name (F10, FE-gated like the secret). */
+        char opera_name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+        if (mesh_state::load_opera_name(opera_name, sizeof(opera_name))) {
+          mesh_session::set_opera_name(opera_name);
+        }
       } else {
         Serial.println("[WARN] mesh_session rejected loaded opera_secret");
       }
@@ -1048,6 +1164,14 @@ void setup() {
      * pairing; its persistence is the integration layer's
      * responsibility before calling start_pairing_initiator). */
     mesh_session::set_paired_callback(&on_pairing_succeeded);
+    /* F10: a peer's signed LEAVE drops its NVS entry; a peer's verified
+     * TAMPER_ALERT lands in the health log. Installed here rather than in
+     * securacv_csi_modules_init() so they are live on mesh builds without
+     * FEATURE_CSI too. */
+    mesh_session::set_peer_left_handler(&on_mesh_peer_left);
+    mesh_session::set_tamper_alert_handler(&on_mesh_tamper_alert);
+    /* F10-rekey: a committed opera_secret rotation re-persists here. */
+    mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
   } else {
     Serial.println("[WARN] Mesh layer init failed — broadcast disabled");
   }
@@ -1185,10 +1309,30 @@ void setup() {
     /* witness_create_record() already increments records_created on
      * success internally (securacv_witness.cpp); we only log on the
      * failure path here. */
-    if (!witness_create_record(payload, cbor.size(), rt, &rec)) {
+    const bool recorded = witness_create_record(payload, cbor.size(), rt, &rec);
+    if (!recorded) {
       log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS,
                  "Sensing witness record failed", nullptr);
     }
+
+#if FEATURE_MESH_NETWORK
+    /* F10: tell the opera. Queue a TAMPER_ALERT for the main loop (this
+     * callback must stay non-blocking and send_tamper_alert is main-loop
+     * only). Payload is templates + numbers only: the dictionary's tamper
+     * kind, a LogLevel severity, and the seq of the record just written
+     * (0 when the write failed). Fields first, flag last. */
+    if (rt == RECORD_TAMPER_ALERT) {
+      g_mesh_alert_kind = (uint8_t)(
+          (we->kind == SENSING_WITNESS_TOUCH_TAMPER) ? mesh_alert::Kind::ENCLOSURE_TAMPER :
+          (we->kind == SENSING_WITNESS_TEMP_DRIFT)   ? mesh_alert::Kind::TEMP_DRIFT
+                                                     : mesh_alert::Kind::CAMERA_TAMPER);
+      g_mesh_alert_severity = (we->kind == SENSING_WITNESS_TEMP_DRIFT)
+                                  ? (uint8_t)LOG_LEVEL_WARNING
+                                  : (uint8_t)LOG_LEVEL_ALERT;
+      g_mesh_alert_seq = recorded ? rec.seq : 0;
+      g_mesh_alert_pending = true;
+    }
+#endif
   });
   Serial.println("[OK] Sensing witness chain bridge armed");
 #endif
@@ -1629,6 +1773,21 @@ void loop() {
    * Both are no-ops until init() succeeds. */
   mesh_transport::process();
   mesh_session::process((uint32_t)millis());
+
+#if FEATURE_SENSING_WITNESS
+  /* Drain a pending opera TAMPER_ALERT (F10) on the main-loop task. Best
+   * effort and not re-armed: with no opera, the mesh disabled, or no
+   * peer in range the send returns false, and the alert still lives in
+   * this device's own witness chain and on the MQTT tamper topic. */
+  if (g_mesh_alert_pending) {
+    g_mesh_alert_pending = false;
+    const uint8_t  kind = g_mesh_alert_kind;
+    const uint8_t  sev  = g_mesh_alert_severity;
+    const uint32_t seq  = g_mesh_alert_seq;
+    mesh_session::send_tamper_alert(static_cast<mesh_alert::Kind>(kind), sev,
+                                    seq, (uint32_t)millis());
+  }
+#endif
 
   {
     static uint32_t s_last_replay_save_ms = 0;

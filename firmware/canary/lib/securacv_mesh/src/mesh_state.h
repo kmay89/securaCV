@@ -166,7 +166,10 @@ struct ReplayEntry {
   uint64_t last_counter;
 };
 
-constexpr size_t MAX_REPLAY_ENTRIES = 8;
+/* Live counters for up to 8 trusted peers + up to 8 replay tombstones
+ * (mesh_session::MAX_REPLAY_COUNTERS, which main.cpp static_asserts
+ * against): 16 × 16 B = 256 B blob. */
+constexpr size_t MAX_REPLAY_ENTRIES = 16;
 
 bool save_replay_counters(const ReplayEntry* entries, size_t count);
 
@@ -212,6 +215,115 @@ bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]);
 /* Erase the persisted elected-Hub fingerprint. Idempotent — succeeds
  * if already absent. On the host build, always returns true. */
 bool clear_elected_hub();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * SINGLE TRUSTED-PEER REMOVAL  (F10)
+ *
+ * Drop ONE pubkey from the "trusted_peers" blob (read-modify-write:
+ * the remaining pubkeys are re-written in order, or the key is removed
+ * when none remain). Used when a peer's verified LEAVE_OPERA arrives and
+ * by peer removal. Same flash-encryption gate as save_trusted_peer():
+ * the blob is household-graph metadata, never read or re-written on an
+ * FE-off device.
+ *
+ * Returns true when the pubkey is gone afterwards — removed, or not
+ * present in the first place (idempotent). Returns false on a null
+ * pointer, FE disabled, or an NVS read/write failure (a malformed blob
+ * is a read failure: refuse rather than clobber). On the host build,
+ * always returns true (no-op success).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * MESH ENABLED FLAG  (F10 — POST /api/mesh/enable)
+ *
+ * NVS key "mesh_enabled", one byte (1 = on, 0 = off). NOT flash-
+ * encryption gated: it is a user preference, not a secret and not
+ * household-identifying, and gating it would make "off" silently revert
+ * to "on" at every reboot of an FE-off dev board.
+ *
+ * load_mesh_enabled() returns true and writes *out only when the key is
+ * present; false (with *out untouched) when absent, on a null pointer,
+ * or on a read failure — callers default to enabled. On the host build
+ * load always returns false and save always returns true.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool save_mesh_enabled(bool enabled);
+bool load_mesh_enabled(bool* out);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * OPERA DISPLAY NAME  (F10 — POST /api/mesh/name)
+ *
+ * NVS key "opera_name", up to MAX_OPERA_NAME_BYTES (32) bytes, stored
+ * without the terminator. Flash-encryption gated like the rest of this
+ * namespace — the name a household gives its devices is identifying
+ * text, the same posture canary-wap's persist_opera_config applies. On
+ * an FE-off board save refuses (the name lasts until reboot) and load
+ * reports nothing stored.
+ *
+ * save_opera_name() rejects null / empty / over-long names (the REST
+ * handler validates first; this is the belt to its braces).
+ * load_opera_name() writes a NUL-terminated name into out (cap must be
+ * at least MAX_OPERA_NAME_BYTES + 1) and returns true only when a
+ * non-empty name was stored; on false out is untouched.
+ * clear_opera_name() is idempotent. Host build: save/clear → true,
+ * load → false.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t MAX_OPERA_NAME_BYTES = 32;   /* == mesh_pairing::MAX_OPERA_NAME_LEN */
+
+bool save_opera_name(const char* name);
+bool load_opera_name(char* out, size_t cap);
+bool clear_opera_name();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * ROTATION PERSISTENCE  (F10-rekey — CRYPTO: maintainer review required)
+ *
+ * Called from mesh_session's rekey-commit handler once this device has
+ * switched to a rotated opera_secret. Drops every forgotten peer's pubkey
+ * from "trusted_peers", THEN re-persists the NEW secret through the same
+ * flash-encryption gate as save_opera_secret().
+ *
+ * The order fails closed (review fix). opera_id travels in cleartext in
+ * every frame header and opera_secret buys nothing else on this tree, so
+ * a board that boots with the new secret while a forgotten device is
+ * still in trusted_peers accepts that device again as soon as it copies
+ * the new opera_id off the air. Removing first means a power cut between
+ * the writes leaves the OLD secret with the peer gone — never the new
+ * secret with the peer present. And if any removal fails, the new secret
+ * is not saved at all.
+ *
+ * When the new secret is not saved (a removal failed, FE off, NVS
+ * failure) the OLD one is cleared instead of left behind: a reboot must
+ * come up with no opera (re-pair) rather than silently rejoin with a
+ * secret the household just rotated away from. The live session keeps the
+ * rotated secret in RAM either way (canary-wap's O2 branch). On an FE-off
+ * board nothing was persisted to begin with, so this changes nothing
+ * there.
+ *
+ * Returns true iff every forgotten pubkey was removed AND the new secret
+ * was saved. Returns false on a null secret, on a null list with a
+ * non-zero count, or on any NVS refusal/failure. Host build: the stubs
+ * record the write order in test::journal() (below).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool persist_rotation(const uint8_t new_secret[mesh_crypto::OPERA_SECRET_LEN],
+                      const uint8_t (*forgotten_pubkeys)[mesh_crypto::PUBKEY_LEN],
+                      size_t forgotten_count);
+
+#ifdef CSI_TEST_HOST_BUILD
+/* Host-test hooks. The host stubs write nothing, so an ORDER of writes is
+ * invisible to a test; the stubs that stand in for the rotation's three
+ * writes append one letter each to a journal instead — 'R'
+ * remove_trusted_peer, 'S' save_opera_secret, 'C' clear_opera_secret — and
+ * remove_trusted_peer can be told to fail. */
+namespace test {
+const char* journal();
+void        reset_journal();
+void        fail_remove_trusted_peer(bool fail);
+}  /* namespace test */
+#endif
 
 }  /* namespace mesh_state */
 

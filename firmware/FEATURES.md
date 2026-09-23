@@ -289,10 +289,11 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `POST /api/peek/stop` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/peek/status` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/peek/resolution` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh/peers` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/mesh/alerts` | ✅ | ❌ | ❌ | ❌ |
-| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ❌ | ❌ | ❌ |
+| `GET /api/mesh` | ✅ | ✅ | ✅ | ❌ |
+| `GET /api/mesh/peers` | ✅ | ✅ | ✅ (incl. per-peer `alerts_received`) | ❌ |
+| `GET /api/mesh/alerts` | ✅ | ⚠️ (+ `DELETE`) — route answers, but nothing in the WAP sends a TAMPER_ALERT (`broadcast_tamper_alert` has no caller), so the history stays empty | ⚠️ (+ `DELETE`; verified TAMPER_ALERT history, per boot) — radio proof pending: the transport peer table is never populated on a device, so no alert arrives over the air yet | ❌ |
+| Mesh pair/leave/remove endpoints | ✅ (6 endpoints) | ⚠️ (+ name, enable) — routes registered; the pairing fix is host-tested only and the X25519-over-Ed25519-keys defect predicts mismatched codes on a device (bench U1 Track C2) | ⚠️ pair ×4, leave, name, enable, remove — radio proof pending (U1 Track C2/C3) | ❌ |
+| `POST /api/mesh/remove` (rotates `opera_secret`, spec §5.6) | ✅ | ⚠️ route and rotation present, but no opera forms on a device until pairing is bench-proven (see the row above; U1 Track C2/C3) | ⚠️ ephemeral-X25519 rotation, host-tested; crypto review + bench pending (spec §5.6 PIO) | ❌ |
 | `GET /api/ble/status` | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/nearby` | ✅ | ❌ | ❌ | ❌ |
 | `POST /api/chirp/send` | ✅ | ❌ | ❌ | ❌ |

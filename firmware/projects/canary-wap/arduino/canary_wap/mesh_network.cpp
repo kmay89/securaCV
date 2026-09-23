@@ -11,6 +11,7 @@
 #if FEATURE_MESH_NETWORK
 
 #include "mesh_network.h"
+#include "mesh_pair_frame.h"       // F14: [type][payload] pairing framing + classifier
 #include "mesh_channel_policy.h"
 #include "csi_mem.h"
 #include "airtime_governor.h"
@@ -476,6 +477,30 @@ static bool send_raw_message(const uint8_t* mac, const uint8_t* data, size_t len
   return false;
 }
 
+// F14: pairing frames go out as [MessageType 8..12][raw Pair*Payload] and
+// are recognized by mesh_pair_frame::classify() before the signed-header
+// minimum in handle_received_message(). Pin that header's constants to the
+// real enum and structs so the sender, the classifier and the handlers
+// cannot drift apart.
+static_assert(mesh_pair_frame::TYPE_DISCOVER == MSG_PAIR_DISCOVER, "pair type drift");
+static_assert(mesh_pair_frame::TYPE_OFFER    == MSG_PAIR_OFFER,    "pair type drift");
+static_assert(mesh_pair_frame::TYPE_ACCEPT   == MSG_PAIR_ACCEPT,   "pair type drift");
+static_assert(mesh_pair_frame::TYPE_CONFIRM  == MSG_PAIR_CONFIRM,  "pair type drift");
+static_assert(mesh_pair_frame::TYPE_COMPLETE == MSG_PAIR_COMPLETE, "pair type drift");
+static_assert(mesh_pair_frame::DISCOVER_LEN == sizeof(PairDiscoverPayload), "pair size drift");
+static_assert(mesh_pair_frame::OFFER_LEN    == sizeof(PairOfferPayload),    "pair size drift");
+static_assert(mesh_pair_frame::CONFIRM_LEN  == sizeof(PairConfirmPayload),  "pair size drift");
+static_assert(mesh_pair_frame::COMPLETE_LEN == sizeof(PairCompletePayload), "pair size drift");
+
+static bool send_pair_frame(const uint8_t* mac, MessageType type,
+                            const void* payload, size_t payload_len) {
+  uint8_t frame[mesh_pair_frame::MAX_FRAME_LEN];
+  const size_t n = mesh_pair_frame::build((uint8_t)type, payload, payload_len,
+                                          frame, sizeof(frame));
+  if (n == 0) return false;
+  return send_raw_message(mac, frame, n);
+}
+
 static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* payload, size_t payload_len) {
   if (!peer || !g_opera_config.configured) {
     return false;
@@ -540,6 +565,27 @@ static bool broadcast_message(MessageType type, const uint8_t* payload, size_t p
 // ════════════════════════════════════════════════════════════════════════════
 
 static void handle_received_message(const uint8_t* mac, const uint8_t* data, size_t len) {
+  // F14: pairing frames are [type 8..12][exact Pair*Payload] — unsigned,
+  // pre-membership, and at most 99 bytes — so they must be recognized
+  // BEFORE the signed-header minimum below, which used to drop every one
+  // of them (WAP-to-WAP pairing could never complete).
+  {
+    uint8_t pair_type = 0;
+    const uint8_t* pair_payload = nullptr;
+    size_t pair_len = 0;
+    if (mesh_pair_frame::classify(data, len, &pair_type, &pair_payload, &pair_len)) {
+      switch ((MessageType)pair_type) {
+        case MSG_PAIR_DISCOVER: handle_pair_discover(mac, pair_payload); break;
+        case MSG_PAIR_OFFER:    handle_pair_offer(mac, pair_payload);    break;
+        case MSG_PAIR_ACCEPT:   handle_pair_accept(mac, pair_payload);   break;
+        case MSG_PAIR_CONFIRM:  handle_pair_confirm(mac, pair_payload);  break;
+        case MSG_PAIR_COMPLETE: handle_pair_complete(mac, pair_payload); break;
+        default: break;
+      }
+      return;
+    }
+  }
+
   // Minimum message size: header (2+16+8+8+4) + signature (64) = 102
   if (len < 102) {
     return;
@@ -574,27 +620,11 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
   size_t payload_len = len - offset - SIGNATURE_SIZE;
   const uint8_t* signature = data + len - SIGNATURE_SIZE;
 
-  // Pairing messages don't require opera membership
+  // Pairing types never ride the signed header — they are classified
+  // above (F14). A >=102-byte frame claiming one is not something this
+  // firmware sends; drop it rather than hand handle_pair_* a payload whose
+  // length nobody checked.
   if (msg_type >= MSG_PAIR_DISCOVER && msg_type <= MSG_PAIR_COMPLETE) {
-    switch (msg_type) {
-      case MSG_PAIR_DISCOVER:
-        handle_pair_discover(mac, payload);
-        break;
-      case MSG_PAIR_OFFER:
-        handle_pair_offer(mac, payload);
-        break;
-      case MSG_PAIR_ACCEPT:
-        handle_pair_accept(mac, payload);
-        break;
-      case MSG_PAIR_CONFIRM:
-        handle_pair_confirm(mac, payload);
-        break;
-      case MSG_PAIR_COMPLETE:
-        handle_pair_complete(mac, payload);
-        break;
-      default:
-        break;
-    }
     return;
   }
 
@@ -988,7 +1018,7 @@ static void handle_pair_discover(const uint8_t* mac, const uint8_t* payload) {
     peer_info.encrypt = false;
     esp_now_add_peer(&peer_info);
 
-    send_raw_message(mac, (uint8_t*)&offer, sizeof(offer));
+    send_pair_frame(mac, MSG_PAIR_OFFER, &offer, sizeof(offer));
   }
 }
 
@@ -1027,7 +1057,7 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
   peer_info.encrypt = false;
   esp_now_add_peer(&peer_info);
 
-  send_raw_message(mac, (uint8_t*)&accept, sizeof(accept));
+  send_pair_frame(mac, MSG_PAIR_ACCEPT, &accept, sizeof(accept));
 
   g_mesh_state = MESH_PAIRING_CONFIRM;
   g_pairing.code_displayed = true;
@@ -1092,7 +1122,7 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     memcpy(complete.nonce, nonce, NONCE_SIZE);
     memcpy(complete.encrypted_secret + OPERA_SECRET_SIZE, tag, 16);
 
-    send_raw_message(g_pairing.peer_mac, (uint8_t*)&complete, sizeof(complete));
+    send_pair_frame(g_pairing.peer_mac, MSG_PAIR_COMPLETE, &complete, sizeof(complete));
 
     // Add joiner to our opera
     add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "New Device");
@@ -1464,7 +1494,7 @@ void update() {
       strncpy(discover.device_name, g_device_name, MAX_PEER_NAME_LEN);
       discover.role = (uint8_t)g_pairing.role;
 
-      send_raw_message((uint8_t*)BROADCAST_ADDR, (uint8_t*)&discover, sizeof(discover));
+      send_pair_frame(BROADCAST_ADDR, MSG_PAIR_DISCOVER, &discover, sizeof(discover));
       last_discover = now;
     }
   }
@@ -1802,7 +1832,7 @@ bool confirm_pairing() {
   memcpy(confirm_input + SESSION_KEY_SIZE, &g_pairing.confirmation_code, 4);
   sha256_domain(DOMAIN_PAIR_CONFIRM, confirm_input, sizeof(confirm_input), confirm.confirmation_hash);
 
-  send_raw_message(g_pairing.peer_mac, (uint8_t*)&confirm, sizeof(confirm));
+  send_pair_frame(g_pairing.peer_mac, MSG_PAIR_CONFIRM, &confirm, sizeof(confirm));
 
   return true;
 }
