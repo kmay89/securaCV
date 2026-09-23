@@ -243,11 +243,17 @@ and [what still has to be true](BRAND.md) in the brand doc.
 Three separate channels, deliberately different trust models. Mixing them up is
 the most common misreading of this project.
 
-**Opera** — The household mesh protocol (ESP-NOW/BLE): how a household's own
-Canaries stay in sync. Requires WiFi association; `opera_secret` provisioning
-refuses to run on a device without flash encryption.
+**Opera** — The household mesh protocol: how a household's own Canaries stay
+in sync. It runs over ESP-NOW, which needs the radio on a shared channel but
+not an access-point association (the WiFi bridge and BLE fallback in the spec
+are not built, and the BLE control plane in the tandem doc is design only). An
+`opera_secret` is never written to or read back from NVS on a board without
+flash encryption (audit O2). That keeps the household secret off un-fused
+boards; it does **not** make it confidential at rest on fused ones, because
+flash encryption does not cover NVS.
 → [`spec/canary_mesh_network_v0.md`](../spec/canary_mesh_network_v0.md),
-[BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md)
+[BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md),
+[threat model](security/THREAT_MODEL.md#opera-mesh-household-trusted)
 
 **Chirp** — The community witness channel: neighbors corroborating an event,
 with ephemeral session keys (never persisted — that's the privacy firewall

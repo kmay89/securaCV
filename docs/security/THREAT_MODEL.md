@@ -637,7 +637,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   tiers (AGENTS.md *Beacon channel invariants* item 9): the log of record is
   `/beacon/audit.jsonl` on SD — pure append, never pruned/truncated/rotated,
   tamper-evident via the embedded signatures and chain hashes — with a
-  64-entry flash-encrypted NVS ring as the bounded recent-view cache. The
+  64-entry NVS ring as the bounded recent-view cache. The ring is written
+  only on a board with flash encryption on (canary-wap's
+  `beacon_channel.cpp` uses the same gate as O2; an un-fused board keeps
+  the ring in RAM only), and it is plaintext NVS there too: flash
+  encryption does not cover NVS, only NVS encryption would, and that is
+  not available under `framework = arduino` (the O2 bullet in the Opera
+  mesh section above). The
   chain head spans every entry ever appended, so continuity stays provable
   past the ring boundary; SD-less devices keep chaining and raise a one-time
   `STORAGE` health warning.

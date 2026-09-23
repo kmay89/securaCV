@@ -346,9 +346,17 @@ helper); if not set, the relevant code paths:
 Rationale: `opera_secret` is the symmetric secret that gates pairing and
 opera_id derivation. On an unencrypted flash, a physical-access attacker
 can extract the secret with `esptool.py read_flash` and become a permanent
-opera member. The FE gate eliminates this attack at the cost of refusing to
-work on dev boards without FE — which is the correct trade-off for a
-production safety system.
+opera member. The FE gate keeps the secret off un-fused boards, at the cost
+of refusing to work on dev boards without FE — which is the correct
+trade-off for a production safety system. It does not eliminate the attack
+on a fused board: flash encryption does not cover NVS (ESP-IDF encrypts
+only the app, OTA-data and NVS-key partitions), so a stored `opera_secret`
+is still plaintext on the flash chip there. Only NVS encryption protects
+NVS at rest, and it is not available under `framework = arduino`, which
+both mesh trees (canary-wap and the PlatformIO canary) build on (roadmap
+item 9 in `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md`). That is why §11.2
+still lists physical compromise as not mitigated;
+`docs/security/THREAT_MODEL.md` (the Opera mesh section) says the same.
 
 ### 5.6 Peer Removal and Re-keying — v0.2
 

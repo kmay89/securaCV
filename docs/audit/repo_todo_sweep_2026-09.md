@@ -235,6 +235,27 @@ so — see D2 below.)
   backfill). Wiring canary event egress is F29; the queue gives that
   transport its loss bound the day it gets callers. Roadmap item 17
   updated (#1697).
+- [ ] **F44 [code+decision] Two 5-second time-bucket stragglers contradict the
+  ten-minute floor.** The IR-TIMEBUCKET decision (option B — maintainer to
+  confirm; `docs/IMPROVEMENT_ROADMAP.md` §3, "Landed in wave 4") made
+  600 000 ms the floor and default of both firmwares' witness chains in
+  #1704, but two canary-tree sites still offer the grid it retired. Both
+  predate the decision; the fw-pins package in #1704 flagged them and
+  changed neither. (1) `firmware/canary/include/secure_defaults.h:71-72`
+  defines `DEFAULT_GPS_COARSENING_MS 5000` ("5000ms = 5-second buckets")
+  with a `< 5000` `#error` floor at :194. Nothing reads the value, and
+  nothing evaluates the floor either: no file `#include`s the header and no
+  build defines `SECURACV_ENFORCE_SECURE_DEFAULTS`. Delete it, or widen it
+  to 600000 with its floor. (2)
+  `firmware/canary/lib/securacv_webui/src/securacv_webui.cpp:2393`: the
+  Device Configuration form offers "Time Bucket (ms)" at `value="5000"`,
+  `min="1000"`, `max="60000"`, and its Save posts to `/api/config`, a route
+  the canary tree does not register, so the form is inert. Align it to
+  canary-wap's `web_ui.h` field (value and min 600000, max 3600000) or
+  delete the dead form; `regression_check.sh`'s time-bucket section holds
+  only the canary-wap field to the floor today. Neither site reaches the
+  chain (`canary_config.h`'s `TIME_BUCKET_MS` is 600000). The choice
+  between deleting and widening, at each site, is the maintainer's.
 
 ### Mesh / fleet / beacon
 
@@ -527,10 +548,12 @@ so — see D2 below.)
   `regression_check.sh --strict` (zero warnings in both modes, reviewed
   allowlists that fail when stale; a release refuses on it, which meets the
   security/privacy acceptance criterion), the offline-queue outage
-  assertion, and `integrations/ha_frigate_mqtt/up.sh`. Still open: the
-  status-strip box, which ticks once `firmware.yml`'s Arduino CLI build is
-  green; the pinning box, which needs the WAP's Arduino-CLI CI rows to pin
-  the core (a maintainer release decision, `firmware/PLATFORMS.md`); the
+  assertion, and `integrations/ha_frigate_mqtt/up.sh`. The status-strip box
+  and its parent, "Simple status language", are ticked (#1704): the strip
+  is CI-compiled (the Arduino CLI and PlatformIO canary-wap builds), not yet
+  seen on a device, and its label wording is still maintainer to confirm.
+  Still open: the pinning box, which needs the WAP's Arduino-CLI CI rows to
+  pin the core (a maintainer release decision, `firmware/PLATFORMS.md`); the
   four boxes that are their own change, now F34; and the U1 / human rest —
   the under-10-minute unbox and the Docker + Frigate end-to-end run (the two
   acceptance criteria still unmet), the per-env boot-time budget and a live
@@ -1022,6 +1045,21 @@ so — see D2 below.)
   `.github/release-targets.yml` watch names them, so a pin bump alone
   releases nothing. One pins file both workflows read and both watches name
   closes it (`.github/RELEASE_LESSONS.md` 2026-09-23 (b) records the lesson).
+- [ ] **A22 [code] The desktop Flasher's crate fails clippy and fmt, and no
+  PR job runs either.** `desktop/src-tauri` fails
+  `cargo clippy --all-targets -- -D warnings` on two findings, both in files
+  #1704 did not change: `whoami.rs`'s `decode_hex` trips
+  `manual_is_multiple_of`, and `sscma.rs`'s `clamp_threshold` is dead
+  outside its own tests (use it or delete it). `cargo fmt --check` fails in
+  `fleet.rs`, `hub.rs`, `lib.rs` and `whoami.rs`, all of it older than
+  #1704. The Lab crate (`desktop-lab-check.yml`) and
+  `hub-core`/`hub-io`/`flash-engine` (the `desktop-hub-core.yml` matrix)
+  run `cargo fmt --check` and clippy with `-D warnings`; the Flasher's
+  `tauri-crate-check` job runs only `cargo check` and `cargo test`, so the
+  next Flasher change meets the same red lints and no PR job says so. Fix
+  the two findings, format the crate in a commit of its own, then add the
+  Lab job's Format check and Clippy steps to `tauri-crate-check`. From the
+  rust-apps and rust-flash packages' open items (#1704).
 
 ---
 
@@ -1377,6 +1415,45 @@ so — see D2 below.)
   The Combo AR model's lens and radome positions are hand-kept CAD values
   until C15 carries the measured features. A model edit regenerates and
   commits its `.glb` in the same change.
+- [ ] **W18 [code] The Lab download page says the app fetches only its update
+  manifest** (`download.html`, "Local-first, always": "talks only to your own
+  devices … The one thing it fetches for itself is its own update manifest,
+  from the project's public GitHub releases"). Since A14 (#1704), once a board
+  is connected the Lab's Flash page asks GitHub which signed firmware is
+  published, and pressing Flash downloads that image. The Lab's own surfaces
+  say so now (`desktop-lab/README.md`, `desktop-lab/INSTALL.md` and the
+  bundle's `longDescription` in `tauri.conf.json`); the download page is
+  hand-written, so no carry fixes it. No Lab release carries A14 yet (the
+  version is still 0.2.4; the bump is a release decision), so land the fix
+  before or with that release: name both fetches, both from the project's
+  GitHub releases. The same section's "(and, soon, reliable USB flashing)"
+  ages with that release; no Lab flash has run on real hardware yet (A14's
+  human work), so say what the app does, not that it is proven. Not one of
+  the claims audit's M2 rows (`download.html` :6, :9, :124, which W16 holds),
+  but when W16 scopes those it should name the same two fetches, not the
+  audit's device wording ("the only outbound traffic is a signed update
+  check …"), which predates A14. A new website PR from origin/main, with a
+  guard in `tests/legal-claims.test.mjs` that fails on "the one thing it
+  fetches".
+- [ ] **W19 [code] The website glossary's "The Vault" conflates sealed
+  snapshots with the quorum Vault** (`scripts/lib/glossary.mjs`, rendered
+  into `glossary.html` and `llms-full.txt`): "The sealed store where raw
+  snapshots live. Sealed means no one — including you, including us — can
+  open it alone." The monorepo glossary has kept the two apart since
+  ios-unseal (#1703): the Vault is the kernel's sealed store of raw frames
+  that break-glass opens by quorum (Invariant V), and a sealed snapshot is
+  "Not the Vault", one canary-wap frame encrypted to one person's X25519 key
+  and opened by that key's holder alone, so the website's sentence is false
+  for it. The sentence also keeps the "no one can … alone" absolute W7
+  rewrote elsewhere (the Vault tagline in `js/site.js` now reads "Footage
+  that takes a quorum to open."), and W7's guard misses it because the
+  em-dash aside splits "no one" from "can open". Rewrite the entry to the
+  monorepo's split (with a "Sealed snapshot" term beside it if the site wants
+  one), regenerate (`node scripts/make-glossary.mjs`, then
+  `node scripts/make-llms-txt.mjs`), and widen the guard in
+  `tests/legal-claims.test.mjs` to read through the aside (it scans the
+  generated `glossary.html`; `scripts/` is out of its scope by design). A new
+  website PR from origin/main.
 
 ---
 
@@ -1630,11 +1707,11 @@ major, by theme") — work its themes, then tick here.
 | `firmware/canary/CONSOLIDATION.md` | Consolidation phases + gap inventory |
 | `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md` | WAP enterprise checklist |
 | `docs/hardware/dev_playground_todo.md` | Bench-gated capability list (U1) |
-| `docs/audit/hardware_verification_checklist.md` | The 23 hardware verification cases (U1) |
-| `docs/hardware/enclosure/AUDIT_2026_09.md` | Enclosure open themes (C1–C3) |
+| `docs/audit/hardware_verification_checklist.md` | The hardware verification cases (U1) |
+| `docs/hardware/enclosure/AUDIT_2026_09.md` | Enclosure open themes (C1–C3, C10–C12) |
 | `docs/RELEASE_BUTTONS.md` | Release/ship operations (U2) |
-| `securacv_website/docs/render-roadmap.md` | 3D/AR quality roadmap (W3, W9) |
-| `securacv_website/docs/roadmap.md` | Website roadmap (stale — W2) |
+| `securacv_website/docs/render-roadmap.md` | 3D/AR quality roadmap (W3, W4, W5, W9, W12, W13) |
+| `securacv_website/docs/roadmap.md` | Website roadmap, coming-soon surfaces (refreshed by W2, website PR #200) |
 
 **Provenance.** Findings confirmed by source inspection during the
 2026-09-20 sweep (five parallel

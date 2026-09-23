@@ -42,9 +42,10 @@
   follow-up.
 - **Not done: a DS/HMAC-bound key and an eFuse/RTC rollback anchor (R18c,
   R18d)**, which stay open under roadmap item 18. Proof: the host tests ran;
-  the four edited `.cpp` files compile only in CI; bench rows K1 (the posture
-  on fused and unfused boards, and the opt-in image halting on both) and K2
-  (power cuts between record and persist never leave a torn pair) are U1.
+  the four edited `.cpp` files are green in CI on #1704 (PlatformIO Build
+  (canary)); bench rows K1 (the posture on fused and unfused boards, and the
+  opt-in image halting on both) and K2 (power cuts between record and
+  persist never leave a torn pair) are U1.
 
 ### The Lab flashes Canaries natively, on the Flasher's own engine
 
@@ -557,19 +558,21 @@
 - **The CAP-gateway attestation path is deferred by decision (F13-c).**
   Nothing is built. Two host tests pin that gateway trust grants nothing, one
   against the real source, and `spec/beacon_cap_gateway_v0.md` §6 writes the
-  gated milestone: a trust root, a separately named build, legal review and
-  operator identity, then pairing UX, then code. Decision: option 2 —
-  maintainer to confirm.
+  gated milestone (backlog F32): a trust root, a separately named build,
+  legal review and operator identity, then pairing UX, then code. Decision:
+  option 2 — maintainer to confirm.
 - **Not landed: wiring the channel into the canary-wap loop.** It needs an
   explicit user opt-in (enabling it at boot would switch on a life-safety
   broadcast without a choice), a COSIGN_REQ that fits the shared receive path,
-  and the pairing flow first; each is a new backlog item. Review round (Codex
-  on #1703): all five Beacon routes read the whole request body through
-  `http_body_reader.h` — a single `httpd_req_recv()` rejected a body split
-  across two TCP segments and truncated a long one silently — and answer "body
-  too large" or "body read failed" by name. Only CI compiles the flag-on
-  channel (the Canary WAP Arduino CLI job, green on #1703); the checklist's
-  "CANCEL propagates" row stays blocked until pairing and wiring land.
+  and the pairing flow first. The wiring, the opt-in and the COSIGN_REQ fit
+  are backlog F31, and the pairing flow is F30. Review round (Codex
+  on #1703): all six body-reading Beacon routes (the two cancel routes share
+  one reader) read the whole request body through `http_body_reader.h` — a
+  single `httpd_req_recv()` rejected a body split across two TCP segments and
+  truncated a long one silently — and answer "body too large" or "body read
+  failed" by name. Only CI compiles the flag-on channel (the Canary WAP
+  Arduino CLI job, green on #1703); the checklist's "CANCEL propagates" row
+  stays blocked until pairing and wiring land.
 
 ### One platform pin per firmware, and a ten-minute time-bucket floor on the witness chain
 
@@ -582,10 +585,11 @@
   whichever 7.x is newest, and the secure envs, whose caret resolved to an
   unrecorded 6.x at build time, may move back to 6.9.0's tool packages. The
   SBOM no longer carries a floating platform component. Compile proof is
-  partial and CI's: firmware.yml builds dev, release, release_ha, esp32cam,
-  esp32-wroom and freenove-s3 on the pin, and no workflow compiles dev_ha,
-  minimal, standalone, usb-onboard, secure or secure_ha on it — build those by
-  hand before relying on them (`firmware/PLATFORMS.md`). The first tag after
+  partial: firmware.yml's PlatformIO Build (canary) built dev, release,
+  release_ha, esp32cam, esp32-wroom and freenove-s3 on the pin, green in CI
+  on #1704, and no workflow compiles dev_ha, minimal, standalone,
+  usb-onboard, secure or secure_ha on it — build those by hand before relying
+  on them (`firmware/PLATFORMS.md`). The first tag after
   merge deserves a look at the release log's bootloader / merged-bin step; the
   `intelhex` pip extra is now a leftover of the 7.x float, kept until a green
   run shows it unneeded. Rollback is one `.ini` edit. Decision: option A —
@@ -659,10 +663,11 @@
   built while the link is down says `"replay":true` (nothing in Home Assistant
   reads it yet). Decision — maintainer to confirm: adopt the csi_mqtt shape,
   persistence option (a); SD backfill on reconnect is recorded as follow-up
-  F29b. Proof: host goldens, and pytest checking a canary-shaped signed body
-  against a pinned key; the device glue compiles only in CI (PlatformIO and
-  arduino-cli); live card pulls, the contact pin and end-to-end delivery are
-  bench work (U1).
+  F37. Proof: host goldens, and pytest checking a canary-shaped signed body
+  against a pinned key; the device glue, the flag-on contact builds included,
+  is green in CI on #1704 (PlatformIO Build (canary), PlatformIO Build
+  (canary-wap) and Arduino CLI Build (Canary WAP)); live card pulls, the
+  contact pin and end-to-end delivery are bench work (U1).
 - **Upgrade note.** The first boot after upgrading can still reuse, once, the
   event ids of the old firmware's last short boot, and Home Assistant's replay
   gate refuses those.
@@ -724,9 +729,14 @@
   Not done here: the factory-reset route, setup presets, the backend audit
   trail and a firmware-side MQTT contract fixture.
 - **Proof.** Host tests, route audits, the regression guard in both modes
-  (with negative runs), the sync checks and the lints ran; every PlatformIO
-  and arduino-cli compile is CI's. The BOOT-tap flow, the HTTPS track and the
-  WPA3 join boxes are bench work (U1).
+  (with negative runs), the sync checks and the lints ran. The compiles are
+  green in CI on #1704: PlatformIO Build (canary) over all seven envs (dev,
+  release, release_ha, full, esp32cam, esp32-wroom and freenove-s3),
+  PlatformIO Build (canary-wap) and Arduino CLI Build (Canary WAP). The TLS
+  and SoftAP SAE paths compile out wherever the core lacks them, so a green
+  `[env:full]` shows that its core 3 build compiles, not that it kept either
+  path. The BOOT-tap flow, the HTTPS track and the WPA3 join boxes are bench
+  work (U1).
 
 ### BLE Scouts pair by proximity, the household keeps a time zone, and a walker reads witness history
 
@@ -769,9 +779,12 @@
   are designed in `docs/design/witness_history_bridge.md` and not built.
   Decision: option B, staged — maintainer to confirm.
 - **Proof.** The host tests ran, including the zone grammar against glibc and
-  espressif's own newlib parsers; the device compiles are CI's. A live pair
-  against a real beacon, the -45 dBm threshold in a real room, and quiet hours
-  across a real local midnight and a DST change are bench work (U1).
+  espressif's own newlib parsers; the canary and canary-wap compiles are
+  green in CI on #1704 (PlatformIO Build (canary), PlatformIO Build
+  (canary-wap) and Arduino CLI Build (Canary WAP)); the display's are CI's.
+  A live pair against a real beacon, the -45 dBm threshold in a real room,
+  and quiet hours across a real local midnight and a DST change are bench
+  work (U1).
 
 ### Opera mesh: the canary's REST surface completes, canary-wap pairing frames get through, and removing a peer rotates the secret
 
@@ -821,8 +834,9 @@
   runs X25519 over Ed25519 keys in both trees, so the two sides' confirmation
   codes will differ; the PlatformIO outbound counter is RAM-only; and the
   PlatformIO tree cannot create an opera. Proof: all eleven mesh host suites,
-  run as firmware.yml runs them; the device compiles are CI's; Tracks C2 and
-  C3 are bench work (U1).
+  run as firmware.yml runs them; the device compiles are green in CI on #1704
+  (PlatformIO Build (canary), PlatformIO Build (canary-wap) and Arduino CLI
+  Build (Canary WAP)); Tracks C2 and C3 are bench work (U1).
 
 ### Repo: the advisory reviewer says when it is inert
 

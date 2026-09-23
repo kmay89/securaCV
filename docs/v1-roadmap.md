@@ -122,12 +122,13 @@ Rationale: Signed log is easier to demonstrate end-to-end without designing enve
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|
 | B1 | **Done:** Ed25519 log signing in kernel + CLI paths | ✅ |
-| B2 | **Done except hardware-backed keys:** OS-RNG device seed kept 0600 beside the database and resolved the same way by every write-side daemon; rotation and DB re-key are operator commands (`break_glass rotate-identity` / `rekey-db`). **Open:** hardware-backed keys (TPM / Secure Element) — needs hardware | hardware only |
+| B2 | **Done except hardware-backed keys and one verifier gap:** OS-RNG device seed kept 0600 beside the database and resolved the same way by every write-side daemon; rotation and DB re-key are operator commands (`break_glass rotate-identity` / `rekey-db`). **Open:** hardware-backed keys (TPM / Secure Element) — needs hardware; and `export_verify` given the current seed after a rotation fails (not fixed, its own decision — see the B2 note) | hardware, plus one verifier decision |
 | B3 | **Done:** `log_verify` validates Ed25519 signatures | ✅ |
 | B4 | **Done:** Tampering demo (`tamper_demo` binary: modify log, verify fails) | ✅ |
 
-**B2 note:** The software half is **done**. The SQLCipher DB key is decoupled from the device
-signing key (`SECURACV_DB_KEY_SEED` → `resolve_db_encryption_key`). The signing identity rotates
+**B2 note:** The software half is **done** except one verifier gap (under **Still open** below).
+The SQLCipher DB key is decoupled from the device signing key (`SECURACV_DB_KEY_SEED` →
+`resolve_db_encryption_key`). The signing identity rotates
 in the kernel: `Kernel::rotate_device_identity` appends a retiring-key-signed `KeyRotation` record
 and a genesis-anchored `device_key_history` row, so the log verifies across the boundary, and
 `Kernel::open` accepts the current epoch's seed and refuses a retired one. Both are operator
@@ -136,8 +137,14 @@ commands — `break_glass rekey-db` and `break_glass rotate-identity` (the succe
 RNG and kept 0600 in `<db>.ed25519.seed`; every write-side daemon resolves it the same way
 (`DEVICE_KEY_SEED`, else that file, else generate) and a seed file any other user can read is
 refused. See [`docs/db_key_rotation.md`](db_key_rotation.md). **Still open:** the higher bar of
-**hardware-backed keys** (TPM/Secure Element), which needs hardware to validate. (The commands'
-home — `break_glass` subcommands, option (a) — is for the maintainer to confirm.)
+**hardware-backed keys** (TPM/Secure Element), which needs hardware to validate; and, in software,
+`export_verify` after a rotation. It still turns `--device-key-seed` (or `DEVICE_KEY_SEED`) into
+the genesis anchor and derives its C2PA trust anchor from that seed, so after
+`break_glass rotate-identity`, verifying with the current seed fails. Not fixed: it needs its own
+decision, because `log_verify`'s self-anchored fallback does not transfer directly — a
+seed-derived C2PA anchor belongs to one lineage epoch
+([Verifier CLIs](db_key_rotation.md#verifier-clis)). (The commands' home — `break_glass`
+subcommands, option (a) — is for the maintainer to confirm.)
 
 **Total:** ~2-3 weeks
 

@@ -223,3 +223,13 @@ self-anchored (`self-consistent; identity unverified`) instead of failing the li
 retired key could have forged history before its successor, so the current key is not treated
 as a substitute for the genesis pin. The genesis seed still derives the anchor and verifies
 `valid`, even though it can no longer open the log for writing.
+
+**Still open — `export_verify` has no such fallback (not fixed).** Given the current seed
+(`DEVICE_KEY_SEED` or `--device-key-seed`) and neither `--public-key` nor `--public-key-file`,
+it still treats that seed's key as the genesis anchor, so after a rotation its lineage check
+fails the way `log_verify`'s did before its fallback landed. With `--c2pa-manifest` and no
+`--c2pa-anchor` it also derives the C2PA trust anchor from the same seed. The fix is its own
+decision: `log_verify`'s self-anchored fallback does not transfer directly, because a
+seed-derived C2PA anchor belongs to one lineage epoch. Rotating the seed rotates the C2PA
+credential with it ([`c2pa_export.md`](design/c2pa_export.md)), so an export signed before the
+rotation does not chain to the current seed's device CA.
