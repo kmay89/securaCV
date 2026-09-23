@@ -367,7 +367,10 @@ Required new tests in `firmware/projects/canary-wap/tests_host/`:
    - `test_ttl_anchored_on_counter_not_uptime` (O1)
 4. `test_beacon_origination.cpp` (new channel, see specs)
    - Two-pubkey co-sign success and single-pubkey failure.
-   - Gateway-pubkey relaxation path.
+   - Gateway trust confers no privilege: `test_gateway_trust_confers_no_privilege`
+     (mirror) and `test_source_grants_gateway_trust_nothing` (reads the real
+     `beacon_channel.cpp`). The relaxation path itself is deferred by decision
+     (§9.1).
    - Solo-degraded path requires physical BOOT-button assertion, marks `certainty = Observed`.
    - Self-test heartbeat trouble detection.
 
@@ -391,9 +394,9 @@ Before merging the Chirp v0.2 hardening to main:
 The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel_v0.md`. Before any Beacon firmware ships:
 
 - [x] `spec/beacon_channel_v0.md` reviewed for non-impersonation, no-PII, no-authority-templates.
-- [x] `spec/beacon_cap_gateway_v0.md` reviewed; implementation explicitly deferred to v0.4.
+- [x] `spec/beacon_cap_gateway_v0.md` reviewed; implementation deferred by decision — not to a version: it is gated on a trust-root decision, a separately named build and a per-deployment legal review (`spec/beacon_cap_gateway_v0.md` §6).
 - [x] Beacon origination requires two distinct device pubkeys cryptographically (`test_beacon_origination.cpp` passes).
-- [x] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`. (Spec'd; firmware path in `beacon_channel.cpp::originate_alert` requires a co-signer entry in the beacon set — BOOT-button fallback path is queued for v0.4.)
+- [x] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`. (Firmware: `originate_alert_solo` and, since 2026-09, `originate_cancel_solo`; receivers enforce the SOLO flag, `certainty = Observed` and originator == cosigner — `test_beacon_solo_origination.cpp`.)
 - [x] `audible_chirp.h` has `PATTERN_BEACON` (3 ascending tones, ≤600 ms, ≠ any reserved emergency-broadcast tone).
 - [x] Lint script passes (no WEA tone, no forbidden phrases). `scripts/lint_no_impersonation.sh` + `scripts/lint_cap_mapping.sh`.
 - [x] HA MQTT discovery surfaces `beacon.state` four-state NFPA enum + `beacon_airtime_pct` + `beacon_active_template`.
@@ -501,6 +504,20 @@ is the hardware checklist's "CANCEL propagates" row; no board can run it
 until the channel is wired into the sketch loop (`init()`, `update()` and the
 ESP-NOW dispatch still have no callers).
 
+Deferred by decision (2026-09), not open: the CAP gateway upstream-attestation
+path (`spec/beacon_cap_gateway_v0.md` §2.3). Gateway-trust keys are ordinary
+two-pubkey signers and get nothing more — no solo without the BOOT-button
+rules, no larger rate bucket, and a frame's trailing bytes (where an
+attestation block would sit) are never parsed. Two host tests pin it:
+`test_gateway_trust_confers_no_privilege` in the receive-path mirror, and
+`test_source_grants_gateway_trust_nothing`, which reads the real
+`beacon_channel.cpp` and fails if its code names the gateway trust level or
+an attestation structure, or reads `trust_level` for anything but REVOKED.
+Building it waits on gates no code can supply — a trust root, a separately
+named build, a per-deployment legal review — listed in the gateway spec's
+§6; the §2.2 three-gateway cap lands with the pairing flow, which is where
+entries get added.
+
 Still open on this surface — and the first two mean no board can exercise
 any of the above yet: the channel's runtime is not wired into the sketch
 (`init()`, `set_enabled()`, `update()` and `dispatch_espnow_message()` have no
@@ -509,10 +526,8 @@ callers, the shared ESP-NOW receive path forwards to Chirp only, and the
 §3.3 pairing flow is a stub (nothing writes a beacon-set entry or a peer's
 X25519 key, so the encrypted two-device path has no input — the COSIGN
 transport itself is encrypted and closed above, contrary to the `.cpp`
-header's old "unencrypted broadcast" note, now corrected); gateway-trust keys
-are accepted as ordinary community cosigners with no upstream CAP attestation
-(the `.cpp` header documents the gap); rate-limit state is not rebuilt from
-the audit log on boot (§11 — `init()` runs before the wall clock syncs, so the persisted
+header's old "unencrypted broadcast" note, now corrected); rate-limit state
+is not rebuilt from the audit log on boot (§11 — `init()` runs before the wall clock syncs, so the persisted
 entries' ages cannot be judged there; a rebuild deferred to first time sync
 is the shape of the fix); a device that spent its fifth origination cannot
 cancel its own alarm (a §8 CANCEL exemption is a spec decision — until then

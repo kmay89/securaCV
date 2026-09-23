@@ -42,9 +42,14 @@
  *     are dropped, and nothing writes a beacon-set entry or sets
  *     has_x25519_pubkey. So pick_cosign_candidate() has no input and the
  *     (implemented, encrypted) two-device path cannot run on any device.
- *  3. The CAP gateway upstream-attestation path
- *     (spec/beacon_cap_gateway_v0.md) is not implemented. Gateway-trust
- *     entries are verified exactly like cosigners and get nothing more.
+ *  3. Not implemented by decision (spec/beacon_cap_gateway_v0.md §6): the
+ *     CAP gateway upstream-attestation path. Gateway-trust entries are
+ *     ordinary two-pubkey signers here and receive no solo or rate privilege,
+ *     because the attestation that would grant it is not parsed. Enabling it
+ *     needs a trust root, a separately named build and a legal review first.
+ *     tests_host/test_beacon_origination.cpp pins it, including a scan of this
+ *     file: its code must not name the gateway trust level or an attestation
+ *     structure, and reads trust_level only to check for REVOKED.
  */
 
 #include "beacon_channel.h"

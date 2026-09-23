@@ -589,7 +589,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   past the ring boundary; SD-less devices keep chaining and raise a one-time
   `STORAGE` health warning.
 - CAP gateway interop (inbound and outbound) specified
-  (`spec/beacon_cap_gateway_v0.md`) but not implemented in v0.
+  (`spec/beacon_cap_gateway_v0.md`) and deferred by decision. Until its human
+  gates are met (trust root, separately named build, per-deployment legal
+  review — gateway spec §6), a gateway-trust key is an ordinary two-pubkey
+  signer with no extra privilege; two host tests pin that, one of them
+  against the real receive path's source.
 
 ### Non-impersonation contract
 

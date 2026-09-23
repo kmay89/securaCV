@@ -28,7 +28,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
+
+// The real receive path, for the source-level pin in
+// test_source_grants_gateway_trust_nothing. The Makefile passes the absolute
+// path; a hand build from tests_host/ falls back to the relative one.
+#ifndef BEACON_CHANNEL_CPP
+#define BEACON_CHANNEL_CPP "../arduino/canary_wap/beacon_channel.cpp"
+#endif
 
 namespace {
 
@@ -36,6 +46,7 @@ constexpr size_t DEVICE_FP_SIZE = 16;
 constexpr size_t BEACON_NONCE_SIZE = 16;
 constexpr uint8_t BCN_MAGIC = 0xB1;
 constexpr uint8_t BCN_SCOPE_PRIVATE = 2;
+constexpr uint8_t BCN_TRUST_GATEWAY = 1;  // spec/beacon_cap_gateway_v0.md §2.2
 constexpr uint8_t BCN_TRUST_REVOKED = 2;
 
 constexpr uint8_t BCN_FLAG_IS_EXERCISE = 0x01;
@@ -779,6 +790,123 @@ void test_alerts_do_not_exhaust_the_drill_bucket() {
 // Finding 7 — template must be in the life-safety set
 // ───────────────────────────────────────────────────────────────────────────
 
+// ───────────────────────────────────────────────────────────────────────────
+// CAP gateway trust confers no privilege (spec/beacon_cap_gateway_v0.md §2.3:
+// "The gateway gets no special privilege without producing the upstream
+// attestation" — and the attestation path is deferred by decision, so a
+// gateway-trust entry must be an ordinary two-pubkey signer today)
+// ───────────────────────────────────────────────────────────────────────────
+
+void test_gateway_trust_confers_no_privilege() {
+  std::vector<SetEntry> set = { mk(0x6A, BCN_TRUST_GATEWAY), mk(0xBB) };
+
+  // (a) No solo-by-trust: a gateway naming itself as its own cosigner,
+  // without the BOOT-button SOLO flag, is a collapsed-signer frame.
+  Frame self = mk_frame(0x6A, 0x6A);
+  EXPECT(!would_accept(set, self),
+         "a gateway-trust key cannot cosign its own frame (no solo without the SOLO flag)");
+  self.certainty = 1;  // BCN_CERT_LIKELY — what an upstream-attested frame would carry
+  EXPECT(!would_accept(set, self),
+         "nor at a higher certainty");
+
+  // (b) The SOLO flag buys a gateway exactly what it buys any member: the
+  // §6.2 rules, certainty = Observed and originator == cosigner.
+  Frame solo = mk_frame(0x6A, 0x6A);
+  solo.flags = BCN_FLAG_SOLO_ORIGIN;
+  EXPECT(would_accept(set, solo),
+         "a gateway's solo frame is accepted under the ordinary §6.2 rules");
+  solo.certainty = 1;
+  EXPECT(!would_accept(set, solo),
+         "a gateway's solo frame above Observed is rejected like anyone's");
+
+  // (c) Co-signed with a real second key, a gateway is just a cosigner.
+  EXPECT(would_accept(set, mk_frame(0x6A, 0xBB)),
+         "a gateway-trust key co-signing with a paired member is an ordinary two-pubkey frame");
+  EXPECT(!would_accept(set, mk_frame(0x6A, 0xBB, /*sa=*/true, /*sb=*/false)),
+         "and still needs the second signature");
+
+  // (d) The same 24 h bucket as anyone (the spec's proposed 50-per-day for
+  // attested gateways, §5 Q4, does not exist without the attestation).
+  Receiver rx;
+  rx.set = set;
+  for (int i = 0; i < MAX_ORIGINATIONS_PER_PUBKEY_24H; i++) {
+    EXPECT(rx.receive(mk_frame(0x6A, 0xBB)) == Outcome::Audited,
+           "gateway alerts inside the ordinary bucket");
+  }
+  EXPECT(rx.receive(mk_frame(0x6A, 0xBB)) == Outcome::RejectedRate,
+         "the gateway's sixth alert is rate-limited like any member's");
+}
+
+// Strip // and /* */ comments (string and char literals kept intact), so
+// the source pin below reads code, not prose about the code.
+std::string strip_comments(const std::string& src) {
+  std::string out;
+  enum { CODE, LINE, BLOCK, STR, CHR } st = CODE;
+  for (size_t i = 0; i < src.size(); i++) {
+    const char c = src[i];
+    const char n = (i + 1 < src.size()) ? src[i + 1] : '\0';
+    switch (st) {
+      case CODE:
+        if (c == '/' && n == '/') { st = LINE; i++; }
+        else if (c == '/' && n == '*') { st = BLOCK; i++; }
+        else { if (c == '"') st = STR; else if (c == '\'') st = CHR; out += c; }
+        break;
+      case LINE:
+        if (c == '\n') { st = CODE; out += c; }
+        break;
+      case BLOCK:
+        if (c == '*' && n == '/') { st = CODE; i++; }
+        else if (c == '\n') out += c;
+        break;
+      case STR:
+      case CHR:
+        out += c;
+        if (c == '\\' && n) { out += n; i++; }
+        else if ((st == STR && c == '"') || (st == CHR && c == '\'')) st = CODE;
+        break;
+    }
+  }
+  return out;
+}
+
+// The mirror above could drift from the firmware; this reads the firmware.
+// Nothing in beacon_channel.cpp's code may name the gateway trust level or
+// the attestation structure, and every trust_level it reads or writes is
+// compared against / set to REVOKED — so no code path can grant a
+// gateway-trust entry anything a cosigner lacks, and a frame's trailing
+// bytes (where an attestation block would sit) are never parsed: the ALERT
+// length check is a lower bound and the parser reads fixed offsets only.
+// Implementing the attestation path is a decision with human gates (a trust
+// root, a separately named build, a per-deployment legal review); when it is
+// taken, this pin is the thing that has to change on purpose.
+void test_source_grants_gateway_trust_nothing() {
+  std::ifstream f(BEACON_CHANNEL_CPP);
+  EXPECT(f.good(), "beacon_channel.cpp is readable (source pin fails closed)");
+  if (!f.good()) return;
+  std::stringstream ss;
+  ss << f.rdbuf();
+  const std::string code = strip_comments(ss.str());
+  EXPECT(code.find("trust_level") != std::string::npos,
+         "the scan sees the receive path's trust checks (sanity)");
+  EXPECT(code.find("BCN_TRUST_GATEWAY") == std::string::npos,
+         "no code in beacon_channel.cpp names the gateway trust level");
+  EXPECT(code.find("BeaconGatewayAttestation") == std::string::npos &&
+         code.find("upstream_sig") == std::string::npos,
+         "no code in beacon_channel.cpp parses a gateway attestation block");
+  std::istringstream lines(code);
+  std::string line;
+  int trust_lines = 0;
+  while (std::getline(lines, line)) {
+    if (line.find("trust_level") == std::string::npos) continue;
+    trust_lines++;
+    if (line.find("BCN_TRUST_REVOKED") == std::string::npos) {
+      std::fprintf(stderr, "  trust_level used without BCN_TRUST_REVOKED: %s\n", line.c_str());
+      EXPECT(false, "every trust_level use in beacon_channel.cpp is a REVOKED check");
+    }
+  }
+  EXPECT(trust_lines >= 5, "the receive, cosign and revoke paths all check trust_level");
+}
+
 void test_template_outside_life_safety_set_rejected() {
   std::vector<SetEntry> set = { mk(0xAA), mk(0xBB) };
   Frame f = mk_frame(0xAA, 0xBB);
@@ -935,6 +1063,9 @@ int main() {
   test_pair_budget_caps_co_signed_alerts();
 
   test_template_outside_life_safety_set_rejected();
+
+  test_gateway_trust_confers_no_privilege();
+  test_source_grants_gateway_trust_nothing();
 
   test_stale_signer_selftest_rejected();
   test_unobserved_selftest_is_not_treated_as_stale();

@@ -133,7 +133,7 @@ A `trust_level = 2` (revoked) state is supported: the pubkey is kept locally for
 
 ### 3.5 Gateway pubkeys (forward-looking)
 
-Reserved: pubkeys may carry `trust_level = 1` (gateway). A gateway-trust pubkey may originate solo (no co-signer required) but only if the frame carries a verifiable second signature from the upstream feed (e.g., CAP XML-DSig). Receivers display gateway-originated frames with a clear "from gateway X" badge and **never** at higher urgency than community-originated frames. This is fully specified in `spec/beacon_cap_gateway_v0.md`; no implementation in v0.
+Reserved: pubkeys may carry `trust_level = 1` (gateway). A gateway-trust pubkey may originate solo (no co-signer required) but only if the frame carries a verifiable second signature from the upstream feed (e.g., CAP XML-DSig). Receivers display gateway-originated frames with a clear "from gateway X" badge and **never** at higher urgency than community-originated frames. This is fully specified in `spec/beacon_cap_gateway_v0.md`; no implementation in v0 — deferred by decision, with its gates listed in that spec's §6. Until then a `trust_level = 1` key is an ordinary two-pubkey signer with no extra privilege.
 
 ## 4. Templates (life-safety only)
 

@@ -38,7 +38,9 @@ CHIRP_SEC_SRC = test_chirp_security.cpp
 # unsigned header nonce now says), and a frame
 # outside the freshness window — and that CANCEL/UPDATE only act on the
 # alarm they name, drills bank against their own rate bucket, and a replayed
-# SELFTEST_OK cannot keep a dead neighbor supervised-healthy.
+# SELFTEST_OK cannot keep a dead neighbor supervised-healthy. Also pins that
+# CAP-gateway trust confers no privilege — in the mirror, and by reading the
+# real beacon_channel.cpp (its path is passed in, so the pin fails closed).
 BEACON_ORIG_BIN = test_beacon_origination
 BEACON_ORIG_SRC = test_beacon_origination.cpp
 
@@ -213,7 +215,7 @@ $(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_SEC_SRC)
 
 $(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC)
-	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_ORIG_SRC)
+	$(CXX) $(CXXFLAGS) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_ORIG_SRC)
 
 $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
