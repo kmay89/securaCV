@@ -191,9 +191,9 @@ lid_t          = 2.0;   // lid top thickness
 lip_h          = 4.0;   // how far the lid lip drops into the base
 lip_t          = 1.2;   // lid lip wall thickness
 corner_r       = 3.0;   // outside corner radius
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp  // [0:0.2:1.2]
-                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
+                   // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
+                   // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
@@ -300,8 +300,8 @@ clip_t         = 1.0;   // beam thickness — thinner = easier flex (tune to you
 clip_hook      = 0.5;   // how far the lip overhangs the board top
 clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
 clip_clear     = 0.25;  // gap between tab inner face and the board edge (a fit — tune on the coupon)
-clip_dx        = 5.25;  // clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The  // [3:0.25:8]
-                        // XIAO's castellated pads run to ±8.5 along each long edge, so a 6 mm tab here
+clip_dx        = 5.25;  // clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot)  // [3:0.25:8]
+                        // The XIAO's castellated pads run to ±8.5 along each long edge, so a 6 mm tab here
                         // sits over three pads: solder wires from the UNDERSIDE and keep the top pad
                         // flat, or a fillet stops the lip latching
 clip_over      = 0.15;  // extra lip travel per side for the MEASURED board (brd_xiao_w_measured() 17.8

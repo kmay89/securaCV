@@ -159,9 +159,9 @@ lid_t    = 2.0;    // front face thickness
 lip_h    = 4.0;    // front lip insertion into the back shell
 lip_t    = 1.2;    // lip wall thickness
 corner_r = 3.0;    // outside corner radius
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp  // [0:0.2:1.2]
-                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
+                   // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
+                   // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 standoff_h = 3.5;  // PCBs sit this high off the back (RAISE if DevKit has soldered pin headers!)
@@ -251,10 +251,10 @@ usb_cov_dep   = 1.0;  // recess depth into the outer wall face
 weep_d        = 2.0;  // weep bore (canary_core_lib weep_d)  // [1.5:0.5:3]
 hood_len      = 9.0;  // rain-hood protrusion from the front face  // [5:0.5:15]
 hood_t        = 1.8;  // hood wall thickness
-hood_seat     = 0.6;  // groove in the front's show face the hood's spigot presses into (tol_press); bond with  // [0.4:0.1:1.0]
-                      // neutral-cure silicone. The hood is its OWN part: a hood grown on the front had no
-                      // printable orientation (face-down it stood on 9 mm of hood; face-up the whole
-                      // 4,000 mm2 inner face was an unsupported ceiling over four post tips)
+hood_seat     = 0.6;  // groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone  // [0.4:0.1:1.0]
+                      // The hood is its OWN part: a hood grown on the front had no printable orientation
+                      // (face-down it stood on 9 mm of hood; face-up the whole 4,000 mm2 inner face was an
+                      // unsupported ceiling over four post tips)
 
 /* [Front-face features] — offsets are measured FROM THE MODULE CENTER so they
    stay valid for both hosts. Measure your build! */

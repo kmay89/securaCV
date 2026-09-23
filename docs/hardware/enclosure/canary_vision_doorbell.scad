@@ -141,9 +141,9 @@ lid_t    = 2.2;      // face thickness (the visible surface)
 lip_h    = 4.0;      // how far the face's lip drops into the body
 lip_t    = 1.2;      // lip wall thickness
 cav_extra = 1.0;     // headroom over the tallest component
-floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp  // [0:0.2:1.2]
-                   // notch there was the crack-starter in every flat-printed shell — a corner drop hinges the
-                   // floor about it along one layer boundary. 0 = the old square corner
+floor_cove = 0.8;  // 45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
+                   // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
+                   // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the lid's lip — four corner posts fit
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 zone_top = 8.0;      // margin above the camera (top posts live here)

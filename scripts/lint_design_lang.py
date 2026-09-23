@@ -56,6 +56,20 @@ stud_* numbers (INTERFACE_KNOBS) — sits in a group named INTERFACE_GROUP
 (the builder's short name: text after " — " is a per-file note). The C3
 pocket case's egg hanger is exempt (INTERFACE_EXEMPT, with its reason).
 
+Sixth rule: a knob with a stated range keeps its whole help on its own line.
+The web builder draws such a knob as a slider with that line's help beside
+it, the Lab lists its range next to the same help, and neither reads the
+comment lines below. C10 moved six ranges off continuation lines onto their
+knobs, and the help on each of those lines had been wrapped mid-sentence
+("...cavity_cut): the sharp", "...the validated spot). The", "...; bond
+with"), so the knob came with half a sentence (review of C10). When a
+comment-only continuation follows a ranged knob, its help must end at a
+sentence boundary: parentheses closed, no dangling article, conjunction or
+preposition (RUN_ON_WORDS), and the continuation starting a new sentence (a
+capital letter or a digit). A knob without a range shows its help the same
+way but is not judged yet: help wrapped that way predates C10 in many
+files, and the rule starts where there is no debt.
+
 Run from the repo root:  python3 scripts/lint_design_lang.py
 """
 
@@ -260,6 +274,49 @@ def lint_interface_group(path):
     return problems
 
 
+# The sixth rule's table: a help that ends on one of these words (an article,
+# a conjunction, a preposition, a relative pronoun) is a sentence cut off by
+# a line wrap, whatever the next line says.
+RUN_ON_WORDS = {
+    "a", "an", "the", "and", "or", "but", "nor", "so", "with", "of", "to", "in", "on",
+    "at", "for", "by", "from", "as", "into", "onto", "via", "per", "than", "that", "which",
+}
+
+
+def lint_ranged_help(path):
+    """Sixth rule: a knob with a stated range keeps its whole help on its line."""
+    problems = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for group in gen_builder_manifest.parse_scad(path, with_lines=True):
+        for param in group["params"]:
+            desc = param.get("desc", "")
+            if "min" not in param or not desc:
+                continue
+            nxt = lines[param["line"]] if param["line"] < len(lines) else ""
+            cont = re.match(r"^\s+//\s*(\S.*)$", nxt)
+            if not cont:
+                continue
+            last = re.search(r"([A-Za-z]+)\W*$", desc)
+            cut = []
+            if desc.count("(") > desc.count(")"):
+                cut.append("an open parenthesis")
+            if desc.rstrip()[-1] in ",:;(":
+                cut.append(f"a trailing '{desc.rstrip()[-1]}'")
+            if last and last.group(1).lower() in RUN_ON_WORDS:
+                cut.append(f"a dangling '{last.group(1)}'")
+            if not re.match(r"[A-Z0-9]", cont.group(1)):
+                cut.append(f"a next line that goes on mid-sentence ('{cont.group(1)[:24]}…')")
+            if cut:
+                problems.append(
+                    f"{path.name}:{param['line']}: `{param['name']}` states a range, so the "
+                    "builder draws a slider and the Lab lists the range, each with this line's "
+                    f"help beside it — and neither reads further. Its help ends \"…{desc[-32:]}\" "
+                    f"with {' and '.join(cut)}, so the knob shows half a sentence. End the help "
+                    "at a sentence boundary on the knob's line, and start the next line with a "
+                    "new sentence (DESIGN_RULES.md §10)")
+    return problems
+
+
 def knob_lines(path):
     """{line number: [knob names]} as gen_builder_manifest.parse_scad sees them."""
     by_line = {}
@@ -306,6 +363,7 @@ def main():
         problems += found
         problems += lint_meanings(path)
         problems += lint_interface_group(path)
+        problems += lint_ranged_help(path)
         debt_seen |= seen
     for name, knob in sorted(HELP_LINE_DEBT - debt_seen):
         problems.append(f"{name}: HELP_LINE_DEBT lists the shared-help line starting "
@@ -319,8 +377,9 @@ def main():
         print(f"\ndesign language: {len(problems)} problem(s)")
         return 1
     print("design language OK — every canonical default conforms or explains itself, "
-          "every knob's help is on its own line, every shared name keeps its meaning, "
-          "and the stud/keyhole interface keeps its one group name")
+          "every knob's help is on its own line, every ranged knob's help ends there, "
+          "every shared name keeps its meaning, and the stud/keyhole interface keeps its "
+          "one group name")
     return 0
 
 

@@ -1221,7 +1221,7 @@
         0.2,
         1.2
        ],
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -1601,7 +1601,7 @@
         0.25,
         8.0
        ],
-       "comment": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The"
+       "comment": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot)"
       },
       {
        "name": "clip_over",
@@ -2113,7 +2113,7 @@
         0.2,
         1.2
        ],
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -2483,7 +2483,7 @@
         0.1,
         1.0
        ],
-       "comment": "groove in the front's show face the hood's spigot presses into (tol_press); bond with"
+       "comment": "groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone"
       },
       {
        "name": "lp_d",
@@ -3177,7 +3177,7 @@
         0.2,
         1.2
        ],
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -4116,7 +4116,7 @@
         0.2,
         1.2
        ],
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -5839,7 +5839,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -6116,7 +6121,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",
@@ -7152,7 +7162,12 @@
       {
        "name": "floor_cove",
        "default": "0.8",
-       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+       "range": [
+        0.0,
+        0.2,
+        1.2
+       ],
+       "comment": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
       },
       {
        "name": "lid_key",

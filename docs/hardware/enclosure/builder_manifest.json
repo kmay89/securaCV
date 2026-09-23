@@ -138,7 +138,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "6a02e360b94f962a5cedd9e4102f569ff4c030ee99b3ac52beebd3f75507eda2",
+      "sha256": "dec4fc3a443d8d0c1b7c72f580a995fb394719d5f41a1fe3dbe80314d27496d5",
       "groups": [
         {
           "name": "What to render",
@@ -682,7 +682,7 @@
               "min": 0,
               "step": 0.2,
               "max": 1.2,
-              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
             },
             {
               "name": "lid_key",
@@ -1121,7 +1121,7 @@
               "min": 3,
               "step": 0.25,
               "max": 8,
-              "desc": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot). The"
+              "desc": "clip centers at board_cx ± clip_dx (5.25 = board_l/4, the validated spot)"
             },
             {
               "name": "clip_over",
@@ -1246,7 +1246,7 @@
         }
       },
       "units": {},
-      "sha256": "d1b1851739a42af405e1fa662dbf6f515b86e0b506b0b908f7046ea6de4e2a4d",
+      "sha256": "174d4ee17371bb4022e5514191209c72fe3713bda1e277a419fd5e7834af3706",
       "groups": [
         {
           "name": "What to render",
@@ -1591,7 +1591,7 @@
               "min": 0,
               "step": 0.2,
               "max": 1.2,
-              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
             },
             {
               "name": "lid_key",
@@ -2012,7 +2012,7 @@
               "min": 0.4,
               "step": 0.1,
               "max": 1.0,
-              "desc": "groove in the front's show face the hood's spigot presses into (tol_press); bond with"
+              "desc": "groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone"
             }
           ]
         },
@@ -2346,7 +2346,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "ceb965e16fb913f93d858c427667531a0501fc3f07216e95051da45c52eb46c7",
+      "sha256": "bf167d0acf0b3bffc93966aa404277b0bb7a8686c6280e6ea641766cc4dbff32",
       "groups": [
         {
           "name": "What to render",
@@ -2672,7 +2672,7 @@
               "min": 0,
               "step": 0.2,
               "max": 1.2,
-              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
             },
             {
               "name": "lid_key",
@@ -3291,7 +3291,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "7e325293b0313222be242ae1c10ba7437c05c3653a3e6e1d7113cc4c26f9782b",
+      "sha256": "e44ad58d3b08381373e5475f63e1ab4265ffbf892e3849fb896cbed03b5c5d87",
       "groups": [
         {
           "name": "What to render",
@@ -3696,7 +3696,7 @@
               "min": 0,
               "step": 0.2,
               "max": 1.2,
-              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut): the sharp"
+              "desc": "45° cove where the floor meets the walls, inside (canary_core_lib cavity_cut); 0 = the old square corner"
             },
             {
               "name": "lid_key",
