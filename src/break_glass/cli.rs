@@ -1832,7 +1832,7 @@ fn cmd_rotate_identity(
     rekey_db_to: Option<&str>,
 ) -> Result<()> {
     use crate::crypto;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     let default_seed_path = crypto::device_key_path_for_db(db_path).ok();
 
@@ -1906,10 +1906,22 @@ fn cmd_rotate_identity(
 
     // Preflight: the current seed must open the log (a retired seed is refused
     // here, before a re-key or a staged file can happen).
-    drop(Kernel::open_with_db_key_seed(
-        &cfg,
-        env_db_secret.as_ref().map(|s| s.as_str()),
-    )?);
+    // A --seed-file kept away from the database has its own `.new`; the
+    // kernel's error names only the one beside the database.
+    drop(
+        Kernel::open_with_db_key_seed(&cfg, env_db_secret.as_ref().map(|s| s.as_str())).map_err(
+            |err| match seed_file.and_then(|p| crypto::staged_successor_for(Path::new(p))) {
+                Some(staged) if !err.to_string().contains(&staged.display().to_string()) => {
+                    anyhow!(
+                        "{err}. A staged successor seed exists at {} — an interrupted rotation \
+                         may have left the latest seed there (docs/db_key_rotation.md)",
+                        staged.display()
+                    )
+                }
+                _ => err,
+            },
+        )?,
+    );
 
     // Every seed file that must follow the identity: --seed-file, and the seed
     // file beside the database whenever one exists (witnessd reads it and

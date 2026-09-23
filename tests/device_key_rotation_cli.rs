@@ -1032,3 +1032,80 @@ fn rotate_identity_treats_two_spellings_of_one_seed_file_as_one_and_stages_befor
     assert!(!staged.exists(), "no .new file may be left behind");
     assert_no_secrets(&out, &[GENESIS_SEED, &successor, DB_SECRET]);
 }
+
+/// The rotation committed but its rename did not happen (a crash, an
+/// immutable file): the latest seed sits in `<file>.new` beside a live file
+/// that still holds the retired one. Every later touchpoint — a daemon
+/// start, a re-run of the ceremony — must name that staged file instead of
+/// only "use the latest seed"; the documented recovery (move it over the
+/// live file) then works.
+#[test]
+fn a_retired_seed_error_names_the_staged_successor_left_by_an_interrupted_rotation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("witness.db");
+    build_db(&db);
+    let seed_file = write_genesis_seed_file(&db);
+    let db_str = db.to_str().expect("utf8 path");
+    let out = break_glass(
+        &[
+            "rotate-identity",
+            "--db",
+            db_str,
+            "--ruleset-id",
+            "ruleset:test",
+            "--generate",
+            "--rekey-db-to",
+            DB_SECRET,
+        ],
+        &[],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+
+    // Recreate the state a failed rename leaves: successor in `.new`, the
+    // retired seed still in the live file.
+    let staged = seed_file.with_file_name("witness.ed25519.seed.new");
+    std::fs::rename(&seed_file, &staged).expect("move successor to .new");
+    witness_kernel::crypto::load_or_create_device_seed(&seed_file, Some(GENESIS_SEED))
+        .expect("retired seed back in the live file");
+    let successor = read_seed(&staged);
+    let staged_str = staged.to_str().expect("utf8 path").to_string();
+
+    let out = grove_ingest(db_str, &[("SECURACV_DB_KEY_SEED", DB_SECRET)]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let all = text(&out);
+    assert!(all.contains("retired"), "{all}");
+    assert!(
+        all.contains("staged successor seed exists at") && all.contains(&staged_str),
+        "a daemon start must name the staged file\n{all}"
+    );
+    assert_no_secrets(&out, &[GENESIS_SEED, &successor, DB_SECRET]);
+
+    let out = break_glass(
+        &[
+            "rotate-identity",
+            "--db",
+            db_str,
+            "--ruleset-id",
+            "ruleset:test",
+            "--generate",
+        ],
+        &[("SECURACV_DB_KEY_SEED", DB_SECRET)],
+    );
+    assert!(!out.status.success(), "{}", text(&out));
+    let all = text(&out);
+    assert!(
+        all.contains("staged successor seed exists at") && all.contains(&staged_str),
+        "a re-run of the ceremony must name the staged file\n{all}"
+    );
+    assert_eq!(
+        read_seed(&staged),
+        successor,
+        "the staged successor is kept"
+    );
+
+    // The documented recovery.
+    std::fs::rename(&staged, &seed_file).expect("move .new over the live file");
+    let out = grove_ingest(db_str, &[("SECURACV_DB_KEY_SEED", DB_SECRET)]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert_no_secrets(&out, &[GENESIS_SEED, &successor, DB_SECRET]);
+}

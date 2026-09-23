@@ -85,7 +85,9 @@ With `--new-seed` and no seed file anywhere, none is written: set the new value 
 own key file (the HA add-on, the Docker sidecar) points `--seed-file` at that file. Restart
 every process afterwards. A `<file>.new` left by an interrupted ceremony blocks the next one
 until it is resolved: if the log still opens with the current seed, the staged seed was never
-activated and can be removed; otherwise move it over the live file.
+activated and can be removed; otherwise move it over the live file. When a retired seed is
+refused and such a file sits beside the database (or, in the ceremony, beside `--seed-file`),
+the error names it.
 
 `--rekey-db-to <secret>` (or `SECURACV_NEW_DB_KEY_SEED`) performs the DB-key prerequisite in
 the same ceremony when `SECURACV_DB_KEY_SEED` is not set yet: exactly what `rekey-db` does

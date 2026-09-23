@@ -289,6 +289,19 @@ fn staged_seed_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// The staged successor an interrupted rotation leaves beside `seed_file`
+/// (`<seed_file>.new`), when one exists. Never read here — only named, so an
+/// error about a retired seed can point at it.
+pub fn staged_successor_for(seed_file: &Path) -> Option<PathBuf> {
+    let staged = staged_seed_path(seed_file);
+    staged.exists().then_some(staged)
+}
+
+/// [`staged_successor_for`] the seed file beside the database at `db_path`.
+pub fn staged_successor_for_db(db_path: &str) -> Option<PathBuf> {
+    staged_successor_for(&device_key_path_for_db(db_path).ok()?)
+}
+
 /// Stage a replacement seed at `<path>.new` — a fresh mode-0600 file, fsynced,
 /// and its directory fsynced so the new entry is durable too — without
 /// touching `path`. Returns the staged path for [`commit_seed_file`].

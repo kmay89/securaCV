@@ -1694,9 +1694,25 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             self.backfill_genesis_key_history(&bytes)?;
             let current = current_device_public_key(&self.conn)?;
             if current != key_bytes {
+                // A rotation that committed but could not rename its staged
+                // successor into place leaves the latest seed in
+                // `<db>.ed25519.seed.new`: name it, or the operator is told
+                // only "use the latest seed" with no idea where it is.
+                let staged = self
+                    .conn
+                    .path()
+                    .and_then(crate::crypto::staged_successor_for_db)
+                    .map(|path| {
+                        format!(
+                            ". A staged successor seed exists at {} — an interrupted rotation \
+                             may have left the latest seed there (docs/db_key_rotation.md)",
+                            path.display()
+                        )
+                    })
+                    .unwrap_or_default();
                 return Err(anyhow!(
                     "device public key mismatch: DEVICE_KEY_SEED does not derive the current \
-                     device key (a retired key cannot reopen the log; use the latest seed)"
+                     device key (a retired key cannot reopen the log; use the latest seed){staged}"
                 ));
             }
             return Ok(());
