@@ -310,14 +310,18 @@ def test_speak_fired_names_the_watch():
 
 def test_watch_roster_summarizes_past_a_handful():
     # Law 3 (docs/design/voice_moments.md): speech is serial, so a long
-    # list of watches is summarized and handed to the screen.
+    # list of watches is summarized and the rest handed to the
+    # securacv.list_watches action (HA10: no dashboard lists watches, so
+    # the old pointer at one led nowhere).
     many = [
         make_watch(f"w{i}", f"watch {i}", SUBJECT, NOW, days=10 + i)
         for i in range(5)
     ]
     speech = speak_roster(many, NOW + DAY)
-    assert speech.startswith("5 watches running.")
-    assert "The next to finish is watch 0, in 9 days." in speech
-    assert "The dashboard has the rest." in speech
+    assert speech == (
+        "5 watches running. The next to finish is watch 0, in 9 days. "
+        "The securacv.list_watches action has the rest."
+    )
+    assert "dashboard" not in speech
     # Three still read out in full.
     assert speak_roster(many[:3], NOW + DAY).startswith("3 watches:")
