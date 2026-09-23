@@ -1015,12 +1015,28 @@ static uint32_t be_word_host_order(const void* word) {
          ((uint32_t)b[2] << 8)  |  (uint32_t)b[3];
 }
 
-// Host-order IPv4 of a sockaddr, or 0 for anything that is not AF_INET
-// (IPv6, link-local, unknown).
+// Host-order IPv4 of a sockaddr, or 0 when it carries none. esp_http_server's
+// listener is a dual-stack AF_INET6 socket on every core with
+// CONFIG_LWIP_IPV6 (both of ours), so an IPv4 client arrives as AF_INET6
+// ::ffff:a.b.c.d — provisioning_gate::ipv4_host_order_from_addr (host-tested)
+// unwraps that and answers 0 for a real IPv6 or link-local address. Reading
+// only AF_INET here made every request look like "address unknown".
 static uint32_t sockaddr_ip4_host_order(const struct sockaddr_storage& ss) {
-  if (ss.ss_family != AF_INET) return 0;
-  const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
-  return be_word_host_order(&sin->sin_addr.s_addr);
+  using canary::net::provisioning_gate::AddrFamily;
+  using canary::net::provisioning_gate::ipv4_host_order_from_addr;
+  if (ss.ss_family == AF_INET) {
+    const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+    return ipv4_host_order_from_addr(AddrFamily::IPV4,
+                                     (const uint8_t*)&sin->sin_addr.s_addr);
+  }
+#if defined(LWIP_IPV6) && LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const struct sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss;
+    return ipv4_host_order_from_addr(AddrFamily::IPV6,
+                                     (const uint8_t*)&sin6->sin6_addr);
+  }
+#endif
+  return 0;
 }
 
 // Address + netmask of one default netif ("WIFI_AP_DEF" / "WIFI_STA_DEF"),

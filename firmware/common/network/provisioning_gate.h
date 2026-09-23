@@ -111,14 +111,55 @@ inline bool mask_is_prefix(uint32_t mask) {
   return (inv & (inv + 1u)) == 0;
 }
 
+// ── Socket address → IPv4 ───────────────────────────────────────────────────
+
+enum class AddrFamily : uint8_t { IPV4, IPV6, OTHER };
+
+// Host-order IPv4 (a<<24 | b<<16 | c<<8 | d) carried by one socket address,
+// or 0 when it carries none. `bytes` is the address exactly as it sits in the
+// sockaddr, network order: 4 bytes for IPV4 (sin_addr), 16 for IPV6
+// (sin6_addr).
+//
+// Why IPV6 matters for an IPv4-only feature: esp_http_server listens on ONE
+// dual-stack AF_INET6 socket whenever the core sets CONFIG_LWIP_IPV6 (both
+// Arduino-ESP32 cores this tree builds on do), and lwIP's getpeername /
+// getsockname report an IPv4 client on it as the IPv4-mapped address
+// ::ffff:a.b.c.d with family AF_INET6. Reading only AF_INET sees 0 for
+// every real request — the AP-subnet unlock never fires and the receipt's
+// base_url falls back to the SoftAP address even for a home-LAN caller.
+//   IPV4                          → a.b.c.d
+//   IPV6 ::ffff:a.b.c.d           → a.b.c.d  (the ::ffff:0:0/96 prefix, RFC 4291 §2.5.5.2)
+//   every other IPV6 — global, link-local fe80::/10, loopback ::1, the
+//   deprecated IPv4-compatible ::a.b.c.d          → 0
+//   OTHER, or a null pointer      → 0
+// 0 is what every consumer below already treats as "unknown", so a real
+// IPv6 peer stays "not provably AP", i.e. the home LAN.
+inline uint32_t ipv4_host_order_from_addr(AddrFamily family, const uint8_t* bytes) {
+  if (!bytes) return 0;
+  const uint8_t* v4 = nullptr;
+  if (family == AddrFamily::IPV4) {
+    v4 = bytes;
+  } else if (family == AddrFamily::IPV6) {
+    for (int i = 0; i < 10; ++i) {
+      if (bytes[i] != 0) return 0;
+    }
+    if (bytes[10] != 0xFF || bytes[11] != 0xFF) return 0;
+    v4 = bytes + 12;
+  } else {
+    return 0;
+  }
+  return ((uint32_t)v4[0] << 24) | ((uint32_t)v4[1] << 16) |
+         ((uint32_t)v4[2] << 8)  |  (uint32_t)v4[3];
+}
+
 // True only when `peer` is an IPv4 address inside the SoftAP's IPv4 subnet.
 // Deliberately conservative: a zero mask, a zero AP address, a zero peer, or
 // a mask that is not a contiguous prefix all answer false — the caller
 // treats "not provably AP" as LAN, because a wrong match re-opens the
 // disclosure this policy exists to close. All three values are host-order
-// (a.b.c.d packed as a<<24 | b<<16 | c<<8 | d); IPv6 and link-local peers
-// never reach this function (the caller answers false for any non-AF_INET
-// socket family).
+// (a.b.c.d packed as a<<24 | b<<16 | c<<8 | d); the caller converts the
+// socket's addresses through ipv4_host_order_from_addr, so an IPv6 or
+// link-local peer arrives here as 0 and answers false.
 inline bool ipv4_in_subnet(uint32_t peer, uint32_t ap_ip, uint32_t mask) {
   if (mask == 0 || ap_ip == 0 || peer == 0) return false;
   if (!mask_is_prefix(mask)) return false;

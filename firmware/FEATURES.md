@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-09-23 (new SoftAP WPA2/WPA3 transition + PMF row: ⚠️ for canary (PIO) and canary-wap — the request is made in both trees, but SoftAP SAE exists only on cores that enable it, so the 2.0.17-core builds stay WPA2 and report it; compile-tested, no bench. Same day, canary (PIO) TLS row ❌→⚠️: self-signed HTTPS on 443 with a port-80 redirect in `[env:dev]`/`[env:full]`, compile-tested only, release pending the slot budget, no bench pass. Same day, canary (PIO) provisioning gate: BOOT tap → `GET /api/provisioning-receipt`, and the dashboard's bearer token withheld from home-LAN page loads — the dashboard row had read ✅ before the canary code existed while the endpoint table said ❌; both now match the code, compile-tested with no bench pass. 2026-09-08: MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` still plain. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
+**Last updated:** 2026-09-23 (new SoftAP WPA2/WPA3 transition + PMF row: ⚠️ for canary (PIO) and canary-wap — the request is made in both trees, but SoftAP SAE exists only on cores that enable it, so the 2.0.17-core builds stay WPA2 and report it; compile-tested, no bench. Same day, canary (PIO) TLS row ❌→⚠️: self-signed HTTPS on 443 with a port-80 redirect in `[env:dev]`/`[env:full]`, compile-tested only, release pending the slot budget, no bench pass. Same day, canary (PIO) provisioning gate: BOOT tap → `GET /api/provisioning-receipt`, and the dashboard's bearer token withheld from home-LAN page loads — the dashboard row had read ✅ before the canary code existed while the endpoint table said ❌; both now read ⚠️ (code landed, CI compile pending, no bench pass) and turn ✅ with the U1 bench pass. 2026-09-08: MQTT broker TLS row added: one shared decision header, canary-wap CA-verified only — no fingerprint hook in esp_mqtt — and its old unverified `tls` bool now refuses until a CA lands; `firmware/canary`'s `securacv_mqtt` still plain. 2026-09-05 feature-truth pass: the two canary-wap dashboard columns collapsed into one — the PlatformIO lane builds the Arduino sketch via `src_dir`, so 43 of 65 cells were describing a deleted `src/` scaffold; canary-wap T3/T4 acoustic detection corrected to ✅; canary-vision / canary-sense WiFi AP corrected to ✅ and their first-time-setup wizard to ⚠️ for the shared headless setup portal. 2026-09-02: canary-display lane added to the dashboard and to `build_matrix.json` — the fleet viewer ships from more release buttons than any other product and had no column; see its note below the dashboard. 2026-07-11: `_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -116,7 +116,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | TLS (HTTPS self-signed; canary (PIO): dev/full compile-tested, release pending slot budget, no bench) | ⚠️ | ❌ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | Watchdog timer | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Watch profiles (runtime per-use-case presets, HA select) | ❌ | ❌ | ✅ | ❌ | ❌ | ➖ | ❌ |
-| Provisioning gate (BOOT button; on canary (PIO) the tap also unlocks the dashboard token on the home LAN — compile-tested, no bench pass) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
+| Provisioning gate (BOOT button; on canary (PIO) one tap unlocks one home-LAN dashboard load or one receipt fetch — code landed, CI compile pending, ⚠️ until the U1 bench pass) | ⚠️ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | Release-build fail-closed guards¹ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ (archive-only) |
 
 > **¹ Release-guard macro names differ per tree:** the canary (PIO) tree
@@ -251,7 +251,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `GET /` (web dashboard) | ✅ Full PROGMEM UI | ✅ Minimal inline | ✅ web_ui_register_routes | ⚠️ |
 | `GET /api/status` | ✅ Full JSON | ✅ Basic JSON | ✅ http_register_standard_api | ⚠️ |
 | `GET /api/device-info` | ✅ | ❌ | ❌ | ❌ |
-| `GET /api/provisioning-receipt` | ✅ (BOOT button gated) | ❌ | ✅ (bearer or one BOOT tap; compile-tested, no bench pass) | ❌ |
+| `GET /api/provisioning-receipt` | ✅ (BOOT button gated) | ❌ | ⚠️ (bearer or one BOOT tap; code landed, CI compile pending, ✅ after the U1 bench pass) | ❌ |
 | `GET /api/system` (sys metrics) | ✅ | ❌ | ❌ | ❌ |
 | `GET /api/chain` | ✅ | ❌ | ✅ | ❌ |
 | `GET /api/logs` | ✅ | ❌ | ✅ | ❌ |
@@ -348,7 +348,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Chirp channel | ✅ chirp_channel.cpp | ❌ | ⚠️ chirp_channel.h header | ⚠️ |
 | Hardware state & safe mode | ✅ hardware_state.h | ❌ | ❌ | ❌ |
 | API authentication (bearer token) | ✅ api_auth.h | ❌ | ✅ securacv_auth lib | ❌ |
-| Provisioning gate (BOOT button) | ✅ | ❌ | ✅ `common/network/provisioning_gate.h` (host-tested) | ❌ |
+| Provisioning gate (BOOT button) | ✅ | ❌ | ⚠️ `common/network/provisioning_gate.h` (host-tested; firmware glue CI compile pending, no bench pass) | ❌ |
 | HKDF API token derivation | ✅ | ❌ | ✅ securacv_crypto::derive_api_token | ❌ |
 | Serial command handler | ✅ (h/i/s/t/g/c/m) | ❌ | ✅ (h/i/s/g/m/r) | ❌ |
 | Watchdog timer | ✅ | ❌ | ✅ | ⚠️ |

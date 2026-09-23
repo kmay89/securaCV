@@ -11,7 +11,10 @@
 //   * LAN + nothing → WITHHOLD; every grant (setup / bearer / AP / gate) → INJECT;
 //   * ipv4_in_subnet / request_on_softap answer false for every "not provably
 //     over the Canary's own Wi-Fi" input (wrong interface, overlapping home
-//     subnet, unusable mask, AP down).
+//     subnet, unusable mask, AP down);
+//   * ipv4_host_order_from_addr unwraps the ::ffff:a.b.c.d address the
+//     dual-stack httpd socket really reports, and reads every true IPv6
+//     address as 0 (without it, every real request looked like "unknown").
 
 #include "../common/network/provisioning_gate.h"
 
@@ -174,6 +177,68 @@ static void request_on_softap_needs_the_ap_interface_and_no_overlap() {
         "STA up with a non-prefix mask → false");
 }
 
+// ── socket address → IPv4 (the dual-stack listener) ─────────────────────────
+
+static void v4_and_v4_mapped_addresses_unwrap() {
+  const uint8_t v4[4] = {192, 168, 4, 2};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV4, v4) == ip4(192, 168, 4, 2),
+        "AF_INET a.b.c.d reads as itself");
+
+  // ::ffff:192.168.4.2 — what lwIP's getpeername reports for an IPv4 client
+  // of esp_http_server's AF_INET6 dual-stack listener.
+  const uint8_t mapped[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 4, 2};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, mapped) == ip4(192, 168, 4, 2),
+        "AF_INET6 ::ffff:a.b.c.d unwraps to a.b.c.d");
+  const uint8_t mapped_lan[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 10, 0, 0, 9};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, mapped_lan) == ip4(10, 0, 0, 9),
+        "a v4-mapped home-LAN address unwraps too (the receipt's base_url)");
+}
+
+static void real_ipv6_and_unknown_families_read_as_zero() {
+  const uint8_t global[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, global) == 0, "2001:db8::1 → 0");
+  const uint8_t link_local[16] = {0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xFF, 0xFE, 0x33, 0x44, 0x55};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, link_local) == 0, "fe80:: link-local → 0");
+  const uint8_t loopback[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, loopback) == 0, "::1 → 0");
+  // Deprecated IPv4-compatible ::a.b.c.d is NOT the mapped prefix.
+  const uint8_t compat[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 192, 168, 4, 2};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, compat) == 0, "::a.b.c.d (compat) → 0");
+  // One stray bit in the prefix and it is an ordinary IPv6 address.
+  const uint8_t near_mapped[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0xFF, 0xFF, 192, 168, 4, 2};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, near_mapped) == 0, "::1:ffff:a.b.c.d → 0");
+  const uint8_t half_ff[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0x00, 192, 168, 4, 2};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, half_ff) == 0, "::ff00:a.b.c.d → 0");
+  const uint8_t v4[4] = {192, 168, 4, 2};
+  CHECK(ipv4_host_order_from_addr(AddrFamily::OTHER, v4) == 0, "unknown family → 0");
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV4, nullptr) == 0, "null bytes → 0");
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, nullptr) == 0, "null bytes (v6) → 0");
+}
+
+// The whole AP test fed what the dual-stack socket really reports: before
+// the v4-mapped unwrap every request reached request_on_softap as 0/0 and
+// the AP unlock could never fire.
+static void dual_stack_request_reaches_the_ap_test_intact() {
+  const uint8_t peer[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 4, 2};
+  const uint8_t local_ap[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 4, 1};
+  const uint8_t local_sta[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 1, 50};
+  const uint32_t ap = ip4(192, 168, 4, 1);
+  const uint32_t m24 = ip4(255, 255, 255, 0);
+  CHECK(request_on_softap(ipv4_host_order_from_addr(AddrFamily::IPV6, peer),
+                          ipv4_host_order_from_addr(AddrFamily::IPV6, local_ap),
+                          ap, m24, 0, 0),
+        "v4-mapped AP client on the AP address → true");
+  CHECK(!request_on_softap(ipv4_host_order_from_addr(AddrFamily::IPV6, peer),
+                           ipv4_host_order_from_addr(AddrFamily::IPV6, local_sta),
+                           ap, m24, ip4(192, 168, 1, 50), m24),
+        "v4-mapped request that arrived on the STA address → false");
+  const uint8_t v6_peer[16] = {0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7};
+  CHECK(!request_on_softap(ipv4_host_order_from_addr(AddrFamily::IPV6, v6_peer),
+                           ipv4_host_order_from_addr(AddrFamily::IPV6, local_ap),
+                           ap, m24, 0, 0),
+        "a real IPv6 (link-local) peer stays not-provably-AP → false");
+}
+
 static void subnet_overlap_math() {
   const uint32_t m24 = ip4(255, 255, 255, 0);
   CHECK(subnets_overlap(ip4(10, 0, 0, 1), m24, ip4(10, 0, 0, 200), m24), "same /24 overlaps");
@@ -214,6 +279,9 @@ int main() {
   reason_pointer_is_optional();
   ap_subnet_match_is_conservative();
   request_on_softap_needs_the_ap_interface_and_no_overlap();
+  v4_and_v4_mapped_addresses_unwrap();
+  real_ipv6_and_unknown_families_read_as_zero();
+  dual_stack_request_reaches_the_ap_test_intact();
   subnet_overlap_math();
   refusal_body_carries_the_ttl_and_refuses_truncation();
 
