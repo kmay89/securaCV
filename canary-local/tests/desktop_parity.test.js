@@ -919,6 +919,119 @@ test("secret drawer: the consent copy names exactly the stores the native side c
     "desktop app.js where() and secret_store.rs name different secret stores");
 });
 
+// The drawer's store paths, RUN rather than read: the Flasher's secretStore
+// lifted out of app.js against a stubbed native side whose store calls are
+// held open until the test answers them, the way a locked keyring holds one
+// open behind its unlock prompt.
+function loadSecretStore(backend, prefsSecrets) {
+  const src = read(join(ROOT, "desktop/src/app.js"));
+  const m = /\nconst secretStore = \{[\s\S]*?\n\};\n/.exec(src);
+  assert.ok(m, "desktop/src/app.js lost the secretStore object — re-point this gate at it");
+  const prefs = { secrets: { ...prefsSecrets }, secretKeys: Object.keys(prefsSecrets) };
+  const store = {};      // what the OS store holds; a write lands when it is answered
+  const calls = [];      // [cmd, args, answer(how)] in invoke order
+  const logs = [];
+  const invoke = (cmd, args) => {
+    if (cmd === "secret_backend") return Promise.resolve(backend);
+    let answer;
+    const p = new Promise((resolve, reject) => {
+      // answer() = the store does it; {reject: e} = it refuses; {value: v} =
+      // it answers v (a read taken before some other write landed).
+      answer = (how = {}) => {
+        if ("reject" in how) return reject(how.reject);
+        if ("value" in how) return resolve(how.value);
+        if (cmd === "secret_set") store[args.key] = args.value;
+        if (cmd === "secret_delete") delete store[args.key];
+        return resolve(cmd === "secret_get" ? (args.key in store ? store[args.key] : null) : null);
+      };
+    });
+    calls.push([cmd, args, answer]);
+    return p;
+  };
+  const secretStore = new Function("invoke", "prefs", "savePrefs", "logEvent",
+    `${m[0]}\nreturn secretStore;`)(invoke, prefs, () => {}, (level, msg) => logs.push([level, msg]));
+  return { secretStore, prefs, store, calls, logs };
+}
+const drain = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+const storeCalls = (calls, cmd, key) => calls.filter(([c, a]) => c === cmd && a.key === key);
+
+test("secret drawer: a refusing store is never downgraded to the prefs file, and a locked keyring never holds up a read", async () => {
+  // 1. The OS store exists but refuses the write (locked, declined): the
+  //    consent note promised the OS store, so set() stores NOWHERE and says
+  //    so — it never quietly drops the password into the prefs file.
+  {
+    const { secretStore, prefs, calls, logs } = loadSecretStore("secret-service", {});
+    const saving = secretStore.set("wifi:home", "hunter2");
+    await drain();
+    storeCalls(calls, "secret_set", "wifi:home")[0][2]({ reject: "locked" });
+    assert.strictEqual(await saving, false, "a refused OS-store write must report failure");
+    assert.ok(!("wifi:home" in prefs.secrets),
+      "a refused OS-store write fell back to the prefs file — the consent note named the OS store");
+    assert.ok(logs.some(([level]) => level === "err"), "a refused OS-store write must be logged, not silent");
+  }
+  // 2. Launch with a password left in prefs and an unlock prompt nobody has
+  //    answered (the adoption pass's write held open): a restore's get() must
+  //    still ask the store and answer from the prefs copy, not wait on it.
+  {
+    const { secretStore, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    const reading = secretStore.get("wifi:home");
+    await drain();
+    const read1 = storeCalls(calls, "secret_get", "wifi:home")[0];
+    assert.ok(read1, "get() is waiting behind the adoption pass — a locked keyring's prompt would hold the restore");
+    read1[2]();
+    assert.strictEqual(await reading, "old", "get() must fall back to the prefs copy while the store has nothing");
+    assert.strictEqual(storeCalls(calls, "secret_set", "wifi:home").length, 1,
+      "the adoption pass should still be out here, its one write unanswered");
+  }
+  // 3. A save made while the pass is still out lands AFTER it, never under
+  //    it: the pass writes the OLD value, so a newer one written first would
+  //    be overwritten once the prompt is answered. Same for a delete, which
+  //    would otherwise see the forgotten password come back.
+  {
+    const { secretStore, store, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    await secretStore.init();
+    const saving = secretStore.set("wifi:home", "new");
+    await drain();
+    const writes = () => storeCalls(calls, "secret_set", "wifi:home");
+    assert.strictEqual(writes().length, 1, "set() wrote while the adoption pass was still out — it must wait for it");
+    writes()[0][2]();            // the prompt is answered: the pass writes the old value
+    await drain();
+    assert.strictEqual(writes().length, 2, "set() never wrote after the adoption pass finished");
+    writes()[1][2]();
+    assert.strictEqual(await saving, true);
+    assert.strictEqual(store["wifi:home"], "new", "the adoption pass overwrote a newer saved password");
+  }
+  {
+    const { secretStore, store, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    await secretStore.init();
+    const forgetting = secretStore.delete("wifi:home");
+    await drain();
+    assert.strictEqual(storeCalls(calls, "secret_delete", "wifi:home").length, 0,
+      "delete() ran while the adoption pass was still out — the pass would put the password back");
+    storeCalls(calls, "secret_set", "wifi:home")[0][2]();
+    await drain();
+    storeCalls(calls, "secret_delete", "wifi:home")[0][2]();
+    assert.strictEqual(await forgetting, true);
+    assert.ok(!("wifi:home" in store), "a forgotten password came back from the adoption pass");
+  }
+  // 4. A key the pass moves while get() is out is still found: the store's
+  //    answer predates the move, and the prefs copy is gone after it.
+  {
+    const { secretStore, prefs, calls } = loadSecretStore("secret-service", { "wifi:home": "v" });
+    await secretStore.init();
+    const reading = secretStore.get("wifi:home");
+    await drain();
+    const [read1] = storeCalls(calls, "secret_get", "wifi:home");
+    const [move] = storeCalls(calls, "secret_set", "wifi:home");
+    assert.ok(read1 && move, "expected the read and the adoption write both in flight");
+    move[2]();                   // the move lands and drops the prefs copy…
+    await drain();
+    assert.ok(!("wifi:home" in prefs.secrets), "the adoption pass should have dropped the prefs copy");
+    read1[2]({ value: null });   // …then the store's answer from before it arrives
+    assert.strictEqual(await reading, "v", "get() lost a password the adoption pass moved while it was asking");
+  }
+});
+
 test("dev channel: BOTH flashers give the user a control, not just a constant", () => {
   // RELEASE_LESSONS 2026-07-24: copy parity without CAPABILITY parity is worse
   // than divergence. The dev channel had the reverse problem — the browser

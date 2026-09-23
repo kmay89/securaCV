@@ -184,13 +184,17 @@ function rosterAdd(entry) {
 const secretStore = {
   backend: "none",
   _ready: null,
+  _adopting: null,
   // Idempotent; every accessor awaits it, so a get() fired from early init
   // (hubRestoreSettings runs at DOMContentLoaded) can't race the backend
-  // answer and wrongly fall back to the prefs file.
+  // answer and wrongly fall back to the prefs file. It resolves as soon as
+  // the backend is known: the adoption pass below starts then but is NOT
+  // awaited here, because a locked keyring answers it with an unlock prompt
+  // that waits as long as the user does — a restore must not wait on that.
   init() {
     this._ready = this._ready || (async () => {
       try { this.backend = await invoke("secret_backend"); } catch (_) { this.backend = "none"; }
-      await this._adopt();
+      this._adopting = this._adopt().catch(() => {});
     })();
     return this._ready;
   },
@@ -201,9 +205,10 @@ const secretStore = {
   // place would make it half true. One pass per launch, stopping at the
   // first refusal (a locked keyring the user declined to unlock): the
   // prefs copy is only dropped after the store accepted it, so nothing is
-  // ever lost, and the next launch simply tries again. It runs inside
-  // init(), so no accessor can race it and write a newer value that this
-  // pass would then overwrite with the old one.
+  // ever lost, and the next launch simply tries again. set() and delete()
+  // wait for this pass, so a newer value can't land under the old one it
+  // writes (or a deleted secret come back); get() reads the prefs copy
+  // before it asks the store, so a key moved while it was asking is found.
   async _adopt() {
     if (this.backend === "none" || !prefs.secrets) return;
     let moved = 0;
@@ -242,6 +247,7 @@ const secretStore = {
   },
   async set(key, value) {
     await this.init();
+    await this._adopting;
     if (!value) return this.delete(key);
     if (this.backend !== "none") {
       try {
@@ -267,16 +273,18 @@ const secretStore = {
   },
   async get(key) {
     await this.init();
+    const local = (prefs.secrets && prefs.secrets[key]) || null;
     if (this.backend !== "none") {
       try {
         const v = await invoke("secret_get", { key });
         if (v != null) return v;
       } catch (_) {}
     }
-    return (prefs.secrets && prefs.secrets[key]) || null;
+    return (prefs.secrets && prefs.secrets[key]) || local;
   },
   async delete(key) {
     await this.init();
+    await this._adopting;
     let ok = true;
     if (this.backend !== "none") {
       try { await invoke("secret_delete", { key }); }
@@ -296,6 +304,8 @@ const secretStore = {
   // Returns how many entries could NOT be removed, so the caller can report
   // an incomplete sweep instead of a false clean bill.
   async wipeAll() {
+    await this.init();
+    await this._adopting;   // a pass still moving keys must not refill what this sweeps
     let failed = 0;
     for (const k of [...(prefs.secretKeys || [])]) {
       if (!(await this.delete(k))) failed++;
