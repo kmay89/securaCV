@@ -192,6 +192,37 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   assert.strictEqual(reg.fw_train, m[1]);
 });
 
+// ── CI wiring: a test file here is a gate only once CI runs it ─────────────
+// canary-local.yml names each file on its own `node --test` line (repo
+// convention: no glob, no runner), so a new file is silently not a gate until
+// someone lists it. scene_figures, body_dims and device_models sat unlisted
+// while the Lab's prose (render_probe.mjs, the README, a workflow comment)
+// said they held their guards. A comment naming a file does not run it: only
+// `node --test` in command position counts.
+test("CI runs every test file in this folder", () => {
+  const wf = readFileSync(join(ROOT, "../.github/workflows/canary-local.yml"), "utf8");
+  const ran = [];
+  for (const raw of wf.split("\n")) {
+    const line = raw.trim().replace(/^(?:-\s*)?run:\s*/, "");
+    if (line.startsWith("#")) continue;
+    for (const seg of line.split(/&&|\|\||;|\|/)) {
+      const words = seg.trim().split(/\s+/);
+      if (words[0] !== "node" || words[1] !== "--test") continue;
+      for (const w of words.slice(2)) {
+        if (w.startsWith("#")) break;
+        if (!w.startsWith("-")) ran.push(w.replace(/^["']|["']$/g, ""));
+      }
+    }
+  }
+  const glob = (p) => new RegExp(`^${p.replace(/[.+?^${}()[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
+  const files = readdirSync(__dirname).filter((n) => /\.test\.m?js$/.test(n));
+  assert.ok(files.includes("canary_local.test.js"), "the folder listing found this file");
+  const unrun = files.filter((n) => !ran.some((p) => glob(p).test(`canary-local/tests/${n}`)));
+  assert.deepStrictEqual(unrun, [],
+    `run by no \`node --test\` line in .github/workflows/canary-local.yml: ${unrun.join(", ")} — ` +
+    `list each in the logic-tests job's "Node tests" step`);
+});
+
 // ── the filament finish system (finishes.js) ───────────────────────────────
 test("finishes: a curated two-tone set, Canary the bold default", async () => {
   const { FINISHES, activeFinish, setFinish } = await import("../assets/finishes.js");
