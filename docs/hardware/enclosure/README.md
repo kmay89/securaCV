@@ -501,8 +501,9 @@ These dimensions were reconciled against **Seeed's official spec** and a
 ## Render / regenerate the STLs
 
 **Changed a knob? Run the whole chain, not one link of it.** An STL is the
-first of ten committed, byte-gated files a dimension moves — the assembled
-envelopes (`gen_assembled_dims.py`), the fleet figures and their firmware and
+first of eleven committed, byte-gated files a dimension moves — the assembled
+envelopes (`gen_assembled_dims.py`), the hardware ledger (`gen_hardware.py`),
+the fleet figures and their firmware and
 Swift mirrors (`gen_figures.mjs`), the flashers' models (`gen_device_glbs.mjs`),
 the display sketch mirror, `flash.json`, the web builder's manifest and the
 enclosure catalog — in a fixed order, with the emulator dist rebuild in the
@@ -514,7 +515,7 @@ python3 scripts/regen_cad.py --previews /tmp/previews   # everything, in order; 
                                                         # every part of every changed case into the dir
 python3 scripts/regen_cad.py --check                    # every step's check form; the first stale one named
 python3 scripts/regen_cad.py --from gen_flash           # resume after the emulator dist came back
-python3 scripts/regen_cad.py --list                     # the twelve steps and their check forms
+python3 scripts/regen_cad.py --list                     # the thirteen steps and their check forms
 ```
 
 It stops on purpose after regenerating the sketch mirror when

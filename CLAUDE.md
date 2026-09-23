@@ -144,6 +144,7 @@ devices/<slug>/device.json cad.params
   → lint_design_lang.py          (the literal-knob canon still holds)
   → render.sh --no-png           (the STLs; OpenSCAD 2021.01)
   → gen_assembled_dims.py        (assembled envelopes, measured off the fit-checked unions)
+  → gen_hardware.py              (each preset's HARDWARE echo + lid-rib headroom → hardware.json; BOM join)
   → gen_figures.mjs              (figures.json, the SVGs, fleet_figures.h / _art.h, FleetFigures.swift)
   → gen_device_glbs.mjs          (the two flashers' models)
   → firmware/projects/canary-display/setup.sh regen   (only when fleet_figures*.h moved) — then STOP

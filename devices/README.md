@@ -301,7 +301,7 @@ linter; making the matrix generator read them is a wave of its own).
   the figure (`gen_figures.mjs`) and re-carries the CAD ledger the website's
   AR models are pinned to (`gen_builder_manifest.py --site`). That order is
   one command — [`scripts/regen_cad.py`](../scripts/regen_cad.py) runs the
-  twelve generators and gates in the order each one's inputs dictate, stops
+  thirteen generators and gates in the order each one's inputs dictate, stops
   before the emulator dist rebuild when the figure headers moved (the
   rebuild is upstream of the catalogs; `--from gen_flash` resumes), renders
   the owed PNG previews of every part of every changed case with

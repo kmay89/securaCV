@@ -6,6 +6,9 @@ The generators that read numbers OUT of the CAD rather than typing them:
   gen_assembled_dims.py    the assembled envelope of a multi-part device
                            (render a union, measure its bounding box, read
                            the seams the case echoes)
+  gen_hardware.py          the hardware a committed preset needs (the case's
+                           own `HARDWARE — …` echo, canary_core_lib hw_echo)
+                           and its lid-rib headroom
   gen_enclosures.py        --check-previews: the coarse preview meshes the
                            Lab loads, re-rendered and compared by bounding box
 

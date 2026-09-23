@@ -13,6 +13,9 @@ on:
       # the Lab's preview meshes are gated here (gen_enclosures.py
       # --check-previews), so replacing one by hand must run the gate
       - "canary-local/enclosures/preview/**"
+      # the BOM CSVs are joined against the CAD's hardware echo here
+      # (gen_hardware.py --check), so a CSV edit must run the join
+      - "docs/hardware/bom_*.csv"
       - ".github/workflows/enclosure.yml"
       # the design-language gate's own script: a change to the gate must run
       # the gate, or it can be weakened while CI stays green
@@ -22,6 +25,7 @@ on:
     paths:
       - "docs/hardware/enclosure/**"
       - "canary-local/enclosures/preview/**"
+      - "docs/hardware/bom_*.csv"
       - ".github/workflows/enclosure.yml"
       - "scripts/lint_design_lang.py"
 
@@ -104,6 +108,18 @@ jobs:
       # one exactly as --render does and compare bounding boxes.
       - name: Lab preview meshes match their sources
         run: python3 ../../../canary-local/tools/gen_enclosures.py --check-previews
+
+      # Every released case echoes the hardware its knobs derive
+      # (canary_core_lib hw_echo) and nothing read it: the builder's
+      # quantities were hand-typed in docs/hardware/bom_*.csv with no gate
+      # between them and the geometry. This re-reads the echo for every
+      # committed preset (and the screw_insert option INS1 bills), fails if
+      # hardware.json is stale, joins the fasteners against the BOM CSVs
+      # (a NEW disagreement fails; the known ones are listed in hardware.json
+      # for the CSV's owner), and holds DESIGN_RULES.md §10's lid-rib
+      # headroom table to the CAD. Echo only — no CGAL — so it is seconds.
+      - name: Hardware counts match the CAD (and the BOMs are no worse)
+        run: python3 gen_hardware.py --check
 
       # The design-language gate: every canonical Customizer default (corner
       # radius, edge stages, walls, feature vocabulary, tolerances) either

@@ -42,7 +42,7 @@ figure declared `assembled: true` (an in-development case with no committed
 STLs) reads its envelope from its row here and nowhere else.
 
 The render-and-parse-echo mechanics live in scad_probe.py, shared with
-gen_enclosures.py --check-previews.
+gen_hardware.py and gen_enclosures.py --check-previews.
 """
 
 import json
