@@ -382,10 +382,88 @@ DISCLOSED_OUTBOUND=$(printf '%s\t%s\t%s\n' \
   'canary-display/.*(tz_auto\.cpp|main\.cpp|canary_display\.ino)$' 'configTzTime\([^)]*"pool\.ntp\.org", *"time\.nist\.gov"' \
     'docs/security/SECURITY_MODEL.md display disclosed exception 1 (SNTP)' \
   'canary-display/.*tz_auto\.cpp$' '\.begin\("http://ip-api\.com/' \
-    'docs/security/SECURITY_MODEL.md display disclosed exception 2 (timezone lookup, compile-time opt-in CD_TZ_WEB_LOOKUP)')
-OUTBOUND_RAW=$(grep -rEn '\.begin\([[:space:]]*"(https?://|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")|\.connect\([[:space:]]*"|\.url[[:space:]]*=[[:space:]]*"https?://|config(Tz)?Time\([^)]*"|(esp_)?sntp_setservername\([^)]*"|getaddrinfo\([[:space:]]*"' "${SRC_DIRS[@]}" 2>/dev/null \
+    'docs/security/SECURITY_MODEL.md display disclosed exception 2 (timezone lookup, compile-time opt-in CD_TZ_WEB_LOOKUP)' \
+  'canary-display/.*wx_direct\.cpp$' 'http\.begin\(client, WX_HOST, 443,.*WX_HOST = "api\.open-meteo\.com"' \
+    'docs/security/SECURITY_MODEL.md display disclosed exception 3 (standalone weather: runtime opt-in on the glass, FEATURE_STANDALONE_WEATHER; a named destination, pinned to its value)')
+OUTBOUND_LITERAL=$(grep -rEn '\.begin\([[:space:]]*"(https?://|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")|\.connect\([[:space:]]*"|\.url[[:space:]]*=[[:space:]]*"https?://|config(Tz)?Time\([^)]*"|(esp_)?sntp_setservername\([^)]*"|getaddrinfo\([[:space:]]*"' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -v "\.md:\|/tests_host/\|/test_\|/examples\?/\|\.pio/" \
   | drop_comment_lines || true)
+
+# The usual way a compiled-in destination is written is behind a NAME —
+# `#define TELEMETRY_URL "https://…"` or `const char* WX_HOST = "api.…"` —
+# and handed to the same client calls; the literal grep above cannot see
+# that shape (the display's standalone-weather fetch is one). So resolve one
+# level: collect every name bound to a URL literal (with a host after the
+# scheme) or a dotted-host literal — a #define, backslash-continued or not,
+# or a char/String initializer — then flag every client call site that
+# passes one of those names. Each hit carries its resolution
+# ("⇐ NAME = "value" (file:line)") so a DISCLOSED_OUTBOUND entry can match
+# on the call text. Not resolved: a name bound to another name, or a
+# destination copied into a runtime variable first — owner-provisioned
+# destinations (broker host, OTA manifest URL) arrive that way and are
+# checked where they live (check_ota_channels.py, mqtt_transport tests).
+SRC_FILE_GLOBS=(--include='*.c' --include='*.cpp' --include='*.h' --include='*.hpp' --include='*.ino')
+DEST_FILES=$(grep -rlE "${SRC_FILE_GLOBS[@]}" '"((https?|mqtts?|wss?)://[A-Za-z0-9]|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")' "${SRC_DIRS[@]}" 2>/dev/null \
+  | grep -v "/tests_host/\|/test_\|/examples\?/\|\.pio/" || true)
+DEST_NAMES=""
+if [ -n "$DEST_FILES" ]; then
+  # One logical line per #define (continuations joined); comment lines skipped.
+  # shellcheck disable=SC2016  # an awk program run through xargs: $0 is awk's
+  DEST_NAMES=$(printf '%s\n' "$DEST_FILES" | tr '\n' '\0' | xargs -0 awk '
+    FNR == 1 { held = ""; held_at = 0 }
+    {
+      line = $0; at = FNR
+      if (held != "") { line = held " " line; at = held_at; held = "" }
+      if (line ~ /\\[[:space:]]*$/) { sub(/\\[[:space:]]*$/, "", line); held = line; held_at = at; next }
+      if (line ~ /^[[:space:]]*(\/\/|\/\*|\*)/) next
+      name = ""; val = ""
+      if (match(line, /^[[:space:]]*#[[:space:]]*define[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]+"[^"]*"/)) {
+        d = substr(line, RSTART, RLENGTH)
+        sub(/^[[:space:]]*#[[:space:]]*define[[:space:]]+/, "", d)
+        name = d; sub(/[[:space:]].*/, "", name)
+        val = d; sub(/^[^"]*/, "", val)
+      } else if (match(line, /(char|String|string|auto)[^=;(){}]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\[[^]]*\])?[[:space:]]*=[[:space:]]*"[^"]*"/)) {
+        d = substr(line, RSTART, RLENGTH)
+        val = d; sub(/^[^=]*=[[:space:]]*/, "", val)
+        name = d; sub(/[[:space:]]*(\[[^]]*\])?[[:space:]]*=.*/, "", name); sub(/.*[^A-Za-z0-9_]/, "", name)
+      }
+      if (name != "" && val ~ /^"((https?|mqtts?|wss?):\/\/[A-Za-z0-9][^"]*|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+)"$/)
+        print name "\t" val "\t" FILENAME ":" at
+    }' || true)
+fi
+OUTBOUND_NAMED=""
+if [ -n "$DEST_NAMES" ]; then
+  OUTBOUND_NAMED=$(grep -rEn "${SRC_FILE_GLOBS[@]}" '\.begin\(|\.connect\(|\.url[[:space:]]*=|config(Tz)?Time\(|(esp_)?sntp_setservername\(|getaddrinfo\(|\.setServer\(' "${SRC_DIRS[@]}" 2>/dev/null \
+    | grep -v "/tests_host/\|/test_\|/examples\?/\|\.pio/" \
+    | drop_comment_lines \
+    | DEST_NAMES="$DEST_NAMES" awk '
+      # One hit per (call site, binding): a name bound in two places (a
+      # sketch mirror and its source) must have BOTH bindings covered, so
+      # changing one copy of a disclosed destination cannot hide.
+      BEGIN {
+        n = split(ENVIRON["DEST_NAMES"], L, "\n")
+        for (i = 1; i <= n; i++) {
+          split(L[i], F, "\t")
+          if (F[1] == "") continue
+          k = ++cnt[F[1]]; V[F[1], k] = F[2]; W[F[1], k] = F[3]
+        }
+      }
+      {
+        code = $0; sub(/^[^:]*:[0-9]+:/, "", code)
+        gsub(/"([^"\\]|\\.)*"/, "\"\"", code)   # string contents are not names
+        gsub(/\/\*[^*]*\*\//, " ", code)         # nor /* inline */ comments
+        sub(/\/\/.*/, "", code)                  # nor a trailing // comment
+        split("", seen)
+        while (match(code, /[A-Za-z_][A-Za-z0-9_]*/)) {
+          tok = substr(code, RSTART, RLENGTH); code = substr(code, RSTART + RLENGTH)
+          if ((tok in cnt) && !(tok in seen)) {
+            seen[tok] = 1
+            for (k = 1; k <= cnt[tok]; k++) print $0 "  ⇐ " tok " = " V[tok, k] " (" W[tok, k] ")"
+          }
+        }
+      }' || true)
+fi
+OUTBOUND_RAW=$(printf '%s\n%s\n' "$OUTBOUND_LITERAL" "$OUTBOUND_NAMED")
 OUTBOUND_SCAN=$(printf '%s\n' "$OUTBOUND_RAW" | sed '/^$/d' | allowlist_filter "$DISCLOSED_OUTBOUND")
 OUTBOUND_HITS=$(printf '%s\n' "$OUTBOUND_SCAN" | awk -F'\t' '$1=="HIT"{print $2}')
 OUTBOUND_STALE=$(printf '%s\n' "$OUTBOUND_SCAN" | awk -F'\t' '$1=="STALE"{print $2}')
