@@ -274,8 +274,9 @@ export const FIGURES = [
     // it is MEASURED off its CAD as seated (assembled_dims.json — the front
     // at z = base_d, where the file's own echo, head pads and lid key put
     // it: 86.4 x 73.6 x 26.38 today), not sketched from that echo. The lens
-    // and the radome window are drawn where front() cuts them (A.features,
-    // measured with the envelope), so a moved stack moves the drawing.
+    // and the radome window are drawn at the variables front() cuts them at
+    // (A.features: lens_x/lens_y, rad_cx/rad_cy, re-evaluated with the
+    // envelope, not read off the cut), so a moved stack moves the drawing.
     // `of` is the catalog's own answer (the combo-witness variant is a
     // canary-vision build); the ladder reads THIS case's catalog entry, not
     // the Vision's released ones (gen_figures.mjs, catalogEvidence).

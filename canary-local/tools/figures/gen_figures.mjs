@@ -196,9 +196,10 @@ function envelopeFor(fig) {
     // the parts from the case source in their seated positions and commits
     // the union's bounds, and the enclosure CI re-measures on every CAD
     // change. So a manifest knob edit that moves the case moves the figure —
-    // which a typed `sketch` envelope never would. It traces to no committed
-    // STL, so the ladder keeps it at prototype by construction (confidenceFor
-    // reads committed_stls, which stays empty); `dims_source` says the
+    // which a typed `sketch` envelope never would. It is never shipping
+    // (nothing printable is committed: committed_stls stays empty); its
+    // catalog evidence is only its own case's variants (catalogEvidence), so
+    // it is prototype unless that case is released. `dims_source` says the
     // numbers are CAD-measured, and the evidence says nothing is printable.
     const asm = assembledDims.devices?.[fig.id];
     if (!asm) {
@@ -214,7 +215,8 @@ function envelopeFor(fig) {
       // bezel bore), measured with the envelope — the massing draws the
       // glass in it rather than retyping the inset
       // `features`: off-center marks the CAD cuts in the face (the Combo's
-      // lens and radome window), each a measured center on the envelope
+      // lens and radome window), each read from the case's own cut
+      // variables and centered on the measured envelope
       assembled: {
         placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d,
         face: asm.face_fig_mm, features: asm.features_fig_mm, scad: asm.scad,

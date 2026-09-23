@@ -203,12 +203,12 @@ test("a CAD-measured in-development figure is its assembled_dims row, and stays 
   assert.strictEqual(combo.confidence, "prototype", "the Combo does not borrow the Vision's released cases");
 });
 
-test("a CAD-measured figure draws its face features where the CAD cuts them", async () => {
+test("a CAD-measured figure draws its face features at the case's own cut variables", async () => {
   // The Combo's lens and radome window sit off-center, at lens_x/lens_y and
   // rad_cx/rad_cy — positions its case derives from the two stacks. They are
-  // measured with the envelope (features_fig_mm: a center on the envelope
-  // and an extent), so the massing must draw each exactly there, at exactly
-  // that size, and MOVE when the measurement moves (no literal standing in).
+  // re-evaluated with the envelope (features_fig_mm: a center on the measured
+  // envelope and an extent), so the massing must draw each exactly there, at
+  // exactly that size, and MOVE when the record moves (no literal standing in).
   const { FIGURES } = await import("../tools/figures/massing.mjs");
   const asm = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/assembled_dims.json"), "utf8"));
   const near = (a, b) => Math.abs(a - b) < 1e-9;

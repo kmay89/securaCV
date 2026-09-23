@@ -47,8 +47,11 @@ the envelope — the Watch's bezel bore, the Dash's view window) and
 `features` (off-center marks — the Combo's lens and radome window: each the
 case's own `[cx, cy, w, h]` expression in its scad frame, recorded as a
 center on the measured envelope, from its min corner, so no symmetry is
-assumed). --check re-measures both with the envelope and refuses anything it
-cannot read back as the measured number.
+assumed). Neither is read off the cut geometry: each is the case's own
+variables, the ones its cuts are drawn at, echoed back. --check re-evaluates
+both with the envelope and refuses anything it cannot read back as the
+recorded number — so an edit through those variables is caught, and a cut
+moved without going through them is not.
 
 The render-and-parse-echo mechanics live in scad_probe.py, shared with
 gen_hardware.py and gen_enclosures.py --check-previews.
@@ -212,7 +215,8 @@ DEVICES = {
         # visible bands from the wall out: the back (keyhole thickening
         # included) to its rim, the front plate beyond
         "seams": "[mount_extra + base_d]",
-        # what the massing draws on the face, where front() cuts it: the
+        # what the massing draws on the face, read from the variables front()
+        # cuts at (echoed, not measured off the cut): the
         # lens aperture (cylinder(d = cam_ap_d) at lens_x, lens_y) on the
         # Vision column and the radome window (rrect2d(rad_win_x, rad_win_y)
         # at rad_cx, rad_cy) on the Sense column — the two features that

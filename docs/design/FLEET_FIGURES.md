@@ -196,10 +196,16 @@ declares `assembled: true`, reads its envelope and seams from its
 `gen_assembled_dims.py` row, and the ledger records
 `dims_source: "assembled-cad"`. That is what lets a manifest knob edit move
 the figure: a typed sketch would have kept the old number while the case
-changed under it. What the massing draws on the face is measured with it
-where the CAD cuts it — a display's aperture (`face`: the Watch's bezel bore,
-the Dash's view window) or an off-center mark (`features`: the Combo's lens
-and radome window, each a center on the envelope and an extent). It traces
+changed under it. What the massing draws on the face comes from the same
+row — a display's aperture (`face`: the Watch's bezel bore, the Dash's view
+window) or an off-center mark (`features`: the Combo's lens and radome
+window, each a center on the envelope and an extent). Those are not measured
+off the cut geometry: they are read from the case's own variables, the ones
+its cuts are drawn at (`bez_ap_d`, `view_l`/`view_w`, `lens_x`/`lens_y`,
+`rad_cx`/`rad_cy`), and a feature's center is then placed on the measured
+envelope. `--check` re-evaluates them with the envelope, so an edit through
+those variables moves the drawing; a cut moved without going through its
+variable is not caught. It traces
 to no committed STL, so it is never `shipping` — measured is not the same as
 printable — and its catalog evidence is **that case's alone**: only the
 variants cut from the `.scad` it was measured off speak for it. The Combo is
