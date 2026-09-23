@@ -17,7 +17,7 @@
 
 use crate::catalog::{Catalog, DEV_FLASH_MANIFEST_URL};
 use crate::host::{run_capture, run_streaming, run_streaming_with_tail, FlashHost};
-use crate::image::stage_firmware;
+use crate::image::{read_safety_copy, stage_firmware};
 use crate::provisioning::Provisioning;
 use crate::{changemap, intake, port_hint, provisioning, release, rescue, sidecar};
 use serde::Serialize;
@@ -365,8 +365,12 @@ pub async fn flash<H: FlashHost>(
     // (the copy was skipped, or the board wouldn't read) means no map, which
     // is the honest answer. Failing the install because we couldn't draw a
     // picture of it would be absurd.
+    //
+    // The path comes from the webview, so it is validated before a byte is
+    // read (image::read_safety_copy: an absolute, canonicalized `.bin` regular
+    // file no larger than any Canary's flash); anything else is no map.
     if let Some(bp) = backup_path.as_deref().filter(|p| !p.is_empty()) {
-        if let Ok(old) = std::fs::read(bp) {
+        if let Some(old) = read_safety_copy(bp) {
             // Both facts the verdict needs are known right here: whether this
             // install erases the whole chip first (so regions the image never
             // reaches do NOT survive), and whether we just wrote the user's
@@ -541,6 +545,11 @@ mod tests {
     /// A catalog with a pinned test key, a manifest that key signed, and the
     /// image the manifest describes.
     fn fixture() -> Fixture {
+        fixture_with((0..4096u32).map(|i| (i % 251) as u8).collect())
+    }
+
+    /// [`fixture`] around a given release image (signed like any other).
+    fn fixture_with(image: Vec<u8>) -> Fixture {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let manifest_url = MANIFEST_URL.to_string();
         let raw = json!({
@@ -557,7 +566,6 @@ mod tests {
         let catalog: &'static Catalog =
             Box::leak(Box::new(Catalog::new(Box::leak(raw.into_boxed_str()))));
         let origin = catalog.release_origin().expect("fixture origin derives");
-        let image: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
         let sha = release::sha256_hex(&image);
         let mut message = Vec::from((image.len() as u32).to_le_bytes());
         message.extend_from_slice(&Sha::digest(&image));
@@ -1002,31 +1010,137 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_safety_copy_draws_the_change_map() {
-        let fx = fixture();
-        let host = Recorder::new(&fx);
-        // A believable old image: the new one, a byte changed.
-        let mut old = fx.image.clone();
-        old[10] ^= 1;
-        let backup = tempfile_with(&old);
-        let mut req = request(&fx, "canary-s3", "ESP32-S3");
+    /// A factory-shaped image: a bootloader-ish head, a partition table at
+    /// 0x8000 (nvs at 0x9000, the app at 0x10000 — `app_size` long), and each
+    /// region filled with its own byte, so a test chooses what differs.
+    fn partitioned(nvs_byte: u8, app_byte: u8, app_size: u32) -> Vec<u8> {
+        let mut img = vec![0xff; 0x20000];
+        for (i, b) in img[..0x1000].iter_mut().enumerate() {
+            *b = (i % 253) as u8; // not blank: the capacity check has a pattern
+        }
+        let mut entry = |i: usize, ptype: u8, subtype: u8, off: u32, size: u32, label: &str| {
+            let base = 0x8000 + i * 32;
+            img[base] = 0xaa;
+            img[base + 1] = 0x50;
+            img[base + 2] = ptype;
+            img[base + 3] = subtype;
+            img[base + 4..base + 8].copy_from_slice(&off.to_le_bytes());
+            img[base + 8..base + 12].copy_from_slice(&size.to_le_bytes());
+            for (slot, b) in img[base + 12..base + 28].iter_mut().zip(label.bytes()) {
+                *slot = b;
+            }
+        };
+        entry(0, 0x01, 0x02, 0x9000, 0x1000, "nvs");
+        entry(1, 0x00, 0x00, 0x10000, app_size, "factory");
+        img[0x9000..0xa000].fill(nvs_byte);
+        img[0x10000..0x11000].fill(app_byte);
+        img
+    }
+
+    /// Every `flash:changemap` payload the run emitted.
+    fn changemaps(host: &Recorder) -> Vec<Value> {
+        host.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(e, _)| e == "flash:changemap")
+            .map(|(_, v)| v.clone())
+            .collect()
+    }
+
+    fn flash_with_copy(fx: &Fixture, old: &[u8]) -> Recorder {
+        let host = Recorder::new(fx);
+        let backup = tempfile_with(old);
+        let mut req = request(fx, "canary-s3", "ESP32-S3");
         req.backup_path = Some(backup.path().to_string_lossy().into_owned());
         block_on(flash(&host, fx.catalog, req)).unwrap();
-        let events = host.events.lock().unwrap();
-        // Whether a map can be drawn depends on the image carrying a
-        // partition table; this one has none, so no map is the honest answer
-        // and the write still happens.
+        assert_eq!(host.calls().len(), 1, "the map never stops the write");
+        host
+    }
+
+    #[test]
+    fn a_safety_copy_draws_the_change_map() {
+        // Same layout, same settings, a new app: the map the Flasher's
+        // frontend renders — one event, every region with its verdict.
+        let fx = fixture_with(partitioned(0x11, 0x33, 0x1000));
+        let host = flash_with_copy(&fx, &partitioned(0x11, 0x22, 0x1000));
+        let maps = changemaps(&host);
+        assert_eq!(maps.len(), 1, "exactly one change map per install");
+        let map = &maps[0];
+        assert_eq!(map["layoutChanged"], false);
+        assert_eq!(map["settings"]["kept"], true);
+        assert!(map["settings"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("untouched"));
+        let rows: Vec<(String, String)> = map["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["label"].as_str().unwrap().to_string(),
+                    r["verdict"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
         assert_eq!(
-            events.iter().any(|(e, _)| e == "flash:changemap"),
-            changemap::diff_install(&old, &fx.image, false).is_some()
+            rows,
+            [
+                ("system", "identical"),
+                ("nvs", "identical"),
+                ("factory", "changed")
+            ]
+            .map(|(l, v)| (l.to_string(), v.to_string()))
         );
+        let factory = &map["rows"][2];
+        assert_eq!(factory["offset"], 0x10000);
+        assert_eq!(factory["size"], 0x1000);
+    }
+
+    #[test]
+    fn the_change_map_says_when_settings_and_layout_do_not_survive() {
+        // The copy had other settings and a smaller app slot: the new image
+        // rewrites the settings region and moves the partition map.
+        let fx = fixture_with(partitioned(0x44, 0x33, 0x2000));
+        let host = flash_with_copy(&fx, &partitioned(0x11, 0x22, 0x1000));
+        let maps = changemaps(&host);
+        assert_eq!(maps.len(), 1);
+        assert_eq!(maps[0]["layoutChanged"], true);
+        assert_eq!(maps[0]["settings"]["kept"], false);
+        let nvs = maps[0]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["label"] == "nvs")
+            .unwrap();
+        assert_eq!(nvs["verdict"], "changed");
+    }
+
+    #[test]
+    fn no_partition_table_and_no_usable_copy_mean_no_map_and_the_write_still_happens() {
+        // Neither side carries a partition table: nothing to anchor a map to.
+        let fx = fixture();
+        let mut old = fx.image.clone();
+        old[10] ^= 1;
+        assert!(changemaps(&flash_with_copy(&fx, &old)).is_empty());
+
+        // A copy path the engine won't read (not a .bin): no map, same write.
+        let fx = fixture_with(partitioned(0x11, 0x33, 0x1000));
+        let host = Recorder::new(&fx);
+        let mut not_bin = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
+        std::io::Write::write_all(&mut not_bin, &partitioned(0x11, 0x22, 0x1000)).unwrap();
+        let mut req = request(&fx, "canary-s3", "ESP32-S3");
+        req.backup_path = Some(not_bin.path().to_string_lossy().into_owned());
+        block_on(flash(&host, fx.catalog, req)).unwrap();
+        assert!(changemaps(&host).is_empty());
         assert_eq!(host.calls().len(), 1);
     }
 
+    /// A safety copy on disk, named as the Flasher names one (`.bin`).
     fn tempfile_with(bytes: &[u8]) -> tempfile::NamedTempFile {
         use std::io::Write;
-        let mut f = tempfile::NamedTempFile::new().unwrap();
+        let mut f = tempfile::Builder::new().suffix(".bin").tempfile().unwrap();
         f.write_all(bytes).unwrap();
         f
     }

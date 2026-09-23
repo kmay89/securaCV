@@ -666,6 +666,10 @@ test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
   assert.match(libRsSrc, /flash:changemap/, "the change map is never emitted");
   assert.match(libRsSrc, /backup_path: Option<String>/,
     "flash must accept the safety copy to diff against");
+  // …and the path is the webview's, so it is validated before a byte is read
+  // (an absolute, canonicalized .bin regular file ≤ 32 MiB — image.rs).
+  assert.match(libRsSrc, /if let Some\(old\) = read_safety_copy\(bp\)/,
+    "flash must read the safety copy through image::read_safety_copy, never an unchecked fs::read");
   assert.match(appJs, /flash:changemap/, "desktop never listens for the change map");
   assert.match(appJs, /function renderChangeMap/, "desktop lost the change-map render");
   assert.match(html, /id="change-map"/, "desktop has nowhere to show the change map");
