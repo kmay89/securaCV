@@ -6,7 +6,7 @@ them), losing track of which Canaries exist and what they run, and having no
 way to update a deployed board without a USB cable. Shipped in Flasher 0.4.0;
 the moving parts live in `desktop/src/app.js` (`secretStore`, `fleetBook`),
 `desktop/src-tauri/src/secret_store.rs`, `desktop/src-tauri/src/fleet.rs`,
-and `desktop/src-tauri/src/provisioning.rs`.
+and `desktop/flash-engine/src/provisioning.rs`.
 
 ## The setup profile — type it once
 

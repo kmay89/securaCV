@@ -151,8 +151,11 @@ fn describe(
             if o + 256 > bytes.len() {
                 return None;
             }
-            health::parse_app_descriptor(&bytes[o..o + 256])
-                .map(|d| format!("{} {}", d.project_name, d.version).trim().to_string())
+            health::parse_app_descriptor(&bytes[o..o + 256]).map(|d| {
+                format!("{} {}", d.project_name, d.version)
+                    .trim()
+                    .to_string()
+            })
         };
         row.before = read(old);
         row.after = read(new);
@@ -170,8 +173,7 @@ pub fn diff_install(old: &[u8], new: &[u8], erase_all: bool) -> Option<ChangeMap
     if table.is_empty() {
         return None;
     }
-    let layout_changed =
-        !new_pt.is_empty() && !old_pt.is_empty() && !same_layout(&new_pt, &old_pt);
+    let layout_changed = !new_pt.is_empty() && !old_pt.is_empty() && !same_layout(&new_pt, &old_pt);
 
     let mut rows = Vec::new();
     // The system area first: bootloader + the partition map itself. It sits
@@ -268,18 +270,19 @@ mod tests {
     // A minimal image: partition table at 0x8000 with an nvs and an app slot.
     fn image(nvs_byte: u8, app_byte: u8, len: usize) -> Vec<u8> {
         let mut img = vec![0xff; len];
-        let mut write_entry = |i: usize, ptype: u8, subtype: u8, off: u32, size: u32, label: &str| {
-            let base = 0x8000 + i * 32;
-            img[base] = 0xaa;
-            img[base + 1] = 0x50;
-            img[base + 2] = ptype;
-            img[base + 3] = subtype;
-            img[base + 4..base + 8].copy_from_slice(&off.to_le_bytes());
-            img[base + 8..base + 12].copy_from_slice(&size.to_le_bytes());
-            for (slot, b) in img[base + 12..base + 28].iter_mut().zip(label.bytes()) {
-                *slot = b;
-            }
-        };
+        let mut write_entry =
+            |i: usize, ptype: u8, subtype: u8, off: u32, size: u32, label: &str| {
+                let base = 0x8000 + i * 32;
+                img[base] = 0xaa;
+                img[base + 1] = 0x50;
+                img[base + 2] = ptype;
+                img[base + 3] = subtype;
+                img[base + 4..base + 8].copy_from_slice(&off.to_le_bytes());
+                img[base + 8..base + 12].copy_from_slice(&size.to_le_bytes());
+                for (slot, b) in img[base + 12..base + 28].iter_mut().zip(label.bytes()) {
+                    *slot = b;
+                }
+            };
         write_entry(0, 0x01, 0x02, 0x9000, 0x1000, "nvs");
         write_entry(1, 0x00, 0x00, 0x10000, 0x1000, "factory");
         for b in img[0x9000..0xa000].iter_mut() {
@@ -347,7 +350,11 @@ mod tests {
         let map = diff_install(&old, &new, false).unwrap();
         let app = map.rows.iter().find(|r| r.label == "factory").unwrap();
         assert_eq!(app.verdict, Verdict::Changed);
-        assert_eq!(app.changed_pct, Some(1), "0% next to 'changed' reads as nothing happened");
+        assert_eq!(
+            app.changed_pct,
+            Some(1),
+            "0% next to 'changed' reads as nothing happened"
+        );
     }
 
     #[test]
@@ -365,8 +372,10 @@ mod tests {
         let (kept, text) = settings_verdict(&map, true, true).unwrap();
         assert!(!kept, "the old contents really are gone");
         assert!(text.contains("replaced"), "got: {text}");
-        assert!(!text.contains("setup network"),
-            "must not claim the board will ask for a network it was just given");
+        assert!(
+            !text.contains("setup network"),
+            "must not claim the board will ask for a network it was just given"
+        );
 
         // Same bytes, but nothing baked in: now it IS a reset.
         let (kept, text) = settings_verdict(&map, true, false).unwrap();

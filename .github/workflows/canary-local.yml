@@ -52,11 +52,12 @@ on:
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
-      - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
-      - "desktop/src-tauri/src/provisioning.rs"
+      # the flash engine both desktop apps share: desktop_parity reads its
+      # catalog guards, provisioning, health, change map, intake and pipeline
+      - "desktop/flash-engine/src/**"
       # the secret drawer's backend names (desktop_parity pins app.js where())
       - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"
@@ -146,11 +147,12 @@ on:
       - "canary-local/tools/gen_flash.py"
       - "desktop/hub-core/src/hub_disk.rs"
       - "desktop/src-tauri/src/lib.rs"
-      - "desktop/src-tauri/src/health.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/we2_bench.rs"
       - "desktop/src-tauri/src/sscma.rs"
-      - "desktop/src-tauri/src/provisioning.rs"
+      # the flash engine both desktop apps share: desktop_parity reads its
+      # catalog guards, provisioning, health, change map, intake and pipeline
+      - "desktop/flash-engine/src/**"
       # the secret drawer's backend names (desktop_parity pins app.js where())
       - "desktop/src-tauri/src/secret_store.rs"
       - "desktop/src-tauri/build.rs"

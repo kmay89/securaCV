@@ -1038,7 +1038,7 @@ export function buildNvsWifiImage(ssid, pass, partitionSize) {
 
 // Turn the optional broker/identity fields into buildNvsSeedImage `strings`/`u16`
 // entries the firmware's runtime_config reads back — the SAME namespace ("securacv"),
-// keys, and NVS types the native app writes (desktop/src-tauri/src/provisioning.rs:
+// keys, and NVS types the native app writes (desktop/flash-engine/src/provisioning.rs:
 // build_nvs), so a board provisioned in the browser and one provisioned natively are
 // equivalent. Each field is optional: an empty device-id is omitted, and the MQTT
 // keys are written as a unit only when a broker host is given. Validates like native

@@ -5798,7 +5798,7 @@ function phaseMonitor(port, opts = {}) {
     // If nothing arrives soon, explain why (many builds stay silent until
     // asked) — but keep the connection; don't tear it down.
     if (quietTimer) clearTimeout(quietTimer);
-    // Same diagnosis the native app gives (desktop/src-tauri/serial_monitor.rs,
+    // Same diagnosis the native app gives (desktop/flash-engine/src/monitor.rs,
     // SILENCE_SECS) — a console that connects and then shows nothing looks like
     // a dead board when the board is usually fine and the LINK is the problem,
     // and browser users deserve the same list of things worth trying rather

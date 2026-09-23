@@ -7,9 +7,10 @@
 //! Every parser mirrors the browser Lab's `flash-core.js` byte-for-byte — same
 //! offsets, magics, endianness, and the same "skip non-printable, break on NUL"
 //! string rule — so the two surfaces read a chip identically. Kept dependency
-//! free (std only) so it unit-tests WITHOUT the desktop stack
-//! (`rustc --test src/health.rs`), exactly like `rescue`/`hub-core`. The Tauri
-//! `health_check` command in `lib.rs` reads the flash regions with the espflash
+//! free (std only), in the tauri-free flash engine, so it unit-tests WITHOUT
+//! the desktop stack (`cargo test` in desktop/flash-engine), exactly like
+//! `rescue`/`hub-core`. The Flasher's `health_check` command
+//! (desktop/src-tauri/src/lib.rs) reads the flash regions with the espflash
 //! sidecar and feeds their bytes to these parsers.
 //!
 //! PRIVACY: the NVS parser extracts VALUES only for integer keys and an explicit
@@ -63,7 +64,7 @@ pub struct Partition {
 }
 
 /// 32-byte entries: magic 0xAA50 @0 | type @2 | subtype @3 | offset u32 @4 |
-/// size u32 @8 | label[16] @12. Loop stops at the first non-magic word (0xFFFF
+/// size u32 @8 | label\[16\] @12. Loop stops at the first non-magic word (0xFFFF
 /// padding or the MD5 marker).
 pub fn parse_partition_table(bytes: &[u8]) -> Vec<Partition> {
     let mut entries = Vec::new();
@@ -363,15 +364,18 @@ fn nvs_int_len(t: u8) -> Option<usize> {
     }
 }
 
+/// Blob chunks gathered per (namespace, key), each tagged with its chunk index.
+type BlobChunks = HashMap<(u8, String), Vec<(u8, Vec<u8>)>>;
+
 /// ESP-IDF NVS: 4 KB pages, each a page-state word @0, a 32-byte 2-bit entry
 /// bitmap @32, then 126 × 32-byte entries @64. Entry: ns u8 @0 | type u8 @1 |
-/// span u8 @2 | chunk u8 @3 | crc @4 | key[16] @8 | data[8] @24. Values are
+/// span u8 @2 | chunk u8 @3 | crc @4 | key\[16\] @8 | data\[8\] @24. Values are
 /// decoded only for integer types and allow-listed blob keys.
 pub fn parse_nvs(bytes: &[u8], allow_blob_keys: &[&str]) -> Vec<NvsItem> {
     let allow: HashSet<&str> = allow_blob_keys.iter().copied().collect();
     let mut ns_names: HashMap<u8, String> = HashMap::new();
     let mut items: Vec<NvsItem> = Vec::new();
-    let mut blob_chunks: HashMap<(u8, String), Vec<(u8, Vec<u8>)>> = HashMap::new();
+    let mut blob_chunks: BlobChunks = HashMap::new();
 
     let mut page = 0;
     while page + 4096 <= bytes.len() {
@@ -667,6 +671,8 @@ pub fn report_verdict(inp: &VerdictInput) -> Verdict {
 }
 
 #[cfg(test)]
+// The otadata assertions spell ESP-IDF's `(seq - 1) % slots` out on purpose.
+#[allow(clippy::identity_op)]
 mod tests {
     use super::*;
 
@@ -874,7 +880,11 @@ mod tests {
 
     #[test]
     fn booted_slot_follows_otadata_not_table_order() {
-        let apps = vec![part(0x00, "factory"), part(0x10, "ota_0"), part(0x11, "ota_1")];
+        let apps = vec![
+            part(0x00, "factory"),
+            part(0x10, "ota_0"),
+            part(0x11, "ota_1"),
+        ];
         assert_eq!(ota_slots(&apps).len(), 2, "factory is not an OTA slot");
 
         // Fresh otadata → the bootloader runs factory, whatever else exists.
@@ -913,7 +923,9 @@ mod tests {
         // something bootable rather than dropping the passport entirely.
         let two = vec![part(0x10, "ota_0"), part(0x11, "ota_1")];
         assert_eq!(
-            pick_booted_app_partition(&two, Some(&ota(false, 7))).unwrap().label,
+            pick_booted_app_partition(&two, Some(&ota(false, 7)))
+                .unwrap()
+                .label,
             "ota_0"
         );
         assert!(pick_booted_app_partition(&[], Some(&ota(true, 0))).is_none());

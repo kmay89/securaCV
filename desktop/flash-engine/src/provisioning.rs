@@ -90,9 +90,7 @@ pub struct Dials {
 pub(crate) fn dial_key_ok(key: &str) -> bool {
     !key.is_empty()
         && key.len() <= 15
-        && key
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 // Identity, broker, and network are INDEPENDENT capabilities (PR #1351's
@@ -900,7 +898,10 @@ mod tests {
         let nvs = build_nvs(&cfg, 0x5000).unwrap();
 
         let header_of = |key: &str| {
-            nvs.windows(key.len()).position(|w| w == key.as_bytes()).unwrap() - 8
+            nvs.windows(key.len())
+                .position(|w| w == key.as_bytes())
+                .unwrap()
+                - 8
         };
         // Preferences putUChar → item type 0x01, value inline at +24.
         let score = header_of("det_score");
@@ -929,7 +930,10 @@ mod tests {
 
         let mut cfg = config();
         cfg.dials.u32.insert("this_key_is_far_too_long".into(), 1);
-        assert!(build_nvs(&cfg, 0x5000).is_err(), "a bad dial key must fail loudly");
+        assert!(
+            build_nvs(&cfg, 0x5000).is_err(),
+            "a bad dial key must fail loudly"
+        );
     }
 
     #[test]
@@ -971,7 +975,11 @@ mod tests {
             - 8;
         assert_eq!(nvs[ns_def], 0, "a namespace definition lives under index 0");
         assert_eq!(nvs[ns_def + 1], 0x01, "namespace entries are type 0x01");
-        assert_eq!(nvs[ns_def + 24], 2, "securacv_ota must be namespace index 2");
+        assert_eq!(
+            nvs[ns_def + 24],
+            2,
+            "securacv_ota must be namespace index 2"
+        );
 
         // The u8 itself: under index 2, type 0x01, value 1 inline at +24.
         let item = nvs

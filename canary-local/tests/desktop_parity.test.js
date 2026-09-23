@@ -32,6 +32,17 @@ const read = (p) => readFileSync(p, "utf8");
 
 const catalog = JSON.parse(read(join(CANARY, "devices/flash.json")));
 const libRs = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+// The ESP32 flash engine both desktop apps share (desktop/flash-engine): what
+// used to live in the Flasher's lib.rs and its pure modules — the catalog
+// guards, release verification, provisioning, the change map, intake, the
+// flash pipeline and the serial monitor. The Flasher's lib.rs keeps the Tauri
+// command wrappers over it, so an assertion about "the native backend" reads
+// both: `nativeRs` is the Flasher's commands plus the engine they call.
+const ENGINE = join(ROOT, "desktop/flash-engine/src");
+const engineRs = (name) => read(join(ENGINE, `${name}.rs`));
+const engineAllRs = readdirSync(ENGINE).filter((f) => f.endsWith(".rs")).sort()
+  .map((f) => read(join(ENGINE, f))).join("\n");
+const nativeRs = libRs + "\n" + engineAllRs;
 const we2Rs = read(join(ROOT, "desktop/src-tauri/src/we2.rs"));
 const we2Core = read(join(CANARY, "assets/we2-core.js"));
 
@@ -42,9 +53,9 @@ const normChip = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
 // to the next top-level item. Reads source, not compiled Rust — enough to assert
 // which guard a command routes through without a desktop toolchain.
 const nativeFnBody = (src, name) => {
-  const sig = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`);
+  const sig = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*(?:<[^>]*>)?\\s*\\(`);
   const m = sig.exec(src);
-  assert.ok(m, `couldn't find fn ${name} in desktop/src-tauri/src/lib.rs`);
+  assert.ok(m, `couldn't find fn ${name} in the native source (desktop/src-tauri or desktop/flash-engine)`);
   const after = src.slice(m.index + 1);
   // Stop at the next top-level item — its `fn`, its attribute (#[…]), or the doc
   // comment (///) that precedes it — so a body can't bleed into the next command.
@@ -56,12 +67,12 @@ test("chip guard: native derives its chip table from the catalog, not a copy", (
   // native chip_table() builds canonical_chip()'s lookup from the embedded
   // catalog's `chips` keys — the drift risk this test used to diff away is
   // gone as long as the derivation stays and no hardcoded table creeps back.
-  assert.match(nativeFnBody(libRs, "chip_table"), /get\("chips"\)/,
-    "lib.rs chip_table() no longer reads the catalog's `chips` keys — " +
+  assert.match(nativeFnBody(engineRs("catalog"), "chip_table"), /get\("chips"\)/,
+    "flash-engine catalog.rs chip_table() no longer reads the catalog's `chips` keys — " +
     "if the table went back to being hardcoded, restore the old diff here");
   assert.strictEqual(
-    [...libRs.matchAll(/\(\s*"esp32[a-z0-9]*"\s*,\s*"(ESP32[^"]*)"\s*\)/g)].length, 0,
-    "a hardcoded (\"esp32…\",\"ESP32-…\") chip pair is back in lib.rs — " +
+    [...nativeRs.matchAll(/\(\s*"esp32[a-z0-9]*"\s*,\s*"(ESP32[^"]*)"\s*\)/g)].length, 0,
+    "a hardcoded (\"esp32…\",\"ESP32-…\") chip pair is back in the native source — " +
     "the table derives from the catalog now; delete the retyped copy");
 
   // The catalog's spelling wins for chips it ships (an ESP32-family chip the
@@ -122,7 +133,7 @@ test("dev channel: browser, native backend, and native frontend pin the same fw-
   // collapses the instant any copy drifts, so pin all three to each other.
   const sources = [
     ["canary-local/assets/flash-core.js", read(join(CANARY, "assets/flash-core.js"))],
-    ["desktop/src-tauri/src/lib.rs", libRs],
+    ["desktop/flash-engine/src/catalog.rs", engineRs("catalog")],
     ["desktop/src/app.js", read(join(ROOT, "desktop/src/app.js"))],
   ];
   const urls = sources.map(([label, src]) => {
@@ -146,13 +157,13 @@ test("release origin: native derives its download-host guard from the catalog", 
   // browser derives live — assert the derivation stays and no literal origin
   // guard crept back (the dev-channel URL is a full manifest URL, not an
   // origin prefix, so it never matched this pattern).
-  const originBody = nativeFnBody(libRs, "release_origin");
+  const originBody = nativeFnBody(engineRs("catalog"), "release_origin");
   assert.ok(originBody.includes('"manifest_url"') && originBody.includes("/releases/download/"),
-    "lib.rs release_origin() no longer derives from the catalog's manifest_url — " +
+    "flash-engine catalog.rs release_origin() no longer derives from the catalog's manifest_url — " +
     "if the guard went back to a literal, restore the old diff here");
   assert.strictEqual(
-    [...libRs.matchAll(/"(https:\/\/[^"]+\/releases\/download\/)"/g)].length, 0,
-    "a literal release-origin prefix is back in lib.rs — the guard derives " +
+    [...nativeRs.matchAll(/"(https:\/\/[^"]+\/releases\/download\/)"/g)].length, 0,
+    "a literal release-origin prefix is back in the native source — the guard derives " +
     "from the catalog now; delete the retyped copy");
 
   // Native fails closed on a manifest_url without the marker (nothing
@@ -166,12 +177,12 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   // Native build_nvs (provisioning.rs) IS the firmware contract for a provisioned
   // board — the exact NVS keys the runtime reads. The browser must write the same
   // set, or a board provisioned in the Lab differs from one provisioned natively.
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   const nativeKeys = new Set(
     [...provRs.matchAll(/writer\.(?:string|u8|u16|u32|blob)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1])
   );
   assert.ok(nativeKeys.size >= 5,
-    "couldn't parse native build_nvs keys from desktop/src-tauri/src/provisioning.rs");
+    "couldn't parse native build_nvs keys from desktop/flash-engine/src/provisioning.rs");
 
   // The browser's provisioning: wifi in BOTH schemes native now writes too —
   // string (sense/vision/display) and blob + wifi_en (canary/wap, flash-core's
@@ -203,7 +214,7 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +
     "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage/apiTokenToNvs with " +
-    "desktop/src-tauri/src/provisioning.rs:build_nvs");
+    "desktop/flash-engine/src/provisioning.rs:build_nvs");
 });
 
 test("OTA auto-update: both flashers seed the engine's own namespace, and both offer the switch", async () => {
@@ -222,7 +233,7 @@ test("OTA auto-update: both flashers seed the engine's own namespace, and both o
 
   // Both writers: the second namespace entry plus the u8 under it.
   const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   assert.match(flashCoreSrc, /"securacv_ota"/,
     "flash-core.js buildNvsSeedImage no longer writes the securacv_ota namespace entry");
   assert.match(flashCoreSrc, /writeInt\("auto_upd", 0x01/,
@@ -372,7 +383,7 @@ test("parity wave 2: the board passport, the install verdict, and 'we've met thi
   // one before". These assertions keep that eyesight.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const healthRs = read(join(ROOT, "desktop/src-tauri/src/health.rs"));
+  const healthRs = engineRs("health");
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
 
   // 1. A connect-time passport command, distinct from the deep health report.
@@ -497,9 +508,9 @@ test("parity wave 3a: the boot-log verdict and the self-healing baud ladder", as
     "the baud ladder must not retry `unknown` — it would retry every sidecar failure");
   // …which is only safe because the backend keeps espflash's own words, so a
   // real transport fault can classify as itself.
-  assert.match(libRs, /let mut tail: Vec<String>/,
+  assert.match(nativeRs, /let mut tail: Vec<String>/,
     "espflash's output must survive into the error, or every failure is `unknown`");
-  assert.match(libRs, /tail\.join\("\\n"\)/,
+  assert.match(nativeRs, /tail\.join\("\\n"\)/,
     "the espflash error must carry its tail for classification");
   // The ceiling is a per-board remedy. Left set across a swap it would hold a
   // healthy board at the slowest speed for the rest of the session.
@@ -549,7 +560,7 @@ test("parity wave 3b: room presets are baked in as typed NVS ints", async () => 
   // boot instead of after a trip to Home Assistant.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
 
   // 1. The NVS writer can express a u32 at all. Without it the dwell and
@@ -632,8 +643,8 @@ test("parity wave 3c: the change map answers 'do my settings survive?'", () => {
   // comparison exist for exactly one moment, and that is where this runs.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const cmRs = read(join(ROOT, "desktop/src-tauri/src/changemap.rs"));
-  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const cmRs = engineRs("changemap");
+  const libRsSrc = nativeRs;
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
   const flashJs = read(join(CANARY, "assets/flash.js"));
 
@@ -693,8 +704,8 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
   // them, so the install reports success and the board cannot boot, with no
   // error at any layer. The safety copy already holds the whole chip in
   // memory before the write, so this costs no serial time at all.
-  const intakeRs = read(join(ROOT, "desktop/src-tauri/src/intake.rs"));
-  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const intakeRs = engineRs("intake");
+  const libRsSrc = nativeRs;
   const appJsSrc = read(join(ROOT, "desktop/src/app.js"));
   const intakeJs = read(join(CANARY, "assets/intake.js"));
 
@@ -847,7 +858,7 @@ test("device API token: both flashers mint the same credential shape and seed th
   assert.ok(blobs.api_token instanceof Uint8Array && blobs.api_token.length === 35);
 
   // Native writes the SAME two blob keys and validates the same shape.
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   assert.match(provRs, /writer\.blob\(\s*"api_token"/,
     "provisioning.rs no longer seeds the PIO canary's api_token blob");
   assert.match(provRs, /writer\.blob\(\s*"api_tkn"/,
@@ -1148,9 +1159,9 @@ test("offset-0 write guard: both flashers refuse an app-only image before writin
     "the browser local-file path (flash.js:onLocalFile) no longer gates on core.localImageShape");
 
   // Native: the shape check exists and keys on the 0x8000 partition table…
-  assert.match(libRs, /fn check_local_image\b/,
-    "native lost lib.rs:check_local_image — the app-only-build refusal");
-  assert.match(libRs, /check_local_image[\s\S]*?PARTITION_TABLE_OFFSET/,
+  assert.match(engineRs("image"), /fn check_local_image\b/,
+    "native lost flash-engine image.rs:check_local_image — the app-only-build refusal");
+  assert.match(nativeFnBody(engineRs("image"), "check_local_image"), /PARTITION_TABLE_OFFSET/,
     "native check_local_image no longer checks the partition table at 0x8000");
 
   // …and EVERY native command that writes a user-chosen file from offset 0 routes
@@ -1278,7 +1289,7 @@ test("first contact forces a full erase on both flashers", () => {
     "desktop flasher never passes eraseFirst to the native flash command");
   assert.match(libRs, /erase_first/,
     "desktop/src-tauri/src/lib.rs ignores erase_first — the checkbox does nothing");
-  assert.match(libRs, /erase_first\.unwrap_or\(false\)/,
+  assert.match(nativeFnBody(engineRs("flash"), "flash"), /erase_first\.unwrap_or\(false\)/,
     "erase_first must fail closed to 'no erase' only when explicitly absent");
 
   // The safe default has to be restored for EVERY board, not once per app
@@ -1324,7 +1335,7 @@ test("health check: native parsers pin the browser's byte-magics, and the UI rea
   // The native health parsers (health.rs) reimplement the browser's flash-core
   // parsers. Their magics/offsets/namespaces MUST match byte-for-byte, or the
   // same chip reads differently on each surface. Pin the shared constants.
-  const healthRs = read(join(ROOT, "desktop/src-tauri/src/health.rs"));
+  const healthRs = engineRs("health");
   const flashCore = read(join(CANARY, "assets/flash-core.js"));
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const appJs = read(join(ROOT, "desktop/src/app.js"));
@@ -1672,7 +1683,7 @@ test("broker TLS: both flashers offer the mode, the CA and the fingerprint, and 
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const html = read(join(ROOT, "desktop/src/index.html"));
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   const logicH = read(join(ROOT, "firmware/common/network/mqtt_transport_logic.h"));
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
 
@@ -2072,7 +2083,7 @@ test("pre-configured Wi-Fi is honored: present-but-empty keys, and identity neve
   const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
   assert.match(flashCoreSrc, /writeString\("wifi_pass", passB\)/,
     "flash-core.js no longer writes the (possibly empty) wifi_pass string key");
-  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const provRs = engineRs("provisioning");
   assert.match(provRs, /writer\.string\("wifi_pass", &config\.wifi_pass\)\?/,
     "provisioning.rs no longer writes the (possibly empty) wifi_pass string key");
 
@@ -2474,7 +2485,7 @@ test("every long wait shows liveness on both flashers", () => {
   const appJs = read(join(ROOT, "desktop", "src", "app.js"));
   const html = read(join(ROOT, "desktop", "src", "index.html"));
   const css = read(join(ROOT, "desktop", "src", "styles.css"));
-  const libRsSrc = read(join(ROOT, "desktop", "src-tauri", "src", "lib.rs"));
+  const libRsSrc = nativeRs;
 
   // 1. The elapsed clock: both frontends tick seconds through every long
   //    operation — the difference between "working" and "hung".
@@ -2511,9 +2522,9 @@ test("every long wait shows liveness on both flashers", () => {
   assert.match(browser, /resp\.body && resp\.body\.getReader/,
     "the browser image download went back to a silent arrayBuffer()");
   assert.match(libRsSrc, /flash:progress/,
-    "lib.rs no longer emits download progress events");
+    "the native flash path (flash-engine flash.rs) no longer emits download progress events");
   assert.match(libRsSrc, /resp\s*\.chunk\(\)/,
-    "lib.rs download went back to a silent bytes() buffer");
+    "the native download (flash-engine net.rs) went back to a silent bytes() buffer");
   assert.match(appJs, /flash:progress/,
     "desktop never listens for the download progress it is sent");
 
