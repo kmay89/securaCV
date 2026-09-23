@@ -186,10 +186,21 @@ measured envelope (height gets ±2.5 mm — a banded massing centers its
 parts vertically, beneath the fidelity of small mounting offsets; the
 ledger still publishes the exact measured number).
 
-Things with no committed CAD — the in-development display enclosures, and
-the concept devices that are still only a research note — declare a `sketch`
-envelope instead. The ledger records `dims_source: "sketch"` next to them, so
-a surface can caption them honestly rather than implying measured geometry.
+An **in-development case whose CAD states its own seat** (the Watch
+Station: drum + snap bezel, the bezel's nubs drawn from the drum rim) is
+measured the same way even though its STLs are not committed — its figure
+declares `assembled: true`, reads its envelope and seams from its
+`gen_assembled_dims.py` row, and the ledger records
+`dims_source: "assembled-cad"`. That is what lets a manifest knob edit move
+the figure: a typed sketch would have kept the old number while the case
+changed under it. It traces to no committed STL, so the ladder keeps it at
+`prototype` by construction — measured is not the same as printable.
+
+Things with no measurable CAD — the display enclosures whose case files do
+not yet state an assembly, and the concept devices that are still only a
+research note — declare a `sketch` envelope instead. The ledger records
+`dims_source: "sketch"` next to them, so a surface can caption them honestly
+rather than implying measured geometry.
 
 ---
 

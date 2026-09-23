@@ -69,6 +69,20 @@ function toFigureFrame(size, frame) {
 }
 
 function envelopeFor(fig) {
+  if (fig.assembled) {
+    // An in-development case measured off its CAD (gen_assembled_dims.py) —
+    // no committed STL, the same row gen_figures.mjs reads, refusal included.
+    const asm = assembledDims.devices?.[fig.id];
+    if (!asm) {
+      throw new Error(`device glbs: ${fig.id} declares an assembled envelope with no row in `
+        + 'docs/hardware/enclosure/assembled_dims.json — add it to gen_assembled_dims.py.');
+    }
+    return {
+      E: { w: asm.fig.w, d: asm.fig.d, h: asm.fig.h },
+      parts: {},
+      assembled: { seams: asm.seams_fig_d },
+    };
+  }
   if (fig.board) {
     const b = boards.boards[fig.board];
     const [w, d, h] = b.dims_mm;

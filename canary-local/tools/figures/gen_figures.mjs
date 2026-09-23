@@ -170,6 +170,33 @@ function toFigureFrame(size, frame) {
 }
 
 function envelopeFor(fig) {
+  if ([fig.assembled, fig.board, fig.sketch, fig.stl || fig.parts].filter(Boolean).length !== 1) {
+    throw new Error(`figures: ${fig.id} must declare exactly one envelope source `
+      + '(assembled / board / sketch / stl or parts)');
+  }
+  if (fig.assembled) {
+    // An in-development case with no committed STLs (dev_*.stl is gitignored
+    // on purpose), measured off its CAD anyway: gen_assembled_dims.py renders
+    // the parts from the case source in their seated positions and commits
+    // the union's bounds, and the enclosure CI re-measures on every CAD
+    // change. So a manifest knob edit that moves the case moves the figure —
+    // which a typed `sketch` envelope never would. It traces to no committed
+    // STL, so the ladder keeps it at prototype by construction (confidenceFor
+    // reads committed_stls, which stays empty); `dims_source` says the
+    // numbers are CAD-measured, and the evidence says nothing is printable.
+    const asm = assembledDims.devices?.[fig.id];
+    if (!asm) {
+      throw new Error(`figures: ${fig.id} declares an assembled envelope but has no row in `
+        + 'docs/hardware/enclosure/assembled_dims.json — add it to gen_assembled_dims.py and regenerate.');
+    }
+    return {
+      E: { w: asm.fig.w, d: asm.fig.d, h: asm.fig.h },
+      parts: {},
+      source: 'assembled-cad',
+      stls: [],
+      assembled: { placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d },
+    };
+  }
   if (fig.board) {
     // The committed board mesh (boards.json), whose geometry facts are
     // recomputed from the mesh itself. Same contract as an STL: the
@@ -253,21 +280,24 @@ const ASM_H_TOL = 2.5;   // mm, height of a multi-part massing vs its measured a
 
 function guardDrift(fig, E, solids, source) {
   // Applies to any figure with ONE dimensional source of truth behind it: a
-  // committed STL, a committed board mesh, or — for a multi-part device —
-  // the measured assembled envelope. Exempting the board path let
+  // committed STL, a committed board mesh, or — for a multi-part device or
+  // an in-development case declared `assembled` — the measured assembled
+  // envelope. Exempting the board path let
   // `board.xiao` publish 22.64 x 3.66 x 19.38 while claiming to come from CAD
   // measuring 22.64 x 4.42 x 17.78 — a figure that both fell short of the part
   // and overflowed it, under a `dims_source` that said otherwise. Exempting
   // multi-part figures was the same hole one size up: their drawn stacks
   // overstated every released device's assembled depth by 30-58 % with no
   // gate to see it.
-  if (source !== 'stl' && source !== 'board-cad') return null;
+  if (source !== 'stl' && source !== 'board-cad' && source !== 'assembled-cad') return null;
   // A multi-part massing centers its parts vertically, so small assembly
   // offsets (the doorbell plate's foot reaches 2 mm below the face's top
   // overhang) are beneath its fidelity — the height tolerance says so
-  // explicitly rather than pretending band drawing is exact.
-  const hTol = fig.parts ? ASM_H_TOL : PLAN_TOL;
-  const what = fig.parts ? 'assembled envelope' : `STL ${fig.stl ?? ''}`.trim();
+  // explicitly rather than pretending band drawing is exact. A CAD-measured
+  // (`assembled`) figure is banded the same way, so it gets the same rule.
+  const banded = !!(fig.parts || fig.assembled);
+  const hTol = banded ? ASM_H_TOL : PLAN_TOL;
+  const what = banded ? 'assembled envelope' : `STL ${fig.stl ?? ''}`.trim();
   const env = envelopeOf(solids);
   const got = { w: env.size[0], d: env.size[1], h: env.size[2] };
   const bad = [];
@@ -278,7 +308,7 @@ function guardDrift(fig, E, solids, source) {
     throw new Error(`figures: ${fig.id} has drifted from its ${what} — ${bad.join('; ')}. `
       + 'The CAD moved; update massing.mjs so the figure matches again.');
   }
-  return { plan_tol_mm: PLAN_TOL, depth_tol_mm: DEPTH_TOL, ...(fig.parts ? { height_tol_mm: ASM_H_TOL } : {}) };
+  return { plan_tol_mm: PLAN_TOL, depth_tol_mm: DEPTH_TOL, ...(banded ? { height_tol_mm: ASM_H_TOL } : {}) };
 }
 
 /* ─────────────────────────────────────────────── the coplanar guard

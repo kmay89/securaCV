@@ -33,19 +33,26 @@ generated catalog. Bounding boxes are deterministic even though OpenSCAD's
 STL bytes are not, so --check compares numbers, not bytes.
 
 Adding a device: add a row to DEVICES with the case's own assembled
-placement (crib it from that case's fitcheck module — never invent one) and
+placement (crib it from that case's fitcheck module — never invent one; a
+case with no fitcheck module is measured only where its own geometry states
+the seat, as the Watch Station's bezel does, and the row says where) and
 rerun. gen_figures.mjs refuses a `parts:` device figure that has no row
-here, so a new multi-part figure cannot fall back to the stacked lie.
+here, so a new multi-part figure cannot fall back to the stacked lie — and a
+figure declared `assembled: true` (an in-development case with no committed
+STLs) reads its envelope from its row here and nowhere else.
+
+The render-and-parse-echo mechanics live in scad_probe.py, shared with
+gen_enclosures.py --check-previews.
 """
 
 import json
-import struct
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import scad_probe  # noqa: E402  (the shared render-and-parse-echo helper, beside this file)
+
 OUT = HERE / "assembled_dims.json"
 TOL = 0.01  # mm — bbox agreement required by --check
 
@@ -113,58 +120,46 @@ DEVICES = {
         "placement": ("doorbell_fitcheck: face at z = base_d; body back flush on plate front "
                       "(T-studs in pockets), resting 0.5 up the slide on the plate's L-foot"),
     },
+    "device.canary-display-watch": {
+        # The Watch Station has no committed STLs (in development — dev_*.stl
+        # is gitignored) and no fit-check module, but it does not need one to
+        # be measured: the seat is stated by its own geometry. bezel() is
+        # drawn in the SEATED frame — face plate z = 0..bez_t, skirt reaching
+        # -skirt_dep into the bore — and its snap nubs are placed at bezel
+        # z = -snap_depth precisely because "the face underside (bezel z=0)
+        # rests on the drum rim (drum z=drum_h), so drum_z = drum_h +
+        # bezel_z" (the nub comment in bezel()). Any other seat and the nubs
+        # miss the drum's windows, so this is the only placement the snap
+        # admits. Drum + bezel only: the puck as it hangs on the wall or sits
+        # in the cradle — the stand is its own part, not the device's
+        # envelope. This is what lets a manifest edit (disc_d, a registry
+        # reference) move the published figure: the ledger re-measures the
+        # case, where a typed sketch envelope silently would not.
+        "scad": "canary_watch_station.scad",
+        "overrides": {"part": '"drum"'},
+        "body": "union() { drum(); translate([0, 0, drum_h]) bezel(); }",
+        # visible bands from the back cap out: drum to its rim, bezel face beyond
+        "seams": "[drum_h]",
+        "placement": ("bezel() seated frame: face underside on the drum rim, bezel at z = drum_h "
+                      "(the nubs' own datum, drum_z = drum_h + bezel_z)"),
+    },
 }
 
 
-def stl_bbox(path):
-    raw = path.read_bytes()
-    (n,) = struct.unpack_from("<I", raw, 80)
-    lo = [float("inf")] * 3
-    hi = [float("-inf")] * 3
-    off = 84
-    for _ in range(n):
-        # 12 floats: normal + 3 vertices; then a u16 attribute
-        vals = struct.unpack_from("<12f", raw, off)
-        for v in range(3):
-            for a in range(3):
-                c = vals[3 + v * 3 + a]
-                if c < lo[a]:
-                    lo[a] = c
-                if c > hi[a]:
-                    hi[a] = c
-        off += 50
-    return [round(hi[a] - lo[a], 3) for a in range(3)]
-
-
 def measure(fig_id, spec):
-    probe = "include <{scad}>\n{ov}\n{body}\necho(\"SEAMS\", {seams});\n".format(
-        scad=spec["scad"],
-        ov="\n".join(f"{k} = {v};" for k, v in spec["overrides"].items()),
-        body=spec["body"],
-        seams=spec["seams"],
-    )
-    # The probe must sit BESIDE the case files: OpenSCAD resolves `include`
-    # relative to the including file, and the cases include the shared libs
-    # the same way.
-    with tempfile.TemporaryDirectory() as td:
-        src = HERE / f".tmp_assembled_{fig_id.replace('.', '_')}.scad"
-        out = Path(td) / "probe.stl"
-        src.write_text(probe)
-        try:
-            r = subprocess.run(
-                ["openscad", "--export-format", "binstl", "-o", str(out), str(src)],
-                cwd=HERE, capture_output=True, text=True,
-            )
-        finally:
-            src.unlink(missing_ok=True)
-        diag = (r.stdout or "") + (r.stderr or "")
-        if "ERROR" in diag or "WARNING" in diag or not out.exists():
-            sys.exit(f"gen_assembled_dims: {fig_id}: dirty render, nothing measured\n{diag}")
-        m = __import__("re").search(r'ECHO: "SEAMS", \[([0-9., ]+)\]', diag)
-        if not m:
-            sys.exit(f"gen_assembled_dims: {fig_id}: seam echo missing\n{diag}")
-        seams = [round(float(v), 3) for v in m.group(1).split(",")]
-        x, y, z = stl_bbox(out)
+    # The shared probe (scad_probe.py): include the case beside the case files,
+    # apply the overrides after it, draw the union, echo the seams — and refuse
+    # a dirty render rather than measure it.
+    try:
+        res = scad_probe.probe(
+            f"assembled_{fig_id}", spec["scad"], spec["overrides"],
+            "{body}\necho(\"SEAMS\", {seams});".format(body=spec["body"], seams=spec["seams"]),
+            root=HERE,
+        )
+        seams = scad_probe.echo_numbers(res, "SEAMS", fig_id)
+    except scad_probe.ProbeError as e:
+        sys.exit(f"gen_assembled_dims: {e}")
+    x, y, z = res.bbox
     # scad frame -> figure frame (the massing's 'scad-wall'): w = x, h = y, d = z
     return {
         "scad": spec["scad"],
@@ -183,11 +178,14 @@ def build():
     return {
         "generated_by": "docs/hardware/enclosure/gen_assembled_dims.py",
         "note": ("Assembled outer envelopes, measured off the union of each "
-                 "device's committed parts in their fit-checked assembled "
-                 "positions. gen_figures.mjs reads these for multi-part device "
-                 "figures instead of stacking part depths, which overstates "
-                 "any nesting assembly. Regenerate after re-exporting any STL "
-                 "these unions include."),
+                 "device's parts rendered from its case source in their "
+                 "assembled positions (the fit-checked ones where the case has "
+                 "a fit check; `placement` says which). gen_figures.mjs reads "
+                 "these for multi-part device figures instead of stacking part "
+                 "depths, which overstates any nesting assembly, and for "
+                 "in-development figures declared `assembled` instead of a "
+                 "typed sketch. Regenerate after any edit to the cases these "
+                 "unions include."),
         "devices": {fig_id: measure(fig_id, spec) for fig_id, spec in sorted(DEVICES.items())},
     }
 
@@ -207,7 +205,8 @@ def main():
                 if abs(m - n) > TOL:
                     sys.exit(
                         f"gen_assembled_dims: {fig_id} axis {a}: measured {m} vs committed {n} "
-                        "— an STL moved; regenerate and re-run gen_figures.mjs"
+                        "— the CAD moved (a case edit or an STL re-export); regenerate and re-run "
+                        "gen_figures.mjs"
                     )
             # The seams are consumed data too (the massings draw each part's
             # visible band between them), and a datum like base_d can move

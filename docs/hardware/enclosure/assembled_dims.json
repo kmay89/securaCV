@@ -1,7 +1,27 @@
 {
  "generated_by": "docs/hardware/enclosure/gen_assembled_dims.py",
- "note": "Assembled outer envelopes, measured off the union of each device's committed parts in their fit-checked assembled positions. gen_figures.mjs reads these for multi-part device figures instead of stacking part depths, which overstates any nesting assembly. Regenerate after re-exporting any STL these unions include.",
+ "note": "Assembled outer envelopes, measured off the union of each device's parts rendered from its case source in their assembled positions (the fit-checked ones where the case has a fit check; `placement` says which). gen_figures.mjs reads these for multi-part device figures instead of stacking part depths, which overstates any nesting assembly, and for in-development figures declared `assembled` instead of a typed sketch. Regenerate after any edit to the cases these unions include.",
  "devices": {
+  "device.canary-display-watch": {
+   "scad": "canary_watch_station.scad",
+   "overrides": {
+    "part": "drum"
+   },
+   "placement": "bezel() seated frame: face underside on the drum rim, bezel at z = drum_h (the nubs' own datum, drum_z = drum_h + bezel_z)",
+   "mm_scad": [
+    49.0,
+    49.0,
+    23.19
+   ],
+   "fig": {
+    "w": 49.0,
+    "d": 23.19,
+    "h": 49.0
+   },
+   "seams_fig_d": [
+    21.0
+   ]
+  },
   "device.canary-sense": {
    "scad": "canary_sense_enclosure.scad",
    "overrides": {

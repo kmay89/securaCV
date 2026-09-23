@@ -1046,17 +1046,27 @@
      "watch"
     ]
    },
-   "dims_source": "sketch",
+   "dims_source": "assembled-cad",
    "sketch_note": null,
    "envelope_mm": {
     "w": 49,
-    "d": 23.2,
+    "d": 23.19,
     "h": 49
    },
+   "assembled": {
+    "placement": "bezel() seated frame: face underside on the drum rim, bezel at z = drum_h (the nubs' own datum, drum_z = drum_h + bezel_z)",
+    "seams_fig_d": [
+     21
+    ]
+   },
    "traced_to": [],
-   "drift_guard": null,
-   "solids": 3,
-   "rev": "17e158d1",
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4,
+    "height_tol_mm": 2.5
+   },
+   "solids": 4,
+   "rev": "c673b27b",
    "svg": "canary-local/figures/device.canary-display-watch.svg",
    "glyph": "canary-local/figures/device.canary-display-watch.glyph.svg"
   },

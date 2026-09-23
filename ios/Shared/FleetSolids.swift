@@ -175,12 +175,13 @@ public struct FleetMassing: Sendable {
       FleetSolid(kind: .box, material: "lit", axis: "y", at: [5, 16.6, 5], size: [36.13, 0.4, 28.13], r: 1.5, h: 0, fullDetailOnly: false),
   ]),
   "device.canary-display-watch": FleetMassing(
-    id: "device.canary-display-watch", rev: "17e158d1", ghost: false,
-    envelope: [49, 23.2, 49],
+    id: "device.canary-display-watch", rev: "c673b27b", ghost: false,
+    envelope: [49, 23.19, 49],
     solids: [
-      FleetSolid(kind: .cyl, material: "shell", axis: "y", at: [24.5, 0, 24.5], size: [], r: 24.5, h: 20.8, fullDetailOnly: false),
-      FleetSolid(kind: .cyl, material: "glass", axis: "y", at: [24.5, 20.75, 24.5], size: [], r: 21, h: 2, fullDetailOnly: false),
-      FleetSolid(kind: .cyl, material: "lit", axis: "y", at: [24.5, 22.8, 24.5], size: [], r: 17.5, h: 0.4, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "shell2", axis: "y", at: [24.5, 0, 24.5], size: [], r: 24.5, h: 21, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "shell", axis: "y", at: [24.5, 20.95, 24.5], size: [], r: 24.5, h: 2.240000000000001, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "glass", axis: "y", at: [24.5, 23.14, 24.5], size: [], r: 19.7, h: 0.4, fullDetailOnly: false),
+      FleetSolid(kind: .cyl, material: "lit", axis: "y", at: [24.5, 23.54, 24.5], size: [], r: 17.5, h: 0.4, fullDetailOnly: false),
   ]),
   "device.canary-feeder": FleetMassing(
     id: "device.canary-feeder", rev: "bc53a17d", ghost: true,

@@ -407,23 +407,36 @@ export const FIGURES = [
 
   /* ══════════════════════════════════════════════════ displays ═══════
    * The display line has no committed STLs (the enclosures are still in
-   * development — dev_*.stl is gitignored on purpose), so these are sketched
-   * from registry.json's `body_mm` and `glass`. They are marked prototype,
-   * not shipping, and the ledger says so. */
+   * development — dev_*.stl is gitignored on purpose). Where the case CAD
+   * states its own seat, the figure is MEASURED off that CAD anyway
+   * (`assembled: true` — gen_assembled_dims.py renders the parts from the
+   * .scad and commits the union's bounds), so a knob edit moves the figure;
+   * the rest are sketched from their panel records. Either way they trace
+   * to no committed STL, so they are marked prototype, not shipping, and
+   * the ledger says so. */
   {
     id: 'device.canary-display-watch',
     title: 'Canary Watch Station',
     role: 'device', of: 'canary-display-watch',
-    // v0.2 CAD (canary_watch_station.scad): drum Ø49.0, seated depth 23.2
-    // (drum 21.0 + snap-bezel face 2.2) — the v0.1 "screwed drum" sketch
-    // said Ø52 x 21.8, dimensions the measured board could never seat.
-    sketch: { w: 49, d: 23.2, h: 49 },
-    build: (E) => [
-      // a snap-bezel drum looking at you: shell, bezel-inset glass, lit face
-      { kind: 'cyl', m: 'shell', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: E.d - 2.4 },
-      { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - 2.4 - EPS, E.h / 2], r: E.w / 2 - 3.5, h: 2.0 },
-      { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d - 0.4, E.h / 2], r: E.w / 2 - 7, h: 0.4 },
-    ],
+    // v0.2 CAD (canary_watch_station.scad), measured: drum + snap bezel as
+    // seated (assembled_dims.json — Ø49.0 x 23.2 today, drum 21.0 + bezel
+    // face 2.2). The v0.1 "screwed drum" sketch said Ø52 x 21.8, dimensions
+    // the measured board could never seat; the v0.2 sketch that replaced it
+    // was typed from a comment, so a disc_d edit in the manifest moved the
+    // case and not this. The stand is its own part, not the puck's envelope.
+    assembled: true,
+    frame: 'scad-wall',
+    build: (E, P, A) => {
+      const [s0] = A.seams;   // the drum rim: the bezel face rides from here out
+      return [
+        // the drum, back cap to rim, and the snap-bezel face riding on it
+        { kind: 'cyl', m: 'shell2', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: s0 },
+        { kind: 'cyl', m: 'shell', axis: 'y', at: [E.w / 2, s0 - EPS, E.h / 2], r: E.w / 2, h: E.d - s0 + EPS },
+        // the round glass in the bezel's aperture, and the lit face on it
+        { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - EPS, E.h / 2], r: E.w / 2 - 4.8, h: 0.4 },
+        { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d + 0.4 - EPS, E.h / 2], r: E.w / 2 - 7, h: 0.4 },
+      ];
+    },
   },
   {
     id: 'device.canary-display-touch169',

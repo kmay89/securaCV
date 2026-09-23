@@ -118,7 +118,7 @@ test("an idea can never render as a product", () => {
 
 test("a figure never claims dimensions its CAD doesn't have", () => {
   for (const f of led.figures) {
-    assert.ok(["stl", "board-cad", "sketch"].includes(f.dims_source),
+    assert.ok(["stl", "board-cad", "assembled-cad", "sketch"].includes(f.dims_source),
       `${f.id} declares where its mm came from`);
     if (f.dims_source === "board-cad") {
       // Read from the committed board mesh, never retyped — same contract as
@@ -141,6 +141,33 @@ test("a figure never claims dimensions its CAD doesn't have", () => {
       assert.ok(f.envelope_mm[k] > 0, `${f.id} has a real ${k}`);
     }
   }
+});
+
+test("a CAD-measured in-development figure is its assembled_dims row, and stays unprintable", () => {
+  // `assembled-cad`: an in-development case with no committed STLs, measured
+  // off its .scad by docs/hardware/enclosure/gen_assembled_dims.py (the
+  // Watch Station). The number must be that row's, exactly — it is what a
+  // manifest knob edit moves — and because nothing printable is committed
+  // the ladder cannot promote it past prototype on this evidence.
+  const asm = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/assembled_dims.json"), "utf8"));
+  let checked = 0;
+  for (const f of led.figures) {
+    if (f.dims_source !== "assembled-cad") continue;
+    const row = asm.devices[f.id];
+    assert.ok(row, `${f.id} is CAD-measured, so assembled_dims.json has its row`);
+    for (const k of ["w", "d", "h"]) {
+      assert.strictEqual(f.envelope_mm[k], row.fig[k], `${f.id} ${k} is the measured ${row.fig[k]}`);
+    }
+    assert.deepStrictEqual(f.assembled.seams_fig_d, row.seams_fig_d, `${f.id} carries the measured seams`);
+    assert.strictEqual(f.assembled.placement, row.placement, `${f.id} names where the seat came from`);
+    assert.deepStrictEqual(f.traced_to, [], `${f.id} traces to no committed STL`);
+    assert.deepStrictEqual(f.evidence.committed_stls, [], `${f.id} has nothing printable committed`);
+    assert.ok(f.drift_guard, `${f.id} went through the drift guard against the measurement`);
+    assert.notStrictEqual(f.confidence, "shipping", `${f.id} cannot ship on a render alone`);
+    checked++;
+  }
+  assert.ok(checked > 0, "the Watch Station is measured off its CAD, not sketched");
+  assert.strictEqual(byId.get("device.canary-display-watch").dims_source, "assembled-cad");
 });
 
 test("a board figure fills the CAD box it says it came from", () => {
