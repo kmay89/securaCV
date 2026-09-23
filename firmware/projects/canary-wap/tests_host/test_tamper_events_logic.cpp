@@ -173,12 +173,45 @@ static void test_recovery_is_not_a_tamper() {
 }
 
 static void test_constant_absent_feed_never_emits_sd_kinds() {
-  /* A host with no SD state machine (the active PIO lane) feeds ABSENT
-   * forever — the watcher adopts it and never invents a detector. */
+  /* A host with no SD state machine (a canary PIO build without
+   * FEATURE_SD_STORAGE) feeds ABSENT forever — the watcher adopts it and
+   * never invents a detector. */
   fresh();
   for (int i = 0; i < 50; ++i) tamper_events_watch(0, 0, 0, SD_ABSENT);
   CHECK(ring_count() == 0);
   CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+}
+
+static void test_canary_storage_lane_story() {
+  /* The canary PIO tree's feed (sd_mount_policy::sd_state_for_tamper over
+   * its storage lane): a card given up on after consecutive write failures
+   * is ERROR, and the lane then retries the mount every 30 s — each failed
+   * retry leaves the state at ERROR, so the feed repeats it and must not
+   * re-narrate. A successful remount is MOUNTED (recovery, silent, clears
+   * the standing story); a later failed presence probe is ABSENT. */
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);            /* boot, card in */
+  CHECK(ring_count() == 0);
+  tamper_events_watch(0, 0, 0, SD_ERROR);              /* writes gave up */
+  CHECK(ring_count() == 1);
+  CHECK(std::strcmp(last_kind(), "sd_error") == 0);
+  for (int i = 0; i < 10; ++i) tamper_events_watch(0, 0, 0, SD_ERROR);
+  CHECK(ring_count() == 1);                            /* retries: silence */
+  CHECK(std::strcmp(tamper_events_active_kind(), "sd_error") == 0);
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);            /* remount worked */
+  CHECK(ring_count() == 1);
+  CHECK(std::strcmp(tamper_events_active_kind(), "") == 0);
+  tamper_events_watch(0, 0, 0, SD_ABSENT);             /* probe failed */
+  CHECK(ring_count() == 2);
+  CHECK(std::strcmp(last_kind(), "sd_remove") == 0);
+  CHECK(csi_bundler_open_count() == 0);
+
+  /* Booting without a card, then one inserted and adopted by the lane's
+   * background remount: a configuration and a recovery, never a tamper. */
+  fresh();
+  tamper_events_watch(0, 0, 0, SD_ABSENT);
+  tamper_events_watch(0, 0, 0, SD_MOUNTED);
+  CHECK(ring_count() == 0);
 }
 
 static void test_the_standing_condition_speaks_the_present_tense() {
@@ -220,6 +253,7 @@ int main() {
   test_mounted_to_error_is_sd_error();
   test_recovery_is_not_a_tamper();
   test_constant_absent_feed_never_emits_sd_kinds();
+  test_canary_storage_lane_story();
   test_the_standing_condition_speaks_the_present_tense();
 
   if (g_failures == 0) {

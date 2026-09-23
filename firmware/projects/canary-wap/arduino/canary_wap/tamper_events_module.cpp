@@ -54,10 +54,11 @@ const csi_module_t MODULE = {
 
 /* Mirrors the canary-wap sketch's hardware_state.h SdState numeric values
  * (that header defines the sketch's globals and is single-include by
- * design, so the values are pinned here instead of included). A host with
- * no SD state machine feeds one of these as a constant — the watcher
- * adopts it on the first call and never emits an SD kind.
- * ABSENT=0 / MOUNTED=1 / ERROR=2. */
+ * design, so the values are pinned here instead of included); the canary
+ * PIO tree produces the same numbers from common/storage/sd_mount_policy.h
+ * (SD_TAMPER_*). A host with no SD state machine feeds one of these as a
+ * constant — the watcher adopts it on the first call and never emits an
+ * SD kind. ABSENT=0 / MOUNTED=1 / ERROR=2. */
 constexpr uint8_t kSdAbsent  = 0;
 constexpr uint8_t kSdMounted = 1;
 constexpr uint8_t kSdError   = 2;

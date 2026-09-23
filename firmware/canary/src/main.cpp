@@ -1674,14 +1674,24 @@ void loop() {
   // saver. On builds where the CSI pipeline never initializes, the
   // module's bounded retry gives up quietly.
   //
-  // sd_state: we feed the module's pinned ABSENT (0) constant, so the
-  // watcher adopts it on the first call and never emits an SD kind on this
-  // host. The storage lane DOES have a hot-swap machine now (F2:
-  // storage_periodic_check + the sd_mount_policy remount path), but wiring
-  // its state into tamper narration would add sd_error/sd_remove event
-  // kinds to this host's vocabulary — a dictionary decision, not a data
-  // feed (backlog F25). Until that call is made, canary-wap remains the
-  // only host narrating SD stories.
+  // sd_state: the storage lane's live three-state (storage_sd_state(),
+  // sd_mount_policy::sd_state_for_tamper). MOUNTED while the card is
+  // mounted; ERROR once noteWriteFailure() gave up on a mounted card after
+  // consecutive write failures; ABSENT otherwise (the periodic presence
+  // probe failed, or no card was ever mounted). Those are the canary-wap's
+  // own two triggers (hardware_state.h SD_ERROR / card gone), so the
+  // watcher narrates sd_error on MOUNTED -> ERROR and sd_remove on
+  // MOUNTED -> ABSENT here exactly as it does there, and booting without a
+  // card is adopted silently. Both kinds are in this host's vocabulary
+  // (spec/witness_dictionary.json system_integrity_kinds, gated by
+  // scripts/lint_dictionary_sync.py). A build without FEATURE_SD_STORAGE
+  // feeds the pinned ABSENT constant and never emits an SD kind.
+  //
+  // Where the rows go: a system.integrity commit reaches this host's RAM
+  // ring and whatever csi_event_on_committed override the build links.
+  // Home Assistant's SD Removed sensor also reads `sd_mounted` from the
+  // health payload (mqtt_publish_health_update), which does not depend on
+  // that override.
   {
     static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
     // Same crash set as canary-wap's hardware_state.h reset_is_crash():
@@ -1694,10 +1704,15 @@ void loop() {
     const bool rst_brownout = (s_boot_rst == ESP_RST_BROWNOUT);
     const bool rst_crash = (s_boot_rst == ESP_RST_PANIC) ||
                            rst_watchdog || rst_brownout;
+#if FEATURE_SD_STORAGE
+    const uint8_t sd_state = storage_sd_state();
+#else
+    const uint8_t sd_state = 0u;  // pinned ABSENT: no SD lane in this build
+#endif
     securacv_csi_modules_tamper_watch(rst_crash ? 1 : 0,
                                       rst_watchdog ? 1 : 0,
                                       rst_brownout ? 1 : 0,
-                                      /*sd_state: pinned ABSENT*/ 0u);
+                                      sd_state);
   }
 
 #if FEATURE_ACOUSTIC_EVENTS
@@ -2185,6 +2200,17 @@ static void mqtt_publish_health_update() {
   doc["http_requests"] = health.http_requests;
   doc["sd_writes"] = health.sd_writes;
   doc["sd_errors"] = health.sd_errors;
+#if FEATURE_SD_STORAGE
+  /* HA's SD Removed sensor reads `sd_mounted` (binary_sensor.py). Sent only
+   * once a card has mounted this boot: booting without a card is a
+   * configuration, not a removal — the same adopt-silently rule the
+   * system.integrity watcher follows — and an absent key reads as mounted
+   * on the HA side. After that, it is the live mount state, so a pulled or
+   * failed card lights the sensor and a remount clears it. */
+  if (storage_mount_generation() > 0) {
+    doc["sd_mounted"] = storage_is_mounted();
+  }
+#endif
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["tamper_detected"] = device.tamper_active;

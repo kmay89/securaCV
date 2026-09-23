@@ -504,6 +504,9 @@ def main() -> int:
     # --- The normative prose must name the same nine kinds as the dictionary ---
     _check_event_contract(ev_ids)
 
+    # --- system.integrity tamper kinds (firmware module + HA + narrations) ---
+    _check_integrity_kinds(d["known_divergences"]["tamper_vocabularies"], const_py)
+
     if ERRORS:
         print("Witness Dictionary drift detected "
               "(edit spec/witness_dictionary.json first, then every copy below):\n", file=sys.stderr)
@@ -559,6 +562,194 @@ def _check_event_contract(ev_ids: list) -> None:
         if sorted(s11) != expected:
             err(f"[drift] {rel} §11 table {sorted(s11)} != dictionary "
                 f"event_types {expected}")
+
+
+# The system.integrity csi_event module is the one firmware producer of the
+# tamper-topic `type` words: canary-wap's csi_mqtt bridges every commit onto
+# securacv/<id>/tamper as {"type": <kind>}, and the canary PIO tree registers
+# the same module. Its kinds are HA's per-type sensor keys verbatim, so a kind
+# minted here without the dictionary (or HA) is a tamper nobody's sensor
+# lights for — and one the dictionary lists that the module cannot emit is an
+# advertised protection that never fires (const.py's own doctrine).
+_INTEGRITY_CPP = "firmware/common/csi/src/tamper_events_module.cpp"
+_INTEGRITY_H = "firmware/common/csi/src/tamper_events_module.h"
+# String literals in the module .cpp that are not kinds: the csi event
+# type_name. (The module id "system.integrity" has a dot, so the kind
+# pattern below never matches it; it is required as the anchor instead.)
+_INTEGRITY_NON_KIND_LITERALS = frozenset({"tamper"})
+_INTEGRITY_KIND_RE = re.compile(r"[a-z][a-z0-9_]*")
+# The header's doctrine table: ` *   sd_remove         — the card left ...`
+# (three spaces after the star; prose lines in the same comment have one).
+_INTEGRITY_DOCTRINE_RE = re.compile(r"^ \*   ([a-z][a-z0-9_]*)\s+—\s", re.M)
+# Where each host feeds the module a live SD state. A host whose dictionary
+# list names an SD kind must still be passing one, or the list is a promise
+# its firmware no longer keeps.
+_INTEGRITY_SD_KINDS = frozenset({"sd_error", "sd_remove"})
+_INTEGRITY_SD_FEEDS = {
+    "canary-wap": ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                   "(uint8_t)g_hw.sd_state"),
+    "canary": ("firmware/canary/src/main.cpp", "storage_sd_state()"),
+}
+
+
+def _c_code(text: str) -> str:
+    """C/C++ source with every comment blanked, string literals kept intact.
+
+    A token inside a comment is prose, not code — the module's comments quote
+    kind words while explaining them, and main.cpp's comment names the very
+    feed call it describes — so the walk skips comments while honoring string
+    and char literals (a `//` inside a string is not a comment).
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            out.append(" ")
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+        elif text[i] in "\"'":
+            quote, j = text[i], i + 1
+            while j < n and text[j] != quote:
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def _c_string_literals(text: str) -> list[str]:
+    """Double-quoted string literals of a C/C++ source, comments skipped."""
+    return re.findall(r'"((?:[^"\\\n]|\\.)*)"', _c_code(text))
+
+
+def _check_integrity_kinds(tv: dict, const_py: str) -> None:
+    """Pin tamper_vocabularies.system_integrity_kinds to every copy.
+
+    Four sides, all required to hold: (1) the module's kind literals and its
+    header's doctrine table equal the dictionary list; (2) every kind is a
+    const.py TAMPER_* value with its own per-type binary sensor and is not a
+    fenced FUTURE_TAMPER_TYPES entry; (3) every narration surface knows every
+    kind (superset — a table may narrate kinds this module never emits);
+    (4) the per-host lists partition nothing new and each host that claims an
+    SD kind still feeds the module a live SD state.
+    """
+    declared = tv.get("system_integrity_kinds")
+    if not declared:
+        err("[drift] known_divergences.tamper_vocabularies.system_integrity_kinds "
+            "is empty or missing")
+        return
+    want = set(declared)
+
+    # (1) The producer and its doctrine.
+    cpp = read(_INTEGRITY_CPP)
+    if cpp:
+        literals = _c_string_literals(cpp)
+        if "system.integrity" not in literals or "tamper" not in literals:
+            err(f"[parse] {_INTEGRITY_CPP}: no \"system.integrity\" / \"tamper\" "
+                f"literal — the module moved or was renamed; update the linter")
+        else:
+            kinds = {s for s in literals if _INTEGRITY_KIND_RE.fullmatch(s)}
+            kinds -= _INTEGRITY_NON_KIND_LITERALS
+            compare(f"{_INTEGRITY_CPP} kind literals vs dictionary "
+                    f"system_integrity_kinds", sorted(want), sorted(kinds))
+    hdr = read(_INTEGRITY_H)
+    if hdr:
+        table = _INTEGRITY_DOCTRINE_RE.findall(hdr)
+        if not table:
+            err(f"[parse] {_INTEGRITY_H}: could not find the doctrine table "
+                f"(` *   <kind> — <meaning>` lines) — update the linter if it moved")
+        else:
+            compare(f"{_INTEGRITY_H} doctrine table vs dictionary "
+                    f"system_integrity_kinds", sorted(want), table)
+
+    # (2) Home Assistant: a real TAMPER_* word, a real sensor, not fenced.
+    consts = dict(re.findall(r'^(TAMPER_[A-Z_]+)\s*=\s*"([^"]+)"', const_py, re.M))
+    if not consts:
+        err("[parse] const.py: no TAMPER_* constants — update the linter if they moved")
+        return
+    fm = re.search(r"FUTURE_TAMPER_TYPES\s*=\s*\[(.*?)\]", const_py, re.S)
+    if not fm:
+        err("[parse] const.py: FUTURE_TAMPER_TYPES not found — update the linter if it moved")
+        future = set()
+    else:
+        future = {consts.get(name, name) for name in re.findall(r"\b(TAMPER_[A-Z_]+)\b", fm.group(1))}
+    bs_rel = "custom_components/securacv/binary_sensor.py"
+    sensor_names = re.findall(
+        r"SecuraCVCanaryTamperTypeSensor\(\s*prefix,\s*device_id,\s*entry,\s*(TAMPER_[A-Z_]+)",
+        read(bs_rel))
+    if not sensor_names:
+        err(f"[parse] {bs_rel}: no SecuraCVCanaryTamperTypeSensor(...) constructions "
+            f"— update the linter if the per-type sensor list moved")
+    sensors = {consts.get(name) for name in sensor_names}
+    for kind in sorted(want):
+        if kind not in consts.values():
+            err(f"[drift] system_integrity_kinds {kind!r} is not a const.py TAMPER_* "
+                f"value — HA's per-type sensors key on those exact strings")
+        elif kind in future:
+            err(f"[drift] system_integrity_kinds {kind!r} is fenced in const.py "
+                f"FUTURE_TAMPER_TYPES — move it out when a firmware emits it")
+        if sensor_names and kind not in sensors:
+            err(f"[drift] system_integrity_kinds {kind!r} has no per-type "
+                f"SecuraCVCanaryTamperTypeSensor in {bs_rel}")
+
+    # (3) Every surface that narrates a kind in words.
+    card_rel = "custom_components/securacv/www/securacv-timeline-card.js"
+    narrations: dict[str, set] = {
+        card_rel: set(brace_object_keys(read(card_rel), r"TAMPER_KIND_METADATA\s*=\s*\{",
+                                        card_rel, "TAMPER_KIND_METADATA")),
+    }
+    voice_rel = "custom_components/securacv/voice.py"
+    vm = re.search(r"_ALERT_EVENT_TYPES\s*=\s*frozenset\((.*?)\)", read(voice_rel), re.S)
+    if not vm:
+        err(f"[parse] {voice_rel}: _ALERT_EVENT_TYPES not found — update the linter if it moved")
+    else:
+        narrations[voice_rel] = set(re.findall(r'"([a-z0-9_]+)"', vm.group(1)))
+    swift_rel = "ios/Shared/EventVocabulary.swift"
+    narrations[swift_rel] = set(swift_enum_raw_values(read(swift_rel), "TamperKind", swift_rel))
+    dash_rel = "firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h"
+    dash = read(dash_rel)
+    narrations[dash_rel] = {k for k in want if re.search(r"\b" + k + r"\s*:\s*'", dash)}
+    for rel, known in narrations.items():
+        missing = want - known
+        if missing:
+            err(f"[drift] {rel} does not narrate system_integrity_kinds "
+                f"{sorted(missing)} — every surface that names a tamper kind in "
+                f"words must know every kind the module can emit")
+
+    # (4) Hosts.
+    hosts = {h: ks for h, ks in tv.get("system_integrity_hosts", {}).items()
+             if not h.startswith("$")}
+    if not hosts:
+        err("[drift] known_divergences.tamper_vocabularies.system_integrity_hosts "
+            "is empty or missing")
+        return
+    union: set = set()
+    for host, ks in sorted(hosts.items()):
+        union |= set(ks)
+        extra = set(ks) - want
+        if extra:
+            err(f"[drift] system_integrity_hosts[{host!r}] lists {sorted(extra)}, "
+                f"which system_integrity_kinds does not")
+        if set(ks) & _INTEGRITY_SD_KINDS:
+            feed = _INTEGRITY_SD_FEEDS.get(host)
+            if feed is None:
+                err(f"[drift] system_integrity_hosts[{host!r}] lists an SD kind but "
+                    f"the linter knows no SD feed for that host — add it to "
+                    f"_INTEGRITY_SD_FEEDS")
+            elif feed[1] not in _c_code(read(feed[0])):
+                err(f"[drift] system_integrity_hosts[{host!r}] lists an SD kind but "
+                    f"{feed[0]} no longer feeds the watcher a live SD state "
+                    f"({feed[1]!r} not found)")
+    if union != want:
+        err(f"[drift] system_integrity_hosts cover {sorted(union)}, not "
+            f"system_integrity_kinds {sorted(want)} — a kind no host can emit "
+            f"is a sensor that never fires")
 
 
 # Files that BUILD or REBUILD a `securacv-canary-sig|v<n>|<kind>|...` canonical

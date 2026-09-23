@@ -131,7 +131,12 @@ instead. Boot kinds stand for the whole boot; SD kinds stand until the card
 recovers (and outrank a standing boot kind while they do). **Absent means
 nothing to confess** — a client must treat the missing field as calm, never
 as unknown-tamper, and may drive its level-triggered tamper flag from this
-field exactly as it would from an open row.
+field exactly as it would from an open row. The kind words are a gated
+vocabulary: `system_integrity_kinds` in `spec/witness_dictionary.json`,
+which `scripts/lint_dictionary_sync.py` holds equal to the module's
+literals and to Home Assistant's per-type tamper sensors. Both firmware
+trees register the module and feed it a live SD state, so both can narrate
+`sd_error` and `sd_remove`.
 
 ### `POST /api/events/dismiss`
 

@@ -463,8 +463,8 @@ existing: the integration listens for several signals no firmware publishes yet.
 
 | Tamper type | HA sensor | Firmware signal today | Status |
 |-------------|-----------|----------------------|--------|
-| `sd_remove` | SD Removed | Canary WAP publishes `sd_mounted` in health | Implemented |
-| `sd_error` | SD Error | Canary publishes `sd_errors` in health | Implemented |
+| `sd_remove` | SD Removed | canary base publishes `sd_mounted` in its MQTT health once a card has mounted this boot (a card-less boot sends no key, so it never reads as removed); Canary WAP publishes `{"type":"sd_remove"}` on the tamper topic when its `system.integrity` module sees a mounted card leave (`csi_mqtt.cpp`'s per-kind bridge). The WAP's `sd_mounted` is on its HTTP `/api/status`, not in its MQTT health | Implemented (canary base + WAP) |
+| `sd_error` | SD Error | canary base publishes `sd_errors` in health; Canary WAP publishes `{"type":"sd_error"}` on the tamper topic when its `system.integrity` module sees a mounted card fail | Implemented (canary base + WAP) |
 | `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
 | `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
 | `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot (power-events classifier, `canary_power_events.h`); Canary WAP publishes the same shape on the tamper topic when its `system.integrity` module commits a brownout-boot tamper (`csi_mqtt.cpp`'s per-kind bridge) | Implemented (canary base + WAP) |

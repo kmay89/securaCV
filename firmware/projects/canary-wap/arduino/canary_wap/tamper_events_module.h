@@ -28,7 +28,19 @@
  *   sd_remove         — the card left while mounted (MOUNTED → ABSENT)
  *
  * Kind ids verbatim from const.py — csi_mqtt republishes committed events
- * and the HA per-type sensors key on these exact strings.
+ * and the HA per-type sensors key on these exact strings. The set is a
+ * gated vocabulary: scripts/lint_dictionary_sync.py requires the kind
+ * literals in tamper_events_module.cpp and the table above to equal
+ * spec/witness_dictionary.json's system_integrity_kinds, each one a
+ * const.py TAMPER_* word with its own HA sensor. A new kind starts in the
+ * dictionary.
+ *
+ * Hosts: the canary-wap sketch feeds its SdState; the canary PIO tree
+ * feeds its storage lane's live state through
+ * sd_mount_policy::sd_state_for_tamper (ERROR is a mounted card given up
+ * on after consecutive write failures, ABSENT is anything else not
+ * mounted), so both narrate the same SD stories from the same two
+ * triggers.
  *
  * The module owns every transition rule; the host's main loop feeds it the
  * facts only that loop can see together (reset classification + SD state)
