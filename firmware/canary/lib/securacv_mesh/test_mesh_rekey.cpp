@@ -31,6 +31,9 @@
  *   8. Wrong payload lengths are ignored everywhere; secret material is
  *      wiped from the contexts after commit / install / abort.
  *   9. Payload sizes pinned (they ride inside the 128-byte envelope cap).
+ *  10. Retransmission: the initiator re-broadcasts the same OFFER every
+ *      REKEY_RETRY_MS inside the window, which heals a lost OFFER and a
+ *      lost SECRET; it stops at commit, and survivors never retransmit.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -210,7 +213,11 @@ void test_timeout_commits_and_drops_silent_peer() {
   Action inst_a = rx(ca, FP_A, MsgType::SECRET, FP_I, sec_a, t0 + 30);
   assert(rx(ci, FP_I, MsgType::ACK, FP_A, inst_a, t0 + 40).type == ActionType::NONE);
 
-  assert(mesh_rekey::tick(ci, t0 + mesh_rekey::REKEY_TIMEOUT_MS - 1).type == ActionType::NONE);
+  /* Just inside the window B is still out, so the initiator re-offers
+   * (retransmission — see test_retransmit_heals_lost_frames); it does not
+   * commit early. */
+  assert(mesh_rekey::tick(ci, t0 + mesh_rekey::REKEY_TIMEOUT_MS - 1).type ==
+         ActionType::BROADCAST_OFFER);
   Action commit = mesh_rekey::tick(ci, t0 + mesh_rekey::REKEY_TIMEOUT_MS);
   assert(commit.type == ActionType::COMMIT);
   assert(commit.dropped_count == 1);
@@ -228,6 +235,66 @@ void test_timeout_commits_and_drops_silent_peer() {
   assert(!mesh_rekey::in_progress(cb));
   assert(all_zero(cb.eph_priv, 32));
   std::printf("PASS test_timeout_commits_and_drops_silent_peer\n");
+}
+
+/* Review finding (fw-mesh #7): nothing was retransmitted, so one lost
+ * OFFER, ACCEPT or SECRET dropped a healthy survivor at 60 s. The
+ * initiator now re-broadcasts the same OFFER every REKEY_RETRY_MS. */
+void test_retransmit_heals_lost_frames() {
+  Context ci, ca, cb;
+  mesh_rekey::context_init(ci);
+  mesh_rekey::context_init(ca);
+  mesh_rekey::context_init(cb);
+  const uint32_t t0 = 0xFFFFE000u;   /* the retry clock crosses the u32 wrap too */
+  const uint32_t R = mesh_rekey::REKEY_RETRY_MS;
+  Action offer = start_ab(ci, 0x5157u, t0);
+
+  /* A hears the OFFER, B does not. A's SECRET is then lost in the air. */
+  Action acc_a = rx(ca, FP_A, MsgType::OFFER, FP_I, offer, t0 + 10);
+  Action sec_a_lost = rx(ci, FP_I, MsgType::ACCEPT, FP_A, acc_a, t0 + 20);
+  assert(sec_a_lost.type == ActionType::SEND_SECRET);
+
+  /* No retransmission before REKEY_RETRY_MS; then the SAME OFFER, once. */
+  assert(mesh_rekey::tick(ci, t0 + R - 1).type == ActionType::NONE);
+  Action again = mesh_rekey::tick(ci, t0 + R);
+  assert(again.type == ActionType::BROADCAST_OFFER);
+  assert(again.payload_len == offer.payload_len);
+  assert(std::memcmp(again.payload, offer.payload, offer.payload_len) == 0);
+  assert(mesh_rekey::tick(ci, t0 + R + 1).type == ActionType::NONE);
+
+  /* B answers the retransmission and completes. */
+  Action acc_b = rx(cb, FP_B, MsgType::OFFER, FP_I, again, t0 + R + 10);
+  assert(acc_b.type == ActionType::SEND_ACCEPT);
+  Action sec_b = rx(ci, FP_I, MsgType::ACCEPT, FP_B, acc_b, t0 + R + 20);
+  Action inst_b = rx(cb, FP_B, MsgType::SECRET, FP_I, sec_b, t0 + R + 30);
+  assert(inst_b.type == ActionType::ACK_AND_INSTALL);
+  assert(rx(ci, FP_I, MsgType::ACK, FP_B, inst_b, t0 + R + 40).type == ActionType::NONE);
+
+  /* A, still waiting for its SECRET, re-sends the SAME ACCEPT, which draws
+   * a fresh SECRET (new nonce) under the same key — and A completes. */
+  Action acc_a2 = rx(ca, FP_A, MsgType::OFFER, FP_I, again, t0 + R + 10);
+  assert(acc_a2.type == ActionType::SEND_ACCEPT);
+  assert(std::memcmp(acc_a2.payload, acc_a.payload, acc_a.payload_len) == 0);
+  Action sec_a = rx(ci, FP_I, MsgType::ACCEPT, FP_A, acc_a2, t0 + R + 50);
+  assert(sec_a.type == ActionType::SEND_SECRET);
+  assert(std::memcmp(sec_a.payload, sec_a_lost.payload, sec_a.payload_len) != 0);
+  Action inst_a = rx(ca, FP_A, MsgType::SECRET, FP_I, sec_a, t0 + R + 60);
+  assert(inst_a.type == ActionType::ACK_AND_INSTALL);
+  Action commit = rx(ci, FP_I, MsgType::ACK, FP_A, inst_a, t0 + R + 70);
+  assert(commit.type == ActionType::COMMIT);
+  assert(commit.dropped_count == 0);            /* nobody dropped */
+  assert(std::memcmp(inst_a.new_secret, commit.new_secret, 32) == 0);
+  assert(std::memcmp(inst_b.new_secret, commit.new_secret, 32) == 0);
+
+  /* Committed: no more retransmissions. A survivor never retransmits. */
+  assert(mesh_rekey::tick(ci, t0 + 3 * R).type == ActionType::NONE);
+  Context cs;
+  mesh_rekey::context_init(cs);
+  Action offer2 = start_ab(ci, 0x5158u, t0);
+  assert(rx(cs, FP_A, MsgType::OFFER, FP_I, offer2, t0).type == ActionType::SEND_ACCEPT);
+  assert(mesh_rekey::tick(cs, t0 + R).type == ActionType::NONE);
+  mesh_rekey::wipe(commit);
+  std::printf("PASS test_retransmit_heals_lost_frames\n");
 }
 
 void test_removed_device_is_excluded() {
@@ -366,6 +433,7 @@ int main() {
   test_happy_path_two_survivors();
   test_ack_gating();
   test_timeout_commits_and_drops_silent_peer();
+  test_retransmit_heals_lost_frames();
   test_removed_device_is_excluded();
   test_secret_is_per_recipient_and_authenticated();
   test_one_rotation_at_a_time();

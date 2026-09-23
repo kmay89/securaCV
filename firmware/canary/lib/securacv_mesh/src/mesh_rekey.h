@@ -37,6 +37,11 @@
  *                                                         check), THEN install + drop
  *                                                         removed_fp
  *   all survivors ACKed → COMMIT
+ *   every 5 s until then → the same OFFER again (review fix): a lost
+ *                         OFFER, ACCEPT or SECRET heals — the survivor
+ *                         answers, or re-sends its ACCEPT and draws a fresh
+ *                         SECRET. A lost ACK does not (that survivor has
+ *                         switched and drops old-id frames).
  *   60 s timeout        → COMMIT, dropping every survivor that did not ACK
  *                         (it keeps the old secret and must re-pair —
  *                         canary-wap's accepted trade-off)
@@ -77,6 +82,7 @@
 namespace mesh_rekey {
 
 constexpr uint32_t REKEY_TIMEOUT_MS = 60u * 1000u;   /* canary-wap REKEY_TIMEOUT_MS */
+constexpr uint32_t REKEY_RETRY_MS   = 5u * 1000u;    /* initiator OFFER re-broadcast */
 constexpr size_t   MAX_SURVIVORS    = 8;             /* == mesh_session::MAX_TRUSTED_PEERS */
 constexpr size_t   FP_LEN           = mesh_crypto::FINGERPRINT_LEN;
 constexpr size_t   EPH_LEN          = mesh_crypto::PUBKEY_LEN;
@@ -147,6 +153,7 @@ struct Context {
   Role     role;
   uint32_t rekey_id;
   uint32_t started_ms;
+  uint32_t last_offer_ms;            /* initiator: last OFFER (re)broadcast */
   uint8_t  eph_pub [EPH_LEN];
   uint8_t  eph_priv[mesh_crypto::PRIVKEY_LEN];
   uint8_t  removed_fp[FP_LEN];
@@ -190,8 +197,10 @@ Action receive(Context&      ctx,
                size_t        payload_len,
                uint32_t      now_ms);
 
-/* Timeout driver: initiator → COMMIT (dropping the non-ACKed) once
- * REKEY_TIMEOUT_MS has passed; survivor → ABORT. NONE otherwise. */
+/* Timeout + retransmit driver. Once REKEY_TIMEOUT_MS has passed:
+ * initiator → COMMIT (dropping the non-ACKed), survivor → ABORT. Before
+ * that, an initiator gets BROADCAST_OFFER — the same OFFER again — every
+ * REKEY_RETRY_MS. NONE otherwise. */
 Action tick(Context& ctx, uint32_t now_ms);
 
 }  /* namespace mesh_rekey */

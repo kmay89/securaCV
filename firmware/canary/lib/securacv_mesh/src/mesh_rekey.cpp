@@ -107,6 +107,19 @@ Action commit(Context& ctx) {
   return a;
 }
 
+/* The initiator's OFFER, rebuilt from the context — the first broadcast
+ * and every retransmission carry the same bytes. */
+Action offer_action(const Context& ctx) {
+  Action a = none();
+  a.type = ActionType::BROADCAST_OFFER;
+  a.msg_type = MsgType::OFFER;
+  put_u32(a.payload, ctx.rekey_id);
+  memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
+  memcpy(a.payload + REKEY_ID_LEN + EPH_LEN, ctx.removed_fp, FP_LEN);
+  a.payload_len = OFFER_LEN;
+  return a;
+}
+
 Action on_offer(Context& ctx, const uint8_t my_fp[FP_LEN],
                 const uint8_t sender_fp[FP_LEN],
                 const uint8_t* p, size_t len, uint32_t now_ms) {
@@ -292,15 +305,8 @@ Action start(Context&      ctx,
     memcpy(ctx.survivors[i].fp, survivor_fps[i], FP_LEN);
   }
   ctx.survivor_count = n_survivors;
-
-  Action a = none();
-  a.type = ActionType::BROADCAST_OFFER;
-  a.msg_type = MsgType::OFFER;
-  put_u32(a.payload, rekey_id);
-  memcpy(a.payload + REKEY_ID_LEN, ctx.eph_pub, EPH_LEN);
-  memcpy(a.payload + REKEY_ID_LEN + EPH_LEN, removed_fp, FP_LEN);
-  a.payload_len = OFFER_LEN;
-  return a;
+  ctx.last_offer_ms  = now_ms;
+  return offer_action(ctx);
 }
 
 Action receive(Context&      ctx,
@@ -322,12 +328,26 @@ Action receive(Context&      ctx,
 
 Action tick(Context& ctx, uint32_t now_ms) {
   if (!in_progress(ctx)) return none();
-  if ((uint32_t)(now_ms - ctx.started_ms) < REKEY_TIMEOUT_MS) return none();
-  if (ctx.role == Role::INITIATOR) return commit(ctx);
-  Action a = none();
-  a.type = ActionType::ABORT;
-  context_init(ctx);
-  return a;
+  if ((uint32_t)(now_ms - ctx.started_ms) >= REKEY_TIMEOUT_MS) {
+    if (ctx.role == Role::INITIATOR) return commit(ctx);
+    Action a = none();
+    a.type = ActionType::ABORT;
+    context_init(ctx);
+    return a;
+  }
+  /* Initiator inside the window: re-broadcast the same OFFER every
+   * REKEY_RETRY_MS. While the role is INITIATOR some survivor has not
+   * ACKed yet (the last ACK commits at once), and the same OFFER heals
+   * each loss that leaves the survivor on the old opera_id: a lost OFFER
+   * (it answers now), a lost ACCEPT (it re-sends the same one) and a lost
+   * SECRET (its repeated ACCEPT draws a fresh SECRET). A lost ACK does not
+   * heal — that survivor already switched and drops old-id frames. */
+  if (ctx.role == Role::INITIATOR &&
+      (uint32_t)(now_ms - ctx.last_offer_ms) >= REKEY_RETRY_MS) {
+    ctx.last_offer_ms = now_ms;
+    return offer_action(ctx);
+  }
+  return none();
 }
 
 }  /* namespace mesh_rekey */

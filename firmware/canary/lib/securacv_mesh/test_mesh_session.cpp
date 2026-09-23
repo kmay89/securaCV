@@ -1926,6 +1926,20 @@ void test_rekey_session_as_initiator() {
   assert(parse_session_frame(g_outs[0].bytes, a_pub, &hdr, &pl, &plen));
   assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_OFFER));
   assert(std::memcmp(hdr.opera_id, old_id, sizeof(old_id)) == 0);
+  const std::vector<uint8_t> offer_pl(pl, pl + plen);
+
+  /* Nothing heard for REKEY_RETRY_MS: process() re-broadcasts the same
+   * OFFER (review fix — one lost frame no longer drops a survivor). */
+  g_outs.clear();
+  mesh_session::process(1000 + mesh_rekey::REKEY_RETRY_MS - 1);
+  assert(g_outs.empty());
+  mesh_session::process(1000 + mesh_rekey::REKEY_RETRY_MS);
+  assert(g_outs.size() == 1);
+  assert(parse_session_frame(g_outs[0].bytes, a_pub, &hdr, &pl, &plen));
+  assert(hdr.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::REKEY_OFFER));
+  assert(plen == offer_pl.size() && std::memcmp(pl, offer_pl.data(), plen) == 0);
+  pl = offer_pl.data();
+  plen = offer_pl.size();
 
   /* B's side of the exchange. */
   mesh_rekey::Context cb;
@@ -1985,12 +1999,13 @@ void test_rekey_session_as_initiator() {
   assert(g_alerts_rx.size() == 1);
 
   /* The outbound counter was NOT reset by the switch (receivers keep
-   * per-fingerprint counters): OFFER=1, SECRET=2, so the next is 3. */
+   * per-fingerprint counters): OFFER=1, its retransmission=2, SECRET=3,
+   * so the next is 4. */
   g_outs.clear();
   assert(mesh_session::send_tamper_alert(mesh_alert::Kind::TEMP_DRIFT, 3, 0, 2000));
   assert(g_outs.size() == 1);
   assert(parse_session_frame(g_outs[0].bytes, a_pub, &hdr, &pl, &plen));
-  assert(hdr.counter == 3);
+  assert(hdr.counter == 4);
   assert(std::memcmp(hdr.opera_id, new_id, sizeof(new_id)) == 0);
   mesh_rekey::wipe(inst);
   std::printf("PASS test_rekey_session_as_initiator\n");

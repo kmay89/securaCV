@@ -407,8 +407,13 @@ authenticated by the sender's long-term Ed25519 key:
    installs the new secret, drops `removed_fp` and re-persists.
 5. The initiator commits when every survivor has ACKed, or at 60 s; a
    survivor that did not ACK is dropped and must re-pair (canary-wap's
-   accepted trade-off). A survivor that never gets its SECRET aborts at its
-   own 60 s mark and keeps the old secret.
+   accepted trade-off). Until then it re-broadcasts the same OFFER every
+   5 s, which heals a lost OFFER, ACCEPT or SECRET (the survivor answers,
+   or repeats its ACCEPT and draws a fresh SECRET). A lost ACK does not
+   heal: that survivor has already switched and drops old-`opera_id`
+   frames, so it holds the new secret but the initiator drops it. A
+   survivor that never gets its SECRET aborts at its own 60 s mark and
+   keeps the old secret.
 
 On a switch the outbound counter is **kept**: receivers track the per-peer
 counter by fingerprint, not by `opera_id`, so resetting it would get the
