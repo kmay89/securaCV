@@ -75,11 +75,25 @@ UNPUBLISHED: dict[str, str] = {
         "port, no bench validation yet; channel turns on with a Hardware "
         "Test Report",
     # canary-sentinel (F22 Phase 1a): compiled by CI, released by nothing —
-    # flavors.json marks it `unreleased`. Its two tier products poll these
-    # until the project README's bench checklist is green.
+    # flavors.json marks it `unreleased`. One product per PRESET (the preset
+    # is compile-time data, so a shared channel would install one preset's
+    # image on another's hardware); each polls its own manifest until the
+    # project README's bench checklist is green.
     "manifest-canary-sentinel.json":
-        "canary-sentinel Standard/Heavy (C6) — Phase 1a compile-gated, not "
+        "canary-sentinel config.h fallback for an env that names no product — "
+        "every sentinel env names its own; no release target",
+    "manifest-canary-sentinel-door.json":
+        "canary-sentinel door preset (C6 Standard) — Phase 1a compile-gated, "
+        "not released; channel turns on when the bench checklist is green",
+    "manifest-canary-sentinel-window.json":
+        "canary-sentinel window preset (C6 Standard) — not built in CI, not "
         "released; channel turns on when the bench checklist is green",
+    "manifest-canary-sentinel-hallway.json":
+        "canary-sentinel hallway preset (C6 Standard) — not built in CI, not "
+        "released; channel turns on when the bench checklist is green",
+    "manifest-canary-sentinel-demo-head.json":
+        "canary-sentinel perimeter-demo Heavy sensor head (C6) — not built in "
+        "CI, not released; channel turns on when the bench checklist is green",
     "manifest-canary-sentinel-lite.json":
         "canary-sentinel Lite (C3) — Phase 1a compile-gated, not released; "
         "channel turns on when the bench checklist is green",

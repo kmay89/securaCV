@@ -242,8 +242,9 @@ adapter, and give it a weight in a preset. The fusion core doesn't change.
 - **Phase 1b (bench-bound, not built):** the onboard-radio channels — WiFi-RF,
   WiFi-CSI, BLE — on the C6 alongside the STA link; the CSI HAL on the C6 is
   unproven and radio coexistence is a bench item (§9).
-- **Phase 2:** presets tuned on the bench; release envs + OTA channel once the
-  bench checklist is green.
+- **Phase 2:** presets tuned on the bench; release envs + one OTA channel per
+  preset (the envs already name a product each) once the bench checklist is
+  green.
 - **Phase 3:** Heavy dual-board demo; vision hub as an independent optical vote.
 
 ## 11. About the creator

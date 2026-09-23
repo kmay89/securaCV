@@ -71,12 +71,14 @@ static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
 // -------------------- Software updates (signed pull-OTA) --------------------
 // Shared engine at firmware/common/ota — same manifest format, signature
 // scheme and HA update-entity UX as canary-sense. A distinct OTA product per
-// tier: a Lite (C3) image must never install on a Standard (C6) head or the
-// reverse — the engine refuses on product mismatch. The lite env overrides
-// both macros via build flags.
+// PRESET, not just per tier — the preset is compile-time data, so a door image
+// must never install on a window, hallway or Heavy unit, nor a Lite (C3) image
+// on a Standard (C6) head; the engine refuses on product mismatch. Every env
+// in envs/platformio/canary-sentinel.ini sets both macros by build flag; the
+// default below is a fallback for an env that forgets, which no env uses.
 //
 // NO release publishes these manifests yet (the project is compile-gated in
-// CI, not released, until its bench checklist is green); the channel is
+// CI, not released, until its bench checklist is green); each channel is
 // declared unpublished in firmware/scripts/check_ota_channels.py, and a
 // unit's daily check finds no manifest until a release signs one.
 #ifndef SECURACV_OTA_PRODUCT

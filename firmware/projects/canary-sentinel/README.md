@@ -123,7 +123,7 @@ dedicated fusion modality is a later dictionary decision.
 | **0** | fusion brain, presets, board pins, envs | landed | `make -C firmware/tests_host` (fusion + door / mailbox-lite preset suites) |
 | **1a** | network/witness path: `sentinel` canonical + chain, MQTT events + retained state, HA discovery, signed pull-OTA, setup portal, mDNS | **compile-tested by CI** — `door` (C6, core 3) and `lite` (C3, core 2) in `firmware.yml`'s PlatformIO leg with OTA-slot size guards; **not run on hardware** | the canonical: host test + HA pytest golden vector; the copy of canary-sense's stack: `firmware/scripts/check_sentinel_net_sync.sh`; the compile: CI only (no local ESP32 toolchain) |
 | **1b** | onboard-radio channels: WiFi-RF, WiFi-CSI, BLE (and the fleet-link BLE beacon) | **bench-bound, NOT built** — radio coexistence with the STA link and the CSI HAL on the C6 are unproven | nothing yet; the adapter call sites in `src/main.cpp` are comments |
-| **2** | bench-tuned presets, release envs, OTA channel | not started | the bench checklist below, then a release |
+| **2** | bench-tuned presets, release envs, OTA channels — one per preset (each env already names its own product and manifest, all declared unpublished) | not started | the bench checklist below, then a release |
 
 Until 1b lands, a Standard build fuses PIR + radar + light and a Lite build
 PIR + light: the unwired channels never vote, which the engine treats as
@@ -206,8 +206,8 @@ Wire the onboard-radio channels — WiFi-RF and BLE counting via canary-wap's
 `rf_presence` / `common/bluetooth`, WiFi-CSI via `common/csi` — into the
 `observe()` call sites `src/main.cpp` shows as comments, prove on a real C6
 that they coexist with the STA link Phase 1a brings up (and that the CSI HAL
-works there at all), then add the fleet-link BLE beacon. Release envs and an
-OTA channel follow the bench checklist, not this list.
+works there at all), then add the fleet-link BLE beacon. Release envs and the
+per-preset OTA channels follow the bench checklist, not this list.
 
 ## Keeping the copied stack honest
 
