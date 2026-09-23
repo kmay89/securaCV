@@ -46,7 +46,11 @@ one carries a comment saying why. Run the checker locally with
   source (`cargo install <tool>`) cache the built binary under a weekly
   key — pattern in audit.yml / sbom.yml.
 - **Node** jobs installing from a lockfile use `setup-node`'s
-  `cache: npm` with an explicit `cache-dependency-path`.
+  `cache: npm` with an explicit `cache-dependency-path`. A job that runs
+  node at all (`node --test`, a `.mjs` generator, `npx`) sets it up with
+  `actions/setup-node@v7`, `node-version: "22"` (the major the page and
+  host tests run) — the image's node moves with the image, like its
+  `python3`. Not machine-checked yet; the reviewer holds it.
 - **One-off big downloads** (Emscripten SDK, Playwright Chromium) get an
   `actions/cache` entry — pinned-version keys for pinned tools, weekly
   keys for floating ones (see canary-local.yml).

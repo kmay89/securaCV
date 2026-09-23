@@ -1097,6 +1097,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version-file: pyproject.toml
+      - uses: actions/setup-node@v7
+        # Two node runs below: the inline mesh-alerts test and the
+        # `node --test` suites firmware/tests_host's Makefile runs. node from
+        # the runner image moves with the image, like its python3.
+        with:
+          node-version: "22"
 
       - name: Build + run all mesh + ble_scan host tests
         # Each test links the minimum source set it needs. ble_scout.cpp
@@ -1147,7 +1153,7 @@ jobs:
           # The canary web UI's Opera alert list (securacv_webui.cpp): each
           # alert's timestamp_ms is the receiver's uptime, shown as an age
           # against the uptime_ms of the JSON test_mesh_session pins, never
-          # as a date (F33 part 7). node is preinstalled on ubuntu-latest.
+          # as a date (F33 part 7). node is setup-node's 22 (top of the job).
           node --test firmware/tests_host/test_canary_mesh_alerts.test.js
 
           # ble_scan + ble_scout_state — pure-logic, only link
