@@ -186,6 +186,7 @@ extern "C" {
 #include "hardware_state.h"
 #include "selftest_api.h"        // GET /api/selftest — wizard pre-flight aggregator
 #include "help_qr_logic.h"       // GET /api/help-qr — verdict → Help Desk URL (pure, host-tested)
+#include "status_tier_logic.h"   // /api/status status_tier — Good / Needs attention / Action required (pure, host-tested)
 #include "data_mgmt_api.h"      // SD rotation, chain backup/restore, integrity verify
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3422,6 +3423,24 @@ static esp_err_t handle_status(httpd_req_t* req) {
 
   doc["logs_stored"] = g_health.logs_stored;
   doc["unacked_count"] = g_health.logs_unacked;
+
+  // The headline dashboard's three-tier strip (ENTERPRISE_READINESS_TODO §2):
+  // one worst-first verdict + one reason CODE; the dashboard owns the words
+  // (COPY.tier). A missing card is not a fault, an erroring one is.
+  {
+    status_tier_logic::Inputs tin;
+    tin.crypto_healthy   = g_health.crypto_healthy;
+    tin.verify_failures  = g_health.verify_failures;
+    tin.safe_mode        = g_hw.safe_mode;
+    tin.sd_card_erroring = (g_hw.sd_state == SD_ERROR);
+    tin.last_reset_crash = g_hw.last_reset_was_crash;
+    tin.min_free_heap    = g_health.min_heap;
+    tin.low_heap_floor   = sys_monitor::HEAP_WARN_BYTES;
+    tin.logs_unacked     = g_health.logs_unacked;
+    const status_tier_logic::Verdict tv = status_tier_logic::evaluate(tin);
+    doc["status_tier"]   = tv.tier_code;
+    doc["status_reason"] = tv.reason_code;
+  }
 
   // GPS position data (safe even if GPS absent - returns zeros/false).
   // We surface the motion-filtered values here so a stationary mounted

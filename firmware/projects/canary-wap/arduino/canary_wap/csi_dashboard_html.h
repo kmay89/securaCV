@@ -582,6 +582,23 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     letter-spacing: 0.02em;
   }
   .privacy-pill.warm { color: #b87800; }
+  /* Three-tier health strip under the topbar (status_tier_logic.h). Calm
+     by default; warm for "needs attention", a stronger warm for "action
+     required" — never red (the non-impersonation contract keeps alarm
+     colors for real alarms). Hidden until /api/status answers. */
+  .tier-strip {
+    display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+    margin: 6px max(env(safe-area-inset-left), 18px) 0 max(env(safe-area-inset-right), 18px);
+    padding: 8px 12px; border-radius: 12px;
+    font-size: 13px; color: var(--fg-mute);
+    background: var(--bg-veil);
+    border: 1px solid var(--hairline);
+  }
+  .tier-strip[hidden] { display: none; }
+  .tier-strip .tier-label { font-weight: 600; }
+  .tier-strip[data-tier="needs_attention"] .tier-label { color: #b87800; }
+  .tier-strip[data-tier="action_required"] { border-color: #b87800; }
+  .tier-strip[data-tier="action_required"] .tier-label { color: #8a5a00; }
   /* Mic pill: same quiet-pill look as .privacy-pill, but always in the
      topbar — the mic's on/off state is privacy-relevant and must be
      visible at a glance, not buried in a sheet. Hidden until
@@ -1022,6 +1039,14 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   </div>
 </header>
 
+<!-- Three-tier health strip: Good / Needs attention / Action required.
+     The verdict comes from /api/status (status_tier + status_reason); the
+     words live in COPY.tier. Stays hidden on a page that is not paired. -->
+<div class="tier-strip" id="tierStrip" role="status" aria-live="polite" hidden>
+  <span class="tier-label" id="tierLabel"></span>
+  <span class="tier-msg" id="tierMsg"></span>
+</div>
+
 <main>
   <section class="hero">
     <div class="plate">
@@ -1359,6 +1384,26 @@ const COPY = {
   },
   today: {
     empty: "Quiet so far today. The canary is perched, head cocked.",
+  },
+  tier: {
+    /* The health strip. Codes come from status_tier_logic.h (worst first);
+     * a new code there needs a row here. The three labels are the wording
+     * the enterprise checklist asked for — a maintainer's call to change. */
+    labels: {
+      good:            "Good",
+      needs_attention: "Needs attention",
+      action_required: "Action required",
+    },
+    reasons: {
+      ok:         "Everything is working.",
+      signing:    "The canary can't seal its records right now. Restart it. If this keeps happening, ask for help.",
+      verify:     "A saved record failed its check. Ask for help before you rely on it.",
+      safe_mode:  "The canary started in safe mode after a problem, so some parts are off. Restart it.",
+      sd_card:    "The memory card isn't working. Records stay on the canary for now.",
+      restarted:  "The canary restarted by itself. It's running again.",
+      low_memory: "The canary is short on memory. A restart will help.",
+      notes:      "The canary noted a problem you haven't looked at yet.",
+    },
   },
   what: {
     title: "What the sensor can and can't see",
@@ -3263,6 +3308,35 @@ pollLoop(pollMicPill, 5000);
  *  Best-effort: a transient network blip leaves the "canary" placeholder
  *  in place, never breaks the dashboard.
  * ──────────────────────────────────────────────────────────────────────── */
+/* ────────────────────────────────────────────────────────────────────────
+ *  Three-tier health strip (Good / Needs attention / Action required).
+ *
+ *  GET /api/status carries status_tier + status_reason, decided in the
+ *  firmware by status_tier_logic.h (host-tested, worst first). The words
+ *  live in COPY.tier. /api/status needs the pairing session, so an
+ *  unpaired page gets a plain 401 (not a lockout strike) and the strip just
+ *  stays hidden — never a guessed verdict. Checked once a minute.
+ * ──────────────────────────────────────────────────────────────────────── */
+async function refreshTier() {
+  const strip = document.getElementById('tierStrip');
+  if (!strip) return;
+  try {
+    const r = await cvFetch('/api/status', {cache: 'no-store'});
+    if (!r.ok) { strip.hidden = true; return; }
+    const j = await r.json();
+    const label = COPY.tier.labels[j.status_tier];
+    if (!label) { strip.hidden = true; return; }
+    document.getElementById('tierLabel').textContent = label;
+    document.getElementById('tierMsg').textContent = COPY.tier.reasons[j.status_reason] || '';
+    strip.dataset.tier = j.status_tier;
+    strip.hidden = false;
+  } catch {
+    strip.hidden = true;
+  }
+}
+refreshTier();
+setInterval(refreshTier, 60000);
+
 (async function fetchDeviceId() {
   try {
     const r = await cvFetch('/api/device-info', {cache: 'no-store'});
