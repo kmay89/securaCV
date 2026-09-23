@@ -89,7 +89,9 @@ typedef enum {
  *   [12..19] Breathing/micro-motion FFT, 0.1–0.5 Hz spectrum in 8 bins
  *   [20..23] RSSI stats over the window: mean, std, max, min (all int8 dBm-derived)
  *   [24..27] Frame-rate health: frames_received, frames_dropped, channel, bandwidth_code
- *   [28..31] Reserved for future features (v2.1: C6 sounding, v2.2: phase unwrap)
+ *   [28..29] Wander, jitter — written only with -DCSI_WANDER_JITTER=1
+ *            (default 0; zero otherwise). See csi_wander_jitter.h.
+ *   [30..31] Reserved for future features (v2.1: C6 sounding, v2.2: phase unwrap)
  *
  * Total: 32 bytes. No timestamps. No identifiers. No raw samples.
  */

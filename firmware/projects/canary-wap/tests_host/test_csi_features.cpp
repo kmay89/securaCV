@@ -37,6 +37,14 @@
 //      late closes hold); a 3 s stall holds the sample and the cadence
 //      counters/mean period report it; an empty timed window advances the
 //      grid with held copies that a real window then replaces.
+//   8. The reserved tail: v[30..31] read zero in every scenario, and so do
+//      v[28..29] unless the build sets CSI_WANDER_JITTER. This file is
+//      compiled twice — test_csi_features (flag off, the shipped layout)
+//      and test_csi_features_wj (-DCSI_WANDER_JITTER=1) — and the flag-on
+//      build adds the second extractor's pipeline pins: amplitude-centroid
+//      wander (v[28]) and frame-to-frame jitter (v[29]) through the REAL
+//      extractor on the same synthetic channel. Ranges and ratios only —
+//      these are synthetic frames, not a bench, and no threshold exists.
 //
 // Build/run: make (this dir). No Arduino runtime needed.
 
@@ -49,6 +57,7 @@
 
 #include "csi_features.h"
 #include "csi_types.h"
+#include "csi_wander_jitter.h"  // CSI_WANDER_JITTER's default
 
 // ── Test-controlled clock (csi_features uses millis() for time_bucket) ──
 static unsigned long g_now_ms = 0;
@@ -61,6 +70,12 @@ static uint32_t xr() {
   return g_rng;
 }
 static double frand() { return (double)(xr() % 10000u) / 10000.0; }
+// Unit Gaussian (Box-Muller). Drawn only when g_extra_noise_lsb > 0, so the
+// suites that never set it see exactly the random stream they always did.
+static double gauss() {
+  const double u1 = frand() + 1e-6, u2 = frand();
+  return std::sqrt(-2.0 * std::log(u1)) * std::cos(6.283185307179586 * u2);
+}
 
 static constexpr double kTwoPi = 6.283185307179586;
 
@@ -91,6 +106,10 @@ static Channel make_channel() {
 static bool g_agc = false;
 static constexpr double AGC_TARGET = 30.0;
 
+// Extra Gaussian I/Q noise (LSB, per component) on top of the ±1 LSB
+// quantization noise — a noisier front end, for the jitter pins.
+static double g_extra_noise_lsb = 0.0;
+
 // Build one frame of interleaved int8 I/Q.
 static void build_frame(const Channel& c, double cfo, double gain,
                         const double* extra_rot /* per-sc or null */,
@@ -110,6 +129,10 @@ static void build_frame(const Channel& c, double cfo, double gain,
   for (int k = 0; k < SC; k++) {
     double i = I[k] * s + (frand() * 2.0 - 1.0);  // ±1 LSB noise
     double q = Q[k] * s + (frand() * 2.0 - 1.0);
+    if (g_extra_noise_lsb > 0.0) {
+      i += g_extra_noise_lsb * gauss();
+      q += g_extra_noise_lsb * gauss();
+    }
     if (i > 127) i = 127;
     if (i < -128) i = -128;
     if (q > 127) q = 127;
@@ -187,6 +210,19 @@ static int max_abs(const int8_t* v, int from, int to) {
   return m;
 }
 
+// The reserved tail of the vector. v[30..31] are reserved in every build;
+// v[28..29] carry wander / jitter only when CSI_WANDER_JITTER is set, and
+// must read zero otherwise — the shipped layout.
+static void check_reserved(const csi_features_t& w) {
+  assert(w.v[30] == 0 && w.v[31] == 0 && "v[30..31] are reserved");
+#if CSI_WANDER_JITTER
+  assert(w.v[28] >= 0 && w.v[29] >= 0 && "wander and jitter are magnitudes");
+#else
+  assert(w.v[28] == 0 && w.v[29] == 0 &&
+         "v[28..29] stay zero unless CSI_WANDER_JITTER is set");
+#endif
+}
+
 // Dominant breathing bin, its score and the bin average (printed).
 static void breath_peak(const csi_features_t& w, int* bin, int* best, int* avg) {
   *bin = -1; *best = -1;
@@ -214,6 +250,7 @@ static void test_static_channel_with_cfo_reads_empty() {
   printf("    static+CFO: amp=%d dop=%d\n", amp, dop);
   assert(amp <= 4 && "static channel must not read as amplitude motion");
   assert(dop <= 4 && "random CFO must cancel in the rotation estimator");
+  check_reserved(w);
   printf("ok  static channel + random CFO reads as empty\n");
 }
 
@@ -228,6 +265,7 @@ static void test_agc_flicker_reads_empty() {
   const int amp = max_abs(w.v, 0, 8);
   printf("    AGC flicker: amp=%d\n", amp);
   assert(amp <= 4 && "per-packet gain flicker must normalize away");
+  check_reserved(w);
   printf("ok  AGC gain flicker reads as empty\n");
 }
 
@@ -261,6 +299,7 @@ static void test_motion_is_detected() {
   assert(dop >= 15 && "moving scatterer must show band rotation");
   assert(dop >= dop_lower &&
          "the moving half of the spectrum must respond at least as hard");
+  check_reserved(w);
   printf("ok  motion detected through CFO (amp=%d, rotation=%d)\n", amp, dop);
 }
 
@@ -301,6 +340,7 @@ static void test_breathing_bin_and_min_windows() {
   assert(best >= 25 && "breathing peak must clear the lock threshold range");
   assert(best >= avg + avg / 2 &&
          "peak must dominate 1.5x avg (core_breathing's gate)");
+  check_reserved(w);
   printf("ok  0.25 Hz breathing lands in bin 3 through the AGC (score=%d, avg=%d)\n",
          best, avg);
 }
@@ -323,6 +363,7 @@ static void test_gain_flicker_is_not_breathing() {
   const int m = max_abs(w.v, 12, 20);
   printf("    80 s of gain flicker: max breathing bin=%d\n", m);
   assert(m <= 5 && "per-packet gain flicker must not read as breathing");
+  check_reserved(w);
   printf("ok  sustained gain flicker is not breathing\n");
 }
 
@@ -410,6 +451,7 @@ static void test_cadence_700ms_merges_early_windows() {
   breath_peak(w, &best_bin, &best, &avg);
   assert(best_bin == 2 && "12 BPM must land in bin 2 at a 700 ms cadence");
   assert(best >= 25 && best >= avg + avg / 2);
+  check_reserved(w);
   printf("ok  700 ms cadence still reads 12 BPM in bin 2 (score=%d)\n", best);
 }
 
@@ -435,6 +477,7 @@ static void test_cadence_1300ms_holds_across_late_windows() {
   breath_peak(w, &best_bin, &best, &avg);
   assert(best_bin == 2 && "12 BPM must land in bin 2 at a 1300 ms cadence");
   assert(best >= 25 && best >= avg + avg / 2);
+  check_reserved(w);
   printf("ok  1300 ms cadence still reads 12 BPM in bin 2 (score=%d)\n", best);
 }
 
@@ -475,7 +518,206 @@ static void test_stall_holds_and_reports() {
   printf("ok  a stall holds the envelope and the cadence stats report it\n");
 }
 
+#if CSI_WANDER_JITTER
+// ── The second extractor through the real pipeline (flag-on build) ──────
+// v[28] wander: σ of the per-frame amplitude centroid, 64 per tone.
+// v[29] jitter: mean frame-to-frame |Δ| per tone, 128 ≙ the row mean.
+// Each pin is a range or a ratio with room around what this fixture reads
+// (the number in parentheses in each message). The bounds were checked
+// against 400 other seeds of the fixture's PRNG, so a harmless change to
+// the random stream does not trip them. Synthetic frames only: no bench,
+// no threshold, and no module reads either slot.
+
+// Wander of a channel that is not moving (still, gain flicker, static
+// tilt). The fixture reads 1–5 across seeds; the moving scatterer ≥ 60.
+static constexpr int WJ_STILL_WANDER_MAX = 6;
+
+// A still room: static channel, random per-frame CFO, a fixed link gain.
+static csi_features_t wj_still(double gain) {
+  return run_window(make_channel(), 20,
+    [gain](int, double* cfo, double* g, const double**, const double**) {
+      *cfo = frand() * kTwoPi;
+      *g = gain;
+    });
+}
+
+// A spectrum that tilts progressively across the window: the amplitude
+// centroid walks steadily from the first frame to the last. Slow and
+// smooth — what wander is for, and what jitter should not see.
+static csi_features_t wj_drift(int frames, double depth, double gain) {
+  static double scale[SC];
+  return run_window(make_channel(), frames,
+    [frames, depth, gain](int f, double* cfo, double* g, const double**,
+                          const double** sc) {
+      *cfo = frand() * kTwoPi;
+      *g = gain;
+      const double t = (double)f / (double)(frames - 1);
+      for (int k = 0; k < SC; k++) {
+        scale[k] = 1.0 + depth * t * ((k - 25.5) / 25.5);
+      }
+      *sc = scale;
+    });
+}
+
+// Strong-link still-room jitter (max over 5 windows) and the σ = 4 LSB
+// noise response — the two references the weak-link pin reads against.
+static int g_wj_floor_v29 = -1;
+static int g_wj_sigma4_v29 = -1;
+
+static void test_wj_still_room_floor() {
+  csi_features::reset_history();
+  int w_max = 0, j_max = 0;
+  for (int r = 0; r < 5; r++) {
+    const csi_features_t w = wj_still(1.0);
+    check_reserved(w);
+    if (w.v[28] > w_max) w_max = w.v[28];
+    if (w.v[29] > j_max) j_max = w.v[29];
+  }
+  printf("    still+CFO x5: max wander=%d max jitter=%d\n", w_max, j_max);
+  assert(w_max <= WJ_STILL_WANDER_MAX && "a still room must not wander (3)");
+  assert(j_max <= 4 && "a still strong link has a low jitter floor (3)");
+  g_wj_floor_v29 = j_max;
+  printf("ok  wander/jitter: a still room reads its floor through CFO\n");
+}
+
+static void test_wj_agc_flicker() {
+  csi_features::reset_history();
+  const csi_features_t w = run_window(make_channel(), 20,
+    [](int, double* cfo, double* gain, const double**, const double**) {
+      *cfo  = frand() * kTwoPi;
+      *gain = 0.7 + 0.6 * frand();  // ±30 % per-packet AGC flicker
+    });
+  check_reserved(w);
+  printf("    AGC flicker: wander=%d jitter=%d\n", w.v[28], w.v[29]);
+  assert(w.v[28] <= WJ_STILL_WANDER_MAX &&
+         "per-packet gain must not move the centroid (2)");
+  printf("ok  wander: AGC gain flicker normalizes away\n");
+}
+
+static void test_wj_motion() {
+  csi_features::reset_history();
+  static double extra[SC];
+  static double scale[SC];
+  const csi_features_t w = run_window(make_channel(), 20,
+    [](int f, double* cfo, double*, const double** ex, const double** sc) {
+      *cfo = frand() * kTwoPi;
+      for (int k = 0; k < SC; k++) {  // test_motion_is_detected's scatterer
+        if (k >= SC / 2) {
+          extra[k] = 0.35 * f;
+          scale[k] = 1.0 + 0.35 * std::sin(0.9 * f + k * 0.2);
+        } else {
+          extra[k] = 0.0;
+          scale[k] = 1.0;
+        }
+      }
+      *ex = extra;
+      *sc = scale;
+    });
+  check_reserved(w);
+  printf("    moving scatterer: wander=%d jitter=%d\n", w.v[28], w.v[29]);
+  assert(w.v[28] >= 30 && "a moving scatterer must wander (61)");
+  assert(w.v[29] >= 8 && "a moving scatterer must jitter (14)");
+  printf("ok  wander/jitter: the moving scatterer reads on both\n");
+}
+
+static void test_wj_drift_scales_wander_not_jitter() {
+  csi_features::reset_history();
+  const double depth[3] = {0.10, 0.20, 0.40};
+  int wv[3], jv[3];
+  for (int i = 0; i < 3; i++) {
+    const csi_features_t w = wj_drift(20, depth[i], 1.0);
+    check_reserved(w);
+    wv[i] = w.v[28];
+    jv[i] = w.v[29];
+    printf("    drift depth %.2f: wander=%d jitter=%d\n", depth[i], wv[i], jv[i]);
+    assert(jv[i] <= g_wj_floor_v29 + 2 &&
+           "a slow drift must leave jitter at its floor (3)");
+  }
+  for (int i = 1; i < 3; i++) {
+    const double r = (double)wv[i] / (double)wv[i - 1];
+    assert(r >= 1.6 && r <= 2.4 &&
+           "doubling the drift must about double the wander (20/38/74)");
+  }
+  printf("ok  wander scales with the drift; jitter stays at its floor\n");
+}
+
+static void test_wj_noise_scales_jitter() {
+  csi_features::reset_history();
+  const double sigma[4] = {1.0, 2.0, 4.0, 8.0};
+  int jv[4];
+  for (int i = 0; i < 4; i++) {
+    g_extra_noise_lsb = sigma[i];
+    const csi_features_t w = wj_still(1.0);
+    g_extra_noise_lsb = 0.0;
+    check_reserved(w);
+    jv[i] = w.v[29];
+    printf("    I/Q noise sigma %.0f LSB: wander=%d jitter=%d\n",
+           sigma[i], w.v[28], jv[i]);
+  }
+  for (int i = 1; i < 4; i++) {
+    assert(jv[i] > jv[i - 1] && "jitter must rise with the noise");
+    assert(jv[i] * 10 >= jv[i - 1] * 14 &&
+           "doubling the noise must raise jitter >= 1.4x (6/10/20/34)");
+  }
+  assert(jv[3] >= 4 * jv[0] && "8x the noise must read >= 4x the jitter (34 vs 6)");
+  g_wj_sigma4_v29 = jv[2];
+  printf("ok  jitter tracks the front-end noise\n");
+}
+
+static void test_wj_static_tilt_is_not_wander() {
+  csi_features::reset_history();
+  static double scale[SC];
+  for (int k = 0; k < SC; k++) scale[k] = 1.0 + 0.40 * ((k - 25.5) / 25.5);
+  const csi_features_t w = run_window(make_channel(), 20,
+    [](int, double* cfo, double*, const double**, const double** sc) {
+      *cfo = frand() * kTwoPi;
+      *sc = scale;
+    });
+  check_reserved(w);
+  printf("    static tilt 0.40: wander=%d jitter=%d\n", w.v[28], w.v[29]);
+  assert(w.v[28] <= WJ_STILL_WANDER_MAX &&
+         "a tilted but still profile is not motion (3)");
+  printf("ok  wander: position is not motion\n");
+}
+
+static void test_wj_weak_link() {
+  csi_features::reset_history();
+  assert(g_wj_floor_v29 > 0 && g_wj_sigma4_v29 > 0);
+  const csi_features_t still = wj_still(0.35);
+  check_reserved(still);
+  const csi_features_t strong = wj_drift(20, 0.20, 1.0);
+  const csi_features_t weak   = wj_drift(20, 0.20, 0.35);
+  printf("    weak link (0.35x): still jitter=%d (strong floor %d, sigma4 %d);"
+         " drift wander weak=%d strong=%d\n", still.v[29], g_wj_floor_v29,
+         g_wj_sigma4_v29, weak.v[28], strong.v[28]);
+  // The floor rises on a weak link (quantization is a bigger share of a
+  // normalized row) — but stays below a genuinely noisy front end.
+  assert(still.v[29] >= 2 * g_wj_floor_v29 &&
+         "a weak link's still-room jitter sits well above the strong floor (9 vs 3)");
+  assert(still.v[29] < g_wj_sigma4_v29 &&
+         "and below the sigma = 4 LSB noise response (20)");
+  // Wander reads normalized rows, so the same drift reads about the same.
+  assert(weak.v[28] * 4 >= strong.v[28] * 3 && weak.v[28] * 4 <= strong.v[28] * 5 &&
+         "wander is gain-invariant within +-25% (42 vs 37)");
+  printf("ok  a weak link raises the jitter floor, not the wander\n");
+}
+
+static void test_wj_short_window() {
+  csi_features::reset_history();
+  const csi_features_t w20 = wj_drift(20, 0.20, 1.0);
+  const csi_features_t w10 = wj_drift(10, 0.20, 1.0);
+  check_reserved(w10);
+  printf("    drift 0.20: 20 frames wander=%d, 10 frames wander=%d\n",
+         w20.v[28], w10.v[28]);
+  assert(w10.v[28] * 100 >= w20.v[28] * 80 && w10.v[28] * 100 <= w20.v[28] * 120 &&
+         "a degraded 10-frame window reads the same drift within 20% (39 vs 38)");
+  printf("ok  wander holds on a 10-frame window\n");
+}
+#endif  // CSI_WANDER_JITTER
+
 int main() {
+  assert(csi_features::wander_jitter_enabled() == (CSI_WANDER_JITTER != 0));
+  printf("    CSI_WANDER_JITTER=%d\n", (int)CSI_WANDER_JITTER);
   test_static_channel_with_cfo_reads_empty();
   test_agc_flicker_reads_empty();
   test_motion_is_detected();
@@ -486,6 +728,16 @@ int main() {
   test_cadence_700ms_merges_early_windows();
   test_cadence_1300ms_holds_across_late_windows();
   test_stall_holds_and_reports();
+#if CSI_WANDER_JITTER
+  test_wj_still_room_floor();
+  test_wj_agc_flicker();
+  test_wj_motion();
+  test_wj_drift_scales_wander_not_jitter();
+  test_wj_noise_scales_jitter();
+  test_wj_static_tilt_is_not_wander();
+  test_wj_weak_link();
+  test_wj_short_window();
+#endif
   printf("test_csi_features: all tests passed\n");
   return 0;
 }
