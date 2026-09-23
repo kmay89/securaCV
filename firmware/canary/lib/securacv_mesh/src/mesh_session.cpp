@@ -631,9 +631,14 @@ void process(uint32_t now_ms) {
  *                      s_device_pub) truncated. Cached at first
  *                      set_opera_secret() since device_pub doesn't
  *                      change post-init().
- *   s_outbound_counter — monotonic per-process. PR 5c-3 keeps it in
- *                      RAM only; PR 5c-4 will persist to NVS so a
- *                      reboot doesn't replay-reset counters at peers.
+ *   s_outbound_counter — monotonic per-process, RAM only — NOT
+ *                      persisted. Receivers DO persist their per-peer
+ *                      last_counter (mesh_state replay_ctrs), so after
+ *                      this device reboots, a peer that restored a
+ *                      higher last_counter drops this device's frames as
+ *                      replays until the counter climbs past it. Open
+ *                      item (F14 report): persist or epoch the outbound
+ *                      counter.
  * ────────────────────────────────────────────────────────────────────────── */
 
 

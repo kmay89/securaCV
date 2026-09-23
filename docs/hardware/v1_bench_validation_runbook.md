@@ -161,6 +161,17 @@ Then enable flash encryption on all fleet boards and proceed.
 fresh for ≥30 minutes; pulling one board's power flips it to *stale* → *offline*
 on the survivor within the spec thresholds (90 s / 300 s).
 
+- [ ] **canary-wap boards:** pairing frames now carry a 1-byte type prefix
+  (`MSG_PAIR_*`, 8..12) and are classified before the 102-byte signed-frame
+  gate (`mesh_pair_frame.h`, F14). Before that fix no WAP pairing frame was
+  ever delivered, so this is the first bench run that can reach the code
+  screens at all.
+- [ ] **Both screens show the same 6-digit code.** A mismatch is not user
+  error: it points at the ephemeral-key derivation (both trees generate the
+  pairing ephemeral keys as Ed25519 keys and feed them to Curve25519, which
+  the host tests cannot see — their X25519 is a symmetric shim). Record it
+  against that open item rather than retrying.
+
 ### C3. Mesh behavior
 
 | Test | Expected |

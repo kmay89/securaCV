@@ -3,31 +3,32 @@
  * Version 0.1.0
  *
  * Singleton glue layer that wires mesh_transport (raw ESP-NOW recv/send)
- * to mesh_pairing (pure state machine) and to whatever else lives on top
- * of the mesh in future slices (PR 3 multilink fusion, etc.).
+ * to mesh_pairing (pure state machine) and to the opera-authenticated
+ * traffic on top of it: beacon events, channel lock, hub election,
+ * tamper alerts and leave (this file), each with its payload codec in
+ * its own pure module (mesh_beacon, mesh_channel_hop, mesh_hub_election,
+ * mesh_alert).
  *
  * Wire envelope:
  *   • Every mesh-session frame is prefixed with a 1-byte MsgType.
  *   • Pair frames (MsgType 0..4) carry only the raw PairXxxPayload after
  *     the prefix — pairing is a pre-membership flow and does not need
- *     the opera_id/sender_fp/counter/signature outer header that
- *     opera-authenticated traffic will use in a future slice.
- *   • Reserved MsgType values 16+ are for opera-authenticated traffic
- *     (heartbeat, alerts, witness records) which will land in PR 2g
- *     with the full MessageHeader format.
+ *     the opera_id/sender_fp/counter/signature outer header.
+ *   • MsgType values 16+ are opera-authenticated traffic: the prefix byte
+ *     is followed by a full signed mesh_envelope (header + payload +
+ *     Ed25519 signature), verified in on_opera_frame against the
+ *     sender's TrustedPeer pubkey, opera_id and replay counter.
  *
  * Wire-compat note:
- *   • canary-wap sends pair frames raw (no envelope) — see
- *     mesh_network.cpp:1234, 778, 817 — but its recv path rejects
- *     anything shorter than the 102-byte header+signature minimum
- *     (mesh_network.cpp:432). That is an existing canary-wap bug:
- *     canary-wap pair frames never actually reach handle_pair_*.
- *     Rather than inherit a non-functional wire format, this bridge
- *     uses a 1-byte MsgType prefix. Documented divergence — see
- *     docs/audit/mesh_and_chirp_audit_v1.md (the existing audit
- *     covered the chirp v0.1→v0.2 break; this is an analogous
- *     pairing fix that will land separately in canary-wap when the
- *     two lanes are consolidated.
+ *   • canary-wap used to send its pair frames raw (no prefix, no
+ *     envelope) while its receive path dropped anything shorter than the
+ *     102-byte header+signature minimum, so its pair frames never reached
+ *     handle_pair_*. F14 fixed that in canary-wap the same way this bridge
+ *     always worked: a 1-byte type prefix, classified before the gate
+ *     (canary_wap/mesh_pair_frame.h, host-tested). The trees still do not
+ *     pair with EACH OTHER — canary-wap's pair types are 8..12, ours 0..4,
+ *     and the signed-envelope version and type numbering differ too (see
+ *     mesh_envelope.h "Layout parity").
  *
  * Layering:
  *   integration_layer (canary main.cpp, host tests)
@@ -70,8 +71,8 @@ namespace mesh_session {
 
 /* MsgType values on the wire. The byte at offset 0 of every mesh_session
  * frame is one of these. Values 0..4 align with mesh_pairing::MsgType
- * exactly so a forwarding switch is trivial. Values 16+ are reserved
- * for opera-authenticated traffic in PR 2g. */
+ * exactly so a forwarding switch is trivial. Values 16+ are
+ * opera-authenticated traffic — mesh_envelope::MsgType. */
 enum class MsgType : uint8_t {
   PAIR_DISCOVER = 0,
   PAIR_OFFER    = 1,
@@ -79,7 +80,7 @@ enum class MsgType : uint8_t {
   PAIR_CONFIRM  = 3,
   PAIR_COMPLETE = 4,
   /* 5..15 reserved for additional pairing extensions. */
-  /* 16+ reserved for opera-authenticated traffic (PR 2g). */
+  /* 16+ is opera-authenticated traffic: see mesh_envelope::MsgType. */
 };
 
 constexpr size_t MSGTYPE_HEADER_LEN = 1;
@@ -92,8 +93,9 @@ constexpr size_t MAX_SESSION_FRAME =
 
 /* Fires when pairing has SUCCEEDED. On the joiner side, `opera_secret`
  * is the freshly-decrypted secret (32 bytes) — the integration layer
- * MUST persist it to NVS within this callback (PR 2g will add the
- * audit-O2 flash-encryption gate). On the initiator side, `opera_secret`
+ * MUST persist it to NVS within this callback, through
+ * mesh_state::save_opera_secret(), which enforces the audit-O2
+ * flash-encryption gate. On the initiator side, `opera_secret`
  * is nullptr (the initiator already had the secret; pairing only
  * distributed it to the joiner).
  *
@@ -197,10 +199,10 @@ void process(uint32_t now_ms);
  * mesh_session derives + caches the 16-byte opera_id and the 8-byte
  * sender fingerprint; the 32-byte secret itself is NOT retained in
  * module state. The caller may zero its own copy of the secret as
- * soon as set_opera_secret() returns. (PR 5c-4 will move the cached
- * opera_id/sender_fp into a flash-encryption-gated NVS slot to match
- * opera_secret's existing hygiene; PR 5c-3 keeps them in module RAM
- * for the life of the process.)
+ * soon as set_opera_secret() returns. Neither derived value is
+ * persisted, by design: both are re-derived at boot — opera_id from the
+ * FE-gated opera_secret mesh_state loads, sender_fp from the device key —
+ * so there is nothing extra to store or to keep in sync.
  *
  *   set_opera_secret() — call ONCE per process (idempotent — calling
  *   again with the same secret is harmless; calling with a different
@@ -325,8 +327,10 @@ size_t get_peer_links(PeerLink* out, size_t cap);
  * last_counter. Returns false if the table is full
  * (MAX_TRUSTED_PEERS) OR the same pubkey is already registered (the
  * call would otherwise reset last_counter and allow replay). Idempotent
- * across boots: persist the same pubkey list and last_counter to NVS
- * (PR 5c-5 / PR 4b will add the NVS persistence).
+ * across boots: the integration layer persists the pubkey list and the
+ * per-peer last_counter (mesh_state trusted_peers / replay_ctrs) and
+ * restores both at boot (main.cpp: register every stored pubkey, then
+ * restore_replay_counter; counters are re-saved every 5 minutes).
  *
  * clear_trusted_peers() — wipes the table. Used on opera-secret-
  * rotation and at deinit().

@@ -86,7 +86,8 @@ struct Peer {
 };
 
 struct Config {
-  /* Reserved. Empty for PR 2a; PR 2b will add crypto-mode flags. */
+  /* Reserved. Crypto sits above the transport (mesh_envelope signs,
+   * mesh_session verifies), so there are no crypto-mode flags here. */
   uint8_t  _reserved;
 
   static Config defaults() {
