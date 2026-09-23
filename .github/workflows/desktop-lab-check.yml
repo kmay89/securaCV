@@ -1,0 +1,108 @@
+name: Lab crate check
+
+# desktop-lab/src-tauri is the Rust behind the SecuraCV Lab app (the whole
+# Lab in a native window). Until this existed, NO PR-triggered job compiled
+# it: canary-local.yml only reads lib.rs as text for its parity tests, and
+# desktop-hub-core.yml's `cargo check (src-tauri)` covers the Flasher crate
+# (desktop/src-tauri) alone. So every native seam landing in this crate —
+# port enumeration, mDNS browse, the tray companion — would have been
+# reviewed, merged, and first compiled by the next RELEASE run
+# (.github/RELEASE_LESSONS.md 2026-09-21). This job is the same shape as the
+# Flasher's: stage the frontend the way tauri.conf.json's beforeBuildCommand
+# does (tauri::generate_context!() embeds ../dist at compile time, so a
+# missing web root is a compile error, not a bundling one), then let the
+# compiler and the unit tests have their say. cargo check, not build — we
+# want the type error, not a binary.
+#
+# The paths cover the crate AND what the app bundles: frontend-stage.json
+# mirrors canary-local/ and docs/hardware/enclosure/ into the web root the
+# codegen embeds, so a change there is an input to this compile exactly as
+# much as a .rs edit is.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'desktop-lab/**'
+      - 'canary-local/**'
+      - 'docs/hardware/enclosure/**'
+      - '.github/workflows/desktop-lab-check.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'desktop-lab/**'
+      - 'canary-local/**'
+      - 'docs/hardware/enclosure/**'
+      - '.github/workflows/desktop-lab-check.yml'
+
+# Read-only token: this workflow only checks out and runs cargo — it needs
+# nothing else.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A new push to a PR branch cancels the in-flight run; main is never canceled.
+concurrency:
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: desktop-lab-check-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lab-crate-check:
+    name: cargo check (desktop-lab/src-tauri)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux build dependencies
+        # The same set the Lab's release workflow installs
+        # (desktop-release.yml "Install Linux build deps"); gdk-sys and
+        # friends cannot configure without them, and libudev-dev is what the
+        # serialport crate's libudev-sys needs (RELEASE_LESSONS 2026-09-21).
+        # Keep the two blocks in step: a crate that outgrows this list fails
+        # HERE, on the PR, instead of in the release run.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libudev-dev \
+            patchelf
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: desktop-lab/src-tauri -> target
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Stage the frontend (what tauri.conf.json's beforeBuildCommand runs)
+        # scripts/stage-frontend.mjs builds desktop-lab/dist from
+        # frontend-stage.json — node built-ins only, so no npm install is
+        # needed for this step. It refuses (::error::) when a sentinel the app
+        # ships is missing or empty, which is the first thing this job proves.
+        working-directory: desktop-lab
+        run: node scripts/stage-frontend.mjs
+      - name: Format check
+        working-directory: desktop-lab/src-tauri
+        run: cargo fmt --check
+      - name: cargo check
+        working-directory: desktop-lab/src-tauri
+        run: cargo check --all-targets
+      - name: Clippy (warnings are errors)
+        working-directory: desktop-lab/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        # `check` proves the crate compiles; it never runs an assertion. The
+        # host/base gates (host_is_local, base_ok) and every unit test a native
+        # seam brings with it were compiling and never executing on a PR.
+        # Costs nothing extra: the dependency graph is already built and
+        # cached by the check above.
+        working-directory: desktop-lab/src-tauri
+        run: cargo test

@@ -21,7 +21,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon`: the menubar fleet companion (src/companion.rs). Desktop-only
+# inside tauri itself. On Linux it adds libappindicator-sys, which links
+# NOTHING at build time — it dlopens libayatana-appindicator3 at runtime —
+# so the release apt block is unchanged and the .deb depends on the runtime
+# library instead (tauri.conf.json); without it the tray is simply absent.
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -51,6 +56,26 @@ tokio = { version = "1", features = ["time"] }
 # (the Flasher's espflash sidecar) is the follow-up that flips the `serial`
 # capability to true.
 serialport = "4"
+# LAN discovery by mDNS (fleet_scan, src/fleet.rs): a real browse of
+# `_securacv._tcp` — the same crate and minor as the Flasher's
+# (desktop/src-tauri/Cargo.toml), pure Rust on std sockets, no -sys crate.
+# The OS resolver alone can find `.local` HOSTNAMES but cannot enumerate a
+# service, and vision/sense announce mDNS-only. Desktop only: an iOS browse
+# needs the multicast entitlement + NSBonjourServices (MOBILE.md).
+mdns-sd = "0.21"
+# The menubar fleet companion's notifications (src/companion.rs), posted from
+# RUST — no notification grant in the webview's capabilities. The same plugin
+# the Flasher carries (desktop/src-tauri/Cargo.toml): notify-rust over zbus on
+# Linux (pure Rust, no -sys crate), the OS notification center on macOS.
+tauri-plugin-notification = "2"
+
+# The tray's Linux library is loaded at RUNTIME by libappindicator-sys, which
+# PANICS when it is missing — with this crate's `panic = "abort"`, a crash at
+# launch on any desktop without libayatana-appindicator3. companion.rs probes
+# the same names first and skips the tray instead. The same libloading the
+# tray crate already links (0.7.4 in the lock): no new crate in the graph.
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.7"
 
 [profile.release]
 panic = "abort"

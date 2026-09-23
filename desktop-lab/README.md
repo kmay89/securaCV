@@ -21,9 +21,19 @@ Native earns its keep for the things a browser can't do well:
 
 - **Reliable USB flashing** — WebSerial is Chromium-only and flaky; native
   serial (Rust `serialport`) is rock-solid. *(Phase 2 — stubbed today.)*
-- **Device discovery** — mDNS + Bluetooth LE to the Canaries. *(Phase 2.)*
-- **An always-on menubar companion** — live fleet status, native
-  notifications on signed events, the tamper-evident timeline. *(Phase 2.)*
+- **Device discovery** — an mDNS browse of `_securacv._tcp` finds every
+  Canary board on the network (desktop, live today — the Flasher's
+  `fleet_scan`, ported), beside the `/api/fleet` poll that finds a kernel.
+  Bluetooth LE discovery *(Phase 2.)*
+- **A menubar companion** — live fleet status in the menu bar /
+  system tray and native notifications when the fleet reports a device
+  going offline, coming back, losing its hub or a chain problem (desktop,
+  live today — coarse words only, see [`INSTALL.md`](INSTALL.md#the-menu-bar-companion)).
+  On macOS it keeps running in the menu bar after you close the window; on
+  Linux it runs while the Lab is open (a desktop may have no tray to keep it).
+  Notifications on *signed* events and the tamper-evident timeline wait on
+  pairing: "verified" means a chain walked against a key pinned at pairing,
+  and the Lab holds no such key yet. *(Phase 2.)*
 
 Tauri gives us all of that from **one frontend** shared with the website: a
 ~5 MB signed binary on the OS WebView, minimal attack surface (Rust) — a
@@ -147,8 +157,10 @@ do). Which button, when, and when not:
 1. **This** — Tauri shell of the Lab, Mac/Linux installers, release pipeline.
 2. **Native USB flashing** (`serialport`) — replace WebSerial; the biggest
    reliability win. Bundle `esptool`.
-3. **Menubar fleet companion** — mDNS/BLE status, native notifications on
-   signed events, the signed timeline.
+3. **Menubar fleet companion** — live on desktop: tray status from the mDNS
+   browse and the fleet report, native notifications on fleet changes.
+   Still to come: BLE status, notifications on signed events and the signed
+   timeline (both wait on pairing a key with the kernel).
 4. Extend the same shared core to **iOS/iPad** (Tauri v2 mobile — **scaffolded**,
    see [`MOBILE.md`](MOBILE.md) or the rendered walkthrough
    [`ipad-guide.html`](ipad-guide.html); needs your Apple Developer account to

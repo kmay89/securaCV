@@ -12,6 +12,10 @@
 // its own is its update manifest, from the project's releases.
 
 #[cfg(desktop)]
+mod companion;
+#[cfg(desktop)]
+mod fleet;
+#[cfg(desktop)]
 mod self_update;
 
 #[tauri::command]
@@ -47,7 +51,10 @@ fn app_info() -> AppInfo {
 // stays false until it lands so the frontend never lights a "Flash over
 // USB (native)" path that isn't there. `serial_list` advertises what does
 // exist, so the flash page can at least show which ports the native shell
-// sees while the browser path explains itself.
+// sees while the browser path explains itself. LAN discovery is two live
+// commands on desktop: an mDNS browse that finds the boards (fleet_scan,
+// src/fleet.rs) and the /api/fleet poll that finds a kernel
+// (witness_discover). Bluetooth LE discovery is still future.
 #[tauri::command]
 fn native_capabilities() -> serde_json::Value {
     serde_json::json!({
@@ -60,9 +67,18 @@ fn native_capabilities() -> serde_json::Value {
         // only fail.
         "serial_list": cfg!(desktop),
         // LAN fleet discovery is live: witness_discover polls /api/fleet on
-        // the LAN (the DISCOVERY.md contract). mDNS browse + BLE stay future.
+        // the LAN (the DISCOVERY.md contract), on every build.
         "discovery": true,
-        "notifications": false,
+        // The mDNS browse of `_securacv._tcp` (fleet_scan, the Flasher's
+        // twin). Desktop only — iOS needs the multicast entitlement and
+        // NSBonjourServices first (MOBILE.md), so a mobile build neither
+        // registers the command nor advertises it. BLE is still future.
+        "mdns": cfg!(desktop),
+        // The menubar fleet companion (src/companion.rs): a tray icon and
+        // native notifications on fleet changes, posted from Rust — coarse
+        // presence words only, never sealed-log content, never "verified".
+        // Desktop only; the webview holds no notification grant.
+        "notifications": cfg!(desktop),
         // Signed self-update via the rolling lab-latest pointer (desktop
         // builds only — the App Store owns updates on iOS/iPadOS).
         "self_update": cfg!(desktop)
@@ -190,7 +206,10 @@ fn base_ok(base: &str) -> bool {
 /// (`canary-local/tests/desktop_parity.test.js` pins that). Unlike the
 /// browser Lab (which can't scan a LAN), the native shell can reach it
 /// directly; `.local` hostnames resolve through the OS resolver (Bonjour /
-/// avahi), so no mDNS crate is needed. ONE pass over the candidate bases,
+/// avahi), so this command needs no mDNS of its own — on desktop the
+/// frontend adds the boards `fleet_scan` browsed (src/fleet.rs) to the
+/// candidates, and the typed kernel base stays first because the kernel
+/// advertises no `_securacv._tcp`. ONE pass over the candidate bases,
 /// first `/api/fleet` that answers wins; the frontend polls while the Witness
 /// Wall bench is open. Coarse presence/health only — see
 /// `tvos/discovery/DISCOVERY.md`.
@@ -243,13 +262,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(std::sync::Mutex::new(self_update::UpdateGate::default()))
+        .manage(companion::Companion::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
             app_info,
             native_capabilities,
             list_serial_ports,
             witness_discover,
+            fleet::fleet_scan,
+            companion::companion_set_bases,
+            companion::companion_snapshot,
             self_update::check_update,
             self_update::install_update,
             self_update::read_update_journal,
@@ -268,7 +292,10 @@ pub fn run() {
     // until the install returns, and quitting mid-write is the one thing that
     // can leave the Lab unable to open at all (the Flasher's guard, ported —
     // desktop/src-tauri/src/lib.rs). Not negotiable, so no "quit anyway";
-    // the install takes seconds and the app relaunches itself.
+    // the install takes seconds and the app relaunches itself. That guard
+    // runs FIRST; only then, where the menu bar always shows the companion's
+    // tray (companion::keeps_running), does closing hide the window instead
+    // of quitting — the fleet watch keeps running, and the tray reopens it.
     #[cfg(desktop)]
     let builder = builder.on_window_event(|window, event| {
         use tauri::Manager as _;
@@ -287,6 +314,10 @@ pub fn run() {
                     .title("Finishing the update")
                     .buttons(MessageDialogButtons::OkCustom("OK".into()))
                     .show(|_| {});
+            } else if companion::keeps_running(window.app_handle()) {
+                api.prevent_close();
+                let _ = window.hide();
+                companion::told_hidden_once(window.app_handle());
             }
         }
     });
@@ -305,12 +336,24 @@ pub fn run() {
                         tokio::time::sleep(self_update::RECHECK_EVERY).await;
                     }
                 });
+                // The menubar fleet companion: tray + a 30 s fleet watch.
+                companion::start(_app.handle());
             }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building the SecuraCV Lab")
         .run(|_app, _event| {
+            // The window may be hidden behind the menu bar companion: a Dock
+            // click brings it back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = &_event
+            {
+                companion::show_main(_app);
+            }
             // Cmd-Q / the app menu's Quit never pass through CloseRequested —
             // they request an application exit directly, and this is the only
             // place that can stop them (the Flasher's guard, ported).
@@ -343,15 +386,31 @@ mod tests {
     #[test]
     fn local_hosts_pass_and_public_hosts_are_refused() {
         for h in [
-            "canary.local", "homeassistant.local", "hub.lan", "pi.home.arpa",
-            "canary-3f2a", "192.168.1.40", "10.0.0.5", "172.16.9.9",
-            "127.0.0.1", "169.254.10.10", "::1", "fe80::1", "fd00::abcd",
+            "canary.local",
+            "homeassistant.local",
+            "hub.lan",
+            "pi.home.arpa",
+            "canary-3f2a",
+            "192.168.1.40",
+            "10.0.0.5",
+            "172.16.9.9",
+            "127.0.0.1",
+            "169.254.10.10",
+            "::1",
+            "fe80::1",
+            "fd00::abcd",
         ] {
             assert!(host_is_local(h), "{h} should be local");
         }
         for h in [
-            "example.com", "github.com", "evil.local.example.com",
-            "8.8.8.8", "172.32.0.1", "2001:4860:4860::8888", "", ".local",
+            "example.com",
+            "github.com",
+            "evil.local.example.com",
+            "8.8.8.8",
+            "172.32.0.1",
+            "2001:4860:4860::8888",
+            "",
+            ".local",
         ] {
             assert!(!host_is_local(h), "{h} must be refused");
         }

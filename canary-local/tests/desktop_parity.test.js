@@ -24,6 +24,7 @@ const assert = require("node:assert");
 const { readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
+const vm = require("node:vm");
 
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
@@ -869,6 +870,166 @@ test("device API token: both flashers mint the same credential shape and seed th
   const flashJs = read(join(CANARY, "assets/flash.js"));
   assert.match(flashJs, /mintApiToken/, "browser flasher no longer mints the device API token");
   assert.match(flashJs, /apiTokenToNvs/, "browser flasher no longer seeds the device API token");
+});
+
+test("secret drawer: the consent copy names exactly the stores the native side can answer", () => {
+  // app.js words every "Remember" note from secretStore.where(), keyed on the
+  // string secret_backend returns. A backend the Rust side can answer but
+  // where() doesn't name falls through to "this app's local settings" — a
+  // consent note that understates where a password went; a name where()
+  // knows but Rust never returns is dead copy. One set, both sides.
+  const storeRs = read(join(ROOT, "desktop/src-tauri/src/secret_store.rs"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const strings = (text) => new Set([...text.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]));
+  const sorted = (set) => [...set].sort();
+
+  const contract = /fn backend_names_are_the_contract\(\)[\s\S]*?matches!\(\s*backend\(\),([^)]*)\)/.exec(storeRs);
+  assert.ok(contract, "secret_store.rs lost backend_names_are_the_contract — re-point this gate at its new home");
+  const names = strings(contract[1]);
+  assert.ok(names.has("none"), "the backend contract must keep \"none\" — the fail-closed answer");
+
+  // Every name the native side can actually return is in the contract:
+  // backend()'s per-platform tail expressions and probe_backend()'s arms.
+  // (A whole-fn slice, to the closing col-0 brace: nativeFnBody stops at the
+  // first attribute, and backend()'s arms are each behind a #[cfg].)
+  const rsFn = (name) => {
+    const m = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`).exec(storeRs);
+    assert.ok(m, `couldn't find fn ${name} in desktop/src-tauri/src/secret_store.rs`);
+    const rest = storeRs.slice(m.index + 1);
+    return rest.slice(0, rest.indexOf("\n}\n"));
+  };
+  const tails = [...rsFn("backend").matchAll(/^\s*"([a-z-]+)"\s*$/gm)].map((m) => m[1]);
+  const arms = [...rsFn("probe_backend").matchAll(/=>\s*"([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(tails.length >= 3, "couldn't read backend()'s per-platform answers out of secret_store.rs");
+  assert.ok(arms.length >= 2, "couldn't read probe_backend()'s answers out of secret_store.rs");
+  for (const a of [...tails, ...arms]) {
+    assert.ok(names.has(a), `secret_store.rs can answer "${a}" but its contract test doesn't list it`);
+  }
+  // The Linux answer is PROBED, and the probe fails closed to "none".
+  assert.match(rsFn("probe_backend"), /_ => "none"/,
+    "probe_backend() must fall back to \"none\" on any failure — a wrong \"secret-service\" makes the consent note a promise the app can't keep");
+
+  // where(): every non-"none" name gets its own wording; "none" is the fallback.
+  const where = /\n  where\(\) \{([\s\S]*?)\n  \},/.exec(appJs);
+  assert.ok(where, "desktop app.js secretStore.where() moved — re-point this gate at it");
+  const worded = new Set([...where[1].matchAll(/this\.backend === "([a-z-]+)"/g)].map((m) => m[1]));
+  assert.match(where[1], /: "this app's local settings";/,
+    "where() must end on the honest no-store wording");
+  assert.deepStrictEqual(sorted(new Set([...worded, "none"])), sorted(names),
+    "desktop app.js where() and secret_store.rs name different secret stores");
+});
+
+// The drawer's store paths, RUN rather than read: the Flasher's secretStore
+// lifted out of app.js against a stubbed native side whose store calls are
+// held open until the test answers them, the way a locked keyring holds one
+// open behind its unlock prompt.
+function loadSecretStore(backend, prefsSecrets) {
+  const src = read(join(ROOT, "desktop/src/app.js"));
+  const m = /\nconst secretStore = \{[\s\S]*?\n\};\n/.exec(src);
+  assert.ok(m, "desktop/src/app.js lost the secretStore object — re-point this gate at it");
+  const prefs = { secrets: { ...prefsSecrets }, secretKeys: Object.keys(prefsSecrets) };
+  const store = {};      // what the OS store holds; a write lands when it is answered
+  const calls = [];      // [cmd, args, answer(how)] in invoke order
+  const logs = [];
+  const invoke = (cmd, args) => {
+    if (cmd === "secret_backend") return Promise.resolve(backend);
+    let answer;
+    const p = new Promise((resolve, reject) => {
+      // answer() = the store does it; {reject: e} = it refuses; {value: v} =
+      // it answers v (a read taken before some other write landed).
+      answer = (how = {}) => {
+        if ("reject" in how) return reject(how.reject);
+        if ("value" in how) return resolve(how.value);
+        if (cmd === "secret_set") store[args.key] = args.value;
+        if (cmd === "secret_delete") delete store[args.key];
+        return resolve(cmd === "secret_get" ? (args.key in store ? store[args.key] : null) : null);
+      };
+    });
+    calls.push([cmd, args, answer]);
+    return p;
+  };
+  const secretStore = new Function("invoke", "prefs", "savePrefs", "logEvent",
+    `${m[0]}\nreturn secretStore;`)(invoke, prefs, () => {}, (level, msg) => logs.push([level, msg]));
+  return { secretStore, prefs, store, calls, logs };
+}
+const drain = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+const storeCalls = (calls, cmd, key) => calls.filter(([c, a]) => c === cmd && a.key === key);
+
+test("secret drawer: a refusing store is never downgraded to the prefs file, and a locked keyring never holds up a read", async () => {
+  // 1. The OS store exists but refuses the write (locked, declined): the
+  //    consent note promised the OS store, so set() stores NOWHERE and says
+  //    so — it never quietly drops the password into the prefs file.
+  {
+    const { secretStore, prefs, calls, logs } = loadSecretStore("secret-service", {});
+    const saving = secretStore.set("wifi:home", "hunter2");
+    await drain();
+    storeCalls(calls, "secret_set", "wifi:home")[0][2]({ reject: "locked" });
+    assert.strictEqual(await saving, false, "a refused OS-store write must report failure");
+    assert.ok(!("wifi:home" in prefs.secrets),
+      "a refused OS-store write fell back to the prefs file — the consent note named the OS store");
+    assert.ok(logs.some(([level]) => level === "err"), "a refused OS-store write must be logged, not silent");
+  }
+  // 2. Launch with a password left in prefs and an unlock prompt nobody has
+  //    answered (the adoption pass's write held open): a restore's get() must
+  //    still ask the store and answer from the prefs copy, not wait on it.
+  {
+    const { secretStore, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    const reading = secretStore.get("wifi:home");
+    await drain();
+    const read1 = storeCalls(calls, "secret_get", "wifi:home")[0];
+    assert.ok(read1, "get() is waiting behind the adoption pass — a locked keyring's prompt would hold the restore");
+    read1[2]();
+    assert.strictEqual(await reading, "old", "get() must fall back to the prefs copy while the store has nothing");
+    assert.strictEqual(storeCalls(calls, "secret_set", "wifi:home").length, 1,
+      "the adoption pass should still be out here, its one write unanswered");
+  }
+  // 3. A save made while the pass is still out lands AFTER it, never under
+  //    it: the pass writes the OLD value, so a newer one written first would
+  //    be overwritten once the prompt is answered. Same for a delete, which
+  //    would otherwise see the forgotten password come back.
+  {
+    const { secretStore, store, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    await secretStore.init();
+    const saving = secretStore.set("wifi:home", "new");
+    await drain();
+    const writes = () => storeCalls(calls, "secret_set", "wifi:home");
+    assert.strictEqual(writes().length, 1, "set() wrote while the adoption pass was still out — it must wait for it");
+    writes()[0][2]();            // the prompt is answered: the pass writes the old value
+    await drain();
+    assert.strictEqual(writes().length, 2, "set() never wrote after the adoption pass finished");
+    writes()[1][2]();
+    assert.strictEqual(await saving, true);
+    assert.strictEqual(store["wifi:home"], "new", "the adoption pass overwrote a newer saved password");
+  }
+  {
+    const { secretStore, store, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
+    await secretStore.init();
+    const forgetting = secretStore.delete("wifi:home");
+    await drain();
+    assert.strictEqual(storeCalls(calls, "secret_delete", "wifi:home").length, 0,
+      "delete() ran while the adoption pass was still out — the pass would put the password back");
+    storeCalls(calls, "secret_set", "wifi:home")[0][2]();
+    await drain();
+    storeCalls(calls, "secret_delete", "wifi:home")[0][2]();
+    assert.strictEqual(await forgetting, true);
+    assert.ok(!("wifi:home" in store), "a forgotten password came back from the adoption pass");
+  }
+  // 4. A key the pass moves while get() is out is still found: the store's
+  //    answer predates the move, and the prefs copy is gone after it.
+  {
+    const { secretStore, prefs, calls } = loadSecretStore("secret-service", { "wifi:home": "v" });
+    await secretStore.init();
+    const reading = secretStore.get("wifi:home");
+    await drain();
+    const [read1] = storeCalls(calls, "secret_get", "wifi:home");
+    const [move] = storeCalls(calls, "secret_set", "wifi:home");
+    assert.ok(read1 && move, "expected the read and the adoption write both in flight");
+    move[2]();                   // the move lands and drops the prefs copy…
+    await drain();
+    assert.ok(!("wifi:home" in prefs.secrets), "the adoption pass should have dropped the prefs copy");
+    read1[2]({ value: null });   // …then the store's answer from before it arrives
+    assert.strictEqual(await reading, "v", "get() lost a password the adoption pass moved while it was asking");
+  }
 });
 
 test("dev channel: BOTH flashers give the user a control, not just a constant", () => {
@@ -1982,6 +2143,172 @@ test("witness wall: both apps discover the LAN fleet the same way, one emulator,
   const b = read(join(CANARY, "witness/tv-emulator.js"));
   assert.strictEqual(a, b,
     "vendored tv-emulator.js drifted between the Flasher and the Lab — run scripts/vendor_witness_emulator.sh");
+});
+
+// Run each app's wall controller against one stubbed native side and report
+// what it asked for and what it told the user. The Lab's host is small enough
+// to run whole; the Flasher's controller is lifted out of app.js with the two
+// helpers it calls. Source-level regexes can't see ORDER or wording drift —
+// running them can.
+const WALL_SIGHTINGS = [
+  { deviceId: "canary-wap-1", host: "canary-wap-1.local", ip: "192.168.1.50", port: 80 },
+  { deviceId: "canary-display-2", host: "canary-display-2.local", ip: "192.168.1.51", port: 1 },
+  { deviceId: "canary-sense-3", host: "canary-sense-3.local", ip: "fe80::1", port: 1 },
+];
+const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://canary-sense-3.local"];
+const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
+  calls.push([cmd, args]);
+  if (cmd === "native_capabilities") return caps;
+  if (cmd === "fleet_scan") return sightings;
+  if (cmd === "witness_discover") throw "no kernel answered on the LAN yet";
+  if (cmd === "companion_set_bases") return null;
+  throw new Error(`the wall invoked an unexpected command: ${cmd}`);
+};
+const wallStatusEl = () => ({ textContent: "", classList: { toggle() {} } });
+async function runLabWall(typedBase, sightings) {
+  const calls = [];
+  const scan = wallStatusEl();
+  const frame = { src: "", contentWindow: { postMessage() {} } };
+  const ctx = {
+    document: {
+      getElementById: (id) => (id === "witness-frame" ? frame : id === "wall-scan" ? scan : null),
+      addEventListener() {},
+      hidden: false,
+    },
+    localStorage: { getItem: (k) => (k === "scv-kernel" ? typedBase : null) },
+    location: { search: "" },
+    URLSearchParams,
+    setTimeout: () => 0,
+    clearTimeout() {},
+    addEventListener() {},
+  };
+  ctx.window = ctx;
+  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }) } };
+  vm.runInNewContext(read(join(CANARY, "assets/witness-host.js")), ctx);
+  for (let i = 0; i < 10 && !calls.some(([c]) => c === "witness_discover"); i++) {
+    await new Promise((r) => setImmediate(r));
+  }
+  await new Promise((r) => setImmediate(r));
+  return { calls, status: scan.textContent };
+}
+async function runFlasherWall(typedHost, sightings) {
+  const src = read(join(ROOT, "desktop/src/app.js"));
+  const grab = (re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `desktop/src/app.js lost ${what} — re-point the wall test at it`);
+    return m[0];
+  };
+  const code = [
+    grab(/\nfunction witnessBoardBases\([\s\S]*?\n\}\n/, "witnessBoardBases()"),
+    grab(/\nfunction witnessBases\([\s\S]*?\n\}\n/, "witnessBases()"),
+    grab(/\nconst witnessDiscovery = \{[\s\S]*?\n\};\n/, "the witnessDiscovery controller"),
+  ].join("\n");
+  const calls = [];
+  const scan = wallStatusEl();
+  const els = {
+    "mqtt-host": { value: typedHost || "" },
+    "fleet-scan-status": scan,
+    "witness-frame": { contentWindow: { postMessage() {} } },
+  };
+  const wall = new Function("$", "invoke", "witnessName", `${code}\nreturn witnessDiscovery;`)(
+    (id) => els[id] || null, wallInvoke(calls, sightings, {}), () => "New Canary");
+  await wall.tick();
+  return { calls, status: scan.textContent };
+}
+
+test("witness wall: both apps try the kernel before any browsed board, and say what they heard", async () => {
+  // witness_discover returns the FIRST base whose /api/fleet answers, and a
+  // WAP or display answers with a one-board self-report
+  // (tvos/discovery/DISCOVERY.md). So a browsed board tried ahead of the
+  // kernel would replace the kernel's whole fleet on the wall, every tick.
+  // Both hosts: browse first, then the typed kernel, the well-known
+  // canary.local:8099 and canary.local, and only then the boards they heard.
+  const hosts = [
+    ["Lab witness-host.js", () => runLabWall("http://192.168.1.10:8099", WALL_SIGHTINGS),
+      ["http://192.168.1.10:8099", "http://canary.local:8099", "http://canary.local"]],
+    ["Flasher app.js", () => runFlasherWall("192.168.1.10", WALL_SIGHTINGS),
+      ["http://192.168.1.10:8099", "http://192.168.1.10", "http://canary.local:8099", "http://canary.local"]],
+  ];
+  const statuses = [];
+  for (const [name, run, kernel] of hosts) {
+    const { calls, status } = await run();
+    const order = calls.map(([c]) => c);
+    const scanAt = order.indexOf("fleet_scan");
+    const pollAt = order.indexOf("witness_discover");
+    assert.ok(scanAt >= 0, `${name}'s wall no longer browses mDNS (fleet_scan) before it polls`);
+    assert.ok(pollAt > scanAt, `${name}'s wall must browse (fleet_scan) BEFORE it polls witness_discover`);
+    // (Array.from: the Lab's list is built in the vm's realm, with its own Array.prototype.)
+    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), [...kernel, ...WALL_BOARDS],
+      `${name}: the kernel addresses must come before every browsed board, boards in browse order`);
+    assert.match(status, /^3 Canaries announced on this network — none serves the fleet document yet\.$/,
+      `${name} must say the boards it heard, not "nothing answering yet"`);
+    statuses.push(status);
+  }
+  assert.strictEqual(statuses[0], statuses[1], "the two walls word the heard-but-no-fleet status differently");
+
+  // Nobody announcing: no board bases, and the honest "nothing answering".
+  for (const [name, run] of [["Lab witness-host.js", () => runLabWall(null, [])],
+                             ["Flasher app.js", () => runFlasherWall("", [])]]) {
+    const { calls, status } = await run();
+    const poll = calls.find(([c]) => c === "witness_discover");
+    assert.deepStrictEqual(Array.from(poll[1].bases), ["http://canary.local:8099", "http://canary.local"],
+      `${name}: with no typed kernel and nothing heard, only the well-known addresses are tried`);
+    assert.match(status, /nothing answering yet/, `${name} must keep the "nothing answering yet" status when nothing announced`);
+  }
+});
+
+test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {
+  // The Lab ported the Flasher's browse of _securacv._tcp as a twin (same
+  // command, DTO, constant, code) so a frontend written against either app
+  // reads the other's answer unchanged. A retyped copy drifts quietly — the
+  // failure would be a board one app lists and the other never hears.
+  const flasherFleet = read(join(ROOT, "desktop/src-tauri/src/fleet.rs"));
+  const labFleet = read(join(ROOT, "desktop-lab/src-tauri/src/fleet.rs"));
+  const labRs = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+  const norm = (t) => t.replace(/\s+/g, " ").trim();
+  const item = (src, re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `couldn't find ${what}`);
+    return norm(m[0]);
+  };
+  const pieces = [
+    [/const SERVICE_TYPE: &str = "[^"]*";/, "SERVICE_TYPE"],
+    [/pub struct FleetSighting \{[\s\S]*?\n\}/, "struct FleetSighting"],
+    [/#\[derive\([^)]*\)\]\s*#\[serde\([^)]*\)\]\s*pub struct FleetSighting/, "FleetSighting's derive/serde attributes"],
+    [/#\[tauri::command\]\s*pub async fn fleet_scan\(timeout_ms: Option<u64>\)[\s\S]*?\n\}/, "fn fleet_scan"],
+    [/fn scan_blocking\(wait_ms: u64\)[\s\S]*?\n\}/, "fn scan_blocking"],
+  ];
+  for (const [re, what] of pieces) {
+    assert.strictEqual(item(labFleet, re, `${what} in desktop-lab fleet.rs`),
+      item(flasherFleet, re, `${what} in desktop fleet.rs`),
+      `desktop-lab fleet.rs ${what} drifted from the Flasher's — copy it back verbatim`);
+  }
+  assert.match(labFleet, /const SERVICE_TYPE: &str = "_securacv\._tcp\.local\.";/,
+    "the Lab must browse the service every board advertises");
+  // Only the browse is ported: the Flasher's device calls carry bearer tokens
+  // from its secret drawer, and the Lab has no drawer to keep them in.
+  const labFleetCode = labFleet.replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(labFleetCode, /fn\s+(?:fleet_device_call|device_whoami)\b|bearer_auth|Authorization|token/i,
+    "desktop-lab fleet.rs must not grow the Flasher's token-bearing device calls");
+  // Desktop-only, and honestly advertised: the module and the command exist
+  // only where the capability says so.
+  assert.match(labRs, /#\[cfg\(desktop\)\]\s*mod fleet;/, "desktop-lab lib.rs must gate mod fleet on desktop");
+  assert.match(labRs, /"mdns":\s*cfg!\(desktop\)/, "desktop-lab native_capabilities must report mdns as cfg!(desktop)");
+  const handlers = [...labRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler in desktop-lab lib.rs");
+  assert.ok(handlers[0].includes("fleet::fleet_scan"), "the desktop handler must register fleet::fleet_scan");
+  assert.ok(!handlers[1].includes("fleet_scan"), "the mobile handler must not register fleet_scan (no mdns there)");
+  // The frontend asks before it browses, then feeds the boards to the poll.
+  const labHost = read(join(CANARY, "assets/witness-host.js"));
+  assert.match(labHost, /invoke\("fleet_scan"/, "Lab witness-host.js no longer browses mDNS (fleet_scan)");
+  assert.match(labHost, /invoke\("native_capabilities"\)/, "Lab witness-host.js must ask native_capabilities before it browses");
+  assert.match(labHost, /if \(mdns\) \{[\s\S]{0,120}invoke\("fleet_scan"/,
+    "Lab witness-host.js must gate the browse on the mdns capability");
+  // One crate version on both sides of the twin.
+  const mdnsVer = (lock) => (/name = "mdns-sd"\nversion = "([^"]+)"/.exec(read(join(ROOT, lock))) || [])[1];
+  assert.ok(mdnsVer("desktop/src-tauri/Cargo.lock"), "the Flasher's lock lost mdns-sd");
+  assert.strictEqual(mdnsVer("desktop-lab/src-tauri/Cargo.lock"), mdnsVer("desktop/src-tauri/Cargo.lock"),
+    "the two apps lock different mdns-sd versions — the twin is no longer the same browse");
 });
 
 // ── The derived birth certificate: one bird, one name, three surfaces ─────
