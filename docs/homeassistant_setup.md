@@ -646,9 +646,7 @@ Cameras → Frigate (detection) → MQTT → PWK (privacy logging)
 - [ ] **Home Assistant MQTT publish settings are aligned**: if you enable `mqtt_publish.enabled`, ensure `mqtt_publish.host`, `mqtt_publish.port`, `mqtt_publish.username`, and `mqtt_publish.password` match the same broker.
 - [ ] **Topic + discovery prefixes are consistent**: `mqtt_publish.topic_prefix` is the prefix you expect for PWK events, and `mqtt_publish.discovery_prefix` matches Home Assistant’s discovery prefix (default `homeassistant`).
 - [ ] **App options from the Configuration tab are configured**: `mode` is still `frigate`, a `device_key_seed` is present (the app auto-generates one on first start if you left it empty), and any Frigate-specific options (`frigate.cameras`, `frigate.labels`, `frigate.min_confidence`) are configured as needed.
-- [ ] **MQTT transport expectations are understood**: the current bridges speak MQTT 3.1.1 over TCP with no TLS support.
-
-**Follow-up task**: If you require TLS or MQTT v5, the bridge code must be modified to use a standard MQTT client library that supports these features. When making this change, ensure the bridge still avoids introducing new privacy metadata.
+- [ ] **Broker transport chosen deliberately**: the bridges speak MQTT 3.1.1 over TCP, plain by default. For a TLS listener set the bridge's `MQTT_USE_TLS` / `MQTT_TLS_CA_PATH` (the [TLS Settings](#tls-settings-optional) table below) — the same broker listener `--with broker_tls` adds for the Canaries (Step 3 of the manual walkthrough). MQTT v5 is not spoken by either bridge.
 
 ### Standalone Mode
 
@@ -1092,7 +1090,7 @@ elsewhere, replace the hostname with the reachable IP/DNS name for that host.
 ### Authentication
 
 The API uses short-lived capability tokens as **Bearer** credentials. The token is written to `/config/api_token` when the app starts and rotates every 10 minutes; read it from the configured token file whenever you need to authenticate. If you run the kernel elsewhere, use the token path or secrets location configured for that deployment. The SecuraCV integration handles rotation automatically when configured with the token-file path (its default); scripts and other clients must re-read the file on every `401`.
-The `/health` endpoint is unauthenticated and only reachable on the local loopback interface. Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
+`/health` and the fleet roll-call `GET /api/fleet` are the two routes that answer without a token. The kernel refuses to bind a non-loopback address without TLS or an explicit override and, when bound to loopback, answers only loopback peers (`403`); the app binds all interfaces inside its own container so Home Assistant core can reach it, and ships the 8799 host port disabled. Query-string tokens are rejected—send the token only in the `Authorization: Bearer` header.
 
 ```bash
 # Read the token
@@ -1143,6 +1141,7 @@ add-on reads the file but has no control that mints one yet.
 | `/verify` | POST | Run sealed-log verification and return the `VerifyReport` |
 | `/export/bundle` | GET | Receipted export bundle (events reshaped for disclosure; correlation tokens stripped) |
 | `/api/sealed-log` | GET | Checkpoint-anchored sealed-log tail for read-only verifiers — stored bytes verbatim, size-capped, **no query parameters** (the log is non-queryable by design). The one route a [viewer token](#viewer-tokens-witness-wall) also opens |
+| `/api/fleet` | GET, OPTIONS | The fleet roll-call the Witness Wall reads — coarse words only (name, online, chain verdict, product, presence/occupants/breathing while proven online); **no token**, an origin allow-list for browsers; see [Witness Wall: the fleet roll-call](#witness-wall-the-fleet-roll-call) |
 | `/health` | GET | Check daemon health (unauthenticated) |
 
 ### `/events/latest` Response (Event)

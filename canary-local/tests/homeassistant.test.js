@@ -170,6 +170,36 @@ test("the drill's trigger entity exists in the demo's entity list", () => {
   assert.ok(names.has(data.ha_demo.drill.trigger_entity));
 });
 
+test("the guide's endpoint table names the two token-free routes, and only those", () => {
+  // src/api/mod.rs answers exactly two paths before the bearer check: GET
+  // /health and GET/OPTIONS /api/fleet — the roll-call the Witness Wall
+  // reads. A reader deciding whether to open the add-on's 8799 host port
+  // needs the guide's table to say what that exposes, so the /api/fleet
+  // row must exist and say "no token"; and no other row may claim to be
+  // token-free, or the doc would promise an open read the kernel gates.
+  const api = readFileSync(join(REPO, "src/api/mod.rs"), "utf8");
+  assert.ok(api.includes('("GET", "/health") =>'), "mod.rs answers /health before the token check");
+  assert.ok(api.includes('("GET", "/api/fleet") => {}'), "mod.rs lets GET /api/fleet through untokened");
+  assert.ok(api.includes('("OPTIONS", "/api/fleet") =>'), "mod.rs answers the /api/fleet preflight");
+
+  const table = doc.split("### Endpoints")[1].split("\n### ")[0];
+  const rows = table.split("\n").filter((l) => l.startsWith("| `/"));
+  assert.ok(rows.length >= 8, "the endpoint table is where it was");
+  const byPath = new Map(rows.map((r) => [r.split("|")[1].trim().replace(/`/g, ""), r]));
+
+  const fleet = byPath.get("/api/fleet");
+  assert.ok(fleet, "the table has a /api/fleet row");
+  assert.match(fleet, /GET, OPTIONS/, "both methods the kernel answers");
+  assert.match(fleet, /no token/i, "the row says the roll-call needs no token");
+  const health = byPath.get("/health");
+  assert.ok(health && /unauthenticated/i.test(health), "the /health row still says unauthenticated");
+  for (const [path, row] of byPath) {
+    if (path === "/api/fleet" || path === "/health") continue;
+    assert.ok(!/no token|unauthenticated|without (a|the) token/i.test(row),
+      `${path}: only /health and /api/fleet are token-free in mod.rs`);
+  }
+});
+
 test("docs links point at files that exist", () => {
   const { existsSync } = require("node:fs");
   for (const p of Object.values(data.docs))
