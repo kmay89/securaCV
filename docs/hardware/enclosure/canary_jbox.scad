@@ -33,15 +33,20 @@ opt_led    = false;  // pinhole light pipe (covert: usually off)
 opt_mark   = false;  // deboss the house wordmark on the lid's INTERIOR face (covert: never outside)
 
 /* [Board] — XIAO ESP32-S3 (Sense) */
-board_l = 21.0;  board_w = 17.5;  board_h = 1.2;  board_clear = 0.6;
-                     // 21 x 17.5 spec — brd_l/brd_w("xiao"), canary_board_lib; a
-                     // real board mics 17.8 (brd_xiao_w_measured()) and the clips'
-                     // clip_clear absorbs the difference, so the spec default stands
-stack_h = 8.0;   standoff_h = 3.5;   // 3.5: the clip beam (standoff + PCB) keeps the measured
-                                     // 17.8 board under the 4.5 % strain budget (3.0 ran 5.5 %)
+board_l = 21.0;      // board length — the 21 spec, brd_l("xiao"), canary_board_lib
+board_w = 17.5;      // board width — the 17.5 spec, brd_w("xiao"); a real board mics 17.8
+                     // (brd_xiao_w_measured()) and the clips' clip_clear absorbs the
+                     // difference, so the spec default stands
+board_h = 1.2;
+board_clear = 0.6;
+stack_h = 8.0;
+standoff_h = 3.5;    // 3.5: the clip beam (standoff + PCB) keeps the measured
+                     // 17.8 board under the 4.5 % strain budget (3.0 ran 5.5 %)
 
 /* [Shell] */
-wall_t = 2.2;  floor_t = 2.2;  lid_t = 2.4;   // deviates: service-box duty build — chunkier walls to match its squared corners
+wall_t = 2.2;        // deviates: service-box duty build — chunkier walls to match its squared corners
+floor_t = 2.2;       // floor thickness — the service-box duty build, chunky like wall_t
+lid_t = 2.4;         // lid thickness — the service-box duty build, chunky like wall_t
 inner_pad = 8.0;     // interior margin around the board (wiring room)
 corner_r = 2.0;      // deviates: squared, utilitarian — the service box reads as gear, not decor
 lip_h = 3.0;  lip_t = 1.2;

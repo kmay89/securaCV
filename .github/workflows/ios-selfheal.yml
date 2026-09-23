@@ -31,6 +31,11 @@ on:
       # change would sail through with only the Ubuntu (JavaScript) side run,
       # which is exactly the drift the fixture exists to prevent.
       - "viewer/fixtures/timeline/**"
+      # Same shape: the sealed-snapshot parity fixture is asserted by
+      # SnapshotVaultTests against ios/Sources/SecuraCV/Security/
+      # SnapshotVault.swift and is generated from the python reference
+      # (tools/gen_svlt_parity.py), so a regeneration must compile Swift.
+      - "tools/fixtures/vault/**"
       - ".github/workflows/ios-selfheal.yml"
   # And main's post-lint compiler. The linters that gate iOS sources
   # (lint_apple_parity.py, lint_apple_plists.py, lint_cloudkit_container.py,

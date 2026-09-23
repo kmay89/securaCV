@@ -30,6 +30,10 @@ enum SenseModality: String, Codable, Hashable, Sendable {
     case radar = "radar"
     case wifiCSI = "wifi-csi"
     case contact = "contact"
+    /// The dictionary's "other" — used for canary-sentinel, which FUSES
+    /// several independent media (PIR, radar, Wi-Fi, BLE, light), so no
+    /// single-medium glyph would be honest. Mirrors const.py.
+    case other = "other"
 
     /// From the type string a device publishes about itself (`/api/fleet`
     /// "product", mDNS TXT `dt` — `Witness.publishedType`). Firmware
@@ -50,6 +54,7 @@ enum SenseModality: String, Codable, Hashable, Sendable {
         case "canary-sense": self = .radar
         case "canary-wap": self = .wifiCSI
         case "canary-contact": self = .contact
+        case "canary-sentinel": self = .other
         default: return nil
         }
     }
@@ -60,6 +65,7 @@ enum SenseModality: String, Codable, Hashable, Sendable {
         case .radar: return "60 GHz radar"
         case .wifiCSI: return "Wi-Fi sensing"
         case .contact: return "Contact switch"
+        case .other: return "Several sensors, fused"
         }
     }
 
@@ -69,6 +75,7 @@ enum SenseModality: String, Codable, Hashable, Sendable {
         case .radar: return "dot.radiowaves.right"
         case .wifiCSI: return "wifi"
         case .contact: return "door.left.hand.closed"
+        case .other: return "square.stack.3d.up"
         }
     }
 }

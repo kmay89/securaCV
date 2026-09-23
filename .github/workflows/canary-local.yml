@@ -212,6 +212,7 @@ jobs:
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/hub_wizard.test.js
           node --test canary-local/tests/wap.test.js
+          node --test canary-local/tests/onboard.test.js
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/vision_checklist.test.js
           node --test canary-local/tests/vision_session.test.js
@@ -284,6 +285,13 @@ jobs:
         # assert they reproduce. A hatch.json edit that isn't regenerated
         # would ship a Canary with two names, so it fails here first.
         run: node canary-local/tools/hatchery/gen_hatch_swift.mjs --check
+      - name: Display portal data drift (the first-boot captive page fleet.html frames, parsed from provision.cpp)
+        # canary-local/devices/display_portal.json is the display's PORTAL_HTML as
+        # the fleet page's phone frames it (script + style= removed), its routes,
+        # SoftAP facts, zone presets and /status reasons — all read from the
+        # firmware. Chained like gen_wap.py -> gen_csp.py: gen_csp.py hashes this
+        # file's <style> block into fleet.html's policy, so it is checked first.
+        run: python3 canary-local/tools/gen_display_portal.py --check
       - name: Lab CSP drift (every page's Content-Security-Policy is generated from one policy table)
         # tools/gen_csp.py writes the <meta> CSP into every canary-local page
         # (and the emulator harness) from BASE + SHARED + PAGES, a reason per
@@ -528,6 +536,12 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Boot probe — COMMITTED artifacts (what a bare checkout serves)
         run: node canary-local/tests/boot_probe.mjs
+      - name: Onboard probe — the display's real first-boot portal (SoftAP, captive DNS, WebServer routes) walked per flavor + the fleet page's phone
+        # net/provision.cpp compiles verbatim into every display flavor; a first
+        # meeting must land in it, and every answer the phone gets (the SoftAP
+        # key, the DNS A record, GET / byte-for-byte, the /status reasons, NVS
+        # written only on success) must be the firmware's.
+        run: node canary-local/tests/onboard_probe.mjs
       - name: CSP probe — every Lab page loads under its policy with zero violations
         # Opens every canary-local page and the harness per flavor in Chromium
         # with a securitypolicyviolation listener installed in every frame; a

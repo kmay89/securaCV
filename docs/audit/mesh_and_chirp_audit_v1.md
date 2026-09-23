@@ -367,7 +367,10 @@ Required new tests in `firmware/projects/canary-wap/tests_host/`:
    - `test_ttl_anchored_on_counter_not_uptime` (O1)
 4. `test_beacon_origination.cpp` (new channel, see specs)
    - Two-pubkey co-sign success and single-pubkey failure.
-   - Gateway-pubkey relaxation path.
+   - Gateway trust confers no privilege: `test_gateway_trust_confers_no_privilege`
+     (mirror) and `test_source_grants_gateway_trust_nothing` (reads the real
+     `beacon_channel.cpp`). The relaxation path itself is deferred by decision
+     (§9.1).
    - Solo-degraded path requires physical BOOT-button assertion, marks `certainty = Observed`.
    - Self-test heartbeat trouble detection.
 
@@ -391,9 +394,9 @@ Before merging the Chirp v0.2 hardening to main:
 The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel_v0.md`. Before any Beacon firmware ships:
 
 - [x] `spec/beacon_channel_v0.md` reviewed for non-impersonation, no-PII, no-authority-templates.
-- [x] `spec/beacon_cap_gateway_v0.md` reviewed; implementation explicitly deferred to v0.4.
+- [x] `spec/beacon_cap_gateway_v0.md` reviewed; implementation deferred by decision — not to a version: it is gated on a trust-root decision, a separately named build and a per-deployment legal review (`spec/beacon_cap_gateway_v0.md` §6).
 - [x] Beacon origination requires two distinct device pubkeys cryptographically (`test_beacon_origination.cpp` passes).
-- [x] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`. (Spec'd; firmware path in `beacon_channel.cpp::originate_alert` requires a co-signer entry in the beacon set — BOOT-button fallback path is queued for v0.4.)
+- [x] Solo-degraded path requires physical BOOT button and marks `certainty = Observed`. (Firmware: `originate_alert_solo` and, since 2026-09, `originate_cancel_solo`; receivers enforce the SOLO flag, `certainty = Observed` and originator == cosigner — `test_beacon_solo_origination.cpp`. The BOOT hold is enforced by the originating device only and is not on the wire, so it stops a remote API caller, not a holder of the device's key — spec §6.2 security note, §14.2.)
 - [x] `audible_chirp.h` has `PATTERN_BEACON` (3 ascending tones, ≤600 ms, ≠ any reserved emergency-broadcast tone).
 - [x] Lint script passes (no WEA tone, no forbidden phrases). `scripts/lint_no_impersonation.sh` + `scripts/lint_cap_mapping.sh`.
 - [x] HA MQTT discovery surfaces `beacon.state` four-state NFPA enum + `beacon_airtime_pct` + `beacon_active_template`.
@@ -409,7 +412,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - [x] Self-test heartbeat (`BEACON_MSG_SELFTEST_OK`) emits daily; receivers surface `Trouble` on >36h absence.
 - [x] X25519 keypair NVS-persisted (audit follow-up: codex P1 #7 closure in PR #454).
 - [x] Audit log NVS-persisted as a ring buffer with head pointer (audit follow-up: gemini P1 #3 / codex P2 #8 closure in PR #454).
-- [x] COSIGN_REQ/RESP encrypted with X25519 + ChaCha20-Poly1305 (audit follow-up in PR #454).
+- [x] COSIGN_REQ/RESP encrypted with X25519 + ChaCha20-Poly1305 (audit follow-up in PR #454). Since 2026-09 the clear routing fields (fingerprints, `ciphertext_len`, `accept`) are bound as associated data and an all-zero X25519 shared secret is refused (`beacon_cosign_aad.h`, `tests_host/test_beacon_cosign_aad.cpp`).
 
 **Status: closed (PR #454 merged 2026-05-12).** Hardware verification of the two-pubkey origination flow remains queued — see `docs/audit/hardware_verification_checklist.md`.
 
@@ -475,17 +478,78 @@ paired cosigner (`originate_alert_solo` refuses whenever
 names the reason, `paired_cosigner_available`, so the operator is sent to the
 two-device path rather than told "refused").
 
-Still open on this surface: gateway-trust keys are accepted as ordinary
-community cosigners with no upstream CAP attestation (the `.cpp` header
-documents the gap); rate-limit state is not rebuilt from the audit log on
-boot (§11 — `init()` runs before the wall clock syncs, so the persisted
+Closed in the CANCEL pass (2026-09): the network all-clear (spec §6.5, §10).
+`POST /api/beacon/cancel` now originates a `BEACON_MSG_CANCEL` over the same
+two-pubkey cosign flow as an ALERT, and `POST /api/beacon/cancel-solo` over
+the BOOT-button solo path (§6.2: SOLO flag, `certainty = Observed`, refused
+while a fresh cosigner is available); the old local-only behavior moved to
+`POST /api/beacon/silence` (`silence_active_alarm()`) under its honest name.
+Four defects on the way there are fixed with it: the COSIGN_RESP handler
+hardcoded the emitted header's `msg_type` to ALERT, so a CANCEL canonical
+would have gone out as a frame every receiver drops (the header is now
+derived from the signed canonical); the originator never adopted its own
+frame — ESP-NOW does not deliver a broadcast to its sender — so it never
+entered ALARM for its own ALERT and held no nonce to name in a CANCEL (it now
+audits and adopts its frame at hop 0, charging no bucket); the cosigner
+checked scope, template and signature but not `msg_type`, so it could be
+asked to sign a CANCEL for an alarm it does not hold (it now signs a CANCEL
+only for an all-clear template naming its own active alarm, and refuses
+UPDATE/EXERCISE requests outright); and the never-called `emit_alert_frame()`
+is gone. The decisions live in the Arduino-free `beacon_cancel_policy.h`,
+pinned by `tests_host/test_beacon_cancel_origination.cpp` against the real
+`beacon_wire.h` structs; `test_beacon_origination.cpp`
+`test_cancel_is_charged_like_an_alert` pins the receive-side consequence of
+charging a CANCEL like an ALERT (spec §8 has no exemption). Radio-level proof
+is the hardware checklist's "CANCEL propagates" row; no board can run it
+until the channel is wired into the sketch loop (`init()`, `update()` and the
+ESP-NOW dispatch still have no callers).
+
+Review follow-up to the CANCEL pass (2026-09): the cosigner of an alarm never
+held it. `handle_alert_frame` looked both signers up in the beacon set, which
+holds peers only (spec §3.3), so the device that co-signed an ALERT dropped
+that very frame, and the strict cosigner gate then refused the alarm's CANCEL
+on it; in a two-device set the cosigner is the only candidate, so no network
+CANCEL could complete. Receivers now resolve their own fingerprint to their
+own pubkey (`resolve_signer`; the slot is still verified and two distinct
+fingerprints are still required — spec §7.1 step 5, §6.5). Pinned in the
+mirror (`test_cosigner_holds_the_alarm_it_cosigned`,
+`test_self_as_signer_grants_nothing_else`, against the real
+`cosign_request_acceptable`) and in the real source
+(`test_source_resolves_this_device_as_a_signer`). The same review found the
+CANCEL pass's guards tested the policy helpers but not the firmware's calls to
+them; `test_source_call_sites_follow_the_policy` now pins the call sites
+(emitter header, the solo BOOT gate, the cosigner gate before a request is
+stashed, no charge on adoption, the COSIGN associated data at all four sites).
+
+Deferred by decision (2026-09), not open: the CAP gateway upstream-attestation
+path (`spec/beacon_cap_gateway_v0.md` §2.3). Gateway-trust keys are ordinary
+two-pubkey signers and get nothing more — no solo without the BOOT-button
+rules, no larger rate bucket, and a frame's trailing bytes (where an
+attestation block would sit) are never parsed. Two host tests pin it:
+`test_gateway_trust_confers_no_privilege` in the receive-path mirror, and
+`test_source_grants_gateway_trust_nothing`, which reads the real
+`beacon_channel.cpp` and fails if its code names the gateway trust level or
+an attestation structure, or reads `trust_level` for anything but REVOKED.
+Building it waits on gates no code can supply — a trust root, a separately
+named build, a per-deployment legal review — listed in the gateway spec's
+§6; the §2.2 three-gateway cap lands with the pairing flow, which is where
+entries get added.
+
+Still open on this surface — and the first two mean no board can exercise
+any of the above yet: the channel's runtime is not wired into the sketch
+(`init()`, `set_enabled()`, `update()` and `dispatch_espnow_message()` have no
+callers, the shared ESP-NOW receive path forwards to Chirp only, and the
+310-byte `COSIGN_REQ` frame does not fit that path's 250-byte buffer); the
+§3.3 pairing flow is a stub (nothing writes a beacon-set entry or a peer's
+X25519 key, so the encrypted two-device path has no input — the COSIGN
+transport itself is encrypted and closed above, contrary to the `.cpp`
+header's old "unencrypted broadcast" note, now corrected); rate-limit state
+is not rebuilt from the audit log on boot (§11 — `init()` runs before the wall clock syncs, so the persisted
 entries' ages cannot be judged there; a rebuild deferred to first time sync
-is the shape of the fix); `cancel_active_alarm()` still silences locally
-without originating a `BEACON_MSG_CANCEL` (§10) — the REST reply now says
-exactly that ("silenced on this device only — no network CANCEL was sent")
-instead of "alarm canceled", but the network cancel itself needs the
-dual-signed cosign flow with `msg_type=CANCEL`; and the CANCEL reference is
-the unsigned header nonce (above).
+is the shape of the fix); a device that spent its fifth origination cannot
+cancel its own alarm (a §8 CANCEL exemption is a spec decision — until then
+another set member cancels it); and the CANCEL reference is the unsigned
+header nonce (above).
 
 ## 10. Closure traceability — every finding's fix in code
 

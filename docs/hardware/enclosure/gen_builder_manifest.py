@@ -703,8 +703,11 @@ def build_manifest() -> dict:
 # carry-and-pin contract as the builder models — before this list existed,
 # canary_watch_station.scad had been hand-copied into the site's /scad with
 # no pin, no generator and no test: an edit here left the copy silently
-# stale forever.
-REFERENCE_SCADS = ["canary_watch_station.scad"]
+# stale forever. The Dash and the Combo joined when their fleet figures
+# became CAD-measured (gen_assembled_dims.py rows) and the site's AR models
+# of them became buildable: a model traces the ledger's numbers, and the
+# ledger traces these sources.
+REFERENCE_SCADS = ["canary_watch_station.scad", "canary_dash_display.scad", "canary_combo.scad"]
 
 # The colorway registry (canary_color_lib.scad) — parsed here so the palette
 # crosses to every non-scad consumer from its one home: the manifest embeds
@@ -807,9 +810,11 @@ def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None 
 
     Provenance travels per figure, because the ledger is mixed: a
     dims_source of "stl" is read from committed STL bounding boxes,
-    "board-cad" from a vendor board mesh — and "sketch" is a massing
-    ESTIMATE for an in-development design, carried so the site can show
-    the design honestly, never as a measured fact. The sketch_note rides
+    "board-cad" from a vendor board mesh, "assembled-cad" is measured off an
+    in-development case's .scad by gen_assembled_dims.py (no committed STL,
+    so still a prototype) — and "sketch" is a massing ESTIMATE for an
+    in-development design, carried so the site can show the design
+    honestly, never as a measured fact. The sketch_note rides
     along for exactly that reason; a consumer that treats a sketch figure
     like an stl one is misreading the ledger, not this file.
 
@@ -863,7 +868,9 @@ def distill_cad_dims(figures_json: Path | None = None, devices_dir: Path | None 
                    "(canary-local/devices/figures.json). Provenance is PER "
                    "FIGURE via dims_source: \"stl\" envelopes are read from "
                    "committed STL bounding boxes, \"board-cad\" from vendor "
-                   "board meshes, and \"sketch\" figures are massing estimates "
+                   "board meshes, \"assembled-cad\" is measured off an "
+                   "in-development case's CAD (no committed STL: a "
+                   "prototype), and \"sketch\" figures are massing estimates "
                    "for in-development designs (sketch_note says more) — "
                    "honest previews, not measurements. The website's model "
                    "tests pin the AR models to these numbers and surface the "

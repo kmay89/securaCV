@@ -28,11 +28,11 @@
       "sense-in-wall-plate"
     ],
     "params": {
-      "vm_l": {
+      "radar_l": {
         "brd": "mr60",
         "dim": "l"
       },
-      "vm_w": {
+      "radar_w": {
         "brd": "mr60",
         "dim": "w"
       },
@@ -48,7 +48,7 @@
         "brd_fn": "brd_stack_sock_measured"
       },
       "xiao_below": 5.5,
-      "vm_front_h": 3.5,
+      "radar_front_h": 3.5,
       "ant_h": 1.2,
       "pcb_t": 1.0,
       "board_clear": 0.6,

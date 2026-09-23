@@ -36,9 +36,10 @@ use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs ci
 part = "all";        // ["plate","slider","all"]
 
 /* [Board] — XIAO ESP32-S3 */
-board_l = 21.0;  board_w = 17.5;  board_h = 1.2;   // 21 x 17.5 x 1.2 spec —
-                     // brd_l/brd_w/brd_t("xiao"); the clips' clip_clear absorbs
-                     // the measured 17.8 (brd_xiao_w_measured())
+board_l = 21.0;      // board length — the 21 spec, brd_l("xiao")
+board_w = 17.5;      // board width — the 17.5 spec, brd_w("xiao"); the clips' clip_clear
+                     // absorbs the measured 17.8 (brd_xiao_w_measured())
+board_h = 1.2;       // PCB thickness — the 1.2 spec, brd_t("xiao")
 standoff_h = 6.0;    // clip-beam root height: 6.0 puts the beam at 7.2 mm and the
                      // repeated-insertion strain at 1.45 % (< snap_budget_cycle);
                      // it also leaves lead room under the board (was 3.0 — that

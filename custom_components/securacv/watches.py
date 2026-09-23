@@ -59,6 +59,11 @@ STATE_ENDED = "ended"
 MIN_BASELINE_OBSERVATIONS = 4
 # Ring cap: a watch keeps enough to describe itself, never a diary.
 MAX_OBSERVATIONS = 500
+# Every collection is bounded. A cap keeps repeated (or false-wake) start
+# commands from growing the roster without limit, and the restore on boot
+# truncates to it as well. Lives here, not in intent.py, so the runtime can
+# enforce it without importing the voice layer.
+MAX_WATCHES = 20
 # Fallback spread when every baseline observation is identical (MAD == 0),
 # as a fraction of the median — otherwise any variation at all would fire.
 FLAT_BASELINE_SPREAD = 0.25

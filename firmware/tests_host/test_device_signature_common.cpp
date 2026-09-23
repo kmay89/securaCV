@@ -2,7 +2,8 @@
  * @file test_device_signature_common.cpp
  * @brief Host-side test for the shared device_signature module
  *        (firmware/common/identity) — canonical-message builders +
- *        b64url encoder, including the canary-sense `sense` kind.
+ *        b64url encoder, including the canary-sense `sense` kind and the
+ *        canary-sentinel `sentinel` kind.
  *
  * The Ed25519 sign path needs the Arduino Crypto library, so this test
  * covers the deterministic parts: the canonical string bytes that go
@@ -109,6 +110,74 @@ void test_sense_canonical_occupancy_change() {
            "occupancy canonical matches reference");
 }
 
+/* The canary-sentinel fused-claim canonical. SENTINEL_GOLDEN is the golden
+ * vector: custom_components/securacv/tests/test_signature.py rebuilds it
+ * byte-for-byte from the same inputs, verifies an Ed25519 signature over it,
+ * and (in the monorepo) reads THIS file to prove the literal below is still
+ * the one it pins — so neither side can move it alone. Inputs: a Confirmed
+ * transition with the Thermal (bit 0), RadioReflection (bit 1) and
+ * CarriedRadio (bit 3) classes corroborating = 0b1011 = 11. */
+#define SENTINEL_GOLDEN \
+  "securacv-canary-sig|v1|sentinel|sentinel01|7|level_changed|confirmed|82|0|1|near|11|1200"
+
+void test_sentinel_canonical_golden_vector() {
+  char out[256];
+  const size_t n = device_signature::build_sentinel_canonical(
+      /*seq=*/7,
+      /*event_name=*/"level_changed",
+      /*level=*/"confirmed",
+      /*confidence=*/82,
+      /*anomaly=*/0,
+      /*occupancy=*/"1",
+      /*range=*/"near",
+      /*modality_bits=*/0x0B,
+      /*bucket_uptime_s=*/1200,
+      /*device_id=*/"sentinel01", out, sizeof(out));
+  check(n > 0, "build_sentinel_canonical wrote something");
+  check_eq(std::string(out, n), SENTINEL_GOLDEN,
+           "sentinel canonical matches the shared golden vector");
+}
+
+void test_sentinel_canonical_anomaly_unknown_bands() {
+  /* The Anomaly overlay with no radar side-band: every field still lands,
+   * the unknown buckets spell "unknown" (never an empty slot a verifier
+   * would read as a different message), and the bitmask 0 prints as "0". */
+  char out[256];
+  const size_t n = device_signature::build_sentinel_canonical(
+      8, "level_changed", "anomaly", 40, 68, "unknown", "unknown", 0, 1800,
+      "sentinel01", out, sizeof(out));
+  check(n > 0, "anomaly canonical wrote something");
+  check_eq(std::string(out, n),
+           "securacv-canary-sig|v1|sentinel|sentinel01|8|level_changed|anomaly|40|68|unknown|unknown|0|1800",
+           "anomaly sentinel canonical matches reference");
+}
+
+void test_sentinel_canonical_is_not_a_sense_canonical() {
+  /* Domain separation by kind: the same device/seq/bucket through the two
+   * builders can never produce the same bytes, so a `sense` signature can
+   * never be replayed as a `sentinel` one (or the reverse). */
+  char a[256], b[256];
+  const size_t na = device_signature::build_sentinel_canonical(
+      3, "level_changed", "present", 60, 0, "1", "near", 1, 1200,
+      "dev01", a, sizeof(a));
+  const size_t nb = device_signature::build_sense_canonical(
+      3, "level_changed", "present", "1", "near", 1200, "dev01", b, sizeof(b));
+  check(na > 0 && nb > 0, "both canonicals built");
+  check(std::string(a, na) != std::string(b, nb),
+        "sentinel and sense canonicals differ for the same inputs");
+  check(std::string(a, na).find("|v1|sentinel|") != std::string::npos,
+        "sentinel canonical carries its kind");
+}
+
+void test_sentinel_canonical_truncation_returns_zero() {
+  char out[32];
+  const size_t n = device_signature::build_sentinel_canonical(
+      7, "level_changed", "confirmed", 82, 0, "1", "near", 11, 1200,
+      "sentinel01", out, sizeof(out));
+  check(n == 0, "truncated sentinel canonical returns 0");
+  check(out[0] == '\0', "truncated sentinel canonical clears the buffer");
+}
+
 void test_chain_canonical_null_hash_returns_zero() {
   char out[256] = "sentinel";
   const size_t n = device_signature::build_chain_canonical(
@@ -181,6 +250,10 @@ int main() {
   test_counts_canonical_known_input();
   test_sense_canonical_known_input();
   test_sense_canonical_occupancy_change();
+  test_sentinel_canonical_golden_vector();
+  test_sentinel_canonical_anomaly_unknown_bands();
+  test_sentinel_canonical_is_not_a_sense_canonical();
+  test_sentinel_canonical_truncation_returns_zero();
   test_chain_canonical_null_hash_returns_zero();
   test_canonical_truncation_returns_zero();
   test_b64url_known_vectors();

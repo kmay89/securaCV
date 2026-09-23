@@ -1,0 +1,873 @@
+{
+ "generated_by": "docs/hardware/enclosure/gen_hardware.py",
+ "note": "The hardware each committed preset needs, parsed from the case's own HARDWARE echo (canary_core_lib hw_echo — derived from the knobs that draw the holes), and the lid-rib headroom its own assert holds the rib to. `bom` joins the fasteners against docs/hardware/bom_*.csv; `bom_drift` lists every disagreement, for the CSV's owner to resolve — this file never edits a BOM.",
+ "sets": {
+  "doorbell": {
+   "device": "canary-vision",
+   "scad": "canary_vision_doorbell.scad",
+   "overrides": {
+    "part": "body"
+   },
+   "case": "Vision doorbell",
+   "items": [
+    {
+     "qty": 6,
+     "kind": "screw",
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap"
+    },
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 6 self-tap",
+     "text": "M2 pan x 6 self-tap (OV5647 to the face posts)"
+    },
+    {
+     "qty": 1,
+     "kind": "security-screw",
+     "spec": "M2 x 10 security screw",
+     "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (plate foot into the body boss)"
+    },
+    {
+     "qty": 1,
+     "kind": "button",
+     "spec": "Ø12 illuminated momentary button + panel nut (16.2 AC)",
+     "text": "Ø12 illuminated momentary button + panel nut (16.2 AC)"
+    },
+    {
+     "qty": 1,
+     "kind": "gasket",
+     "spec": "TPU gasket (print part=\"gasket\")",
+     "text": "TPU gasket (print part=\"gasket\")"
+    },
+    {
+     "qty": 1,
+     "kind": "vent",
+     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+     "text": "Ø12 adhesive ePTFE/GORE vent patch"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (plate)",
+     "text": "#6 pan wall screw (plate)"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 1.0,
+    "bound": "lid_headroom",
+    "slack": 0.0,
+    "batt_hold": false
+   },
+   "bom": {
+    "SCR5": {
+     "bom": 8,
+     "echo": 10
+    },
+    "SCR8": {
+     "bom": 1,
+     "echo": 1
+    }
+   }
+  },
+  "doorbell+inserts": {
+   "device": "canary-vision",
+   "scad": "canary_vision_doorbell.scad",
+   "overrides": {
+    "part": "body",
+    "screw_insert": "true"
+   },
+   "case": "Vision doorbell",
+   "items": [
+    {
+     "qty": 6,
+     "kind": "screw",
+     "spec": "M2 pan x 10 machine (into the inserts)",
+     "text": "M2 pan x 10 machine (into the inserts)"
+    },
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 6 self-tap",
+     "text": "M2 pan x 6 self-tap (OV5647 to the face posts)"
+    },
+    {
+     "qty": 1,
+     "kind": "security-screw",
+     "spec": "M2 x 10 security screw",
+     "text": "M2 x 10 security screw, Torx pin/tri-wing, machine thread (into the boss insert) (plate foot into the body boss)"
+    },
+    {
+     "qty": 7,
+     "kind": "insert",
+     "spec": "M2 heat-set insert 3.5 OD x 4",
+     "text": "M2 heat-set insert 3.5 OD x 4 — the +1 seats in the security boss"
+    },
+    {
+     "qty": 1,
+     "kind": "button",
+     "spec": "Ø12 illuminated momentary button + panel nut (16.2 AC)",
+     "text": "Ø12 illuminated momentary button + panel nut (16.2 AC)"
+    },
+    {
+     "qty": 1,
+     "kind": "gasket",
+     "spec": "TPU gasket (print part=\"gasket\")",
+     "text": "TPU gasket (print part=\"gasket\")"
+    },
+    {
+     "qty": 1,
+     "kind": "vent",
+     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+     "text": "Ø12 adhesive ePTFE/GORE vent patch"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (plate)",
+     "text": "#6 pan wall screw (plate)"
+    }
+   ],
+   "bom": {
+    "INS1": {
+     "bom": 5,
+     "echo": 7
+    }
+   }
+  },
+  "sense": {
+   "device": "canary-sense",
+   "scad": "canary_sense_enclosure.scad",
+   "overrides": {
+    "part": "back"
+   },
+   "case": "Sense",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "bolt",
+     "spec": "M5 x 25 bolt + nut",
+     "text": "M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)"
+    },
+    {
+     "qty": 4,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (bracket)",
+     "text": "#6 pan wall screw (bracket)"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 1.0,
+    "bound": "cav_extra",
+    "slack": 0.0,
+    "batt_hold": false
+   },
+   "bom": {}
+  },
+  "sense+inserts": {
+   "device": "canary-sense",
+   "scad": "canary_sense_enclosure.scad",
+   "overrides": {
+    "part": "back",
+    "screw_insert": "true"
+   },
+   "case": "Sense",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 10 machine (into the inserts)",
+     "text": "M2 pan x 10 machine (into the inserts)"
+    },
+    {
+     "qty": 4,
+     "kind": "insert",
+     "spec": "M2 heat-set insert 3.5 OD x 4",
+     "text": "M2 heat-set insert 3.5 OD x 4"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "bolt",
+     "spec": "M5 x 25 bolt + nut",
+     "text": "M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)"
+    },
+    {
+     "qty": 4,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (bracket)",
+     "text": "#6 pan wall screw (bracket)"
+    }
+   ],
+   "bom": {
+    "INS1": {
+     "bom": 4,
+     "echo": 4
+    }
+   }
+  },
+  "vision.devkit_indoor": {
+   "device": "canary-vision",
+   "scad": "canary_vision_enclosure.scad",
+   "overrides": {
+    "host": "devkit",
+    "preset": "vision_indoor",
+    "part": "back"
+   },
+   "case": "Vision devkit",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap"
+    },
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 6 self-tap",
+     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+    },
+    {
+     "qty": 1,
+     "kind": "bolt",
+     "spec": "M5 x 25 bolt + nut",
+     "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+    },
+    {
+     "qty": 4,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (bracket)",
+     "text": "#6 pan wall screw (bracket)"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 1.0,
+    "bound": "lid_headroom",
+    "slack": 0.0,
+    "batt_hold": false
+   },
+   "bom": {
+    "SCR5": {
+     "bom": 8,
+     "echo": 8
+    },
+    "SCR6": {
+     "bom": 1,
+     "echo": 1
+    }
+   }
+  },
+  "vision.xiao_indoor": {
+   "device": "canary-vision",
+   "scad": "canary_vision_enclosure.scad",
+   "overrides": {
+    "host": "xiao",
+    "preset": "vision_indoor",
+    "part": "back"
+   },
+   "case": "Vision xiao",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap"
+    },
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 6 self-tap",
+     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+    },
+    {
+     "qty": 1,
+     "kind": "bolt",
+     "spec": "M5 x 25 bolt + nut",
+     "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+    },
+    {
+     "qty": 4,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (bracket)",
+     "text": "#6 pan wall screw (bracket)"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 1.38,
+    "bound": "lid_headroom",
+    "slack": 0.38,
+    "batt_hold": false
+   },
+   "bom": {
+    "SCR5": {
+     "bom": 8,
+     "echo": 8
+    },
+    "SCR6": {
+     "bom": 1,
+     "echo": 1
+    }
+   }
+  },
+  "vision.xiao_indoor+inserts": {
+   "device": "canary-vision",
+   "scad": "canary_vision_enclosure.scad",
+   "overrides": {
+    "host": "xiao",
+    "preset": "vision_indoor",
+    "part": "back",
+    "screw_insert": "true"
+   },
+   "case": "Vision xiao",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 10 machine (into the inserts)",
+     "text": "M2 pan x 10 machine (into the inserts)"
+    },
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 6 self-tap",
+     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+    },
+    {
+     "qty": 4,
+     "kind": "insert",
+     "spec": "M2 heat-set insert 3.5 OD x 4",
+     "text": "M2 heat-set insert 3.5 OD x 4"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+    },
+    {
+     "qty": 1,
+     "kind": "bolt",
+     "spec": "M5 x 25 bolt + nut",
+     "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+    },
+    {
+     "qty": 4,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (bracket)",
+     "text": "#6 pan wall screw (bracket)"
+    }
+   ],
+   "bom": {
+    "INS1": {
+     "bom": 5,
+     "echo": 4
+    }
+   }
+  },
+  "vision.xiao_weather": {
+   "device": "canary-vision",
+   "scad": "canary_vision_enclosure.scad",
+   "overrides": {
+    "host": "xiao",
+    "preset": "vision_weather",
+    "part": "back"
+   },
+   "case": "Vision xiao",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap"
+    },
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 6 self-tap",
+     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+    },
+    {
+     "qty": 1,
+     "kind": "gasket",
+     "spec": "TPU gasket (print part=\"gasket\")",
+     "text": "TPU gasket (print part=\"gasket\")"
+    },
+    {
+     "qty": 1,
+     "kind": "vent",
+     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+     "text": "Ø12 adhesive ePTFE/GORE vent patch"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+     "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+    },
+    {
+     "qty": 1,
+     "kind": "printed-part",
+     "spec": "hood (print part=\"hood\"; bond into the front's groove)",
+     "text": "hood (print part=\"hood\"; bond into the front's groove)"
+    },
+    {
+     "qty": 1,
+     "kind": "bolt",
+     "spec": "M5 x 25 bolt + nut",
+     "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+    },
+    {
+     "qty": 4,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (bracket)",
+     "text": "#6 pan wall screw (bracket)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (keyholes)",
+     "text": "#6 pan wall screw (keyholes)"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 4.58,
+    "bound": "lid_headroom",
+    "slack": 3.58,
+    "batt_hold": false
+   },
+   "bom": {
+    "SCR5": {
+     "bom": 8,
+     "echo": 8
+    },
+    "SCR6": {
+     "bom": 1,
+     "echo": 1
+    }
+   }
+  },
+  "wap.battery_full": {
+   "device": "canary-wap",
+   "scad": "canary_wap_enclosure.scad",
+   "overrides": {
+    "preset": "battery_full",
+    "part": "base"
+   },
+   "case": "WAP",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 flat x 8 self-tap",
+     "text": "M2 flat x 8 self-tap"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø12 x 1 clear disc (bond)",
+     "text": "Ø12 x 1 clear disc (bond)"
+    },
+    {
+     "qty": 1,
+     "kind": "magnet",
+     "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+     "text": "Ø6 x 2.2 disc magnet (press + glue)"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 1.0,
+    "bound": "lid_headroom",
+    "slack": 0.0,
+    "batt_hold": true
+   },
+   "bom": {
+    "SCR3": {
+     "bom": 4,
+     "echo": 4
+    }
+   }
+  },
+  "wap.battery_weather": {
+   "device": "canary-wap",
+   "scad": "canary_wap_enclosure.scad",
+   "overrides": {
+    "preset": "battery_weather",
+    "part": "base"
+   },
+   "case": "WAP",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 flat x 8 self-tap",
+     "text": "M2 flat x 8 self-tap"
+    },
+    {
+     "qty": 1,
+     "kind": "gasket",
+     "spec": "TPU gasket (print part=\"gasket\")",
+     "text": "TPU gasket (print part=\"gasket\")"
+    },
+    {
+     "qty": 1,
+     "kind": "vent",
+     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+     "text": "Ø12 adhesive ePTFE/GORE vent patch"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø12 x 1 clear disc (bond)",
+     "text": "Ø12 x 1 clear disc (bond)"
+    },
+    {
+     "qty": 1,
+     "kind": "magnet",
+     "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+     "text": "Ø6 x 2.2 disc magnet (press + glue)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (keyholes)",
+     "text": "#6 pan wall screw (keyholes)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
+     "text": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 1.35,
+    "bound": "lid_headroom",
+    "slack": 0.35,
+    "batt_hold": true
+   },
+   "bom": {
+    "SCR3": {
+     "bom": 4,
+     "echo": 4
+    },
+    "SCR4": {
+     "bom": 2,
+     "echo": 2
+    }
+   }
+  },
+  "wap.battery_weather.shield": {
+   "device": "canary-wap",
+   "scad": "canary_wap_enclosure.scad",
+   "overrides": {
+    "preset": "battery_weather",
+    "part": "shield"
+   },
+   "case": "WAP",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 flat x 8 self-tap",
+     "text": "M2 flat x 8 self-tap"
+    },
+    {
+     "qty": 1,
+     "kind": "gasket",
+     "spec": "TPU gasket (print part=\"gasket\")",
+     "text": "TPU gasket (print part=\"gasket\")"
+    },
+    {
+     "qty": 1,
+     "kind": "vent",
+     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+     "text": "Ø12 adhesive ePTFE/GORE vent patch"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø12 x 1 clear disc (bond)",
+     "text": "Ø12 x 1 clear disc (bond)"
+    },
+    {
+     "qty": 1,
+     "kind": "magnet",
+     "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+     "text": "Ø6 x 2.2 disc magnet (press + glue)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (keyholes)",
+     "text": "#6 pan wall screw (keyholes)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
+     "text": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)"
+    },
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 flat x 16 self-tap",
+     "text": "M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted"
+    }
+   ],
+   "bom": {}
+  },
+  "wap.compact_plain": {
+   "device": "canary-wap",
+   "scad": "canary_wap_enclosure.scad",
+   "overrides": {
+    "preset": "compact_plain",
+    "part": "base"
+   },
+   "case": "WAP",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 flat x 8 self-tap",
+     "text": "M2 flat x 8 self-tap"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    }
+   ],
+   "lid_rib": {
+    "ribs": true,
+    "h": 1.0,
+    "w": 2.5,
+    "headroom": 1.85,
+    "bound": "lid_headroom",
+    "slack": 0.85,
+    "batt_hold": false
+   },
+   "bom": {
+    "SCR3": {
+     "bom": 4,
+     "echo": 4
+    }
+   }
+  },
+  "wap.compact_plain+inserts": {
+   "device": "canary-wap",
+   "scad": "canary_wap_enclosure.scad",
+   "overrides": {
+    "preset": "compact_plain",
+    "part": "base",
+    "screw_insert": "true"
+   },
+   "case": "WAP",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 flat x 8 machine (into the inserts)",
+     "text": "M2 flat x 8 machine (into the inserts)"
+    },
+    {
+     "qty": 4,
+     "kind": "insert",
+     "spec": "M2 heat-set insert 3.5 OD x 4",
+     "text": "M2 heat-set insert 3.5 OD x 4"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    }
+   ],
+   "bom": {
+    "INS1": {
+     "bom": 4,
+     "echo": 4
+    }
+   }
+  }
+ },
+ "bom_drift": [
+  {
+   "set": "doorbell",
+   "csv": "bom_canary_vision.csv",
+   "what": "short SCR5",
+   "detail": "bom_canary_vision.csv SCR5 qty 8 < 10 the CAD echoes"
+  },
+  {
+   "set": "doorbell",
+   "csv": "bom_canary_vision.csv",
+   "what": "unbilled #6 pan wall screw (plate)",
+   "detail": "2x #6 pan wall screw (plate) — no row in bom_canary_vision.csv bills it"
+  },
+  {
+   "set": "doorbell+inserts",
+   "csv": "bom_canary_vision.csv",
+   "what": "short INS1",
+   "detail": "bom_canary_vision.csv INS1 qty 5 < 7 the CAD echoes"
+  },
+  {
+   "set": "sense",
+   "csv": "bom_canary_sense.csv",
+   "what": "unbilled #6 pan wall screw (bracket)",
+   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_sense.csv bills it"
+  },
+  {
+   "set": "sense",
+   "csv": "bom_canary_sense.csv",
+   "what": "unbilled M2 pan x 10 self-tap",
+   "detail": "4x M2 pan x 10 self-tap — no row in bom_canary_sense.csv bills it"
+  },
+  {
+   "set": "sense",
+   "csv": "bom_canary_sense.csv",
+   "what": "unbilled M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)",
+   "detail": "1x M5 x 25 bolt + nut (hinge; Vision knob/bracket parts) — no row in bom_canary_sense.csv bills it"
+  },
+  {
+   "set": "vision.devkit_indoor",
+   "csv": "bom_canary_vision.csv",
+   "what": "unbilled #6 pan wall screw (bracket)",
+   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_vision.csv bills it"
+  },
+  {
+   "set": "vision.xiao_indoor",
+   "csv": "bom_canary_vision.csv",
+   "what": "unbilled #6 pan wall screw (bracket)",
+   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_vision.csv bills it"
+  },
+  {
+   "set": "vision.xiao_weather",
+   "csv": "bom_canary_vision.csv",
+   "what": "unbilled #6 pan wall screw (bracket)",
+   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_vision.csv bills it"
+  },
+  {
+   "set": "vision.xiao_weather",
+   "csv": "bom_canary_vision.csv",
+   "what": "unbilled #6 pan wall screw (keyholes)",
+   "detail": "2x #6 pan wall screw (keyholes) — no row in bom_canary_vision.csv bills it"
+  },
+  {
+   "set": "wap.battery_weather",
+   "csv": "bom_canary_wap.csv",
+   "what": "unbilled M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
+   "detail": "2x M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat) — no row in bom_canary_wap.csv bills it"
+  },
+  {
+   "set": "wap.battery_weather.shield",
+   "csv": "bom_canary_wap.csv",
+   "what": "unbilled M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted",
+   "detail": "4x M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted — no row in bom_canary_wap.csv bills it"
+  }
+ ]
+}

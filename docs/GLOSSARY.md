@@ -84,8 +84,16 @@ policy saying how many of them must sign for a break-glass request to
 authorize. Configured once, then rehearsed — see the Operator's Bench in
 the Lab.
 
-**The Vault** — The sealed store of raw snapshots that break-glass opens.
-→ [sealed snapshot vault](sealed_snapshot_vault.md)
+**The Vault** — The kernel's sealed store of raw frames that break-glass
+opens — by quorum, never by one person.
+→ [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Sealed snapshot** — Not the Vault. One camera frame a canary-wap seals when
+an alarm it was armed for fires, encrypted to one person's X25519 key; the
+Canary keeps only the public half, so it cannot open its own file. Being
+single-recipient by construction, it is opened by that key's holder alone —
+with `tools/unseal_snapshot.py`, or on the iPhone app's Keys tab.
+→ [sealed snapshots](sealed_snapshot_vault.md)
 
 **Coarse timestamps** — Event times are bucketed (10-minute windows) on
 purpose, so the log can prove *that* something happened without becoming a
@@ -200,7 +208,7 @@ truth is [`firmware/build_matrix.json`](../firmware/build_matrix.json).
 | **Canary Vision** | shipping | Camera + on-device person detection, reports to Home Assistant. |
 | **Canary Sense** | shipping | Presence and breathing radar (60 GHz MR60BHA2) — care and wellbeing without a camera to point. |
 | **Canary Pool** | design | *Design-stage* — an outdoor pool/spa water-chemistry node (pH · ORP · water temp · TDS) that publishes to the fleet; the Dash already renders its cards. ESP32 + Atlas EZO or industrial differential probes. See [pool water-monitor research](research/pool_water_monitor.md). |
-| **Canary Sentinel** | design | *Phase 0 — fusion core host-tested, no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
+| **Canary Sentinel** | design | *Phase 1a — fusion core host-tested; the signed network/witness firmware is compile-gated in CI but has not run on hardware; no released build.* Multi-sensor fusion guardian: PIR + radar + WiFi CSI + WiFi/BLE + light, scored for corroboration across physically independent channels. Lite / Standard / Heavy tiers. See `firmware/FIRMWARE_VARIANT_AUDIT.md`. |
 | **Canary Display** | prototype | The wall displays and dashes — the ambient surface a household actually looks at. |
 | **Canary OTA** | software | The signed pull-update path, with rollback. |
 | **Canary Fence Guard** | idea | *Concept — nothing builds yet.* Boundary/perimeter variant. |

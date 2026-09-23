@@ -237,6 +237,14 @@ Within 30 seconds of the Canary connecting to MQTT:
    attributes with `verified: false`, `trust_reason: unsigned`, so a
    dashboard can tell an unsigned publish from a verified one.
 
+   The names in bold are what Home Assistant renders after the device
+   name; they come from each entity's translation key, not from the code.
+   To rename one, edit `custom_components/securacv/strings.json`, copy it
+   over `translations/en.json` (a test keeps the two byte-identical), and
+   mirror the rename in this list and in the names
+   `tests/test_entity_translations.py` pins; other languages go in their
+   own `translations/<lang>.json`.
+
    Sensors:
    - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
    - **Chain Length** — hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)
@@ -296,6 +304,19 @@ device also announces acoustic entities via MQTT discovery:
      muted / `OFF` = live). Every toggle — including ones from HA — is signed
      into the device's witness chain with its source, so an investigator can
      later verify when the mic was off and who turned it off.
+
+Canary Sentinel (the multi-sensor fusion guardian) is **not released yet** —
+its Phase 1a firmware is compiled by CI but has not run on a bench
+([project README](../firmware/projects/canary-sentinel/README.md)). When a
+unit is built by hand, its own discovery announces **Presence** and
+**Anomaly** binary sensors, a **Channel blinded** problem sensor, **Level**,
+**Confidence**, **Anomaly score**, **Occupancy**, **Range band** and
+**Corroborating modalities** sensors, the uptime / RSSI / free-heap
+diagnostics and the firmware update entity — all from the coarse fused
+claim, never a raw measurement. Its events are signed over their own
+`sentinel` canonical, which the integration verifies like every other signed
+kind; its **Last Event** reads `level_changed`, and its sensing modality
+shows as "Other sensor" because it fuses several media at once.
 
 ### Step 4b: Add the verified-✓ timeline card
 
@@ -385,6 +406,60 @@ after-hours presence (with optional two-physics corroboration),
 lights-out-with-presence tamper, and a non-diagnostic welfare check — plus a
 stock-card **wellbeing tile**. See
 [`docs/blueprints/canary_sense_wellbeing.md`](blueprints/canary_sense_wellbeing.md).
+
+### Actions
+
+The integration registers three Home Assistant actions, all of them about
+[watches](design/watches.md): bounded attention that ends by itself. Try
+them from **Developer tools → Actions**, or call them from an automation or
+a script.
+
+| Action | Takes | Returns |
+|---|---|---|
+| `securacv.start_watch` | `subject` (required, in words: "the gate canary"), `duration` ("two weeks", in days, weeks, months, seasons or years; 14 days if left out, never more than a year, and refused rather than guessed when it names no unit, such as "48 hours"), `concern` (`stopped`, `unusual`, `more`, `less` or `every`; read off the subject's wording if left out) | the watch, including the `id` that `end_watch` takes |
+| `securacv.end_watch` | `watch`: its id, or its label ("the gate canary") | the watch as it ended |
+| `securacv.list_watches` | nothing (response only) | `watches`: each running watch with its `state`, `subject` and `days_left` |
+
+```yaml
+# automations.yaml — watch the gate while you're away; say if it goes quiet
+- alias: "Away: watch the gate Canary"
+  triggers:
+    - trigger: state
+      entity_id: input_boolean.away
+      to: "on"
+  actions:
+    - action: securacv.start_watch
+      data:
+        subject: "the gate canary"
+        duration: "10 days"
+        concern: stopped
+```
+
+The example is written in the automation syntax of Home Assistant 2024.10
+and newer. The integration supports 2024.4.1 and newer, and on a release
+before 2024.10 the same automation is written with `trigger:` and
+`- platform: state`, then `action:` and `- service: securacv.start_watch`.
+The action and its fields don't change.
+
+What to expect:
+
+- A watch started this way is the same object as one you spoke: the same
+  cap on how many run at once, kept across a clean restart (a crash or
+  power cut can lose the last few seconds of changes), delivered as a
+  persistent notification, and it ends by itself and says so.
+- A subject that no Canary's name matches is accepted but cannot fire until
+  something reports it. The returned watch says `subject.kind: unbound`, and
+  the log warns.
+- `end_watch` refuses a label that two watches share (end it by id) and a
+  name it doesn't know. It never guesses. An early end is announced the
+  same way an expiry is, with what the watch learned.
+- Until the integration has loaded, all three refuse with a message rather
+  than answering from an empty list. The same goes if the stored watches
+  could not be read. The file is left as it is, nothing is written over
+  it, and reloading the integration tries again.
+- There are no actions for pinning, rotating or unpinning a device key.
+  Those stay in the options flow on purpose
+  ([why](device_trust.md#why-pin-rotate-and-unpin-are-not-actions)).
 
 ### Step 6: Verify per-device PKI (optional but recommended)
 

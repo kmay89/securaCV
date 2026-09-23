@@ -1,7 +1,90 @@
 {
  "generated_by": "docs/hardware/enclosure/gen_assembled_dims.py",
- "note": "Assembled outer envelopes, measured off the union of each device's committed parts in their fit-checked assembled positions. gen_figures.mjs reads these for multi-part device figures instead of stacking part depths, which overstates any nesting assembly. Regenerate after re-exporting any STL these unions include.",
+ "note": "Assembled outer envelopes, measured off the union of each device's parts rendered from its case source in their assembled positions (the fit-checked ones where the case has a fit check; `placement` says which). gen_figures.mjs reads these for multi-part device figures instead of stacking part depths, which overstates any nesting assembly, and for in-development figures declared `assembled` instead of a typed sketch. Regenerate after any edit to the cases these unions include.",
  "devices": {
+  "device.canary-combo": {
+   "scad": "canary_combo.scad",
+   "overrides": {
+    "part": "back"
+   },
+   "placement": "front() at z = base_d: the echo's base_d + lid_t + mount_extra, the posts shortened by the head pads they carry, the lid-key rib to the rim",
+   "mm_scad": [
+    86.4,
+    73.6,
+    26.38
+   ],
+   "fig": {
+    "w": 86.4,
+    "d": 26.38,
+    "h": 73.6
+   },
+   "seams_fig_d": [
+    24.38
+   ],
+   "features_fig_mm": {
+    "lens": {
+     "x": 21.6,
+     "z": 59.1,
+     "w": 10.0,
+     "h": 10.0
+    },
+    "radome": {
+     "x": 57.8,
+     "z": 30.6,
+     "w": 24.0,
+     "h": 24.0
+    }
+   }
+  },
+  "device.canary-display-dash": {
+   "scad": "canary_dash_display.scad",
+   "overrides": {
+    "part": "back"
+   },
+   "placement": "total_t = frame_h + back_t: back as modeled (dock pads on its wall face), frame turned face-out with its rim on the back's inner face",
+   "mm_scad": [
+    118.1,
+    77.997,
+    25.6
+   ],
+   "fig": {
+    "w": 118.1,
+    "d": 25.6,
+    "h": 77.997
+   },
+   "seams_fig_d": [
+    6.0,
+    9.0
+   ],
+   "face_fig_mm": {
+    "w": 101.3,
+    "h": 61.2
+   }
+  },
+  "device.canary-display-watch": {
+   "scad": "canary_watch_station.scad",
+   "overrides": {
+    "part": "drum"
+   },
+   "placement": "bezel() seated frame: face underside on the drum rim, bezel at z = drum_h (the nubs' own datum, drum_z = drum_h + bezel_z)",
+   "mm_scad": [
+    49.0,
+    49.0,
+    23.19
+   ],
+   "fig": {
+    "w": 49.0,
+    "d": 23.19,
+    "h": 49.0
+   },
+   "seams_fig_d": [
+    21.0
+   ],
+   "face_fig_mm": {
+    "w": 39.4,
+    "h": 39.4
+   }
+  },
   "device.canary-sense": {
    "scad": "canary_sense_enclosure.scad",
    "overrides": {

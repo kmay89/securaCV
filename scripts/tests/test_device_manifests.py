@@ -13,7 +13,10 @@ What is pinned and why:
   • the stdlib schema validator rejects what a full validator would;
   • a manifest may own a second case file (`cad.also`, the Vision's doorbell):
     the file must exist and source a listed enclosure set, the schema spells
-    it like cad.scad, and no standalone doorbell manifest exists.
+    it like cad.scad, and no standalone doorbell manifest exists;
+  • enclosures.json homes every set on the manifests that claim it: a set
+    homed by its README name alone, a claimant the catalog does not reflect,
+    and a claimed set the catalog left universal each fail.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -119,6 +122,35 @@ class LintCatchesRealMistakes(unittest.TestCase):
         self.assertTrue(any("unclaimed.json" in e and "canary-display-watch" in e
                             for e in errors), errors)
 
+    # enclosures.json homes each set on the manifests that claim it
+    # (gen_enclosures.py); the committed JSON stays as generated while the
+    # scratch manifests move, which is exactly the drift the lint must name.
+    def test_a_set_homed_by_its_name_alone_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-vision",
+                 lambda d: d["cad"]["enclosure_sets"].remove("combo-witness"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("'combo-witness' is homed on device 'canary-vision', but no "
+                            "manifest claims it" in e for e in errors), errors)
+
+    def test_a_new_claimant_the_catalog_does_not_reflect_fails(self):
+        with _Mutated() as devices:          # a third claimant for the 7" case
+            edit(devices, "canary-display-dash",
+                 lambda d: d["cad"]["enclosure_sets"].append("7-touch-dashboard-case"))
+            _, errors = ldm.lint(devices_dir=devices)
+        hits = [e for e in errors if "'7-touch-dashboard-case'" in e and "disagrees" in e]
+        self.assertEqual(len(hits), 1, errors)
+        self.assertIn("canary-display-dash, canary-display-dash7, canary-display-nightstand7",
+                      hits[0])
+
+    def test_a_claimed_set_the_catalog_left_universal_fails(self):
+        with _Mutated() as devices:
+            edit(devices, "canary-wap",
+                 lambda d: d["cad"]["enclosure_sets"].append("field-case"))
+            _, errors = ldm.lint(devices_dir=devices)
+        self.assertTrue(any("'field-case'" in e and "disagrees" in e and "canary-wap" in e
+                            for e in errors), errors)
+
     def test_chip_mismatch_with_flasher_catalog_fails(self):
         with _Mutated() as devices:
             edit(devices, "canary-sense", lambda d: d["board"].__setitem__("mcu", "ESP32-S3"))
@@ -221,9 +253,9 @@ class LintCatchesRealMistakes(unittest.TestCase):
     def test_cad_params_reference_to_an_unknown_row_is_refused(self):
         with _Mutated() as devices:
             edit(devices, "canary-sense", lambda d: d["cad"]["params"].__setitem__(
-                "vm_l", {"brd": "mr60x", "dim": "l"}))
+                "radar_l", {"brd": "mr60x", "dim": "l"}))
             _, errors = ldm.lint(devices_dir=devices)
-        hits = [e for e in errors if "cad.params.vm_l" in e]
+        hits = [e for e in errors if "cad.params.radar_l" in e]
         self.assertEqual(len(hits), 1, errors)
         self.assertIn('BRD_REGISTRY has no row "mr60x"', hits[0])
         self.assertIn("devices/canary-sense", hits[0])

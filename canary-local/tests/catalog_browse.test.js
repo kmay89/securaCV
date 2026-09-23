@@ -30,6 +30,39 @@ test("every product summarizes with a family and an env label", async () => {
   }
 });
 
+// "configure in the workshop →" (the browse card and the finder's result, both
+// through workshopHref) links to workshop.html#<s.workshop>. The workshop opens
+// the WAP for a device it does not know, so the link may only ever name a
+// workshop device — and a case no workshop device takes gets no link at all.
+test("the workshop link only ever names a device the workshop configures", async () => {
+  const ws = JSON.parse(readFileSync(join(ROOT, "devices/workshop.json"), "utf8"));
+  const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
+  for (const p of cat.products) {
+    const s = B.productSummary(p);
+    const href = B.workshopHref(s);
+    if (s.workshop == null) {
+      assert.strictEqual(href, null, `${p.id}: no workshop device, no link`);
+      continue;
+    }
+    assert.strictEqual(href, `workshop.html#${s.workshop}`);
+    assert.ok(ws.devices[s.workshop], `${p.id}: workshop ${s.workshop} is a workshop.json device`);
+    const serves = (set) => set.device === s.workshop || (set.devices || []).includes(s.workshop);
+    assert.ok(enc.sets.some((set) => set.scad === p.scad && serves(set)),
+      `${p.id}: one of its sets belongs on the ${s.workshop} page`);
+  }
+  // each workshop device's own case keeps its link …
+  const link = (id) => B.productSummary(cat.products.find((p) => p.id === id)).workshop;
+  assert.strictEqual(link("wap_enclosure"), "canary-wap");
+  assert.strictEqual(link("vision_enclosure"), "canary-vision");
+  assert.strictEqual(link("sense_enclosure"), "canary-sense");
+  assert.strictEqual(link("watch_station"), "canary-display-watch");
+  assert.strictEqual(link("dash_display"), "canary-display-dash");
+  // … and the display cases homed on boards the workshop lacks have none
+  for (const id of ["s3_lcd7", "s3_touch169", "c6_display", "s3_lcd147", "c3_lcd147"]) {
+    assert.strictEqual(link(id), null, `${id}: no workshop device takes it — no link`);
+  }
+});
+
 test("env labels are honest (rated → a target, unrated otherwise)", async () => {
   const field = cat.products.find((p) => p.id === "field_case");
   assert.strictEqual(B.envLabel(field), "CER-4", "field case reads its CER level");

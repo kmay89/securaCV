@@ -55,10 +55,13 @@ hat_h = 22.0;        // headroom above the PCB (HAT/M.2 + fan)
 standoff_ff = 11.0;  // F-F brass standoffs on the Pi's hole grid: 11 bare, 16 with a HAT
 
 /* [Shell] */
-wall_t = 2.0;  floor_t = 3.0;  lid_t = 2.0;  corner_r = 3.0;   // wall_t: catalog default shell — core_wall(), canary_core_lib
-                                                                // floor 3.0: the clip screws' cone seats leave a 1.35 web
+wall_t = 2.0;     // wall thickness — catalog default shell, core_wall(), canary_core_lib
+floor_t = 3.0;    // floor thickness — 3.0: the clip screws' cone seats leave a 1.35 web
+lid_t = 2.0;
+corner_r = 3.0;   // catalog default — core_corner_r(), canary_core_lib
 board_clear = 1.0;
-tol_slide = 0.20;  tol_hole = 0.30;   // catalog defaults — core_tol_*(), canary_core_lib
+tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
+tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 screw_d = 2.2;       // M2.5 self-tap into the standoffs
 screw_head_d = 5.0;
 lid_screw_d = 2.8;   // M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into F-F

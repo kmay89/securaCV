@@ -110,7 +110,8 @@ usb_dz   = 0.0;      // measured correction to the derived USB-C center (+ = tow
 btn_side = "back";   // ["back","front"] which PCB face carries the buttons — MEASURE
 btn_dz   = 1.0;      // actuator center off that face (side tact switches sit ~1.0) — MEASURE
 opt_side = true;
-side_open_h = 16.0;   side_open_dy = 0.0;      // tall slot — MEASURE
+side_open_h = 16.0;   // side slot height — a tall slot, MEASURE
+side_open_dy = 0.0;   // side slot center offset (Y) — MEASURE
 
 /* [Mount] — the catalog's blind stud/keyhole standard; defaults cite
    canary_mount_lib, and deviations earn their keep on the fit coupon */

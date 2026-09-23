@@ -1123,6 +1123,26 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .wap-captive-frame { width: 100%; height: 330px; border: 0; background: #0b0d10; }
 .wap-captive-go { margin: 12px 14px; }
 
+/* ── the display's first-boot phone (onboard-phone.js) ── the WAP phone's
+   chrome, plus the captive sheet's stand-in and the exchange log. */
+.ob-wrap { gap: 10px; margin-top: 14px; }
+.ob-sheet-head { display: flex; justify-content: space-between; align-items: center; }
+.ob-link { background: none; border: none; color: var(--canary); font-size: 12px; cursor: pointer; padding: 0; }
+.ob-frame { height: 180px; flex: none; }
+.ob-standin { border-top: 1px dashed rgba(255, 255, 255, 0.14); overflow-y: auto; flex: 1; }
+.ob-standin-note { margin: 0; }
+.ob-other { color: #9aa2ad; }
+.ob-tz-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.ob-tz { flex: 1; min-width: 0; }
+.ob-msg { min-height: 1.2em; margin: 0; font-size: 13px; color: var(--warn); }
+.ob-air-h { margin: 6px 0 0; font-size: 13px; color: var(--muted); align-self: stretch; }
+.ob-air { align-self: stretch; margin: 0; padding: 8px 10px 8px 28px; max-height: 190px; overflow-y: auto;
+  border: 1px solid var(--edge); border-radius: 10px; background: #0d0e10;
+  font: 11.5px/1.5 "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #b9c0c9; }
+.ob-air:empty { display: none; }
+.ob-air .ob-ok { color: var(--ok); }
+.ob-air .ob-warn { color: var(--warn); }
+
 /* wizard */
 .wap-wiz { padding: 18px 16px; display: flex; flex-direction: column; gap: 12px; }
 .wap-wiz-prog { display: flex; gap: 6px; margin-bottom: 4px; }

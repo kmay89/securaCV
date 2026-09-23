@@ -23,7 +23,7 @@
  },
  "counts": {
   "idea": 15,
-  "prototype": 9,
+  "prototype": 10,
   "confirmed": 1,
   "shipping": 25
  },
@@ -566,11 +566,6 @@
       "status": "in-development"
      },
      {
-      "product": "c3_lcd147",
-      "variant": "c3-pocket-display-case",
-      "status": "in-development"
-     },
-     {
       "product": "dock",
       "variant": "fleet-provisioning-dock",
       "status": "in-development"
@@ -618,11 +613,6 @@
      {
       "product": "relay_solar",
       "variant": "solar-lora-relay-pod",
-      "status": "in-development"
-     },
-     {
-      "product": "s3_lcd147",
-      "variant": "s3-hallway-stick-case",
       "status": "in-development"
      },
      {
@@ -744,6 +734,56 @@
    "glyph": "canary-local/figures/device.canary-clime.glyph.svg"
   },
   {
+   "id": "device.canary-combo",
+   "title": "Canary Combo",
+   "role": "device",
+   "device": "canary-vision",
+   "family": "canary-vision",
+   "supply": [
+    {
+     "vendor": "seeed",
+     "line": "XIAO"
+    }
+   ],
+   "confidence": "prototype",
+   "evidence": {
+    "registry_kind": "witness",
+    "committed_stls": [],
+    "catalog_variants": [
+     {
+      "product": "combo",
+      "variant": "combo-witness",
+      "status": "in-development"
+     }
+    ],
+    "firmware_configs": [
+     "default"
+    ]
+   },
+   "dims_source": "assembled-cad",
+   "sketch_note": null,
+   "envelope_mm": {
+    "w": 86.4,
+    "d": 26.38,
+    "h": 73.6
+   },
+   "assembled": {
+    "placement": "front() at z = base_d: the echo's base_d + lid_t + mount_extra, the posts shortened by the head pads they carry, the lid-key rib to the rim",
+    "seams_fig_d": [
+     24.38
+    ]
+   },
+   "traced_to": [],
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 4,
+   "rev": "6846c406",
+   "svg": "canary-local/figures/device.canary-combo.svg",
+   "glyph": "canary-local/figures/device.canary-combo.glyph.svg"
+  },
+  {
    "id": "device.canary-curbwatch",
    "title": "Canary Curbwatch",
    "role": "device",
@@ -834,11 +874,6 @@
       "product": "dash_display",
       "variant": "dashboard-display-case",
       "status": "in-development"
-     },
-     {
-      "product": "s3_lcd7",
-      "variant": "7-touch-dashboard-case",
-      "status": "in-development"
      }
     ],
     "firmware_configs": [
@@ -850,29 +885,29 @@
      "nightstand7",
      "touch169",
      "watch"
-    ],
-    "vendor_board": {
-     "key": "waveshare_4_3b",
-     "vendor": "Waveshare",
-     "mpn": "ESP32-S3-Touch-LCD-4.3B",
-     "mesh_committed": true,
-     "vendor_step": false
-    }
+    ]
    },
-   "dims_source": "board-cad",
+   "dims_source": "assembled-cad",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 118,
-    "d": 38.9,
-    "h": 79
+    "w": 118.1,
+    "d": 25.6,
+    "h": 77.997
+   },
+   "assembled": {
+    "placement": "total_t = frame_h + back_t: back as modeled (dock pads on its wall face), frame turned face-out with its rim on the back's inner face",
+    "seams_fig_d": [
+     6,
+     9
+    ]
    },
    "traced_to": [],
    "drift_guard": {
     "plan_tol_mm": 0.75,
     "depth_tol_mm": 4
    },
-   "solids": 3,
-   "rev": "9bb5e13f",
+   "solids": 5,
+   "rev": "f344cfc8",
    "svg": "canary-local/figures/device.canary-display-dash.svg",
    "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg"
   },
@@ -892,7 +927,13 @@
    "evidence": {
     "registry_kind": "display",
     "committed_stls": [],
-    "catalog_variants": [],
+    "catalog_variants": [
+     {
+      "product": "s3_lcd7",
+      "variant": "7-touch-dashboard-case",
+      "status": "in-development"
+     }
+    ],
     "firmware_configs": [
      "amoled241",
      "dash",
@@ -934,7 +975,13 @@
    "evidence": {
     "registry_kind": "display",
     "committed_stls": [],
-    "catalog_variants": [],
+    "catalog_variants": [
+     {
+      "product": "s3_lcd147",
+      "variant": "s3-hallway-stick-case",
+      "status": "in-development"
+     }
+    ],
     "firmware_configs": [
      "amoled241",
      "dash",
@@ -976,7 +1023,13 @@
    "evidence": {
     "registry_kind": "display",
     "committed_stls": [],
-    "catalog_variants": [],
+    "catalog_variants": [
+     {
+      "product": "s3_touch169",
+      "variant": "1-69-touch-watch-display-puck",
+      "status": "in-development"
+     }
+    ],
     "firmware_configs": [
      "amoled241",
      "dash",
@@ -1020,16 +1073,6 @@
     "committed_stls": [],
     "catalog_variants": [
      {
-      "product": "c6_display",
-      "variant": "c6-display-pocket-case",
-      "status": "in-development"
-     },
-     {
-      "product": "s3_touch169",
-      "variant": "1-69-touch-watch-display-puck",
-      "status": "in-development"
-     },
-     {
       "product": "watch_station",
       "variant": "watch-station",
       "status": "in-development"
@@ -1046,17 +1089,26 @@
      "watch"
     ]
    },
-   "dims_source": "sketch",
+   "dims_source": "assembled-cad",
    "sketch_note": null,
    "envelope_mm": {
     "w": 49,
-    "d": 23.2,
+    "d": 23.19,
     "h": 49
    },
+   "assembled": {
+    "placement": "bezel() seated frame: face underside on the drum rim, bezel at z = drum_h (the nubs' own datum, drum_z = drum_h + bezel_z)",
+    "seams_fig_d": [
+     21
+    ]
+   },
    "traced_to": [],
-   "drift_guard": null,
-   "solids": 3,
-   "rev": "17e158d1",
+   "drift_guard": {
+    "plan_tol_mm": 0.75,
+    "depth_tol_mm": 4
+   },
+   "solids": 4,
+   "rev": "c673b27b",
    "svg": "canary-local/figures/device.canary-display-watch.svg",
    "glyph": "canary-local/figures/device.canary-display-watch.glyph.svg"
   },
@@ -3414,11 +3466,6 @@
       "status": "in-development"
      },
      {
-      "product": "c3_lcd147",
-      "variant": "c3-pocket-display-case",
-      "status": "in-development"
-     },
-     {
       "product": "dock",
       "variant": "fleet-provisioning-dock",
       "status": "in-development"
@@ -3466,11 +3513,6 @@
      {
       "product": "relay_solar",
       "variant": "solar-lora-relay-pod",
-      "status": "in-development"
-     },
-     {
-      "product": "s3_lcd147",
-      "variant": "s3-hallway-stick-case",
       "status": "in-development"
      },
      {

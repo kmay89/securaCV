@@ -125,8 +125,26 @@
   },
   "entity": {
     "sensor": {
-      "last_event": {
-        "name": "Last Event"
+      "kernel_last_event": {
+        "name": "SecuraCV Last Event"
+      },
+      "storage_health": {
+        "name": "Storage Health"
+      },
+      "storage_free_pct": {
+        "name": "Storage Free"
+      },
+      "storage_wear_pct": {
+        "name": "Storage Wear Estimate"
+      },
+      "storage_write_rate": {
+        "name": "Storage Write Rate"
+      },
+      "soc_temperature": {
+        "name": "SoC Temperature"
+      },
+      "adapter_stats": {
+        "name": "SecuraCV Adapter Host"
       },
       "witness_count": {
         "name": "Witness Count"
@@ -134,16 +152,28 @@
       "chain_length": {
         "name": "Chain Length"
       },
+      "last_event": {
+        "name": "Last Event"
+      },
       "health_status": {
         "name": "Health"
       },
+      "sd_wear": {
+        "name": "SD Wear Estimate"
+      },
       "gps_fix": {
         "name": "GPS Fix"
+      },
+      "radar_link": {
+        "name": "Radar Link"
       }
     },
     "binary_sensor": {
       "kernel_online": {
-        "name": "Kernel Online"
+        "name": "Online"
+      },
+      "storage_replace": {
+        "name": "Storage Replacement Recommended"
       },
       "online": {
         "name": "Online"
@@ -153,7 +183,108 @@
       },
       "tamper": {
         "name": "Tamper"
+      },
+      "tamper_power_loss": {
+        "name": "Power Loss"
+      },
+      "tamper_sd_remove": {
+        "name": "SD Removed"
+      },
+      "tamper_sd_error": {
+        "name": "SD Error"
+      },
+      "tamper_gps_jamming": {
+        "name": "GPS Jamming"
+      },
+      "tamper_motion": {
+        "name": "Unexpected Motion"
+      },
+      "tamper_enclosure": {
+        "name": "Enclosure Open"
+      },
+      "tamper_gpio": {
+        "name": "GPIO Tamper"
+      },
+      "tamper_watchdog": {
+        "name": "Watchdog Timeout"
+      },
+      "tamper_unexpected_reboot": {
+        "name": "Unexpected Reboot"
+      },
+      "tamper_memory_critical": {
+        "name": "Memory Critical"
+      },
+      "sd_replace": {
+        "name": "SD Replacement Recommended"
+      },
+      "transport_wifi_ap": {
+        "name": "WiFi AP"
+      },
+      "transport_wifi_sta": {
+        "name": "WiFi Station"
+      },
+      "transport_mqtt": {
+        "name": "MQTT"
+      },
+      "transport_ble": {
+        "name": "Bluetooth"
+      },
+      "transport_mesh": {
+        "name": "Mesh Network"
+      },
+      "transport_chirp": {
+        "name": "Chirp Network"
+      },
+      "motion": {
+        "name": "Motion"
+      },
+      "occupancy": {
+        "name": "Occupancy"
+      },
+      "mesh_connected": {
+        "name": "Mesh Connected"
+      },
+      "chirp_active": {
+        "name": "Chirp Active"
       }
+    }
+  },
+  "services": {
+    "start_watch": {
+      "name": "Start a watch",
+      "description": "Starts a bounded, self-expiring watch on something the fleet already senses. Adds attention only: it cannot arm, disarm or unseal anything, and it never turns on new sensing. Returns the watch, including the id that End a watch takes.",
+      "fields": {
+        "subject": {
+          "name": "Subject",
+          "description": "What to keep an eye on, the way you would say it. A Canary's name binds the watch to that device's witness events; anything else is accepted but stays unfed until something in the fleet reports it.",
+          "example": "the gate canary"
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long, in days, weeks, months, seasons or years: \"two weeks\", \"10 days\", \"a month\". A duration with none of those units (\"48 hours\") is refused, not guessed. 14 days if left out; never longer than a year.",
+          "example": "two weeks"
+        },
+        "concern": {
+          "name": "Concern",
+          "description": "What to tell you about. Left out, it is read off the subject's wording (\"if it stops reporting\"), or it is \"if anything changes\".",
+          "example": "unusual"
+        }
+      }
+    },
+    "end_watch": {
+      "name": "End a watch",
+      "description": "Ends a watch early and removes it. Name it by its id (from Start a watch or List watches) or by its label; a label two watches share is refused rather than guessed. The early end is announced like an expiry. Returns the watch as it ended.",
+      "fields": {
+        "watch": {
+          "name": "Watch",
+          "description": "The watch's id, or its label as you said it.",
+          "example": "the gate canary"
+        }
+      }
+    },
+    "list_watches": {
+      "name": "List watches",
+      "description": "Returns the watches currently running, each with its state, what it is bound to and how many days it has left. Response only."
     }
   }
 }

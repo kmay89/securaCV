@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:8c8dc9bd-fefd-5d20-9874-5dcc9482de3c",
+  "serialNumber": "urn:uuid:40c12610-7bf7-5d34-bad7-53e87cbcc570",
   "version": 1,
   "metadata": {
     "tools": {
@@ -25,7 +25,7 @@
       "properties": [
         {
           "name": "securacv:products",
-          "value": "canary,canary-wap,canary-vision,canary-display,canary-sense"
+          "value": "canary,canary-wap,canary-vision,canary-display,canary-sense,canary-sentinel"
         },
         {
           "name": "securacv:version_source",
@@ -1108,7 +1108,7 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:full,canary:release,canary:release_ha"
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-sentinel:canary-sentinel-door,canary-sentinel:canary-sentinel-lite,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:full,canary:release,canary:release_ha"
         },
         {
           "name": "securacv:exact_pin",
@@ -1258,7 +1258,7 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary:release_ha"
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-sentinel:canary-sentinel-door,canary-sentinel:canary-sentinel-lite,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary:release_ha"
         },
         {
           "name": "securacv:exact_pin",
@@ -1410,7 +1410,7 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:full,canary:release,canary:release_ha"
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand-s3,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-sentinel:canary-sentinel-door,canary-sentinel:canary-sentinel-lite,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:dev,canary:esp32-wroom,canary:esp32cam,canary:freenove-s3,canary:full,canary:release,canary:release_ha"
         },
         {
           "name": "securacv:exact_pin",
@@ -1481,7 +1481,7 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:full"
+          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-sentinel:canary-sentinel-door,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:full"
         },
         {
           "name": "securacv:exact_pin",
@@ -1516,7 +1516,7 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-sentinel:canary-sentinel-lite,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
         },
         {
           "name": "securacv:exact_pin",
@@ -1627,6 +1627,36 @@
         }
       ],
       "bom-ref": "product:canary-sense"
+    },
+    {
+      "type": "firmware",
+      "group": "securacv",
+      "name": "securacv-canary-sentinel",
+      "version": "2.4.15",
+      "description": "PlatformIO product `canary-sentinel` (firmware/projects/canary-sentinel)",
+      "properties": [
+        {
+          "name": "securacv:boards",
+          "value": "seeed_xiao_esp32c3,seeed_xiao_esp32c6"
+        },
+        {
+          "name": "securacv:build_envs",
+          "value": "canary-sentinel-door,canary-sentinel-lite"
+        },
+        {
+          "name": "securacv:check_env",
+          "value": "canary-sentinel-door"
+        },
+        {
+          "name": "securacv:project_dir",
+          "value": "firmware/projects/canary-sentinel"
+        },
+        {
+          "name": "securacv:release_envs",
+          "value": ""
+        }
+      ],
+      "bom-ref": "product:canary-sentinel"
     },
     {
       "type": "firmware",
@@ -1992,6 +2022,21 @@
       ]
     },
     {
+      "ref": "product:canary-sentinel",
+      "dependsOn": [
+        "common:boot",
+        "common:csi",
+        "common:fleet_link",
+        "common:fusion",
+        "common:ota",
+        "lib:bblanchon/ArduinoJson@^7.0.0",
+        "lib:knolleary/PubSubClient@^2.8",
+        "lib:rweather/Crypto@^0.4.0",
+        "platform:platform_core3",
+        "platform:platform_s3c3"
+      ]
+    },
+    {
       "ref": "product:canary-vision",
       "dependsOn": [
         "common:boot",
@@ -2030,6 +2075,7 @@
         "product:canary",
         "product:canary-display",
         "product:canary-sense",
+        "product:canary-sentinel",
         "product:canary-vision",
         "product:canary-wap"
       ]

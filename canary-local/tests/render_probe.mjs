@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MIME = {
   ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
-  ".css": "text/css",
+  ".css": "text/css", ".glb": "model/gltf-binary",
 };
 
 const pw = await (async () => {
@@ -71,7 +71,9 @@ try {
     cv.style.cssText = "width:420px;height:420px";
     document.body.append(cv);
     const scene = new DeviceScene(cv, null);   // throws on shader failure
-    build(scene);
+    // the display line draws its committed fleet-figure model, which loads
+    // async — wait for it, or the frame is judged before the device lands
+    await build(scene);
     scene.start();
     await frames(24);                          // settle: sway, shadow, glass
     scene.stop();
@@ -116,8 +118,10 @@ const fail = (msg) => { console.error("✗ " + msg); failed++; };
 if (probe.status !== "done") fail("harness: " + probe.status);
 for (const e of errors) fail("pageerror: " + e);
 
-const EXPECT = ["canary-display-watch", "canary-display-dash", "canary-vision",
-                "canary-wap", "canary-sense", "canary-fence-guard"];
+const EXPECT = ["canary-display-watch", "canary-display-dash", "canary-display-nightstand-s3",
+                "canary-display-touch169", "canary-display-dash7", "canary-display-amoled241",
+                "canary-nightlight", "canary-vision", "canary-wap", "canary-sense",
+                "canary-fence-guard"];
 for (const id of EXPECT) {
   const r = probe.results[id];
   if (!r) { fail(`${id}: no result`); continue; }

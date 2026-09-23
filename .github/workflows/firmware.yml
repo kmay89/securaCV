@@ -9,6 +9,15 @@ on:
       # it and the generator's --check pins it, so an edit here must run this job.
       - 'spec/fixtures/witness_page_v1.json'
       - 'spec/fixtures/gen_witness_page_v1.py'
+      # The sealed-snapshot vault's python half and its cross-language
+      # fixture: "Mesh + Scout Host Tests" runs tools/test_unseal_snapshot.py
+      # and gen_svlt_parity.py --check, and the golden header they share
+      # with test_vault_logic.cpp is a firmware contract, so an edit here
+      # must run this job (the same reason the witness-page fixture is listed).
+      - 'tools/unseal_snapshot.py'
+      - 'tools/test_unseal_snapshot.py'
+      - 'tools/gen_svlt_parity.py'
+      - 'tools/fixtures/vault/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -24,6 +33,15 @@ on:
       # it and the generator's --check pins it, so an edit here must run this job.
       - 'spec/fixtures/witness_page_v1.json'
       - 'spec/fixtures/gen_witness_page_v1.py'
+      # The sealed-snapshot vault's python half and its cross-language
+      # fixture: "Mesh + Scout Host Tests" runs tools/test_unseal_snapshot.py
+      # and gen_svlt_parity.py --check, and the golden header they share
+      # with test_vault_logic.cpp is a firmware contract, so an edit here
+      # must run this job (the same reason the witness-page fixture is listed).
+      - 'tools/unseal_snapshot.py'
+      - 'tools/test_unseal_snapshot.py'
+      - 'tools/gen_svlt_parity.py'
+      - 'tools/fixtures/vault/**'
       - '.github/workflows/firmware.yml'
       # The release workflow is a checked INPUT here, not just a neighbor:
       # "Regression Guards" runs check_ota_channels.py, which reads the
@@ -96,6 +114,12 @@ jobs:
   #                        checks every env name those workflows type against
   #                        it (firmware/scripts/flavor_envs.py); a product
   #                        without it releases from its own dedicated steps.
+  #   unreleased         — a reason string: CI compiles this product (so its
+  #                        code cannot rot) but nothing ships it — no
+  #                        release_envs (flavor_envs.py refuses both), no
+  #                        build_matrix.json lane (lint_build_matrix.py
+  #                        refuses one). canary-sentinel carries it until its
+  #                        bench checklist is green.
   #   pip_extras         — extra pip packages (e.g. canary needs
   #                        intelhex: esptool 4.11.0 bundled by the
   #                        official espressif32 7.x platform imports it
@@ -613,6 +637,24 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_fleet_beacon_sync.sh
           firmware/scripts/check_fleet_beacon_sync.sh
+
+      - name: Verify canary-sentinel's network/witness stack matches canary-sense's
+        # canary-sentinel (F22 Phase 1a) carries canary-sense's src/net,
+        # runtime config, diagnostics and witness key/chain plumbing as a
+        # project-local copy (the way canary-vision carries its own src/net)
+        # instead of promoting them to firmware/common. A copy is only safe if
+        # it cannot drift: this pins the shared files byte-identical,
+        # wifi_mgr.cpp but for its setup-network product name, and mqtt_mgr /
+        # witness as whole files but for a named list of product regions (the
+        # payloads, the event canonical's call sites, sense's radar dials and
+        # identify button) — so the TLS gate, client ID, OTA command parser,
+        # key names and chain construction are pinned, and a fix to
+        # canary-sense that misses the sentinel is a red build, not two
+        # products quietly diverging. scripts/tests/test_check_sentinel_net_sync.py
+        # (lint.yml) is the mutation proof.
+        run: |
+          chmod +x firmware/scripts/check_sentinel_net_sync.sh
+          firmware/scripts/check_sentinel_net_sync.sh
 
       - name: Verify fleet self-report header copies match the canonical /api/fleet wire shape
         # fleet_selfreport.h is the ONE place the coarse /api/fleet presence JSON
@@ -1551,6 +1593,15 @@ jobs:
         run: |
           python3 -m pip install --quiet cryptography
           python3 tools/test_unseal_snapshot.py
+
+      - name: Check the sealed-snapshot parity fixture is fresh
+        # tools/fixtures/vault/svlt_parity.json pins ONE sealed .svlt, byte
+        # for byte, from fixed test-only keys — the file the iOS app's
+        # CryptoKit port (SnapshotVaultTests, ios-selfheal.yml) must open and
+        # re-seal identically. The python test above asserts its contents;
+        # this asserts the committed bytes are what the generator renders,
+        # so the Swift side can never be held to a stale twin.
+        run: python3 tools/gen_svlt_parity.py --check
 
       - name: Build + run canary-wap witness store logic host test
         # The /WITNESS/records.jsonl durable tier (witness_store.h): the

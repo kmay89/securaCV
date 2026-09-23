@@ -38,7 +38,13 @@ CHIRP_SEC_SRC = test_chirp_security.cpp
 # unsigned header nonce now says), and a frame
 # outside the freshness window — and that CANCEL/UPDATE only act on the
 # alarm they name, drills bank against their own rate bucket, and a replayed
-# SELFTEST_OK cannot keep a dead neighbor supervised-healthy.
+# SELFTEST_OK cannot keep a dead neighbor supervised-healthy; and that the
+# cosigner of a frame holds its alarm (its own fingerprint resolves to its own
+# key) and so can cosign that alarm's CANCEL, checked against the real
+# beacon_cancel_policy.h. Also pins that CAP-gateway trust confers no
+# privilege — in the mirror, and by reading the real beacon_channel.cpp (its
+# path is passed in, so the pin fails closed), which is also read to hold the
+# receive path's signer resolution to the mirror's.
 BEACON_ORIG_BIN = test_beacon_origination
 BEACON_ORIG_SRC = test_beacon_origination.cpp
 
@@ -49,6 +55,27 @@ BEACON_ORIG_SRC = test_beacon_origination.cpp
 # path still rejects collapsed signers without the flag.
 BEACON_SOLO_BIN = test_beacon_solo_origination
 BEACON_SOLO_SRC = test_beacon_solo_origination.cpp
+
+# Beacon CANCEL origination (beacon_cancel_policy.h): reason -> all-clear
+# template, the cancel request body (malformed fields refused, not
+# defaulted — beacon_api.h's adapter is read and pinned too), the canonical a
+# CANCEL signs, the refusal order the REST layer
+# names, the cosigner gate (sign a CANCEL only for the alarm this device
+# holds), the emitted header following the signed canonical, the originator
+# adopting its own frame, and the wire struct sizes. Includes the REAL
+# Arduino-free beacon_wire.h + beacon_cancel_policy.h, not a mirror — and reads
+# the real beacon_channel.cpp (beacon_source_scan.h; its path is passed in, so
+# the pins fail closed) to pin the call sites that use those helpers.
+BEACON_CANCEL_BIN = test_beacon_cancel_origination
+BEACON_CANCEL_SRC = test_beacon_cancel_origination.cpp
+
+# Beacon COSIGN envelope associated data (beacon_cosign_aad.h): the clear
+# routing fields both ends bind into the ChaCha20-Poly1305 tag (layout, byte
+# order, every field an attacker could flip changes the bytes, REQ/RESP
+# domain separation), the all-zero X25519 shared-secret refusal, and
+# secure_zero (the key wipe the optimizer cannot delete).
+BEACON_AAD_BIN = test_beacon_cosign_aad
+BEACON_AAD_SRC = test_beacon_cosign_aad.cpp
 
 # v0.5: auto-revoke-on-tamper invariants for
 # mesh_network.cpp::handle_tamper_alert → beacon_channel::on_peer_tampered.
@@ -196,11 +223,46 @@ $(CHIRP_INV_BIN): $(CHIRP_INV_SRC)
 $(CHIRP_SEC_BIN): $(CHIRP_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CHIRP_SEC_SRC)
 
-$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC)
-	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_ORIG_SRC)
+$(BEACON_ORIG_BIN): $(BEACON_ORIG_SRC) beacon_source_scan.h $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h
+	$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -o $@ $(BEACON_ORIG_SRC)
 
 $(BEACON_SOLO_BIN): $(BEACON_SOLO_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_SOLO_SRC)
+
+$(BEACON_CANCEL_BIN): $(BEACON_CANCEL_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cancel_policy.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_CHANNEL_CPP='"$(abspath $(SRC_DIR))/beacon_channel.cpp"' -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(BEACON_CANCEL_SRC)
+
+$(BEACON_AAD_BIN): $(BEACON_AAD_SRC) $(SRC_DIR)/beacon_wire.h $(SRC_DIR)/beacon_cosign_aad.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(BEACON_AAD_SRC)
+
+# The two suites above join `run` and `clean` by prerequisite, so they add no
+# hunk to those shared lists (other branches extend the same lines).
+.PHONY: run-beacon-cancel clean-beacon-cancel
+run-beacon-cancel: $(BEACON_CANCEL_BIN) $(BEACON_AAD_BIN)
+	./$(BEACON_CANCEL_BIN)
+	./$(BEACON_AAD_BIN)
+clean-beacon-cancel:
+	rm -f $(BEACON_CANCEL_BIN) $(BEACON_AAD_BIN)
+run: run-beacon-cancel
+clean: clean-beacon-cancel
+
+# Full-body HTTP reads (http_body_reader.h): a body split across TCP reads is
+# reassembled, an oversized one is refused before any read (never truncated),
+# timeouts are bounded, nothing past content_len is read — and a source pin
+# that every Beacon route in beacon_api.h reads its body through read_body().
+HTTP_BODY_BIN = test_http_body_reader
+HTTP_BODY_SRC = test_http_body_reader.cpp
+
+$(HTTP_BODY_BIN): $(HTTP_BODY_SRC) $(SRC_DIR)/http_body_reader.h $(SRC_DIR)/beacon_api.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(HTTP_BODY_SRC)
+
+.PHONY: run-http-body clean-http-body
+run-http-body: $(HTTP_BODY_BIN)
+	./$(HTTP_BODY_BIN)
+clean-http-body:
+	rm -f $(HTTP_BODY_BIN)
+run: run-http-body
+clean: clean-http-body
 
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto

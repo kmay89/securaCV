@@ -1,0 +1,19 @@
+{
+  "$schema": "../device.schema.json",
+  "slug": "canary-sentinel-lite",
+  "name": "Canary Sentinel Lite",
+  "family": "canary-sentinel",
+  "board": {
+    "mcu": "ESP32-C3",
+    "psram_mb": 0,
+    "flash_mb": 4,
+    "board_id": "xiao-esp32c3-sentinel-lite",
+    "envs": [
+      "canary-sentinel-lite"
+    ]
+  },
+  "peripherals": [
+    "ambient_light",
+    "pir"
+  ]
+}

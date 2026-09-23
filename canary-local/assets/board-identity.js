@@ -7,9 +7,12 @@
 // model in the Board Room. Everything is drawn from the honest catalogs
 // (devices/boards.json + devices/enclosures.json), no scraped images.
 //
-// Pure DOM, zero dependencies, same-origin fetch only (CSP-safe). Every entry
+// Pure DOM, no third-party dependencies (one sibling module: which device a
+// set serves, enclosure-sets.js), same-origin fetch only (CSP-safe). Every entry
 // point is defensive: if the catalogs or a field are missing, the panel
 // quietly renders what it can (or nothing) rather than throwing into the flow.
+
+import { setServes } from "./enclosure-sets.js";
 
 // The vendor-legend function classes (Seeed's color language), used to tint
 // each pin/feature so a physical board is easy to match.
@@ -72,7 +75,7 @@ export function boardForProduct(boards, productId) {
 export function enclosureForProduct(enclosures, productId) {
   if (!enclosures || !Array.isArray(enclosures.sets)) return null;
   const short = shortDeviceId(productId);
-  const mine = enclosures.sets.filter((s) => s.device === short);
+  const mine = enclosures.sets.filter((s) => setServes(s, short));
   if (!mine.length) return null;
   return mine.find((s) => s.preview) || mine[0];
 }

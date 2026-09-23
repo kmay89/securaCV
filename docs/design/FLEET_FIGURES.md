@@ -186,10 +186,38 @@ measured envelope (height gets ±2.5 mm — a banded massing centers its
 parts vertically, beneath the fidelity of small mounting offsets; the
 ledger still publishes the exact measured number).
 
-Things with no committed CAD — the in-development display enclosures, and
-the concept devices that are still only a research note — declare a `sketch`
-envelope instead. The ledger records `dims_source: "sketch"` next to them, so
-a surface can caption them honestly rather than implying measured geometry.
+An **in-development case whose CAD states its own seat** (the Watch
+Station: drum + snap bezel, the bezel's nubs drawn from the drum rim; the
+Dash: back + frame, stacked as the file's own `total_t = frame_h + back_t`,
+dock pads included; the Combo: back + front, the front at `base_d` where its
+echo, its head pads and its lid key all put it) is measured the same way
+even though its STLs are not committed — its figure
+declares `assembled: true`, reads its envelope and seams from its
+`gen_assembled_dims.py` row, and the ledger records
+`dims_source: "assembled-cad"`. That is what lets a manifest knob edit move
+the figure: a typed sketch would have kept the old number while the case
+changed under it. What the massing draws on the face comes from the same
+row — a display's aperture (`face`: the Watch's bezel bore, the Dash's view
+window) or an off-center mark (`features`: the Combo's lens and radome
+window, each a center on the envelope and an extent). Those are not measured
+off the cut geometry: they are read from the case's own variables, the ones
+its cuts are drawn at (`bez_ap_d`, `view_l`/`view_w`, `lens_x`/`lens_y`,
+`rad_cx`/`rad_cy`), and a feature's center is then placed on the measured
+envelope. `--check` re-evaluates them with the envelope, so an edit through
+those variables moves the drawing; a cut moved without going through its
+variable is not caught. It traces
+to no committed STL, so it is never `shipping` — measured is not the same as
+printable — and its catalog evidence is **that case's alone**: only the
+variants cut from the `.scad` it was measured off speak for it. The Combo is
+a `canary-vision` build in the catalog, and the Vision's released cases are
+not evidence about it; read as its device's, they would have made it
+`confirmed`. On its own evidence it is a `prototype`.
+
+Things with no measurable CAD — the display enclosures whose case files do
+not yet state an assembly, and the concept devices that are still only a
+research note — declare a `sketch` envelope instead. The ledger records
+`dims_source: "sketch"` next to them, so a surface can caption them honestly
+rather than implying measured geometry.
 
 ---
 

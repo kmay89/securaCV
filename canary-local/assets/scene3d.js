@@ -1,11 +1,12 @@
 // canary-local/assets/scene3d.js — the device as an object, not a photo.
 //
 // A deliberately small WebGL renderer (no three.js, no CDN — this repo
-// ships pages that work with the ethernet cable unplugged). It builds
-// each Canary's body procedurally from the same millimeter dimensions as
-// the OpenSCAD enclosures in docs/hardware/enclosure/, and textures the
-// glass with the LIVE emulator framebuffer — so the 3D card is not an
-// illustration of the device, it IS the device, running.
+// ships pages that work with the ethernet cable unplugged). The display
+// line draws its committed fleet-figure model (models/<figure>.glb, massed
+// from the CAD — see "the display line, from the fleet figures" below), the
+// witnesses a procedural body until real-shapes.js swaps in their STLs, and
+// the glass is textured with the LIVE emulator framebuffer — so the 3D card
+// is not an illustration of the device, it IS the device, running.
 //
 // Lighting is a physically-based studio: GGX softboxes (warm key, cool
 // window fill, rim strip) with area-light lobe widening, hemisphere
@@ -16,6 +17,8 @@
 // staying a single zero-dependency file.
 
 import { activeFinish, finishColor } from "./finishes.js";
+import { parseGLB } from "./glb.js";
+import { deviceFigure } from "./body-dims.js";
 
 // ── tiny mat4 ───────────────────────────────────────────────────────────
 export const M4 = {
@@ -489,6 +492,10 @@ export class DeviceScene {
       uv: gl.getAttribLocation(this.prog, "aUv"),
     };
     this.parts = [];
+    // bumped by every clearParts(): an async build (a figure model still in
+    // flight) checks it before adding parts, so a later build that already
+    // owns the scene — a real-shape upgrade, a rebuild — is never doubled
+    this.buildGen = 0;
     this.rot = { x: -0.28, y: 0.55 }; // presentation pose
     this.home = { x: -0.28, y: 0.55 };
     this.vel = { x: 0, y: 0 };
@@ -586,6 +593,7 @@ export class DeviceScene {
   }
 
   clearParts() {
+    this.buildGen++;
     for (const p of this.parts) {
       this.gl.deleteBuffer(p.vbo);
       this.gl.deleteBuffer(p.nbo);
@@ -811,51 +819,158 @@ export class DeviceScene {
 // ── device bodies (dimensions: docs/hardware/enclosure/*.scad) ──────────
 // Printed-shell colors come from the active finish (finishes.js); only the
 // functional non-filament parts (glass, lens, solar, radome) stay literal.
-const GLASS_EDGE = [0.05, 0.05, 0.06];
 
-export function buildWatchStation(scene) {
-  // canary_watch_station.scad: drum Ø52, drum_h≈14.8, bezel 7 (Σ≈21.8),
-  // aperture Ø34, stand tilt 25°.
-  scene.clearParts();
-  const f = activeFinish();
-  const drum = cylinder(26, 14.8, 72);
-  const bezel = cylinder(26, 7, 72, 17);
-  const glassRing = cylinder(17.4, 1.2, 72, 17);
-  const screen = screenPlane(34, 34, true);
-  const tilt = (25 * Math.PI) / 180;
-  const lean = M4.rotX(-tilt);
+// ── the display line, from the fleet figures ────────────────────────────
+// The displays have no committed STLs, so their cards used to be hand
+// meshes: a Watch drum typed from the v0.1 CAD (Ø52 × 21.8, a size the
+// measured board could never seat), a Dash box typed as 113.7 × 73.6 × 16
+// that had lost its corner lobes, its back and its dock pads — and three
+// nightstand boards BORROWED that Dash mesh while two more fell through to
+// the WAP's witness box. The fleet figures already carry every one of them,
+// massed from the CAD (the Watch and the Dash are measured off it,
+// gen_assembled_dims.py) or from their panel records, and honest about
+// which (figures.json `dims_source`: a sketch stays a sketch, a prototype
+// stays a prototype); tools/figures/gen_device_glbs.mjs commits each as a
+// small plain GLB. The cards read those: one geometry for the picker's
+// figure, the flasher's turntable and this card, and a fourth hand-typed
+// copy of the numbers is gone. URLs resolve against THIS module, so any
+// page that imports it (and the render probe) finds the same files.
+const MODELS = new URL("../models/", import.meta.url);
+const LEDGER = new URL("../devices/figures.json", import.meta.url);
 
-  const at = (m, dz) => M4.mul(lean, M4.mul(m, M4.translate(0, 0, dz)));
-  scene.addMesh(drum, { color: f.shell, role: "shell", gloss: 0.22, model: at(M4.ident(), -3.6) });
-  scene.addMesh(bezel, { color: f.shell, role: "shell", gloss: 0.3, model: at(M4.ident(), 7.4) });
-  scene.addMesh(glassRing, { color: GLASS_EDGE, gloss: 0.75, model: at(M4.ident(), 10.4) });
-  scene.addMesh(screen, { screen: true, model: at(M4.ident(), 11.05) });
-  // stand wedge (secondary finish), its pocket under the leaning drum
-  const st = wedge(64, 47, 26);
-  scene.addMesh(st, {
-    color: f.shell2, role: "shell2", gloss: 0.18,
-    model: M4.mul(M4.translate(0, -30, 2), M4.ident()),
-  });
-    scene.setContactShadow({ y: -32, rx: 48, rz: 36, alpha: 0.32 });
-  scene.dist = 165;
+const figureCache = new Map(); // figure id → Promise<parsed GLB>
+function loadFigureModel(figId) {
+  if (figureCache.has(figId)) return figureCache.get(figId);
+  const p = fetch(new URL(`${figId}.glb`, MODELS))
+    .then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.arrayBuffer();
+    })
+    .then((buf) => parseGLB(buf))
+    .catch((err) => {
+      figureCache.delete(figId); // a failed load evicts itself; a later card retries
+      throw err;
+    });
+  figureCache.set(figId, p);
+  return p;
+}
+let ledgerP = null;
+function loadLedger() {
+  ledgerP = ledgerP || fetch(LEDGER)
+    .then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
+    .catch((err) => {
+      ledgerP = null;
+      throw err;
+    });
+  return ledgerP;
 }
 
-export function buildDash(scene) {
-  // canary_dash_display.scad: shell 113.7 × 73.6 × 16.0 (frame 13.6 +
-  // back 2.4), view window 101.3 × 61.2, r_out 5, stand 25°.
-  scene.clearParts();
-  const f = activeFinish();
-  const tiltM = M4.rotX((-25 * Math.PI) / 180);
-  const body = roundedBox(113.7, 73.6, 16, 5);
-  const glass = screenPlane(101.3, 61.2, false);
-  const bezl = roundedBox(104.5, 64.4, 1.4, 2.4);
-  scene.addMesh(body, { color: f.shell, role: "shell", gloss: 0.22, model: tiltM });
-  scene.addMesh(bezl, { color: GLASS_EDGE, gloss: 0.7, model: M4.mul(tiltM, M4.translate(0, 0, 7.6)) });
-  scene.addMesh(glass, { screen: true, model: M4.mul(tiltM, M4.translate(0, 0, 8.45)) });
-  const st = wedge(120, 78, 40);
-  scene.addMesh(st, { color: f.shell2, role: "shell2", gloss: 0.18, model: M4.translate(0, -48, -6) });
-    scene.setContactShadow({ y: -50, rx: 80, rz: 56, alpha: 0.32 });
-  scene.dist = 260;
+// How the Lab paints a figure's materials (gen_device_glbs.mjs names them by
+// role): printed parts take the active finish, the lit face becomes the live
+// glass (see placeFigure), and everything else — glass, lens, the canary
+// accent — keeps the figure's own color.
+export const FIGURE_PAINT = {
+  "printed shell": { role: "shell", gloss: 0.24 },
+  "secondary printed part": { role: "shell2", gloss: 0.2 },
+  "dark printed part": { gloss: 0.2 },
+  "glass / screen": { gloss: 0.75 },
+  "canary accent": { gloss: 0.3 },
+};
+export const SCREEN_MATERIAL = "lit screen";
+
+function frameFigure(scene, size) {
+  const big = Math.max(size[0], size[1], size[2]);
+  scene.setContactShadow({
+    y: -size[1] / 2 - 1.5,
+    rx: Math.max(16, size[0] * 0.62),
+    rz: Math.max(14, size[2] * 0.9 + 10),
+    alpha: 0.3,
+  });
+  scene.dist = 60 + big * 1.8;
+}
+
+// glTF frame (+Y up, +Z toward the viewer, mm after parseGLB) is the card's
+// frame, so a figure only needs centering.
+function placeFigure(scene, model, { round }) {
+  const c = model.bbox.center;
+  const center = M4.translate(-c[0], -c[1], -c[2]);
+  for (const part of model.parts) {
+    if (part.name === SCREEN_MATERIAL) {
+      // the lit face IS the glass: a screen plane over its footprint, on its
+      // front face, textured with the live framebuffer once a sheet has one
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < part.pos.length; i += 3) {
+        for (let k = 0; k < 3; k++) {
+          lo[k] = Math.min(lo[k], part.pos[i + k]);
+          hi[k] = Math.max(hi[k], part.pos[i + k]);
+        }
+      }
+      scene.addMesh(screenPlane(hi[0] - lo[0], hi[1] - lo[1], round), {
+        screen: true,
+        model: M4.translate((lo[0] + hi[0]) / 2 - c[0], (lo[1] + hi[1]) / 2 - c[1], hi[2] - c[2]),
+      });
+      continue;
+    }
+    const paint = FIGURE_PAINT[part.name] || {};
+    scene.addMesh(part, {
+      color: part.color, gloss: paint.gloss ?? 0.3, role: paint.role ?? null, model: center,
+    });
+  }
+  frameFigure(scene, model.bbox.size);
+}
+
+// The twelve edges of a box, as a line list — how an IDEA stands in: a ghost,
+// no fill, never a product-looking body (docs/design/FLEET_FIGURES.md §6).
+function boxEdges(w, h, d) {
+  const m = new MeshBuilder();
+  const v = [];
+  for (const x of [-w / 2, w / 2]) for (const y of [-h / 2, h / 2]) for (const z of [-d / 2, d / 2])
+    v.push(m.vert([x, y, z], [0, 0, 1]));
+  // corner index = 4·xi + 2·yi + zi
+  for (const [a, b] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7],
+                        [0, 4], [1, 5], [2, 6], [3, 7]]) m.idx.push(v[a], v[b]);
+  return m;
+}
+
+// No committed model for this figure (an idea, or a sketch the 3D tier does
+// not build): stand in with its ENVELOPE from the ledger — a ghost for an
+// idea, a plain slab otherwise — and say so on the console. Never another
+// device's body: a card that borrows the WAP's box is a picture of the wrong
+// thing.
+function figureStandIn(scene, fig, devId) {
+  const e = fig.envelope_mm;
+  if (fig.confidence === "idea") {
+    scene.addMesh(boxEdges(e.w, e.h, e.d), { color: [0.55, 0.58, 0.64], lines: true, unlit: true });
+  } else {
+    console.warn(`scene3d: "${devId}" has no committed figure model — standing in with `
+      + `${fig.id}'s ${fig.dims_source} envelope`);
+    scene.addMesh(roundedBox(e.w, e.h, e.d, Math.min(4, e.w / 4, e.h / 4)), {
+      color: activeFinish().shell2, role: "shell2", gloss: 0.18,
+    });
+  }
+  frameFigure(scene, [e.w, e.h, e.d]);
+}
+
+/** A builder that draws fleet figure `figId` from its committed GLB. Returns
+ * the load promise (the render probe waits on it; the page need not). */
+export function buildFromFigure(figId, { round = false } = {}) {
+  return (scene) => {
+    scene.clearParts();
+    const gen = scene.buildGen;
+    return loadFigureModel(figId)
+      .then((model) => {
+        if (scene.buildGen === gen) placeFigure(scene, model, { round });
+      })
+      .catch(() => loadLedger().then((led) => {
+        const fig = led.figures.find((f) => f.id === figId);
+        if (!fig) throw new Error(`${figId} is not in the ledger`);
+        if (scene.buildGen === gen) figureStandIn(scene, fig, figId);
+      }))
+      .catch((err) => console.warn(`scene3d: ${figId}: no model and no ledger entry (${err.message})`));
+  };
 }
 
 // Sensing canaries (no glass): simplified true-to-scad bodies so every
@@ -926,19 +1041,51 @@ export function buildFenceGuard(scene) {
   scene.dist = 150;
 }
 
+// Registry id → builder. The display line reads its fleet figure (the
+// manifest's `figure`, the same id deviceFigure() resolves); the witnesses
+// keep their procedural bodies until real-shapes.js swaps in the committed
+// print-validated STLs.
+export const FIGURE_BUILDERS = {
+  "canary-display-watch": ["device.canary-display-watch", { round: true }],
+  "canary-display-dash": ["device.canary-display-dash", {}],
+  "canary-display-nightstand-s3": ["device.canary-display-nightstand", {}],
+  "canary-display-touch169": ["device.canary-display-touch169", {}],
+  "canary-display-dash7": ["device.canary-display-dash7", {}],
+  "canary-display-amoled241": ["device.canary-display-amoled241", {}],
+  "canary-nightlight": ["device.canary-nightlight", {}],
+};
+
 export const BUILDERS = {
-  "canary-display-watch": buildWatchStation,
-  "canary-display-dash": buildDash,
-  // The Nightstand Line: dedicated meshes are follow-up work — until then
-  // the honest nearest kin stands in. Dash 7 IS the dash electrically and
-  // visually (same 800x480 panel, roomier bezel); the portrait boards
-  // borrow the dash's panel shape rather than falling through to an
-  // unrelated witness enclosure.
-  "canary-display-nightstand-s3": buildDash,
-  "canary-display-touch169": buildDash,
-  "canary-display-dash7": buildDash,
+  ...Object.fromEntries(Object.entries(FIGURE_BUILDERS)
+    .map(([id, [fig, opts]]) => [id, buildFromFigure(fig, opts)])),
   "canary-vision": buildVision,
   "canary-wap": buildWap,
   "canary-sense": buildSense,
   "canary-fence-guard": buildFenceGuard,
 };
+
+/** The builder for any registry device: its own, else its fleet figure's
+ * envelope resolved through the ledger (a ghost for an idea, a slab for a
+ * figure the 3D tier does not build — every figure that HAS a committed
+ * model is routed above, so nothing here fetches a model that is not there;
+ * the Lab's probes fail a page on any 4xx) — never another device's body. */
+export function builderFor(devId) {
+  if (BUILDERS[devId]) return BUILDERS[devId];
+  return (scene) => {
+    scene.clearParts();
+    const gen = scene.buildGen;
+    return loadLedger()
+      .then((led) => {
+        if (scene.buildGen !== gen) return undefined;
+        const fig = deviceFigure(led, devId);
+        if (!fig) {
+          console.warn(`scene3d: no fleet figure draws "${devId}" — its card stays empty `
+            + "rather than borrowing another device's body");
+          return undefined;
+        }
+        figureStandIn(scene, fig, devId);
+        return undefined;
+      })
+      .catch((err) => console.warn(`scene3d: "${devId}": the figure ledger did not load (${err.message})`));
+  };
+}

@@ -62,6 +62,13 @@ What is PROVED (each a hard error, exit 1):
                enclosures.json; scad, and each also-file, is the source of
                at least one listed set (cad.also: the further case files
                one manifest's cad.params own — the Vision's doorbell form).
+               From the other side: every set enclosures.json homes on a
+               device is claimed by a manifest, and its device / devices are
+               the inversion of cad.enclosure_sets that gen_enclosures.py
+               writes (the first claimant in slug order, on its family's
+               device when the family is a manifest; every claimant whenever
+               the device alone does not name them) — never a README name
+               hint on its own.
   cad.params   every owned knob is a literal Customizer knob of that scad
                (never a selector, a computed value or a two-knob line),
                manifests sharing one case agree on every shared key, and the
@@ -514,6 +521,42 @@ def lint(devices_dir: Path = DEVICES_DIR, repo: Path = REPO) -> tuple[list[dict]
         if fl_name not in claimed_emu:
             err(f"emulator dist flavor '{fl_name}' (canary-local/emulator/dist/canary-display-"
                 f"{fl_name}.js) is claimed by no manifest")
+
+    # enclosure sets, from the other side: every set enclosures.json homes on
+    # a device is claimed by a manifest. gen_enclosures.py inverts
+    # cad.enclosure_sets — `device` is the first claimant (slug order), homed
+    # on its family's device when the family is itself a manifest (the
+    # DevKit's case is on the canary-vision page); `devices` lists the
+    # claimants whenever `device` alone does not — and falls back to a NAME
+    # hint only for a set no manifest claims, which is refused here, so a
+    # README row cannot move a Lab card by its wording alone (that is how
+    # five display cases sat on the wrong pages).
+    claimed_sets: dict[str, list[str]] = {}
+    by_slug = {m["slug"]: m for m in manifests}
+    for m in manifests:
+        for s in (m.get("cad") or {}).get("enclosure_sets", []):
+            claimed_sets.setdefault(s, []).append(m["slug"])
+
+    def home(slug: str) -> str:
+        fam = by_slug[slug].get("family")
+        return fam if fam in by_slug else slug
+
+    for s in enclosures.get("sets", []):
+        sid, dev = s.get("id"), s.get("device")
+        owners = claimed_sets.get(sid, [])
+        if not owners:
+            if dev is not None:
+                err(f"enclosures.json set '{sid}' is homed on device '{dev}', but no manifest "
+                    f"claims it — list it in devices/{dev}/device.json cad.enclosure_sets if "
+                    f"that is true, else fix the name hint in canary-local/tools/"
+                    f"gen_enclosures.py DEVICE_OF")
+            continue
+        want_dev = home(owners[0])
+        want = {"device": want_dev, "devices": owners if owners != [want_dev] else None}
+        got = {"device": dev, "devices": s.get("devices")}
+        if got != want:
+            err(f"enclosures.json set '{sid}': {got} disagrees with the manifests that claim it "
+                f"({', '.join(owners)}) — run canary-local/tools/gen_enclosures.py")
 
     # ── 4. build_matrix.json: every product lane has a manifest that agrees ─
     # (the same resolution scripts/lint_build_matrix.py applies from the
