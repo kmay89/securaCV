@@ -46,16 +46,16 @@ static int g_failures = 0;
 static const char     FIXTURE_SEED[]      = "fixture-key-for-witness-page-v1!";  // 32 bytes, test-only
 static const char     PUBKEY_HEX[]        = "22b7279917b3a47068f4d17f0ee3182b5fef9035592765f9b55e4eb97d167e1c";
 static const char     FIXTURE_DEVICE_ID[] = "canary-fixture-0001";
-static const uint32_t FIXTURE_BUCKET_MS   = 5000;
-static const uint32_t FIXTURE_NOW_MS      = 700000;
+static const uint32_t FIXTURE_BUCKET_MS   = 600000;   // the ten-minute grid
+static const uint32_t FIXTURE_NOW_MS      = 1300000;
 static const uint32_t FIXTURE_NOW_EPOCH_S = 1788864000u;  // 2026-09-08T10:40:00Z
 
 struct FixtureRow { uint32_t seq; uint32_t tb; uint8_t type; const char* payload; };
 static const FixtureRow FIXTURE_ROWS[] = {
-    {1, 1,   0, "boot:canary-fixture-0001"},
-    {2, 130, 1, "event:presence_changed"},
-    {3, 131, 2, "tamper:enclosure_tamper"},
-    {4, 132, 3, "state:NOFIX->ACQRD"},
+    {1, 1, 0, "boot:canary-fixture-0001"},
+    {2, 2, 1, "event:presence_changed"},
+    {3, 2, 2, "tamper:enclosure_tamper"},
+    {4, 2, 3, "state:NOFIX->ACQRD"},
 };
 
 // ── crypto helpers (OpenSSL stands in for mbedtls / the Arduino Ed25519) ───
@@ -389,7 +389,7 @@ static void test_fixture(int argc, char** argv) {
   CHECK(strstr(page, "\"timestamp\"") == nullptr);
   CHECK(strstr(page, "\"time_source\"") == nullptr);
   CHECK(strstr(page, "1970") == nullptr);
-  CHECK(strstr(page, "\"time_bucket\":130,\"time_bucket_ms\":5000") != nullptr);
+  CHECK(strstr(page, "\"time_bucket\":2,\"time_bucket_ms\":600000") != nullptr);
   CHECK(strstr(page, "\"zone\":\"\",\"signature\":\"") != nullptr);
 
   // An empty ring is a valid, empty page.

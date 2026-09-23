@@ -44,7 +44,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 4 (2026-09-08) | 7 in full (items 2, 5, 6, 13, 22, 42, 51 — 2 and 22 host-tested, 5/6/13 written without a Swift toolchain and then compiled and tested by the PR's iOS CI) |
 | Landed in wave 5 (2026-09-11, PR #1682, website #197) | row 21's Parametrize wave, in part — the device manifests own their cases' board knobs and a generator writes them into the CAD, the regeneration order is one command, the CAD ledger the website pins to carries the knobs; zero `.scad` bytes moved |
 | Landed in wave 6 (2026-09-19, PR #1686) | the open clauses of three landed rows — 1 (the add-on and sidecar wire the fleet roll-call file), 12's flasher half (the broker TLS controls in both flashers) and 35 (the SBOM schema gate and the sketch-pin assertion), then 12's other two halves (the canary client rides the shared broker transport with its own provisioning path; an opt-in `--with broker_tls` hub step), 17 (the coarse weather location entered on the glass), 21's leftovers (the C6 and the Touch 1.69 own their knobs; `cad.also` gives the doorbell an owner; the 7" frame stays open with its reason written) and the canary `release_ha` image joining PR CI |
-| Still open | 0 in full, 2 in part (21's Parametrize leftovers — see §4 — and 30's version spread), plus one decision surfaced in wave 4's review: whether the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, 5 s in both firmwares) should widen to the ten-minute grid Invariant III names for wall-clock time; and two surfaced in wave 5 (§4): whether the optional render-plan package is wanted, and what to do about `canary-local/devices/registry.json`'s hand-typed `body_mm` |
+| Still open | 0 in full, 1 in part (21's Parametrize leftovers — see §4). Two decisions from wave 5 (§4): whether the optional render-plan package is wanted, and what to do about `canary-local/devices/registry.json`'s hand-typed `body_mm`. Two more were decided on 2026-09-22, maintainer to confirm: row 30's version spread (its row below) and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §1) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
 target compiles, the Swift edits, and every claim about device behavior are
@@ -164,23 +164,39 @@ prove here:
   serves the integration's own `brand/` folder and HACS's validator reads
   it, so the folder is carried, not deleted.
 
-What is left — 0 rows in full and 2 in part — is the device package's
-Parametrize wave (row 21) and row 30's version-spread decision, plus the
-bench confirmations in §5 that no worktree can run.
+What is left — 0 rows in full and 1 in part — is the device package's
+Parametrize wave (row 21), plus the bench confirmations in §5 that no
+worktree can run; row 30's version-spread decision was taken on 2026-09-22
+(its row below, `firmware/PLATFORMS.md` for the record).
 
-One decision surfaced by the wave-4 review and deliberately not taken
-here: the witness chain binds `time_bucket = millis() / time_bucket_ms`
-with a 5 s floor (`TIME_BUCKET_MS` in canary-wap, `CONFIG_TIME_BUCKET_MS`
-and the canary product's `securacv_witness.cpp`), documented in six places
-as the privacy floor, while Invariant III names ten-minute buckets for
-wall-clock time. The bucket rides every witness surface because the hash
-binds it, so `/api/v1/witness` adds no exposure — but an authenticated
-reader can place records 5 s apart relative to boot. Widening the floor to
-600 000 ms is mechanical (the two constants, `configs/canary-wap/*/config.h`,
-`web_ui.h`'s "Minimum 5000 ms" copy, the two READMEs, `LESSONS_LEARNED`
-line "5-second buckets (minimum)", `test_config_logic.cpp`'s `FLOOR`) and
-changes nothing about verification, but it is a product decision about
-both firmwares' chains, not a review fix (`spec/witness_api_v1.md` §3).
+One decision surfaced by the wave-4 review was deliberately left open
+then and decided on 2026-09-22 (option B of three — keep 5 s and call it
+deliberate; floor = default = 600 000 ms; a 300 000 ms floor with a
+600 000 ms default — maintainer to confirm): the witness chain binds
+`time_bucket = millis() / time_bucket_ms`, and its floor was 5 s
+(`TIME_BUCKET_MS` in canary-wap, `CONFIG_TIME_BUCKET_MS` and the canary
+product's `securacv_witness.cpp`), documented in six places as the privacy
+floor, while Invariant III names ten-minute buckets for wall-clock time.
+The bucket rides every witness surface because the hash binds it, so
+`/api/v1/witness` added no exposure — but the bucket alone let an
+authenticated reader place records 5 s apart relative to boot. The floor is
+now 600 000 ms in both firmwares (the two constants; the canary tree's `BUCKET_10MIN_MS`
+derives from it under a `static_assert`, so the chain and every payload
+share one grid; `configs/canary-wap/*/config.h`; `web_ui.h`'s copy and
+its generated gzip; the two READMEs; `LESSONS_LEARNED`;
+`test_config_logic.cpp`'s `FLOOR`; the shared witness-page fixture and its
+C++ and Swift mirrors; `spec/witness_api_v1.md` §3 names one floor).
+What this does not do: the bucket no longer adds precision finer than ten
+minutes, but it does not make the chain coarse. canary-wap still writes a
+record every second by default and each one carries its `seq`, so an
+authenticated reader can place records far more finely than the bucket.
+That is why §3 of the spec keeps coarsening a reader's duty. Verification
+is unchanged — the width rides with each record. The value loaded from NVS
+is raised to the floor at every boot (widen-only); NVS itself keeps the old
+number until a save writes a different one. SD lines carry no width, so
+pre-upgrade lines read at 5 s relative to their boot. The
+Swift mirror was edited without a Swift toolchain and is compiled by the
+PR's iOS CI; on-device behavior is a bench item.
 
 ### Landed in wave 5
 
@@ -458,7 +474,7 @@ the ledger stays complete:
 | 27 | **(landed)** **Website mirrors `verify_core.js`, `kernel-status.json` and `onboarding-spec.json` by hand**; only the CAD carry is automated. | The verify page can check a chain format the kernel no longer writes. | Landed, with two corrections to this row: the verify-core mirror is `tv/vendor/verify_core.js` plus its fixtures (not `js/verify.js`, which is website-authored), and `onboarding-spec.json` is website-authored except its `builds` block. `scripts/carry_to_site.py --site <checkout>` refreshes all three byte-reproducibly (the `builds` block from `build_matrix.json`, `kernel-status.json` via `tools/gen_kernel_status.py --site`, the verifier and fixtures with their provenance file); the website's weekly carry job runs it next to the CAD carry and opens a PR only when bytes moved, and the site pins the carried bytes. Its first run landed the predicted drift: the `/checkup` build matrix was four products behind. | S |
 | 28 | **(landed)** **Monorepo → HACS mirror is detect-only.** The new weekly check raises an issue; nothing pushes. | Users on HACS lag the monorepo by up to a week plus a human. | Landed: `homeassistant-mirror.yml` pushes `custom_components/securacv/` (and `conftest.py`) to the mirror as a PR on `bot/mirror-sync` on every `main` change, proving the copy exact with the mirror's own check. It needs a `MIRROR_PAT` secret (fine-grained, contents + pull-requests write on the mirror); without it the run stays green and raises one deduplicated issue saying so. | S |
 | 29 | **(landed)** **Dead legacy headers in `firmware/common/` share names with live sketch modules**; `csi_hal.cpp`'s `__has_include` probe depends on which one wins. | Include order decides behavior. | Landed: six unbuilt scaffold headers (`core/log.h`, `core/version.h`, `health/health_log.h`, `network/mesh_network.h`, `rf_presence/rf_presence.h`, `web/web_ui.h`) are gone — no build, manifest, Makefile or `build.sh` reached them, and the hazard was real: the dead `health_log.h` declared a C API, not the namespace the CSI macros use, so the probe resolving to it would not have compiled. The probe itself stays, because `examples/csi_minimal` consumes `common/csi` with no host logger. | S |
-| 30 | **(landed as a refactor; the decision stays open)** **The two Arduino platform lines are pinned differently across ini files.** | A board builds against two toolchains depending on the entry point. | Landed: `firmware/envs/platformio/platforms.ini` is the one source for the espressif32 / pioarduino platform pin (five sections, one per distinct literal, each saying who uses it and why); every env interpolates it, `firmware/scripts/lint_platform_pins.py` rejects a literal anywhere else, and `pio project config` resolves every env to the same string as before, so no pin value moved. What stays open is the decision `firmware/PLATFORMS.md` documents: canary floats on `^7.0.0` while the S3/C3 line pins `6.9.0`, the secure env's `^6.5.0` probably resolves to the same bytes under another spelling, and canary-ota's exact `6.5.0` may just be the version current when the project started. Any of those is a build-behavior change that needs a build per env. | S |
+| 30 | **(landed)** **The two Arduino platform lines are pinned differently across ini files.** | A board builds against two toolchains depending on the entry point. | Landed in two steps. First as a refactor: `firmware/envs/platformio/platforms.ini` is the one source for the espressif32 / pioarduino platform pin (one section per distinct literal, each saying who uses it and why); every env interpolates it, `firmware/scripts/lint_platform_pins.py` rejects a literal anywhere else, and `pio project config` resolved every env to the same string as before, so no pin value moved. Then the decision, 2026-09-22 (option A of the three in `firmware/PLATFORMS.md`, maintainer to confirm): the canary tree's `[env]` and the secure envs interpolate `platform_s3c3` (`6.9.0` exact — the same 2.0.17 core `^7.0.0` resolved to; `^6.5.0` resolved to the newest 6.x at build time, `6.9.0` or later, never recorded; one exact pin now resolves the same on every runner), `[platform_canary]` and `[platform_secure]` are gone, three sections remain, and canary-ota's exact `6.5.0` stays with its reason written (a pure-IDF `sdkconfig`; bumping it is its own bench pass). A build-behavior change, and only part of it is compile-proven: `firmware.yml` builds `dev`, `release`, `release_ha` and the three board envs on the pin, while `dev_ha`, `minimal`, `standalone`, `usb-onboard`, `secure` and `secure_ha` are compiled by no workflow (`firmware/PLATFORMS.md`); the S3 canary images are compile-tested on the pin until a bench pass. | S |
 | 31 | **(landed)** **`die()` is defined eleven times with three behaviors** across `canary-local/tools`, `_warn()` twice, the repo-root discovery line 36 times. | Tooling scripts disagree on exit codes. | Landed: `canary-local/tools/_tooling.py` is the single definition of `die(msg, code=1)`, `warn(msg)` and `repo_root()`; the ten `die()` copies the grep actually found, both `_warn()` copies and seventeen repo-root lines are gone, and every generator imports it. `die` has one behavior: `<prog>: ERROR: <msg>` on stderr, a `::error::` annotation under GitHub Actions, exit 1 unless the caller says otherwise. `hub_seed_apply.py` stays self-contained because it is embedded and hash-pinned. | S |
 | 32 | **(landed)** **Website still calls the wiring bench "The Playground"** in twelve places while the glossary now says Test bench. | Two names for one thing across two repos. | Rename the pages; the glossary term already exists. | S |
 | 33 | **(landed)** **The Wall's two `online` defaults are now consistent (false) but `DISCOVERY.md` and the firmware normalizer still describe true.** | Contract doc contradicts both implementations. | Update the contract and add the field to the anti-drift vector. | S |

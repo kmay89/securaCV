@@ -16,7 +16,7 @@
   ✓ Hash chain with domain separation (tamper-evident)
   ✓ Ed25519 signatures on every record
   ✓ Crypto self-test at boot + periodic verification
-  ✓ Time coarsening (5-second buckets, no precise timestamps)
+  ✓ Time coarsening (ten-minute buckets, no precise timestamps)
   ✓ Chain state persistence (survives power loss)
   ✓ Boot attestation record (identity proof on first record)
   ✓ Watchdog timer (hardware reset on hang)
@@ -441,7 +441,13 @@ static const uint32_t AP_DROP_GRACE_MS = 120000;
 // ════════════════════════════════════════════════════════════════════════════
 
 static const uint32_t RECORD_INTERVAL_MS   = 1000;    // Record emission rate (default)
-static const uint32_t TIME_BUCKET_MS       = 5000;    // Time coarsening bucket — the PRIVACY FLOOR (Invariant III)
+static const uint32_t TIME_BUCKET_MS       = config_logic::kTimeBucketFloorMs;
+                                                      // Time coarsening bucket — the PRIVACY FLOOR (Invariant III):
+                                                      // the ten-minute grid (600 000 ms), the same bucket canary-sense
+                                                      // chains and the kernel defaults to (600 s). Widened from 5 s on
+                                                      // 2026-09-22. Defined in config_logic.h so the host test pins it.
+static_assert(TIME_BUCKET_MS >= 600000u && TIME_BUCKET_MS % 600000u == 0,
+              "TIME_BUCKET_MS must be a whole multiple of the ten-minute grid (Invariant III)");
 static const uint32_t FIX_LOST_TIMEOUT_MS  = 3000;    // GPS fix timeout
 
 // ── Operator-configurable runtime settings (Device tab "Save Configuration",
@@ -4190,7 +4196,7 @@ static void config_load_runtime() {
 // optional; only provided fields change. All values are clamped before use
 // AND before persistence, so NVS never holds an out-of-envelope value. The
 // time bucket is clamped to at least its compile-time floor — event timing is
-// never finer than the Invariant III minimum (5000 ms). The operator owns the
+// never finer than the Invariant III minimum (600 000 ms, ten minutes). The operator owns the
 // device and may retune it above that floor in either direction (Invariant
 // IV/sovereignty); the floor is the privacy guarantee, not a one-way ratchet.
 static esp_err_t handle_config_post(httpd_req_t* req) {

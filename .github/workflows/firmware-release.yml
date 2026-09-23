@@ -146,8 +146,10 @@ jobs:
         # to the flash engine — so every version is exact. Bump deliberately;
         # Dependabot does not watch these lines.
         #   cryptography — ota_release.py signing
-        #   intelhex     — esptool 4.11 (official espressif32 7.x platform)
-        #                  imports it without declaring it, as in firmware.yml
+        #   intelhex     — leftover from canary's floating espressif32 ^7.x
+        #                  days (its esptool 4.11 imports it without declaring
+        #                  it); canary pins 6.9.0 exactly since 2026-09-22
+        #                  (firmware/PLATFORMS.md). Harmless, as in firmware.yml
         #   esptool      — the browser-flasher factory images (make_factory.py);
         #                  stays <5 so the `merge_bin` subcommand name is stable
         uses: ./.github/actions/setup-platformio

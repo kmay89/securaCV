@@ -608,11 +608,14 @@ static void factory_reset() {
 
 // 10-minute daily time bucket (0..143), matched across audio, sensing,
 // CSI, and witness payloads so a verifier comparing two events from
-// different sensors sees consistent bucket values. Constant name is
-// prefixed BUCKET_ to avoid colliding with the 5-second TIME_BUCKET_MS
-// macro that canary_config.h defines for witness-chain coarsening.
-static constexpr uint32_t BUCKET_10MIN_MS    = 10UL * 60UL * 1000UL;
+// different sensors sees consistent bucket values. One number: derived from
+// canary_config.h's TIME_BUCKET_MS, the width the witness chain also binds
+// (securacv_witness.cpp time_bucket()), so the chain and every payload
+// share the ten-minute grid. The static_assert holds the day index to it.
+static constexpr uint32_t BUCKET_10MIN_MS    = TIME_BUCKET_MS;
 static constexpr uint8_t  TIME_BUCKETS_PER_DAY = 144;
+static_assert(BUCKET_10MIN_MS * (uint32_t)TIME_BUCKETS_PER_DAY == 24UL * 60UL * 60UL * 1000UL,
+              "TIME_BUCKET_MS must be the ten-minute grid: 144 buckets make one day");
 static inline uint8_t time_bucket_now() {
   return (uint8_t)((millis() / BUCKET_10MIN_MS) % TIME_BUCKETS_PER_DAY);
 }

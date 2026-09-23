@@ -55,7 +55,7 @@ final class WitnessPageFixtureTests: XCTestCase {
         XCTAssertEqual(page.format, .wapV1)
         XCTAssertEqual(page.deviceID, "canary-fixture-0001")
         XCTAssertEqual(page.total, 4)
-        XCTAssertEqual(page.uptimeS, 700)
+        XCTAssertEqual(page.uptimeS, 1300)
         XCTAssertEqual(page.records.map(\.seq), [1, 2, 3, 4], "oldest first")
         XCTAssertEqual(page.records.map(\.eventType),
                        ["boot_attestation", "witness_event", "tamper_detected", "state_change"])
@@ -65,19 +65,20 @@ final class WitnessPageFixtureTests: XCTestCase {
             XCTAssertEqual(r.prevHash.count, 64)
             XCTAssertEqual(r.payloadHash?.count, 64)
             XCTAssertEqual(r.signature.count, 128, "every wap record is individually signed")
-            XCTAssertEqual(r.timeBucketMS, 5000)
+            XCTAssertEqual(r.timeBucketMS, 600_000)
             XCTAssertEqual(r.zone, "")
             XCTAssertEqual(r.timeSource, "device_clock")
             XCTAssertTrue(r.hasWireTimestamp)
         }
-        XCTAssertEqual(page.records.map(\.timeBucket), [1, 130, 131, 132])
+        XCTAssertEqual(page.records.map(\.timeBucket), [1, 2, 2, 2])
     }
 
     func testTimestampsAreCoarseBucketStarts() throws {
         let page = try decode(try fixtureText())
         // 2026-09-08T10:20:00Z and 10:30:00Z — the device's clock read
-        // 10:40:00Z at render, the records were 695 s / ≤50 s old, and each
-        // is floored to its ten-minute bucket (Invariant III).
+        // 10:40:00Z at render, the records were 700 s / 100 s old (raw bucket
+        // starts 10:28:20 and 10:38:20), and each is floored to its
+        // ten-minute bucket (Invariant III).
         let t = page.records.map { $0.timestamp.timeIntervalSince1970 }
         XCTAssertEqual(t[0], 1_788_862_800)
         XCTAssertEqual(t[1], 1_788_863_400)
@@ -213,11 +214,11 @@ final class WitnessPageFixtureTests: XCTestCase {
             XCTAssertGreaterThan(r.timestamp, before.addingTimeInterval(-1_800),
                                  "a 700 s-old record anchors within the last half hour")
         }
-        // Record 1 is 645 s older than record 2 (buckets 1 vs 130 at 5 s):
-        // after flooring that is one or two ten-minute steps, never zero.
+        // Record 1 is 600 s older than record 2 (buckets 1 vs 2 at ten
+        // minutes): after flooring that is one ten-minute step, never zero.
         let gap = page.records[1].timestamp.timeIntervalSince(page.records[0].timestamp)
         XCTAssertTrue(gap == 600 || gap == 1_200, "gap was \(gap)")
-        // Records 2–4 are within 10 s of each other: same bucket or adjacent.
+        // Records 2–4 share bucket 2: the same ten-minute anchor.
         let gap23 = page.records[2].timestamp.timeIntervalSince(page.records[1].timestamp)
         XCTAssertTrue(gap23 == 0 || gap23 == 600)
 

@@ -352,7 +352,7 @@ Edit `secrets/secrets.h` with your credentials. The `.gitignore` prevents commit
 
 **Privacy Guarantees:**
 - No raw video storage
-- Time coarsening (5s buckets)
+- Time coarsening (ten-minute buckets)
 - No MAC address logging
 - Local-first data storage
 - Session token rotation

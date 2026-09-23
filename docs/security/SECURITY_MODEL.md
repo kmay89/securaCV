@@ -50,7 +50,7 @@ visibly breaks and anyone checking the evidence can see the tampering.
 
 The device records only:
 
-- **Timestamps** — rounded to 5-second intervals (never precise)
+- **Timestamps** — rounded to ten-minute buckets (never precise)
 - **GPS coordinates** — if available, with configurable precision coarsening
 - **Count of nearby WiFi devices** — not their identities
 - **Device health data** — memory, storage, battery status
@@ -333,7 +333,7 @@ not objective ground truth.
 ### Clock Accuracy
 Timestamps come from GPS satellites when a fix is available. Without
 GPS fix, the device uses its internal clock, which may drift. All
-timestamps are coarsened to 5-second buckets regardless of source.
+timestamps are coarsened to ten-minute buckets regardless of source.
 
 ### Evidence Scope
 The device records metadata about events, not comprehensive multimedia

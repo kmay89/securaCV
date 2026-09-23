@@ -165,6 +165,41 @@ report_privacy "High-precision lat/lon format string (>=4 dp)" "$GPS_PREC"
 
 echo ""
 
+# ── Check: canary-wap event-time bucket floor (Invariant III) ──
+# The ten-minute floor is written once, in config_logic.h (kTimeBucketFloorMs,
+# pinned by its own static_assert and by test_config_logic.cpp). The sketch
+# must define TIME_BUCKET_MS from it and the Device tab's number field must
+# not offer a finer value, so the floor cannot drift back in one of the three
+# places while the other two stay green.
+echo "── Privacy: canary-wap time-bucket floor (Invariant III) ──"
+WAP_SKETCH_DIR="$PROJECTS_DIR/canary-wap/arduino/canary_wap"
+if [ -f "$WAP_SKETCH_DIR/config_logic.h" ]; then
+  TB_FLOOR=$(sed -nE 's/^constexpr uint32_t kTimeBucketFloorMs = ([0-9]+)u?;.*/\1/p' "$WAP_SKETCH_DIR/config_logic.h")
+  if [ -z "$TB_FLOOR" ]; then
+    check_fail "config_logic.h: no 'constexpr uint32_t kTimeBucketFloorMs = <ms>' line"
+  elif [ "$TB_FLOOR" -lt 600000 ] || [ $((TB_FLOOR % 600000)) -ne 0 ]; then
+    check_fail "config_logic.h: kTimeBucketFloorMs = ${TB_FLOOR} is not a whole multiple of the ten-minute grid"
+  else
+    if grep -qE '^static const uint32_t TIME_BUCKET_MS[[:space:]]*=[[:space:]]*config_logic::kTimeBucketFloorMs;' "$WAP_SKETCH_DIR/canary_wap.ino"; then
+      check_pass "canary_wap.ino TIME_BUCKET_MS is config_logic::kTimeBucketFloorMs (${TB_FLOOR} ms)"
+    else
+      check_fail "canary_wap.ino: TIME_BUCKET_MS must be defined as config_logic::kTimeBucketFloorMs, not a literal"
+    fi
+    UI_FIELD=$(grep -oE '<input[^>]*id="configTimeBucket"[^>]*>' "$WAP_SKETCH_DIR/web_ui.h" || true)
+    UI_MIN=$(printf '%s' "$UI_FIELD" | sed -nE 's/.* min="([0-9]+)".*/\1/p')
+    UI_VAL=$(printf '%s' "$UI_FIELD" | sed -nE 's/.* value="([0-9]+)".*/\1/p')
+    if [ -n "$UI_MIN" ] && [ "$UI_MIN" = "$TB_FLOOR" ] && [ -n "$UI_VAL" ] && [ "$UI_VAL" -ge "$TB_FLOOR" ]; then
+      check_pass "web_ui.h configTimeBucket min=${UI_MIN} value=${UI_VAL} (floor ${TB_FLOOR} ms)"
+    else
+      check_fail "web_ui.h configTimeBucket must have min=\"${TB_FLOOR}\" and a value at or above it (found min=\"${UI_MIN}\" value=\"${UI_VAL}\")"
+    fi
+  fi
+else
+  check_warn "canary-wap config_logic.h not found — time-bucket floor not checked"
+fi
+
+echo ""
+
 # Keyword filters below look at a hit's CONTENT, never its path: `grep -rn`
 # prefixes every line with `file:line:`, and a checkout path that happened to
 # contain "witness" or "transmit" (a worktree name, a user's home directory)

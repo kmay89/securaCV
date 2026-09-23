@@ -50,8 +50,10 @@ per-module change that follows.
 
 Today the shipping profiles are split across **two** toolchains:
 
-- `dev` / `release` / `minimal` / `standalone` build on `espressif32 @ ^7.0.0`, whose
-  `framework=arduino` package is still **Arduino 2.0.17 / IDF 4.4.7**
+- `dev` / `release` / `minimal` / `standalone` build on the official `espressif32@6.9.0`
+  (exact, `[platform_s3c3]` in [`envs/platformio/platforms.ini`](envs/platformio/platforms.ini);
+  a floating `^7.0.0` until 2026-09-22, [`PLATFORMS.md`](PLATFORMS.md)), whose
+  `framework=arduino` package is **Arduino 2.0.17 / IDF 4.4.7** — and so is 7.x's
   ([`canary/platformio.ini`](canary/platformio.ini), `[env]` `platform =`).
 - `[env:full]` pins the **pioarduino** fork `55.03.38-1` = **Arduino 3.3.8 / IDF 5.5.4**
   ([`canary/platformio.ini`](canary/platformio.ini) `[env:full]` block) because NimBLE 2.x
