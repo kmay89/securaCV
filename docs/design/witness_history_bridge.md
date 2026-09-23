@@ -2,8 +2,9 @@
 
 Status: **Stage 1 built (the pure walker, host-tested). Stage 2 built (F35):
 the bridge's state machine is a pure, host-tested header; the ESP glue, the
-`handle_witness` extension and the timeline UI compile in CI's canary legs,
-with no bench pass yet** (U1: a card holding more than 32 records).
+`handle_witness` extension and the timeline UI are compile-gated by CI's
+canary legs (`firmware.yml`) and not yet CI-compiled, with no bench pass
+yet** (U1: a card holding more than 32 records).
 Decision: **F26: option B (staged) — maintainer to confirm.**
 Scope: the canary PlatformIO tree (`firmware/canary`). Repo sweep items F26
 and F35.
@@ -234,9 +235,12 @@ lifts those functions out of the raw string and pins that behavior.
   suite (the handshake, the generation counter, the bounded wait, the
   per-pass budget, the hint refusals, linkage; deterministic and threaded)
   and the timeline UI test.
-- CI: the canary PlatformIO legs compile the glue, the endpoint and the UI
-  (`firmware.yml`, the canary build matrix); `check_route_security.py`
-  holds the route table.
+- CI: the canary PlatformIO legs gate the glue, the endpoint and the UI
+  (`firmware.yml`, the canary build matrix), and so do the release /
+  release_ha OTA-slot size guards; `check_route_security.py` holds the route
+  table. Until the PR's canary legs are green this is a gate, not a result;
+  here it is proven only by a syntax compile of each TU with the core's own
+  toolchain and flags.
 - Bench (U1): latency and the timeout path need a card holding more than 32
   records on a real unit — a page read across passes while the loop appends,
   a card pulled mid-page, and a stalled loop answering 504 — plus, on a large
