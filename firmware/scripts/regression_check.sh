@@ -263,6 +263,49 @@ fi
 
 echo ""
 
+# ── Check: canary time-bucket floor (Invariant III) ──
+# The canary tree's chain bucket is canary_config.h's TIME_BUCKET_MS, the
+# ten-minute grid. Two stragglers once offered the five-second grid it retired
+# (F44): an unused DEFAULT_GPS_COARSENING_MS 5000 in secure_defaults.h, and a
+# Device Configuration form whose Time Bucket field defaulted to 5000 and
+# posted to an /api/config route the canary never registered. Both are gone.
+# This holds the line: every canary `#define ..._MS <literal>` whose name says
+# BUCKET or COARSEN sits on the ten-minute grid, and a web-UI time-bucket
+# field, if one comes back, may not offer less than it.
+section "Privacy: canary time-bucket floor (Invariant III)"
+CANARY_TB_FLOOR=600000
+TB_BAD=""
+while IFS= read -r tb_line; do
+  [ -n "$tb_line" ] || continue
+  tb_val=$(printf '%s' "$tb_line" | sed -nE 's/.*#define[[:space:]]+[A-Z0-9_]+[[:space:]]+([0-9]+).*/\1/p')
+  if [ -z "$tb_val" ] || [ "$tb_val" -lt "$CANARY_TB_FLOOR" ] || [ $((tb_val % CANARY_TB_FLOOR)) -ne 0 ]; then
+    TB_BAD="${TB_BAD}${tb_line#"$FIRMWARE_DIR"/}\n"
+  fi
+done < <(grep -rnE '^[[:space:]]*#[[:space:]]*define[[:space:]]+[A-Z0-9_]*(BUCKET|COARSEN)[A-Z0-9_]*_MS[[:space:]]+[0-9]+' \
+           "$CANARY_DIR/include" "$CANARY_DIR/src" "$CANARY_DIR/lib" 2>/dev/null || true)
+if [ -n "$TB_BAD" ]; then
+  check_fail "canary time-bucket constant below or off the ten-minute grid (${CANARY_TB_FLOOR} ms):"
+  echo -e "$TB_BAD" | while read -r line; do [ -z "$line" ] || blue "  $line"; done
+else
+  check_pass "every canary BUCKET/COARSEN _MS literal is on the ten-minute grid"
+fi
+CANARY_TB_FIELDS=$(grep -rhoE '<input[^>]*id="configTimeBucket"[^>]*>' "$CANARY_DIR/lib" "$CANARY_DIR/src" 2>/dev/null || true)
+if [ -z "$CANARY_TB_FIELDS" ]; then
+  check_pass "canary web UI offers no time-bucket field (the bucket is not runtime-configurable)"
+else
+  while IFS= read -r tb_field; do
+    UI_MIN=$(printf '%s' "$tb_field" | sed -nE 's/.* min="([0-9]+)".*/\1/p')
+    UI_VAL=$(printf '%s' "$tb_field" | sed -nE 's/.* value="([0-9]+)".*/\1/p')
+    if [ -n "$UI_MIN" ] && [ "$UI_MIN" = "$CANARY_TB_FLOOR" ] && [ -n "$UI_VAL" ] && [ "$UI_VAL" -ge "$CANARY_TB_FLOOR" ]; then
+      check_pass "canary web UI configTimeBucket min=${UI_MIN} value=${UI_VAL} (floor ${CANARY_TB_FLOOR} ms)"
+    else
+      check_fail "canary web UI configTimeBucket must have min=\"${CANARY_TB_FLOOR}\" and a value at or above it (found min=\"${UI_MIN}\" value=\"${UI_VAL}\")"
+    fi
+  done <<< "$CANARY_TB_FIELDS"
+fi
+
+echo ""
+
 # Keyword filters below look at a hit's CONTENT, never its path: `grep -rn`
 # prefixes every line with `file:line:`, and a checkout path that happened to
 # contain "witness" or "transmit" (a worktree name, a user's home directory)

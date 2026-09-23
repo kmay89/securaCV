@@ -65,12 +65,9 @@
   #define DEFAULT_PRESENCE_STORE_RAW_MAC  0
 #endif
 
-// GPS time coarsening bucket (milliseconds).
-// 5000ms = 5-second buckets. Prevents correlation attacks
-// via precise timestamp matching.
-#ifndef DEFAULT_GPS_COARSENING_MS
-  #define DEFAULT_GPS_COARSENING_MS   5000
-#endif
+// Time coarsening is not configured here. The witness chain's time bucket
+// is canary_config.h's TIME_BUCKET_MS: the ten-minute grid, floor and
+// default (Invariant III, IR-TIMEBUCKET), held there by regression_check.sh.
 
 // ════════════════════════════════════════════════════════════════════
 // PRINCIPLE 6: PRIVACY BY ARCHITECTURE
@@ -189,10 +186,6 @@
 
   #if DEFAULT_JTAG_ENABLED != 0
     #error "SECURITY VIOLATION: JTAG must be disabled in production"
-  #endif
-
-  #if DEFAULT_GPS_COARSENING_MS < 5000
-    #error "SECURITY VIOLATION: GPS coarsening must be >= 5000ms (privacy)"
   #endif
 
   #if DEFAULT_SECURE_BOOT != 1

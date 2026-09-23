@@ -2380,29 +2380,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Device Configuration</div>
-            <div class="card-subtitle">Modify device settings</div>
+            <div class="card-title">Device</div>
+            <div class="card-subtitle">Restart the Canary</div>
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Record Interval (ms)</label>
-          <input type="number" class="form-input" id="configRecordInterval" value="1000" min="100" max="60000">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Time Bucket (ms)</label>
-          <input type="number" class="form-input" id="configTimeBucket" value="5000" min="1000" max="60000">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Log Level (min stored)</label>
-          <select class="form-input" id="configLogLevel">
-            <option value="0">Debug</option>
-            <option value="1" selected>Info</option>
-            <option value="2">Notice</option>
-            <option value="3">Warning</option>
-          </select>
-        </div>
         <div style="display:flex;gap:0.5rem;margin-top:1rem;">
-          <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
           <button class="btn btn-danger" onclick="confirmReboot()">Reboot Device</button>
         </div>
       </div>
@@ -5011,16 +4993,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // Settings
-    async function saveConfig() {
-      const config = {
-        record_interval_ms: parseInt(document.getElementById('configRecordInterval').value),
-        time_bucket_ms: parseInt(document.getElementById('configTimeBucket').value),
-        log_level: parseInt(document.getElementById('configLogLevel').value)
-      };
-      const data = await api('/api/config', 'POST', config);
-      alert(data.ok ? 'Configuration saved!' : 'Save failed: ' + (data.error || 'Unknown'));
-    }
-
     function confirmReboot() {
       if (confirm('Reboot the device? All unsaved data will be persisted first.')) {
         api('/api/reboot', 'POST');
