@@ -120,6 +120,8 @@ struct World : Port {
   size_t short_read_len = 0;       // ...returns only this many bytes (0 = off)
   int short_reads = 0;             // short reads served
   bool short_read_had_newline = false;
+  uint32_t bad_at = 0;             // a bad sector at this offset (0 = off): a read
+                                   // that crosses it stops at it, a read at it gets 0
   // MQTT
   bool configured = true;
   bool connected = true;
@@ -184,7 +186,9 @@ struct World : Port {
       return 0;
     }
     if (off >= log.size()) return 0;
+    if (bad_at && off == bad_at) return 0;
     size_t n = std::min(cap, log.size() - off);
+    if (bad_at && off < bad_at && off + n > bad_at) n = bad_at - off;
     if (short_read_len > 0 && off >= short_read_from) {
       // The card returns less than asked, mid-file, once.
       n = std::min(n, short_read_len);
@@ -1406,6 +1410,60 @@ static int test_short_read_mid_file_is_retried_not_stepped_over() {
     ++g_checks;                                                            \
   } while (0)
 
+// A bad sector mid-row, the way fread reports one: every read that crosses
+// it stops short at it (no line break in the tail), and a read at it returns
+// nothing. The read-failure count must survive those short reads — a reset on
+// any non-zero read would park the walk at the sector forever, pending() true
+// for good and every new row held behind it. The walk gives up once, keeps the
+// rows before the sector, and the next commit goes live.
+static int test_a_bad_sector_mid_row_gives_up_once() {
+  World w; Planner p; Allocator a;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p);
+  Host h{w, p, a};
+  w.connected = false;
+  std::vector<uint32_t> starts;
+  for (int i = 0; i < 30; ++i) { starts.push_back((uint32_t)w.log.size()); h.tick(1); }
+  w.bad_at = starts[15] + 20;                       // inside row 16
+  w.connected = true;
+  const int passes = h.drain(5000);
+  CHECK(passes < 5000);
+  CHECK(p.stats().read_giveups == 1);
+  CHECK(!p.pending());
+  CHECK(each_once(w.ha, 1, 15));
+  const uint32_t live_before = p.stats().live;
+  h.tick(1);
+  CHECK(p.stats().live == live_before + 1);
+  return 0;
+}
+
+// After a remount the walk restarts at the head and skips every delivered
+// line before it reaches the held ones. Isolated read failures during that
+// skip are not "three in a row": a whole line read in between resets the
+// count. A reset only on owed rows, or only on sends, would give the backlog
+// up here and lose the five held rows to the watermark.
+static int test_isolated_failures_while_skipping_delivered_rows() {
+  World w; Planner p; Allocator a;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p);
+  Host h{w, p, a};
+  for (int i = 0; i < 200; ++i) h.tick(1);          // live: 1..200
+  w.connected = false;
+  for (int i = 0; i < 5; ++i) h.tick(1);            // held: 201..205
+  p.card_close();
+  open_card(w, p);                                  // remount: walk from the head
+  w.connected = true;
+  const long r0 = w.reads_ever;
+  w.fail_read_nos = {r0 + 2, r0 + 6, r0 + 10};      // isolated, all in the skip phase
+  h.drain();
+  CHECK(w.reads_failed == 3);
+  CHECK(p.stats().read_giveups == 0);
+  CHECK(each_once(w.ha, 1, 205));
+  return 0;
+}
+
 int main() {
   RUN(test_ceiling_for);
   RUN(test_last_line_id);
@@ -1438,6 +1496,8 @@ int main() {
   RUN(test_isolated_read_failures_do_not_abandon_the_backlog);
   RUN(test_read_past_a_damaged_run_breaks_the_failure_run);
   RUN(test_short_read_mid_file_is_retried_not_stepped_over);
+  RUN(test_a_bad_sector_mid_row_gives_up_once);
+  RUN(test_isolated_failures_while_skipping_delivered_rows);
   std::printf("test_csi_event_backfill: %d checks passed\n", g_checks);
   return 0;
 }
