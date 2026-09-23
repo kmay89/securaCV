@@ -129,7 +129,7 @@ enum PairingError: LocalizedError, Equatable {
         case .badBaseURL(let raw):
             return "The receipt's address \"\(raw)\" isn't one the Wall can reach."
         case .keychain(let status):
-            return "This Apple TV's Keychain refused the pairing (status \(status)). Nothing was saved."
+            return "This Apple TV's Keychain refused the pairing (status \(status)). Nothing was saved; any earlier pairing is unchanged."
         }
     }
 }
@@ -185,11 +185,20 @@ struct KeychainPairingSecrets: PairingSecrets {
         return out as? Data
     }
 
+    /// Replace in place, never delete-then-add: a re-pair the Keychain
+    /// refuses must leave the previous pairing (token AND pin) exactly as it
+    /// was, because PairingError.keychain tells the person nothing was
+    /// saved. Update the existing item; add one only when there is none.
     func write(_ data: Data, account: String) throws {
-        SecItemDelete(item(account) as CFDictionary)
+        let fields: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let updated = SecItemUpdate(item(account) as CFDictionary, fields as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw PairingError.keychain(updated) }
         var add = item(account)
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        add.merge(fields) { _, new in new }
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw PairingError.keychain(status) }
     }

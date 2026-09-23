@@ -79,6 +79,21 @@ final class MemoryPairingSecrets: PairingSecrets, @unchecked Sendable {
 
 private let goodFleet = #"{"kernel":"kitchen-hub","devices":[{"name":"Front Door"},{"name":"Studio"}]}"#
 
+/// Pairings kept in memory by a store that refuses every write after the
+/// first `allowedWrites` — the Keychain saying no to a re-pair.
+final class RefusingPairingSecrets: PairingSecrets, @unchecked Sendable {
+    private let inner = MemoryPairingSecrets()
+    private var allowedWrites: Int
+    init(allowedWrites: Int) { self.allowedWrites = allowedWrites }
+    func read(account: String) -> Data? { inner.read(account: account) }
+    func write(_ data: Data, account: String) throws {
+        guard allowedWrites > 0 else { throw PairingError.keychain(-25_299) }
+        allowedWrites -= 1
+        try inner.write(data, account: account)
+    }
+    func remove(account: String) { inner.remove(account: account) }
+}
+
 /// A pairing receipt in `witness_api mint-viewer-token`'s shape.
 func receiptJSON(token: String, key: String, baseURL: String? = nil) -> String {
     var fields = [
@@ -770,6 +785,28 @@ final class WallModelTests: XCTestCase {
         await m.refreshOnce()
         XCTAssertEqual(transport.tokensSent.last, .some(nil), "a forgotten pairing sends no token")
         XCTAssertEqual(m.standing, .unpaired)
+    }
+
+    func testARePairTheKeychainRefusesKeepsThePairingItWouldHaveReplaced() async {
+        // "Nothing was saved" must stay true of a refused RE-pair: the old
+        // token and pin still stand, and the next walk still uses them.
+        let secrets = RefusingPairingSecrets(allowedWrites: 1)
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: tamperedSealedLog)
+        let defaults = scratchDefaults()
+        defaults.set(["canary.local:8099"], forKey: "SecuraCVWallSources")
+        let m = WallModel(transport: transport, defaults: defaults, pollInterval: 0.01,
+                          pairings: PairedSourceStore(secrets: secrets), discover: { _ in [] })
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: otherKey)))
+
+        let newToken = String(repeating: "8", count: 64)
+        let refused = m.pair(receiptText: receiptJSON(token: newToken, key: String(repeating: "2", count: 64)))
+        XCTAssertEqual(refused, PairingError.keychain(-25_299).localizedDescription)
+        XCTAssertEqual(m.pairing?.token, viewerToken, "the pairing it would have replaced still stands")
+        XCTAssertEqual(m.pairing?.verifyingKey, otherKey)
+        XCTAssertEqual(PairedSourceStore(secrets: secrets).pairing(for: "canary.local:8099")?.token, viewerToken)
+
+        await m.refreshOnce()
+        XCTAssertEqual(transport.tokensSent, [viewerToken])
     }
 
     func testAReceiptThatCannotPairSavesNothing() {
