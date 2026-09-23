@@ -2,10 +2,11 @@
 set -euo pipefail
 #
 # Compatibility wrapper. The TV verifier carry — viewer/verify_core.js, the
-# fixtures the website's tv-wall.test.mjs runs it against, and
-# tv/vendor/PROVENANCE.txt — now lives in scripts/carry_to_site.py, the one
-# tool for every fact the website carries from this repo (the /checkup build
-# matrix and the landing page's kernel-status grid ride the same command).
+# fixtures the website's tv-wall.test.mjs runs it against, the fleet contract
+# vectors the Wall's parseFleet replays, and tv/vendor/PROVENANCE.txt — now
+# lives in scripts/carry_to_site.py, the one tool for every fact the website
+# carries from this repo (the /checkup build matrix and the landing page's
+# kernel-status grid ride the same command).
 # This name keeps working for anyone who has it in muscle memory or a note.
 #
 # Usage (from anywhere, with a website checkout):
