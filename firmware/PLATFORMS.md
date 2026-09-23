@@ -26,7 +26,7 @@ every copy; now it is structural.
 
 | Section | Literal | Who builds on it | Why this literal, and why it is distinct |
 |---|---|---|---|
-| `platform_s3c3` | `espressif32@6.9.0` | `common_esp32s3` / `common_esp32c3` in `common.ini`, so every env that extends them: canary-vision (all envs), canary-display's core-2 SPI panels (`watch`, `watch-modes`, `watch-debug`, `nightstand-s3`, `touch169`, `amoled241`) and `nightlight-c3`, `canary-sentinel-lite`; `firmware/canary` `[env]` default: `dev`, `release`, `dev_ha`, `release_ha`, `minimal`, `standalone`, `usb-onboard`, `esp32cam`, `esp32-wroom`, `freenove-s3`; `provisioning/platformio_secure.ini` (`secure`, `secure_ha`) when included from `firmware/canary/platformio.ini` per its header | Official platform, **exact** pin: arduino-esp32 core 2.0.17 / ESP-IDF 4.4.7, the bench-validated release path that `projects/canary-display/arduino/PARITY.md` and the two `core_compat.h` name by number. The canary tree and the secure envs joined on 2026-09-22 (the decision below); until then they floated on `^7.0.0` and `^6.5.0`, both of which resolved to this same 2.0.17 core. |
+| `platform_s3c3` | `espressif32@6.9.0` | `common_esp32s3` / `common_esp32c3` in `common.ini`, so every env that extends them: canary-vision (all envs), canary-display's core-2 SPI panels (`watch`, `watch-modes`, `watch-debug`, `nightstand-s3`, `touch169`, `amoled241`) and `nightlight-c3`, `canary-sentinel-lite`; `firmware/canary` `[env]` default: `dev`, `release`, `dev_ha`, `release_ha`, `minimal`, `standalone`, `usb-onboard`, `esp32cam`, `esp32-wroom`, `freenove-s3`; `provisioning/platformio_secure.ini` (`secure`, `secure_ha`) when included from `firmware/canary/platformio.ini` per its header | Official platform, **exact** pin: arduino-esp32 core 2.0.17 / ESP-IDF 4.4.7, the bench-validated release path that `projects/canary-display/arduino/PARITY.md` and the two `core_compat.h` name by number. The canary tree and the secure envs joined on 2026-09-22 (the decision below); until then they floated on `^7.0.0` (the same 2.0.17 core) and `^6.5.0` (the newest 6.x at build time: `6.9.0` or later, never recorded). |
 | `platform_core3` | pioarduino release `55.03.38-1` (`platform-espressif32.zip`) | every ESP32-C6 env (canary-sense, canary-sentinel `door`/`window`/`hallway`/`demo-head`, canary-display `nightstand-c6`); canary-wap (all envs); canary-display's dash family incl. `dash7` / `nightstand7`; canary `[env:full]` | The only PlatformIO platform that packages arduino-esp32 3.x (3.3.8 / ESP-IDF 5.5.4). The official platform has no C6 support for `framework = arduino`; canary-wap calls IDF5-only APIs unconditionally; canary-wap and `[env:full]` link NimBLE-Arduino 2.x, which needs core 3; the dash family needs GFX 1.6.x's RGB bounce buffers, which need core 3. |
 | `platform_ota_idf` | `espressif32@6.5.0` | `projects/canary-ota` (`dev`, `production`, `test`) | `framework = espidf`, not arduino: this pin selects an ESP-IDF release, and the project's `sdkconfig` is written against it. Exact pin, left where it was on 2026-09-22 (below). |
 
@@ -77,12 +77,16 @@ given — and it is what the tree says now:
 - **`firmware/canary` `[env]` interpolates `platform_s3c3`** (`6.9.0` exact)
   instead of the floating `^7.0.0`. 7.x ships the same 2.0.17 / 4.4.7 core
   (the 7.x bump added ESP-IDF 6.0 support, not core 3.x), so the canonical
-  tree builds the core bytes it built before, stops picking up whichever 7.x
-  is newest on a release runner, and joins the pin that `PARITY.md` and both
+  tree builds on the same 2.0.17 Arduino core as before (the tool packages
+  around it change, below), stops picking up whichever 7.x is newest on a
+  release runner, and joins the pin that `PARITY.md` and both
   `core_compat.h` name by number. `[env:full]` still overrides to
   `platform_core3`.
-- **The secure envs interpolate `platform_s3c3`** instead of `^6.5.0`, which
-  resolved to the newest 6.x — `6.9.0`, the same pin under another spelling.
+- **The secure envs interpolate `platform_s3c3`** instead of `^6.5.0`. A
+  caret resolves to the newest 6.x at build time: `6.9.0` or later, and no
+  build of these envs recorded which. If it was a later 6.x, this pin moves
+  them back to `6.9.0`'s tool packages. Nothing here confirms either case,
+  and no workflow builds these envs (below).
   `[platform_canary]` and `[platform_secure]` are gone: the lint refuses a
   dead section and a duplicate literal, so merging pins means deleting
   sections. Three remain, and the SBOM no longer carries a floating
@@ -94,16 +98,30 @@ given — and it is what the tree says now:
   6.5.0 is still the intended IDF release is a separate call, recorded here
   when someone makes it.
 
-What moves and what does not: the Arduino core is unchanged; the tool
-packages `6.9.0` bundles differ from the ones a 7.x resolve brought — the
-7.x line's esptool 4.11 is why the release workflows install `intelhex`, and
-that pip extra (`flavors.json` `pip_extras`, `firmware-release.yml`,
+What moves and what does not: the canary tree's Arduino core is unchanged
+(2.0.17); the tool packages `6.9.0` bundles differ from the ones a 7.x
+resolve brought — the 7.x line's esptool 4.11 is why the release workflows
+install `intelhex`, and that pip extra (`flavors.json` `pip_extras`, `firmware-release.yml`,
 `flasher-release.yml`) is now a leftover, kept because it is harmless and
-the merged-bin steps pin their own esptool from pip. The compile proof is
-CI's `firmware.yml` building every canary env on the new pin, and the first
-tag after it deserves a look at the release log's bootloader / merged-bin
-step; per `boards/boards.json` the S3 canary images are compile-tested on
-the pin until a bench pass. Rolling back is one `.ini` edit.
+the merged-bin steps pin their own esptool from pip.
+
+The compile proof covers only part of what moved. `firmware.yml` builds the
+canary envs that `flavors.json` lists under `build_envs`. On the new pin
+those are `dev`, `release`, `release_ha`, `esp32cam`, `esp32-wroom` and
+`freenove-s3` (`full` is in the list too, but it builds on `platform_core3`).
+`firmware-release.yml` builds `release`, `release_ha` and the three board
+envs again at tag time. **No workflow compiles `dev_ha`, `minimal`,
+`standalone`, `usb-onboard`, `secure` or `secure_ha` on the new pin.** The
+first four take the same `[env]` platform as `dev` and `release` (they
+extend one of them) and differ in their own options, not in the platform.
+The secure envs resolve only when a project lists
+`provisioning/platformio_secure.ini` in `extra_configs`, and
+`firmware/canary/platformio.ini` does not. All six move with this pin
+untested: build them by hand before relying on them, or add them to
+`build_envs`. The first tag after the change deserves a look at the release
+log's bootloader / merged-bin step. Per `boards/boards.json`, the S3 canary
+images are compile-tested on the pin until a bench pass. Rolling back is one
+`.ini` edit.
 
 ## Not covered by `platforms.ini`
 
