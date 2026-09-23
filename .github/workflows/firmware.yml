@@ -1901,7 +1901,10 @@ jobs:
         # provisioning_gate.h's page_token_decide (F20 gap #11); the script
         # fails any page call that does not pass page_token_inject(req), a
         # registration inside registerHttpHandlers that does not use its
-        # `server` parameter, and a table larger than kRouteTableSlots.
+        # `server` parameter, a table larger than kRouteTableSlots, and any
+        # path that can hand out the token or spend the BOOT tap (auth_gate,
+        # the receipt route, page_token_inject) without deciding the Host
+        # (host_is_foreign) first.
         run: |
           python3 firmware/canary/scripts/check_route_security.py
 

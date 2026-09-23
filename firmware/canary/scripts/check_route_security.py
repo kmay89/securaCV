@@ -19,8 +19,9 @@ are registered from a string array in a loop (`.uri = p`), so the parser
 reads that array too — otherwise the six probe routes would be invisible
 here and an unauthenticated route could hide in the same loop.
 
-Beyond "every route reaches a gate", four wiring rules the marker scan alone
-cannot see (each added after a review mutation passed every other gate):
+Beyond "every route reaches a gate", five wiring rules the marker scan alone
+cannot see (each added after a review mutation, or a review finding, passed
+every other gate):
 
   * a gate marker counts only where its RESULT decides something — inside an
     `if (...)` / `while (...)` condition or a `return` expression. A bare
@@ -38,13 +39,26 @@ cannot see (each added after a review mutation passed every other gate):
     a serial line (the shape two sibling branches add routes in);
   * no function registers more routes than the max_uri_handlers budget it
     sets (registerHttpHandlers is held to kRouteTableSlots, with and without
-    the mesh block; every #if branch is counted, i.e. the worst case).
+    the mesh block; every #if branch is counted, i.e. the worst case);
+  * the Host comes first on every path that can hand out the bearer token or
+    spend the BOOT tap (check_host_first): host_is_foreign(req) — the Host
+    must name this device unless the request came over the SoftAP — decides
+    before any bearer is read, any tap is taken or any token is emitted. A
+    gated route gets it from auth_gate (whose own body is held to that
+    order) or asks it itself (the provisioning receipt, gated by a bearer or
+    the tap); page_token_inject asks it before page_token_decide may take
+    the tap; send_html_with_token streams the token only on
+    PageToken::INJECT; and every function that reads auth_get_token() is
+    named here as an emitter or a comparer, so a new reader cannot appear
+    unclassified (added with the provisioning receipt's own Host check; the
+    four rules above were green without it).
 
 Run from the repo root (CI: firmware.yml job "Mesh + Scout Host Tests",
 step "Check canary (PIO) route security", beside the WAP's audit):
     python3 firmware/canary/scripts/check_route_security.py
 """
 
+import functools
 import re
 import sys
 from pathlib import Path
@@ -77,8 +91,10 @@ PUBLIC_ALLOWLIST = {
     # the page with an EMPTY token. Every API the page calls is auth_gate'd.
     # check_page_token_wiring() below is what makes this reason true: it
     # fails a page call that does not pass page_token_inject(req).
-    ("GET", "/"): "dashboard shell; token injection gated by page_token_decide (F20 gap #11)",
-    ("GET", "/setup"): "setup wizard shell; token injection gated by page_token_decide (F20 gap #11)",
+    # check_host_first() holds page_token_inject to asking the Host before
+    # the grants and the tap.
+    ("GET", "/"): "dashboard shell; token injection gated by page_token_decide (F20 gap #11), Host first",
+    ("GET", "/setup"): "setup wizard shell; token injection gated by page_token_decide (F20 gap #11), Host first",
     # OS captive-portal probes must answer plainly or the OS disconnects.
     # While setup is active (or the STA is down) they serve the setup page
     # through the same page_token_policy; otherwise a fixed success body.
@@ -163,6 +179,10 @@ def strip_comments(text: str) -> str:
     return "".join(out)
 
 
+# Pure and called for the same few files hundreds of times (every handler
+# lookup, every call/definition scan), so it is memoized: without the cache
+# the check spends most of its time re-walking securacv_network.cpp.
+@functools.lru_cache(maxsize=None)
 def blank_string_contents(text: str) -> str:
     """Replace the *contents* of string/char literals with spaces, keeping
     the quotes and the original length so byte offsets still align with
@@ -436,6 +456,264 @@ def check_page_token_wiring(sources: dict) -> list:
     return failures
 
 
+# ── The Host first ────────────────────────────────────────────────────────────
+
+# The Host check: the Host a request targeted must name this device, unless
+# the request arrived over the Canary's own SoftAP (securacv_network's
+# host_is_foreign over firmware/common/network/host_guard.h).
+HOST_CHECK = "host_is_foreign("
+
+# The host-tested decisions that take the Host verdict as their FIRST
+# argument (firmware/common/network/provisioning_gate.h) and decide it before
+# anything else they are given.
+HOST_DECISIONS = ("receipt_decide", "page_token_decide")
+
+# Functions that put a secret into a response. Name → what they emit. Every
+# call of one must sit behind the Host check (or, for the page, behind
+# page_token_inject, which asks it).
+TOKEN_EMITTERS = {
+    "send_provisioning_receipt": "the provisioning receipt (the API token and the AP password)",
+    "send_html_with_token": "a page with the API token in its __CV_TOKEN__ placeholder",
+}
+
+# Functions that read auth_get_token() only to compare a presented credential
+# against it, never into a response.
+TOKEN_COMPARERS = {
+    "auth_gate": "the API gate: the Host, then the bearer compare",
+    "bearer_present_and_valid": "the silent bearer compare the receipt and the pages use",
+}
+
+# What must not run before the Host is decided: reading the bearer, taking
+# the tap, reading the token, emitting it.
+PRE_HOST_STEPS = ("bearer_present_and_valid(", "auth_check_optional(", "auth_check(",
+                  "provisioning_gate_take(", "auth_get_token(") + tuple(
+                      name + "(" for name in TOKEN_EMITTERS)
+
+_KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "sizeof", "defined"}
+
+
+def function_spans(text: str):
+    """[(name, start, end)] for every brace-bodied function definition in
+    `text` whose parameter list holds no parentheses (every handler and
+    helper here). A lambda has no name before its `(`, so a statement inside
+    one is attributed to the function that holds the lambda."""
+    blanked = blank_string_contents(text)
+    spans = []
+    for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const\s*)?\{", blanked):
+        if m.group(1) in _KEYWORDS:
+            continue
+        depth, k = 1, m.end()
+        while k < len(blanked) and depth:
+            if blanked[k] == "{":
+                depth += 1
+            elif blanked[k] == "}":
+                depth -= 1
+            k += 1
+        spans.append((m.group(1), m.start(), k))
+    return spans
+
+
+def enclosing_function(spans, offset: int):
+    """The innermost (name, start, end) of `spans` holding `offset`, or None."""
+    best = None
+    for name, start, end in spans:
+        if start <= offset < end and (best is None or start > best[1]):
+            best = (name, start, end)
+    return best
+
+
+def first_host_decision(body: str) -> int:
+    """Offset in `body` of the first host_is_foreign(...) whose answer
+    decides, or -1: in an if/while condition or a return expression
+    (first_deciding_marker); passed straight in as the first argument of a
+    HOST_DECISIONS call; or assigned to a bool local that is then that first
+    argument, or tested in an if (...). A bare call, or a local nobody
+    reads, is not a Host check."""
+    blanked = blank_string_contents(body)
+    found = []
+    i = first_deciding_marker(body, HOST_CHECK)
+    if i >= 0:
+        found.append(i)
+    local = re.compile(r"\b(?:const\s+)?bool\s+([A-Za-z_]\w*)\s*=\s*host_is_foreign\s*\(\s*req\s*\)\s*;")
+    for fn in HOST_DECISIONS:
+        for off, args in call_args(body, fn):
+            if not args:
+                continue
+            if re.fullmatch(r"host_is_foreign\s*\(\s*req\s*\)", args[0]):
+                found.append(blanked.find(HOST_CHECK, off))
+                continue
+            for m in local.finditer(blanked[:off]):
+                if m.group(1) == args[0]:
+                    found.append(m.start() + m.group(0).find(HOST_CHECK))
+    for m in local.finditer(blanked):
+        tail = blanked[m.end():]
+        if re.search(r"\b(?:if|while)\s*\(\s*!?\s*" + re.escape(m.group(1)) + r"\b", tail):
+            found.append(m.start() + m.group(0).find(HOST_CHECK))
+    return min(found) if found else -1
+
+
+def steps_before(body: str, limit: int, steps=PRE_HOST_STEPS) -> list:
+    """The PRE_HOST_STEPS that occur in `body` before offset `limit`."""
+    blanked = blank_string_contents(body)
+    out = []
+    for step in steps:
+        i = blanked.find(step)
+        # `auth_check(` must not match inside `bearer_auth_check(` and friends.
+        while i > 0 and (blanked[i - 1].isalnum() or blanked[i - 1] == "_"):
+            i = blanked.find(step, i + 1)
+        if 0 <= i < limit:
+            out.append(step[:-1])
+    return out
+
+
+def check_host_first(sources: dict, require_defs: bool = True) -> list:
+    """The Host is asked FIRST on every path that can hand out the token or
+    spend the BOOT tap (see the module docstring)."""
+    failures = []
+    routes = []
+    for fname, text in sources.items():
+        routes.extend(parse_routes(fname, text))
+    all_spans = {fname: function_spans(text) for fname, text in sources.items()}
+
+    def body_of(name):
+        for fname, text in sorted(sources.items()):
+            span = definition_span(text, name)
+            if span:
+                return fname, text[span[0]:span[1]]
+        return None, None
+
+    # 1. auth_gate asks the Host before it reads or compares the token.
+    fname, body = body_of("auth_gate")
+    if body is None:
+        if require_defs:
+            failures.append("auth_gate definition not found — parser regression?")
+    else:
+        h = first_deciding_marker(body, HOST_CHECK)
+        if h < 0:
+            failures.append(f"{fname}: auth_gate no longer refuses a foreign Host "
+                            f"(if (host_is_foreign(req)) ...) — every auth_gate route "
+                            f"would serve under a rebound name")
+        else:
+            late = steps_before(body, h, ("auth_get_token(", "auth_check(", "auth_check_optional("))
+            if late:
+                failures.append(f"{fname}: auth_gate reads the token ({', '.join(late)}) "
+                                f"before its Host check")
+
+    # 2. Every gated route reaches the Host check before any credential step:
+    #    through auth_gate, or by asking it itself. A public route reaches no
+    #    credential step at all except the page path (rule 3).
+    seen = set()
+    for uri, method, handler, fname in routes:
+        base = handler.split("::")[-1]
+        if (method, uri, base) in seen or uri is None:
+            continue
+        seen.add((method, uri, base))
+        bodies = [b for b in (function_body(t, base) for t in sources.values()) if b]
+        if not bodies:
+            continue  # main() already names a missing handler
+        body = bodies[0]
+        if (method, uri) in PUBLIC_ALLOWLIST:
+            steps = steps_before(body, len(body),
+                                 tuple(st for st in PRE_HOST_STEPS if st != "send_html_with_token("))
+            if steps:
+                failures.append(f"{method} {uri}: public handler {handler} reaches "
+                                f"{', '.join(steps)} — a public route may hand out the "
+                                f"token only through send_html_with_token(..., "
+                                f"page_token_inject(req))")
+            continue
+        via_gate = first_deciding_marker(body, "auth_gate(")
+        via_host = first_host_decision(body)
+        covered = [i for i in (via_gate, via_host) if i >= 0]
+        if not covered:
+            failures.append(f"{method} {uri}: handler {handler} ({fname}) never asks the "
+                            f"Host — run auth_gate, or decide host_is_foreign(req) before "
+                            f"the bearer, the tap and the token (the receipt route's shape)")
+            continue
+        late = steps_before(body, min(covered))
+        if late:
+            failures.append(f"{method} {uri}: handler {handler} ({fname}) runs "
+                            f"{', '.join(late)} before the Host check — a foreign Host "
+                            f"must be refused before the bearer is read or the tap is "
+                            f"spent")
+
+    # 3. The page path: page_token_inject asks the Host before any grant and
+    #    before the tap, and hands that verdict to page_token_decide.
+    fname, body = body_of("page_token_inject")
+    if body is None:
+        if require_defs:
+            failures.append("page_token_inject definition not found — parser regression?")
+    else:
+        h = first_host_decision(body)
+        if h < 0:
+            failures.append(f"{fname}: page_token_inject does not decide the Host first "
+                            f"(host_is_foreign(req) as page_token_decide's first "
+                            f"argument) — a page load under a foreign Host would spend "
+                            f"the owner's BOOT tap")
+        else:
+            late = steps_before(body, h)
+            if late:
+                failures.append(f"{fname}: page_token_inject runs {', '.join(late)} "
+                                f"before the Host check")
+
+    # 4. send_html_with_token streams the token only on PageToken::INJECT.
+    fname, body = body_of("send_html_with_token")
+    if body is None:
+        if require_defs:
+            failures.append("send_html_with_token definition not found — parser regression?")
+    else:
+        blanked = blank_string_contents(body)
+        for m in re.finditer(r"\bauth_get_token\s*\(", blanked):
+            stmt_start = max(blanked.rfind(";", 0, m.start()), blanked.rfind("{", 0, m.start()),
+                             blanked.rfind("}", 0, m.start())) + 1
+            stmt_end = blanked.find(";", m.start())
+            if not re.search(r"==\s*PageToken::INJECT\s*\)?\s*\?\s*auth_get_token\s*\(",
+                             blanked[stmt_start:stmt_end]):
+                failures.append(f"{fname}: send_html_with_token reads auth_get_token() "
+                                f"outside a PageToken::INJECT test (`verdict == "
+                                f"PageToken::INJECT ? auth_get_token() : \"\"`) — only "
+                                f"that verdict (Host first, host-tested) may put the "
+                                f"token in a page")
+
+    # 5. Every call of an emitter (other than the page's, rule 3) sits behind
+    #    the Host check in its own function; every token reader is named.
+    for fname, text in sorted(sources.items()):
+        spans = all_spans[fname]
+        for emitter in TOKEN_EMITTERS:
+            if emitter == "send_html_with_token":
+                continue
+            for off, _ in call_args(text, emitter):
+                enc = enclosing_function(spans, off)
+                if enc is None:
+                    continue  # a declaration
+                name, start, end = enc
+                body = text[start:end]
+                covered = [i for i in (first_deciding_marker(body, "auth_gate("),
+                                       first_host_decision(body)) if i >= 0]
+                rel = off - start
+                line = text.count("\n", 0, off) + 1
+                if not covered or min(covered) > rel:
+                    failures.append(f"{fname}:{line}: {name} calls {emitter}, which emits "
+                                    f"{TOKEN_EMITTERS[emitter]}, without deciding "
+                                    f"host_is_foreign(req) (or auth_gate) first")
+        for off, _ in call_args(text, "auth_get_token"):
+            enc = enclosing_function(spans, off)
+            if enc is None:
+                continue  # the declaration
+            if enc[0] not in TOKEN_EMITTERS and enc[0] not in TOKEN_COMPARERS:
+                line = text.count("\n", 0, off) + 1
+                failures.append(f"{fname}:{line}: {enc[0]} reads auth_get_token() but is "
+                                f"neither a TOKEN_EMITTERS nor a TOKEN_COMPARERS entry — "
+                                f"name it, and if it puts the token in a response, route "
+                                f"every caller through the Host check")
+    if require_defs:
+        for table in (TOKEN_EMITTERS, TOKEN_COMPARERS):
+            for name in table:
+                if not any(definition_span(t, name) for t in sources.values()):
+                    failures.append(f"{name} is listed as a token reader but is not "
+                                    f"defined — remove or fix the entry")
+    return failures
+
+
 def check_registration_sites(sources: dict) -> list:
     """Inside registerHttpHandlers(server) every registration goes to the
     `server` parameter — never a member handle."""
@@ -615,6 +893,85 @@ def _assert_parser_robust() -> None:
     over = table.replace("kRouteTableSlots = 3;", "kRouteTableSlots = 2;")
     assert any("with the mesh" in f for f in check_route_budgets({"fx": over})), over
 
+    # 6. The Host first: receipt shapes the rule refuses, and the fixed ones.
+    reg = ('httpd_uri_t r = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, '
+           '.handler = handle_provisioning_receipt };\n')
+    emit = ("static esp_err_t send_provisioning_receipt(httpd_req_t* req) {\n"
+            "  doc[\"token\"] = auth_get_token();\n  return ESP_OK;\n}\n")
+    def receipt(body):
+        return {"fx": reg + emit + "static esp_err_t handle_provisioning_receipt("
+                "httpd_req_t* req) {\n" + body + "}\n"}
+    no_host = ("  if (bearer_present_and_valid(req)) return send_provisioning_receipt(req);\n"
+               "  if (!provisioning_gate_take()) return ESP_OK;\n"
+               "  return send_provisioning_receipt(req);\n")
+    got = check_host_first(receipt(no_host), require_defs=False)
+    assert any("never asks the Host" in f for f in got), got
+    late = ("  if (bearer_present_and_valid(req)) return send_provisioning_receipt(req);\n"
+            "  if (host_is_foreign(req)) return ESP_OK;\n"
+            "  if (!provisioning_gate_take()) return ESP_OK;\n"
+            "  return send_provisioning_receipt(req);\n")
+    got = check_host_first(receipt(late), require_defs=False)
+    assert any("before the Host check" in f and "bearer_present_and_valid" in f
+               for f in got), got
+    ignored = "  host_is_foreign(req);\n" + no_host
+    got = check_host_first(receipt(ignored), require_defs=False)
+    assert any("never asks the Host" in f for f in got), got
+    unread = "  const bool foreign = host_is_foreign(req);\n" + no_host
+    got = check_host_first(receipt(unread), require_defs=False)
+    assert any("never asks the Host" in f for f in got), got
+    fixed_if = "  if (host_is_foreign(req)) return ESP_OK;\n" + no_host
+    assert check_host_first(receipt(fixed_if), require_defs=False) == []
+    fixed_decide = (
+        "  const ReceiptVerdict v = receipt_decide(host_is_foreign(req),\n"
+        "      [req]() { return bearer_present_and_valid(req); },\n"
+        "      []() { return provisioning_gate_take(); });\n"
+        "  if (v == ReceiptVerdict::REFUSE_HOST) return ESP_OK;\n"
+        "  return send_provisioning_receipt(req);\n")
+    assert check_host_first(receipt(fixed_decide), require_defs=False) == []
+    # ...an emitter called from an unregistered helper is held to it too.
+    helper = {"fx": emit + "static esp_err_t other(httpd_req_t* req) {\n"
+              "  return send_provisioning_receipt(req);\n}\n"}
+    got = check_host_first(helper, require_defs=False)
+    assert any("other calls send_provisioning_receipt" in f for f in got), got
+
+    # 7. The page path: the Host before the grants and the tap.
+    def inject(body):
+        return {"fx": "static PageToken page_token_inject(httpd_req_t* req) {\n" + body + "}\n"}
+    old_inject = ("  const bool bearer_ok = bearer_present_and_valid(req);\n"
+                  "  return page_token_decide(false, bearer_ok, false,\n"
+                  "      []() { return provisioning_gate_take(); });\n")
+    got = check_host_first(inject(old_inject), require_defs=False)
+    assert any("does not decide the Host first" in f for f in got), got
+    late_inject = ("  const bool bearer_ok = bearer_present_and_valid(req);\n"
+                   "  const bool foreign = host_is_foreign(req);\n"
+                   "  return page_token_decide(foreign, bearer_ok, false,\n"
+                   "      []() { return provisioning_gate_take(); });\n")
+    got = check_host_first(inject(late_inject), require_defs=False)
+    assert any("before the Host check" in f for f in got), got
+    good_inject = ("  const bool foreign = host_is_foreign(req);\n"
+                   "  const bool bearer_ok = !foreign && bearer_present_and_valid(req);\n"
+                   "  return page_token_decide(foreign, bearer_ok, false,\n"
+                   "      []() { return provisioning_gate_take(); });\n")
+    assert check_host_first(inject(good_inject), require_defs=False) == []
+
+    # 8. The page streams the token only on INJECT; every reader is named.
+    old_send = {"fx": "static esp_err_t send_html_with_token(httpd_req_t* req, "
+                "const char* h, bool inject) {\n"
+                "  const char* token = (inject && !foreign) ? auth_get_token() : \"\";\n"
+                "  return ESP_OK;\n}\n"}
+    got = check_host_first(old_send, require_defs=False)
+    assert any("outside a PageToken::INJECT test" in f for f in got), got
+    new_send = {"fx": old_send["fx"].replace("(inject && !foreign)",
+                                             "(verdict == PageToken::INJECT)")}
+    assert check_host_first(new_send, require_defs=False) == []
+    for wrong in ("(verdict != PageToken::WITHHOLD)", "(verdict != PageToken::INJECT)"):
+        bad_send = {"fx": old_send["fx"].replace("(inject && !foreign)", wrong)}
+        got = check_host_first(bad_send, require_defs=False)
+        assert any("outside a PageToken::INJECT test" in f for f in got), (wrong, got)
+    stray = {"fx": "static void dump(void) {\n  Serial.println(auth_get_token());\n}\n"}
+    got = check_host_first(stray, require_defs=False)
+    assert any("dump reads auth_get_token()" in f for f in got), got
+
 
 def main() -> int:
     _assert_parser_robust()
@@ -678,6 +1035,7 @@ def main() -> int:
                             f"gate is unreachable")
 
     failures.extend(check_page_token_wiring(sources))
+    failures.extend(check_host_first(sources))
     failures.extend(check_registration_sites(sources))
     failures.extend(check_route_budgets(sources))
 
