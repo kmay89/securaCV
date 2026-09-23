@@ -60,6 +60,12 @@ static_assert((int)WIFI_AUTH_WPA2_PSK == canary::net::ap_security::kAuthWpa2Psk,
               "ap_security_policy.h: WIFI_AUTH_WPA2_PSK renumbered");
 static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa2Wpa3Psk,
               "ap_security_policy.h: WIFI_AUTH_WPA2_WPA3_PSK renumbered");
+// IDF 5.x names the httpd control port's default; IDF 4.4 (Arduino core
+// 2.0.17, the canary's pinned core) only writes the literal inside
+// HTTPD_DEFAULT_CONFIG(). Same number either way.
+#ifndef ESP_HTTPD_DEF_CTRL_PORT
+  #define ESP_HTTPD_DEF_CTRL_PORT 32768
+#endif
 #if FEATURE_HTTPS && __has_include("esp_https_server.h") && \
     defined(CONFIG_ESP_HTTPS_SERVER_ENABLE) && CONFIG_ESP_HTTPS_SERVER_ENABLE
   #include "esp_https_server.h"
