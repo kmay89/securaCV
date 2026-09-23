@@ -134,12 +134,13 @@ final class WallModel {
     /// Where a fleet answers on a standard install, most-specific first: the
     /// hub convention port, the kernel's own API port (8799 — what the Home
     /// Assistant add-on and the Docker sidecar serve), then a lone canary-wap
-    /// fronting its own fleet at canary.local. The desktop Flasher and Lab
-    /// (witnessBases / witness-host.js) and the web walls probe the first and
-    /// the last; 8799 is the Wall's addition so a kernel host that answers to
-    /// canary.local is found without typing the port. Those other lists are
-    /// pinned against each other (securacv_website tests/tv-wall.test.mjs),
-    /// so mirroring 8799 there is a cross-repo follow-up, not a drive-by.
+    /// fronting its own fleet at canary.local. 8799 is here so a kernel host
+    /// that answers to canary.local is found without typing the port. This
+    /// list is the reference every other wall probes, in this order: the
+    /// desktop Flasher and Lab (witnessBases / witness-host.js, the Lab's
+    /// menu bar companion) and the vendored web emulator are pinned to it by
+    /// canary-local/tests/desktop_parity.test.js, and the website's TV app
+    /// to the emulator by securacv_website tests/tv-wall.test.mjs.
     static let wellKnownCandidates = ["canary.local:8099", "canary.local:8799", "canary.local"]
 
     /// The character's current face and posture, and its one ambient

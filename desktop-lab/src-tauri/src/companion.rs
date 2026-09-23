@@ -49,8 +49,15 @@ const TRAY_ID: &str = "fleet";
 const MAX_BASES: usize = 8;
 const MAX_ROWS: usize = 12;
 /// Where the companion looks for a kernel until the frontend names one — the
-/// same defaults the Witness Wall host starts from (witness-host.js).
-const DEFAULT_BASES: [&str; 2] = ["http://canary.local:8099", "http://canary.local"];
+/// same defaults the Witness Wall host starts from (witness-host.js), in the
+/// Apple TV's order (tvos WallModel.wellKnownCandidates): the hub convention
+/// port, the kernel's own API port, then the bare device.
+/// canary-local/tests/desktop_parity.test.js holds the three lists together.
+const DEFAULT_BASES: [&str; 3] = [
+    "http://canary.local:8099",
+    "http://canary.local:8799",
+    "http://canary.local",
+];
 const STATE_FILE: &str = "companion.json";
 
 /// Which report a row came from — it decides how silence reads.
@@ -763,6 +770,15 @@ mod tests {
         assert!(accept_bases(vec!["https://github.com".into()]).is_empty());
         let many: Vec<String> = (0..20).map(|i| format!("http://10.0.0.{i}")).collect();
         assert_eq!(accept_bases(many).len(), MAX_BASES);
+    }
+
+    #[test]
+    fn every_default_base_survives_the_gate_in_order() {
+        // A default the gate dropped would be a candidate the tray never
+        // polls — the kernel's own port (8799) silently gone from the list.
+        let defaults: Vec<String> = DEFAULT_BASES.iter().map(|b| b.to_string()).collect();
+        assert_eq!(accept_bases(defaults.clone()), defaults);
+        assert_eq!(*Companion::default().bases.lock().unwrap(), defaults);
     }
 
     #[test]

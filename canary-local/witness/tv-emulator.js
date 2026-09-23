@@ -505,12 +505,14 @@ if (tv && stage) {
 
   // ---------- auto-detection: live-watch the well-known addresses ----------
   // The same list every SecuraCV surface probes, in the same order (the tvOS
-  // Wall, the desktop Flasher, the Lab's witness host): the hub/kernel
-  // convention first, then the bare device — a fresh Canary answers
-  // /api/fleet at http://canary.local (port 80, no hub needed), which is the
-  // address the getting-started docs put in front of people. The real Wall
-  // (tv/app.js) probes the identical list; tests/tv-wall.test.mjs pins the two.
-  const WELL_KNOWN = ['http://canary.local:8099', 'http://canary.local'];
+  // Wall, the desktop Flasher, the Lab's witness host): the hub convention
+  // port first, then the kernel's own API port (8799 — the Home Assistant
+  // add-on and the Docker sidecar), then the bare device — a fresh Canary
+  // answers /api/fleet at http://canary.local (port 80, no hub needed), which
+  // is the address the getting-started docs put in front of people. The real
+  // Wall (tv/app.js) probes the identical list; tests/tv-wall.test.mjs pins
+  // the two.
+  const WELL_KNOWN = ['http://canary.local:8099', 'http://canary.local:8799', 'http://canary.local'];
   // An https page can never fetch an http LAN device (mixed content), so
   // probing from the public site would only fail forever; the loop runs where
   // it can actually work — served from the hub, over http, or in an app shell.

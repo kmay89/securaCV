@@ -197,9 +197,33 @@ That last row is why the public demo ships a **same-origin live demo kernel**
 browser — and why the *real* fleet shows up once the page is served next to the
 kernel (hub, LAN, or desktop app).
 
+### The well-known addresses every wall tries first
+
+Every wall probes the same three well-known addresses, in this order, and
+keeps the first that answers:
+
+1. `canary.local:8099` — the hub convention port (the mock kernel's default);
+2. `canary.local:8799` — the kernel's own API port, what the Home Assistant
+   add-on and the Docker sidecar serve — found here only when the kernel's
+   host answers to `canary.local` and its owner has opened the port to the
+   LAN (both ship closed; see the add-on and sidecar notes below);
+3. `canary.local` — a lone `canary-wap` fronting its own fleet, no hub.
+
+The Apple TV's `WallModel.wellKnownCandidates` is the reference. The desktop
+Flasher (`witnessBases` in `desktop/src/app.js`), the Lab's wall host
+(`canary-local/assets/witness-host.js`) and its menu bar companion
+(`DEFAULT_BASES`), and the vendored web emulator (`tv-emulator.js`) are held
+to it by `canary-local/tests/desktop_parity.test.js`; the website's TV app
+(`tv/app.js`) is held to the emulator by that repo's
+`tests/tv-wall.test.mjs`. The desktop apps put the kernel address the owner
+gave them ahead of the three and the boards their mDNS browse heard after
+them: a board answers with its own one-row self-report, so a board tried
+first would stand in for the kernel's whole fleet. A browser page still
+reads an answer only where the table above lets it.
+
 ### What the Wall does with an advert (the native tvOS app)
 
-The Apple TV has no browser sandbox, so beyond probing `canary.local` it
+The Apple TV has no browser sandbox, so beyond probing those addresses it
 browses the `_securacv._tcp` Bonjour service every Canary announces and reads
 the TXT `host` key — the salted per-unit mDNS hostname the firmware writes.
 An advert is a claim anyone on the LAN can make, so two rules bound it:

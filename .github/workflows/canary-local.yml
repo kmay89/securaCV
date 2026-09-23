@@ -95,6 +95,9 @@ on:
       - "canary-local/witness-wall.html"
       - "canary-local/assets/witness-host.js"
       - "desktop-lab/src-tauri/src/lib.rs"
+      # the reference well-known probe list every wall above is pinned to
+      # (desktop_parity reads WallModel.wellKnownCandidates)
+      - "tvos/WitnessWall/Sources/WitnessWall/WallModel.swift"
       # the mDNS browse twin: both fleet.rs files + the mdns-sd lock pins
       # (desktop_parity holds the Lab's fleet_scan to the Flasher's)
       - "desktop/src-tauri/src/fleet.rs"
@@ -212,6 +215,9 @@ on:
       - "canary-local/witness-wall.html"
       - "canary-local/assets/witness-host.js"
       - "desktop-lab/src-tauri/src/lib.rs"
+      # the reference well-known probe list every wall above is pinned to
+      # (desktop_parity reads WallModel.wellKnownCandidates)
+      - "tvos/WitnessWall/Sources/WitnessWall/WallModel.swift"
       # the mDNS browse twin: both fleet.rs files + the mdns-sd lock pins
       # (desktop_parity holds the Lab's fleet_scan to the Flasher's)
       - "desktop/src-tauri/src/fleet.rs"

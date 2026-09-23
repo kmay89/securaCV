@@ -2201,6 +2201,9 @@ const WALL_SIGHTINGS = [
   { deviceId: "canary-sense-3", host: "canary-sense-3.local", ip: "fe80::1", port: 1 },
 ];
 const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://canary-sense-3.local"];
+// The Apple TV's well-known candidates (tvos WallModel.wellKnownCandidates),
+// as bases — the test after the run test holds every monorepo wall to them.
+const WALL_WELL_KNOWN = ["http://canary.local:8099", "http://canary.local:8799", "http://canary.local"];
 const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
   calls.push([cmd, args]);
   if (cmd === "native_capabilities") return caps;
@@ -2267,12 +2270,13 @@ test("witness wall: both apps try the kernel before any browsed board, and say w
   // (tvos/discovery/DISCOVERY.md). So a browsed board tried ahead of the
   // kernel would replace the kernel's whole fleet on the wall, every tick.
   // Both hosts: browse first, then the typed kernel, the well-known
-  // canary.local:8099 and canary.local, and only then the boards they heard.
+  // canary.local:8099, canary.local:8799 and canary.local, and only then the
+  // boards they heard.
   const hosts = [
     ["Lab witness-host.js", () => runLabWall("http://192.168.1.10:8099", WALL_SIGHTINGS),
-      ["http://192.168.1.10:8099", "http://canary.local:8099", "http://canary.local"]],
+      ["http://192.168.1.10:8099", ...WALL_WELL_KNOWN]],
     ["Flasher app.js", () => runFlasherWall("192.168.1.10", WALL_SIGHTINGS),
-      ["http://192.168.1.10:8099", "http://192.168.1.10", "http://canary.local:8099", "http://canary.local"]],
+      ["http://192.168.1.10:8099", "http://192.168.1.10", ...WALL_WELL_KNOWN]],
   ];
   const statuses = [];
   for (const [name, run, kernel] of hosts) {
@@ -2296,10 +2300,42 @@ test("witness wall: both apps try the kernel before any browsed board, and say w
                              ["Flasher app.js", () => runFlasherWall("", [])]]) {
     const { calls, status } = await run();
     const poll = calls.find(([c]) => c === "witness_discover");
-    assert.deepStrictEqual(Array.from(poll[1].bases), ["http://canary.local:8099", "http://canary.local"],
+    assert.deepStrictEqual(Array.from(poll[1].bases), WALL_WELL_KNOWN,
       `${name}: with no typed kernel and nothing heard, only the well-known addresses are tried`);
     assert.match(status, /nothing answering yet/, `${name} must keep the "nothing answering yet" status when nothing announced`);
   }
+});
+
+test("witness wall: every wall here probes the Apple TV's well-known addresses, in its order", () => {
+  // The Wall (tvos WallModel.wellKnownCandidates) is the reference: the hub
+  // convention port, the kernel's own API port (8799 — the Home Assistant
+  // add-on and the Docker sidecar serve it), then the bare device; the first
+  // address that serves a fleet wins. The desktop Flasher, the Lab's wall
+  // host, the Lab's menu bar companion and the vendored web emulator must
+  // try the same three in the same order — a list one surface forgot is a
+  // kernel that surface never finds. (The website's tests/tv-wall.test.mjs
+  // pins its TV app to the emulator's list, which this file pins here.)
+  const swift = read(join(ROOT, "tvos/WitnessWall/Sources/WitnessWall/WallModel.swift"));
+  const tv = /static let wellKnownCandidates = \[([^\]]*)\]/.exec(swift);
+  assert.ok(tv, "tvos WallModel.swift lost `static let wellKnownCandidates` — re-point this test at it");
+  const tvBases = [...tv[1].matchAll(/"([^"]+)"/g)].map((x) => `http://${x[1]}`);
+  assert.deepStrictEqual(WALL_WELL_KNOWN, tvBases,
+    "the monorepo walls' well-known list drifted from the Apple TV's wellKnownCandidates");
+
+  // The Lab's menu bar companion polls these until the wall host names one.
+  const companion = read(join(ROOT, "desktop-lab/src-tauri/src/companion.rs"));
+  const defaults = /const DEFAULT_BASES: \[&str; \d+\] = \[([^\]]*)\];/.exec(companion);
+  assert.ok(defaults, "companion.rs lost `const DEFAULT_BASES` — re-point this test at it");
+  assert.deepStrictEqual([...defaults[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]), tvBases,
+    "the Lab companion's DEFAULT_BASES must be the Apple TV's list, in its order");
+
+  // The vendored web emulator (canonical in the website repo; both app copies
+  // are byte-identical — the sync guard proves that).
+  const emu = read(join(CANARY, "witness/tv-emulator.js"));
+  const known = /const WELL_KNOWN = \[([^\]]*)\];/.exec(emu);
+  assert.ok(known, "the vendored tv-emulator.js lost `const WELL_KNOWN` — re-point this test at it");
+  assert.deepStrictEqual([...known[1].matchAll(/'([^']+)'/g)].map((x) => x[1]), tvBases,
+    "the vendored emulator's WELL_KNOWN drifted from the Apple TV's — change the website's js/tv-emulator.js, then scripts/vendor_witness_emulator.sh");
 });
 
 test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {

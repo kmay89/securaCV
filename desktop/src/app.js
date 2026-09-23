@@ -1113,7 +1113,10 @@ function witnessBoardBases(sightings) {
   return b;
 }
 // The kernel addresses first — the provisioned host, then the well-known
-// `canary.local:8099` and `canary.local` — and the browsed boards only after
+// three in the Apple TV's order (tvos WallModel.wellKnownCandidates): the hub
+// convention `canary.local:8099`, the kernel's own API port
+// `canary.local:8799` (what the Home Assistant add-on and the Docker sidecar
+// serve), then a bare `canary.local` — and the browsed boards only after
 // them: the kernel advertises no `_securacv._tcp`, and a WAP or display
 // answers /api/fleet with a one-board self-report, so a board tried first
 // would stand in for the kernel's whole fleet (witness_discover returns the
@@ -1122,7 +1125,7 @@ function witnessBases(sightings) {
   const bases = [];
   const host = $("mqtt-host") && $("mqtt-host").value && $("mqtt-host").value.trim();
   if (host) { bases.push("http://" + host + ":8099"); bases.push("http://" + host); }
-  bases.push("http://canary.local:8099", "http://canary.local");
+  bases.push("http://canary.local:8099", "http://canary.local:8799", "http://canary.local");
   bases.push(...witnessBoardBases(sightings));
   return [...new Set(bases)];
 }

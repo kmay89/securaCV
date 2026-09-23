@@ -74,9 +74,9 @@ categories are simply **empty**, and this app sits in all three:
    failed walk. The Home Assistant add-on has no mint control yet, so an
    add-on install shows the roll-call and not a walk of the Wall's own.
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
-   well-known LAN addresses the desktop Flasher and Lab probe
-   (`canary.local:8099`, `canary.local`) plus the kernel's own port
-   (`canary.local:8799`), finds the fleet by itself, and remembers it. No account,
+   well-known LAN addresses the desktop Flasher, the Lab and the web walls
+   probe (`canary.local:8099`, the kernel's own port `canary.local:8799`,
+   then `canary.local`), finds the fleet by itself, and remembers it. No account,
    no subscription, nothing leaves the room — and tvOS's own constraints
    (storage the OS may purge, foreground-only apps) match the architecture:
    the TV never holds the record, it witnesses, displays, and proves.
