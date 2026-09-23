@@ -153,6 +153,28 @@ test("an idea stands in as a ghost, and a figure with no model as its envelope",
   }
 });
 
+test("an idea never has a body of its own: every concept card is its figure's ghost", async () => {
+  // The honesty invariant, on the Lab's 3D tier: an idea renders as a dashed
+  // ghost everywhere (docs/design/FLEET_FIGURES.md). The Fence Guard kept a
+  // solid hand-modeled slab — solar lid, antenna, clamp, LED — in BUILDERS
+  // while its own figure was a ghost, so the one card on the page that looked
+  // like a product you could buy was an idea. No builder for an idea, then:
+  // builderFor() falls through to the ledger, and the ledger says ghost.
+  const { BUILDERS, builderFor } = await load();
+  const { deviceFigure } = await import("../assets/body-dims.js");
+  const ideas = registry.devices.filter((d) => d.kind === "concept"
+    || deviceFigure(ledger, d.id)?.confidence === "idea");
+  assert.ok(ideas.some((d) => d.id === "canary-fence-guard"), "the Fence Guard is an idea");
+  for (const d of ideas) {
+    assert.strictEqual(BUILDERS[d.id], undefined,
+      `${d.id} is an idea with a body of its own — draw it as its figure's ghost`);
+    const scene = fakeScene();
+    await builderFor(d.id)(scene);
+    assert.ok(scene.parts.length > 0, `${d.id} draws its ghost`);
+    assert.ok(scene.parts.every((p) => p.lines && p.unlit), `${d.id} is edges only — no fill for an idea`);
+  }
+});
+
 test("no card asks for a file that is not there (the Lab's probes fail a page on any 4xx)", async () => {
   const { builderFor } = await load();
   const real = globalThis.fetch;

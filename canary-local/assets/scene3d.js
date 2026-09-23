@@ -1019,32 +1019,13 @@ export function buildSense(scene) {
   scene.dist = 120;
 }
 
-export function buildFenceGuard(scene) {
-  scene.clearParts();
-  const f = activeFinish();
-  // concept body: sealed slab (XIAO ESP32S3 + Wio-SX1262 stack inside),
-  // fence-clamp lip on the back, stub antenna up top, solar sliver lid
-  const body = roundedBox(46, 62, 22, 5);
-  scene.addMesh(body, { color: f.shell, role: "shell", gloss: 0.25 });
-  const solar = roundedBox(38, 40, 2.2, 2);
-  scene.addMesh(solar, { color: [0.16, 0.2, 0.26], gloss: 0.6, model: M4.translate(0, 8, 11.2) });
-  const antenna = cylinder(2.2, 26, 24);
-  scene.addMesh(antenna, {
-    color: [0.2, 0.21, 0.23], gloss: 0.3,
-    model: M4.mul(M4.translate(0, 38, 0), M4.rotX(Math.PI / 2)),
-  });
-  const clamp = roundedBox(12, 46, 6, 2);
-  scene.addMesh(clamp, { color: f.shell2, role: "shell2", gloss: 0.2, model: M4.translate(0, 0, -13) });
-  const led = cylinder(1.4, 1.4, 24);
-  scene.addMesh(led, { color: [0.44, 0.84, 0.76], gloss: 0.9, model: M4.translate(16, -24, 11.2) });
-    scene.setContactShadow({ y: -34, rx: 34, rz: 26, alpha: 0.30 });
-  scene.dist = 150;
-}
-
 // Registry id → builder. The display line reads its fleet figure (the
 // manifest's `figure`, the same id deviceFigure() resolves); the witnesses
 // keep their procedural bodies until real-shapes.js swaps in the committed
-// print-validated STLs.
+// print-validated STLs. An idea has no entry here, ever: builderFor() draws
+// every concept as its figure's ghost — the Fence Guard used to keep a solid
+// hand-modeled body of its own, the one idea on the page that looked like
+// something you could buy (tests/scene_figures.test.js now refuses that).
 export const FIGURE_BUILDERS = {
   "canary-display-watch": ["device.canary-display-watch", { round: true }],
   "canary-display-dash": ["device.canary-display-dash", {}],
@@ -1061,7 +1042,6 @@ export const BUILDERS = {
   "canary-vision": buildVision,
   "canary-wap": buildWap,
   "canary-sense": buildSense,
-  "canary-fence-guard": buildFenceGuard,
 };
 
 /** The builder for any registry device: its own, else its fleet figure's

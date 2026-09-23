@@ -118,10 +118,13 @@ const fail = (msg) => { console.error("✗ " + msg); failed++; };
 if (probe.status !== "done") fail("harness: " + probe.status);
 for (const e of errors) fail("pageerror: " + e);
 
+// Every device with a body of its own. The ideas are not here: they have no
+// builder (scene3d.js draws each as its figure's ghost — edges only, which
+// this probe's coverage floor is not written for); tests/scene_figures.test.js
+// holds them to the ghost.
 const EXPECT = ["canary-display-watch", "canary-display-dash", "canary-display-nightstand-s3",
                 "canary-display-touch169", "canary-display-dash7", "canary-display-amoled241",
-                "canary-nightlight", "canary-vision", "canary-wap", "canary-sense",
-                "canary-fence-guard"];
+                "canary-nightlight", "canary-vision", "canary-wap", "canary-sense"];
 for (const id of EXPECT) {
   const r = probe.results[id];
   if (!r) { fail(`${id}: no result`); continue; }

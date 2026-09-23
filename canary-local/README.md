@@ -171,6 +171,9 @@ Adding a future Canary = adding one registry entry + one procedural body
 in `scene3d.js` (dimensions from its enclosure `.scad` — the same
 millimeters, so the card is the printed thing). If it has a screen, add a
 `build.sh` flavor wiring its config/pins dirs; the shim layer is shared.
+A concept (`kind: "concept"`) gets no body at all: its card draws its fleet
+figure's dashed ghost, as every surface draws an idea
+(`tests/scene_figures.test.js` refuses a builder for one).
 
 ## 3. Versioning: cards for every firmware version
 
