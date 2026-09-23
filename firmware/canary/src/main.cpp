@@ -1950,10 +1950,10 @@ void loop() {
   // feeds the pinned ABSENT constant and never emits an SD kind.
   //
   // Where the rows go: the RAM ring and, on HA builds, csi_event_egress's
-  // csi_event_on_committed override — the signed `events` topic, plus the
-  // tamper-topic bridge for the SD and enclosure kinds. Home Assistant's SD
-  // Removed sensor also reads `sd_mounted` from the health payload
-  // (mqtt_publish_health_update).
+  // csi_event_on_committed override — the SD event log, the signed `events`
+  // topic, plus the tamper-topic bridge for the SD and enclosure kinds. Home
+  // Assistant's SD Removed sensor also reads `sd_mounted` from the health
+  // payload (mqtt_publish_health_update).
   {
     static const esp_reset_reason_t s_boot_rst = esp_reset_reason();
     // Same crash set as canary-wap's hardware_state.h reset_is_crash():
@@ -2204,8 +2204,11 @@ void loop() {
 
 #if FEATURE_CSI
   // Committed csi_events (presence, breathing, system.integrity tampers)
-  // -> securacv/{id}/events, signed, plus the per-kind tamper bridge. The
-  // override only queues; this loop-task pump is the one publisher.
+  // -> the SD event log and securacv/{id}/events, signed, plus the per-kind
+  // tamper bridge; then one bounded backfill pass from the card (F37). The
+  // override only queues; this loop-task pump is the one publisher and the
+  // event log's one SD writer. After mqtt_loop(), so the offline queue
+  // drains before any backfill.
   csi_event_egress_pump();
 #endif
 

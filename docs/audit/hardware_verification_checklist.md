@@ -395,6 +395,52 @@ or ticks Beacon frames. Every row below assumes both.
   - Repro: trigger a beacon alarm via the happy-path test above.
   - Post-fix expected: HA automation fires within one 30 s publish cycle.
 
+## Canary base SD event log + reconnect backfill (F37) — on-device verification
+
+Code: `firmware/canary/src/csi_event_egress.cpp` over the loop-task adapter
+`src/csi_event_log.cpp`; the rules are
+`firmware/common/csi/src/csi_event_backfill.h` (host-tested against a model
+of Home Assistant's replay gate). Owner: U1.
+
+Read the results knowing one thing the backfill cannot change: rows that go
+through the CSI bundler (presence, and `system.integrity` tampers, which
+carry a state) take ids from the bundler's own space — 0x80000000 upward,
+restarting every boot, covered by no floor — and commit when their bundle
+closes, not in id order. Home Assistant's replay gate refuses a row whose
+id is below one it already verified, live or not, and the backfill skips
+exactly those rows. So judge "whole" against the rows HA could accept; a
+`replay` verdict on a LIVE row is that pre-existing id-space problem, not
+the backfill.
+
+- [ ] **An outage longer than the offline queue arrives whole**
+  - Setup: an HA-enabled canary image (`release_ha`) with a card in,
+    paired to Home Assistant; the MQTT broker on a host you can stop.
+  - Repro: stop the broker; commit more than 12 events (presence changes
+    in front of the sensor); restart the broker.
+  - Expected: the serial log shows `[EVT-LOG] /EVENTS/today.ndjson open`
+    at boot and `[CSI] event backfill done: N event(s) from the card`
+    after the reconnect; HA's event history holds the outage's rows in id
+    order, well past the 12 the offline queue could hold; no backfilled
+    body gets a `replay` verdict; and the bodies committed while the broker
+    was down carry `"replay":true`.
+  - Artifact: `docs/audit/repro/F37/outage/`.
+- [ ] **A reboot inside the outage republishes nothing**
+  - Setup: as above.
+  - Repro: stop the broker, commit several events, power-cycle the canary,
+    commit a few more, restart the broker.
+  - Expected: the pre-reboot backlog arrives in id order with no `replay`
+    verdict on any backfilled body (at most nine of its rows may be missing
+    — the NVS ceiling's stride). Post-reboot rows from the bundler restart
+    below the pre-reboot ids, so HA refuses them live and the backfill does
+    not send them — the id-space problem above, recorded as an open item.
+  - Artifact: `docs/audit/repro/F37/reboot/`.
+- [ ] **Another device's card is left alone**
+  - Setup: a card taken from a canary-wap (or another canary).
+  - Expected: the health log says `SD event log belongs to another device -
+    not used`; the card's `/EVENTS` is unchanged afterwards; events still
+    publish live.
+  - Artifact: `docs/audit/repro/F37/foreign-card/`.
+
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 
 Code: `firmware/common/network/ap_security_policy.h` (host-tested), applied

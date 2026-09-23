@@ -277,6 +277,22 @@ if [ -f "$ADAPTER_CPP" ]; then
     done
 fi
 
+# ── The SD event log's line format: one builder ──
+# Both trees write /EVENTS/today.ndjson and a tool reads either card, so the
+# line is built in exactly one place, csi_event_log_line.h (and its staged
+# copy): a second snprintf of the record would drift the moment one side
+# changed (backlog F37 moved the canary-wap's own copy there).
+EVLINE_FMT='\{\\"id\\":%lu,\\"first\\":'
+evline_hits=$(grep -rlE "$EVLINE_FMT" firmware --include='*.h' --include='*.cpp' --include='*.ino' \
+    | grep -v '/tests_host/' | sort)
+evline_want=$(printf '%s\n' "$CANONICAL/csi_event_log_line.h" "$STAGED/csi_event_log_line.h" | sort)
+if [ "$evline_hits" != "$evline_want" ]; then
+    echo "::error::The event-log line format is built outside csi_event_log_line.h:"
+    echo "$evline_hits" | sed 's/^/           /'
+    echo "         Call csi_event_log_line::marshal() instead of restating the format."
+    drift=1
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources,"
@@ -285,4 +301,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule library copies are in sync; the canary CSI adapter is thin."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder."

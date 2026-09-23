@@ -2104,6 +2104,42 @@
   the same change.
 - **Date learned:** 2026-09
 
+### A replay watermark kept only in RAM starts over at every boot, and a torn log line reads as a record
+- **What happened:** Porting the canary-wap's SD event log and reconnect
+  backfill to the canary base (backlog F37) meant reading what it replays.
+  The canary-wap keys its backfill on `s_last_published_event_id`, which
+  lives in RAM and is 0 after a reboot, so the first reconnect of every boot
+  replays the oldest 64 lines of the log: ids Home Assistant verified long
+  ago, which its replay gate refuses. Its line parser also accepted a torn
+  last line (a power cut mid-append), and once the next append glued a
+  whole record onto the fragment, the pair parsed as the torn record's id
+  with the next record's fields.
+- **Root cause:** The watermark answered "what did this boot publish?" when
+  the receiver asks "what have you ever handed me?". The field scanner
+  looked each key up anywhere in the line and never checked that the line
+  was one record.
+- **Fix:** The canary base's backfill
+  (`common/csi/src/csi_event_backfill.h`, pure) never sends an id at or
+  below the highest one handed to the broker, and carries that watermark
+  across reboots as an NVS ceiling written with `csi_event_id_floor.h`'s
+  policy before an id goes out, kept at or below the allocator's floor so a
+  new boot's ids are never read as delivered. The line format moved into
+  `common/csi/src/csi_event_log_line.h`, shared by both trees, and its
+  parser refuses a line that does not start `{"id":`, end `}` and hold one
+  `{`; the canary's adapter also seals a torn tail with `'\n'` before the
+  next append. The canary-wap takes the parser fix with the shared header;
+  its RAM watermark is unchanged and recorded as a follow-up.
+- **Regression check:** `firmware/tests_host/test_csi_event_backfill.cpp`
+  replays outages, reboots and card faults against a model of HA's replay
+  gate and fails on any refused backfill; mutating the watermark skip, the
+  ceiling cap or the first-boot record turns it red.
+  `test_csi_event_log_line.cpp` pins the format's bytes and refuses torn
+  and glued lines, and `check_csi_sync.sh` fails if a second builder of the
+  line appears. A watermark the receiver enforces belongs in storage that
+  outlives the sender's RAM, with the same "already past everything handed
+  out" invariant as the id floor.
+- **Date learned:** 2026-09
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

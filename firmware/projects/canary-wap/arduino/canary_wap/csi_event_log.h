@@ -8,7 +8,9 @@
  * and the MQTT bridge re-publishes whatever happens NEXT but loses
  * everything between the last successful HA update and the outage.
  *
- * Wire format (one event per line, terminated by '\n'):
+ * Wire format (one event per line, terminated by '\n'; marshalled and
+ * parsed by csi_event_log_line.h, shared with the canary PIO tree so a
+ * tool reads either device's card the same way):
  *
  *   {"id":12345,"first":<ms>,"last":<ms>,"cat":"event","priv":"p0",
  *    "module":"core.presence","type":"presence_changed","bundled":1,
