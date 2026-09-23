@@ -2139,7 +2139,10 @@
   persisting before the send on any route or the floor cap on any route,
   the cursor staying put when a send is refused (a queue longer than one
   drain, a failed send), the ceiling cap itself, or the first-boot record.
-  The test has to assume two things it cannot check: that the MQTT layer
+  So does a failed-read count that a good read does not reset: a paced walk
+  returns from inside its line loop, so a reset at the end of a chunk never
+  ran, and three isolated failures across a long backlog gave it up. The
+  test has to assume two things it cannot check: that the MQTT layer
   refuses a live send while its queue holds records, and that the tamper
   bridge publishes first. `firmware/scripts/check_event_egress_order.py`
   holds the firmware source to both.

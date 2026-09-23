@@ -377,6 +377,13 @@ class Planner {
       while (pos < got) {
         const char* nl = static_cast<const char*>(memchr(m_buf + pos, '\n', got - pos));
         if (!nl) break;
+        /* A whole line came back: the read worked, so the failed-read count
+         * starts over. It must be here, not at the end of the chunk: a
+         * paced walk parks (or meets kNotNow) and returns from inside this
+         * loop on nearly every pass that reads, so a reset after the chunk
+         * would never run, and isolated failures across a long backlog
+         * would add up to a give-up that abandons the rest of it. */
+        m_read_fails = 0;
         const size_t len = (size_t)(nl - (m_buf + pos));
         const uint32_t step = (uint32_t)(len + 1);
         m_buf[pos + len] = '\0';
@@ -423,8 +430,8 @@ class Planner {
         }
         m_scan_off += (uint32_t)got;
         m_stats.skipped++;
+        m_read_fails = 0;  /* the read worked: the walk moved past the run */
       }
-      m_read_fails = 0;
     }
     return finish(sent, link);
   }
@@ -451,8 +458,10 @@ class Planner {
     if (port.persist_ceiling(c)) m_stored = c;
   }
 
-  /* kReadFailLimit failed reads in a row: leave the rest on the card (a
-   * remount re-reads it) rather than hold new rows behind it forever. */
+  /* kReadFailLimit failed reads in a row (a read that returns a whole line,
+   * or steps over a damaged run, breaks the run): leave the rest on the
+   * card (a remount re-reads it) rather than hold new rows behind it
+   * forever. */
   void note_read_fail() {
     if (++m_read_fails < kReadFailLimit) return;
     m_scan_off = m_size;

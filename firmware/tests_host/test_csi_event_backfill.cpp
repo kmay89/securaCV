@@ -35,6 +35,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -107,6 +108,14 @@ struct World : Port {
   bool needs_seal = false;
   int read_fail_budget = 0;        // fail the next N reads
   int reads = 0;                   // this pass
+  long reads_ever = 0;             // every read, numbered from 1
+  std::vector<long> fail_read_nos; // fail these reads (by reads_ever number)
+  std::map<uint32_t, int> fail_reads_at;  // byte offset -> fail the next N reads there
+  int reads_failed = 0;            // reads the two knobs above failed
+  uint32_t short_read_from = 0;    // once: the first read at or past this offset...
+  size_t short_read_len = 0;       // ...returns only this many bytes (0 = off)
+  int short_reads = 0;             // short reads served
+  bool short_read_had_newline = false;
   // MQTT
   bool configured = true;
   bool connected = true;
@@ -154,13 +163,31 @@ struct World : Port {
   }
   size_t card_read(uint32_t off, char* buf, size_t cap) override {
     ++reads;
+    ++reads_ever;
     if (!card_in) return 0;
     if (read_fail_budget > 0) {
       --read_fail_budget;
       return 0;
     }
+    if (std::find(fail_read_nos.begin(), fail_read_nos.end(), reads_ever) != fail_read_nos.end()) {
+      ++reads_failed;
+      return 0;
+    }
+    auto at = fail_reads_at.find(off);
+    if (at != fail_reads_at.end() && at->second > 0) {
+      --at->second;
+      ++reads_failed;
+      return 0;
+    }
     if (off >= log.size()) return 0;
-    const size_t n = std::min(cap, log.size() - off);
+    size_t n = std::min(cap, log.size() - off);
+    if (short_read_len > 0 && off >= short_read_from) {
+      // The card returns less than asked, mid-file, once.
+      n = std::min(n, short_read_len);
+      short_read_len = 0;
+      ++short_reads;
+      if (std::memchr(log.data() + off, '\n', n)) short_read_had_newline = true;
+    }
     std::memcpy(buf, log.data() + off, n);
     return n;
   }
@@ -885,6 +912,22 @@ static int test_unbuildable_row_is_skipped_not_a_stall() {
   CHECK(w.ha.accepted.size() == 5);
   CHECK(p.stats().unsendable == 1);
   CHECK(!p.pending());
+  // The unbuildable row is the LAST line on the card: nothing after it
+  // moves the cursor, so the walk must step past it itself, or pending()
+  // stays true for good and every later row is held behind it.
+  w.connected = false;
+  for (int i = 0; i < 3; ++i) h.tick(1);           // held: 7..9
+  w.unbuildable_id = 9;
+  w.connected = true;
+  CHECK(h.drain() < 1000);
+  CHECK(!p.pending());
+  CHECK(p.stats().unsendable == 2);
+  CHECK(each_once(w.ha, 7, 8));
+  const uint32_t live_before = p.stats().live;
+  h.tick(1);                                       // 10: live, not held
+  CHECK(p.stats().live == live_before + 1);
+  CHECK(each_once(w.ha, 10, 10));
+  CHECK(w.ha.refused.empty());
   return 0;
 }
 
@@ -1252,6 +1295,100 @@ static int test_out_of_step_ids_keep_the_ceiling_under_the_floor() {
   return 0;
 }
 
+// ── Re-review follow-ups: the read-failure count, short reads ────────────
+
+static int test_isolated_read_failures_do_not_abandon_the_backlog() {
+  // kReadFailLimit counts failed reads IN A ROW. A paced walk returns from
+  // inside its line loop on nearly every pass that reads (it parks after
+  // kSendsPerPass sends), so a count reset only at the end of a chunk would
+  // add up failures that good reads separated, and give the backlog up.
+  World w; Planner p; Allocator a;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p);
+  Host h{w, p, a};
+  w.connected = false;
+  for (int i = 0; i < 60; ++i) h.tick(1);          // held: 1..60
+  w.connected = true;
+  // One failed read early in the walk, one in the middle, one late; each
+  // followed by good reads that deliver rows.
+  const long r0 = w.reads_ever;
+  w.fail_read_nos = {r0 + 3, r0 + 12, r0 + 22};
+  h.drain();
+  CHECK(w.reads_failed == 3);                      // all three landed mid-walk
+  CHECK(p.stats().read_giveups == 0);
+  CHECK(each_once(w.ha, 1, 60));
+  CHECK(w.ha.accepted.size() == 60);
+  CHECK(strictly_rising(w.ha.accepted));
+  CHECK(w.ha.refused.empty());
+  CHECK(!p.pending());
+  CHECK(h.bound_violations == 0);
+  return 0;
+}
+
+static int test_read_past_a_damaged_run_breaks_the_failure_run() {
+  // A read that steps over a damaged run (a full read with no line break)
+  // moved the walk: it is not part of a run of failures either. Two failed
+  // reads at the run's start, then the run read, then one failure at the
+  // next offset: three failures, but not three in a row.
+  World w; Planner p; Allocator a;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p);
+  Host h{w, p, a};
+  w.connected = false;
+  for (int i = 0; i < 3; ++i) h.tick(1);           // held: 1..3
+  const uint32_t damage = (uint32_t)w.log.size();
+  w.log.append(std::string(3 * kReadChunk - 100, '\0'));  // longer than two reads
+  w.log.push_back('\n');
+  for (int i = 0; i < 3; ++i) h.tick(1);           // held after the damage: 4..6
+  w.fail_reads_at[damage] = 2;
+  w.fail_reads_at[damage + (uint32_t)kReadChunk] = 1;
+  w.connected = true;
+  h.drain();
+  CHECK(w.reads_failed == 3);
+  CHECK(p.stats().read_giveups == 0);
+  CHECK(each_once(w.ha, 1, 6));
+  CHECK(w.ha.accepted.size() == 6);
+  CHECK(w.ha.refused.empty());
+  // Three in a row still give the walk up (the count is not reset by a
+  // read that failed).
+  w.connected = false;
+  for (int i = 0; i < 3; ++i) h.tick(1);           // held: 7..9
+  w.fail_read_nos = {w.reads_ever + 1, w.reads_ever + 2, w.reads_ever + 3};
+  w.connected = true;
+  h.drain();
+  CHECK(p.stats().read_giveups == 1);
+  CHECK(!p.pending());
+  return 0;
+}
+
+static int test_short_read_mid_file_is_retried_not_stepped_over() {
+  // The card hands back fewer bytes than asked, with no line break in them,
+  // in the middle of the log. That is a failed read: retry from the same
+  // offset. Stepping over those bytes would cut a row in two and lose it.
+  World w; Planner p; Allocator a;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p);
+  Host h{w, p, a};
+  w.connected = false;
+  for (int i = 0; i < 10; ++i) h.tick(1);          // held: 1..10
+  w.short_read_from = 1;                           // the second read of the walk
+  w.short_read_len = 50;                           // shorter than any line
+  w.connected = true;
+  h.drain();
+  CHECK(w.short_reads == 1);
+  CHECK(!w.short_read_had_newline);
+  CHECK(each_once(w.ha, 1, 10));
+  CHECK(w.ha.accepted.size() == 10);
+  CHECK(strictly_rising(w.ha.accepted));
+  CHECK(w.ha.refused.empty());
+  CHECK(p.stats().read_giveups == 0);
+  CHECK(!p.pending());
+  return 0;
+}
+
 // Runs one scenario, then fails it if the model saw an invariant broken.
 #define RUN(test)                                                          \
   do {                                                                     \
@@ -1294,6 +1431,9 @@ int main() {
   RUN(test_queue_path_then_reboot_republishes_nothing);
   RUN(test_nvs_lost_treats_the_card_as_delivered);
   RUN(test_out_of_step_ids_keep_the_ceiling_under_the_floor);
+  RUN(test_isolated_read_failures_do_not_abandon_the_backlog);
+  RUN(test_read_past_a_damaged_run_breaks_the_failure_run);
+  RUN(test_short_read_mid_file_is_retried_not_stepped_over);
   std::printf("test_csi_event_backfill: %d checks passed\n", g_checks);
   return 0;
 }
