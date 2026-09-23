@@ -14,10 +14,17 @@
  * window holds every send at any rate and reads 10.0-10.1 s (a bucket
  * leaves it with its newest send; the cap errs toward denying).
  *
+ * This is an ESTIMATE, not a measurement of the air: it counts the bytes
+ * the caller passes at the 1 Mbps fallback rate. The CSI probe adds its
+ * ~59 B of ESP-NOW framing (probe_airtime.h); the mesh, chirp and Beacon
+ * callers pass header + payload and do not yet.
+ *
  * Two send classes
  * ────────────────
  *   - Routine: heartbeats, gossip, presence, peer-list refresh, chirp
- *     presence beacons. These call `try_reserve_routine()`. If the projected
+ *     presence beacons, and the WAP's CSI active probe (probe_airtime.h,
+ *     which also stops the probe at 1.60 % so the rest keep room). These
+ *     call `try_reserve_routine()`. If the projected
  *     airtime would exceed the cap, the send is denied; the caller should
  *     simply skip this tick.
  *   - Urgent:  tamper alerts, OFFLINE_IMMINENT, power-loss notifications.
@@ -43,8 +50,10 @@
 
 namespace airtime_governor {
 
-// PHY parameters for ESP-NOW @ 1 Mbps long preamble (worst-case, deliberately
-// conservative — real rates are typically higher, so we never under-count).
+// PHY parameters for ESP-NOW @ 1 Mbps long preamble (the worst-case rate —
+// real rates are typically higher). Conservative in RATE only: the byte
+// count is whatever the caller passes, and only the CSI probe adds the MAC
+// framing, so the other callers' estimates run ~59 B a frame short.
 static const uint32_t PHY_PREAMBLE_US = 192;      // long preamble + headers
 static const uint32_t PHY_BIT_RATE_KBPS = 1000;   // 1 Mbps fallback rate
 
