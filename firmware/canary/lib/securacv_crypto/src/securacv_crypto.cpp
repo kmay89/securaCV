@@ -174,6 +174,14 @@ bool crypto_generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
   // and canary-wap carry). bootloader_random_enable() must NEVER be called
   // while RF is up; the later draws (scout key, mesh pairing keys) run after
   // the radio starts and are seeded by it, so they stay bare on purpose.
+  // The ADC is the other half of that rule: the entropy source IS the SAR
+  // ADC, IDF 4.4's bootloader_random.h says the pair must run "before RF
+  // features, ADC, or I2S ... are initialized", and on the S3 the disable
+  // powers the SAR ADC down and clock-gates/resets its digital part. Here
+  // FEATURE_POWER_MONITOR has ALREADY opened the battery ADC (power_start(),
+  // earlier in setup()). This runs once per unit (first boot, no key in NVS);
+  // whether the battery reading stays sane after it is bench row K1's
+  // fresh-unit step — plausible harm, not proven either way here.
   bootloader_random_enable();
   esp_fill_random(priv, 32);
   bootloader_random_disable();

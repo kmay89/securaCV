@@ -145,7 +145,7 @@ reconnect. This is a far better default than the current deep-sleep-and-cold-rec
 ### 1.5 Protect the key at rest and in hardware (the "crypto signing everything" lever)
 
 The product's spine is Ed25519-signed, hash-chained records. The **device identity key sits in
-plaintext NVS** ([`securacv_crypto.cpp:376`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
+plaintext NVS** ([`securacv_crypto.cpp:384`](canary/lib/securacv_crypto/src/securacv_crypto.cpp))
 with **no flash encryption and no secure boot** in the default build — and burning flash encryption
 would not change that: flash encryption does not cover NVS (below). Physical read of the flash →
 key extraction → the attacker can forge records *forward* from that point (not rewrite anchored
@@ -466,8 +466,13 @@ Beyond §1.5:
   The two later draws — the BLE scout key (`ble_scout_key_init`, from `ble_scout_init` inside
   `securacv_csi_modules_init()`) and the mesh pairing ephemeral key (`mesh_pairing`) — run after
   `mesh_transport::start()` brings the radio up, so they are RF-seeded and deliberately stay
-  bare: `bootloader_random_enable()` must never run while RF is up. No entropy self-check
-  (still open under item 18). **[P1 → done]**
+  bare: `bootloader_random_enable()` must never run while RF is up. The same IDF rule covers the
+  ADC (the entropy source *is* the SAR ADC; the pair must run before the ADC is initialized, and on
+  the S3 `bootloader_random_disable()` powers it down and resets its digital part), and here
+  `FEATURE_POWER_MONITOR`'s `power_start()` has already opened the battery ADC earlier in
+  `setup()` — so whether the battery reading survives a first-boot keygen is an open bench check
+  (K1's fresh-unit step), not proven. No entropy self-check (still open under item 18).
+  **[P1 → done; ADC interaction bench-gated]**
 - **(fixed) Chain-head persistence is non-atomic** — `seq` then `chain_head` were two separate
   NVS writes; a power cut between them left them inconsistent (recoverable via SD-wins **only if a
   card is present**). Now one 39-byte `{version, seq, head, CRC-16}` blob under `chain_st`
@@ -583,7 +588,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 5 | (fixed) SD glitch disabled logging until reboot — bounded mount worker + periodic remount | **P0** | Storage | `securacv_storage.cpp` | Durable logging survives transient faults |
 | 6 | CSI dies under modem-sleep; probe unwired | **P0** | WiFi/CSI | `power_policy.cpp:73` | Reliable CSI on battery + lone devices |
 | 7 | (fixed) Camera init/deinit raced peek task — lifecycle mutex in CameraManager | **P0** | Camera | `securacv_camera.cpp` | Removes a crash vector |
-| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images (refuses unless NVS is encrypted — flash encryption alone does not cover NVS, so every board under `framework = arduino`); posture self-reported (`key_at_rest`, `plaintext-nvs` everywhere today) | **P0→P1** | Crypto | `securacv_crypto.cpp:376` | Posture stated, not assumed; at-rest encryption needs NVS encryption (item 9), FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
+| 8 | (decided) Plaintext identity key at Tier 0 is the accepted default (`hardware_root_of_trust.md` §8 #1/#3/#4); fail-closed via `SECURACV_REQUIRE_FLASH_ENCRYPTION` on Tier-3+ images (refuses unless NVS is encrypted — flash encryption alone does not cover NVS, so every board under `framework = arduino`); posture self-reported (`key_at_rest`, `plaintext-nvs` everywhere today) | **P0→P1** | Crypto | `securacv_crypto.cpp:384` | Posture stated, not assumed; at-rest encryption needs NVS encryption (item 9), FE dev-mode (Tier 3) → FE+SB (Tier 4) stay opt-in |
 | 9 | Unify on core-3.x / IDF-5.x toolchain | **P1** | Build | `platformio.ini` | Unblocks §3.2–3.4, §1.4, WPA3, new drivers |
 | 10 | Dual-core task model (sensing + durability) | **P1** | Core | `main.cpp:1480` | Bounded loop latency, no WDT thrash |
 | 11 | One 8 MB partition table + `witness_log` | **P1** | Flash | `partitions_ota.csv` | Ends the table matrix; card-independent durability |

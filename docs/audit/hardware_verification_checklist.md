@@ -146,6 +146,16 @@ host tests assert they do, on real radio.
       encryption is not active (flash encryption alone does not cover NVS)`.
       Under `framework = arduino` the opt-in image refuses on every board —
       that is the policy, not a fault.
+    - fresh-unit keygen vs the battery ADC (R18a): on a board with the
+      battery divider fitted and `FEATURE_POWER_MONITOR` on, erase NVS, boot
+      the default image once (first-boot keygen runs
+      `bootloader_random_enable()`/`_disable()` AFTER `power_start()` opened
+      the ADC), note the battery mV from the `b` console card (or
+      `current.voltage_mv` in `GET /api/battery/history`), then reboot
+      without erasing and note it again: the two readings agree
+      within normal ADC noise. A zero, pinned or wildly different first
+      reading is a FAIL (the disable powered down / reset the ADC under the
+      power monitor).
   - Policy under test: `firmware/common/identity/key_at_rest.h`
     (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
   - Artifact: `docs/audit/repro/K1/`.
