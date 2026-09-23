@@ -20,11 +20,20 @@ on:
       - "docs/getting_started_canary.md"
       - "docs/canary_sense_mr60bha2_design.md"
       - "src/vault/**"
+      # …and the daemon that wires it in (vault.test.js: witnessd seals the
+      # latest frame through the vault)
+      - "src/bin/witnessd.rs"
       - "src/break_glass/**"
       - "src/crypto/signatures.rs"
       - "spec/invariants.md"
       - "docs/sealed_snapshot_vault.md"
       - "docs/frigate_integration.md"
+      # vision.test.js holds the two Vision guides' model URL, port roles and
+      # recovery symptoms to the firmware core; operator.test.js holds the
+      # operator guide's guided-setup and trustee-enroll sections to the page
+      - "docs/hardware/grove_vision_ai_v2_guide.md"
+      - "docs/hardware/canary_vision_getting_started.md"
+      - "docs/operator_guide.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
       - "firmware/configs/**"
@@ -35,6 +44,10 @@ on:
       - "ios/Shared/FleetFigures.swift"
       - "firmware/boards/*/pins/pins.h"
       - "ios/Shared/FleetFigureBridge.swift"
+      # figures.test.js also holds the iPhone app's mm solids (the phone's
+      # turntable) to the ledger and checks its fleet rows draw the figure
+      - "ios/Shared/FleetSolids.swift"
+      - "ios/Sources/SecuraCV/Views/FleetView.swift"
       # the family map: ecosystem.test.js pins the iPhone app's and the
       # desktop Flasher's copies to devices/ecosystem.json
       - "ios/Shared/EcosystemMap.swift"
@@ -54,20 +67,28 @@ on:
       # emulator's pinned LVGL checkout (checked after the build below)
       - "firmware/scripts/gen_montserrat_metrics.py"
       - "desktop/hub-core/src/hub_disk.rs"
-      - "desktop/src-tauri/src/lib.rs"
-      - "desktop/src-tauri/src/we2.rs"
-      - "desktop/src-tauri/src/we2_bench.rs"
-      - "desktop/src-tauri/src/sscma.rs"
+      # desktop_parity builds the flashers' wrong-architecture espflash error
+      # from hub-core's ARCH_MISMATCH_HINT
+      - "desktop/hub-core/src/hub_sidecar.rs"
+      # the Flasher's Rust, as ONE glob. desktop_parity reads nearly every file
+      # in it: lib.rs, we2.rs, we2_bench.rs and sscma.rs (the WE2 USB identity
+      # and MODEL_ADDR it derives from the catalog), host.rs and
+      # serial_monitor.rs (the two apps' flash-command wrappers and hosts),
+      # secret_store.rs (the secret drawer's backend names; it pins app.js
+      # where()), fleet.rs (the mDNS browse twin) and whoami.rs (the device
+      # proof's canonical string). This was a per-file list, and wave after
+      # wave a new reader landed without its line (whoami.rs had none); the
+      # glob also takes hub.rs, launch_guard.rs and main.rs, which no test
+      # reads, for the price of a run.
+      - "desktop/src-tauri/src/**"
       # the flash engine both desktop apps share: desktop_parity reads its
       # catalog guards, provisioning, health, change map, intake and pipeline
       - "desktop/flash-engine/src/**"
       # …and holds the two apps' flash-command wrappers, hosts, catalog embed,
       # engine dependency and (absent) shell grants to each other
-      - "desktop/src-tauri/src/host.rs"
-      - "desktop/src-tauri/src/serial_monitor.rs"
+      # (the wrappers and hosts themselves are the two src/** globs)
       - "desktop/src-tauri/Cargo.toml"
       - "desktop/src-tauri/capabilities/**"
-      - "desktop-lab/src-tauri/src/flash.rs"
       - "desktop-lab/src-tauri/build.rs"
       # …and holds the Lab's espflash bundling to the Flasher's: the one pins
       # file and the steps in both release workflows that read it, the
@@ -83,33 +104,41 @@ on:
       - "desktop-lab/src-tauri/tauri.linux.conf.json"
       - "desktop/src-tauri/packaging/canary-serial.rules"
       - "desktop-lab/src-tauri/packaging/**"
-      # the secret drawer's backend names (desktop_parity pins app.js where())
-      - "desktop/src-tauri/src/secret_store.rs"
+      # the Flasher's build.rs embeds the same devices/hatch.json the browser
+      # fetches (desktop_parity holds the two to one file)
       - "desktop/src-tauri/build.rs"
-      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
-      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
-      - "desktop/src/index.html"
-      - "desktop/src/app.js"
+      # the desktop frontend, as ONE glob: desktop_parity.test.js reads its
+      # index.html, app.js and styles.css to keep the two flashers in step
+      # (CLAUDE.md "two flashers, two frontends"); figures.test.js reads
+      # app.js and styles.css; device_models.test.js holds models/*.glb and
+      # fig3d.js byte-equal to canary-local's; and witness/** is the vendored
+      # Witness Wall copy (desktop_parity + the sync guard). styles.css,
+      # fig3d.js and models/ had no line of their own.
+      - "desktop/src/**"
       - "desktop-lab/frontend-stage.json"
       # the shared Witness Wall emulator: both vendored copies + both hosts +
-      # both native discovery commands (desktop_parity + the sync guard gate them)
-      - "desktop/src/witness/**"
+      # both native discovery commands (desktop_parity + the sync guard gate them;
+      # the desktop copy and the two lib.rs files are in the src/** globs)
       - "canary-local/witness/**"
       - "canary-local/witness-wall.html"
       - "canary-local/assets/witness-host.js"
-      - "desktop-lab/src-tauri/src/lib.rs"
+      # the Lab's Rust, as ONE glob: desktop_parity reads flash.rs (the Lab's
+      # flash-command wrapper), lib.rs (its Witness Wall discovery command and
+      # its network claim) and fleet.rs (the mDNS browse twin); lab_settings
+      # reads lib.rs, companion.rs (the menu bar companion's words and
+      # grants) and self_update.rs (the update panel), which had no line.
+      # main.rs is the one file no test reads.
+      - "desktop-lab/src-tauri/src/**"
       # the reference well-known probe list every wall above is pinned to
       # (desktop_parity reads WallModel.wellKnownCandidates)
       - "tvos/WitnessWall/Sources/WitnessWall/WallModel.swift"
-      # the mDNS browse twin: both fleet.rs files + the mdns-sd lock pins
-      # (desktop_parity holds the Lab's fleet_scan to the Flasher's)
-      - "desktop/src-tauri/src/fleet.rs"
-      - "desktop-lab/src-tauri/src/fleet.rs"
+      # the mDNS browse twin: the mdns-sd lock pins (desktop_parity holds the
+      # Lab's fleet_scan to the Flasher's; both fleet.rs files are in the
+      # src/** globs)
       - "desktop/src-tauri/Cargo.lock"
       - "desktop-lab/src-tauri/Cargo.lock"
       # the menu bar companion: lab_settings holds its words, its grants and
-      # its tray package (companion.rs, capabilities/, Cargo.toml)
-      - "desktop-lab/src-tauri/src/companion.rs"
+      # its tray package (companion.rs is in the Lab's src/** glob)
       - "desktop-lab/src-tauri/capabilities/**"
       - "desktop-lab/src-tauri/Cargo.toml"
       - "scripts/check_witness_emulator_sync.sh"
@@ -131,6 +160,20 @@ on:
       - "custom_components/securacv/manifest.json"
       - "hacs.json"
       - "sbom/README.md"
+      # files desktop_parity.test.js reads outside every tree above: the udev
+      # heredoc each INSTALL.md hands an AppImage user (held to
+      # canary-serial.rules); the Lab's network claim on every surface that
+      # makes it (README, INSTALL, the iPad guide); the dev channel and the
+      # release-key question in flasher-release.yml, and the manifest
+      # builder's --signing-key; and the flagship's blob-scheme Wi-Fi
+      # credential loader (the string/blob fallback both flashers rely on)
+      - "desktop/INSTALL.md"
+      - "desktop-lab/INSTALL.md"
+      - "desktop-lab/README.md"
+      - "desktop-lab/ipad-guide.html"
+      - ".github/workflows/flasher-release.yml"
+      - "firmware/scripts/build_flash_manifest.py"
+      - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
       - ".github/workflows/canary-local.yml"
   pull_request:
     paths:
@@ -143,11 +186,20 @@ on:
       - "docs/getting_started_canary.md"
       - "docs/canary_sense_mr60bha2_design.md"
       - "src/vault/**"
+      # …and the daemon that wires it in (vault.test.js: witnessd seals the
+      # latest frame through the vault)
+      - "src/bin/witnessd.rs"
       - "src/break_glass/**"
       - "src/crypto/signatures.rs"
       - "spec/invariants.md"
       - "docs/sealed_snapshot_vault.md"
       - "docs/frigate_integration.md"
+      # vision.test.js holds the two Vision guides' model URL, port roles and
+      # recovery symptoms to the firmware core; operator.test.js holds the
+      # operator guide's guided-setup and trustee-enroll sections to the page
+      - "docs/hardware/grove_vision_ai_v2_guide.md"
+      - "docs/hardware/canary_vision_getting_started.md"
+      - "docs/operator_guide.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
       - "firmware/configs/**"
@@ -158,6 +210,10 @@ on:
       - "ios/Shared/FleetFigures.swift"
       - "firmware/boards/*/pins/pins.h"
       - "ios/Shared/FleetFigureBridge.swift"
+      # figures.test.js also holds the iPhone app's mm solids (the phone's
+      # turntable) to the ledger and checks its fleet rows draw the figure
+      - "ios/Shared/FleetSolids.swift"
+      - "ios/Sources/SecuraCV/Views/FleetView.swift"
       # the family map: ecosystem.test.js pins the iPhone app's and the
       # desktop Flasher's copies to devices/ecosystem.json
       - "ios/Shared/EcosystemMap.swift"
@@ -177,20 +233,28 @@ on:
       # emulator's pinned LVGL checkout (checked after the build below)
       - "firmware/scripts/gen_montserrat_metrics.py"
       - "desktop/hub-core/src/hub_disk.rs"
-      - "desktop/src-tauri/src/lib.rs"
-      - "desktop/src-tauri/src/we2.rs"
-      - "desktop/src-tauri/src/we2_bench.rs"
-      - "desktop/src-tauri/src/sscma.rs"
+      # desktop_parity builds the flashers' wrong-architecture espflash error
+      # from hub-core's ARCH_MISMATCH_HINT
+      - "desktop/hub-core/src/hub_sidecar.rs"
+      # the Flasher's Rust, as ONE glob. desktop_parity reads nearly every file
+      # in it: lib.rs, we2.rs, we2_bench.rs and sscma.rs (the WE2 USB identity
+      # and MODEL_ADDR it derives from the catalog), host.rs and
+      # serial_monitor.rs (the two apps' flash-command wrappers and hosts),
+      # secret_store.rs (the secret drawer's backend names; it pins app.js
+      # where()), fleet.rs (the mDNS browse twin) and whoami.rs (the device
+      # proof's canonical string). This was a per-file list, and wave after
+      # wave a new reader landed without its line (whoami.rs had none); the
+      # glob also takes hub.rs, launch_guard.rs and main.rs, which no test
+      # reads, for the price of a run.
+      - "desktop/src-tauri/src/**"
       # the flash engine both desktop apps share: desktop_parity reads its
       # catalog guards, provisioning, health, change map, intake and pipeline
       - "desktop/flash-engine/src/**"
       # …and holds the two apps' flash-command wrappers, hosts, catalog embed,
       # engine dependency and (absent) shell grants to each other
-      - "desktop/src-tauri/src/host.rs"
-      - "desktop/src-tauri/src/serial_monitor.rs"
+      # (the wrappers and hosts themselves are the two src/** globs)
       - "desktop/src-tauri/Cargo.toml"
       - "desktop/src-tauri/capabilities/**"
-      - "desktop-lab/src-tauri/src/flash.rs"
       - "desktop-lab/src-tauri/build.rs"
       # …and holds the Lab's espflash bundling to the Flasher's: the one pins
       # file and the steps in both release workflows that read it, the
@@ -206,33 +270,41 @@ on:
       - "desktop-lab/src-tauri/tauri.linux.conf.json"
       - "desktop/src-tauri/packaging/canary-serial.rules"
       - "desktop-lab/src-tauri/packaging/**"
-      # the secret drawer's backend names (desktop_parity pins app.js where())
-      - "desktop/src-tauri/src/secret_store.rs"
+      # the Flasher's build.rs embeds the same devices/hatch.json the browser
+      # fetches (desktop_parity holds the two to one file)
       - "desktop/src-tauri/build.rs"
-      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
-      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
-      - "desktop/src/index.html"
-      - "desktop/src/app.js"
+      # the desktop frontend, as ONE glob: desktop_parity.test.js reads its
+      # index.html, app.js and styles.css to keep the two flashers in step
+      # (CLAUDE.md "two flashers, two frontends"); figures.test.js reads
+      # app.js and styles.css; device_models.test.js holds models/*.glb and
+      # fig3d.js byte-equal to canary-local's; and witness/** is the vendored
+      # Witness Wall copy (desktop_parity + the sync guard). styles.css,
+      # fig3d.js and models/ had no line of their own.
+      - "desktop/src/**"
       - "desktop-lab/frontend-stage.json"
       # the shared Witness Wall emulator: both vendored copies + both hosts +
-      # both native discovery commands (desktop_parity + the sync guard gate them)
-      - "desktop/src/witness/**"
+      # both native discovery commands (desktop_parity + the sync guard gate them;
+      # the desktop copy and the two lib.rs files are in the src/** globs)
       - "canary-local/witness/**"
       - "canary-local/witness-wall.html"
       - "canary-local/assets/witness-host.js"
-      - "desktop-lab/src-tauri/src/lib.rs"
+      # the Lab's Rust, as ONE glob: desktop_parity reads flash.rs (the Lab's
+      # flash-command wrapper), lib.rs (its Witness Wall discovery command and
+      # its network claim) and fleet.rs (the mDNS browse twin); lab_settings
+      # reads lib.rs, companion.rs (the menu bar companion's words and
+      # grants) and self_update.rs (the update panel), which had no line.
+      # main.rs is the one file no test reads.
+      - "desktop-lab/src-tauri/src/**"
       # the reference well-known probe list every wall above is pinned to
       # (desktop_parity reads WallModel.wellKnownCandidates)
       - "tvos/WitnessWall/Sources/WitnessWall/WallModel.swift"
-      # the mDNS browse twin: both fleet.rs files + the mdns-sd lock pins
-      # (desktop_parity holds the Lab's fleet_scan to the Flasher's)
-      - "desktop/src-tauri/src/fleet.rs"
-      - "desktop-lab/src-tauri/src/fleet.rs"
+      # the mDNS browse twin: the mdns-sd lock pins (desktop_parity holds the
+      # Lab's fleet_scan to the Flasher's; both fleet.rs files are in the
+      # src/** globs)
       - "desktop/src-tauri/Cargo.lock"
       - "desktop-lab/src-tauri/Cargo.lock"
       # the menu bar companion: lab_settings holds its words, its grants and
-      # its tray package (companion.rs, capabilities/, Cargo.toml)
-      - "desktop-lab/src-tauri/src/companion.rs"
+      # its tray package (companion.rs is in the Lab's src/** glob)
       - "desktop-lab/src-tauri/capabilities/**"
       - "desktop-lab/src-tauri/Cargo.toml"
       - "scripts/check_witness_emulator_sync.sh"
@@ -254,6 +326,20 @@ on:
       - "custom_components/securacv/manifest.json"
       - "hacs.json"
       - "sbom/README.md"
+      # files desktop_parity.test.js reads outside every tree above: the udev
+      # heredoc each INSTALL.md hands an AppImage user (held to
+      # canary-serial.rules); the Lab's network claim on every surface that
+      # makes it (README, INSTALL, the iPad guide); the dev channel and the
+      # release-key question in flasher-release.yml, and the manifest
+      # builder's --signing-key; and the flagship's blob-scheme Wi-Fi
+      # credential loader (the string/blob fallback both flashers rely on)
+      - "desktop/INSTALL.md"
+      - "desktop-lab/INSTALL.md"
+      - "desktop-lab/README.md"
+      - "desktop-lab/ipad-guide.html"
+      - ".github/workflows/flasher-release.yml"
+      - "firmware/scripts/build_flash_manifest.py"
+      - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
       - ".github/workflows/canary-local.yml"
 
 permissions:
