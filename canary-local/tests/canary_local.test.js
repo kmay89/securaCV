@@ -196,16 +196,30 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
 
 // A card's status is prose, and prose that names a firmware version drifts the
 // moment the train moves: the Vision card still said "fw 2.2.0" with the
-// unified train at 2.4.15, on the Lab and on the website's lab.html, which
-// renders this file live. The train lives in `fw_train` (held to
-// version.h above); a status string may repeat it, never contradict it.
+// unified train at 2.4.15, and the Lab's Specs tab (assets/app.js specsView,
+// on Pages and in the desktop Lab) prints a card's status verbatim. (The
+// website's lab.html renders this file too, but a released card only as the
+// word "released", so it never showed the number.) The train lives in
+// `fw_train` (held to version.h above); a status string may repeat it, never
+// contradict it. A version counts with or without a space after "fw"/"v"/
+// "firmware", and a two-part one counts once a prefix says it is firmware.
 test("no card's status names a firmware version other than fw_train", () => {
   const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+  const VERSION = /(?<![\w.])((?:firmware|fw|v)\s*v?)?(\d+\.\d+(?:\.\d+)?)(?!\.?\d)/gi;
+  const versionsIn = (s) => [...s.matchAll(VERSION)]
+    .filter(([, prefix, v]) => prefix || v.split(".").length === 3).map(([, , v]) => v);
+  // The scanner itself, on the spellings a status could drift into.
+  for (const [s, want] of [
+    ["released, fw 2.2.0", ["2.2.0"]], ["released, fw2.2.0", ["2.2.0"]],
+    ["released, fw v2.2.0.", ["2.2.0"]], ["released (2.2.0)", ["2.2.0"]],
+    ["firmware 2.3.1-rc1", ["2.3.1"]], ["released, fw 2.2", ["2.2"]],
+    ["phase 2 complete", []], ["a 1.5 m range, 11 tests", []],
+  ]) assert.deepStrictEqual(versionsIn(s), want, `the version scanner reads "${s}" wrong`);
   let statuses = 0;
   for (const dev of reg.devices) {
     if (typeof dev.status !== "string") continue;
     statuses++;
-    for (const [, v] of dev.status.matchAll(/\bv?(\d+\.\d+\.\d+)\b/g)) {
+    for (const v of versionsIn(dev.status)) {
       assert.strictEqual(v, reg.fw_train,
         `${dev.id}: status "${dev.status}" names fw ${v}, but the registry's train is ${reg.fw_train} ` +
         `— drop the version from the status (the card's train is fw_train), don't retype it`);
@@ -214,14 +228,19 @@ test("no card's status names a firmware version other than fw_train", () => {
   assert.ok(statuses >= 5, `the registry's cards still carry a status (${statuses})`);
 });
 
-// Both apps iframe the website's Witness Wall emulator, vendored byte for byte
-// (witness/PROVENANCE.txt). The fleet contract it reads is
+// Both apps iframe the website's Witness Wall emulator, vendored from the
+// website (witness/PROVENANCE.txt). The fleet contract it reads is
 // tvos/discovery/DISCOVERY.md: only `name` is required, and a silent `online`
 // is NOT a presence claim. The website fixed its canonical copy after the apps
 // had vendored it, and nothing here noticed, because
 // scripts/check_witness_emulator_sync.sh compares the two app copies with each
-// other, never with the contract. So replay the contract's own vectors through
-// every `online:` the vendored emulator derives from a fleet row, in both apps.
+// other, never with the contract. So, in both apps: replay the contract's own
+// vectors through the three fleet-row `online` derivations (appear,
+// witness:fleet, connect), and hold every other `online:` the emulator writes
+// to a bare literal, so a new default spelled some other way cannot slip past
+// the replay. A literal is the host's or the simulation's own claim; the
+// /api/fleet poll adding a newcomer as `online: true` is one, and it is the
+// website's to fix (it cannot be told from `just flashed` by shape).
 test("both apps' vendored Witness Wall reads a silent `online` as offline", () => {
   const { vectors } = JSON.parse(readFileSync(
     join(ROOT, "../tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"), "utf8"));
@@ -240,6 +259,14 @@ test("both apps' vendored Witness Wall reads a silent `online` as offline", () =
           `${rel}: \`${expr}\` reads vector "${x.name}" row ${i} ${JSON.stringify(r)} wrong — ` +
           "a silent `online` is never a presence claim; re-vendor with scripts/vendor_witness_emulator.sh"));
       }
+    }
+    // Every `online:` value is one of the replayed derivations or a literal.
+    const values = [...src.matchAll(/\bonline:\s*([^,}\n]*)/g)].map(([, v]) => v.trim());
+    assert.ok(values.length >= sites.length, `${rel}: the \`online:\` scan found the derivations`);
+    for (const v of values) {
+      assert.match(v, /^(?:true|false|[A-Za-z_$][\w$]*\.online === true)$/,
+        `${rel}: \`online: ${v}\` is neither a literal nor \`<row>.online === true\` — ` +
+        "a silent `online` is never a presence claim");
     }
     assert.doesNotMatch(src, /online[^,;\n]*(!==\s*false|===\s*undefined\s*\?\s*true|\?\?\s*true)/,
       `${rel} still defaults a silent \`online\` to present in some other shape`);
