@@ -29,8 +29,8 @@
   4 × 1 KiB of reading per loop pass, and a generation counter so a late
   read never answers the next request. Rows from the card are badged "from
   card, chain-linked", never "Verified" — no signature is checked on the
-  loop. The state machine is a host-tested pure header; the device compile
-  is CI's, and a card with more than 32 records is bench work (U1).
+  loop. The state machine is a host-tested pure header, and CI's canary
+  builds compile it; a card with more than 32 records is bench work (U1).
 - **The first-boot join screen is laid out from the panel (F43).** The dash's
   "or join … password" caption no longer crosses the QR, and the same stack
   fixes the round watch and the AMOLED 2.41, where the re-check found the

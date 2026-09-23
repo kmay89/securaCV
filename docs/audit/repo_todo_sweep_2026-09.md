@@ -734,8 +734,8 @@ so — see D2 below.)
   most 4 × 1 KiB per loop pass, a past-EOF hint refused before any read.
   `handle_witness` is extended (no new route); the web UI's Load More pages
   into the card, rows badged "from card, chain-linked", never "Verified".
-  Compile is CI's (the canary matrix and the OTA-slot size guards); bench
-  (U1): a card holding more than 32 records.
+  CI-compiled on #1718 (897182d: the canary matrix and its OTA-slot size
+  guards); bench (U1): a card holding more than 32 records.
 - [ ] **F36 [code+human] Tighten Scout proximity pairing (F27 follow-up).**
   The window pairs the first single qualifying advert. Two tightenings need
   real advert data first (U1): an N-advert confirmation (several qualifying

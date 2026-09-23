@@ -2,8 +2,8 @@
 
 Status: **Stage 1 built (the pure walker, host-tested). Stage 2 built (F35):
 the bridge's state machine is a pure, host-tested header; the ESP glue, the
-`handle_witness` extension and the timeline UI are compile-gated by CI's
-canary legs (`firmware.yml`) and not yet CI-compiled, with no bench pass
+`handle_witness` extension and the timeline UI are CI-compiled by
+`firmware.yml`'s canary legs (green on #1718 at 897182d), with no bench pass
 yet** (U1: a card holding more than 32 records).
 Decision: **F26: option B (staged) — maintainer to confirm.**
 Scope: the canary PlatformIO tree (`firmware/canary`). Repo sweep items F26
