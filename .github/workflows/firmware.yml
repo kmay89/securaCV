@@ -1945,7 +1945,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version-file: pyproject.toml
 
       - name: Run microcopy lint trio
         # Three sub-checks gate every PR that touches the dashboard:

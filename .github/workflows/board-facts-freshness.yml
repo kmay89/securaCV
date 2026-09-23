@@ -53,7 +53,7 @@ jobs:
           token: ${{ secrets.FRESHNESS_PAT || github.token }}
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version-file: pyproject.toml
       - name: Refresh the vendor board-facts snapshot
         run: python3 canary-local/tools/gen_board_facts.py --refresh-upstream
       - name: Drift-lock before proposing anything (facts shape + pins.h match)

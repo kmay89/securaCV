@@ -49,6 +49,11 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python
+        # The one job on requires-python's floor, on purpose. pyproject.toml's
+        # range starts at 3.11 (ruff targets py311, mypy python_version 3.11),
+        # and every python-version-file job resolves to the newest release
+        # inside it, so this pin is what proves the floor still holds. Move it
+        # when the floor moves.
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'

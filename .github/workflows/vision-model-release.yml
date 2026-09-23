@@ -100,6 +100,11 @@ jobs:
 
       - uses: actions/setup-python@v7
         if: steps.tag.outputs.skip != '1'
+        # The signing path's compiler (ethos-u-vela at VELA_VERSION, above)
+        # runs on an interpreter chosen for it, not on whatever pyproject.toml
+        # resolves to this month: this workflow runs only on a release, so a
+        # new interpreter would meet the compiler for the first time while a
+        # release is being signed. Move it with VELA_VERSION, deliberately.
         with:
           python-version: "3.11"
 
