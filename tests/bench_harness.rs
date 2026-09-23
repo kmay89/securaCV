@@ -120,7 +120,41 @@ fn print_host() {
     );
 }
 
-fn print_table(title: &str, rows: &[(&str, LatencyStats)]) {
+/// The unit a table's cells print in. The whole-log rows print milliseconds to
+/// four decimals. The per-call rows print microseconds to three (nanosecond
+/// steps), so a single call's cost is never rounded to the fourth decimal of a
+/// millisecond, where a change between two runs could vanish.
+#[derive(Clone, Copy)]
+enum Unit {
+    Millis,
+    Micros,
+}
+
+impl Unit {
+    fn label(self) -> &'static str {
+        match self {
+            Unit::Millis => "ms",
+            Unit::Micros => "µs",
+        }
+    }
+
+    /// Multiplier from the milliseconds `latency_stats` reports.
+    fn per_ms(self) -> f64 {
+        match self {
+            Unit::Millis => 1.0,
+            Unit::Micros => 1_000.0,
+        }
+    }
+
+    fn decimals(self) -> usize {
+        match self {
+            Unit::Millis => 4,
+            Unit::Micros => 3,
+        }
+    }
+}
+
+fn print_table(title: &str, unit: Unit, rows: &[(&str, LatencyStats)]) {
     for (name, _) in rows {
         assert!(
             ROW_NAMES.contains(name),
@@ -130,12 +164,18 @@ fn print_table(title: &str, rows: &[(&str, LatencyStats)]) {
     }
     println!();
     println!("### {title}");
-    println!("| row | n | mean ms | p50 ms | p95 ms | p99 ms | max ms |");
+    let (u, k, d) = (unit.label(), unit.per_ms(), unit.decimals());
+    println!("| row | n | mean {u} | p50 {u} | p95 {u} | p99 {u} | max {u} |");
     println!("|---|---:|---:|---:|---:|---:|---:|");
     for (name, s) in rows {
         println!(
-            "| {name} | {} | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} |",
-            s.count, s.mean_ms, s.p50_ms, s.p95_ms, s.p99_ms, s.max_ms
+            "| {name} | {} | {:.d$} | {:.d$} | {:.d$} | {:.d$} | {:.d$} |",
+            s.count,
+            s.mean_ms * k,
+            s.p50_ms * k,
+            s.p95_ms * k,
+            s.p99_ms * k,
+            s.max_ms * k
         );
     }
 }
@@ -219,6 +259,7 @@ fn kernel_append_throughput() {
 
     print_table(
         &format!("kernel append throughput (N={n}, fresh SQLCipher database on disk)"),
+        Unit::Millis,
         &[(ROW_APPEND, stats)],
     );
     println!(
@@ -276,6 +317,7 @@ fn log_verification_wall_time() {
         &format!(
             "log verification wall time (N={n} sealed events, {items_walked} items walked per pass)"
         ),
+        Unit::Millis,
         &[(ROW_VERIFY, stats)],
     );
 }
@@ -330,6 +372,7 @@ fn envelope_build_and_verify() {
 
     print_table(
         &format!("evidence envelope (N={n} sealed events per envelope)"),
+        Unit::Millis,
         &[(ROW_ENVELOPE_BUILD, build), (ROW_ENVELOPE_VERIFY, verify)],
     );
 }
@@ -368,6 +411,7 @@ fn contract_enforcement_and_time_bucket_cost() {
 
     print_table(
         &format!("contract enforcement and time bucket (N={n} calls each)"),
+        Unit::Micros,
         &[(ROW_CONTRACT, enforce), (ROW_BUCKET, buckets)],
     );
 }
@@ -467,6 +511,7 @@ mod sandbox_row {
 
         print_table(
             &format!("sandbox boundary (N={n} calls, 640x480 frame, no-op module)"),
+            Unit::Millis,
             &[(ROW_SANDBOX, stats)],
         );
     }

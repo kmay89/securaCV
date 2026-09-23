@@ -47,9 +47,9 @@ phase-1 pipeline and the hardware; nothing here stands in for it.
 ## What each row measures
 
 Every row prints one Markdown table line through the crate's own
-`eval::metrics::latency_stats` — count, mean, p50, p95, p99 and max in
-milliseconds — under a `host:` line naming the OS, the architecture, the build
-profile and N.
+`eval::metrics::latency_stats` — count, mean, p50, p95, p99 and max, in
+milliseconds (microseconds for the two per-call rows, see below) — under a
+`host:` line naming the OS, the architecture, the build profile and N.
 
 | row | what one sample is | what it deliberately leaves out |
 |---|---|---|
@@ -61,9 +61,13 @@ profile and N.
 | `TimeBucket::now_10min` | One coarse clock read — the call each witnessd loop iteration starts with. | — |
 | `execute_sandboxed (no-op module)` | One trip across the sandbox boundary with a module whose `process` does nothing: fork, seccomp filter, result pipe, waitpid, and the stub backend's state export (child) and import (parent), on one synthetic 640×480 frame. The backend is primed once first, so it carries state the way a running witnessd backend does. | Inference and decode. The row is the boundary's own cost — the per-frame fork the Frigate learnings call an unmeasured hypothesis. Linux only, by the same `cfg(target_os = "linux")` the sandbox module carries: Linux is the only platform with a sandbox implementation, and elsewhere `execute_sandboxed` refuses ("sandbox unavailable"), so there is no boundary to time. |
 
-The two per-call rows (`enforce`, `now_10min`) time one call per sample, and
-every row prints four decimals of a millisecond; the cost of `Instant::now()`
-itself is inside every sample, which matters most for the shortest calls.
+The two per-call rows (`enforce`, `now_10min`) time one call per sample and
+print microseconds to three decimals (nanosecond steps); every other row
+prints milliseconds to four. Rounded to the fourth decimal of a millisecond, a
+single call's cost could read the same before and after a change, and two
+tables put side by side (the only comparison, below) would show nothing. The
+cost of `Instant::now()` itself is inside every sample, which matters most for
+the shortest calls.
 
 ## Reading a table honestly
 
