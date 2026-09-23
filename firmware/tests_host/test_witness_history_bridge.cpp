@@ -25,6 +25,19 @@ namespace wb = witness_history_bridge;
 namespace wh = witness_history;
 namespace ws = witness_store;
 
+// The specified values, pinned as literals. Every other check in this file
+// compares against the header's own constants, so on their own they would
+// stay green through a change to the header while the prose that states these
+// numbers went stale: docs/design/witness_history_bridge.md ("4 x 1 KiB per
+// pass", "3000 ms", "30 rows"), docs/README.md's entry, main.cpp's loop()
+// comment and this suite's Makefile note. Change a value here only together
+// with that prose.
+static_assert(wb::READS_PER_PASS == 4, "F35: at most 4 reads per loop pass (design doc)");
+static_assert(wb::READ_LEN == 1024, "F35: 1 KiB per read (design doc)");
+static_assert(wb::WAIT_MS == 3000, "F35: the httpd wait is 3000 ms (design doc)");
+static_assert(wb::WAIT_STEP_MS == 10, "F35: the httpd side polls every 10 ms (design doc)");
+static_assert(wb::PAGE_ROWS_MAX == 30, "F35: a card page returns at most 30 rows (design doc)");
+
 static int g_fail = 0;
 #define CHECK(cond)                                                          \
   do {                                                                       \
@@ -344,6 +357,82 @@ static void test_one_outstanding_request() {
   const Page none = run(&s, io, req(59, 0));
   CHECK(none.seqs.size() == 1);
   report("one_outstanding_request", f0);
+}
+
+// The request body's lock: a side that finds it held never waits and never
+// touches `req`. begin() answers busy and leaves the slot free; the loop
+// adopts nothing, opens nothing, and takes the request on a later pass.
+static void test_req_lock_is_honored() {
+  const int f0 = g_fail;
+  const Built b = build(1, 60);
+  MemIo io;
+  io.file = b.file;
+  wb::Slot s;
+  wb::init(&s);
+
+  // httpd side: the loop is copying the previous request this instant.
+  s.req_lock = 1;
+  CHECK(wb::begin(&s, req(50, 5)) == 0);  // 503 history_busy, not a wait
+  CHECK(s.busy == 0);                     // the slot is not left claimed
+  CHECK(s.req_gen == 0);                  // and nothing was published
+  s.req_lock = 0;
+
+  // Loop side: a request is published, and the lock is held when the pass
+  // runs (its waiter gave up before the loop adopted it, and the next
+  // begin() is writing `req`).
+  const uint32_t g = wb::begin(&s, req(50, 5));
+  CHECK(g != 0);
+  s.req_lock = 1;
+  pass(&s, io);
+  pass(&s, io);
+  CHECK(!s.active && s.work_gen != g);    // not adopted
+  CHECK(io.opens == 0 && io.reads == 0);  // nothing read for it
+  CHECK(wb::poll(&s, g) == nullptr);
+  CHECK(s.req_lock == 1);                 // and the holder's lock is untouched
+  s.req_lock = 0;
+  for (int i = 0; i < 50 && !wb::poll(&s, g); ++i) pass(&s, io);
+  const wb::Response* p = wb::poll(&s, g);
+  CHECK(p != nullptr && p->n == 5 && p->rows[p->first].seq == 49);
+  wb::end(&s, g, false);
+  report("req_lock_is_honored", f0);
+}
+
+// begin() never hands out the generation whose page sits in `resp`: after
+// 2^32 requests the counter comes round to done_gen, and that old page must
+// not answer the new request. Nor is 0 ever a generation, across the wrap.
+static void test_generation_skips_done_gen() {
+  const int f0 = g_fail;
+  const Built b = build(1, 60);
+  MemIo io;
+  io.file = b.file;
+  wb::Slot s;
+  wb::init(&s);
+
+  // A filled page from long ago under generation 1, and a counter that has
+  // come round so that the next generation would be 1 again.
+  s.resp.result = wb::Result::OK;
+  s.resp.first = 0;
+  s.resp.n = 1;
+  s.resp.rows[0].seq = 7;
+  s.done_gen = 1;
+  s.req_gen = 0;
+  const uint32_t g = wb::begin(&s, req(50, 5));
+  CHECK(g != 0 && g != 1);
+  CHECK(wb::poll(&s, g) == nullptr);      // the old page is not this one's
+  for (int i = 0; i < 50 && !wb::poll(&s, g); ++i) pass(&s, io);
+  const wb::Response* p = wb::poll(&s, g);
+  CHECK(p != nullptr && p->n == 5 && p->rows[p->first].seq == 49);
+  wb::end(&s, g, false);
+
+  // The wrap itself: UINT32_MAX + 1 is 0 (never a generation), then 1 is
+  // done_gen's: the next generation is 2.
+  s.req_gen = UINT32_MAX;
+  s.done_gen = 1;
+  const uint32_t w = wb::begin(&s, req(50, 5));
+  CHECK(w == 2);
+  CHECK(wb::poll(&s, w) == nullptr);
+  wb::end(&s, w, true);
+  report("generation_skips_done_gen", f0);
 }
 
 // A waiter that gives up takes its walk with it: the loop reads nothing more
@@ -828,6 +917,8 @@ int main() {
   test_hint_pages_to_the_start();
   test_hint_refusals();
   test_one_outstanding_request();
+  test_req_lock_is_honored();
+  test_generation_skips_done_gen();
   test_abandoned_walk_stops_reading();
   test_late_completion_never_answers_the_next_request();
   test_wait_is_bounded();
