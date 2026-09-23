@@ -274,6 +274,16 @@ struct WallView: View {
                     title: "Verified through \(receipt(asOf)) · \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries")",
                     detail: verifiedDetail(fleet)
                 )
+            } else if model.standing == .pinnedNothingToCheck {
+                // Paired, the log names the pinned key and walks clean — but
+                // it held no entries, so no signature was checked. A key is
+                // public and an empty list is easy to serve, so this says
+                // exactly that and never borrows the word "Verified".
+                StatusBanner(
+                    tone: .calm,
+                    title: "Paired · nothing sealed to check as of \(receipt(asOf))",
+                    detail: nothingToCheckDetail(fleet)
+                )
             } else if let verifiedThrough = fleet.verifiedThrough {
                 // Two sentences for two claims — and two clocks. The time
                 // after "through" is THIS TV's: when it received (and, given
@@ -297,7 +307,9 @@ struct WallView: View {
                     StatusBanner(
                         tone: .calm,
                         title: "Chain intact through \(receipt(asOf)) · \(report.verified) sealed \(report.verified == 1 ? "entry" : "entries")",
-                        detail: "Signatures checked on this Apple TV against the key the log supplied (not yet pinned). Device reports “\(verifiedThrough)”."
+                        detail: report.verified > 0
+                            ? "Signatures checked on this Apple TV against the key the log supplied (not yet pinned). Device reports “\(verifiedThrough)”."
+                            : "The log held no sealed entries, so no signature was checked (and its key is not yet pinned). Device reports “\(verifiedThrough)”."
                     )
                 } else {
                     StatusBanner(
@@ -323,6 +335,15 @@ struct WallView: View {
         let checked = "Ed25519 signatures checked on this Apple TV against the key pinned when you paired it."
         guard let stamp = fleet.verifiedThrough else { return checked }
         return checked + " Device reports “\(stamp)”."
+    }
+
+    /// The nothing-to-check banner's second line: what was (not) checked,
+    /// and why that is not a verdict — plus the device's self-stamp, still
+    /// labeled as the device's.
+    private func nothingToCheckDetail(_ fleet: FleetSnapshot) -> String {
+        let said = "The hub named the key pinned when you paired this Apple TV but served no sealed entries — none since its last checkpoint, or none yet — so no signature was checked. The Wall says “Verified” once there is one to check."
+        guard let stamp = fleet.verifiedThrough else { return said }
+        return said + " Device reports “\(stamp)”."
     }
 
     /// This TV's own clock, as the banners print it: when THIS screen received
@@ -431,8 +452,10 @@ struct WallView: View {
 
     /// The footer's one word on this TV's own check, phrased by standing so
     /// it can never say more than the banner above it: "verified" only
-    /// against the pinned key, "not pinned" for a walk against the log's own
-    /// key, and a refused pairing or a changed key in the trouble color.
+    /// against the pinned key and only when a signature was checked,
+    /// "nothing sealed to check" for a pinned walk of an empty tail, "not
+    /// pinned" for a walk against the log's own key, and a refused pairing
+    /// or a changed key in the trouble color.
     private var footerVerdict: (text: String, trouble: Bool)? {
         switch model.standing {
         case .keyChanged:
@@ -442,6 +465,8 @@ struct WallView: View {
         case .verified:
             guard let report = model.report else { return nil }
             return (text: "verified · \(report.verified) entries", trouble: false)
+        case .pinnedNothingToCheck:
+            return (text: "paired · nothing sealed to check", trouble: false)
         case .none, .unpaired, .failedAgainstPin:
             guard let report = model.report else { return nil }
             if report.ok {

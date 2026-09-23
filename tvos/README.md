@@ -54,7 +54,10 @@ categories are simply **empty**, and this app sits in all three:
    and nothing else on the hub — and the kernel's verifying key, which the
    Wall pins in the Keychain (never in the defaults tvOS may purge). From
    then on the header says **"Verified through <this TV's receipt time>"**
-   only when every signature checked against that pinned key; a log signed
+   only when every signature checked against that pinned key and at least
+   one did (a log naming the pinned key over an empty tail reads "Paired ·
+   nothing sealed to check" — the key is public, so an empty list proves
+   nothing); a log signed
    by any other key is an alarm ("Your hub's signing key changed since this
    Apple TV was paired"), a revoked token a warning, and an unpaired Wall
    still labels the fleet's status as the devices' own report ("Your fleet

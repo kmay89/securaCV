@@ -82,7 +82,8 @@ final class WallCanaryTests: XCTestCase {
         XCTAssertTrue(pinned.allVerified)
         XCTAssertFalse(pinned.alarmUnacked)
 
-        for standing: VerificationStanding in [.none, .unpaired, .unauthorized, .failedAgainstPin] {
+        for standing: VerificationStanding in [.none, .unpaired, .unauthorized, .failedAgainstPin,
+                                                .pinnedNothingToCheck] {
             let i = WallCanary.inputs(fleet: fleet([("porch", true, "ok")]),
                                       wallDown: false, report: report(ok: true),
                                       standing: standing)

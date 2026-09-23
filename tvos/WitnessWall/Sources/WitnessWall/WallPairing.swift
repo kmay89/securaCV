@@ -261,8 +261,18 @@ enum VerificationStanding: Equatable, Sendable {
     /// pinned for this source. Internal consistency, not provenance — the
     /// banner says "not yet pinned" and never "Verified".
     case unpaired
-    /// Paired; the log is signed by the pinned key and the walk passed.
+    /// Paired; the log is signed by the pinned key, the walk passed, and it
+    /// checked at least one signature. "Verified" is an Ed25519 signature
+    /// checked against the pin — a walk that checked none has not earned it.
     case verified
+    /// Paired; the log names the pinned key and its walk passed, but it held
+    /// no entries past its checkpoint (or none at all yet), so NO signature
+    /// was checked. The key a log names is public: anything answering at
+    /// the hub's address can serve `{"verifying_key": <pin>, "entries": []}`,
+    /// and a genuine hub just after a checkpoint serves the same shape. So
+    /// this is its own standing, phrased "nothing to check" — never
+    /// "Verified", never the bird's full-verified snap.
+    case pinnedNothingToCheck
     /// Paired; the log is signed by the pinned key and the walk FAILED — the
     /// report's alarm, under the key this TV was told to trust.
     case failedAgainstPin
@@ -286,7 +296,8 @@ enum VerificationStanding: Equatable, Sendable {
         guard let servedKey, servedKey == pinnedKey else {
             return .keyChanged(pinned: pinnedKey, served: servedKey ?? "")
         }
-        return report.ok ? .verified : .failedAgainstPin
+        guard report.ok else { return .failedAgainstPin }
+        return report.verified > 0 ? .verified : .pinnedNothingToCheck
     }
 
     /// The standing is itself an alarm, whatever the walk said.

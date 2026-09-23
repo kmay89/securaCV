@@ -91,7 +91,11 @@ request, so `revoke-viewer-token <id>` lands on the next poll. The Wall
 keeps the token and the receipt's key as ONE Keychain item per source,
 sends the bearer only to that source and never across a redirect, and
 folds every walk into a standing (`WallPairing.swift`): **verified** only
-when the log's key is the pinned key and every signature checked;
+when the log's key is the pinned key, every signature checked, and there
+was at least one to check; **nothing to check** when the log names the
+pinned key over an empty tail — a genuine hub just after a checkpoint
+serves that, and so can anything answering at its address, because the
+key is public — which is never phrased as verified;
 **key changed** — an alarm, not a quiet downgrade — when the log is signed
 by any other key (the core deliberately does not follow rotations, so a
 re-keyed hub reads this way until it is re-paired); **refused** when the

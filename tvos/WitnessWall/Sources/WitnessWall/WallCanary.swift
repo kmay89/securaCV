@@ -58,9 +58,11 @@ enum WallCanary {
         // The engine's full-verified snap is reserved for a chain walked
         // against a key pinned at pairing ("verified" means nothing looser
         // — AGENTS.md); an unpaired walk checks the key the log itself
-        // supplied and never earns it. A FAILED walk, or a hub signing with
-        // a key other than the pinned one, is a real alarm below — the same
-        // asymmetry the header banner speaks.
+        // supplied and never earns it, and neither does a pinned walk of an
+        // empty tail (.pinnedNothingToCheck), which checked no signature. A
+        // FAILED walk, or a hub signing with a key other than the pinned
+        // one, is a real alarm below — the same asymmetry the header banner
+        // speaks.
         i.allVerified = standing == .verified
         i.alarmUnacked = report?.ok == false || fleet.hasChainTrouble || standing.isAlarm
         return i

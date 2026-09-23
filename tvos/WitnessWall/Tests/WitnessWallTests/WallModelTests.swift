@@ -711,6 +711,34 @@ final class WallModelTests: XCTestCase {
         XCTAssertEqual(m.standing, .verified)
     }
 
+    func testThePinnedKeyOverAnEmptyTailIsNeverVerified() async throws {
+        // The verifying key is public, and the Wall probes canary.local over
+        // cleartext HTTP: anything that answers there can serve the pinned
+        // key over an empty entry list, which walks clean with ZERO
+        // signatures checked. So can a genuine hub just after a checkpoint.
+        // Neither is "Verified", and neither lights the bird's snap.
+        let pinned = "5866666666666666666666666666666666666666666666666666666666666666"
+        let empty = #"{"verifying_key":"\#(pinned)","entries":[]}"#
+        let transport = SealedLogTransport(fleet: [.success(goodFleet)], sealedLog: empty,
+                                           acceptedToken: viewerToken)
+        let m = pairedModel(transport)
+        XCTAssertNil(m.pair(receiptText: receiptJSON(token: viewerToken, key: pinned)))
+        await m.refreshOnce()
+
+        let report = try XCTUnwrap(m.report, "the walk ran and is kept")
+        XCTAssertTrue(report.ok, report.message)
+        XCTAssertEqual(report.verified, 0)
+        XCTAssertEqual(m.standing, .pinnedNothingToCheck)
+        XCTAssertNotEqual(m.standing, .verified)
+        XCTAssertTrue(m.timeline.isEmpty)
+        guard case .live(let snapshot, _) = m.state else {
+            return XCTFail("expected .live, got \(m.state)")
+        }
+        XCTAssertFalse(WallCanary.inputs(fleet: snapshot, wallDown: false,
+                                         report: m.report, standing: m.standing).allVerified,
+                       "a walk that checked nothing never earns the full-verified snap")
+    }
+
     func testAnotherKeyThanThePinnedOneIsAnAlarmEvenWhenItsWalkPasses() async throws {
         // The log verifies — under a key this TV was never told to trust.
         // That is the one passing walk that must alarm, not reassure.

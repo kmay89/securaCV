@@ -112,8 +112,8 @@ final class WallPairingTests: XCTestCase {
 
     // MARK: - what a walk may claim
 
-    private func report(ok: Bool) -> VerifyReport {
-        VerifyReport(ok: ok, verified: 3, head: "abc", failedAt: ok ? nil : 2,
+    private func report(ok: Bool, verified: UInt64 = 3) -> VerifyReport {
+        VerifyReport(ok: ok, verified: verified, head: "abc", failedAt: ok ? nil : 2,
                      kind: ok ? nil : .signatureMismatch, detail: nil,
                      message: ok ? "chain ok" : "chain broke")
     }
@@ -138,6 +138,24 @@ final class WallPairingTests: XCTestCase {
         XCTAssertEqual(S.derive(pinnedKey: key, fetch: .absent, report: nil, servedKey: nil), .none)
         XCTAssertTrue(S.keyChanged(pinned: key, served: other).isAlarm)
         XCTAssertFalse(S.verified.isAlarm)
+    }
+
+    func testAPinnedWalkThatCheckedNoSignatureIsNotVerified() {
+        // `{"verifying_key": <pin>, "entries": []}` walks clean with nothing
+        // checked — and the key is public, so anything answering at the
+        // hub's address can serve it. A genuine hub just after a checkpoint
+        // serves the same shape. Neither has earned "Verified".
+        let doc = SealedLogFetch.document("{}")
+        typealias S = VerificationStanding
+
+        let empty = S.derive(pinnedKey: key, fetch: doc, report: report(ok: true, verified: 0), servedKey: key)
+        XCTAssertEqual(empty, .pinnedNothingToCheck)
+        XCTAssertNotEqual(empty, .verified, "zero signatures checked is not a signature checked against the pin")
+        XCTAssertFalse(empty.isAlarm, "nothing to check is not a broken record either")
+        XCTAssertEqual(S.derive(pinnedKey: key, fetch: doc, report: report(ok: true, verified: 1), servedKey: key),
+                       .verified, "one signature checked against the pin is the floor")
+        XCTAssertEqual(S.derive(pinnedKey: key, fetch: doc, report: report(ok: false, verified: 0), servedKey: key),
+                       .failedAgainstPin, "a walk that failed on its first entry still alarms")
     }
 
     func testTheServedKeyIsReadButNeverTrusted() {
