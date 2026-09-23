@@ -414,6 +414,12 @@ a script.
         concern: stopped
 ```
 
+The example is written in the automation syntax of Home Assistant 2024.10
+and newer. The integration supports 2024.4.1 and newer, and on a release
+before 2024.10 the same automation is written with `trigger:` and
+`- platform: state`, then `action:` and `- service: securacv.start_watch`.
+The action and its fields don't change.
+
 What to expect:
 
 - A watch started this way is the same object as one you spoke: the same

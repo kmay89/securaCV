@@ -231,10 +231,15 @@ def _augment_ha_stubs() -> None:
                 return None
 
         class _ServiceCall:
+            """The oldest supported shape (2024.4.1): slotted, and no
+            ``.hass`` — HA added that in 2025.1, so a handler must bind
+            hass at registration rather than read it off the call."""
+
+            __slots__ = ("domain", "service", "data", "context", "return_response")
+
             def __init__(
-                self, hass, domain, service, data=None, context=None, return_response=False
+                self, domain, service, data=None, context=None, return_response=False
             ) -> None:
-                self.hass = hass
                 self.domain = domain
                 self.service = service
                 self.data = dict(data or {})

@@ -95,9 +95,7 @@ def _require_restored(hass: HomeAssistant) -> None:
         )
 
 
-@callback
-def _async_start_watch(call: ServiceCall) -> dict[str, Any]:
-    hass = call.hass
+def _async_start_watch(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     _require_restored(hass)
     subject = str(call.data.get(ATTR_SUBJECT) or "").strip()
     if not subject:
@@ -128,9 +126,7 @@ def _async_start_watch(call: ServiceCall) -> dict[str, Any]:
     return watch_row(watch, now)
 
 
-@callback
-def _async_end_watch(call: ServiceCall) -> dict[str, Any]:
-    hass = call.hass
+def _async_end_watch(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     _require_restored(hass)
     ref = str(call.data.get(ATTR_WATCH) or "").strip()
     if not ref:
@@ -150,9 +146,7 @@ def _async_end_watch(call: ServiceCall) -> dict[str, Any]:
     return watch_row(watch, now)
 
 
-@callback
-def _async_list_watches(call: ServiceCall) -> dict[str, Any]:
-    hass = call.hass
+def _async_list_watches(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     _require_restored(hass)
     now = time.time()
     rows: list[dict[str, Any]] = []
@@ -166,27 +160,46 @@ def _async_list_watches(call: ServiceCall) -> dict[str, Any]:
 
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
-    """Register the actions, once; a second call is a no-op."""
+    """Register the actions, once; a second call is a no-op.
+
+    ``hass`` is bound here, never read off the call: ``ServiceCall`` has
+    no ``hass`` before Home Assistant 2025.1, and the integration supports
+    2024.4.1 and newer (hacs.json). A handler that read ``call.hass`` would
+    raise AttributeError on every call there.
+    """
     if hass.services.has_service(DOMAIN, SERVICE_START_WATCH):
         return
+
+    @callback
+    def _start_watch(call: ServiceCall) -> dict[str, Any]:
+        return _async_start_watch(hass, call)
+
+    @callback
+    def _end_watch(call: ServiceCall) -> dict[str, Any]:
+        return _async_end_watch(hass, call)
+
+    @callback
+    def _list_watches(call: ServiceCall) -> dict[str, Any]:
+        return _async_list_watches(hass, call)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_START_WATCH,
-        _async_start_watch,
+        _start_watch,
         schema=START_WATCH_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_END_WATCH,
-        _async_end_watch,
+        _end_watch,
         schema=END_WATCH_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_LIST_WATCHES,
-        _async_list_watches,
+        _list_watches,
         schema=LIST_WATCHES_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )

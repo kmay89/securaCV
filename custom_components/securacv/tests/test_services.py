@@ -96,11 +96,13 @@ def _hass(*, with_entry: bool = True) -> HomeAssistant:
     return hass
 
 
-def _call(hass, service: str, data: dict | None = None):
+def _call(hass, service: str, data: dict | None = None, *, call_cls=None):
+    """Call a registered handler the way HA does. The conftest ServiceCall
+    is the pre-2025.1 shape (no ``.hass``), the oldest this integration
+    supports, so every test here would fail on a handler that reads it."""
     registered = hass.services.registered[(DOMAIN, service)]
-    return registered.func(
-        ServiceCall(hass, DOMAIN, service, data or {}, return_response=True)
-    )
+    call_cls = call_cls or ServiceCall
+    return registered.func(call_cls(DOMAIN, service, data or {}, return_response=True))
 
 
 def _bucket(hass) -> list:
@@ -171,6 +173,56 @@ def test_the_vocabulary_is_watches_only_and_nothing_else_registers_actions() -> 
         )
     )
     assert registering == ["services.py"]
+
+
+class _CallBefore2025_1:
+    """homeassistant.core.ServiceCall as 2024.4.1 through 2024.12 define
+    it: slotted, and no ``hass`` (hacs.json's minimum is 2024.4.1)."""
+
+    __slots__ = ("domain", "service", "data", "context", "return_response")
+
+    def __init__(self, domain, service, data=None, context=None, return_response=False):
+        self.domain, self.service, self.data = domain, service, dict(data or {})
+        self.context, self.return_response = context, return_response
+
+
+class _CallFrom2025_1(_CallBefore2025_1):
+    """...and as 2025.1 onward define it, with ``hass`` added. The handler
+    must ignore it: this one points at a different hub, so a handler that
+    read it would act on the wrong instance and the test would see it."""
+
+    __slots__ = ("hass",)
+
+    def __init__(self, domain, service, data=None, context=None, return_response=False):
+        super().__init__(domain, service, data, context, return_response)
+        self.hass = HomeAssistant()
+
+
+@pytest.mark.parametrize("call_cls", [_CallBefore2025_1, _CallFrom2025_1])
+def test_every_action_works_with_either_service_call_shape(call_cls, delivered) -> None:
+    """The handlers get ``hass`` from registration, never from the call:
+    ServiceCall gained ``.hass`` only in Home Assistant 2025.1, and before
+    that every securacv.* call raised AttributeError."""
+    hass = _hass()
+    started = _call(hass, "start_watch", {"subject": "the gate canary"}, call_cls=call_cls)
+    assert [w["id"] for w in _bucket(hass)] == [started["id"]]
+    listed = _call(hass, "list_watches", call_cls=call_cls)
+    assert [row["id"] for row in listed["watches"]] == [started["id"]]
+    ended = _call(hass, "end_watch", {"watch": started["id"]}, call_cls=call_cls)
+    assert ended["id"] == started["id"]
+    assert _bucket(hass) == []
+
+
+def test_no_handler_reads_hass_off_the_call() -> None:
+    """The source-level half of the guard above, for a handler path the
+    behavioral test does not reach."""
+    module = ast.parse((PACKAGE_DIR / "services.py").read_text(encoding="utf-8"))
+    reads = [
+        node.lineno
+        for node in ast.walk(module)
+        if isinstance(node, ast.Attribute) and node.attr == "hass"
+    ]
+    assert reads == [], f"services.py reads .hass on lines {reads}"
 
 
 def test_config_schema_is_declared_because_async_setup_exists() -> None:

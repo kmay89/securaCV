@@ -98,13 +98,16 @@ def _install_minimum_stubs() -> None:
             return None
 
     class _ServiceCall:
-        """What a registered handler receives: .hass, .data and the
-        return_response flag, as HA's ServiceCall carries them."""
+        """What a registered handler receives, in the OLDEST shape the
+        integration supports (hacs.json: 2024.4.1). HA added ``.hass`` to
+        ServiceCall only in 2025.1, so the stub is slotted without it: a
+        handler that reads ``call.hass`` fails here as it would there."""
+
+        __slots__ = ("domain", "service", "data", "context", "return_response")
 
         def __init__(
-            self, hass, domain, service, data=None, context=None, return_response=False
+            self, domain, service, data=None, context=None, return_response=False
         ) -> None:
-            self.hass = hass
             self.domain = domain
             self.service = service
             self.data = dict(data or {})
