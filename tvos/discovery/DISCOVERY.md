@@ -106,7 +106,13 @@ devices' own report ("Your fleet reported in through <this TV's own
 receipt time>", with the device's self-stamped `verified_through` shown
 only as "Device reports …", because the firmware fills that field with the
 literal word "now"), and a walk it did run against the log's own key is
-labeled "not yet pinned". Everything above about
+labeled "not yet pinned". What a verified log is for on the wall: every
+entry's `payload` embeds the coarse `time_bucket` the kernel sealed, so a
+paired Wall whose standing is verified also draws the record's day shape —
+the evidence viewer's timeline model (`ios/Shared/TimelineScrub.swift`,
+parity-pinned to `viewer/timeline_core.js`), bucket ranges only — and
+draws nothing of the kind from an unpinned, failed or re-keyed walk.
+Everything above about
 `/api/fleet` being coarse and unauthenticated is exactly why this endpoint
 is separate — and gated: the sealed log is how a *display* gets to say
 something cryptographic instead of repeating the wire, and the full coarse

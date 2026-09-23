@@ -23,15 +23,18 @@
 // widgets, which take ios/Shared wholesale. Color and layout live in the
 // views; this file only decides what a day is shaped like.
 //
-// The tvOS Witness Wall does NOT compile this yet, and that is deliberate:
-// it lists its shared sources one by one, this file deliberately omits the
-// opt-in marker that scripts/lint_apple_parity.py looks for (do not name that
-// marker here — the lint greps for the bare string and would enroll this file
-// by describing it), and the Wall has no time-bearing event data to draw:
-// sealed entries carry no timestamp, and while the kernel now serves
-// /api/sealed-log (token-gated), the TV holds no token to read it yet.
-// Adding the marker plus one project.yml entry is the whole port on the day
-// that data reaches the TV. See docs/design/witness_log_viewer.md.
+// The tvOS Witness Wall compiles this too (the marker below, enforced by
+// scripts/lint_apple_parity.py, with EventVocabulary.swift and
+// AlertRecord.swift, its only non-Foundation dependencies). Sealed entries DO
+// carry time: every payload the kernel's /api/sealed-log serves embeds its
+// coarse `time_bucket` (start and size, never an instant — Invariant III),
+// the same bytes the evidence viewer draws its timeline from. The Wall reads
+// them with `records(fromSealedPayloads:)`, and draws them only from a chain
+// it walked and verified against the key pinned when it was paired. See
+// docs/design/witness_log_viewer.md.
+
+// SecuraCV-Parity: every Apple surface that shows a device compiles this.
+// (the shape of a day: folds, buckets, the density strip)
 
 import Foundation
 
@@ -660,6 +663,137 @@ extension TimelineScrub {
     // target, NOT here: that type lives in Sources/SecuraCV, which the widgets
     // and the watch do not compile, and this file must stay buildable by every
     // target that takes `Shared` wholesale.
+
+    /// The kernel's sealed log, as timeline records — the Swift twin of
+    /// `normalizeEnvelope` in viewer/timeline_core.js, ported line for line
+    /// and pinned to it by the `normalization` section of
+    /// viewer/fixtures/timeline/scrub_parity.json.
+    ///
+    /// `payloads` are the entries' `payload` strings from `GET
+    /// /api/sealed-log` (the stored bytes, verbatim — the same
+    /// `payload_json` the evidence envelope carries). Each is a JSON object
+    /// whose `time_bucket` is the privacy-coarsened bucket the kernel sealed
+    /// (Invariant III), so a record here is never more precise than the log.
+    /// A payload that is not an object, has no believable bucket, or has a
+    /// record_type that is neither absent nor a string is COUNTED in
+    /// `unparsed` — never drawn, never fatal. The caller decides whether the
+    /// log may be drawn at all: the Wall draws only a chain it walked and
+    /// verified against its pinned key.
+    ///
+    /// Where an Int timeline cannot follow a JavaScript number — a fractional
+    /// or out-of-range epoch, which the kernel never writes — the record is
+    /// counted unparsed rather than rounded into a time the log did not say.
+    static func records(fromSealedPayloads payloads: [String]) -> (records: [TimelineRecord], unparsed: Int) {
+        var records: [TimelineRecord] = []
+        var unparsed = 0
+        for payload in payloads {
+            // null, a bare number or an array parse fine and then are not a
+            // record: counted, exactly like a payload that is not JSON.
+            guard let parsed = try? JSONSerialization.jsonObject(with: Data(payload.utf8),
+                                                                 options: [.fragmentsAllowed]),
+                  let rec = parsed as? [String: Any] else {
+                unparsed += 1
+                continue
+            }
+            // JS distinguishes an ABSENT key (undefined) from a JSON null;
+            // so does this: `rec[key] == nil` is absent, NSNull is present.
+            let recordType = rec["record_type"]
+            let typeString = recordType as? String
+            var r: TimelineRecord?
+            if typeString == "failure" || (recordType == nil && rec["failure_type"] != nil) {
+                r = sealedFailure(rec)
+            } else if typeString == "event" || (recordType == nil && rec["event_type"] != nil) {
+                r = sealedEvent(rec)
+            } else if let system = typeString {
+                r = sealedSystem(rec, system)
+            }
+            if let r { records.append(r) } else { unparsed += 1 }
+        }
+        return (sorted(records), unparsed)
+    }
+
+    /// `bucketOf`: the bucket start must be a finite number; a size that is
+    /// not a positive finite number falls back to the default bucket.
+    private static func sealedBucket(_ rec: [String: Any]) -> (t0: Int, size: Int)? {
+        guard let tb = rec["time_bucket"] as? [String: Any],
+              let start = jsFiniteNumber(tb["start_epoch_s"]),
+              let t0 = Int(exactly: start) else { return nil }
+        var size = defaultBucketSeconds
+        if let raw = jsFiniteNumber(tb["size_s"]), raw > 0 {
+            guard let whole = Int(exactly: raw) else { return nil }
+            size = whole
+        }
+        return (t0, size)
+    }
+
+    /// `recordFromEvent`: the dictionary's label and family when the type is
+    /// known (`WitnessEvent(wire:)` takes the kernel's PascalCase and the
+    /// dictionary's snake_case alike), an honest humanized label and the
+    /// neutral family when it is not.
+    private static func sealedEvent(_ e: [String: Any]) -> TimelineRecord? {
+        guard let b = sealedBucket(e) else { return nil }
+        let wire = jsString(e["event_type"])
+        let known = WitnessEvent(wire: wire)
+        return TimelineRecord(
+            t0: b.t0, size: b.size, kind: .event,
+            label: known?.label ?? humanize(wire),
+            family: known.map { family(for: $0) } ?? .other,
+            zone: e["zone_id"] as? String ?? "",
+            confidence: jsNumber(e["confidence"]),
+            details: "")
+    }
+
+    /// `recordFromFailure`: a declared blind spot — always a gap, never folded.
+    private static func sealedFailure(_ f: [String: Any]) -> TimelineRecord? {
+        guard let b = sealedBucket(f) else { return nil }
+        return TimelineRecord(
+            t0: b.t0, size: b.size, kind: .gap,
+            label: humanize(jsString(f["failure_type"])), family: .gap,
+            zone: "", confidence: nil,
+            details: f["details"] as? String ?? "")
+    }
+
+    /// `recordFromSystem`: key rotation, lifecycle, heartbeat.
+    private static func sealedSystem(_ rec: [String: Any], _ recordType: String) -> TimelineRecord? {
+        guard let b = sealedBucket(rec) else { return nil }
+        return TimelineRecord(
+            t0: b.t0, size: b.size, kind: recordType == "heartbeat" ? .heartbeat : .system,
+            label: humanize(recordType), family: .other)
+    }
+
+    /// `typeof x === 'number'`: Foundation boxes JSON booleans as NSNumber
+    /// too, and JavaScript never calls `true` a number.
+    private static func jsNumber(_ value: Any?) -> Double? {
+        guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return nil }
+        return n.doubleValue
+    }
+
+    /// `Number.isFinite(x)`.
+    private static func jsFiniteNumber(_ value: Any?) -> Double? {
+        guard let d = jsNumber(value), d.isFinite else { return nil }
+        return d
+    }
+
+    /// `String(x)` for the JSON scalars a type field can hold, as far as a
+    /// label needs it: absent is "undefined", null "null", a whole number
+    /// its digits. An array or object labels as "Unknown" here (JavaScript
+    /// would print its contents) — a shape no kernel writes.
+    private static func jsString(_ value: Any?) -> String {
+        switch value {
+        case nil:
+            return "undefined"
+        case let s as String:
+            return s
+        case is NSNull:
+            return "null"
+        case let n as NSNumber:
+            if CFGetTypeID(n) == CFBooleanGetTypeID() { return n.boolValue ? "true" : "false" }
+            if let whole = Int(exactly: n.doubleValue) { return String(whole) }
+            return n.stringValue
+        default:
+            return ""
+        }
+    }
 
     // MARK: - Deterministic UTC formatting
 

@@ -85,7 +85,10 @@ Four rules keep "beautiful" from decaying into "busy":
   `scripts/lint_dictionary_sync.py` fails CI on drift), speaks the device
   dialect, and renders *unknown* event types as readable words with a calm
   default — a new sensor lights up here without an app update, never as a
-  blank row (the anti-rot bet, applied to copy).
+  blank row (the anti-rot bet, applied to copy). It, `Shared/AlertRecord.swift`
+  and `Shared/TimelineScrub.swift` carry the `SecuraCV-Parity` marker: the
+  tvOS Witness Wall compiles them and draws the same day shape the Alerts
+  ribbon does, from the hub's sealed log once its key is pinned.
 - **The hive.** At a handful of Canaries the Fleet tab becomes a honeycomb
   (`Views/Components/Honeycomb.swift`, pure host-tested geometry): quiet
   cells wear soft rings, the one that needs you is the only saturated one,

@@ -60,9 +60,13 @@ categories are simply **empty**, and this app sits in all three:
    still labels the fleet's status as the devices' own report ("Your fleet
    reported in through …", the device's self-stamp shown only as "Device
    reports …") or, when it did walk a log, as "not yet pinned". Forgetting
-   the pairing drops the token and the pin together. The Home Assistant
-   add-on has no mint control yet, so an add-on install shows the roll-call
-   and not a walk of the Wall's own.
+   the pairing drops the token and the pin together. A verified log also
+   draws the record's **day shape** below the devices — the phone's and the
+   evidence viewer's timeline model, fed the sealed payloads' coarse time
+   buckets and driven by the Siri Remote bucket by bucket, every "when" a
+   range, never an instant — and nothing of the kind from an unpinned or
+   failed walk. The Home Assistant add-on has no mint control yet, so an
+   add-on install shows the roll-call and not a walk of the Wall's own.
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
    well-known LAN addresses the desktop Flasher and Lab probe
    (`canary.local:8099`, `canary.local`) plus the kernel's own port

@@ -31,7 +31,7 @@ private final class StubTransport: FleetTransport, @unchecked Sendable {
 /// records the bearer each sealed-log request carried, and can play a hub
 /// that gates the route: with `acceptedToken` set, any other token (or
 /// none) is answered 401, exactly as the kernel answers.
-private final class SealedLogTransport: FleetTransport, @unchecked Sendable {
+final class SealedLogTransport: FleetTransport, @unchecked Sendable {
     /// Fleet answers, consumed in order; the last one repeats.
     var fleetAnswers: [Result<String, Error>]
     let sealedLog: String?

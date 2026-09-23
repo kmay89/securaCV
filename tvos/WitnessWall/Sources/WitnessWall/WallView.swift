@@ -140,12 +140,36 @@ struct WallView: View {
                 }
             }
 
+            timelineRow
+
             Spacer()
             canaryRow
             residentRow
             footer
         }
         .padding(72)
+    }
+
+    /// The sealed record's day shape, below the devices — drawn ONLY from a
+    /// chain this TV verified against its pinned key (WallModel.timeline is
+    /// empty otherwise). Where there is nothing it may draw, one quiet line
+    /// says why instead of an empty frame that would read as "nothing
+    /// happened".
+    @ViewBuilder private var timelineRow: some View {
+        if !model.timeline.isEmpty {
+            WallTimelineView(records: model.timeline,
+                             unparsed: model.timelineUnparsed,
+                             profile: profile,
+                             skin: skin)
+        } else if model.report == nil {
+            Text("Sealed record not readable from this source yet")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+        } else if model.standing == .unpaired, model.report?.ok == true {
+            Text("The sealed record's timeline appears here once this Apple TV is paired with your hub (Settings → Verification) — until its key is pinned, the Wall does not draw what the record says.")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     /// The character at the base of the wall — the same living canary the

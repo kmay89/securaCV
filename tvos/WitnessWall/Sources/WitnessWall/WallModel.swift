@@ -49,6 +49,16 @@ final class WallModel {
     /// token and the pinned key, read from the Keychain (never defaults).
     /// Nil on a multi-source wall: one pin cannot vouch for several sources.
     private(set) var pairing: PairedSource?
+    /// The sealed log as a timeline — drawn ONLY from a chain this TV walked
+    /// and verified against the key pinned at pairing (`standing ==
+    /// .verified`). A failed walk shows the alarm banner, never a ribbon; an
+    /// unpinned walk shows neither, because a ribbon of "what happened"
+    /// wears the integrity claim the Wall has not earned. Coarse buckets
+    /// only (TimelineScrub.records(fromSealedPayloads:)); empty otherwise.
+    private(set) var timeline: [TimelineRecord] = []
+    /// Payloads in that verified log the timeline could not read — counted
+    /// and shown as a count, never silently dropped.
+    private(set) var timelineUnparsed = 0
     /// Where the fleet answers, persisted so a power cut heals itself. ONE
     /// entry when a hub (or a typed address) fronts the fleet; SEVERAL when
     /// the Wall found standalone Canaries by their own announcements and
@@ -178,6 +188,16 @@ final class WallModel {
         reloadPairing()
     }
 
+    /// Drop this cycle's verdict and everything drawn from it. A remembered
+    /// verdict is not a current verdict, and a timeline is only as current
+    /// as the verdict that licensed it.
+    private func clearVerdict() {
+        report = nil
+        standing = .none
+        timeline = []
+        timelineUnparsed = 0
+    }
+
     /// Re-read this TV's pairing for the source it polls. Only a single
     /// source can be paired: a merged wall has no one key to pin.
     private func reloadPairing() {
@@ -220,8 +240,7 @@ final class WallModel {
             return error.localizedDescription
         }
         sealedLogRefused.removeAll()
-        report = nil
-        standing = .none
+        clearVerdict()
         if sources.count == 1,
            PairedSourceStore.account(for: sources[0]) == PairedSourceStore.account(for: target) {
             reloadPairing()
@@ -240,8 +259,7 @@ final class WallModel {
         pairings.forget(sources[0])
         reloadPairing()
         sealedLogRefused.removeAll()
-        report = nil
-        standing = .none
+        clearVerdict()
     }
 
     /// Read the last-seen table. A value that is not a number is ignored —
@@ -349,8 +367,7 @@ final class WallModel {
         persist([typed])
         markSeen([typed])
         // The old source's verdict does not cover the new source's fleet.
-        report = nil
-        standing = .none
+        clearVerdict()
         sealedLogRefused.removeAll()
         backoff.reset()
         state = .connecting(to: typed)
@@ -537,8 +554,7 @@ final class WallModel {
     private func refreshVerification() async {
         guard sources.count == 1,
               let address = try? FleetAddress.normalize(sources[0]) else {
-            report = nil
-            standing = .none
+            clearVerdict()
             return
         }
         reloadPairing()
@@ -567,6 +583,26 @@ final class WallModel {
         report = verdict
         standing = VerificationStanding.derive(pinnedKey: pin?.verifyingKey, fetch: fetch,
                                                report: verdict, servedKey: servedKey)
+        if standing == .verified, case .document(let sealed) = fetch {
+            let folded = TimelineScrub.records(fromSealedPayloads: Self.sealedPayloads(in: sealed))
+            timeline = folded.records
+            timelineUnparsed = folded.unparsed
+        } else {
+            timeline = []
+            timelineUnparsed = 0
+        }
+    }
+
+    /// The entries' `payload` strings — the stored bytes the chain walk just
+    /// hashed, and the only field the timeline reads. Anything that does
+    /// not decode is no entries at all (the walk already said why).
+    private static func sealedPayloads(in sealedLogJSON: String) -> [String] {
+        struct SealedLogEntriesLite: Decodable {
+            struct Entry: Decodable { let payload: String }
+            let entries: [Entry]
+        }
+        let doc = try? JSONDecoder().decode(SealedLogEntriesLite.self, from: Data(sealedLogJSON.utf8))
+        return doc?.entries.map(\.payload) ?? []
     }
 
     /// Losing the hub keeps the last good fleet on screen, clearly marked
@@ -575,8 +611,7 @@ final class WallModel {
     /// not a current verdict, the same rule `withEveryDeviceOffline` applies
     /// to a remembered `verified_through`.
     private func degrade(reason: String) {
-        report = nil
-        standing = .none
+        clearVerdict()
         switch state {
         case .live(let snapshot, let asOf):
             state = .stale(snapshot, since: asOf, reason: reason)
