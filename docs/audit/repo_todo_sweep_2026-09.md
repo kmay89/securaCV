@@ -387,7 +387,7 @@ so — see D2 below.)
   gateway-trust entry is a plain cosigner, pinned by
   `test_gateway_trust_confers_no_privilege` and
   `test_source_grants_gateway_trust_nothing`.
-- [ ] **F33 [code] The PIO Opera mesh has not yet carried a frame over a
+- [x] **F33 [code] The PIO Opera mesh has not yet carried a frame over a
   radio.** Found while landing F10/F14 and not fixed there; each needs its
   own change and a bench (U1 Tracks C2/C3). (1) `mesh_transport`'s peer
   table is never populated on a device — no `add_peer` caller outside host
@@ -408,6 +408,28 @@ so — see D2 below.)
   network (Opera / ESP-NOW)" row still reads ✅ for canary-wap although (2)
   and (6) hold there too; `features_dashboard_guard` refuses a downgrade, so
   lowering that cell is a maintainer's edit.
+  *Done in code (#1718):* all seven parts. Nothing has run on two radios yet.
+  - (2) Pairing ephemerals are clamped X25519 keys in both trees. The PIO
+    host X25519 is now a real RFC 7748 ladder, and a host test shows two
+    independent keypairs agree on the secret and the code (crypto review —
+    maintainer to confirm).
+  - (1) The transport peer table fills from pairing and NVS `peer_macs`.
+  - (3) The outbound counter reserves ahead in NVS (`mesh_out_ctr`), so no
+    counter is signed twice and a rebooted sender is not dropped as a
+    replay.
+  - (5) The four pairing routes run on the loop's request slot.
+  - (6) The §5.6 seven-day deny-list is in both trees. PIO also converges
+    two concurrent removals: a settle window, lower-fingerprint precedence
+    and OFFER propagation (crypto review — maintainer to confirm). Since
+    27bd7ea, a removal reaches NVS and the health log once, not once per
+    resent OFFER.
+  - (7) The web UI shows an alert's age.
+  - (4) `pair/start` founds an opera on a PIO device that holds none, on the
+    existing route and gates.
+
+  FEATURES.md's mesh cell is untouched (the maintainer's call). Bench (U1):
+  Tracks C2/C3, whose rows the runbook now carries. Found here and recorded
+  as F48 and F49.
 
 ### Network surface & provisioning
 
@@ -836,7 +858,7 @@ so — see D2 below.)
   emulator dist is rebuilt. Bench (U1): the panels themselves, and a phone
   scanning the watch's smaller card.
 
-- [ ] **F45 [code] The nightstand join screen cuts off the only text way in.**
+- [x] **F45 [code] The nightstand join screen cuts off the only text way in.**
   On the 172 px nightstand (and the C6 and the nightlight at 180 px), the
   joined credentials line "SecuraCV-XXXX  •  <password>" (172 px of text in a
   156 px row) and the stuck-phone hint (207 px) end in an ellipsis. When the
@@ -845,6 +867,19 @@ so — see D2 below.)
   rectangular glass the way round glass already is (network name on one
   line, password or hint on the next) when the joined line is wider than
   its row, through the same `onboard_layout.h` stack and its host test.
+  *Done (#1718):* `join_lines()` keeps the joined line only where it fits its
+  row. It measures the way LVGL lays a line out, kerning included, from a
+  generated metrics header (`gen_montserrat_metrics.py`, `--check`ed in CI).
+  Otherwise it splits the line into the name, then `pass  <key>`. Each row
+  tries shorter forms before a smaller face, and none ever ends in an
+  ellipsis. The name and key stay on the glass with and without the QR or
+  the stuck-phone hint, and the hint gets a row of its own. On the round
+  watch that row is the title's band, a visible change. Three more cuts
+  were fixed by the same measure. The host test runs every display env with
+  both type ladders, using the widest name and key the minting alphabet can
+  make. `onboard_probe.mjs` fails on an ellipsis and reads the firmware's
+  own labels, the hint included (4242eb7). The emulator dist is rebuilt.
+  Bench (U1): real 172/180 px glass. Found here: F50.
 - [ ] **F46 [code] The CSI bundler's event ids live outside the chokepoint
   id space.** Found by F37 (#1718). Rows that pass through the CSI bundler
   (presence, and the system.integrity tampers, since they carry a state)
@@ -871,6 +906,35 @@ so — see D2 below.)
   last whole line before a power cut's torn tail, the canary's walk stays
   pending and re-reads the fragment about once per loop pass until the next
   committed row seals it. Nothing is lost, and the next row goes out.
+- [ ] **F48 [code+decision] canary-wap's mesh crypto and its interop with the
+  PIO tree.** Found by F33 (#1718). canary-wap's AUTH exchange still runs
+  X25519 over long-term Ed25519 keys, the bug class F33 part 2 fixed for
+  pairing, and its rotation encrypts under those session keys. canary-wap
+  also HKDFs the pairing key where the PIO tree and spec §5.3 use it raw,
+  and it numbers pairing frames differently, so the two trees cannot pair
+  with each other. Concurrent removals on canary-wap cannot converge without
+  a wire change: `MSG_OPERA_REKEY` names no removed device and has no
+  announcement phase. Crypto review and a wire decision first, then code in
+  both trees and a cross-tree host test.
+- [ ] **F49 [code] Mesh leftovers from F33.** (1) The canary's health-log
+  list passes `millis()` to `formatTimestamp`, the same uptime-as-time-of-day
+  rendering F33 part 7 fixed for alerts. (2) The joiner side's
+  `CodeReadyCallback` never fires: the code arrives on `SEND_ACCEPT`, and
+  dispatch reports only `NOTIFY_CODE_READY`. The web UI reads the code from
+  `GET /api/mesh`, so no user sees it today. (3) There is no radio-MAC
+  learning from opera frames, so a changed MAC means a re-pair. (4) Some
+  PIO residual splits remain: both initiators already handed out, a mutual
+  removal, or a lost ACK. A random-loss probe split 3 of 60 runs at 5%
+  frame loss (spec §5.6 states it).
+- [ ] **F50 [code] The display's other join hints still cut on narrow glass.**
+  Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
+  175-219 px at 12 px ("your router may be out of addresses" is 219), so
+  they are cut on the round watch's 142 px band and on the 156/164 px
+  portrait rows. The PhoneJoined hint ("no page? open 192.168.4.1") is
+  182 px under Heirloom on those rows. Carry them through `join_lines()` /
+  `fit_line()` with narrow forms. Also, on the round watch's no-QR path,
+  the title band appears to overlap the top of the bird, inferred from the
+  numbers only. The emulator always renders the QR, so it was not seen.
 ---
 
 ## 2. Apps (desktop Flasher, Lab, iOS, tvOS)

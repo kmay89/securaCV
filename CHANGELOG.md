@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### The Opera mesh can pair and carry frames in code, and no join text is cut on narrow glass (#1718)
+
+- **The PlatformIO Opera mesh's seven known blockers are fixed in code (F33).**
+  Nothing has run on two radios yet; the bench runbook now carries those
+  checks (U1 Tracks C2/C3).
+  - Pairing now makes real X25519 keys in both trees, so the two sides can
+    derive the same code (crypto review — maintainer to confirm).
+  - The radio's peer table is filled.
+  - The frame counter survives a reboot by reserving ahead in NVS, so a
+    rebooted device is not dropped as a replay.
+  - Pairing runs on the main loop.
+  - A removed device is refused for seven days, in both trees. The
+    PlatformIO tree also converges two removals made at once.
+  - The web UI shows an alert's age, not a made-up time of day.
+  - A PlatformIO device can found an opera.
+
+  Found and recorded: canary-wap's own session keys have the same
+  key-type bug, and the two trees still cannot pair with each other (F48).
+- **The display's first-boot join text is never cut to an ellipsis (F45).** On
+  the 172 px nightstand and the 180 px nightlight, the network name and
+  password split onto two rows when they do not fit one. Text is measured
+  with LVGL's own glyph metrics, so the name and key stay readable when
+  the QR code will not scan. The stuck-phone hint gets a row of its own.
+  The other join hints on narrow glass are F50.
+
 ### Every released case's knobs explain themselves, the site stops denying the traffic it uses, and the hero gets its light (#1718, website #203)
 
 - **The released four's Customizer knobs all have help (C10, wave 2).**
