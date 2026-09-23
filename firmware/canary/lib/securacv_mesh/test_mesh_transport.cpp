@@ -236,6 +236,63 @@ void test_recv_from_unknown_drops() {
   std::printf("PASS test_recv_from_unknown_drops\n");
 }
 
+/* F33 part 1: a frame from an unknown MAC goes to the unknown-sender hook;
+ * taken → not a drop (and the sender is NOT made a peer); declined → the
+ * drop is counted as before; the hook is gone after deinit(). */
+std::vector<RecvFrame> g_unknown;
+bool g_take_unknown = true;
+bool record_unknown(const uint8_t* mac, const uint8_t* data, size_t len, int8_t rssi) {
+  RecvFrame f; std::memcpy(f.mac, mac, 6);
+  f.data.assign(data, data + len);
+  f.rssi = rssi;
+  g_unknown.push_back(std::move(f));
+  return g_take_unknown;
+}
+
+void test_unknown_sender_hook() {
+  reset_world();
+  g_unknown.clear();
+  mesh_transport::set_unknown_sender_callback(record_unknown);
+  uint8_t stranger[6] = {0x50, 0, 0, 0, 0, 0xAB};
+  const uint8_t payload[] = {0x00, 0x42};
+
+  g_take_unknown = true;
+  mesh_transport::test::inject_recv(stranger, payload, sizeof(payload), -61);
+  mesh_transport::process();
+  assert(g_unknown.size() == 1 && g_unknown[0].data.size() == 2 && g_unknown[0].rssi == -61);
+  assert(std::memcmp(g_unknown[0].mac, stranger, 6) == 0);
+  assert(g_recvs.empty());                         /* not the peer callback */
+  assert(!mesh_transport::has_peer(stranger));     /* never auto-registered */
+  mesh_transport::Stats s;
+  assert(mesh_transport::get_stats(&s));
+  assert(s.recv_dropped_no_peer == 0);
+  assert(s.bytes_received == 2);
+
+  g_take_unknown = false;
+  mesh_transport::test::inject_recv(stranger, payload, sizeof(payload), -61);
+  mesh_transport::process();
+  assert(g_unknown.size() == 2);
+  assert(mesh_transport::get_stats(&s) && s.recv_dropped_no_peer == 1);
+
+  /* A known peer never reaches the hook. */
+  uint8_t known[6] = {0x50, 0, 0, 0, 0, 0xAC};
+  assert(mesh_transport::add_peer(known));
+  mesh_transport::test::inject_recv(known, payload, sizeof(payload), -40);
+  mesh_transport::process();
+  assert(g_unknown.size() == 2 && g_recvs.size() == 1);
+
+  /* deinit() uninstalls it. */
+  mesh_transport::deinit();
+  assert(mesh_transport::init(mesh_transport::Config::defaults()));
+  assert(mesh_transport::start());
+  g_take_unknown = true;
+  mesh_transport::test::inject_recv(stranger, payload, sizeof(payload), -61);
+  mesh_transport::process();
+  assert(g_unknown.size() == 2);
+  assert(mesh_transport::get_stats(&s) && s.recv_dropped_no_peer == 1);
+  std::printf("PASS test_unknown_sender_hook\n");
+}
+
 void test_peer_aging_active_stale_offline() {
   reset_world();
   uint8_t a[6] = {0x60, 0, 0, 0, 0, 0x01};
@@ -322,6 +379,7 @@ int main() {
   test_broadcast_hits_each_peer();
   test_recv_updates_peer_and_invokes_callback();
   test_recv_from_unknown_drops();
+  test_unknown_sender_hook();
   test_peer_aging_active_stale_offline();
   test_recv_restores_active_from_stale();
   test_list_peers_snapshot();

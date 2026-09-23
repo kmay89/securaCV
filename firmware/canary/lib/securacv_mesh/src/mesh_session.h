@@ -185,6 +185,13 @@ uint32_t            pairing_confirmation_code();
  * loop) — same task the PairedCallback fires from. */
 bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]);
 
+/* The pairing partner's radio MAC (F33 part 1), from AWAITING_CONFIRM on,
+ * like get_paired_peer_pubkey(). The integration layer persists it from its
+ * PairedCallback (mesh_state::save_peer_mac) so the next boot can bind it;
+ * the session binds it for this boot itself (bind_peer_mac, right after the
+ * callback returns, once the callback has registered the peer). */
+bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * MAIN LOOP
  *
@@ -360,6 +367,41 @@ constexpr size_t MAX_REPLAY_COUNTERS    = MAX_TRUSTED_PEERS + MAX_COUNTER_TOMBST
 bool   register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
 void   clear_trusted_peers();
 size_t trusted_peer_count();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * RADIO ADDRESSES — the transport peer table on the device (F33 part 1)
+ *
+ * mesh_transport delivers only frames from MACs in its table and
+ * broadcast() sends only to them; before F33 nothing but the host tests
+ * filled it, so on a device every frame dropped as recv_dropped_no_peer and
+ * every broadcast reached nobody. The session now keeps it in step with the
+ * trusted peers:
+ *   • bind_peer_mac(fp, mac) — a trusted peer's radio MAC goes into the
+ *     transport table and is remembered with the peer (it replaces an older
+ *     address of the same peer). Called at boot for every persisted
+ *     (fingerprint, MAC) pair (main.cpp, mesh_state peer_macs) and by the
+ *     session itself when a pairing completes. Refused for an untrusted
+ *     fingerprint, a broadcast/group/zero MAC, a MAC another peer holds, or
+ *     a full transport table.
+ *   • While a pairing runs, the partner's MAC — not a peer yet — is added
+ *     for the unicast replies, and pairing frames from an unknown MAC reach
+ *     the pairing state machine through the transport's unknown-sender hook
+ *     (nothing else from an unknown MAC does). A pairing that ends without a
+ *     new member takes the address out again.
+ *   • A peer that is dropped — a verified LEAVE, unregister, a removal or a
+ *     rotation that forgets it, clear_trusted_peers() — leaves the transport
+ *     table with it.
+ * online_peer_count(): trusted peers whose verified-frame MAC (PeerLink
+ * mac_known, below) is in the transport table in the ACTIVE window — a
+ * peer bound at boot that has not been heard this boot is NOT online, even
+ * though its fresh transport entry starts ACTIVE. GET /api/mesh uses it.
+ * Threading: bind_peer_mac is main-loop only (it mutates both tables);
+ * online_peer_count only reads, like get_peer_links().
+ * ────────────────────────────────────────────────────────────────────────── */
+
+bool   bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
+                     const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
+size_t online_peer_count();
 
 /* Drop ONE trusted peer by fingerprint (empties its slot and MAC binding;
  * its replay counter becomes a tombstone). Returns true iff an entry was

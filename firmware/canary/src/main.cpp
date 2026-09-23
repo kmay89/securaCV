@@ -501,6 +501,18 @@ static void register_paired_peer() {
   if (mesh_session::get_paired_peer_pubkey(peer_pub)) {
     const bool peer_save_ok = mesh_state::save_trusted_peer(peer_pub);
     const bool peer_set_ok  = mesh_session::register_trusted_peer(peer_pub);
+    /* Its radio address (F33 part 1): the session binds it into the
+     * transport table for this boot once this callback returns; persist it
+     * so the next boot can bind it too (FE-gated, like the pubkey). */
+    uint8_t peer_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+    if (mesh_session::get_paired_peer_mac(peer_mac)) {
+      uint8_t peer_fp[mesh_crypto::FINGERPRINT_LEN];
+      mesh_crypto::compute_fingerprint(peer_pub, peer_fp);
+      if (!mesh_state::save_peer_mac(peer_fp, peer_mac)) {
+        Serial.println("[WARN] Peer radio MAC not persisted — after a reboot "
+                       "this peer is not heard until it pairs again");
+      }
+    }
     if (peer_save_ok && peer_set_ok) {
       Serial.println("[OK] Peer pubkey persisted + registered for RX");
     } else if (peer_set_ok && !peer_save_ok) {
@@ -1129,6 +1141,24 @@ void setup() {
         if (peers_count > 0) {
           Serial.printf("[OK] Registered %u/%u trusted peer pubkeys from NVS\n",
                         (unsigned)registered, (unsigned)peers_count);
+        }
+      }
+      /* Put the trusted peers' radio MACs back into the transport table
+       * (F33 part 1) — without them mesh_transport drops every frame they
+       * send (recv_dropped_no_peer) and broadcast() reaches nobody. An
+       * entry whose fingerprint is not a registered peer binds nothing. */
+      {
+        mesh_state::PeerMac macs[mesh_state::MAX_TRUSTED_PEERS];
+        size_t n_macs = 0;
+        if (mesh_state::load_peer_macs(macs, mesh_state::MAX_TRUSTED_PEERS, &n_macs)) {
+          size_t bound = 0;
+          for (size_t i = 0; i < n_macs; ++i) {
+            if (mesh_session::bind_peer_mac(macs[i].fingerprint, macs[i].mac)) ++bound;
+          }
+          if (n_macs > 0) {
+            Serial.printf("[OK] Bound %u/%u peer radio MACs from NVS\n",
+                          (unsigned)bound, (unsigned)n_macs);
+          }
         }
       }
       /* Wipe the local buffer — pubkeys aren't secret per se but a

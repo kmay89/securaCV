@@ -5068,7 +5068,10 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // below are the transport table's real numbers once a peer has spoken
 // this boot. A peer that has not yet sent a verified frame reports
 // OFFLINE/never — best-effort by design, documented in
-// spec/canary_mesh_network_v0.md §8.
+// spec/canary_mesh_network_v0.md §8. (The table itself is filled by
+// mesh_session from each peer's persisted radio MAC — F33 part 1 — so a
+// peer's entry exists from boot; the verified-frame MAC is what says it
+// has actually been heard.)
 // ════════════════════════════════════════════════════════════════════════════
 
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
@@ -5077,20 +5080,6 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 // here to the end of this file, naming one is a compile error. Reach them
 // through mesh_call() / mesh_session::submit_request().
 #pragma GCC poison leave_opera set_opera_name set_enabled clear_alerts remove_peer
-
-// Number of online peers from the live transport table (peers seen within
-// the transport's ACTIVE window). Used for the status state mapping.
-static size_t mesh_count_online_peers() {
-  mesh_transport::Peer peers[16];
-  const size_t n = mesh_transport::list_peers(peers, sizeof(peers) / sizeof(peers[0]));
-  size_t online = 0;
-  for (size_t i = 0; i < n; ++i) {
-    if (peers[i].in_use && peers[i].state == mesh_transport::PeerState::ACTIVE) {
-      ++online;
-    }
-  }
-  return online;
-}
 
 static esp_err_t handle_mesh_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
@@ -5107,7 +5096,11 @@ static esp_err_t handle_mesh_status(httpd_req_t* req) {
 
   const mesh_pairing::State pstate = mesh_session::pairing_state();
   const size_t peers_total  = mesh_session::trusted_peer_count();
-  const size_t peers_online = mesh_count_online_peers();
+  // Trusted peers heard this boot (verified frame) whose transport entry is
+  // in the ACTIVE window. Not the raw transport table any more: since F33
+  // the table holds every bound peer from boot, fresh entries start ACTIVE,
+  // and a peer that has said nothing is not online.
+  const size_t peers_online = mesh_session::online_peer_count();
 
   // alerts_received: verified TAMPER_ALERT frames from any peer this boot
   // (F10/F11 — counted only after signature + opera_id + replay checks).

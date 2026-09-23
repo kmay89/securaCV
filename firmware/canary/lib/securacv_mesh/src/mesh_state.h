@@ -21,6 +21,10 @@
  *   • elected_hub   — the last hub election result, so the fleet resumes
  *                     its role split without a fresh election.
  *
+ *   • peer_macs     — each trusted peer's radio MAC (F33 part 1), so a
+ *                     reboot can put the peers back into mesh_transport's
+ *                     table; without it the transport drops their frames.
+ *
  * NVS layout (mirrors the existing canary "securacv" namespace used by
  * ble_scout_key, device_id, mic_muted, etc.):
  *
@@ -30,6 +34,7 @@
  *       trusted_peers  — blob (peer table)
  *       replay_ctrs    — blob (per-peer counters)
  *       elected_hub    — blob (election result)
+ *       peer_macs      — blob (fingerprint → radio MAC; F33, FE-gated)
  *       opera_name     — string, <= 32 bytes (F10; flash-encryption gated
  *                        like the four above)
  *       mesh_enabled   — 1 byte (F10; NOT gated: a preference, not a
@@ -182,10 +187,74 @@ bool load_trusted_peers(uint8_t* out_pubkeys,
                         size_t*  out_count);
 
 /* Erase the persisted trusted-peer list. Used on factory reset and
- * "un-pair all" UI. Idempotent — succeeds if the list was empty.
+ * "un-pair all" UI. Idempotent — succeeds if the list was empty. Also
+ * erases "peer_macs" (below), best effort: an address with no peer is
+ * meaningless, and the return value reports the pubkey list only.
  *
  * On the host build, always returns true (no-op success). */
 bool clear_trusted_peers();
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * TRUSTED-PEER RADIO ADDRESSES  (F33 part 1)
+ *
+ * mesh_transport accepts frames only from MACs in its peer table, and a
+ * pubkey says nothing about the address a peer transmits from, so the
+ * integration layer stores each trusted peer's radio MAC — learned when the
+ * pairing completes (mesh_session::get_paired_peer_mac) — and re-binds it
+ * at boot (mesh_session::bind_peer_mac). NVS key "peer_macs": up to
+ * MAX_TRUSTED_PEERS entries of fingerprint (8 B) || MAC (6 B), 14 B each,
+ * one entry per fingerprint. FE-gated like "trusted_peers": which radios a
+ * device trusts is household-graph metadata of the same class.
+ *
+ *   save_peer_mac()   — insert, or replace that fingerprint's address.
+ *                       False on null, FE off, a full table with a new
+ *                       fingerprint, or an NVS failure.
+ *   load_peer_macs()  — every stored entry; true with count 0 when none.
+ *                       False on null, cap < MAX_TRUSTED_PEERS, FE off, a
+ *                       read failure or a malformed blob.
+ *   remove_peer_mac() — drop one fingerprint's entry; true when it is gone
+ *                       afterwards (idempotent). remove_trusted_peer() calls
+ *                       it for the removed pubkey's fingerprint.
+ *   clear_peer_macs() — erase the key; idempotent.
+ * Host build: save/remove/clear → true, load → true with count 0.
+ *
+ * The blob edits are the pure peer_mac_blob:: helpers, host-tested
+ * (test_mesh_state).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr size_t PEER_MAC_LEN        = 6;
+constexpr size_t PEER_MAC_ENTRY_LEN  = mesh_crypto::FINGERPRINT_LEN + PEER_MAC_LEN;   /* 14 */
+constexpr size_t PEER_MACS_BLOB_MAX  = MAX_TRUSTED_PEERS * PEER_MAC_ENTRY_LEN;        /* 112 */
+
+struct PeerMac {
+  uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN];
+  uint8_t mac[PEER_MAC_LEN];
+};
+
+bool save_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+                   const uint8_t mac[PEER_MAC_LEN]);
+bool load_peer_macs(PeerMac* out, size_t out_cap, size_t* out_count);
+bool remove_peer_mac(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]);
+bool clear_peer_macs();
+
+namespace peer_mac_blob {
+/* A stored blob is well formed iff its length is a whole number of
+ * entries, at most PEER_MACS_BLOB_MAX. */
+bool valid_len(size_t len);
+/* Insert fingerprint → mac, or replace that fingerprint's MAC, in
+ * blob[0 .. *len) (capacity PEER_MACS_BLOB_MAX); *len is updated. False —
+ * blob untouched — on a malformed *len or a full blob with a new
+ * fingerprint. */
+bool upsert(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN],
+            const uint8_t mac[PEER_MAC_LEN]);
+/* Drop that fingerprint's entry, keeping the others in order. Returns true
+ * when an entry was dropped; *len is updated. */
+bool remove(uint8_t* blob, size_t* len,
+            const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]);
+/* Decode into out[] (cap entries); false on a malformed len. */
+bool decode(const uint8_t* blob, size_t len, PeerMac* out, size_t cap, size_t* count);
+}  /* namespace peer_mac_blob */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * REPLAY COUNTERS — per-peer last_counter persistence
@@ -267,7 +336,8 @@ bool clear_elected_hub();
  * present in the first place (idempotent). Returns false on a null
  * pointer, FE disabled, or an NVS read/write failure (a malformed blob
  * is a read failure: refuse rather than clobber). On the host build,
- * always returns true (no-op success).
+ * always returns true (no-op success). Also drops the peer's "peer_macs"
+ * entry (F33), best effort — the return value is the pubkey's.
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);

@@ -93,8 +93,24 @@ struct TrustedPeer {
    * in dispatch_verified, i.e. only after signature + opera_id + replay
    * checks — the same trust argument as the MAC binding above. */
   uint32_t alerts_received;
+  /* The address this peer is registered under in mesh_transport's table
+   * (F33 part 1): learned at pairing, restored at boot through
+   * bind_peer_mac(). Without it the transport drops every frame the peer
+   * sends (recv_dropped_no_peer) and broadcast() never reaches it. Taken
+   * out of the table whenever the peer is dropped (drop_trusted_slot). */
+  uint8_t  radio_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+  bool     radio_mac_set;
 };
 static TrustedPeer s_trusted_peers[MAX_TRUSTED_PEERS];
+
+/* The pairing partner's address, while a pairing runs (F33 part 1). A
+ * joiner is not a peer yet, so its frames reach the session through the
+ * transport's unknown-sender hook, and the unicast replies need its MAC in
+ * the transport table: s_pair_contact_added records that THIS module put it
+ * there, so a pairing that ends without a new member takes it out again.
+ * On PAIRED the new trusted peer takes the address over (bind_peer_mac). */
+static uint8_t s_pair_contact_mac[mesh_transport::MESH_TRANSPORT_MAC_LEN];
+static bool    s_pair_contact_added = false;
 
 /* Replay tombstones (review fix). A peer that leaves or is removed used to
  * take its last_counter with it; re-registering the same device into the
@@ -199,6 +215,11 @@ static inline MsgType pairing_msg_to_session(mesh_pairing::MsgType m) {
   return static_cast<MsgType>(static_cast<uint8_t>(m));
 }
 
+/* Pairing-contact bookkeeping (F33 part 1), defined with the trusted-peer
+ * table below. */
+static void ensure_pair_contact(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
+static void end_pair_contact(bool paired);
+
 /* Map mesh_pairing::Action to a session-frame outgoing MsgType. Returns
  * (out_msg_type, dest_mac, payload, len) by reference; caller decides
  * unicast vs broadcast based on the Action::type. */
@@ -243,6 +264,9 @@ static void dispatch_action(const mesh_pairing::Action& a) {
        * by mesh_transport::init). */
       mesh_transport::send_raw(a.peer_mac, frame, frame_len);
     } else {
+      /* A unicast needs the destination in the transport table; the
+       * pairing partner is not a peer yet (F33 part 1). */
+      ensure_pair_contact(a.peer_mac);
       mesh_transport::send_to_peer(a.peer_mac, frame, frame_len);
     }
   }
@@ -269,9 +293,13 @@ static void dispatch_action(const mesh_pairing::Action& a) {
        * layer was responsible for persisting it. secure_zero (volatile +
        * asm barrier) so the compiler can't elide this. */
       secure_zero(opera_secret, sizeof(opera_secret));
+      /* The callback registered the new member: it takes the pairing
+       * partner's address over as its radio MAC. */
+      end_pair_contact(/*paired=*/true);
       break;
     }
     case mesh_pairing::ActionType::NOTIFY_FAILED:
+      end_pair_contact(/*paired=*/false);
       if (s_failed_cb) s_failed_cb();
       break;
     default:
@@ -335,11 +363,63 @@ static bool tombstone_put(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN],
   return true;
 }
 
-/* Drop a trusted-peer slot, keeping its replay counter as a tombstone. The
+/* Drop a trusted-peer slot, keeping its replay counter as a tombstone and
+ * taking its radio MAC out of the transport table (F33 part 1: a peer that
+ * left, was removed or was rotated out stops being sent to and heard). The
  * one place a slot is emptied outside deinit(). */
 static void drop_trusted_slot(TrustedPeer* p) {
   tombstone_put(p->sender_fp, p->last_counter);
+  if (p->radio_mac_set) mesh_transport::remove_peer(p->radio_mac);
   memset(p, 0, sizeof(*p));
+}
+
+static bool mac_is_unicast(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
+  uint8_t all_and = 0xFF, all_or = 0;
+  for (size_t i = 0; i < mesh_transport::MESH_TRANSPORT_MAC_LEN; ++i) {
+    all_and &= mac[i];
+    all_or  |= mac[i];
+  }
+  /* Neither FF:FF:FF:FF:FF:FF nor 00:00:00:00:00:00, and not a group
+   * address (the I/G bit of the first octet). */
+  return all_and != 0xFF && all_or != 0 && (mac[0] & 0x01) == 0;
+}
+
+static TrustedPeer* find_peer_by_radio_mac(
+    const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    if (s_trusted_peers[i].in_use && s_trusted_peers[i].radio_mac_set &&
+        memcmp(s_trusted_peers[i].radio_mac, mac,
+               mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
+      return &s_trusted_peers[i];
+    }
+  }
+  return nullptr;
+}
+
+static void ensure_pair_contact(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
+  if (mac == nullptr || !mac_is_unicast(mac)) return;
+  if (mesh_transport::has_peer(mac)) return;          /* already reachable */
+  if (s_pair_contact_added) return;                   /* one partner per pairing */
+  if (!mesh_transport::add_peer(mac)) return;         /* table full: the send fails */
+  memcpy(s_pair_contact_mac, mac, sizeof(s_pair_contact_mac));
+  s_pair_contact_added = true;
+}
+
+static void end_pair_contact(bool paired) {
+  if (paired) {
+    /* Bind the new member to the address it paired from — when the
+     * PairedCallback registered it (a full table does not). */
+    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+    mesh_crypto::compute_fingerprint(s_ctx.peer_pubkey, fp);
+    if (find_trusted_peer(fp) != nullptr) {
+      bind_peer_mac(fp, s_ctx.peer_mac);   /* clears s_pair_contact_added on a match */
+    }
+  }
+  if (s_pair_contact_added && find_peer_by_radio_mac(s_pair_contact_mac) == nullptr) {
+    mesh_transport::remove_peer(s_pair_contact_mac);
+  }
+  s_pair_contact_added = false;
+  memset(s_pair_contact_mac, 0, sizeof(s_pair_contact_mac));
 }
 
 /* True while a pairing exchange is between start_* and a terminal state.
@@ -647,6 +727,22 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   dispatch_verified(*peer, hdr, payload, payload_len);
 }
 
+/* A PAIR_* frame (type byte 0..4) into the pairing state machine. */
+static void handle_pair_frame(const uint8_t mac[6],
+                              const uint8_t* data, size_t len) {
+  const mesh_pairing::MsgType pair_type =
+      static_cast<mesh_pairing::MsgType>(data[0]);
+  const uint8_t* payload     = data + MSGTYPE_HEADER_LEN;
+  const size_t   payload_len = len  - MSGTYPE_HEADER_LEN;
+  /* now_ms isn't readily available in this callback context, but
+   * mesh_pairing::receive uses it only for the tamper-path nothing-
+   * else, so 0 is acceptable. The tick() path supplies a real now_ms
+   * for timeout enforcement. */
+  mesh_pairing::Action a = mesh_pairing::receive(s_ctx, mac, pair_type,
+                                                  payload, payload_len, 0);
+  dispatch_action(a);
+}
+
 /* mesh_transport recv callback. Decodes the 1-byte MsgType envelope
  * and routes to either the pairing state machine (type_byte <= 4) or
  * the opera-authenticated dispatch (type_byte >= 16). */
@@ -658,17 +754,7 @@ static void on_transport_recv(const uint8_t mac[6],
 
   /* PAIR_* (0..4) — pre-membership pairing traffic, no envelope. */
   if (type_byte <= static_cast<uint8_t>(MsgType::PAIR_COMPLETE)) {
-    const mesh_pairing::MsgType pair_type =
-        static_cast<mesh_pairing::MsgType>(type_byte);
-    const uint8_t* payload     = data + MSGTYPE_HEADER_LEN;
-    const size_t   payload_len = len  - MSGTYPE_HEADER_LEN;
-    /* now_ms isn't readily available in this callback context, but
-     * mesh_pairing::receive uses it only for the tamper-path nothing-
-     * else, so 0 is acceptable. The tick() path supplies a real now_ms
-     * for timeout enforcement. */
-    mesh_pairing::Action a = mesh_pairing::receive(s_ctx, mac, pair_type,
-                                                    payload, payload_len, 0);
-    dispatch_action(a);
+    handle_pair_frame(mac, data, len);
     return;
   }
 
@@ -678,6 +764,22 @@ static void on_transport_recv(const uint8_t mac[6],
   /* >=16 — opera-authenticated traffic. PR 5c-4 routes it here; the
    * peer table + signature verify + replay check happen inside. */
   on_opera_frame(mac, data, len);
+}
+
+/* mesh_transport unknown-sender hook (F33 part 1): a frame from a MAC that
+ * is not in the transport table. Only a pairing frame, and only while a
+ * pairing runs, is taken — the partner of a pairing is not a peer yet, and
+ * the state machine checks roles, MACs, the confirmation hash and the AEAD
+ * itself. Everything else stays a recv_dropped_no_peer: an opera frame must
+ * come from a bound radio MAC. */
+static bool on_transport_unknown(const uint8_t mac[6],
+                                 const uint8_t* data, size_t len,
+                                 int8_t /*rssi*/) {
+  if (!s_running || data == nullptr || len < MSGTYPE_HEADER_LEN) return false;
+  if (data[0] > static_cast<uint8_t>(MsgType::PAIR_COMPLETE)) return false;
+  if (!pairing_in_progress()) return false;
+  handle_pair_frame(mac, data, len);
+  return true;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -693,6 +795,7 @@ bool init(const uint8_t device_pubkey [mesh_crypto::PUBKEY_LEN],
   memcpy(s_device_priv, device_privkey, mesh_crypto::PRIVKEY_LEN);
   mesh_pairing::context_init(s_ctx);
   mesh_transport::set_recv_callback(&on_transport_recv);
+  mesh_transport::set_unknown_sender_callback(&on_transport_unknown);
   s_initialized = true;
   return true;
 }
@@ -700,7 +803,10 @@ bool init(const uint8_t device_pubkey [mesh_crypto::PUBKEY_LEN],
 void deinit() {
   if (!s_initialized) return;
   mesh_transport::set_recv_callback(nullptr);
+  mesh_transport::set_unknown_sender_callback(nullptr);
   mesh_pairing::context_init(s_ctx);   /* wipes ephem/session/secret */
+  s_pair_contact_added = false;
+  memset(s_pair_contact_mac, 0, sizeof(s_pair_contact_mac));
   secure_zero(s_device_priv, sizeof(s_device_priv));
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
@@ -781,10 +887,22 @@ void set_code_ready_callback(CodeReadyCallback  cb) { s_code_ready_cb = cb; }
  * PAIRING ENTRY POINTS
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* A finished pairing (PAIRED or FAILED, its notification delivered) goes
+ * back to IDLE before a new one starts. mesh_pairing only starts from IDLE
+ * and nothing else ever reset s_ctx, so before F33 the FIRST pairing a
+ * device ran — success, cancel or timeout — was the last one until a
+ * reboot (pair/start and pair/join answered pair_*_failed). */
+static void recycle_finished_pairing() {
+  const bool terminal = s_ctx.state == mesh_pairing::State::PAIRED ||
+                        s_ctx.state == mesh_pairing::State::FAILED;
+  if (terminal && !s_ctx.pending_notify_paired) mesh_pairing::context_init(s_ctx);
+}
+
 bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRET_LEN],
                              const char*   opera_name,
                              uint32_t      now_ms) {
   if (!s_running) return false;
+  recycle_finished_pairing();
   mesh_pairing::Action a =
       mesh_pairing::start_initiator(s_ctx, s_device_pub, s_device_priv,
                                     opera_secret, opera_name, now_ms);
@@ -800,6 +918,7 @@ bool start_pairing_initiator(const uint8_t opera_secret[mesh_crypto::OPERA_SECRE
 
 bool start_pairing_joiner(uint32_t now_ms) {
   if (!s_running) return false;
+  recycle_finished_pairing();
   mesh_pairing::Action a =
       mesh_pairing::start_joiner(s_ctx, s_device_pub, s_device_priv, now_ms);
   if (a.type == mesh_pairing::ActionType::NONE) return false;
@@ -823,6 +942,20 @@ void cancel_pairing() {
 
 mesh_pairing::State pairing_state()        { return s_ctx.state; }
 uint32_t            pairing_confirmation_code() { return s_ctx.confirmation_code; }
+
+bool get_paired_peer_mac(uint8_t out[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
+  if (out == nullptr) return false;
+  switch (s_ctx.state) {
+    case mesh_pairing::State::AWAITING_CONFIRM:
+    case mesh_pairing::State::AWAITING_CONFIRM_PEER:
+    case mesh_pairing::State::AWAITING_COMPLETE:
+    case mesh_pairing::State::PAIRED:
+      memcpy(out, s_ctx.peer_mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
+      return true;
+    default:
+      return false;
+  }
+}
 
 bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]) {
   if (out == nullptr) return false;
@@ -1088,6 +1221,49 @@ size_t get_peer_links(PeerLink* out, size_t cap) {
     ++n;
   }
   return n;
+}
+
+bool bind_peer_mac(const uint8_t fp [mesh_crypto::FINGERPRINT_LEN],
+                   const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]) {
+  if (fp == nullptr || mac == nullptr || !mac_is_unicast(mac)) return false;
+  TrustedPeer* p = find_trusted_peer(fp);
+  if (p == nullptr) return false;
+  /* One address speaks for one fingerprint. */
+  const TrustedPeer* holder = find_peer_by_radio_mac(mac);
+  if (holder != nullptr && holder != p) return false;
+  if (p->radio_mac_set &&
+      memcmp(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
+    mesh_transport::remove_peer(p->radio_mac);   /* its old address */
+    p->radio_mac_set = false;
+  }
+  if (!mesh_transport::has_peer(mac) && !mesh_transport::add_peer(mac)) return false;
+  memcpy(p->radio_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN);
+  p->radio_mac_set = true;
+  /* The pairing partner's address now belongs to the member. */
+  if (s_pair_contact_added &&
+      memcmp(s_pair_contact_mac, mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
+    s_pair_contact_added = false;
+  }
+  return true;
+}
+
+size_t online_peer_count() {
+  mesh_transport::Peer live[mesh_transport::MESH_TRANSPORT_MAX_PEERS];
+  const size_t n_live = mesh_transport::list_peers(
+      live, mesh_transport::MESH_TRANSPORT_MAX_PEERS);
+  size_t online = 0;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    const TrustedPeer& p = s_trusted_peers[i];
+    if (!p.in_use || !p.mac_known) continue;   /* not heard from this boot */
+    for (size_t t = 0; t < n_live; ++t) {
+      if (live[t].in_use && live[t].state == mesh_transport::PeerState::ACTIVE &&
+          memcmp(live[t].mac, p.mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
+        ++online;
+        break;
+      }
+    }
+  }
+  return online;
 }
 
 bool restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],

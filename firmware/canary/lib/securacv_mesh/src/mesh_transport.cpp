@@ -10,8 +10,10 @@
  *   • Receive: ESP-NOW recv callback (WiFi task) deposits into a small
  *     SPSC ring. The main loop's process() drains the ring, invokes
  *     the user-registered callback, and updates the peer's last_seen +
- *     RSSI. Frames from unknown senders are dropped (NOT registered as
- *     peers — pairing is a separate concern handled in PR 2b).
+ *     RSSI. A frame from an unknown sender goes to the unknown-sender
+ *     hook, if one is installed and takes it (mesh_session: pairing
+ *     frames while a pairing runs); otherwise it is dropped and counted.
+ *     It is never registered as a peer here.
  *   • Aging: every process() tick walks the peer table and transitions
  *     ACTIVE → STALE (after PEER_STALE_AFTER_MS) → OFFLINE (after
  *     PEER_OFFLINE_AFTER_MS). The state-change callback fires on each
@@ -63,8 +65,9 @@ static Config s_cfg = Config::defaults();
 
 static Peer   s_peers[MESH_TRANSPORT_MAX_PEERS];
 
-static RecvCallback      s_recv_cb = nullptr;
-static PeerStateCallback s_peer_state_cb = nullptr;
+static RecvCallback          s_recv_cb = nullptr;
+static UnknownSenderCallback s_unknown_cb = nullptr;
+static PeerStateCallback     s_peer_state_cb = nullptr;
 
 /* Cumulative counters. */
 static std::atomic<uint32_t> s_bytes_sent{0};
@@ -342,6 +345,7 @@ void deinit() {
   /* Do NOT call esp_now_deinit() — csi_probe may still be using it. */
 #endif
   s_recv_cb = nullptr;
+  s_unknown_cb = nullptr;
   s_peer_state_cb = nullptr;
   s_initialized = false;
 }
@@ -509,6 +513,7 @@ size_t broadcast(const uint8_t* data, size_t len) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 void set_recv_callback(RecvCallback cb) { s_recv_cb = cb; }
+void set_unknown_sender_callback(UnknownSenderCallback cb) { s_unknown_cb = cb; }
 void set_peer_state_callback(PeerStateCallback cb) { s_peer_state_cb = cb; }
 
 static void drain_ring() {
@@ -527,9 +532,13 @@ static void drain_ring() {
       if (s_recv_cb) {
         s_recv_cb(slot->mac, slot->data, slot->len, slot->rssi_dbm);
       }
+    } else if (s_unknown_cb != nullptr &&
+               s_unknown_cb(slot->mac, slot->data, slot->len, slot->rssi_dbm)) {
+      /* Taken by the unknown-sender hook: pre-membership pairing traffic
+       * (mesh_session). Not a peer, so no last_seen/state to update. */
+      s_bytes_received.fetch_add((uint32_t)slot->len, std::memory_order_relaxed);
     } else {
-      /* Frame from an unknown sender. PR 2b's pairing layer registers
-       * peers; raw transport just counts the drop. */
+      /* Frame from an unknown sender nobody takes: count the drop. */
       s_recv_dropped_no_peer.fetch_add(1, std::memory_order_relaxed);
     }
     /* Wipe slot before advancing tail so a producer wrap doesn't leak

@@ -699,8 +699,28 @@ opera_id and replay checks all passed, so the MAC provably spoke for the
 fingerprint at that instant), and the handler joins that MAC into the
 transport table's liveness. A trusted peer that has not sent a verified
 frame this boot — or whose MAC has aged out of the transport table —
-reports the OFFLINE/never defaults; the binding refreshes on the peer's
-next verified frame, so an address change heals itself.
+reports the OFFLINE/never defaults, and `peers_online` in `GET /api/mesh`
+counts only peers heard this boot (v0.3, F33).
+
+**The transport peer table (v0.3, F33 part 1).** The ESP-NOW transport
+delivers frames only from MACs in its peer table and `broadcast()` sends only
+to them; before F33 nothing on a device filled it (only host tests did), so
+every inbound frame was dropped as `recv_dropped_no_peer` and every
+broadcast — pairing replies, alerts, leave, rekey — reached nobody.
+`mesh_session` now keeps it in step with the trusted peers: each peer's
+radio MAC is learned when a pairing completes (the address the partner
+paired from), persisted in NVS `peer_macs` (§12.3) and bound again at boot;
+while a pairing runs, the partner's MAC is added for the unicast replies
+and pairing frames from a MAC not in the table reach the pairing state
+machine (nothing else from an unknown MAC does); a peer dropped by a
+verified `LEAVE_OPERA`, a removal or a rotation leaves the table with it,
+and a pairing that ends without a new member removes the partner's MAC
+again. There is no address learning from opera frames: a peer whose radio
+MAC changes (a replaced board is a new key anyway) is heard again once it
+re-pairs. A finished pairing (paired, canceled or timed out) no longer
+blocks the next one — until F33 the first pairing a device ran was its last
+until a reboot. Host-tested (`test_mesh_session`, `test_mesh_transport`,
+`test_mesh_state`); not yet run on two radios (U1 Track C2).
 
 **Add-on → device bridge:** the Home Assistant "Add another Canary" wizard
 (`privacy_witness_kernel/serve_wizard.py` + `wizard/index.html`) forwards
@@ -816,7 +836,8 @@ The PlatformIO tree (`mesh_state.cpp`, NVS namespace `securacv`) stores:
 `replay_ctrs` (up to 16 × (8 B fingerprint + 8 B counter): the trusted
 peers' counters and — v0.3 — the tombstones of dropped peers, §4.2),
 `elected_hub` (8 B) and — v0.3 —
-`opera_name` (up to 32 B), all behind the flash-encryption gate (§5.5), plus
+`opera_name` (up to 32 B) and `peer_macs` (up to 8 × (8 B fingerprint +
+6 B radio MAC), F33), all behind the flash-encryption gate (§5.5), plus
 `mesh_enabled` (1 B), which is **not** gated: it is a preference, and gating
 it would make "off" silently revert to "on" at every reboot of an FE-off
 board. The `opera_id` is not stored; it is derived from the secret at boot.
