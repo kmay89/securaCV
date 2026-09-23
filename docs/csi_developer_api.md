@@ -242,6 +242,12 @@ open; falls back to declared defaults for unset keys.
 maintainer to confirm): the POSIX rule the device applies, and the IANA name
 it was mapped from when it came from one. Both are `""` while no zone is set,
 and then the device keeps **UTC**, exactly as before the setting existed.
+Once a zone is set, three things that used to run on UTC follow household
+time instead: the CSI day offset (`time_bucket` and quiet hours), the
+30-day Chirp self-test's waking-hours gate (it only sounds between 06:00
+and 22:00), and **Chirp night mode** (22:00 to 06:00, when templates not
+allowed at night are refused with `night_restricted` and `GET /api/chirp`
+reports `night_mode: true`).
 
 ### `POST /api/settings`
 
