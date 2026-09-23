@@ -199,4 +199,45 @@ final class WallTimelineTests: XCTestCase {
         XCTAssertTrue(range.contains("10:30"), range)
         XCTAssertTrue(range.contains(" – "), "a start and an end, always: \(range)")
     }
+
+    func testTheDetailsStripPrintsTheSealedBucketNotTheCell() throws {
+        // Asia/Kathmandu is UTC+5:45, so this TV's day starts off the sealed
+        // ten-minute grid: the bucket sealed at 04:05 local lands in the
+        // 04:00 cell. The strip must print 4:05 – 4:15, the window the
+        // record holds — never the cell's 4:00 – 4:10, which it never sealed.
+        let kathmandu = try XCTUnwrap(TimeZone(identifier: "Asia/Kathmandu"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = kathmandu
+        let sealed = TimelineRecord(t0: 1_700_000_400, size: 600, kind: .event,
+                                    label: "Contact state change", family: .touch)
+        let days = WallTimeline.days(for: [sealed], profile: .home, calendar: calendar)
+        let selection = try XCTUnwrap(WallTimeline.initialSelection(days))
+        XCTAssertEqual(selection.cell, 24, "04:05 local sits in the 04:00 cell of this TV's grid")
+
+        let rows = WallTimeline.records(at: selection, in: days, from: [sealed],
+                                        bucketSeconds: 600, calendar: calendar)
+        let buckets = WallTimeline.sealedBuckets(rows, fallbackSeconds: 600)
+        XCTAssertEqual(buckets.map(\.start), [1_700_000_400])
+        XCTAssertEqual(buckets.map(\.seconds), [600])
+        let printed = WallTimeline.bucketRange(start: buckets[0].start, seconds: buckets[0].seconds,
+                                               timeZone: kathmandu, locale: Locale(identifier: "en_US_POSIX"))
+        XCTAssertTrue(printed.contains("4:05"), printed)
+        XCTAssertTrue(printed.contains("4:15"), printed)
+        XCTAssertFalse(printed.contains("4:00"), "the cell's start is not a time the record sealed: \(printed)")
+    }
+
+    func testACellHoldingTwoSealedBucketsPrintsBoth() {
+        // A cell can hold more than one sealed bucket (a 25-hour day clamps
+        // its last hour into one cell; a tail can mix bucket sizes). Each
+        // record is headed by its own range, oldest first — never merged
+        // into one window the record did not seal.
+        let a = TimelineRecord(t0: 1_700_000_400, size: 600, kind: .event, label: "A", family: .touch)
+        let b = TimelineRecord(t0: 1_700_000_400, size: 600, kind: .event, label: "B", family: .touch)
+        let c = TimelineRecord(t0: 1_700_000_100, size: 300, kind: .event, label: "C", family: .touch)
+        let buckets = WallTimeline.sealedBuckets([a, b, c], fallbackSeconds: 600)
+        XCTAssertEqual(buckets.map(\.start), [1_700_000_100, 1_700_000_400])
+        XCTAssertEqual(buckets.map(\.seconds), [300, 600])
+        XCTAssertEqual(buckets.map { $0.records.map(\.label) }, [["C"], ["A", "B"]])
+        XCTAssertTrue(WallTimeline.sealedBuckets([], fallbackSeconds: 600).isEmpty)
+    }
 }

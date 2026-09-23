@@ -115,6 +115,35 @@ enum WallTimeline {
         }
     }
 
+    /// One bucket the kernel SEALED, and the selected records sealed in it.
+    struct SealedBucket: Equatable, Sendable {
+        let start: Int
+        let seconds: Int
+        var records: [TimelineRecord]
+    }
+
+    /// The details strip's headings: the selected records grouped by the
+    /// bucket each was sealed on — its own `t0` and `size` — oldest first.
+    /// A cell is not a sealed bucket: the grid cuts this TV's day at LOCAL
+    /// midnight into `bucketSeconds` slices, which lines up with the sealed
+    /// grid only when the TV's UTC offset is a multiple of the bucket (not
+    /// in +5:45 with ten-minute buckets, not in +5:30 with hour buckets) and
+    /// the day is 24 hours long (a 25-hour day clamps its last hour into
+    /// one cell). So what the strip prints is always the record's own
+    /// range, and a cell holding two sealed buckets prints both.
+    static func sealedBuckets(_ rows: [TimelineRecord], fallbackSeconds: Int) -> [SealedBucket] {
+        var buckets: [SealedBucket] = []
+        for record in rows {
+            let seconds = record.size > 0 ? record.size : fallbackSeconds
+            if let at = buckets.firstIndex(where: { $0.start == record.t0 && $0.seconds == seconds }) {
+                buckets[at].records.append(record)
+            } else {
+                buckets.append(SealedBucket(start: record.t0, seconds: seconds, records: [record]))
+            }
+        }
+        return buckets.sorted { ($0.start, $0.seconds) < ($1.start, $1.seconds) }
+    }
+
     /// The bucket as a range in this TV's clock — a bucket IS a range, and
     /// the Wall prints it as one.
     static func bucketRange(start: Int, seconds: Int,
@@ -260,22 +289,26 @@ struct WallTimelineView: View {
         return sentence
     }
 
+    /// The selected cell's details, headed by the range each record was
+    /// SEALED on (WallTimeline.sealedBuckets) — never the cell's own start,
+    /// which is this TV's grid and not a time the record holds.
     private func details(_ selected: WallTimeline.Selection, days: [TimelineDay]) -> some View {
-        let bucket = bucketSeconds
-        let start = days[selected.day].dayT0 + selected.cell * bucket
         let rows = WallTimeline.records(at: selected, in: days, from: records,
-                                        bucketSeconds: bucket, calendar: calendar)
+                                        bucketSeconds: bucketSeconds, calendar: calendar)
+        let sealed = WallTimeline.sealedBuckets(rows, fallbackSeconds: bucketSeconds)
         return VStack(alignment: .leading, spacing: 6) {
-            Text(WallTimeline.bucketRange(start: start, seconds: bucket))
-                .font(.headline)
-            if rows.isEmpty {
+            if sealed.isEmpty {
                 Text("Nothing sealed in this bucket.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, record in
-                    Text(WallTimeline.line(for: record))
-                        .font(.callout)
+                ForEach(Array(sealed.enumerated()), id: \.offset) { _, bucket in
+                    Text(WallTimeline.bucketRange(start: bucket.start, seconds: bucket.seconds))
+                        .font(.headline)
+                    ForEach(Array(bucket.records.enumerated()), id: \.offset) { _, record in
+                        Text(WallTimeline.line(for: record))
+                            .font(.callout)
+                    }
                 }
             }
         }
