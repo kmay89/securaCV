@@ -744,7 +744,7 @@ so — see D2 below.)
   advert cannot win the window (it needs the advert payload passed into
   `ble_scout_on_advert()`, which today takes only MAC, RSSI and time). The
   WAP carries the same pairing module and could adopt the route after.
-- [ ] **F37 [code] Canary SD event log + reconnect backfill (F29 follow-up,
+- [x] **F37 [code] Canary SD event log + reconnect backfill (F29 follow-up,
   "F29b" in #1704's commits).** F29 chose persistence option (a): a
   committed event outlives a broker outage only as far as the 12-slot
   offline queue holds it. Port canary-wap's SD event log and its
@@ -753,6 +753,32 @@ so — see D2 below.)
   rule, then replay from the card once the broker returns
   (`firmware/canary/CONSOLIDATION.md` gap row 16). Bench (U1): an outage
   longer than the queue.
+  *Done (#1718):* with a card in, the canary logs every committed csi_event
+  to `/EVENTS/today.ndjson` in the canary-wap's line format. Both trees now
+  marshal and parse it through one header,
+  `common/csi/src/csi_event_log_line.h`, which also refuses torn and glued
+  lines. Once the broker returns and the offline queue has drained, the
+  canary replays what the broker has not seen, in id order and a bounded
+  amount per loop pass. The rules are the pure
+  `common/csi/src/csi_event_backfill.h`, host-tested against a model of Home
+  Assistant's replay gate:
+  - no id at or below the highest one already handed over is sent;
+  - a new row never overtakes an older one waiting on the card;
+  - the watermark survives reboots as an NVS ceiling capped at the
+    allocator's floor;
+  - queued tamper alerts go first, and the tamper bridge publishes at
+    commit.
+
+  The card is touched only from the loop task, and only while storage
+  reports it mounted with no mount in flight. A log is used only when
+  `/EVENTS/owner` names this device's witness key, and the canary-wap now
+  leaves such a card alone in turn. The failed-read give-up counts
+  consecutive failures, and a whole line resets it. No broker, or a changed
+  broker, drops the backlog. `firmware/scripts/check_event_egress_order.py`
+  (33 self-test mutations) holds the firmware glue to what the host test
+  models. Compile beyond the 2.0.17 syntax harness is CI's. Bench (U1): the
+  F37 rows in `hardware_verification_checklist.md`. Found here and recorded
+  as F46 and F47.
 - [x] **F41 [code] canary-wap's MQTT health does not carry its tamper
   state.** `csi_mqtt::publish_health()` sends heap, uptime and the battery;
   `enclosure_open` and `sd_mounted` reach only the HTTP `/api/health`
@@ -819,6 +845,32 @@ so — see D2 below.)
   rectangular glass the way round glass already is (network name on one
   line, password or hint on the next) when the joined line is wider than
   its row, through the same `onboard_layout.h` stack and its host test.
+- [ ] **F46 [code] The CSI bundler's event ids live outside the chokepoint
+  id space.** Found by F37 (#1718). Rows that pass through the CSI bundler
+  (presence, and the system.integrity tampers, since they carry a state)
+  take ids from `common/csi/src/csi_bundler.cpp`'s own space, 0x80000000
+  upward. No floor covers that space, it restarts every boot, and it
+  commits in bundle-close order. Home Assistant's replay gate therefore
+  already refuses many canary events live: the chokepoint ids after any
+  bundle, and every bundle id after a reboot until the new boot passes the
+  old ids. F29's "no reused ids" holds only for chokepoint ids. The backfill
+  mirrors the gate and skips those rows rather than send ids it would
+  refuse, so F37 does little across reboots until there is one id space.
+  Also, the first bundled row handed over moves `csi.evsent` and the
+  watermark into the bundler's space for good, so on that device the
+  backfill never sends a chokepoint-id row again
+  (`test_one_bundled_row_moves_the_watermark_for_good` pins today's
+  behavior). Recommended: allocate bundle ids from the chokepoint allocator
+  at commit time, in both trees and the open-row display. The fix must
+  reset or migrate `csi.evsent` and Home Assistant's stored mark.
+- [ ] **F47 [code] canary-wap's backfill watermark lives in RAM.** Found by
+  F37 (#1718). Its first reconnect after every boot replays up to 64 ids
+  Home Assistant refuses. It could adopt the canary's
+  `common/csi/src/csi_event_backfill.h` (NVS ceiling, id-floor cap). A
+  smaller one found in the same review: when an unbuildable row is the
+  last whole line before a power cut's torn tail, the canary's walk stays
+  pending and re-reads the fragment about once per loop pass until the next
+  committed row seals it. Nothing is lost, and the next row goes out.
 ---
 
 ## 2. Apps (desktop Flasher, Lab, iOS, tvOS)

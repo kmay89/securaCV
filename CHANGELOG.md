@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### The canary keeps its events on the SD card and replays them after an outage (#1718)
+
+- **An outage longer than the offline queue no longer loses events (F37).**
+  With a card in, the canary logs every committed event to
+  `/EVENTS/today.ndjson` in the canary-wap's format, now one shared line
+  header for both trees. When the broker comes back and the offline queue
+  has drained, it replays what the broker has not seen, oldest first and a
+  little per loop pass. It never sends an id Home Assistant would refuse,
+  and never lets the backlog delay a tamper alert. The card is touched only
+  from the loop task, and only a card whose owner file names this device is
+  replayed. A canary-wap now leaves a canary's card alone. A guard holds the
+  firmware glue to what the host test models. Bench work (U1) is open.
+  Found on the way and recorded: the CSI bundler's ids live in a separate,
+  per-boot space that Home Assistant's replay gate already refuses (F46),
+  and the canary-wap's own backfill watermark resets every boot (F47).
+
 ### The Lab draws every display case, and the CAD regen order follows what each step reads (#1718, website #203)
 
 - **Every display manifest's case has a Lab home (C13).** The Nightstand C6
