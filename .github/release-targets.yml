@@ -95,6 +95,18 @@ targets:
       - canary-local/devices/flash.json
       - canary-local/devices/hub_image.json
       - canary-local/devices/hatch.json
+      # …and what hub-io bakes in with include_str! (desktop/hub-io/src/
+      # provision.rs): the provisioning bundle the Flasher seeds onto a Pi
+      # hub's card. Without these, a change to the executor, the host runner,
+      # the plan or the Frigate config alone reports the Flasher unchanged,
+      # and the published app keeps seeding the old bytes (RELEASE_LESSONS
+      # 2026-09-23 (c)). test_release_plan.py holds every file a desktop
+      # app's path-linked crates embed, and each such crate, to its watch.
+      - canary-local/devices/hub_seed.json
+      - canary-local/devices/hub_provision_bundle.json
+      - canary-local/tools/hub_seed_apply.py
+      - canary-local/tools/hub_host_provision.sh
+      - homeassistant/frigate/config.yaml
       # …and what the RELEASE bundles: the espflash sidecar's version and
       # sha256 pins, read by desktop-flasher-release.yml. A pin bump changes
       # the flash engine inside the app without touching desktop/, so without
