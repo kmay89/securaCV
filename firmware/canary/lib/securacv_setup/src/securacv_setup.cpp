@@ -16,6 +16,10 @@
 #include "canary_config.h"
 #include "log_level.h"
 #include "securacv_witness.h"
+#include "time/tz_rule.h"   // household time zone table + validator (common/)
+
+#include <stdlib.h>          // setenv / unsetenv
+#include <time.h>            // tzset
 
 namespace setup_wiz {
 
@@ -214,6 +218,70 @@ bool setup_set_device_name(const char* name) {
   }
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM,
              "Device name updated", s_device_name);
+  return true;
+}
+
+/* ── Household time zone (repo sweep F28) ─────────────────────────────── */
+
+static bool tz_read(const char* key, char* out, size_t len) {
+  if (!out || len == 0) return false;
+  out[0] = '\0';
+  Preferences prefs;
+  if (!prefs.begin("securacv", true)) return false;
+  if (prefs.isKey(key)) prefs.getString(key, out, len);
+  prefs.end();
+  return out[0] != '\0';
+}
+
+void setup_apply_tz(void) {
+  char rule[SETUP_TZ_MAX + 1];
+  if (!tz_read("tz", rule, sizeof(rule))) return;   // unset: TZ stays UTC
+  if (!tz_rule::posix_plausible(rule)) return;
+  setenv("TZ", rule, 1);
+  tzset();
+}
+
+bool setup_get_tz(char* out, size_t len) {
+  if (!tz_read("tz", out, len)) return false;
+  if (!tz_rule::posix_plausible(out)) { out[0] = '\0'; return false; }
+  return true;
+}
+
+bool setup_get_tz_iana(char* out, size_t len) {
+  if (!tz_read("tz_iana", out, len)) return false;
+  if (tz_rule::posix_for_iana(out) == nullptr) { out[0] = '\0'; return false; }
+  return true;
+}
+
+int setup_set_tz(const char* posix, const char* iana) {
+  char rule[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  const tz_rule::Resolve r = tz_rule::resolve(posix, iana, rule);
+  if (r != tz_rule::Resolve::OK) return (int)r;
+  Preferences prefs;
+  if (!prefs.begin("securacv", false)) return (int)tz_rule::Resolve::BAD_RULE;
+  prefs.putString("tz", rule);
+  const bool typed = posix && posix[0] != '\0';
+  if (!typed && iana && strlen(iana) <= tz_rule::MAX_IANA_LEN) {
+    prefs.putString("tz_iana", iana);
+  } else if (prefs.isKey("tz_iana")) {
+    prefs.remove("tz_iana");
+  }
+  prefs.end();
+  setenv("TZ", rule, 1);
+  tzset();
+  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Time zone set", rule);
+  return (int)tz_rule::Resolve::OK;
+}
+
+bool setup_clear_tz(void) {
+  Preferences prefs;
+  if (!prefs.begin("securacv", false)) return false;
+  if (prefs.isKey("tz"))      prefs.remove("tz");
+  if (prefs.isKey("tz_iana")) prefs.remove("tz_iana");
+  prefs.end();
+  unsetenv("TZ");
+  tzset();
+  log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Time zone cleared", "UTC");
   return true;
 }
 

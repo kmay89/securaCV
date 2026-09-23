@@ -439,6 +439,15 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
     font: inherit; font-size: 13px;
   }
   .qh-row .qh-arrow { color: var(--fg-mute); }
+  .qh-zone {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    font-size: 12px; color: var(--fg-mute);
+  }
+  .qh-zone button {
+    border: 1px solid var(--hairline); background: var(--bg-veil);
+    color: var(--fg); padding: 3px 8px; border-radius: 6px;
+    font: inherit; font-size: 12px; cursor: pointer;
+  }
   .switch {
     position: relative; width: 44px; height: 26px;
     background: rgba(0,0,0,0.10); border-radius: 13px;
@@ -1128,6 +1137,10 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
           <input type="time" id="qhEnd"   value="07:00" data-tip="quietHoursEnd">
         </span>
       </div>
+      <div class="qh-zone" id="qhZone" hidden>
+        <span id="qhZoneText"></span>
+        <button type="button" id="qhZoneBtn" data-tip="timeZone" hidden>Use this phone's time zone</button>
+      </div>
 
       <details class="tinker">
         <summary>Details</summary>
@@ -1330,6 +1343,7 @@ const COPY = {
     quietHours:      "Hide late-night events from the ribbon. Movement still folds into a gentle nightly summary.",
     quietHoursStart: "When quiet hours begin.",
     quietHoursEnd:   "When quiet hours end.",
+    timeZone:        "Set the canary's clock to the time zone this phone uses, so quiet hours start at your midnight.",
     sensitivity: "Slide right to notice more. Slide left to ignore tiny movements.",
     rawVector:   "For tinkerers. Shows the live numbers behind the scenes.",
     breathAudio: "Play a soft breath sound that follows the rhythm in the room. Off by default.",
@@ -2695,6 +2709,10 @@ setSwitch(petSwitch, window.PET_MODE);
       if (typeof qh.end_min   === 'number')  window.QH_END_MIN   = Number(qh.end_min);
       applyQhUiState();
     }
+    /* Household time zone (F28): "" while the device keeps world time. */
+    if (typeof j.tz === 'string')      window.DEVICE_TZ      = j.tz;
+    if (typeof j.tz_iana === 'string') window.DEVICE_TZ_IANA = j.tz_iana;
+    applyZoneUi();
   } catch {}
 })();
 
@@ -2739,6 +2757,9 @@ const qhSwitch = document.getElementById('qhSwitch');
 const qhTimes  = document.getElementById('qhTimes');
 const qhStart  = document.getElementById('qhStart');
 const qhEnd    = document.getElementById('qhEnd');
+const qhZone     = document.getElementById('qhZone');
+const qhZoneText = document.getElementById('qhZoneText');
+const qhZoneBtn  = document.getElementById('qhZoneBtn');
 
 window.QH_ENABLED   = false;
 window.QH_START_MIN = 23 * 60;
@@ -2771,7 +2792,48 @@ function applyQhUiState() {
   if (qhTimes)  qhTimes.hidden = !window.QH_ENABLED;
   if (qhStart)  qhStart.value = minutesToTimeStr(window.QH_START_MIN);
   if (qhEnd)    qhEnd.value   = minutesToTimeStr(window.QH_END_MIN);
+  applyZoneUi();
 }
+
+/* Household time zone (repo sweep F28). The canary compares quiet hours
+ * against ITS clock, which is world time (UTC) until a zone is set — at
+ * setup from the phone, or here. The zone travels as the phone's own IANA
+ * name; the canary maps it to a rule from its built-in table and says so
+ * when it doesn't know it. */
+window.DEVICE_TZ      = '';
+window.DEVICE_TZ_IANA = '';
+function phoneZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+}
+function applyZoneUi() {
+  if (!qhZone || !qhZoneText || !qhZoneBtn) return;
+  qhZone.hidden = !window.QH_ENABLED;
+  const here = window.DEVICE_TZ_IANA || window.DEVICE_TZ;
+  qhZoneText.textContent = here ? ('Times follow ' + here + '.')
+                                : 'Times follow world time (UTC).';
+  const phone = phoneZone();
+  qhZoneBtn.hidden = !phone || phone === window.DEVICE_TZ_IANA;
+}
+async function usePhoneZone() {
+  const zone = phoneZone();
+  if (!zone) return;
+  try {
+    const r = await cvFetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tz_iana: zone}),
+    });
+    let j = {};
+    try { j = await r.json(); } catch {}
+    if (r.ok && j.ok) {
+      window.DEVICE_TZ_IANA = zone;
+      applyZoneUi();
+    } else if (qhZoneText) {
+      qhZoneText.textContent = "The canary doesn't know " + zone + " yet, so its clock did not change.";
+    }
+  } catch {}
+}
+if (qhZoneBtn) qhZoneBtn.addEventListener('click', usePhoneZone);
 applyQhUiState();
 
 let g_qhTimer = null;

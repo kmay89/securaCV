@@ -232,9 +232,16 @@ open; falls back to declared defaults for unset keys.
   "sensitivity": 50,
   "quiet_hours": { "enabled": false, "start_min": 0, "end_min": 480 },
   "privacy_ceiling": "p0",
-  "filter_foreign": true
+  "filter_foreign": true,
+  "tz": "EST5EDT,M3.2.0,M11.1.0",
+  "tz_iana": "America/New_York"
 }
 ```
+
+`tz` / `tz_iana` are the household time zone (repo sweep F28, option A —
+maintainer to confirm): the POSIX rule the device applies, and the IANA name
+it was mapped from when it came from one. Both are `""` while no zone is set,
+and then the device keeps **UTC**, exactly as before the setting existed.
 
 ### `POST /api/settings`
 
@@ -249,6 +256,8 @@ not the full module-tunable surface):
 | `"preset"` | string | `"sensitive"` / `"balanced"` / `"quiet"`. |
 | `"sensitivity"` | int 0..100 | Slider; ±20 around the preset baseline. |
 | `"quiet_hours"` | object | `{ "enabled": bool, "start_min": int 0..1439, "end_min": int 0..1439 }`. |
+| `"tz"` | string | Household time zone as a POSIX rule (≤ 47 printable characters, e.g. `"CET-1CEST,M3.5.0,M10.5.0/3"`). `""` alone clears the zone (back to UTC). An implausible rule is refused (`400`, `"bad time zone"`) and nothing in the body is written. |
+| `"tz_iana"` | string | The same, as an IANA zone name (`"Europe/Berlin"`), mapped on the device through the fleet's table (`firmware/common/time/tz_rule.h`). A zone the table does not know is refused (`400`, `"unknown zone"`) — never stored, never silently UTC. A typed `"tz"` wins when both are sent. |
 | `"filter_foreign"` | bool | CSI transmitter filter: accept frames only from the router this Canary is associated with (and registered peer Canaries); everything else is counted under `frames_dropped_foreign` on `/api/status` and never buffered. Default on. Off restores every decoded frame on the channel. Applied to the HAL at once and persisted; `/api/status` reports `filter_armed` (the setting is on and the Canary has associated, so the filter is comparing). |
 
 ```bash
@@ -350,7 +359,13 @@ without recompiling. The override is read once per boot.
 ## Quiet Hours gating
 
 The dashboard's Quiet Hours range (NVS keys `qh.en`, `qh.start`, `qh.end`)
-is wired into the chokepoint via `csi_event_set_quiet_window(start_min,
+is collected in the household's local time. The chokepoint compares it
+against the device's own clock, which follows the household time zone once
+one is set (`tz` above — seeded at setup from the phone's zone, which the
+setup wizard sends as `tz_iana` on `/api/wifi/connect`; applied with
+`setenv("TZ")` + `tzset()`, the device has no SNTP) and UTC until then. The
+same zone sets where the 10-minute `time_bucket` day starts. The Quiet
+Hours range is wired into the chokepoint via `csi_event_set_quiet_window(start_min,
 end_min, enabled)`. While the configured window is active, the chokepoint
 suppresses non-anomaly emits and increments an internal hold counter
 instead. At the first emit AFTER the window closes (or when the user
@@ -366,6 +381,17 @@ csi_integration.cpp::register_v1_modules()` (boot-time NVS read) and
 the `/api/settings` POST handler (live re-apply on dashboard change).
 
 ---
+
+## Household time zone on the canary PIO tree
+
+The canary PlatformIO tree has no module-settings surface, so its
+`/api/settings` (both methods, bearer-auth gated) carries only the zone:
+`GET` answers `{ok, tz, tz_iana}` and `POST` takes the same `tz` /
+`tz_iana` keys with the same rules as above (errors `unknown_zone` /
+`bad_time_zone`), answering with the stored values. Its setup page sends
+the phone's zone as `tz_iana` with the join, and the web UI's Settings
+panel has a Time zone card (use this browser's zone, a POSIX rule, or back
+to UTC). Storage: NVS `securacv`/`tz` and `tz_iana`.
 
 ## BLE Scout pairing (canary PIO tree, `[env:full]`)
 

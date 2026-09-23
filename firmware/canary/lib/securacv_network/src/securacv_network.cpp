@@ -922,6 +922,10 @@ static esp_err_t handle_battery_history(httpd_req_t* req);
 static esp_err_t handle_thermal(httpd_req_t* req);
 #endif
 
+// Household time zone (F28): GET/POST /api/settings.
+static esp_err_t handle_settings_get(httpd_req_t* req);
+static esp_err_t handle_settings_post(httpd_req_t* req);
+
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
 // BLE Scout paired beacons + the proximity pairing window (F27).
 static esp_err_t handle_scout_list(httpd_req_t* req);
@@ -969,11 +973,12 @@ bool ScvNetworkManager::startHttpServer() {
   // probes + /setup + the wildcard fallback) + 6 mesh endpoints (PR-8) when
   // the mesh feature is compiled in. Each registered httpd_uri_t needs a
   // slot; register_route() names any that does not get one.
+  // + 2 settings (GET/POST /api/settings — household time zone, F28), always.
   // + 5 BLE Scout pairing endpoints (F27) when FEATURE_BLE_SCAN is compiled in.
   #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-  config.max_uri_handlers = 59;
+  config.max_uri_handlers = 61;
   #else
-  config.max_uri_handlers = 53;
+  config.max_uri_handlers = 55;
   #endif
   #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
   config.max_uri_handlers += 5;
@@ -1184,6 +1189,12 @@ void ScvNetworkManager::registerHttpHandlers() {
   httpd_uri_t thermal_ep = { .uri = "/api/thermal", .method = HTTP_GET, .handler = handle_thermal };
   register_route(m_http_server, &thermal_ep);
   #endif
+
+  // Household time zone (F28). 2 endpoints — see the SETTINGS section below.
+  httpd_uri_t settings_get_ep = { .uri = "/api/settings", .method = HTTP_GET, .handler = handle_settings_get };
+  register_route(m_http_server, &settings_get_ep);
+  httpd_uri_t settings_post_ep = { .uri = "/api/settings", .method = HTTP_POST, .handler = handle_settings_post };
+  register_route(m_http_server, &settings_post_ep);
 
   #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
   // BLE Scout pairing (F27). 5 endpoints — see the SCOUT section below.
@@ -2423,7 +2434,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  char body[256];
+  char body[384];  // ssid + password + tz_iana (F28); 256 left no room for the zone
   int recv = httpd_req_recv(req, body, sizeof(body) - 1);
   if (recv <= 0) {
     return http_send_error(req, 400, "empty_body");
@@ -2441,6 +2452,12 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   if (!ssid || strlen(ssid) == 0) {
     return http_send_error(req, 400, "missing_ssid");
   }
+
+  // Household time zone seed (repo sweep F28): the setup page sends the
+  // phone's own IANA zone. Mapped on the device; an unknown or absent zone
+  // stores nothing and never fails the join.
+  const char* tz_iana = input["tz_iana"] | "";
+  if (tz_iana[0] != '\0') (void)setup_set_tz(nullptr, tz_iana);
 
   ScvNetworkManager& net = network_get_instance();
   WiFiCredentials creds;
@@ -3659,6 +3676,80 @@ static esp_err_t handle_thermal(httpd_req_t* req) {
 }
 
 #endif // FEATURE_THERMAL_WATCHDOG
+
+// ════════════════════════════════════════════════════════════════════════════
+// SETTINGS — household time zone (repo sweep F28, option A)
+//
+//   GET  /api/settings  — {ok, tz, tz_iana}: "" while unset (the Canary keeps UTC)
+//   POST /api/settings  — {tz: "<POSIX rule>"} or {tz_iana: "<IANA zone>"};
+//                         {tz: ""} alone clears the zone (UTC again)
+//
+// Stored and applied by securacv_setup (setenv + tzset, never configTzTime),
+// resolved through the shared table (common/time/tz_rule.h): a typed rule
+// wins, an IANA name maps, an unknown zone or implausible rule is refused by
+// name and stores nothing. The CSI day offset picks the change up on the
+// next loop pass (main.cpp updateCsiClockOffset).
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t send_settings(httpd_req_t* req) {
+  char tz[SETUP_TZ_MAX + 1];
+  char tz_iana[SETUP_TZ_MAX + 1];
+  if (!setup_get_tz(tz, sizeof(tz))) tz[0] = '\0';
+  if (!setup_get_tz_iana(tz_iana, sizeof(tz_iana))) tz_iana[0] = '\0';
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["tz"] = tz;
+  doc["tz_iana"] = tz_iana;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_settings_get(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+  return send_settings(req);
+}
+
+static esp_err_t handle_settings_post(httpd_req_t* req) {
+  if (!rate_limit_check(req, true)) return ESP_OK;
+  if (!auth_gate(req)) return ESP_OK;
+  witness_get_health().http_requests++;
+
+  char body[256];
+  if (req->content_len == 0) return http_send_error(req, 400, "empty_body");
+  if (req->content_len >= sizeof(body)) return http_send_error(req, 413, "body_too_large");
+  size_t total = 0;
+  while (total < req->content_len) {
+    const int r = httpd_req_recv(req, body + total, req->content_len - total);
+    if (r <= 0) return http_send_error(req, 400, "empty_body");
+    total += (size_t)r;
+  }
+  body[total] = '\0';
+
+  JsonDocument input;
+  if (deserializeJson(input, body) != DeserializationError::Ok) {
+    return http_send_error(req, 400, "invalid_json");
+  }
+  const bool has_tz   = input["tz"].is<const char*>();
+  const bool has_iana = input["tz_iana"].is<const char*>();
+  if (!has_tz && !has_iana) return http_send_error(req, 400, "no_recognized_keys");
+  const char* tz      = input["tz"] | "";
+  const char* tz_iana = input["tz_iana"] | "";
+
+  if (has_tz && tz[0] == '\0' && tz_iana[0] == '\0') {
+    if (!setup_clear_tz()) return http_send_error(req, 500, "nvs_unavailable");
+  } else {
+    switch (setup_set_tz(tz, tz_iana)) {
+      case 0:  break;
+      case 3:  return http_send_error(req, 400, "unknown_zone");
+      default: return http_send_error(req, 400, "bad_time_zone");
+    }
+  }
+  return send_settings(req);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // BLE SCOUT PAIRING (repo sweep F27, option B — proximity pairing window)

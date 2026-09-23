@@ -57,6 +57,16 @@ WITSTORE_HDR  = ../common/witness/witness_store.h
 WITSTORE_TEST = ../projects/canary-wap/tests_host/test_witness_store_logic.cpp
 WITSTORE_BIN  = $(BUILD_DIR)/test_witness_store_common
 
+# Household time zone (common/time/tz_rule.h, repo sweep F28): the fleet's one
+# IANA -> POSIX table (lifted from the display's tz_auto.cpp), the rule
+# validator, and the local minute-of-day the CSI clock offset keys on. glibc
+# applies the same POSIX rules newlib does, so the DST vectors are real; the
+# portal-parity case reads the display portal's TZS list (PORTAL_SRC) and holds
+# every zone it names to the same wall clock here. Pure header.
+TZRULE_HDR    = ../common/time/tz_rule.h
+TZRULE_PORTAL = ../projects/canary-display/src/net/provision.cpp
+TZRULE_BIN    = $(BUILD_DIR)/test_tz_rule
+
 # USB onboarding trust model (common/usb/usb_onboard_logic.h): the consent
 # state machine (types only after an announced arm + physical confirm), the
 # help-URL builder/sanitizer, and the keystroke-plan allow-list that makes the
@@ -351,6 +361,9 @@ $(WITCHAIN_BIN): test_witness_chain_core.cpp $(WITCHAIN_HDR) Makefile | $(BUILD_
 $(WITSTORE_BIN): $(WITSTORE_TEST) $(WITSTORE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common/witness $(WITSTORE_TEST) -lcrypto -o $@
 
+$(TZRULE_BIN): test_tz_rule.cpp $(TZRULE_HDR) $(TZRULE_PORTAL) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common '-DPORTAL_SRC="$(TZRULE_PORTAL)"' test_tz_rule.cpp -o $@
+
 $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_usb_onboard_logic.cpp -o $@
 
@@ -440,12 +453,13 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(MQTTQUEUE_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISPROF_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
 	./$(WITCHAIN_BIN)
 	./$(WITSTORE_BIN)
+	./$(TZRULE_BIN)
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)

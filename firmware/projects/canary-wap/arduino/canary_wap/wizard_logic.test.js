@@ -106,3 +106,26 @@ describe('capabilityNotice', () => {
     assert.equal(L.capabilityNotice(false, true, true).show, false);
   });
 });
+
+describe('connectBody (household time zone seed, repo sweep F28)', () => {
+  it('carries the phone zone as tz_iana beside the credentials', () => {
+    const b = L.connectBody('Home', 'pw', 'a'.repeat(64), 'America/New_York');
+    assert.deepEqual(Object.keys(b).sort(), ['password', 'ssid', 'token', 'tz_iana']);
+    assert.equal(b.tz_iana, 'America/New_York');
+    assert.equal(b.ssid, 'Home');
+    assert.equal(b.password, 'pw');
+  });
+  it('accepts the table shapes: three-part names, UTC, Etc/UTC', () => {
+    for (const z of ['America/Argentina/Buenos_Aires', 'UTC', 'Etc/UTC', 'Europe/Kyiv']) {
+      assert.equal(L.connectBody('s', '', 't', z).tz_iana, z, z);
+    }
+  });
+  it('leaves the zone out when the browser could not tell, or sent something odd — the join never depends on it', () => {
+    for (const z of ['', undefined, null, 42, 'America/New York', '../etc', 'Europe/"x"',
+                     'a'.repeat(48), '/Europe', 'Europe/']) {
+      const b = L.connectBody('Home', 'pw', 't', z);
+      assert.ok(!('tz_iana' in b), JSON.stringify(z));
+      assert.deepEqual(Object.keys(b).sort(), ['password', 'ssid', 'token']);
+    }
+  });
+});

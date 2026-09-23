@@ -128,6 +128,7 @@
 #include "health_log.h"
 #include "sd_storage.h"
 #include "gnss_time.h"  // NMEA UTC date/time -> validated Unix epoch (GPS-derived system clock)
+#include "tz_rule.h"    // household time zone: local minute-of-day for the CSI offset (F28)
 #include "csi_event.h"  // csi_event_set_clock_offset_minutes — wall-clock bucket alignment
 #include "nvs_store.h"
 #include "api_auth.h"
@@ -1141,15 +1142,17 @@ static bool note_wall_clock(uint32_t unix_s);
 // the wall clock. The chokepoint coarsens timestamps into 10-minute day
 // buckets from monotonic uptime plus this offset; without it the "day"
 // started at boot, not midnight, so buckets and quiet hours were
-// session-relative. Derived from UTC — the device has no timezone setting
-// (repo sweep F28), so bucket 0 is UTC midnight, not the household's.
-// Recomputed on every pass with a set clock: cheap, keeps the offset
-// drift-corrected alongside the clock itself, and stays aligned across
-// millis() rollover because the offset and csi_event's own millis()-based
-// consumer wrap together. Loop task only — the offset is loop-owned
-// (csi_event.h).
+// session-relative. Derived from LOCAL wall time: the household time zone
+// (repo sweep F28 — csi_integration::set_timezone, seeded at provisioning)
+// when one is set, so bucket 0 and the quiet-hours window the dashboard
+// collects in local time are the household's midnight; UTC, exactly as
+// before, while none is. Recomputed on every pass with a set clock: cheap,
+// keeps the offset drift-corrected alongside the clock itself, carries DST
+// and zone changes without a flag, and stays aligned across millis()
+// rollover because the offset and csi_event's own millis()-based consumer
+// wrap together. Loop task only — the offset is loop-owned (csi_event.h).
 static void update_csi_clock_offset(time_t wall_now) {
-  const int32_t wall_min = (int32_t)((wall_now % 86400) / 60);
+  const int32_t wall_min = tz_rule::local_minute_of_day(wall_now);
   const int32_t mono_min = (int32_t)(millis() / 60000UL);
   csi_event_set_clock_offset_minutes(wall_min - mono_min);
 }
@@ -6169,8 +6172,10 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   g_health.http_requests++;
   setup_wizard::touch();
 
-  // Read body (sized for ssid + password + token + optional device_name)
-  char content[384] = {0};
+  // Read body (sized for ssid + password + token + optional device_name +
+  // optional tz_iana — a maximal escaped password and SSID alone approach
+  // the old 384, so the zone got its own headroom rather than a squeeze).
+  char content[512] = {0};
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
 
   if (ret <= 0) {
@@ -6245,6 +6250,17 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     if (probe[0] && setup_wizard::set_device_name(device_name)) {
       generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
     }
+  }
+
+  // Household time zone seed (repo sweep F28): the setup wizard sends the
+  // phone's own IANA zone (Intl.DateTimeFormat) — one hop over the setup
+  // network, no lookup service. Mapped on the device through the shared
+  // table and stored; an unknown or absent zone stores nothing and NEVER
+  // fails the join (a wrong clock is better than no network), and it never
+  // overwrites a zone that is already set by an unknown guess.
+  const char* tz_iana = body["tz_iana"] | "";
+  if (tz_iana[0] != '\0' && strlen(tz_iana) <= tz_rule::MAX_IANA_LEN) {
+    (void)csi_integration::set_timezone(nullptr, tz_iana);
   }
 
   // Save credentials
@@ -10942,6 +10958,11 @@ void setup() {
   Serial.printf("[OK] Power policy: %s\n", power_policy::mode_name(power_policy::get_mode()));
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Power policy initialized", nullptr);
   #endif
+
+  // Household time zone (repo sweep F28): apply the stored POSIX rule before
+  // the first clock sync, so the CSI day offset and the waking-hours gate read
+  // local time from the first pass. Nothing stored = TZ unset = UTC.
+  csi_integration::apply_timezone_from_nvs();
 
   // ════════════════════════════════════════════════════════════════════════════
   // PHASE 4: GNSS — Initialize serial, probe only if not in safe mode

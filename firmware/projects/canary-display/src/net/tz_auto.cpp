@@ -21,61 +21,17 @@
 #include "canary/net/tz_auto.h"
 #include "canary/net/wifi_mgr.h"
 #include "canary/log.h"
+#include "time/tz_rule.h"  // the shared IANA -> POSIX table (common/)
 
 namespace canary::net {
 
 namespace {
 
-// IANA zone -> full POSIX rule, DST transitions included. Covers the
-// zones a home display realistically lands in; anything else falls back
-// to the service's fixed offset (right today, no DST flips). Flash-
-// resident string pairs — ~1.5 KB.
-struct ZoneRule { const char* iana; const char* posix; };
-const ZoneRule ZONES[] = {
-    {"America/New_York",    "EST5EDT,M3.2.0,M11.1.0"},
-    {"America/Toronto",     "EST5EDT,M3.2.0,M11.1.0"},
-    {"America/Detroit",     "EST5EDT,M3.2.0,M11.1.0"},
-    {"America/Chicago",     "CST6CDT,M3.2.0,M11.1.0"},
-    {"America/Winnipeg",    "CST6CDT,M3.2.0,M11.1.0"},
-    {"America/Mexico_City", "CST6"},
-    {"America/Denver",      "MST7MDT,M3.2.0,M11.1.0"},
-    {"America/Edmonton",    "MST7MDT,M3.2.0,M11.1.0"},
-    {"America/Phoenix",     "MST7"},
-    {"America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"},
-    {"America/Vancouver",   "PST8PDT,M3.2.0,M11.1.0"},
-    {"America/Anchorage",   "AKST9AKDT,M3.2.0,M11.1.0"},
-    {"Pacific/Honolulu",    "HST10"},
-    {"America/Sao_Paulo",   "<-03>3"},
-    {"America/Argentina/Buenos_Aires", "<-03>3"},
-    {"America/Bogota",      "<-05>5"},
-    {"Europe/London",       "GMT0BST,M3.5.0/1,M10.5.0"},
-    {"Europe/Dublin",       "GMT0IST,M3.5.0/1,M10.5.0"},
-    {"Europe/Lisbon",       "WET0WEST,M3.5.0/1,M10.5.0"},
-    {"Europe/Paris",        "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Berlin",       "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Madrid",       "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Rome",         "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Amsterdam",    "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Brussels",     "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Stockholm",    "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Warsaw",       "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"Europe/Athens",       "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-    {"Europe/Helsinki",     "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-    {"Europe/Kyiv",         "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-    {"Europe/Moscow",       "MSK-3"},
-    {"Asia/Dubai",          "<+04>-4"},
-    {"Asia/Kolkata",        "IST-5:30"},
-    {"Asia/Shanghai",       "CST-8"},
-    {"Asia/Hong_Kong",      "HKT-8"},
-    {"Asia/Singapore",      "<+08>-8"},
-    {"Asia/Tokyo",          "JST-9"},
-    {"Asia/Seoul",          "KST-9"},
-    {"Australia/Perth",     "AWST-8"},
-    {"Australia/Brisbane",  "AEST-10"},
-    {"Australia/Sydney",    "AEST-10AEDT,M10.1.0,M4.1.0/3"},
-    {"Australia/Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
-    {"Pacific/Auckland",    "NZST-12NZDT,M9.5.0,M4.1.0/3"},
-};
+// IANA zone -> full POSIX rule, DST transitions included: the fleet's one
+// table, common/time/tz_rule.h (repo sweep F28 lifted it out of this file so
+// the canary and canary-wap seed their household zone from the same rules).
+// Anything it does not know falls back to the service's fixed offset (right
+// today, no DST flips).
 
 bool s_learned = false;
 bool s_gave_up = false;
@@ -107,9 +63,7 @@ bool json_int(const String& body, const char* key, long* out) {
 }
 
 const char* zone_to_posix(const char* iana) {
-  for (const auto& z : ZONES)
-    if (strcmp(z.iana, iana) == 0) return z.posix;
-  return nullptr;
+  return tz_rule::posix_for_iana(iana);
 }
 
 // POSIX fixed-offset string from seconds east of UTC. POSIX inverts the

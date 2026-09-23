@@ -2372,6 +2372,30 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Household time zone (repo sweep F28). The Canary's day — its
+           10-minute buckets and quiet hours — follows this zone; world time
+           (UTC) until one is set. Set at setup from the phone; changed here. -->
+      <div class="card" id="tzCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Time zone</div>
+            <div class="card-subtitle" id="tzNow">--</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary" id="tzUseBrowser" onclick="tzUseBrowser()">Use this browser's time zone</button>
+          <button class="btn btn-ghost" onclick="tzSet({tz: ''})">Back to world time (UTC)</button>
+        </div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label" for="tzRule">Or a POSIX rule (advanced)</label>
+          <div style="display:flex;gap:0.5rem;">
+            <input type="text" class="form-input" id="tzRule" maxlength="47" placeholder="EST5EDT,M3.2.0,M11.1.0" style="flex:1;">
+            <button class="btn btn-secondary" onclick="tzSetRule()">Set</button>
+          </div>
+        </div>
+        <div class="card-subtitle" id="tzMsg" style="margin-top:0.5rem;"></div>
+      </div>
+
       <!-- Software Update Card (signed pull-OTA; hidden on builds without it) -->
       <div class="card" id="otaCard" style="display:none;">
         <div class="card-header">
@@ -2751,7 +2775,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
       else if (panel === 'sensing') { refreshSensing(); refreshThermal(); refreshScout(); }
       else if (panel === 'status') refreshLiveSensing();
-      else if (panel === 'settings') refreshOtaStatus();
+      else if (panel === 'settings') { refreshOtaStatus(); loadTz(); }
 
       // Stop OTA status polling when leaving settings (refreshOtaStatus
       // restarts it if an install is still running next time we look)
@@ -3706,6 +3730,47 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       setT('thwThrMin', h.throttled_min || 0);
       setT('thwPauses', h.pause_events || 0);
       setT('thwSensor', d.sensor_ok ? 'OK' : 'FAULT');
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Household time zone — /api/settings (repo sweep F28)
+    // ════════════════════════════════════════════════════════════════
+    function browserZone() {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; }
+    }
+    function tzShow(d) {
+      const here = d.tz_iana || d.tz;
+      document.getElementById('tzNow').textContent = here
+        ? 'Days and quiet hours follow ' + here + '.'
+        : 'Days and quiet hours follow world time (UTC). No time zone is set.';
+      const z = browserZone();
+      const btn = document.getElementById('tzUseBrowser');
+      btn.style.display = (!z || z === d.tz_iana) ? 'none' : '';
+      btn.textContent = 'Use ' + z;
+    }
+    async function loadTz() {
+      const card = document.getElementById('tzCard');
+      if (!card) return;
+      const d = await api('/api/settings');
+      if (!d || d.ok !== true) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      tzShow(d);
+    }
+    async function tzSet(body) {
+      const msg = document.getElementById('tzMsg');
+      const d = await api('/api/settings', 'POST', body);
+      if (d && d.ok === true) { tzShow(d); msg.textContent = 'Saved. The next reading uses it.'; return; }
+      const why = { unknown_zone: 'This Canary does not know that zone yet. Enter its POSIX rule instead.',
+                    bad_time_zone: 'That does not look like a POSIX time zone rule.' };
+      msg.textContent = why[d && d.error] || ('Could not save: ' + ((d && d.error) || 'unknown'));
+    }
+    function tzUseBrowser() {
+      const z = browserZone();
+      if (z) tzSet({ tz_iana: z });
+    }
+    function tzSetRule() {
+      const v = document.getElementById('tzRule').value.trim();
+      if (v) tzSet({ tz: v });
     }
 
     // ════════════════════════════════════════════════════════════════

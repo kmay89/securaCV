@@ -774,7 +774,22 @@ const WizardLogic = (function () {
     return { action: 'fail', isTokenErr: isTokenErr };
   }
 
-  return { isPairToken, connectOutcome, capabilityNotice };
+  // The /api/wifi/connect body. The phone's own IANA zone rides along as
+  // tz_iana (repo sweep F28) so the canary's quiet hours start at the
+  // household's midnight: one hop over the setup network, mapped on the
+  // device, no lookup service. Sent only when it looks like a zone name —
+  // an empty, odd or oversize value is left out, and the join never depends
+  // on it.
+  function connectBody(ssid, password, token, tzIana) {
+    const body = { ssid: ssid, password: password, token: token };
+    if (typeof tzIana === 'string' && tzIana.length > 0 && tzIana.length <= 47 &&
+        /^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+)*$/.test(tzIana)) {
+      body.tz_iana = tzIana;
+    }
+    return body;
+  }
+
+  return { isPairToken, connectOutcome, capabilityNotice, connectBody };
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
 /* WIZARD_LOGIC:END */
@@ -1162,10 +1177,12 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     }
     setStep(4);
     showProgress('Sending credentials to your Canary.');
+    let phoneZone = '';
+    try { phoneZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
     const postConnect = () => fetch('/api/wifi/connect', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ssid: pickedSsid, password: pw, token: token }),
+      body: JSON.stringify(WizardLogic.connectBody(pickedSsid, pw, token, phoneZone)),
     });
     try {
       let r = await postConnect();
