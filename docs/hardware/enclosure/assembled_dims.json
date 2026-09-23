@@ -21,7 +21,11 @@
    "seams_fig_d": [
     6.0,
     9.0
-   ]
+   ],
+   "face_fig_mm": {
+    "w": 101.3,
+    "h": 61.2
+   }
   },
   "device.canary-display-watch": {
    "scad": "canary_watch_station.scad",
@@ -41,7 +45,11 @@
    },
    "seams_fig_d": [
     21.0
-   ]
+   ],
+   "face_fig_mm": {
+    "w": 39.4,
+    "h": 39.4
+   }
   },
   "device.canary-sense": {
    "scad": "canary_sense_enclosure.scad",

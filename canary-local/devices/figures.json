@@ -869,11 +869,10 @@
    "traced_to": [],
    "drift_guard": {
     "plan_tol_mm": 0.75,
-    "depth_tol_mm": 4,
-    "height_tol_mm": 2.5
+    "depth_tol_mm": 4
    },
    "solids": 5,
-   "rev": "d2ef7976",
+   "rev": "f344cfc8",
    "svg": "canary-local/figures/device.canary-display-dash.svg",
    "glyph": "canary-local/figures/device.canary-display-dash.glyph.svg"
   },
@@ -1063,8 +1062,7 @@
    "traced_to": [],
    "drift_guard": {
     "plan_tol_mm": 0.75,
-    "depth_tol_mm": 4,
-    "height_tol_mm": 2.5
+    "depth_tol_mm": 4
    },
    "solids": 4,
    "rev": "c673b27b",

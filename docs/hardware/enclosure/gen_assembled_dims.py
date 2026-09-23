@@ -140,6 +140,9 @@ DEVICES = {
         "body": "union() { drum(); translate([0, 0, drum_h]) bezel(); }",
         # visible bands from the back cap out: drum to its rim, bezel face beyond
         "seams": "[drum_h]",
+        # the face aperture the glass shows through, centered on the drum axis
+        # (bezel() cuts it as cylinder(d = bez_ap_d) at the origin)
+        "face": "[bez_ap_d, bez_ap_d]",
         "placement": ("bezel() seated frame: face underside on the drum rim, bezel at z = drum_h "
                       "(the nubs' own datum, drum_z = drum_h + bezel_z)"),
     },
@@ -169,6 +172,11 @@ DEVICES = {
         # there — the pad band, then the back plate, then the frame out to
         # the face
         "seams": "[cr_pad_h(), cr_pad_h() + back_t]",
+        # the view window the bezel lip frames (view_l/view_w = panel less
+        # 2 * bez_lip), cut as rrect2d(view_l, view_w) at the frame's origin;
+        # the outline and its four corner lobes are symmetric about the same
+        # origin, so the window is centered on the envelope
+        "face": "[view_l, view_w]",
         "placement": ("total_t = frame_h + back_t: back as modeled (dock pads on its wall face), "
                       "frame turned face-out with its rim on the back's inner face"),
     },
@@ -177,19 +185,31 @@ DEVICES = {
 
 def measure(fig_id, spec):
     # The shared probe (scad_probe.py): include the case beside the case files,
-    # apply the overrides after it, draw the union, echo the seams — and refuse
-    # a dirty render rather than measure it.
+    # apply the overrides after it, draw the union, echo the seams (and the
+    # face aperture, where the row names one) — and refuse a dirty render
+    # rather than measure it.
+    face_echo = "\necho(\"FACE\", {face});".format(face=spec["face"]) if "face" in spec else ""
     try:
         res = scad_probe.probe(
             f"assembled_{fig_id}", spec["scad"], spec["overrides"],
-            "{body}\necho(\"SEAMS\", {seams});".format(body=spec["body"], seams=spec["seams"]),
+            "{body}\necho(\"SEAMS\", {seams});{face}".format(
+                body=spec["body"], seams=spec["seams"], face=face_echo),
             root=HERE,
         )
         seams = scad_probe.echo_numbers(res, "SEAMS", fig_id)
+        face = scad_probe.echo_numbers(res, "FACE", fig_id) if "face" in spec else None
     except scad_probe.ProbeError as e:
         sys.exit(f"gen_assembled_dims: {e}")
+    if face is not None and len(face) != 2:
+        sys.exit(f"gen_assembled_dims: {fig_id} face must echo [w, h], got {face}")
     x, y, z = res.bbox
     # scad frame -> figure frame (the massing's 'scad-wall'): w = x, h = y, d = z
+    extra = {}
+    if face is not None:
+        # the aperture on the outer face (scad x, y -> figure w, h), centered
+        # on the envelope: what the massing draws the glass in, so a panel
+        # or bezel-lip edit moves the drawn window as well as the outline
+        extra["face_fig_mm"] = {"w": face[0], "h": face[1]}
     return {
         "scad": spec["scad"],
         "overrides": {k: v.strip('"') for k, v in spec["overrides"].items()},
@@ -200,7 +220,20 @@ def measure(fig_id, spec):
         # case's own datums: the massing draws each part's VISIBLE band
         # between consecutive seams, so the drawn stack nests as built
         "seams_fig_d": seams,
+        **extra,
     }
+
+
+def face_moved(fresh, got) -> bool:
+    """True unless the committed face aperture is the measured one (to TOL) —
+    or both are absent. A committed value this cannot read as a number is
+    never "equal"."""
+    if fresh is None or got is None:
+        return (fresh is None) != (got is None)
+    if not isinstance(got, dict) or set(got) != {"w", "h"}:
+        return True
+    return any(not isinstance(got[k], (int, float)) or isinstance(got[k], bool)
+               or not abs(fresh[k] - got[k]) <= TOL for k in ("w", "h"))
 
 
 def build():
@@ -254,6 +287,14 @@ def main():
             # overrides) must match what this generator would write, so the
             # committed file can never describe a different assembly than the
             # one measured.
+            # The face aperture is consumed the same way (the massing draws
+            # the glass in it) — present exactly where the row names one.
+            fresh_face, got_face = spec.get("face_fig_mm"), got.get("face_fig_mm")
+            if face_moved(fresh_face, got_face):
+                sys.exit(
+                    f"gen_assembled_dims: {fig_id} face: measured {fresh_face} vs committed "
+                    f"{got_face} — the face aperture moved; regenerate and re-run gen_figures.mjs"
+                )
             for key in ("scad", "overrides", "placement", "fig"):
                 if spec[key] != got.get(key):
                     sys.exit(

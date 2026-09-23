@@ -163,11 +163,57 @@ test("a CAD-measured in-development figure is its assembled_dims row, and stays 
     assert.deepStrictEqual(f.traced_to, [], `${f.id} traces to no committed STL`);
     assert.deepStrictEqual(f.evidence.committed_stls, [], `${f.id} has nothing printable committed`);
     assert.ok(f.drift_guard, `${f.id} went through the drift guard against the measurement`);
-    assert.notStrictEqual(f.confidence, "shipping", `${f.id} cannot ship on a render alone`);
+    // One case drawn at the measured height: nothing is centered, so it
+    // gets the plan tolerance, not the multi-part massing's banded one.
+    assert.strictEqual(f.drift_guard.height_tol_mm, undefined,
+      `${f.id} is one case, so its height is held to the plan tolerance`);
+    // The ladder on this evidence: nothing printable is committed, so it is
+    // prototype — unless the catalog RELEASES a variant, which by the
+    // ladder's own definition ("released in the catalog; one of the three
+    // proofs still missing") legitimately makes it confirmed. Never shipping.
+    const released = f.evidence.catalog_variants.some((v) => v.status === "released");
+    assert.strictEqual(f.confidence, released ? "confirmed" : "prototype",
+      `${f.id} is ${released ? "released but unprintable" : "in development"} on its evidence`);
     checked++;
   }
   assert.ok(checked > 0, "the Watch Station is measured off its CAD, not sketched");
   assert.strictEqual(byId.get("device.canary-display-watch").dims_source, "assembled-cad");
+});
+
+test("a CAD-measured figure draws its glass in the CAD's measured face aperture", async () => {
+  // The Dash's view-window inset used to be a literal 8.4 and the Watch's
+  // glass radius E.w / 2 - 4.8 — numbers the case files derive (view_l =
+  // panel_l - 2 * bez_lip; bez_ap_d) retyped where no gate could see them
+  // move. gen_assembled_dims.py now measures the aperture with the envelope
+  // (face_fig_mm); the massing must draw the glass in exactly that window,
+  // centered, and must MOVE when it moves (so no literal is standing in).
+  const { FIGURES } = await import("../tools/figures/massing.mjs");
+  const asm = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/assembled_dims.json"), "utf8"));
+  const glassOf = (fig, row, face) => {
+    const E = { ...row.fig };
+    const g = fig.build(E, {}, { seams: row.seams_fig_d, face }).filter((s) => s.m === "glass");
+    assert.strictEqual(g.length, 1, `${fig.id} draws one glass`);
+    const s = g[0];
+    return s.kind === "cyl"
+      ? { w: 2 * s.r, h: 2 * s.r, cx: s.at[0], cz: s.at[2], E }
+      : { w: s.size[0], h: s.size[2], cx: s.at[0] + s.size[0] / 2, cz: s.at[2] + s.size[2] / 2, E };
+  };
+  let checked = 0;
+  for (const fig of FIGURES) {
+    const row = fig.assembled ? asm.devices[fig.id] : null;
+    if (!row || !row.face_fig_mm) continue;
+    const face = row.face_fig_mm;
+    const g = glassOf(fig, row, face);
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+    assert.ok(near(g.w, face.w) && near(g.h, face.h),
+      `${fig.id} glass ${g.w} x ${g.h} is the measured aperture ${face.w} x ${face.h}`);
+    assert.ok(near(g.cx, g.E.w / 2) && near(g.cz, g.E.h / 2), `${fig.id} glass is centered as the CAD cuts it`);
+    const moved = glassOf(fig, row, { w: face.w - 2, h: face.h - 2 });
+    assert.ok(near(moved.w, face.w - 2) && near(moved.h, face.h - 2),
+      `${fig.id} glass follows the measured aperture, not a literal`);
+    checked++;
+  }
+  assert.ok(checked >= 2, "the Watch and the Dash draw their glass from the measured aperture");
 });
 
 test("a board figure fills the CAD box it says it came from", () => {

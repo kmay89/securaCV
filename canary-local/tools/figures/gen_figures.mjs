@@ -194,7 +194,10 @@ function envelopeFor(fig) {
       parts: {},
       source: 'assembled-cad',
       stls: [],
-      assembled: { placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d },
+      // `face`: the aperture the CAD cuts in the outer face (view window,
+      // bezel bore), measured with the envelope — the massing draws the
+      // glass in it rather than retyping the inset
+      assembled: { placement: asm.placement, mm: asm.mm_scad, seams: asm.seams_fig_d, face: asm.face_fig_mm },
     };
   }
   if (fig.board) {
@@ -294,9 +297,11 @@ function guardDrift(fig, E, solids, source) {
   // offsets (the doorbell plate's foot reaches 2 mm below the face's top
   // overhang) are beneath its fidelity — the height tolerance says so
   // explicitly rather than pretending band drawing is exact. A CAD-measured
-  // (`assembled`) figure is banded the same way, so it gets the same rule.
+  // (`assembled`) figure is checked against the same assembled envelope, but
+  // it is ONE case drawn at E.h — nothing is centered — so it keeps the
+  // plan tolerance: the exemption is exactly as wide as its reason.
   const banded = !!(fig.parts || fig.assembled);
-  const hTol = banded ? ASM_H_TOL : PLAN_TOL;
+  const hTol = fig.parts ? ASM_H_TOL : PLAN_TOL;
   const what = banded ? 'assembled envelope' : `STL ${fig.stl ?? ''}`.trim();
   const env = envelopeOf(solids);
   const got = { w: env.size[0], d: env.size[1], h: env.size[2] };
@@ -308,7 +313,7 @@ function guardDrift(fig, E, solids, source) {
     throw new Error(`figures: ${fig.id} has drifted from its ${what} — ${bad.join('; ')}. `
       + 'The CAD moved; update massing.mjs so the figure matches again.');
   }
-  return { plan_tol_mm: PLAN_TOL, depth_tol_mm: DEPTH_TOL, ...(banded ? { height_tol_mm: ASM_H_TOL } : {}) };
+  return { plan_tol_mm: PLAN_TOL, depth_tol_mm: DEPTH_TOL, ...(fig.parts ? { height_tol_mm: ASM_H_TOL } : {}) };
 }
 
 /* ─────────────────────────────────────────────── the coplanar guard
@@ -359,7 +364,7 @@ function emit(path, contents) {
 
 function buildOne(fig) {
   const { E, parts, source, stls, assembled } = envelopeFor(fig);
-  const solids = fig.build(E, parts, assembled ? { seams: assembled.seams } : undefined);
+  const solids = fig.build(E, parts, assembled ? { seams: assembled.seams, face: assembled.face } : undefined);
   guardCoplanar(fig, solids);
 
   const dev = registry.devices.find((d) => d.id === fig.of);

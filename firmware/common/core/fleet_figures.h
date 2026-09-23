@@ -77,7 +77,7 @@ inline constexpr HardwareRef kHardware[] = {
   { "waveshare-esp32c3-lcd147", "device.canary-nightlight", "27f621f7", "prototype", false },  // 1 build
   { "waveshare-esp32s3-amoled241", "device.canary-display-amoled241", "8c939c25", "prototype", false },  // 1 build
   { "waveshare-esp32s3-lcd147", "device.canary-display-nightstand", "c361481b", "prototype", false },  // 1 build
-  { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "d2ef7976", "prototype", false },  // 2 builds
+  { "waveshare-esp32s3-lcd43", "device.canary-display-dash", "f344cfc8", "prototype", false },  // 2 builds
   { "waveshare-esp32s3-lcd7", "device.canary-display-dash7", "cdff74a9", "prototype", true },  // 2 builds — shared by canary-dash + canary-nightstand7
   { "waveshare-esp32s3-touch-lcd169", "device.canary-display-touch169", "72fa8cf1", "prototype", false },  // 1 build
   { "xiao-esp32c3", "device.canary-vision", "0d4ba02d", "shipping", false },  // 1 build

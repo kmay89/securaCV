@@ -419,22 +419,27 @@ export const FIGURES = [
     title: 'Canary Watch Station',
     role: 'device', of: 'canary-display-watch',
     // v0.2 CAD (canary_watch_station.scad), measured: drum + snap bezel as
-    // seated (assembled_dims.json — Ø49.0 x 23.2 today, drum 21.0 + bezel
-    // face 2.2). The v0.1 "screwed drum" sketch said Ø52 x 21.8, dimensions
-    // the measured board could never seat; the v0.2 sketch that replaced it
-    // was typed from a comment, so a disc_d edit in the manifest moved the
-    // case and not this. The stand is its own part, not the puck's envelope.
+    // seated (assembled_dims.json — Ø49.0 x 23.19 today: drum 21.0 + bezel
+    // face 2.2, less the 0.01 its edge chamfer overlaps), and the glass in
+    // the measured face aperture (bez_ap_d, A.face). The v0.1 "screwed drum"
+    // sketch said Ø52 x 21.8, dimensions the measured board could never
+    // seat; the v0.2 sketch that replaced it was typed from a comment, so a
+    // disc_d edit in the manifest moved the case and not this. The stand is
+    // its own part, not the puck's envelope.
     assembled: true,
     frame: 'scad-wall',
     build: (E, P, A) => {
       const [s0] = A.seams;   // the drum rim: the bezel face rides from here out
+      const ap = A.face.w / 2; // the bezel's aperture radius (bez_ap_d / 2), measured
       return [
         // the drum, back cap to rim, and the snap-bezel face riding on it
         { kind: 'cyl', m: 'shell2', axis: 'y', at: [E.w / 2, 0, E.h / 2], r: E.w / 2, h: s0 },
         { kind: 'cyl', m: 'shell', axis: 'y', at: [E.w / 2, s0 - EPS, E.h / 2], r: E.w / 2, h: E.d - s0 + EPS },
-        // the round glass in the bezel's aperture, and the lit face on it
-        { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - EPS, E.h / 2], r: E.w / 2 - 4.8, h: 0.4 },
-        { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d + 0.4 - EPS, E.h / 2], r: E.w / 2 - 7, h: 0.4 },
+        // the round glass in the bezel's aperture, and the lit face on it —
+        // the 2.2 lit inset is a drawing choice (no CAD number: the panel's
+        // active area is not in the case file), sized to read at glyph scale
+        { kind: 'cyl', m: 'glass', axis: 'y', at: [E.w / 2, E.d - EPS, E.h / 2], r: ap, h: 0.4 },
+        { kind: 'cyl', m: 'lit', axis: 'y', at: [E.w / 2, E.d + 0.4 - EPS, E.h / 2], r: ap - 2.2, h: 0.4 },
       ];
     },
   },
@@ -504,17 +509,23 @@ export const FIGURES = [
     frame: 'scad-wall',
     build: (E, P, A) => {
       const [s0, s1] = A.seams;   // pad tips -> back plate -> frame
-      // the view window: the bezel lip frames it, and the glass is the
-      // whole story from across the room — inset the same on all four sides
-      const win = 8.4;            // (out outline - view window) / 2, with the corner lobes
+      // the view window the bezel lip frames (view_l x view_w, measured —
+      // A.face), centered on the case as the CAD cuts it: the glass is the
+      // whole story from across the room, so it is the CAD's number
+      const { w: vw, h: vh } = A.face;
+      const wx = (E.w - vw) / 2, wz = (E.h - vh) / 2;
       return [
         // the dock pads' shadow gap: four low pads, massed as one inset block
-        // — what holds the case off the wall, not a thicker back
+        // — what holds the case off the wall, not a thicker back. Only its
+        // depth band (s0, the pad height) is the CAD's; the block's footprint
+        // is a drawing choice, roughly the cradle_dx x cradle_dy pad span
         { kind: 'box', m: 'dark', face: 'y', at: [E.w * 0.18, 0, E.h * 0.22], size: [E.w * 0.64, s0 + EPS, E.h * 0.56], r: 3 },
         { kind: 'box', m: 'shell2', face: 'y', at: [0, s0, 0], size: [E.w, s1 - s0 + EPS, E.h], r: 5 },
         { kind: 'box', m: 'shell', face: 'y', at: [0, s1, 0], size: [E.w, E.d - s1, E.h], r: 5 },
-        { kind: 'box', m: 'glass', face: 'y', at: [win, E.d - EPS, win], size: [E.w - 2 * win, 0.4, E.h - 2 * win], r: 2 },
-        { kind: 'box', m: 'lit', face: 'y', at: [win + 3, E.d + 0.4 - EPS, win + 3], size: [E.w - 2 * win - 6, 0.4, E.h - 2 * win - 6], r: 1.5 },
+        { kind: 'box', m: 'glass', face: 'y', at: [wx, E.d - EPS, wz], size: [vw, 0.4, vh], r: 2 },
+        // the lit area 3 inside the window: a drawing choice (the panel's
+        // active area is not in the case file)
+        { kind: 'box', m: 'lit', face: 'y', at: [wx + 3, E.d + 0.4 - EPS, wz + 3], size: [vw - 6, 0.4, vh - 6], r: 1.5 },
       ];
     },
   },

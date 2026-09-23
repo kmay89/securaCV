@@ -441,7 +441,7 @@ inline constexpr ArtFace kArt_device_canary_wap_faces[] = {
 
 inline constexpr FigureArt kFigureArt[] = {
   { "device.canary-display-amoled241", "8c939c25", 15, kArt_device_canary_display_amoled241_faces },
-  { "device.canary-display-dash", "d2ef7976", 19, kArt_device_canary_display_dash_faces },
+  { "device.canary-display-dash", "f344cfc8", 19, kArt_device_canary_display_dash_faces },
   { "device.canary-display-dash7", "cdff74a9", 8, kArt_device_canary_display_dash7_faces },
   { "device.canary-display-nightstand", "c361481b", 20, kArt_device_canary_display_nightstand_faces },
   { "device.canary-display-touch169", "72fa8cf1", 19, kArt_device_canary_display_touch169_faces },
