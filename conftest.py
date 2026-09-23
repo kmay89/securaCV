@@ -125,7 +125,20 @@ def _install_minimum_stubs() -> None:
     ha_exceptions = types.ModuleType("homeassistant.exceptions")
 
     class _HomeAssistantError(Exception):
-        pass
+        """HA's constructor: a positional message plus the translation
+        triple the frontend localizes from (services.py raises with both)."""
+
+        def __init__(
+            self,
+            *args,
+            translation_domain=None,
+            translation_key=None,
+            translation_placeholders=None,
+        ) -> None:
+            super().__init__(*args)
+            self.translation_domain = translation_domain
+            self.translation_key = translation_key
+            self.translation_placeholders = translation_placeholders
 
     class _ServiceValidationError(_HomeAssistantError):
         pass
