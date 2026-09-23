@@ -12,6 +12,32 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-09-23 — A `-sys` crate that links nothing can still crash the app
+
+- **Symptom (caught before it was paid for):** the Lab's menu bar companion
+  turned on tauri's `tray-icon` feature. On Linux that brings in
+  `libappindicator-sys`, and the 2026-09-21 rule below ("diff the new
+  `-sys` deps against the apt block") found nothing to install — the crate
+  has no build script and links no library. It `dlopen`s
+  `libayatana-appindicator3` the first time a tray is built and **panics**
+  when no candidate loads; with the Lab's `panic = "abort"` release profile
+  that is a crash at launch on any desktop without the library (an AppImage
+  on a minimal distro, a `.deb` forced in without its depends).
+- **Cause:** a runtime-loaded library is invisible to every build-time
+  check. The build is green, the tests are green, and the dependency exists
+  only as a string inside the crate's loader.
+- **Fix:** the Lab's `.deb` depends on `libayatana-appindicator3-1`
+  (`tauri.conf.json`, asserted by `canary-local/tests/lab_settings.test.js`
+  whenever the feature is on), and `companion.rs` probes the loader's own
+  four library names with the same `libloading` before building the tray —
+  no library, no tray, the app runs on. **The general rule:** when a new
+  `-sys` crate shows up in the 2026-09-21 diff, read its source for
+  `dlopen`/`libloading` as well as its build script; a runtime library
+  belongs in the package's depends, and a loader that panics needs a probe
+  in front of it.
+- **Applies to:** the Lab (fixed). The Flasher carries no tray; if it ever
+  gains one, it needs the same depends line and the same probe.
+
 ## 2026-09-21 — A new native crate is a release-workflow edit, not just a Cargo.toml line
 
 - **Symptom (caught before it was paid for):** adding `serialport` to the

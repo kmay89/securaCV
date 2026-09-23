@@ -2075,7 +2075,9 @@ test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {
   // The frontend asks before it browses, then feeds the boards to the poll.
   const labHost = read(join(CANARY, "assets/witness-host.js"));
   assert.match(labHost, /invoke\("fleet_scan"/, "Lab witness-host.js no longer browses mDNS (fleet_scan)");
-  assert.match(labHost, /caps\.mdns/, "Lab witness-host.js must gate the browse on the mdns capability");
+  assert.match(labHost, /invoke\("native_capabilities"\)/, "Lab witness-host.js must ask native_capabilities before it browses");
+  assert.match(labHost, /if \(mdns\) \{[\s\S]{0,120}invoke\("fleet_scan"/,
+    "Lab witness-host.js must gate the browse on the mdns capability");
   // One crate version on both sides of the twin.
   const mdnsVer = (lock) => (/name = "mdns-sd"\nversion = "([^"]+)"/.exec(read(join(ROOT, lock))) || [])[1];
   assert.ok(mdnsVer("desktop/src-tauri/Cargo.lock"), "the Flasher's lock lost mdns-sd");

@@ -170,3 +170,49 @@ test("the journal read is bounded", () => {
     "read_update_journal must cap how much of the journal it hands the frontend");
   assert.ok(existsSync(join(ROOT, "desktop-lab/src-tauri/src/self_update.rs")));
 });
+
+test("the menu bar companion notifies from Rust, in coarse words, and says so honestly", () => {
+  // The companion (desktop only) turns fleet changes into native
+  // notifications. Three promises ride on it: the webview gains no
+  // notification grant (Rust posts them), the words stay coarse — never
+  // sealed-log content, never the wellbeing keys, never "verified" — and a
+  // capability never lights a path a build doesn't carry.
+  const companionRs = read(join(ROOT, "desktop-lab/src-tauri/src/companion.rs"));
+  assert.match(libRs, /"notifications":\s*cfg!\(desktop\)/,
+    "lib.rs must report notifications as cfg!(desktop) — the companion exists only there");
+  assert.match(libRs, /#\[cfg\(desktop\)\]\s*mod companion;/, "mod companion must be desktop-only");
+  assert.match(libRs, /\.plugin\(tauri_plugin_notification::init\(\)\)/,
+    "the notification plugin must be initialized on the desktop builder");
+  const handlers = [...libRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler");
+  for (const cmd of ["companion_set_bases", "companion_snapshot"]) {
+    assert.ok(handlers[0].includes(`companion::${cmd}`), `the desktop handler must register companion::${cmd}`);
+    assert.ok(!handlers[1].includes(cmd), `the mobile handler must not register ${cmd}`);
+  }
+  // No webview grant: Rust posts every notification.
+  const capsDir = join(ROOT, "desktop-lab/src-tauri/capabilities");
+  for (const f of require("node:fs").readdirSync(capsDir)) {
+    const perms = JSON.parse(read(join(capsDir, f))).permissions || [];
+    assert.ok(!perms.some((p) => String(p.identifier || p).startsWith("notification:")),
+      `capabilities/${f} grants the webview notifications — the companion posts them from Rust`);
+  }
+  // The shipped code (comments and the test module aside) never reaches for
+  // what the companion must not say.
+  const code = companionRs.split("#[cfg(test)]")[0].replace(/\/\/.*$/gm, "");
+  for (const banned of [/verif/i, /sealed-log/, /verified_through/, /"presence"/, /"occupants"/, /"breathing"/, /"seeing"/]) {
+    assert.doesNotMatch(code, banned, `companion.rs code must not touch ${banned}`);
+  }
+  // A tray that dlopens its library at runtime needs the package declared,
+  // or the .deb installs an app whose tray silently never appears.
+  const cargoToml = read(join(ROOT, "desktop-lab/src-tauri/Cargo.toml"));
+  const conf = JSON.parse(read(join(ROOT, "desktop-lab/src-tauri/tauri.conf.json")));
+  if (/^tauri = \{[^}]*"tray-icon"/m.test(cargoToml)) {
+    assert.ok(conf.bundle.linux.deb.depends.includes("libayatana-appindicator3-1"),
+      "tauri's tray-icon feature is on — the Lab .deb must depend on libayatana-appindicator3-1");
+  }
+  // The Wall host hands the companion its kernel addresses, only where it runs.
+  const hostJs = read(join(CANARY, "assets/witness-host.js"));
+  assert.match(hostJs, /if \(notifications\) await syncCompanion\(\)/,
+    "witness-host.js must gate companion_set_bases on the notifications capability");
+  assert.match(hostJs, /invoke\("companion_set_bases"/, "witness-host.js no longer feeds the companion its bases");
+});

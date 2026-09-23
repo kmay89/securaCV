@@ -85,6 +85,34 @@ named `SecuraCV.Lab_…`.)
 
 ---
 
+## The menu bar companion
+
+While the Lab runs it keeps a small fleet icon in the menu bar (macOS) or
+the system tray (Linux): how many of your Canaries are online, one line per
+device, **Open the Lab**, **Pause notifications** and **Quit**. Every 30
+seconds it listens for Canaries announcing themselves on your network and
+asks your kernel for its fleet report, and it posts a desktop notification
+when that report says a device went offline, came back, lost its hub or has
+a chain problem. Only those coarse words — never recordings, never anything
+from the sealed log, and never "verified" (the Lab doesn't pair with a
+kernel yet, so it repeats the fleet's own report and says so). A device
+that simply goes quiet reads "not heard lately" and raises no alarm: a
+missed announcement is not an outage.
+
+- **macOS:** closing the window keeps the Lab running in the menu bar (the
+  first time, a notification says so); **Quit** is in the menu bar icon, or
+  press ⌘Q. Notifications come from the installed app, not from a
+  development build.
+- **Linux:** the tray needs an AppIndicator host — KDE Plasma, Xfce,
+  Cinnamon, MATE and Ubuntu's own GNOME show it; stock GNOME needs the
+  "AppIndicator and KStatusNotifierItem Support" extension. The `.deb`
+  installs the library it loads (`libayatana-appindicator3-1`); if the
+  AppImage shows no icon, install that package. Because a Linux desktop may
+  have no tray at all, closing the window quits the Lab there, as it always
+  has — notifications arrive while it is open.
+
+---
+
 ## Updating
 
 You don't. The Lab checks the project's GitHub releases when it starts (and

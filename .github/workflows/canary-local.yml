@@ -78,6 +78,11 @@ on:
       - "desktop-lab/src-tauri/src/fleet.rs"
       - "desktop/src-tauri/Cargo.lock"
       - "desktop-lab/src-tauri/Cargo.lock"
+      # the menu bar companion: lab_settings holds its words, its grants and
+      # its tray package (companion.rs, capabilities/, Cargo.toml)
+      - "desktop-lab/src-tauri/src/companion.rs"
+      - "desktop-lab/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/Cargo.toml"
       - "scripts/check_witness_emulator_sync.sh"
       # self-update parity: endpoints/pubkeys in the app configs must match
       # the workflows that publish the rolling updater pointers
@@ -167,6 +172,11 @@ on:
       - "desktop-lab/src-tauri/src/fleet.rs"
       - "desktop/src-tauri/Cargo.lock"
       - "desktop-lab/src-tauri/Cargo.lock"
+      # the menu bar companion: lab_settings holds its words, its grants and
+      # its tray package (companion.rs, capabilities/, Cargo.toml)
+      - "desktop-lab/src-tauri/src/companion.rs"
+      - "desktop-lab/src-tauri/capabilities/**"
+      - "desktop-lab/src-tauri/Cargo.toml"
       - "scripts/check_witness_emulator_sync.sh"
       # self-update parity: endpoints/pubkeys in the app configs must match
       # the workflows that publish the rolling updater pointers

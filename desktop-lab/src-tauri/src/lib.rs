@@ -12,6 +12,8 @@
 // its own is its update manifest, from the project's releases.
 
 #[cfg(desktop)]
+mod companion;
+#[cfg(desktop)]
 mod fleet;
 #[cfg(desktop)]
 mod self_update;
@@ -72,7 +74,11 @@ fn native_capabilities() -> serde_json::Value {
         // NSBonjourServices first (MOBILE.md), so a mobile build neither
         // registers the command nor advertises it. BLE is still future.
         "mdns": cfg!(desktop),
-        "notifications": false,
+        // The menubar fleet companion (src/companion.rs): a tray icon and
+        // native notifications on fleet changes, posted from Rust — coarse
+        // presence words only, never sealed-log content, never "verified".
+        // Desktop only; the webview holds no notification grant.
+        "notifications": cfg!(desktop),
         // Signed self-update via the rolling lab-latest pointer (desktop
         // builds only — the App Store owns updates on iOS/iPadOS).
         "self_update": cfg!(desktop)
@@ -256,7 +262,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(std::sync::Mutex::new(self_update::UpdateGate::default()))
+        .manage(companion::Companion::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
             app_info,
@@ -264,6 +272,8 @@ pub fn run() {
             list_serial_ports,
             witness_discover,
             fleet::fleet_scan,
+            companion::companion_set_bases,
+            companion::companion_snapshot,
             self_update::check_update,
             self_update::install_update,
             self_update::read_update_journal,
@@ -282,7 +292,10 @@ pub fn run() {
     // until the install returns, and quitting mid-write is the one thing that
     // can leave the Lab unable to open at all (the Flasher's guard, ported —
     // desktop/src-tauri/src/lib.rs). Not negotiable, so no "quit anyway";
-    // the install takes seconds and the app relaunches itself.
+    // the install takes seconds and the app relaunches itself. That guard
+    // runs FIRST; only then, where the menu bar always shows the companion's
+    // tray (companion::keeps_running), does closing hide the window instead
+    // of quitting — the fleet watch keeps running, and the tray reopens it.
     #[cfg(desktop)]
     let builder = builder.on_window_event(|window, event| {
         use tauri::Manager as _;
@@ -301,6 +314,10 @@ pub fn run() {
                     .title("Finishing the update")
                     .buttons(MessageDialogButtons::OkCustom("OK".into()))
                     .show(|_| {});
+            } else if companion::keeps_running(window.app_handle()) {
+                api.prevent_close();
+                let _ = window.hide();
+                companion::told_hidden_once(window.app_handle());
             }
         }
     });
@@ -319,12 +336,24 @@ pub fn run() {
                         tokio::time::sleep(self_update::RECHECK_EVERY).await;
                     }
                 });
+                // The menubar fleet companion: tray + a 30 s fleet watch.
+                companion::start(_app.handle());
             }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building the SecuraCV Lab")
         .run(|_app, _event| {
+            // The window may be hidden behind the menu bar companion: a Dock
+            // click brings it back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = &_event
+            {
+                companion::show_main(_app);
+            }
             // Cmd-Q / the app menu's Quit never pass through CloseRequested —
             // they request an application exit directly, and this is the only
             // place that can stop them (the Flasher's guard, ported).

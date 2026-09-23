@@ -41,16 +41,17 @@ if (invoke && frame) {
   // "/" = our own origin: the wall is our iframe, and a LAN fleet (device
   // names, who is home) goes nowhere else even if something else were framed.
   const post = (m) => { try { if (frame.contentWindow) frame.contentWindow.postMessage(m, "/"); } catch (_) {} };
-  // Asked once: only a build that registers fleet_scan says `mdns` (desktop;
-  // a mobile shell neither registers nor advertises it), so a missing
+  // Asked once: only a build that registers fleet_scan says `mdns`, and only
+  // one that runs the menu bar companion says `notifications` (desktop; a
+  // mobile shell neither registers nor advertises them), so a missing
   // capability means "poll only", never a failing invoke every tick.
-  let mdns = null;
-  const probeMdns = async () => {
-    if (mdns === null) {
-      try { const caps = await invoke("native_capabilities"); mdns = !!(caps && caps.mdns); }
-      catch (_) { mdns = false; }
+  let caps = null;
+  const probeCaps = async () => {
+    if (caps === null) {
+      try { caps = (await invoke("native_capabilities")) || {}; }
+      catch (_) { caps = {}; }
     }
-    return mdns;
+    return caps;
   };
   // Where each browsed board might serve /api/fleet. IPv4 when the browse
   // resolved one (a bare IPv6 literal would need brackets, and a link-local
@@ -74,12 +75,25 @@ if (invoke && frame) {
     b.push("http://canary.local:8099", "http://canary.local");
     return [...new Set(b)];
   };
+  // The menu bar companion polls the same kernel addresses in the
+  // background: hand it the typed kernel base and the defaults (not the
+  // browsed boards — it browses for itself), and only when they change.
+  let companionSent = "";
+  const syncCompanion = async () => {
+    const kernelBases = bases([]);
+    const key = JSON.stringify(kernelBases);
+    if (key === companionSent) return;
+    try { await invoke("companion_set_bases", { bases: kernelBases }); companionSent = key; }
+    catch (_) { /* the companion keeps the addresses it had */ }
+  };
   let inFlight = false, found = false, timer = null;
   const tick = async () => {
     if (inFlight) return schedule();
     inFlight = true;
+    const { mdns, notifications } = await probeCaps();
+    if (notifications) await syncCompanion();
     let sightings = [];
-    if (await probeMdns()) {
+    if (mdns) {
       try { sightings = (await invoke("fleet_scan", { timeoutMs: 2500 })) || []; }
       catch (_) { /* no multicast here, or nobody announcing — the poll still runs */ }
     }
