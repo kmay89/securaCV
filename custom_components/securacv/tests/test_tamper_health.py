@@ -8,7 +8,9 @@ card. The firmware now sends ``sd_mounted`` once a card has mounted this
 boot (a card-less boot is a configuration, not a removal, and an absent key
 reads as mounted here).
 
-These tests pin the field name and the three shapes the canary publishes.
+These tests pin the field name and the shapes the canary publishes: a
+pulled card, the card back, a failing card still in the slot (ERROR, which
+is SD Error's story and must not light SD Removed), and a card-less boot.
 In the monorepo, where the firmware source sits next to the integration,
 they also prove the canary's health publisher still spells the key; the
 HACS mirror carries no firmware, so that one test skips there.
@@ -64,6 +66,22 @@ def test_canary_health_with_the_card_back_clears_sd_removed() -> None:
     assert removed._attr_is_on is False
 
 
+def test_canary_health_with_a_failing_card_lights_sd_error_not_sd_removed() -> None:
+    """A card that is present but failing (the storage lane's ERROR state:
+    given up on after consecutive write failures) is still in the slot. The
+    firmware says sd_mounted true for it, so HA narrates SD Error alone
+    instead of SD Removed beside it."""
+    removed, error = _sd_removed(), _sd_error()
+    payload = (
+        '{"sd_healthy": false, "sd_writes": 42, "sd_errors": 5, '
+        '"sd_mounted": true, "boot_count": 3}'
+    )
+    removed._handle_health_message(_msg(payload))
+    error._handle_health_message(_msg(payload))
+    assert removed._attr_is_on is False
+    assert error._attr_is_on is True
+
+
 def test_card_less_canary_boot_omits_the_key_and_stays_quiet() -> None:
     """No card has mounted this boot: the firmware sends no sd_mounted, and
     the sensor must not call a canary without a card 'removed'."""
@@ -87,3 +105,9 @@ def test_canary_health_publisher_spells_the_key_the_sensor_reads() -> None:
     )
     # Sent only once a card has mounted this boot (adopt-silently rule).
     assert "storage_mount_generation() > 0" in body
+    # From the watcher's three-state, so a failing card (ERROR) is not
+    # "removed": storage_is_mounted() alone read false for it.
+    assert (
+        'doc["sd_mounted"] = storage_sd_state() != sd_mount_policy::SD_TAMPER_ABSENT'
+        in body
+    )

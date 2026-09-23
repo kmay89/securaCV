@@ -22,6 +22,7 @@
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
+#include "storage/sd_mount_policy.h"  // SD_TAMPER_* — the health payload's sd_mounted
 #endif
 
 #if FEATURE_WIFI_AP
@@ -2265,14 +2266,36 @@ static void mqtt_publish_health_update() {
    * once a card has mounted this boot: booting without a card is a
    * configuration, not a removal — the same adopt-silently rule the
    * system.integrity watcher follows — and an absent key reads as mounted
-   * on the HA side. After that, it is the live mount state, so a pulled or
-   * failed card lights the sensor and a remount clears it. */
+   * on the HA side. After that it says whether a card is still in the
+   * slot, from the same three-state the watcher reads: a pulled card
+   * lights the sensor and a remount clears it. A card that is present
+   * but failing (ERROR: given up on after consecutive write failures) is
+   * NOT removed. It is SD Error's story (sd_errors here, sd_error on the
+   * tamper topic), so it must not light SD Removed beside it. */
   if (storage_mount_generation() > 0) {
-    doc["sd_mounted"] = storage_is_mounted();
+    doc["sd_mounted"] = storage_sd_state() != sd_mount_policy::SD_TAMPER_ABSENT;
   }
 #endif
   doc["boot_count"] = device.boot_count;
   doc["firmware_version"] = FIRMWARE_VERSION;
+  /* The witness key's public half, 64 lowercase hex: the canary-wap's
+   * health shape. Home Assistant pins it on first sight
+   * (__init__.py _async_health_for_tofu; docs/device_trust.md), and
+   * that pin is what lets it verify the Ed25519 signature on the `events`
+   * bodies csi_event_egress publishes. Without it every body read
+   * `no_pubkey` until someone pinned the key by hand. The same key signs
+   * those bodies (csi_event_egress hands this identity to
+   * device_signature). A public key; /api/status already serves it. */
+  {
+    static const char kHex[] = "0123456789abcdef";
+    char pk_hex[65];
+    for (int i = 0; i < 32; ++i) {
+      pk_hex[2 * i]     = kHex[(device.pubkey[i] >> 4) & 0xF];
+      pk_hex[2 * i + 1] = kHex[device.pubkey[i] & 0xF];
+    }
+    pk_hex[64] = '\0';
+    doc["public_key"] = pk_hex;
+  }
   doc["tamper_detected"] = device.tamper_active;
 #if FEATURE_TAMPER_GPIO
   /* The contact's live (debounced) level, which HA's Enclosure Open sensor

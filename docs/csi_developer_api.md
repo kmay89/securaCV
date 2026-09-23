@@ -147,8 +147,11 @@ When a broker is configured, every committed row is also published on
 that builder, and `firmware/tests_host/test_csi_event_wire.cpp` pins its
 bytes. The body carries an Ed25519 signature over the `event` canonical
 (`firmware/common/identity/device_signature`), which Home Assistant verifies
-against the device's pinned key; `"signed"` is `true` only when a signature
-rides the body. `system.integrity` rows are also republished on
+against the device's pinned key. Both trees publish that key as
+`public_key` in their MQTT health payload, and the integration pins it on
+first sight ([device_trust.md](device_trust.md)); until a key is pinned,
+the body reads as unverified (`no_pubkey`). `"signed"` is `true` only when
+a signature rides the body. `system.integrity` rows are also republished on
 `securacv/<id>/tamper` as `{"type":"<kind>","severity":"tamper"}`, the shape
 the integration's per-type tamper sensors match. On the canary base that
 bridge carries the SD and enclosure kinds only: its boot story already
