@@ -112,14 +112,14 @@ mosquitto_sub -h core-mosquitto -t 'witness/#' -v
 4. Enter your MQTT broker host/port and credentials (if required).
 5. Confirm it connects successfully.
 
-### B. Listen to a Topic in Developer Tools
-1. Go to **Developer Tools → MQTT**.
+### B. Listen to a Topic in the MQTT Settings
+1. Go to **Settings → Devices & services → MQTT → Configure** (the MQTT integration's own settings page; current Home Assistant has no MQTT tab in Developer Tools).
 2. In **Listen to a topic**, enter `frigate/events`.
 3. Click **Start Listening**.
 4. Trigger an object detection in Frigate and confirm JSON events appear in the log output.
 
 ### C. Confirm Frigate Is Publishing
-1. Stay in **Developer Tools → MQTT**.
+1. Stay on the MQTT settings page (**Settings → Devices & services → MQTT → Configure**).
 2. If you enabled PWK MQTT publishing, listen to `witness/#` and `homeassistant/#` in separate sessions (or switch topics).
 3. Confirm PWK is publishing discovery and state messages for SecuraCV entities (the broker should show retained discovery payloads and state updates).
 
@@ -156,18 +156,18 @@ Use this checklist to validate the v1 Home Assistant + Frigate MQTT integration 
   - [ ] Ports 1883 (MQTT), 5000 (Frigate UI), and 8123 (Home Assistant) are free.
   - [ ] `integrations/ha_frigate_mqtt` contains `docker-compose.yml`, `frigate.yml`, `mosquitto.conf`, `verify_pipeline.sh`.
 - [ ] **Bring-up and service health**
-  - [ ] The broker password file exists and `.env` holds `SECURACV_MQTT_PASSWORD` (README quickstart step 1 — the `securacv` and `frigate` services refuse to start without it).
+  - [ ] `.env` holds `SECURACV_MQTT_PASSWORD`, written FIRST (Compose interpolates every service on load, and the `securacv` and `frigate` services require it, so no `docker compose` command runs without it), and the broker password file was then created with the same password (README quickstart step 1).
   - [ ] `docker compose up -d --build` succeeds from `integrations/ha_frigate_mqtt`.
   - [ ] `docker compose ps` shows all four services running: `mosquitto`, `frigate`, `homeassistant`, `securacv` (containers `ha-mosquitto`, `ha-frigate`, `ha-core`, `ha-securacv`).
   - [ ] `docker compose logs -f --tail=50` shows Mosquitto listening on 1883, Frigate connected to MQTT, HA started, and the `securacv` sidecar's three bridges up with no auth errors.
 - [ ] **Home Assistant UI validation**
   - [ ] MQTT integration added in **Settings → Devices & Services** with broker host/port.
   - [ ] (Optional) Frigate integration added pointing at `http://frigate:5000` or `http://localhost:5000`.
-  - [ ] Developer Tools → MQTT shows `frigate/events` publishing detections.
+  - [ ] The MQTT settings page (**Settings → Devices & services → MQTT → Configure → Listen to a topic**) shows `frigate/events` publishing detections.
   - [ ] If PWK MQTT publishing is enabled, `witness/#` and `homeassistant/#` show discovery/state messages.
 - [ ] **Pipeline verification**
   - [ ] `MQTT_USER=securacv MQTT_PASS=<the password> ./verify_pipeline.sh` exits `0` with `✅` on all three steps: a live `frigate/events` publish, `frigate_bridge` ingesting the script's nonce-tagged event, and the sealed-log database written during this run.
-  - [ ] Home Assistant receiving events is confirmed by eye in Developer Tools → MQTT (section 5B); the script never checks it.
+  - [ ] Home Assistant receiving events is confirmed by eye on the MQTT settings page's *Listen to a topic* (section 5B); the script never checks it.
 - [ ] **Cleanup (if needed)**
   - [ ] `docker compose down` cleanly stops containers.
   - [ ] `docker compose down -v` removes volumes for a clean reset.
@@ -180,7 +180,7 @@ Use this checklist to validate the v1 Home Assistant + Frigate MQTT integration 
    - Verify the broker host/port and credentials match Frigate and PWK settings.
    - Confirm the broker is reachable from Home Assistant.
 
-2. **No messages appear on `frigate/events` in Developer Tools**
+2. **No messages appear on `frigate/events` in the MQTT listen tool**
    - Ensure Frigate is configured to publish MQTT and is actively detecting events.
    - Validate the topic in Frigate matches the subscription (`frigate/events` by default).
 
@@ -216,7 +216,7 @@ Use this checklist to validate the v1 Home Assistant + Frigate MQTT integration 
     - Verify the PWK add-on is running and publishing LWT availability status.
 
 11. **verify_pipeline.sh reports missing topics**
-    - Confirm you can see Frigate events in **Developer Tools → MQTT**.
+    - Confirm you can see Frigate events in **Settings → Devices & services → MQTT → Configure → Listen to a topic**.
     - Verify the PWK MQTT publish settings match the broker and prefixes in `docs/homeassistant_setup.md` and `docs/frigate_integration.md`.
 
 12. **Frigate + PWK integration works but the PWK sealed log is empty**

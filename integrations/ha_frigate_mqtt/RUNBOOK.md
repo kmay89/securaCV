@@ -2,16 +2,20 @@
 
 > **What this file is.** A tick-as-you-go runbook for ONE bring-up of the
 > stack in this directory. Copy it (or tick a printed copy) per run; never
-> commit the ticks. It is not a plan of unfinished work — every step below
-> is runnable today against `docker-compose.yml` as committed.
+> commit the ticks. It is not a plan of unfinished work — every step below,
+> in the order written, is runnable today against `docker-compose.yml` as
+> committed.
 >
 > **Where the expected outputs come from.** They are *derived* from
 > [`docker-compose.yml`](docker-compose.yml), [`README.md`](README.md) and
 > [`verify_pipeline.sh`](verify_pipeline.sh) as of 2026-09-22 — not from a
 > recorded live run. Container names, service names, the three
 > verification steps and their `✅` / `All verification steps passed.` lines
-> are what those files produce; third-party log lines (Mosquitto, Frigate,
-> Home Assistant) are described, not quoted, because nothing here pins them.
+> are what those files produce. Docker Compose's own progress output is
+> shown as abbreviated samples ("lines like"), because its headers, counts
+> and ordering vary by Compose version and by what already exists;
+> third-party log lines (Mosquitto, Frigate, Home Assistant) are described,
+> not quoted, because nothing here pins them.
 > **If a step's real output differs from what is written, the runbook is
 > wrong: fix it here in the same change that fixes the stack.** When someone
 > records a full live run, replace this note with the date of that run.
@@ -50,71 +54,84 @@
       ```bash
       ls -1 integrations/ha_frigate_mqtt
       ```
-    - Expected output:
+    - Expected output includes (the order depends on your locale):
       ```
-      README.md
-      RUNBOOK.md
-      ci_smoke.sh
       docker-compose.yml
       frigate.yml
       mosquitto.conf
-      tests
       verify_pipeline.sh
       ```
   - [ ] Give Frigate a real RTSP source. `frigate.yml` ships with one
-        disabled example camera so the config parses; without a live camera
-        Frigate never publishes a detection, and verification step 1 below
-        cannot pass. Edit the `cameras:` block per the README's step 2.
+        placeholder camera (`demo`, `rtsp://127.0.0.1:8554/demo`, which
+        nothing serves); Frigate starts it, logs ffmpeg errors for it and
+        never publishes a detection until you replace the path, so
+        verification step 1 below cannot pass without a live camera. Edit
+        the `cameras:` block per the README's step 2.
 
 - [ ] **Bring-up steps (Docker Compose)**
-  - [ ] Create the broker password file and tell the stack the password.
+  - [ ] Choose the broker password, write it to `.env`, then create the
+        broker's password file with the same password. The order matters:
+        Compose interpolates EVERY service when it loads
+        `docker-compose.yml`, even for a one-off `run` of `mosquitto`, and
+        the `securacv` and `frigate` services require
+        `SECURACV_MQTT_PASSWORD` (`${SECURACV_MQTT_PASSWORD:?...}`), so any
+        `docker compose run` or `up` before `.env` holds it stops with
+        `required variable SECURACV_MQTT_PASSWORD is missing a value`.
+        The password file comes next, BEFORE the first `up`:
         `mosquitto.conf` disables anonymous access, and Mosquitto exits if
-        its configured `password_file` is missing, so this runs BEFORE the
-        first `up`. The `securacv` and `frigate` services read
-        `SECURACV_MQTT_PASSWORD` from `.env` and refuse to start without it
-        (`${SECURACV_MQTT_PASSWORD:?...}` in `docker-compose.yml`).
-    - Command (you are prompted for the password):
+        its configured `password_file` is missing.
+    - Command (or `cp .env.example .env` and set the same variable there;
+      `mosquitto_passwd` prompts twice — type the password you wrote to
+      `.env`):
       ```bash
       cd integrations/ha_frigate_mqtt
+      echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
       docker compose run --rm --no-deps --entrypoint sh mosquitto -c \
         'mosquitto_passwd -c /mosquitto/config/passwd securacv &&
          chown mosquitto:mosquitto /mosquitto/config/passwd &&
          chmod 600 /mosquitto/config/passwd'
-      echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
       ```
-    - Expected output: the `mosquitto_passwd` prompts (`Password:` /
-      `Reenter password:`) and nothing else; `.env` now holds one line.
+    - Expected output: on a first run, Compose's own progress lines come
+      first (pulling `eclipse-mosquitto:2` if it is not local yet, and
+      creating the project network and volumes), then the
+      `mosquitto_passwd` prompts (`Password:` / `Reenter password:`) and
+      no error; `.env` now holds the `SECURACV_MQTT_PASSWORD=` line.
   - [ ] Start the stack. `--build` because the `securacv` service is built
         from this repo (`docker/sidecar/Dockerfile`), not pulled.
     - Command:
       ```bash
       docker compose up -d --build
       ```
-    - Expected output (four containers, named by `container_name` in
-      `docker-compose.yml`; the build log for the sidecar image precedes it
-      on the first run):
+    - Expected output, abbreviated: one `Started` line per container,
+      named by `container_name` in `docker-compose.yml`, in an order Compose
+      chooses. Around them Compose prints a progress header, pull lines for
+      images not yet local, `Created` lines for any volume that does not
+      exist yet and, on the first run, the sidecar image's build log
+      first. Lines like:
       ```
-      [+] Running 5/5
-      ✔ Network ha_frigate_mqtt_default  Created
-      ✔ Container ha-mosquitto           Started
-      ✔ Container ha-core                Started
-      ✔ Container ha-frigate             Started
-      ✔ Container ha-securacv            Started
+      ✔ Container ha-mosquitto  Started
+      ✔ Container ha-core       Started
+      ✔ Container ha-frigate    Started
+      ✔ Container ha-securacv   Started
       ```
   - [ ] Verify all four services are running.
     - Command:
       ```bash
       docker compose ps
       ```
-    - Expected output: one row per service, each `running` (or `Up`;
-      columns abbreviated here):
+    - Expected output: one row per service with a STATUS of `Up <how
+      long>` (an image that declares a health check adds a suffix such as
+      `(health: starting)` or `(healthy)`); the IMAGE, COMMAND, CREATED and
+      PORTS columns are left out here. Lines like:
       ```
       NAME           SERVICE         STATUS
-      ha-core        homeassistant   running
-      ha-frigate     frigate         running
-      ha-mosquitto   mosquitto       running
-      ha-securacv    securacv        running
+      ha-core        homeassistant   Up 20 seconds
+      ha-frigate     frigate         Up 20 seconds
+      ha-mosquitto   mosquitto       Up 21 seconds
+      ha-securacv    securacv        Up 19 seconds
       ```
+      A row reading `Restarting` or `Exited`, or a service missing from
+      the list, means that container is not up; start with its logs below.
   - [ ] Tail the logs to confirm startup completion.
     - Command:
       ```bash
@@ -146,9 +163,11 @@
   - [ ] Confirm events reach Home Assistant. This is the ONE check that
         `verify_pipeline.sh` does not make — it never talks to Home
         Assistant — so it is done here, by eye.
-    - Steps:
-      1. Developer Tools → MQTT → *Listen to a topic*: `frigate/events`,
-         then Start Listening; trigger a detection on the camera.
+    - Steps (the MQTT listen tool lives on the MQTT integration's own
+      settings page, not in Developer Tools):
+      1. Settings → Devices & services → MQTT → **Configure** →
+         *Listen to a topic*: `frigate/events`, then Start Listening;
+         trigger a detection on the camera.
       2. Repeat for `homeassistant/#` (retained discovery payloads from
          `event_mqtt_bridge`) and `witness/#` (its state topics).
     - You should see JSON payloads arrive on all three within a few
@@ -258,9 +277,9 @@
       ```bash
       docker compose down
       ```
-    - Expected output:
+    - Expected output, abbreviated (after a progress header, in an order
+      Compose chooses). Lines like:
       ```
-      [+] Running 5/5
       ✔ Container ha-securacv            Removed
       ✔ Container ha-frigate             Removed
       ✔ Container ha-core                Removed
@@ -276,7 +295,10 @@
       ```bash
       docker compose down -v
       ```
-    - Expected output (the five named volumes from `docker-compose.yml`):
+    - Expected output, abbreviated: the container and network lines of
+      the previous step if anything was still up, and one `Removed` line
+      for each of the five named volumes from `docker-compose.yml`. Lines
+      like:
       ```
       ✔ Volume ha_frigate_mqtt_mosquitto_data        Removed
       ✔ Volume ha_frigate_mqtt_mosquitto_config      Removed

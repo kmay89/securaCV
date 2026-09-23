@@ -23,16 +23,20 @@ repo via its entrypoint:
 1) **Set up MQTT credentials** (anonymous access is disabled by default):
 
 ```bash
+# Choose the password and write it to .env FIRST (or copy .env.example to
+# .env and set it there): Compose interpolates every service when it loads
+# docker-compose.yml — even for the one-off `run` below — and the frigate and
+# securacv services require SECURACV_MQTT_PASSWORD, so without it every
+# `docker compose` command stops before it starts anything.
+echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
 # Create the password file BEFORE starting the broker (mosquitto exits if the
 # configured password_file is missing, so it can't be created via `exec` on a
-# running broker). You'll be prompted for the password.
+# running broker). You'll be prompted for the password: type the same one.
 docker compose run --rm --no-deps --entrypoint sh mosquitto -c \
   'mosquitto_passwd -c /mosquitto/config/passwd securacv &&
    chown mosquitto:mosquitto /mosquitto/config/passwd &&
    chmod 600 /mosquitto/config/passwd'
 docker compose up -d mosquitto
-# Tell the frigate and securacv services the password you chose:
-echo 'SECURACV_MQTT_PASSWORD=<the password>' >> .env
 ```
 
 The `.env` value is injected into the SecuraCV bridges

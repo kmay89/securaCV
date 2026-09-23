@@ -317,3 +317,8 @@ jobs:
           python3 docs/hardware/enclosure/gen_qr.py --check
       - name: verify_pipeline.sh false-pass regression tests
         run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh
+      - name: Frigate stack docs write .env before the first Compose command
+        # Compose interpolates every service on load and two of them require
+        # SECURACV_MQTT_PASSWORD, so README/RUNBOOK step one must write .env
+        # before any `docker compose` command, or it fails as written.
+        run: bash integrations/ha_frigate_mqtt/tests/test_bringup_order.sh
