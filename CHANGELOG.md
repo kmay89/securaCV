@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+### Firmware operations: OTA scripts that can deploy, a buildable secure image, the WAP's tamper state over MQTT, and the last 5-second buckets gone (#1718)
+
+- **The OTA deploy scripts send the bearer (F39).** `ota_deploy.py` and
+  `ota_deploy.sh` take it from `CANARY_TOKEN` or a no-echo prompt — never
+  argv, never printed — and, given `CANARY_TLS_FP`, speak HTTPS to 443 only
+  once the presented certificate's SHA-256 equals the pin; a TLS device with
+  no pin is refused and its fingerprint printed, and an HTTP-only build keeps
+  plain HTTP. Both were refused by every device before. 17 cases against a
+  fake Canary run in CI's Mesh + Scout host-test job.
+- **The Tier-1 secure image builds again (F42).** `[env:secure]` and
+  `[env:secure_ha]` extend the canary's build flags and resolve from
+  `firmware/canary`, and a compile-only CI step builds both. **Upgrade
+  note:** `partitions_secure.csv` no longer flags `nvs` as `encrypted` —
+  ESP-IDF does not support flash-encrypting NVS, and with the flag a fused
+  board could not open NVS at all. The key is still plaintext in NVS under
+  `framework = arduino` (F5); a `regression_check.sh` section refuses an
+  encrypted `nvs` row.
+- **canary-wap's MQTT health carries `enclosure_open` and `sd_mounted` (F41)**,
+  in the canary tree's names, so Home Assistant's per-type WAP tamper sensors
+  no longer re-clear at the next health publish. Its other per-type sensors
+  (SD error, watchdog, power loss, unexpected reboot) still do — recorded in
+  `docs/homeassistant_setup.md`.
+- **The canary's dead pre-build tripwire is gone (F40, option delete —
+  maintainer to confirm)**, and `regression_check.sh` now fails an
+  `extra_scripts` line PlatformIO would ignore or that points at a missing
+  file. **The last 5-second time-bucket constants are gone (F44, option
+  delete — maintainer to confirm):** an unused `DEFAULT_GPS_COARSENING_MS`
+  and the canary web UI's Device Configuration form, which had no backend; a
+  new Invariant III guard holds canary bucket constants to the ten-minute
+  grid.
+
+### Flashers: an espflash that cannot start says so, one pins file, and a gated Flasher crate (#1718)
+
+- **A bundled espflash that cannot start is its own error in both flashers
+  (A20):** "The app's flash engine couldn't start", with the system's reason,
+  instead of `unknown` and download-mode coaching — in the Flasher and in the
+  Lab, the same classifier in both.
+- **The espflash version and sha256 pins live once, in
+  `.github/espflash-pins.env` (A21)**, which both desktop release workflows
+  load and both apps' release-target watches name, so a pin bump alone now
+  marks both apps as changed. The load step has not yet run on a release
+  runner.
+- **The desktop Flasher crate is fmt- and clippy-clean and gated (A22).** Why
+  the Flasher still cannot read eFuses is written beside its disclosure: the
+  pinned espflash 3.3.0 has no such command (A12).
+
+### Home Assistant and the walls (#1718, website #203)
+
+- **The watch actions' refusals are translatable (HA9):** nine keys in a new
+  `exceptions` section of `strings.json`, the English unchanged; a test holds
+  the keys raised to the keys declared. **Watch speech says "the" once and
+  "1 day" (HA11)**, and the long roster points at `securacv.list_watches`
+  (HA10).
+- **Every wall probes `canary.local:8799` (A16)** — the Flasher, the Lab and
+  the website's walls now try the Apple TV's three addresses in its order.
+- **The iPhone's Alerts ribbon labels a cell with its records' own buckets
+  (A17)**, not the grid slot — wrong before in +5:45/+5:30 zones and on
+  25-hour days. The Swift is proven by CI only.
+
 ### Firmware keys: the canary reports where its identity key sits, first-boot keygen gets a hardware-RNG floor, and the chain head persists atomically
 
 - **The identity key's at-rest posture is reported, not assumed (F5).**

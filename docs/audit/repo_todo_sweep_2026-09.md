@@ -235,7 +235,7 @@ so — see D2 below.)
   backfill). Wiring canary event egress is F29; the queue gives that
   transport its loss bound the day it gets callers. Roadmap item 17
   updated (#1697).
-- [ ] **F44 [code+decision] Two 5-second time-bucket stragglers contradict the
+- [x] **F44 [code+decision] Two 5-second time-bucket stragglers contradict the
   ten-minute floor.** The IR-TIMEBUCKET decision (option B — maintainer to
   confirm; `docs/IMPROVEMENT_ROADMAP.md` §3, "Landed in wave 4") made
   600 000 ms the floor and default of both firmwares' witness chains in
@@ -256,6 +256,12 @@ so — see D2 below.)
   only the canary-wap field to the floor today. Neither site reaches the
   chain (`canary_config.h`'s `TIME_BUCKET_MS` is 600000). The choice
   between deleting and widening, at each site, is the maintainer's.
+  *Done (#1718, option delete both — maintainer to confirm):* the unused
+  `DEFAULT_GPS_COARSENING_MS` and its floor are deleted, and so is the canary
+  web UI's back-end-less Device Configuration form (its live Reboot button
+  stays). `regression_check.sh`'s new "Privacy: canary time-bucket floor
+  (Invariant III)" section fails a canary bucket constant off the ten-minute
+  grid and holds any time-bucket field to min=600000.
 
 ### Mesh / fleet / beacon
 
@@ -488,7 +494,7 @@ so — see D2 below.)
   canary dev rebuild and the WAP Beacon leg, and the catalog's pin status stays
   "planned". Bench (U1): pin, polarity (the NC reed held open by the
   magnet) and the debounce policy. (Re-scope recorded in #1699.) (#1704)
-- [ ] **F39 [code] The canary's OTA deploy scripts cannot deploy.**
+- [x] **F39 [code] The canary's OTA deploy scripts cannot deploy.**
   `firmware/canary/scripts/ota_deploy.py` and `ota_deploy.sh` POST the image
   to `/api/ota` with no `Authorization` header, and `handle_ota` answers
   `auth_gate()` first (`securacv_network.cpp`), so every device refuses
@@ -497,7 +503,16 @@ so — see D2 below.)
   #1704, not introduced there. Take the bearer the way the other operator
   tools do (an env var or a prompt, never an argv literal), and with F15
   on, speak HTTPS to 443 with the device's pinned `tls_cert_fp`.
-- [ ] **F40 [code+decision] The canary tree's pre-build tripwire never
+  *Done (#1718):* both scripts take the bearer from `CANARY_TOKEN` or a
+  no-echo prompt (never argv, never printed; the shell passes it to curl on
+  stdin), and with `CANARY_TLS_FP` speak HTTPS to 443 only after the presented
+  certificate's DER SHA-256 equals the pin; an unpinned TLS device is refused
+  with its fingerprint printed, and an HTTP-only build keeps plain HTTP.
+  `test_ota_deploy.py` (17 cases against a fake Canary) runs in the Mesh +
+  Scout host-test job, with shellcheck. The pin comes from the operator (the
+  recovery kit's `tls_cert_fp`), not from `/api/status`, which would hand the
+  token to an unverified peer. Bench (U1): a real push both ways.
+- [x] **F40 [code+decision] The canary tree's pre-build tripwire never
   runs.** `firmware/canary/platformio.ini` sets
   `extra_scripts = pre:../../scripts/pre_build.py` under `[platformio]`,
   where PlatformIO does not read `extra_scripts` (it is an `[env]` option),
@@ -513,6 +528,11 @@ so — see D2 below.)
   note point at the wrong path too), or port it: `[env]` placement, a
   correct path, `env.subst("$PROJECT_DIR")` in place of `__file__`, and the
   comment filter. Maintainer to choose.
+  *Done (#1718, option delete — maintainer to confirm):* the dead line and
+  `firmware/scripts/pre_build.py` are removed, and every pointer to it now
+  names `regression_check.sh`, whose new "Build: PlatformIO extra_scripts"
+  section fails an `extra_scripts` outside `[env]` or one that points at a
+  missing file.
 
 ### Parity & sub-projects
 
@@ -722,7 +742,7 @@ so — see D2 below.)
   rule, then replay from the card once the broker returns
   (`firmware/canary/CONSOLIDATION.md` gap row 16). Bench (U1): an outage
   longer than the queue.
-- [ ] **F41 [code] canary-wap's MQTT health does not carry its tamper
+- [x] **F41 [code] canary-wap's MQTT health does not carry its tamper
   state.** `csi_mqtt::publish_health()` sends heap, uptime and the battery;
   `enclosure_open` and `sd_mounted` reach only the HTTP `/api/health`
   document. HA's per-type WAP tamper sensors set from F29's tamper-topic
@@ -731,7 +751,18 @@ so — see D2 below.)
   health (the canary tree already does) or stop the health from clearing a
   tamper-type sensor. F29's "MQTT-discovery triggers for the canary events
   topic" clause is the same surface and could land with it.
-- [ ] **F42 [code] The Tier-1 secure build is not buildable as written.**
+  *Done (#1718):* `csi_mqtt::publish_health()` carries `sd_mounted` (once a
+  card has mounted this boot) and `enclosure_open` (once the contact is
+  adopted) in the canary tree's names; the worst-case body is 323 bytes,
+  inside the 384-byte buffer. HA needed no change:
+  `tests/test_wap_tamper_health.py` reproduces the re-clear against the old
+  firmware's keys. Still open (maintainer's call, in
+  `docs/homeassistant_setup.md`): the WAP health carries no level for
+  `sd_error`, watchdog, power-loss, unexpected-reboot or `tamper_detected`, so
+  those sensors still clear at the next publish. The MQTT-discovery triggers
+  clause of F29 was not attempted. Bench (U1): a lid opening and an SD pull
+  held across two publishes.
+- [x] **F42 [code] The Tier-1 secure build is not buildable as written.**
   `firmware/provisioning/platformio_secure.ini` `[env:secure]` replaces
   the canary `[env]` build flags instead of extending `${env.build_flags}`,
   so it loses the include paths the witness and crypto sources need, and no
@@ -742,6 +773,14 @@ so — see D2 below.)
   unreadable. Fix both, and add a compile-only CI leg so it cannot rot
   again. Bench (U1): K1/K2 of the hardware checklist on a fused board. The
   key-at-rest decision itself is F38.
+  *Done (#1718):* both secure envs extend `${env.build_flags}` and resolve
+  through `firmware/canary/platformio.ini`'s `extra_configs`;
+  `partitions_secure.csv` drops `encrypted` from `nvs` (ESP-IDF 4.4.7: "The
+  nvs partition cannot be encrypted"); `main.cpp`'s always-used includes moved
+  above the `FEATURE_CSI` gate (which also fixes `[env:minimal]`).
+  `firmware.yml`'s canary leg compiles both envs, and `regression_check.sh`
+  refuses an encrypted `nvs` row. The key still sits in plaintext NVS under
+  `framework = arduino` (F5, F38). Bench (U1): K1/K2 on a fused board.
 - [ ] **F43 [code] The dash display's join screen draws its caption over
   the QR.** On the 800×480 dash flavor, the first-boot join scene's "or join
   … password" caption crosses the QR code's lower edge (`onboard_ui`
@@ -938,11 +977,18 @@ so — see D2 below.)
   since native fails closed silently on a malformed field. `MODEL_ADDR` and
   `DEV_FLASH_MANIFEST_URL` stay deliberate constants, still diffed by the
   test.
-- [ ] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
+- [x] **A12 [code] Desktop Flasher lacks the eFuse-read diagnostic** the
   browser flasher has (espflash has no fuse-read; the parity test currently
   forces a "browser-only" disclosure). Needs an espflash upstream check or a
   raw-command implementation — investigate, then either implement or record
   why not beside the disclosure.
+  *Investigated, not implemented (#1718):* the pinned espflash 3.3.0 CLI has
+  no register, eFuse or security-info read (`board-info` prints no security
+  field; the library declares `GET_SECURITY_INFO` but never sends it). The
+  reason is recorded beside the parity test's browser-only disclosure and tied
+  to the pin. espflash 4.x's `board-info` prints part of it (not
+  `SECURE_VERSION` or `DIS_DOWNLOAD_MANUAL_ENCRYPT`), so the item reopens with
+  an espflash bump, which needs a bench flash per board.
 - [ ] **A13 [human-gated by U3/certs] macOS signing/notarization** — both Mac
   apps ship unsigned until `ENABLE_MACOS_SIGNING` + certs exist
   (`desktop-lab/README.md`, `desktop/INSTALL.md`).
@@ -1005,18 +1051,31 @@ so — see D2 below.)
   key; removing the passcode disables the key, as documented. Then a real
   canary-wap seal followed by an unseal on the phone, a `.svlt` opened from
   Files or Mail, and the app-switcher snapshot blank while a frame is up.
-- [ ] **A16 [code] Mirror the Wall's `canary.local:8799` probe on the other
+- [x] **A16 [code] Mirror the Wall's `canary.local:8799` probe on the other
   walls.** A2 added it to the Apple TV's well-known candidates only; the
   desktop Flasher's wall, the Lab's `witness-host.js` / `tv-emulator.js`
   and the website's `tv/app.js` do not probe it yet. The website test pins
   its two lists against each other, so this is a cross-repo change.
-- [ ] **A17 [code] The iPhone's timeline labels cells from the local grid.**
+  *Done (#1718, website #203):* every wall — the Flasher, the Lab host and
+  companion defaults, and the website's `tv/app.js` / `js/tv-emulator.js`
+  (re-vendored into both apps) — probes `canary.local:8099`, `:8799`, then
+  `canary.local`, in the Apple TV's order; `desktop_parity.test.js` and a new
+  test pin them all to the Swift literal, and the website test pins its two
+  lists. Not done (maintainer's call): probing a provisioned or typed host on
+  `:8799`.
+- [x] **A17 [code] The iPhone's timeline labels cells from the local grid.**
   `ios/Sources/SecuraCV/Views/Components/TimelineScrubView.swift` (~:47,
   the day's audio-graph clock) prints `dayT0 + cell × bucket`, the rule the
   Wall had until its review fix: in zones whose offset is not a multiple of
   the bucket (+5:45, +5:30) and on 25-hour days that is not the record's
   sealed bucket. Port the Wall's rule — print each record's own sealed
   bucket (`WallTimeline.sealedBuckets`).
+  *Done (#1718):* `TimelineCellBuckets` in `TimelineScrubView.swift` labels a
+  lit cell with its records' own buckets (oldest first) and only an empty cell
+  with its slot; tap/drag now scroll to the cell's newest record.
+  `TimelineCellBucketsTests.swift` covers +5:45, +5:30 and a 25-hour day.
+  Wording says "own bucket", not "sealed" (the ribbon's alert notebook makes
+  no sealing claim). Swift is CI-only (iOS self-heal job).
 - [ ] **A18 [code+decision] The Wall cannot walk an add-on or root-image
   install.** The Home Assistant add-on honors `/config/viewer_tokens.json`
   but has no control that mints a viewer token (running `witness_api`
@@ -1031,7 +1090,7 @@ so — see D2 below.)
   Wall now asks a refusing source once per session and stays clear of it;
   other tokenless pollers still can lock themselves out. Decide whether the
   lockout should cover the unauthenticated routes.
-- [ ] **A20 [code] A bundled espflash that cannot run reads as "unknown"
+- [x] **A20 [code] A bundled espflash that cannot run reads as "unknown"
   in both flashers.** When the sidecar is present but cannot execute (the
   wrong CPU, a missing loader), `identify()` in the Flasher
   (`desktop/src/app.js`) and in the Lab (`canary-local/assets/flash-native.js`)
@@ -1039,13 +1098,25 @@ so — see D2 below.)
   Details text names the cause. Give the spawn failure its own kind and
   words in both frontends (two flashers, two frontends — CLAUDE.md). From
   the rust-flash package's open items (#1704).
-- [ ] **A21 [code] The espflash pins do not mark either app as changed.** The
+  *Done (#1718):* a new `engine` kind in both frontends' error classifier
+  (`desktop/src/app.js`, `canary-local/assets/flash-native.js`), checked
+  first: "The app's flash engine couldn't start", with the system's reason
+  (`spawnReason()`) and no driver or download-mode coaching. `desktop_parity`
+  builds the errors from the Rust that produces them. A real spawn failure has
+  not been seen on a machine (bench).
+- [x] **A21 [code] The espflash pins do not mark either app as changed.** The
   bundled espflash's version and sha256 live only in
   `desktop-release.yml` and `desktop-flasher-release.yml`, and neither app's
   `.github/release-targets.yml` watch names them, so a pin bump alone
   releases nothing. One pins file both workflows read and both watches name
   closes it (`.github/RELEASE_LESSONS.md` 2026-09-23 (b) records the lesson).
-- [ ] **A22 [code] The desktop Flasher's crate fails clippy and fmt, and no
+  *Done (#1718):* `.github/espflash-pins.env` holds the version and the three
+  sha256 pins once; both release workflows load it with a parse-don't-source
+  step that fails on a malformed line, and both apps' `release-targets.yml`
+  watches name it. `desktop_parity` refuses a pin inside either workflow. The
+  load step has not yet run on a release runner — a build-only dispatch of
+  each workflow proves it.
+- [x] **A22 [code] The desktop Flasher's crate fails clippy and fmt, and no
   PR job runs either.** `desktop/src-tauri` fails
   `cargo clippy --all-targets -- -D warnings` on two findings, both in files
   #1704 did not change: `whoami.rs`'s `decode_hex` trips
@@ -1060,6 +1131,10 @@ so — see D2 below.)
   the two findings, format the crate in a commit of its own, then add the
   Lab job's Format check and Clippy steps to `tauri-crate-check`. From the
   rust-apps and rust-flash packages' open items (#1704).
+  *Done (#1718):* `desktop/src-tauri` is `cargo fmt`- and `clippy -D
+  warnings`-clean on rustc 1.98.1 (`is_multiple_of`; the dead
+  `clamp_threshold` and its test removed); `desktop-hub-core.yml`'s `cargo
+  check (src-tauri)` job now runs a format check and clippy.
 
 ---
 
@@ -1184,24 +1259,41 @@ so — see D2 below.)
   Frigate config once a real camera is on the bench (today: one placeholder
   camera, `demo`, on an RTSP path nothing serves — Frigate starts it and
   logs ffmpeg errors for it, so the config parses but never detects).
-- [ ] **HA9 [code] Make the watch actions' refusals translatable.** HA5's
+- [x] **HA9 [code] Make the watch actions' refusals translatable.** HA5's
   `securacv.*` actions raise `ServiceValidationError` with plain-English
   messages and no `translation_key`, so a non-English install reads
   English errors (strategy/11's action-exceptions row reads ⚠️ for it).
   Give each refusal a key in an `exceptions` section of `strings.json`
   (copied to `translations/en.json`) and raise with the translation
   domain, key and placeholders.
-- [ ] **HA10 [code] The watch roster points at a dashboard that doesn't
+  *Done (#1718):* all nine refusals the watch actions raise go through
+  `services._refusal()` with `translation_domain`, `translation_key` and
+  `translation_placeholders`; the keys live in a new `exceptions` section of
+  `strings.json`, `translations/en.json` is a byte-identical copy, and the
+  English is unchanged word for word. `tests/test_exception_translations.py`
+  scans the package: every raise carries a literal key and the keys raised
+  equal the keys declared. strategy/11's action-exceptions row reads ✅; its
+  exception-translations row stays ⚠️ until `__init__.py`'s three
+  `UpdateFailed` messages are translated. hassfest is CI's.
+- [x] **HA10 [code] The watch roster points at a dashboard that doesn't
   exist.** `watches.speak_roster` ends its summary of four or more watches
   with "The dashboard has the rest.", and no dashboard lists watches. Point
   it at `securacv.list_watches` (HA5) instead, and update
   `tests/test_watches.py`, which pins the current sentence.
-- [ ] **HA11 [code] Watch notifications double the article and say "1
+  *Done (#1718):* the summary now ends "The securacv.list_watches action has
+  the rest." A new test holds every `securacv.<action>` named in `watches.py`,
+  `intent.py` and `voice.py` to a registered action.
+- [x] **HA11 [code] Watch notifications double the article and say "1
   days".** Every watch label starts with "the "
   (`watch_runtime._make_label`), and `watches.speak_ending` /
   `speak_fired` write "The {label} watch", so a notification reads "The
   the gate canary watch ended after 1 days" — the plural is wrong too. Fix
   the speech in `watches.py` and pin both cases in a test.
+  *Done (#1718):* every `speak_*` function says the label's article once
+  (`_label`/`_the` helpers) and counts in the singular for one (`_count`) —
+  including `_duration_phrase`'s "1 minutes". Pinned in
+  `tests/test_watches.py`. Left: an early end still rounds up to "after 1
+  day"; the notification title shows a stored doubled label as stored.
 - [ ] **HA12 [decision] The kernel device's double "SecuraCV" prefix.** HA2
   kept "SecuraCV Last Event" and "SecuraCV Adapter Host" (keys
   `kernel_last_event`, `adapter_stats`) byte-identical. Dropping the prefix
