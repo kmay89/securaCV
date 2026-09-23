@@ -25,6 +25,11 @@
 // Not for the browser emulator: it needs the real WiFiClientSecure. The
 // display's mqtt_mgr.cpp includes this only when EMU_BUILD_FLAVOR is unset.
 //
+// The TLS socket's timeouts (the TCP connect and the handshake) are set here
+// once, in apply(), for every consumer; each product's mqtt_mgr.cpp asserts
+// the watchdog budget they feed (firmware/canary re-sets tighter ones of its
+// own on every attempt, for its 8 s watchdog).
+//
 // Dependency note: setCACert() keeps the POINTER it is given, so the PEM
 // lives in this object (static storage in every consumer) for the life of
 // the connection, never in a stack buffer.
@@ -53,6 +58,26 @@ constexpr const char* NVS_KEY_FP   = "mqtt_fp";   // str — SHA-256 pin, any ac
 constexpr size_t kCaBufBytes = kCaPemMax + 1;          // 3072
 constexpr size_t kFpBufBytes = kFingerprintTextLen + 1; // 96
 constexpr unsigned long kHandshakeTimeoutSec = 15;      // RSA-4096 roots on an S3 take a few seconds
+// The TCP connect under the handshake. Left at the core's default it waits
+// 30 s, which alone is the whole of every product's 30 s task watchdog. Each
+// product static_asserts kConnectTimeoutSec + kHandshakeTimeoutSec + its
+// PubSubClient socket timeout (the CONNACK wait) under that watchdog.
+constexpr uint32_t kConnectTimeoutSec = 5;
+
+// Bound a secure client's TCP connect, in whole seconds, on either
+// Arduino-ESP32 major. Core 2.x: WiFiClientSecure::setTimeout(seconds) is
+// the connect select and the socket timeout. Core 3.x: that job moved to
+// NetworkClient::setConnectionTimeout(milliseconds) (Network/NetworkClient.h),
+// and the only setTimeout a NetworkClientSecure still has is
+// Stream::setTimeout(ms), the read timeout, so a bare setTimeout(5) compiles
+// on core 3 and leaves the 30 s connect in place. Keep the two branches.
+inline void set_connect_timeout_sec(WiFiClientSecure& client, uint32_t seconds) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  client.setConnectionTimeout(seconds * 1000u);
+#else
+  client.setTimeout(seconds);
+#endif
+}
 
 // WiFiClientSecure that refuses to stay connected to a peer whose
 // certificate does not match the pin. PubSubClient calls Client::connect()
@@ -198,6 +223,7 @@ class BrokerTransport {
     secure_.clear_pin();
     secure_.setCACert(nullptr);
     secure_.setHandshakeTimeout(kHandshakeTimeoutSec);
+    set_connect_timeout_sec(secure_, kConnectTimeoutSec);
     switch (decision_.transport) {
       case Transport::TlsCa:
         secure_.setCACert(ca_);
