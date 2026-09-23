@@ -5388,6 +5388,23 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }).join('');
     }
 
+    // An Opera alert's timestamp_ms is this Canary's uptime (millis()) when
+    // the alert arrived, not a date: it is shown as an age against the
+    // uptime_ms the same response carries, or not at all (F33 part 7).
+    // The subtraction is u32, like the firmware's, so it survives the
+    // millis() wrap every ~49.7 days.
+    function formatAlertAge(timestampMs, uptimeMs) {
+      const u32 = (v) => Number.isInteger(v) && v >= 0 && v <= 0xFFFFFFFF;
+      if (!u32(timestampMs) || !u32(uptimeMs)) return '';
+      const sec = Math.floor(((uptimeMs - timestampMs) >>> 0) / 1000);
+      if (sec < 60) return `received ${sec} s ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `received ${min} min ago`;
+      const h = Math.floor(min / 60);
+      if (h < 24) return `received ${h} h ${min % 60} min ago`;
+      return `received ${Math.floor(h / 24)} d ${h % 24} h ago`;
+    }
+
     async function loadOperaAlerts() {
       const data = await api('/api/mesh/alerts');
       const list = document.getElementById('operaAlertsList');
@@ -5399,13 +5416,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       list.innerHTML = data.alerts.map(alert => {
         const levelClass = alert.severity >= 6 ? 'critical' : alert.severity >= 4 ? 'error' : 'warning';
+        const age = formatAlertAge(alert.timestamp_ms, data.uptime_ms);
         return `
           <div class="log-item ${levelClass}">
             <div class="log-level ${levelClass}">${alert.type || 'ALERT'}</div>
             <div class="log-content">
               <div class="log-message">From: ${escapeHtml(alert.sender_name || 'Unknown')}</div>
               <div class="log-detail">${escapeHtml(alert.detail || '')}</div>
-              <div class="log-meta">${formatTimestamp(alert.timestamp_ms)}</div>
+              ${age ? `<div class="log-meta">${age}</div>` : ''}
             </div>
           </div>
         `;

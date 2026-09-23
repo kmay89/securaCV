@@ -750,11 +750,16 @@ passes signature, `opera_id` and replay checks and decodes is counted
 against the sender (`alerts_received` per peer and opera-wide), kept in a
 16-entry RAM history, and written to the health log at `LOG_LEVEL_ALERT`,
 `LOG_CAT_NETWORK` with the sender's fingerprint (§6.3). `GET /api/mesh/alerts`
-returns `{ok, count, alerts:[{timestamp_ms, type, severity, sender_fp,
-sender_name, detail, witness_seq}]}` newest first: `type` is `"TAMPER"`,
-`detail` is the kind's template name, `timestamp_ms` is the receiver's uptime
-at receipt (the canary-wap basis too), and `sender_name` is `""` until a
-peer-metadata store exists. `DELETE` clears the history; the counters keep
+returns `{ok, count, uptime_ms, alerts:[{timestamp_ms, type, severity,
+sender_fp, sender_name, detail, witness_seq}]}` newest first: `type` is
+`"TAMPER"`, `detail` is the kind's template name, `timestamp_ms` is the
+receiver's uptime at receipt (the canary-wap basis too) — not a wall-clock
+time — and `sender_name` is `""` until a peer-metadata store exists.
+`uptime_ms` (v0.3, F33) is the receiver's uptime when the response was
+built, so a client can show each alert's age (`uptime_ms − timestamp_ms`,
+modulo 2³² across the `millis()` wrap); the PIO web UI shows "received … ago"
+and, without `uptime_ms`, no time at all — until F33 it rendered the uptime
+as a time of day. canary-wap's web UI shows no alert time. `DELETE` clears the history; the counters keep
 counting. Counters and history are **per boot** — not persisted. Relay
 (§6.1 step 3), `POWER_ALERT` and `OFFLINE_IMMINENT` are not implemented.
 **Not wire-interoperable with canary-wap:** the two trees number the outer
@@ -964,4 +969,6 @@ An implementation conforms to this specification if it:
   counter reserves ahead in `mesh_out_ctr` (§3.3, §12.3); the four PIO
   pairing routes run on the main loop's request slot (§8.3); the §5.6
   revocation deny-list in both trees (`mesh_revoked`, `revoked`, §12.3) and
-  convergence of two concurrent removals in the PIO tree (§5.6).
+  convergence of two concurrent removals in the PIO tree (§5.6); PIO
+  `GET /api/mesh/alerts` adds `uptime_ms`, and the web UI shows an alert's
+  age instead of a made-up time of day (§8.3).

@@ -118,23 +118,30 @@ bool build_mesh_peers_json(char*  out,
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/alerts — received alert history (F10)
  *
- * Emits {ok:true, count:N, alerts:[{timestamp_ms, type, severity,
- * sender_fp, sender_name, detail, witness_seq}]} in the order given
- * (the session hands them over newest-first). The field names are the
- * ones the web UI's loadOperaAlerts() reads — type, severity,
- * sender_name, detail, timestamp_ms — plus sender_fp and witness_seq,
- * which canary-wap also emits. `type` is always "TAMPER"
- * (mesh_alert::type_name), `detail` is the template name for the kind
- * (mesh_alert::kind_name — never sender-authored text), `sender_fp` is
+ * Emits {ok:true, count:N, uptime_ms:U, alerts:[{timestamp_ms, type,
+ * severity, sender_fp, sender_name, detail, witness_seq}]} in the order
+ * given (the session hands them over newest-first). The field names are
+ * the ones the web UI's loadOperaAlerts() reads — type, severity,
+ * sender_name, detail, timestamp_ms, and the envelope's uptime_ms — plus
+ * sender_fp and witness_seq, which canary-wap also emits. `type` is always
+ * "TAMPER" (mesh_alert::type_name), `detail` is the template name for the
+ * kind (mesh_alert::kind_name — never sender-authored text), `sender_fp` is
  * 16 lowercase hex chars, and `sender_name` is "" until a peer-metadata
- * store exists (the UI renders "Unknown"). timestamp_ms is the
- * receiver's uptime at receipt, the same basis canary-wap uses.
+ * store exists (the UI renders "Unknown").
+ *
+ * timestamp_ms is the receiver's uptime (millis()) at receipt, the same
+ * basis canary-wap uses — NOT a wall-clock time, and it means nothing
+ * without the uptime it is measured against. So the envelope carries
+ * `uptime_ms`, the receiver's uptime when the body was built (`now_ms`),
+ * and the web UI renders each alert as an age, now_ms − timestamp_ms
+ * (u32, so it survives the millis() wrap), never as a date (F33 part 7).
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool build_mesh_alerts_json(char*                     out,
                             size_t                    cap,
                             const mesh_alert::Record* alerts,
-                            size_t                    count);
+                            size_t                    count,
+                            uint32_t                  now_ms);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * POST /api/mesh/remove {fingerprint} — request parsing (F10-rekey)

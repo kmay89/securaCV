@@ -1831,22 +1831,24 @@ void test_build_mesh_alerts_json() {
   recs[1].severity = 3;
 
   char buf[1024];
-  assert(mesh_api::build_mesh_alerts_json(buf, sizeof(buf), recs, 2));
-  /* The exact field names the web UI's loadOperaAlerts() reads. */
-  assert(std::strstr(buf, "{\"ok\":true,\"count\":2,\"alerts\":[{") == buf);
+  assert(mesh_api::build_mesh_alerts_json(buf, sizeof(buf), recs, 2, 150000));
+  /* The exact field names the web UI's loadOperaAlerts() reads — and the
+   * receiver's uptime each timestamp_ms is measured against (F33 part 7:
+   * the UI shows 150000 - 90000 as "1 min ago", never a date). */
+  assert(std::strstr(buf, "{\"ok\":true,\"count\":2,\"uptime_ms\":150000,\"alerts\":[{") == buf);
   assert(std::strstr(buf, "{\"timestamp_ms\":90000,\"type\":\"TAMPER\",\"severity\":6,"
                           "\"sender_fp\":\"1011121314151617\",\"sender_name\":\"\","
                           "\"detail\":\"camera_tamper\",\"witness_seq\":4242}") != nullptr);
   assert(std::strstr(buf, "\"detail\":\"unknown\"") != nullptr);
 
   /* Empty history is a valid envelope. */
-  assert(mesh_api::build_mesh_alerts_json(buf, sizeof(buf), nullptr, 0));
-  assert(std::strcmp(buf, "{\"ok\":true,\"count\":0,\"alerts\":[]}") == 0);
+  assert(mesh_api::build_mesh_alerts_json(buf, sizeof(buf), nullptr, 0, 7));
+  assert(std::strcmp(buf, "{\"ok\":true,\"count\":0,\"uptime_ms\":7,\"alerts\":[]}") == 0);
 
   /* Overflow fails cleanly; null records with count>0 refused. */
   char tiny[16];
-  assert(!mesh_api::build_mesh_alerts_json(tiny, sizeof(tiny), recs, 2));
-  assert(!mesh_api::build_mesh_alerts_json(buf, sizeof(buf), nullptr, 1));
+  assert(!mesh_api::build_mesh_alerts_json(tiny, sizeof(tiny), recs, 2, 0));
+  assert(!mesh_api::build_mesh_alerts_json(buf, sizeof(buf), nullptr, 1, 0));
   std::printf("PASS test_build_mesh_alerts_json\n");
 }
 
@@ -1883,7 +1885,7 @@ void test_rest_buffers_fit_worst_case() {
   }
   std::vector<char> abuf(mesh_api::ALERTS_JSON_CAP);
   assert(mesh_api::build_mesh_alerts_json(abuf.data(), abuf.size(), recs,
-                                          mesh_api::MAX_ALERTS_JSON));
+                                          mesh_api::MAX_ALERTS_JSON, 0xFFFFFFFFu));
   std::printf("PASS test_rest_buffers_fit_worst_case  (alerts=%zu B, peers=%zu B)\n",
               std::strlen(abuf.data()), std::strlen(buf.data()));
 }

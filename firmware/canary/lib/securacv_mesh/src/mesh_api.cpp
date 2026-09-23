@@ -183,13 +183,16 @@ bool parse_fingerprint_hex(const char* hex,
 bool build_mesh_alerts_json(char*                     out,
                             size_t                    cap,
                             const mesh_alert::Record* alerts,
-                            size_t                    count) {
+                            size_t                    count,
+                            uint32_t                  now_ms) {
   if (out == nullptr || cap == 0) return false;
   if (count > 0 && alerts == nullptr) return false;
 
   size_t pos = 0;
+  /* uptime_ms: what each timestamp_ms is measured against (F33 part 7). */
   int n = snprintf(out + pos, cap - pos,
-                   "{\"ok\":true,\"count\":%u,\"alerts\":[", (unsigned)count);
+                   "{\"ok\":true,\"count\":%u,\"uptime_ms\":%lu,\"alerts\":[",
+                   (unsigned)count, (unsigned long)now_ms);
   if (n < 0 || (size_t)n >= cap - pos) return false;
   pos += (size_t)n;
 

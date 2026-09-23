@@ -1139,6 +1139,12 @@ jobs:
               -I $MESH_SRC
           done
 
+          # The canary web UI's Opera alert list (securacv_webui.cpp): each
+          # alert's timestamp_ms is the receiver's uptime, shown as an age
+          # against the uptime_ms of the JSON test_mesh_session pins, never
+          # as a date (F33 part 7). node is preinstalled on ubuntu-latest.
+          node --test firmware/tests_host/test_canary_mesh_alerts.test.js
+
           # ble_scan + ble_scout_state — pure-logic, only link
           # ble_scan.cpp / ble_scout_state.cpp from the lib, plus
           # mesh_crypto.cpp for sha256_domain.

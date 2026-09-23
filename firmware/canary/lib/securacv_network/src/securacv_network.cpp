@@ -5523,7 +5523,9 @@ static esp_err_t handle_mesh_alerts(httpd_req_t* req) {
   char* body = (char*)malloc(cap);
   if (body == nullptr) return http_send_error(req, 500, "oom");
   esp_err_t rc;
-  if (!mesh_api::build_mesh_alerts_json(body, cap, recs, n)) {
+  // millis(): the uptime each alert's timestamp_ms is measured against —
+  // the web UI shows an age, never a date (F33 part 7).
+  if (!mesh_api::build_mesh_alerts_json(body, cap, recs, n, (uint32_t)millis())) {
     rc = http_send_error(req, 500, "encode_failed");
   } else {
     rc = http_send_json(req, body);
