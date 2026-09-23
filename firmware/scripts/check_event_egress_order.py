@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Hold the canary's event egress to the two things its backfill test assumes.
+"""Hold the canary's event egress to what its backfill test assumes.
 
 The SD event log's reconnect backfill (backlog F37) keeps its rules in the
 pure `firmware/common/csi/src/csi_event_backfill.h`, and
 `firmware/tests_host/test_csi_event_backfill.cpp` replays whole outages
 against it. That test runs the planner inside a model world, and two of the
-properties it asserts are properties of the model, not of the planner:
+properties it asserts are properties of the model, not of the planner
+(rules 1-3 below; the model also supplies three glue values, rules 4-6):
 
 - the model's live publish refuses while the MQTT offline queue still holds
   records, and
@@ -17,7 +18,10 @@ In the firmware those are `mqtt_publish_event_live()` in
 `csi_event_egress_pump()` in `firmware/canary/src/csi_event_egress.cpp`.
 Reviewing F37, someone deleted the refusal and gated the bridge on the
 backlog, and every host test and lint stayed green. This check is the guard
-those two edits lacked.
+those two edits lacked. The re-review then got past its first rule set with
+a bridge gated on `s_replay_run`, an `if (false)` decoy in front of a bridge
+moved after the commit, a zero id floor in `current_link()` or `begin()`,
+and a deleted epoch bump or `not_owed()` call; rules 3-6 refuse those.
 
 ## The rules
 
@@ -33,18 +37,43 @@ those two edits lacked.
    csi_event_egress.cpp) publish through `mqtt_publish_event_live()`, never
    through the buffering `mqtt_publish_event()`.
 3. In `csi_event_egress_pump()`, each dequeued row (`xQueueReceive(`)
-   publishes its tamper bridge (`mqtt_publish_tamper(`) BEFORE the planner
-   commits it (`s_backfill.commit(`). Between the dequeue and that publish,
-   nothing consults the planner (`s_backfill`) or the link state
-   (`link.connected`, `mqtt_connected(`), and `s_backfill.pending(` is not
-   read anywhere before it. So a tamper alert never waits on the card or
-   the backlog, and it queues through an outage. The backfill pass
-   (`s_backfill.pass(`) runs after the row is committed.
+   publishes its tamper bridge (`mqtt_publish_tamper(`, once in the pump)
+   BEFORE the planner commits it (`s_backfill.commit(`). Between the
+   dequeue and that publish there is no control flow (no `if`, `continue`,
+   `return`, ...) and nothing reads the backfill's state (`s_backfill`,
+   `s_replay_run`, `s_dest_epoch`, `s_port`, `csi_event_log::`) or the link
+   state (`link.connected`, `mqtt_connected(`); `s_backfill.pending(` is
+   not read anywhere before it. The `if` around the publish tests only
+   `link.accepting`, that the body built, and the boot-story filter — so an
+   `if (false ...` decoy, or a gate on the backlog, is refused. So a tamper
+   alert never waits on the card or the backlog, and it queues through an
+   outage. The backfill pass (`s_backfill.pass(`) runs after the row is
+   committed.
+
+The host test also takes three glue values from its model that the planner
+cannot check for itself:
+
+4. The id floor. `current_link()` sets `link.id_floor` once, from
+   `s_id_floor_stored` (the allocator's floor as NVS holds it), and the pump
+   takes its link from `current_link()`; `csi_event_egress_begin()` calls
+   `restore_event_id_floor()` and then hands `s_id_floor_stored` to
+   `s_backfill.begin(` as its floor. A zero there would let the ceiling pass
+   the floor once the two strides fall out of step (a failed NVS write),
+   and a new boot's first ids would read as delivered.
+5. The broker-change epoch, in the pump. Before any row is dequeued, an
+   `if` whose `||` condition holds `!link.accepting` and a comparison of
+   `s_dest_epoch` with `mqtt_destination_epoch()` calls
+   `s_backfill.not_owed(` and stores the new epoch. Without it a new broker
+   is sent the old one's backlog.
+6. The epoch itself, in securacv_mqtt.cpp. `apply_pending_reload()` bumps
+   `s_destination_epoch` under an `if` on the same flag that guards the
+   offline queue's flush (`s_offline_q.clear(`), and
+   `mqtt_destination_epoch()` returns it.
 
 ## It proves it bites
 
 Each run applies a set of mutations to the sources, in memory, and requires
-the check to fail on every one. The reviewer's two edits are in that set. So
+the check to fail on every one. The reviewers' edits are in that set. So
 the check is proven against the code as it stands. If a refactor moves an
 anchor a mutation needs, the run fails and says so; it does not pass quietly.
 
@@ -163,11 +192,69 @@ def unwrap(term: str) -> str:
     return term
 
 
+def enclosing_if(text: str, pos: int) -> tuple[int, str, int, int] | None:
+    """The innermost `if (...)` whose condition or controlled statement holds
+    `pos`: (where the `if` starts, its condition, where its statement starts,
+    where it ends)."""
+    for m in reversed([m for m in re.finditer(r"\bif\s*\(", text) if m.start() < pos]):
+        close = matching_paren(text, m.end() - 1)
+        if close < 0:
+            continue
+        k = close + 1
+        while k < len(text) and text[k].isspace():
+            k += 1
+        if k < len(text) and text[k] == "{":
+            depth, end = 0, -1
+            for j in range(k, len(text)):
+                if text[j] == "{":
+                    depth += 1
+                elif text[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = j + 1
+                        break
+        else:
+            end = text.find(";", k)
+            end = end + 1 if end >= 0 else -1
+        if end >= 0 and m.end() <= pos < end:
+            return m.start(), text[m.end():close], close + 1, end
+    return None
+
+
+def call_args(text: str, call: str) -> list[str] | None:
+    """The top-level arguments of the first `call` (e.g. `f(`), squashed."""
+    at = text.find(call)
+    if at < 0:
+        return None
+    close = matching_paren(text, at + len(call) - 1)
+    if close < 0:
+        return None
+    return [squash(a) for a in top_level_terms(text[at + len(call):close], ",")]
+
+
 # Signatures, matched against the blanked source.
 SIG_LIVE = r"\bbool\s+mqtt_publish_event_live\s*\([^)]*\)"
 SIG_PUMP = r"\bvoid\s+csi_event_egress_pump\s*\(\s*(?:void)?\s*\)"
+SIG_BEGIN = r"\bvoid\s+csi_event_egress_begin\s*\(\s*(?:void)?\s*\)"
+SIG_CURRENT_LINK = r"\bcsi_event_backfill::Link\s+current_link\s*\(\s*(?:void)?\s*\)"
 SIG_SEND_LIVE = r"\bsend_live\s*\([^)]*\)\s*(?:override\s*)?"
 SIG_SEND_BACKFILL = r"\bsend_backfill\s*\([^)]*\)\s*(?:override\s*)?"
+SIG_RELOAD = r"\bvoid\s+apply_pending_reload\s*\(\s*(?:void)?\s*\)"
+SIG_EPOCH = r"\buint32_t\s+mqtt_destination_epoch\s*\(\s*(?:void)?\s*\)"
+
+# What the tamper bridge's `if` may test (each `&&` term, squashed).
+BRIDGE_TERMS = (
+    r"link\.accepting",
+    r"csi_event_wire::build_tamper_bridge_body\(.*\)>0",
+    r"!boot_story_bridged_elsewhere\(.*\)",
+)
+# The backfill's and the link's state: none of it may stand between a
+# dequeued row and its tamper bridge.
+BACKLOG_STATE = ("s_backfill", "s_replay_run", "s_dest_epoch", "s_port", "csi_event_log::",
+                 "link.connected", "mqtt_connected(")
+CONTROL_FLOW = r"\b(?:if|else|for|while|do|switch|return|continue|break|goto)\b"
+# The allocator's floor as NVS holds it, read atomically or plainly.
+FLOOR_READ = r"__atomic_load_n\(&s_id_floor_stored,[A-Z_]+\)|s_id_floor_stored"
 
 
 def the_body(code: str, signature: str, what: str, errors: list[str],
@@ -253,18 +340,132 @@ def check_pump_order(egress_src: str, errors: list[str]) -> None:
     if tamper > commit:
         errors.append(f"{where}: the tamper bridge must publish BEFORE the row is committed "
                       "to the planner — a tamper alert never waits on the card or the backlog")
+    if body.count("mqtt_publish_tamper(") != 1:
+        errors.append(f"{where}: expected one tamper bridge publish (mqtt_publish_tamper), "
+                      f"found {body.count('mqtt_publish_tamper(')} — a second one is either a "
+                      "decoy or a duplicate alert")
     between = body[deq:tamper]
-    for gate in ("s_backfill", "link.connected", "mqtt_connected("):
+    for gate in BACKLOG_STATE:
         if gate in between:
             errors.append(f"{where}: the tamper bridge must not be gated on `{gate}` — it "
                           "publishes (or queues through an outage) whatever the backfill is doing")
     if "s_backfill.pending(" in body[:tamper]:
         errors.append(f"{where}: s_backfill.pending() is read before the tamper bridge — "
                       "the bridge must not depend on the backlog")
+    # Nothing between the dequeue statement and the bridge's `if` may branch
+    # (a `continue` would skip the bridge), and that `if` may test only what
+    # BRIDGE_TERMS allows (an `if (false ...` decoy is refused here).
+    dequeue_if = enclosing_if(body, deq)
+    bridge_if = enclosing_if(body, tamper)
+    if dequeue_if is None or bridge_if is None or bridge_if[0] < dequeue_if[3] or \
+            not bridge_if[2] <= tamper < bridge_if[3]:
+        errors.append(f"{where}: the row dequeue and the tamper bridge must each be an `if` "
+                      "statement, the bridge's after the dequeue's, with the publish as its "
+                      "statement")
+    else:
+        flow = re.search(CONTROL_FLOW, body[dequeue_if[3]:bridge_if[0]])
+        if flow:
+            errors.append(f"{where}: `{flow.group(0)}` between the row dequeue and the tamper "
+                          "bridge — every dequeued row reaches the bridge")
+        for term in top_level_terms(unwrap(bridge_if[1]), "&&"):
+            if not any(re.fullmatch(ok, unwrap(term)) for ok in BRIDGE_TERMS):
+                errors.append(f"{where}: the tamper bridge is gated on `{unwrap(term)}` — it may "
+                              "test only link.accepting, that the body built and the boot-story "
+                              "filter")
     passes = body.find("s_backfill.pass(", commit if commit >= 0 else 0)
     if passes < 0:
         errors.append(f"{where}: the backfill pass (s_backfill.pass) must run after the rows "
                       "are committed")
+
+
+def check_floor_glue(egress_src: str, errors: list[str]) -> None:
+    """Rule 4: the planner is given the allocator's floor, at boot and every pass."""
+    code = blank_comments_and_strings(egress_src)
+    span = the_body(code, SIG_CURRENT_LINK, f"{EGRESS_CPP}: current_link()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        sets = re.findall(r"\blink\.id_floor\s*=(?!=)([^;]*);", body)
+        if len(sets) != 1 or not re.fullmatch(FLOOR_READ, squash(sets[0])):
+            errors.append(
+                f"{EGRESS_CPP}: current_link() must set link.id_floor once, from "
+                "s_id_floor_stored (the allocator's floor as NVS holds it) — the planner caps its "
+                "ceiling there, so a new boot's first ids are never read as delivered")
+    span = the_body(code, SIG_PUMP, f"{EGRESS_CPP}: csi_event_egress_pump()", errors,
+                    need="xQueueReceive(")
+    if span is not None:
+        body = code[span[0]:span[1]]
+        if not re.search(r"\blink\s*=\s*current_link\s*\(\s*\)", body) or \
+                re.search(r"\blink\.id_floor\s*=(?!=)", body):
+            errors.append(f"{EGRESS_CPP}: csi_event_egress_pump() must take its link, id floor "
+                          "included, from current_link()")
+    span = the_body(code, SIG_BEGIN, f"{EGRESS_CPP}: csi_event_egress_begin()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        args = call_args(body, "s_backfill.begin(")
+        restore = body.find("restore_event_id_floor(")
+        if args is None or len(args) != 3 or not re.fullmatch(FLOOR_READ, args[1]):
+            errors.append(f"{EGRESS_CPP}: csi_event_egress_begin() must hand s_id_floor_stored "
+                          "to s_backfill.begin() as its floor (the first-boot record starts "
+                          "there)")
+        elif restore < 0 or restore > body.find("s_backfill.begin("):
+            errors.append(f"{EGRESS_CPP}: csi_event_egress_begin() must restore the id floor "
+                          "from NVS (restore_event_id_floor) before s_backfill.begin() reads it")
+
+
+def check_epoch_glue(egress_src: str, errors: list[str]) -> None:
+    """Rule 5: a changed (or removed) broker drops the backlog, before any row."""
+    code = blank_comments_and_strings(egress_src)
+    span = the_body(code, SIG_PUMP, f"{EGRESS_CPP}: csi_event_egress_pump()", errors,
+                    need="xQueueReceive(")
+    if span is None:
+        return
+    body = code[span[0]:span[1]]
+    where = f"{EGRESS_CPP}: csi_event_egress_pump()"
+    call = body.find("s_backfill.not_owed(")
+    guard = enclosing_if(body, call) if call >= 0 else None
+    if guard is None or body.count("s_backfill.not_owed(") != 1:
+        errors.append(f"{where}: must call s_backfill.not_owed() once, under an `if` on the "
+                      "broker (no broker, or a changed one) — what waited for one broker is not "
+                      "the next one's to see")
+        return
+    epochs = ["mqtt_destination_epoch()"] + [
+        m.group(1) for m in re.finditer(r"\b(\w+)\s*=\s*mqtt_destination_epoch\s*\(\s*\)", body)]
+    terms = [unwrap(t) for t in top_level_terms(unwrap(guard[1]), "||")]
+    compares = any(t in (f"{e}!=s_dest_epoch", f"s_dest_epoch!={e}") for t in terms for e in epochs)
+    if "!link.accepting" not in terms or not compares:
+        errors.append(f"{where}: s_backfill.not_owed() must run when no broker is configured "
+                      "(!link.accepting) OR the destination epoch moved (s_dest_epoch != "
+                      "mqtt_destination_epoch()), as one `||` condition")
+    if not re.search(r"\bs_dest_epoch\s*=(?!=)", body[guard[2]:guard[3]]):
+        errors.append(f"{where}: the not_owed() branch must store the new epoch in s_dest_epoch, "
+                      "or it drops the backlog on every pass after a broker change")
+    deq = body.find("xQueueReceive(")
+    if deq >= 0 and call > deq:
+        errors.append(f"{where}: s_backfill.not_owed() must run before the rows are dequeued, "
+                      "so a row committed for the new broker is not dropped with the old backlog")
+
+
+def check_destination_epoch(mqtt_src: str, errors: list[str]) -> None:
+    """Rule 6: the epoch moves exactly when the offline queue would be flushed."""
+    code = blank_comments_and_strings(mqtt_src)
+    span = the_body(code, SIG_EPOCH, f"{MQTT_CPP}: mqtt_destination_epoch()", errors)
+    if span is not None and squash(code[span[0]:span[1]]) != "returns_destination_epoch;":
+        errors.append(f"{MQTT_CPP}: mqtt_destination_epoch() must return s_destination_epoch")
+    span = the_body(code, SIG_RELOAD, f"{MQTT_CPP}: apply_pending_reload()", errors)
+    if span is None:
+        return
+    body = code[span[0]:span[1]]
+    bumps = list(re.finditer(r"\+\+\s*s_destination_epoch\b|\bs_destination_epoch\s*\+\+", body))
+    clear = body.find("s_offline_q.clear(")
+    bump_if = enclosing_if(body, bumps[0].start()) if len(bumps) == 1 else None
+    clear_if = enclosing_if(body, clear) if clear >= 0 else None
+    flag = unwrap(bump_if[1]) if bump_if else ""
+    if not re.fullmatch(r"\w+", flag) or clear_if is None or \
+            flag not in [unwrap(t) for t in top_level_terms(unwrap(clear_if[1]), "&&")]:
+        errors.append(
+            f"{MQTT_CPP}: apply_pending_reload() must bump s_destination_epoch once, under an "
+            "`if` on the same flag that flushes the offline queue (s_offline_q.clear) — the SD "
+            "event log's backfill drops its backlog on exactly the broker changes the queue does")
 
 
 def check(mqtt_src: str, egress_src: str) -> list[str]:
@@ -272,6 +473,9 @@ def check(mqtt_src: str, egress_src: str) -> list[str]:
     check_live_publish(mqtt_src, errors)
     check_port_sends(egress_src, errors)
     check_pump_order(egress_src, errors)
+    check_floor_glue(egress_src, errors)
+    check_epoch_glue(egress_src, errors)
+    check_destination_epoch(mqtt_src, errors)
     return errors
 
 
@@ -335,6 +539,59 @@ MUTATIONS: list[tuple[str, Mutation]] = [
                    need="xQueueReceive("),
          SIG_PUMP, r"(CommittedEvent\s+ev\s*;)", r"(void)s_backfill.pass(link, s_port); \1",
          need="xQueueReceive("))),
+    # The re-review's edits: gates and decoys the first rule set let through.
+    ("tamper bridge gated on the backfill's replay run",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"if\s*\(\s*link\.accepting\s*&&",
+                                "if (link.accepting && s_replay_run == 0 &&",
+                                need="xQueueReceive("))),
+    ("tamper bridge moved after the commit behind an `if (false)` decoy",
+     lambda m, e: (m, mutate_in(
+         e, SIG_PUMP,
+         r"(if\s*\(\s*link\.accepting\s*&&.*?mqtt_publish_tamper\([^;]*;\s*\})"
+         r"(.*?\(void\)\s*s_backfill\.commit\([^;]*;)",
+         r"if (false) mqtt_publish_tamper(tb, false);\2 \1", need="xQueueReceive("))),
+    ("a dequeued row can skip its tamper bridge",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"(char\s+tb\[128\]\s*;)",
+                                r"\1 if (millis() == 0) continue;", need="xQueueReceive("))),
+    ("current_link() drops the id floor",
+     lambda m, e: (m, mutate_in(e, SIG_CURRENT_LINK, r"(link\.id_floor\s*=)[^;]*;", r"\1 0;"))),
+    ("the pump overrides the link's id floor",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP,
+                                r"const\s+(csi_event_backfill::Link\s+link\s*=\s*current_link\(\)\s*;)",
+                                r"\1 link.id_floor = 0;", need="xQueueReceive("))),
+    ("the pump builds its own link with no floor",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"=\s*current_link\(\)\s*;",
+                                "= csi_event_backfill::Link{mqtt_accepting(), mqtt_connected(), "
+                                "0, millis()};", need="xQueueReceive("))),
+    ("begin() hands the planner no floor",
+     lambda m, e: (m, mutate_in(e, SIG_BEGIN, r"(s_backfill\.begin\(\s*ceiling\s*,).*?(,\s*s_port\s*\))",
+                                r"\1 0\2"))),
+    ("the id floor is restored after the planner starts",
+     lambda m, e: (m, mutate_in(
+         mutate_in(e, SIG_BEGIN, r"restore_event_id_floor\(\)\s*;", ""),
+         SIG_BEGIN, r"(s_backfill\.begin\([^;]*;)", r"\1 restore_event_id_floor();"))),
+    ("a broker change keeps the old backlog",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\n[ \t]*s_backfill\.not_owed\([^;]*;", "",
+                                need="xQueueReceive("))),
+    ("the destination epoch is never compared",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\s*\|\|\s*epoch\s*!=\s*s_dest_epoch", "",
+                                need="xQueueReceive("))),
+    ("the new destination epoch is never stored",
+     lambda m, e: (m, mutate_in(e, SIG_PUMP, r"\n[ \t]*s_dest_epoch\s*=\s*epoch\s*;", "",
+                                need="xQueueReceive("))),
+    ("the old backlog is dropped after the rows",
+     lambda m, e: (m, mutate_in(
+         e, SIG_PUMP, r"(if\s*\(\s*!link\.accepting[^{]*\{[^}]*\})(.*?)(const\s+size_t\s+replayed)",
+         r"\2\1 \3", need="xQueueReceive("))),
+    ("the destination epoch is never bumped",
+     lambda m, e: (mutate_in(m, SIG_RELOAD,
+                             r"if\s*\(\s*destination_changed\s*\)\s*s_destination_epoch\+\+\s*;",
+                             ""), e)),
+    ("the epoch moves only when the queue held records",
+     lambda m, e: (mutate_in(m, SIG_RELOAD, r"if\s*\(\s*destination_changed\s*\)",
+                             "if (!s_offline_q.empty() && destination_changed)"), e)),
+    ("mqtt_destination_epoch() returns a constant",
+     lambda m, e: (mutate_in(m, SIG_EPOCH, r"return\s+s_destination_epoch\s*;", "return 0;"), e)),
 ]
 
 
@@ -367,8 +624,8 @@ def main() -> int:
     if errors or problems:
         return 1
     print(f"Event egress order holds: the live publish waits for the offline queue, the "
-          f"planner's sends never buffer, the tamper bridge goes first "
-          f"({len(MUTATIONS)} mutations refused).")
+          f"planner's sends never buffer, the tamper bridge goes first, the planner gets the "
+          f"id floor and the broker-change epoch ({len(MUTATIONS)} mutations refused).")
     return 0
 
 

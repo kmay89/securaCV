@@ -22,9 +22,13 @@
 //   - World::publish refuses a live publish while the offline queue holds
 //     records, so queued tamper alerts and events go first;
 //   - Host::tick publishes a tamper alert before it commits the row.
+// It also hands the planner glue values: the allocator's floor in every
+// Link and at begin(), and a not_owed() call when the broker changes.
 // In the firmware those are securacv_mqtt.cpp's mqtt_publish_event_live()
-// and csi_event_egress_pump(). firmware/scripts/check_event_egress_order.py,
-// run by check_csi_sync.sh, holds that source to them. The scenarios here
+// and mqtt_destination_epoch(), and csi_event_egress.cpp's current_link(),
+// csi_event_egress_begin() and csi_event_egress_pump().
+// firmware/scripts/check_event_egress_order.py, run by check_csi_sync.sh,
+// holds that source to them. The scenarios here
 // that involve tamper alerts check only the planner's side of the contract:
 // it keeps a row it could not send, and it holds a tamper row's events copy
 // in id order.

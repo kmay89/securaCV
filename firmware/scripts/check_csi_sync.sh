@@ -316,10 +316,11 @@ fi
 # ── The SD event log backfill's glue (backlog F37) ──
 # test_csi_event_backfill.cpp runs the planner against a model. The model
 # refuses a live publish while the MQTT offline queue holds records, and
-# publishes the tamper bridge before it commits the row. Those two are the
-# firmware's job (securacv_mqtt.cpp, csi_event_egress.cpp), and this check
-# holds the source to them. Each run it also mutates the source in memory,
-# to prove the check bites.
+# publishes the tamper bridge before it commits the row; it also hands the
+# planner the allocator's id floor and drops the backlog on a broker change.
+# Those are the firmware's job (securacv_mqtt.cpp, csi_event_egress.cpp),
+# and this check holds the source to them. Each run it also mutates the
+# source in memory, to prove the check bites.
 if ! python3 firmware/scripts/check_event_egress_order.py; then
     drift=1
 fi
