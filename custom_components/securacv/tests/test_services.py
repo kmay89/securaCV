@@ -352,6 +352,39 @@ def test_end_watch_by_label_ignores_case_spacing_and_the_article(ref, delivered)
     assert [w["label"] for w in _bucket(hass)] == ["the back door"]
 
 
+@pytest.mark.parametrize(
+    ("said", "label"),
+    [
+        ("The gate canary", "the gate canary"),
+        ("THE gate canary", "the gate canary"),
+        ("My gate canary", "the gate canary"),
+        ("the the gate canary", "the gate canary"),
+        ("The my gate canary", "the gate canary"),
+        ("  the   gate  canary ", "the gate canary"),
+        ("The Gate Canary", "the Gate Canary"),
+        ("gate canary", "the gate canary"),
+        ("theater lights", "the theater lights"),
+    ],
+)
+def test_a_watch_ends_by_the_words_it_was_started_with(said, label, delivered) -> None:
+    """The label and the match key come from one normalization: the
+    leading article is dropped in any case and however often it was said,
+    so the label never doubles it ("the The gate canary") and ending by the
+    same text always finds the watch. Voice and the action agree."""
+    hass = _hass()
+    started = _call(hass, "start_watch", {"subject": said})
+    assert started["label"] == label
+    assert not re.match(r"(the|my) (the|my)\b", label, re.IGNORECASE), label
+
+    spoken = _hass()
+    _start(spoken, said)
+    assert _bucket(spoken)[0]["label"] == label, "voice and the action label alike"
+
+    ended = _call(hass, "end_watch", {"watch": said})
+    assert ended["id"] == started["id"]
+    assert _bucket(hass) == []
+
+
 def test_an_ambiguous_label_is_refused_and_an_id_still_works(delivered) -> None:
     hass = _hass()
     first = _call(hass, "start_watch", {"subject": "the gate canary"})

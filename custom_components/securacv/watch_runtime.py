@@ -285,14 +285,37 @@ def _new_id(bucket: list[dict[str, Any]], now: float) -> str:
     return f"w{n}-{int(now)}"
 
 
+# Words in front of a subject that are not part of its name: "the gate
+# canary", "The gate canary", "my gate canary" and "gate canary" are one watch.
+_LABEL_FILLERS = ("the", "my")
+
+
+def _label_words(text: Any) -> list[str]:
+    """The subject's words without the leading fillers.
+
+    Any case, as many as there are ("the my gate"). This is the one
+    normalization behind both the label a watch is given and the key a
+    label is matched by, so a watch can always be ended by the words it
+    was started with. The last word is never stripped, so a subject that
+    is only a filler still names something.
+    """
+    words = str(text or "").split()
+    while len(words) > 1 and words[0].lower() in _LABEL_FILLERS:
+        del words[0]
+    return words
+
+
+def _make_label(subject_text: str) -> str:
+    """The label a watch is spoken of by: "the " and the subject as said,
+    less its own leading article ("The gate canary" -> "the gate canary",
+    never "the The gate canary")."""
+    return " ".join(["the", *_label_words(subject_text)])
+
+
 def _label_key(text: Any) -> str:
     """A label as a person would match it: case, spacing and the leading
     article do not count."""
-    key = " ".join(str(text or "").lower().split())
-    for filler in ("the ", "my "):
-        if key.startswith(filler):
-            key = key[len(filler):]
-    return key
+    return " ".join(_label_words(text)).lower()
 
 
 @callback
@@ -324,11 +347,7 @@ def async_start_watch(
     days = watches.parse_duration_days(duration_text)
     if concern is None:
         concern = watches.concern_from_text(subject_text)
-    label = subject_text
-    for filler in ("the ", "my "):
-        if label.startswith(filler):
-            label = label[len(filler):]
-    label = "the " + label
+    label = _make_label(subject_text)
 
     brief = voice.fleet_brief(fleet_snapshot(hass), now)
     device_id = voice.match_device(
