@@ -36,8 +36,23 @@
  * else the legacy pair (READ-ONLY — it is never rewritten or deleted, so an
  * older image still boots after a downgrade), else genesis. The legacy pair
  * therefore goes stale after the first blob write; an older image after a
- * downgrade sees it, and SD-wins covers that when a card is present. The
- * SD-wins reconciliation itself is unchanged and still runs after this.
+ * downgrade sees it and continues the chain from that stale point — a fork
+ * this image cannot prevent (it is the older image's code running), and
+ * SD-wins covers it only when a card is present.
+ *
+ * THE RE-UPGRADE. That older image writes only the legacy pair. When this
+ * image comes back, a blob-first rule would resume from the blob — the state
+ * from BEFORE the downgrade — and re-sign every seq from blob_seq + 1 to the
+ * older image's legacy seq on yet another branch. So `choose()` compares the
+ * two seqs when both are present: while this image runs, the blob's seq never
+ * falls below the frozen legacy seq (the first blob write starts at or above
+ * it, seq only ever increments, and SD-wins only ever raises it), so a legacy
+ * seq AHEAD of the blob's can only mean an older image ran since the last
+ * blob write, and its pair holds the newest records: resume from it. (Its
+ * pair is whatever that image last wrote, torn-write window included — the
+ * pre-blob risk, back only for the image that still has it.) Equal seqs keep
+ * the blob: nothing is re-signed either way. The SD-wins reconciliation is
+ * unchanged and still runs after this.
  *
  * Pure hosted C++ (no Arduino/ESP-IDF includes) so the byte-exact format and
  * the decision are unit-tested on the host (test_chain_state.cpp). The
@@ -106,12 +121,20 @@ inline bool decode(const uint8_t* in, size_t len, uint32_t* seq, uint8_t head[HE
 /** Where this boot's chain state comes from. */
 enum class Source : uint8_t {
   Blob,     ///< the atomic blob decoded — the normal case after the first persist
-  Legacy,   ///< no valid blob; the old two-entry pair is present (read-only)
+  Legacy,   ///< no valid blob, or an older image wrote a newer pair (read-only either way)
   Genesis,  ///< neither — a fresh device (or a wiped NVS): start the chain
 };
 
-/** The whole decision: blob beats legacy, legacy beats genesis. */
-inline Source choose(bool blob_ok, bool legacy_present) {
+/**
+ * The whole decision: blob beats legacy, legacy beats genesis — except that a
+ * legacy seq strictly ahead of a valid blob's means an older image ran since
+ * the last blob write (see THE RE-UPGRADE above), and then the legacy pair
+ * wins. `blob_seq` is read only when `blob_ok`, `legacy_seq` only when
+ * `legacy_present` (pass 0 when the legacy seq entry is absent).
+ */
+inline Source choose(bool blob_ok, bool legacy_present,
+                     uint32_t blob_seq, uint32_t legacy_seq) {
+  if (blob_ok && legacy_present && legacy_seq > blob_seq) return Source::Legacy;
   if (blob_ok) return Source::Blob;
   if (legacy_present) return Source::Legacy;
   return Source::Genesis;

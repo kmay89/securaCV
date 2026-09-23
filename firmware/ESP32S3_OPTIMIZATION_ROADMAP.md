@@ -472,11 +472,14 @@ Beyond §1.5:
   NVS writes; a power cut between them left them inconsistent (recoverable via SD-wins **only if a
   card is present**). Now one 39-byte `{version, seq, head, CRC-16}` blob under `chain_st`
   ([`common/witness/chain_state.h`](common/witness/chain_state.h), host-tested;
-  [`securacv_witness.cpp:324`](canary/lib/securacv_witness/src/securacv_witness.cpp) is the single
+  [`securacv_witness.cpp:154`](canary/lib/securacv_witness/src/securacv_witness.cpp) is the single
   writer — the `/api/reboot` handler's own copy of the two-write pair is gone too), which NVS
   commits atomically. Boot reads blob → legacy pair (read-only, never deleted, so a downgrade still
   boots) → genesis. The legacy pair goes stale after the first blob write, so an older image after
-  a downgrade sees an old head — SD-wins covers that when a card is present. Not carried to the
+  a downgrade resumes from an old head and forks the chain there — SD-wins covers that only when a
+  card is present. On the **re-upgrade**, a legacy seq *ahead of* the blob's can only mean that
+  older image ran since the last blob write, so boot resumes from its pair (and says so) instead of
+  re-signing its seqs on a second branch (`chain_state::choose()`, host-tested). Not carried to the
   canary-wap sketch (its three write sites and the staged-copy sync gate are a follow-up).
   **[P1 → done in the PIO canary tree]**
 - **No device-side rollback detection** — without secure boot / an eFuse or RTC monotonic anchor,

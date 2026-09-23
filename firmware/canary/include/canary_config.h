@@ -435,7 +435,11 @@
 // legacy two-entry layout: still READ as the fallback when no blob exists (so
 // an image upgrade keeps its chain) and never written again by this image (so
 // a downgrade still boots — from a pair that goes stale after the first blob
-// persist; the SD-wins reconciliation covers that when a card is present).
+// persist, so the older image forks the chain there; the SD-wins
+// reconciliation covers that only when a card is present). On the re-upgrade,
+// a legacy seq AHEAD of the blob's means that older image ran since the last
+// blob write, and boot resumes from its pair instead of re-signing its seqs
+// (chain_state::choose()).
 #define NVS_KEY_CHAINST   "chain_st"
 #define NVS_KEY_SEQ       "seq"
 #define NVS_KEY_BOOTS     "boots"

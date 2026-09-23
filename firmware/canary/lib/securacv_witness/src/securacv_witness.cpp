@@ -219,9 +219,12 @@ bool witness_provision_device() {
 
   // Load chain state: the atomic {seq, head} blob first, then the legacy
   // seq/chain pair (read-only — never rewritten or deleted, so an older image
-  // still boots after a downgrade), then genesis. The order is decided by
-  // chain_state::choose() and pinned on the host; the SD-wins reconciliation
-  // (witness_recover_chain_from_sd) is unchanged and still runs after this.
+  // still boots after a downgrade), then genesis — except that a legacy seq
+  // AHEAD of the blob's means an older image ran since our last blob write,
+  // and resuming from the blob would re-sign its seqs on a second branch. The
+  // order is decided by chain_state::choose() and pinned on the host; the
+  // SD-wins reconciliation (witness_recover_chain_from_sd) is unchanged and
+  // still runs after this.
   {
     uint8_t blob[chain_state::BLOB_LEN];
     uint32_t blob_seq = 0;
@@ -231,14 +234,22 @@ bool witness_provision_device() {
         chain_state::decode(blob, sizeof(blob), &blob_seq, blob_head);
     uint8_t legacy_head[chain_state::HEAD_LEN];
     const bool legacy_present = nvs_load_bytes(NVS_KEY_CHAIN, legacy_head, 32);
+    const uint32_t legacy_seq = legacy_present ? nvs_load_u32(NVS_KEY_SEQ, 0) : 0;
 
-    switch (chain_state::choose(blob_ok, legacy_present)) {
+    switch (chain_state::choose(blob_ok, legacy_present, blob_seq, legacy_seq)) {
       case chain_state::Source::Blob:
         g_device.seq = blob_seq;
         memcpy(g_device.chain_head, blob_head, 32);
         break;
       case chain_state::Source::Legacy:
-        g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
+        if (blob_ok) {
+          // Only reachable when legacy_seq > blob_seq: say so once, since it
+          // means the chain already forked under an older image.
+          Serial.printf("[WARN] Chain: legacy seq %u is ahead of chain_st seq %u - an older "
+                        "image ran since the last blob write; resuming from its pair\n",
+                        (unsigned)legacy_seq, (unsigned)blob_seq);
+        }
+        g_device.seq = legacy_seq;
         memcpy(g_device.chain_head, legacy_head, 32);
         break;
       case chain_state::Source::Genesis:

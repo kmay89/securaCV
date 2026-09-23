@@ -162,7 +162,11 @@ host tests assert they do, on real radio.
     and the `t` self-test chain verify passes. A board upgraded from a
     pre-blob image boots with its old seq/head (legacy fallback), and the
     first persist moves it to the blob; `chain_st` appears in NVS, `seq` /
-    `chain` are left as they were.
+    `chain` are left as they were. Re-upgrade: downgrade that board to the
+    pre-blob image, create records until its `chain_seq` passes the blob's,
+    then flash this image again — the boot log carries
+    `[WARN] Chain: legacy seq N is ahead of chain_st seq M` and
+    `/api/status` resumes at the older image's seq N, not at M.
   - Codec + source order under test: `firmware/common/witness/chain_state.h`
     (host-tested by `firmware/tests_host/test_chain_state.cpp`).
   - Artifact: `docs/audit/repro/K2/`.

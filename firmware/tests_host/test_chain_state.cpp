@@ -172,10 +172,35 @@ static void test_null_args_safe() {
 // (genesis) while a legacy pair sat right there, or trusting a stale legacy
 // pair over the blob the last boot wrote.
 static void test_choose_table() {
-  CHECK(chain_state::choose(true,  true)  == Source::Blob);
-  CHECK(chain_state::choose(true,  false) == Source::Blob);
-  CHECK(chain_state::choose(false, true)  == Source::Legacy);   // blob invalid + legacy -> Legacy
-  CHECK(chain_state::choose(false, false) == Source::Genesis);
+  // The stale-legacy case this image creates itself: legacy frozen at or
+  // below the blob's seq -> the blob.
+  CHECK(chain_state::choose(true,  true,  100, 50)  == Source::Blob);
+  CHECK(chain_state::choose(true,  true,  100, 100) == Source::Blob);  // equal: nothing re-signed either way
+  CHECK(chain_state::choose(true,  false, 100, 0)   == Source::Blob);
+  CHECK(chain_state::choose(false, true,  0,   50)  == Source::Legacy);  // blob invalid + legacy -> Legacy
+  CHECK(chain_state::choose(false, false, 0,   0)   == Source::Genesis);
+  // Seqs never matter to the one-sided cases.
+  CHECK(chain_state::choose(false, true,  999, 1)   == Source::Legacy);
+  CHECK(chain_state::choose(true,  false, 1,   999) == Source::Blob);
+  CHECK(chain_state::choose(false, false, 5,   9)   == Source::Genesis);
+}
+
+// ── the failure: a re-upgrade re-signing seqs an older image already signed ─
+//
+// Image N persists the blob at seq 100 (the legacy pair frozen at 50). A
+// downgrade to N-1 continues from 50 — its code, its fork — and writes ONLY
+// the legacy pair, up to seq 150. Re-upgrading to N with a blob-first rule
+// would resume at 100 and sign 101..150 a second time on another branch.
+// A legacy seq AHEAD of the blob's means exactly that happened: resume from
+// the legacy pair, where the newest records are.
+static void test_choose_prefers_newer_legacy_after_reupgrade() {
+  CHECK(chain_state::choose(true, true, 100, 150) == Source::Legacy);
+  CHECK(chain_state::choose(true, true, 100, 101) == Source::Legacy);   // one ahead is enough
+  CHECK(chain_state::choose(true, true, 0,   1)   == Source::Legacy);
+  CHECK(chain_state::choose(true, true, 0xFFFFFFFEu, 0xFFFFFFFFu) == Source::Legacy);
+  // ...and once N persists again (blob past the frozen pair), the blob wins
+  // for good: the decision converges, it does not flap.
+  CHECK(chain_state::choose(true, true, 151, 150) == Source::Blob);
 }
 
 int main() {
@@ -187,6 +212,7 @@ int main() {
   test_zero_ff_substitution_rejected();
   test_null_args_safe();
   test_choose_table();
+  test_choose_prefers_newer_legacy_after_reupgrade();
 
   if (g_failures == 0) { std::printf("ALL chain-state tests PASSED\n"); return 0; }
   std::printf("FAILED: %d assertion(s)\n", g_failures);
